@@ -112,6 +112,20 @@ func (c *Controller) SetFrequency(ctx context.Context, frequencyKHz uint16, mode
 	return c.Refresh(ctx)
 }
 
+func (c *Controller) SetMode(ctx context.Context, mode string) error {
+	state := c.State()
+	if state.FrequencyKHz == 0 {
+		if err := c.Refresh(ctx); err != nil {
+			return err
+		}
+		state = c.State()
+		if state.FrequencyKHz == 0 {
+			return fmt.Errorf("current frequency unknown")
+		}
+	}
+	return c.SetFrequency(ctx, state.FrequencyKHz, mode)
+}
+
 func (c *Controller) setOffline(err error) {
 	state := c.State()
 	state.Offline = true

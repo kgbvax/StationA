@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"strconv"
+	"sync"
 
 	paho "github.com/eclipse/paho.mqtt.golang"
 
@@ -18,6 +19,21 @@ type Client struct {
 	prefix   string
 	ctrl     *service.Controller
 	deviceID string
+
+	mu           sync.Mutex
+	hasLastState bool
+	lastState    publishedState
+}
+
+type publishedState struct {
+	FrequencyKHz uint16
+	BandName     string
+	BandIndex    byte
+	ModeName     string
+	MotorsMoving bool
+	MotorBits    byte
+	Offline      bool
+	LastError    string
 }
 
 func New(broker, clientID, prefix, user, password string, ctrl *service.Controller) (*Client, error) {
@@ -56,10 +72,46 @@ func (c *Client) Close() {
 }
 
 func (c *Client) PublishState(state service.State) {
+	snapshot := stateSnapshot(state)
+	if !c.shouldPublishState(snapshot) {
+		return
+	}
+
 	c.publishJSON(c.topic("status/frequency"), map[string]any{"frequency": state.FrequencyKHz, "band": state.BandName, "mode": state.ModeName}, 0, true)
 	c.publishJSON(c.topic("status/motors"), map[string]any{"moving": state.MotorsMoving, "motor_bits": state.MotorBits}, 0, true)
-	c.publishString(c.topic("status/availability"), "online", 0, true)
+	c.publishString(c.topic("status/availability"), availabilityPayload(state), 0, true)
 	c.publishJSON(c.topic("status/raw"), state, 0, true)
+}
+
+func stateSnapshot(state service.State) publishedState {
+	return publishedState{
+		FrequencyKHz: state.FrequencyKHz,
+		BandName:     state.BandName,
+		BandIndex:    state.BandIndex,
+		ModeName:     state.ModeName,
+		MotorsMoving: state.MotorsMoving,
+		MotorBits:    state.MotorBits,
+		Offline:      state.Offline,
+		LastError:    state.LastError,
+	}
+}
+
+func (c *Client) shouldPublishState(snapshot publishedState) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.hasLastState && c.lastState == snapshot {
+		return false
+	}
+	c.lastState = snapshot
+	c.hasLastState = true
+	return true
+}
+
+func availabilityPayload(state service.State) string {
+	if state.Offline {
+		return "offline"
+	}
+	return "online"
 }
 
 func (c *Client) PublishDiscovery() {
@@ -128,7 +180,7 @@ func (c *Client) PublishDiscovery() {
 		"availability_topic":    c.topic("status/availability"),
 		"payload_available":     "online",
 		"payload_not_available": "offline",
-		"options":               []string{"normal", "180", "bidir"},
+		"options":               []string{"forward", "reverse", "bidirectional"},
 		"value_template":        "{{ value_json.mode }}",
 		"device":                device,
 	}, 1, true)
@@ -151,8 +203,7 @@ func (c *Client) BindCommands(ctx context.Context) {
 	})
 	_ = c.subscribe(c.topic("command/mode"), func(_ paho.Client, msg paho.Message) {
 		log.Printf("[mqtt] rx topic=%s payload=%q", msg.Topic(), string(msg.Payload()))
-		state := c.ctrl.State()
-		_ = c.ctrl.SetFrequency(context.Background(), state.FrequencyKHz, modeFromPayload(msg.Payload()))
+		_ = c.ctrl.SetMode(context.Background(), modeFromPayload(msg.Payload()))
 	})
 	_ = c.subscribe(c.topic("command/retract"), func(_ paho.Client, _ paho.Message) {
 		log.Printf("[mqtt] rx topic=%s", c.topic("command/retract"))
@@ -195,7 +246,7 @@ func (c *Client) discoveryTopic(kind, name string) string {
 func modeFromPayload(payload []byte) string {
 	s := string(payload)
 	switch s {
-	case "normal", "180", "bidir":
+	case "forward", "reverse", "bidirectional", "normal", "180", "bidir":
 		return s
 	default:
 		return protocol.ModeName(protocol.ModeNormal)

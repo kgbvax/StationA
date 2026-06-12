@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -9,6 +10,30 @@ import (
 	"ubctrl/internal/ub/service"
 	"ubctrl/internal/ub/transport"
 )
+
+type nonFlushingRecorder struct {
+	header http.Header
+	code   int
+	body   strings.Builder
+}
+
+func (w *nonFlushingRecorder) Header() http.Header {
+	if w.header == nil {
+		w.header = make(http.Header)
+	}
+	return w.header
+}
+
+func (w *nonFlushingRecorder) Write(b []byte) (int, error) {
+	if w.code == 0 {
+		w.code = http.StatusOK
+	}
+	return w.body.Write(b)
+}
+
+func (w *nonFlushingRecorder) WriteHeader(statusCode int) {
+	w.code = statusCode
+}
 
 func TestRoutesIntegration(t *testing.T) {
 	ctrl := service.NewController(transport.NewMock())
@@ -54,6 +79,14 @@ func TestRoutesIntegration(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("POST /api/frequency (no form): status = %d, want %d", rec.Code, http.StatusBadRequest)
 	}
+
+	// Test POST /api/mode (invalid)
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/api/mode", nil)
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("POST /api/mode (no form): status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
 }
 
 func TestHandleEventsSSE(t *testing.T) {
@@ -61,7 +94,10 @@ func TestHandleEventsSSE(t *testing.T) {
 	srv := New(ctrl)
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/events", nil)
+	baseReq := httptest.NewRequest(http.MethodGet, "/api/events", nil)
+	reqCtx, cancel := context.WithCancel(baseReq.Context())
+	defer cancel()
+	req := baseReq.WithContext(reqCtx)
 
 	done := make(chan struct{})
 	go func() {
@@ -71,6 +107,7 @@ func TestHandleEventsSSE(t *testing.T) {
 
 	// Simulate sending a status update
 	srv.PublishStatus(ctrl.State())
+	cancel()
 
 	// We can't forcibly close the context in httptest, so just let the handler exit naturally.
 	// Wait briefly for goroutine to finish.
@@ -86,13 +123,11 @@ func TestHandleEventsStreamingUnsupported(t *testing.T) {
 	srv := New(ctrl)
 
 	// Use a ResponseWriter that doesn't implement http.Flusher
-	type dummyWriter struct{ httptest.ResponseRecorder }
-
-	rec := &dummyWriter{}
+	rec := &nonFlushingRecorder{}
 	req := httptest.NewRequest(http.MethodGet, "/api/events", nil)
 	srv.handleEvents(rec, req)
-	if rec.Code != http.StatusInternalServerError {
-		t.Fatalf("expected 500 for streaming unsupported, got %d", rec.Code)
+	if rec.code != http.StatusInternalServerError {
+		t.Fatalf("expected 500 for streaming unsupported, got %d", rec.code)
 	}
 }
 
@@ -125,7 +160,7 @@ func TestHandleFrequencyInvalidValue(t *testing.T) {
 	srv := New(ctrl)
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/api/frequency", strings.NewReader("frequency=notanumber&mode=normal"))
+	req := httptest.NewRequest(http.MethodPost, "/api/frequency", strings.NewReader("frequency=notanumber&mode=forward"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	srv.handleFrequency(rec, req)
 	if rec.Code != http.StatusBadRequest {
@@ -133,7 +168,7 @@ func TestHandleFrequencyInvalidValue(t *testing.T) {
 	}
 
 	rec = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodPost, "/api/frequency", strings.NewReader("frequency=70000&mode=normal"))
+	req = httptest.NewRequest(http.MethodPost, "/api/frequency", strings.NewReader("frequency=70000&mode=forward"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	srv.handleFrequency(rec, req)
 	if rec.Code != http.StatusBadRequest {
@@ -180,9 +215,9 @@ func TestHandleFrequencyModeSwitches(t *testing.T) {
 		mode     string
 		wantMode string
 	}{
-		{name: "normal mode", freq: "14000", mode: "normal", wantMode: "normal"},
-		{name: "180 mode", freq: "14000", mode: "180", wantMode: "180"},
-		{name: "bidir mode", freq: "14000", mode: "bidir", wantMode: "bidir"},
+		{name: "forward mode", freq: "14000", mode: "forward", wantMode: "forward"},
+		{name: "reverse mode", freq: "14000", mode: "reverse", wantMode: "reverse"},
+		{name: "bidirectional mode", freq: "14000", mode: "bidirectional", wantMode: "bidirectional"},
 	}
 
 	for _, tt := range tests {
@@ -213,7 +248,7 @@ func TestHandleFrequencyChangesFrequency(t *testing.T) {
 	srv := New(ctrl)
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/api/frequency", strings.NewReader("frequency=14550&mode=normal"))
+	req := httptest.NewRequest(http.MethodPost, "/api/frequency", strings.NewReader("frequency=14550&mode=forward"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
 	srv.handleFrequency(rec, req)
@@ -226,8 +261,42 @@ func TestHandleFrequencyChangesFrequency(t *testing.T) {
 	if got := state.FrequencyKHz; got != 14550 {
 		t.Fatalf("frequency = %d, want %d", got, 14550)
 	}
-	if got := state.ModeName; got != "normal" {
-		t.Fatalf("mode = %q, want %q", got, "normal")
+	if got := state.ModeName; got != "forward" {
+		t.Fatalf("mode = %q, want %q", got, "forward")
+	}
+}
+
+func TestHandleModeSwitches(t *testing.T) {
+	ctrl := service.NewController(transport.NewMock())
+	srv := New(ctrl)
+
+	tests := []struct {
+		name     string
+		mode     string
+		wantMode string
+	}{
+		{name: "forward mode", mode: "forward", wantMode: "forward"},
+		{name: "reverse mode", mode: "reverse", wantMode: "reverse"},
+		{name: "bidirectional mode", mode: "bidirectional", wantMode: "bidirectional"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodPost, "/api/mode", strings.NewReader("mode="+tt.mode))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+			srv.handleMode(rec, req)
+
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+			}
+
+			state := ctrl.State()
+			if got := state.ModeName; got != tt.wantMode {
+				t.Fatalf("mode = %q, want %q", got, tt.wantMode)
+			}
+		})
 	}
 }
 
@@ -240,7 +309,7 @@ func TestIndexRendersModeButtonsAndNoRefreshButton(t *testing.T) {
 	srv.handleIndex(rec, req)
 
 	body := rec.Body.String()
-	if !strings.Contains(body, `onclick="setMode('normal')"`) || !strings.Contains(body, `onclick="setMode('180')"`) || !strings.Contains(body, `onclick="setMode('bidir')"`) {
+	if !strings.Contains(body, `onclick="setMode('forward')"`) || !strings.Contains(body, `onclick="setMode('reverse')"`) || !strings.Contains(body, `onclick="setMode('bidirectional')"`) {
 		t.Fatalf("mode buttons not rendered as expected: %s", body)
 	}
 	if strings.Contains(body, "Refresh status") {
@@ -262,7 +331,7 @@ func TestIndexRendersModeButtonsAndNoRefreshButton(t *testing.T) {
 	if !strings.Contains(body, `id="freq-btn"`) {
 		t.Fatalf("expected frequency button with id 'freq-btn'")
 	}
-	if !strings.Contains(body, `id="mode-normal"`) || !strings.Contains(body, `id="mode-180"`) || !strings.Contains(body, `id="mode-bidir"`) {
+	if !strings.Contains(body, `id="mode-forward"`) || !strings.Contains(body, `id="mode-reverse"`) || !strings.Contains(body, `id="mode-bidirectional"`) {
 		t.Fatalf("expected mode buttons with individual IDs")
 	}
 }

@@ -82,25 +82,25 @@ func ParseMovingStatus(data []byte) (MovingStatus, error) {
 
 func ParseMode(mode string) (byte, error) {
 	switch mode {
-	case "", "normal":
+	case "", "forward", "normal":
 		return ModeNormal, nil
-	case "180":
+	case "reverse", "180":
 		return Mode180, nil
-	case "bidir", "bidirectional":
+	case "bidirectional", "bidir":
 		return ModeBidir, nil
 	default:
-		return 0, fmt.Errorf("invalid mode %q (expected normal|180|bidir)", mode)
+		return 0, fmt.Errorf("invalid mode %q (expected forward|reverse|bidirectional)", mode)
 	}
 }
 
 func ModeName(mode byte) string {
 	switch mode {
 	case ModeNormal:
-		return "normal"
+		return "forward"
 	case Mode180:
-		return "180"
+		return "reverse"
 	case ModeBidir:
-		return "bidir"
+		return "bidirectional"
 	default:
 		return "unknown"
 	}

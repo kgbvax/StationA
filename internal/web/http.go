@@ -34,6 +34,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/refresh", s.handleRefresh)
 	mux.HandleFunc("/api/retract", s.handleRetract)
 	mux.HandleFunc("/api/frequency", s.handleFrequency)
+	mux.HandleFunc("/api/mode", s.handleMode)
 	return mux
 }
 
@@ -161,7 +162,32 @@ func (s *Server) handleFrequency(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid frequency", http.StatusBadRequest)
 		return
 	}
+	if mode == "" {
+		mode = s.ctrl.State().ModeName
+	}
 	if err := s.ctrl.SetFrequency(r.Context(), uint16(freq), mode); err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	s.PublishStatus(s.ctrl.State())
+	writeJSON(w, map[string]string{"status": "ok"})
+}
+
+func (s *Server) handleMode(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	mode := r.FormValue("mode")
+	if mode == "" {
+		http.Error(w, "mode is required", http.StatusBadRequest)
+		return
+	}
+	if err := s.ctrl.SetMode(r.Context(), mode); err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
@@ -237,7 +263,7 @@ const indexHTML = `<!doctype html>
 
 		<div>
 			<label>Mode</label>
-			<div class="row-inline"><button id="mode-normal" class="mode {{if eq .ModeName "normal"}}active{{end}}" type="button" data-mode="normal" onclick="setMode('normal')">normal</button><button id="mode-180" class="mode {{if eq .ModeName "180"}}active{{end}}" type="button" data-mode="180" onclick="setMode('180')">180</button><button id="mode-bidir" class="mode {{if eq .ModeName "bidir"}}active{{end}}" type="button" data-mode="bidir" onclick="setMode('bidir')">bidir</button></div>
+			<div class="row-inline"><button id="mode-forward" class="mode {{if eq .ModeName "forward"}}active{{end}}" type="button" data-mode="forward" onclick="setMode('forward')">forward</button><button id="mode-reverse" class="mode {{if eq .ModeName "reverse"}}active{{end}}" type="button" data-mode="reverse" onclick="setMode('reverse')">reverse</button><button id="mode-bidirectional" class="mode {{if eq .ModeName "bidirectional"}}active{{end}}" type="button" data-mode="bidirectional" onclick="setMode('bidirectional')">bidirectional</button></div>
 		</div>
 
 		<div class="row">
@@ -311,22 +337,35 @@ const indexHTML = `<!doctype html>
 			}
 		};
 
+		const postMode = async (mode) => {
+			const body = new URLSearchParams();
+			body.set('mode', mode);
+			const res = await fetch('/api/mode', {
+				method: 'POST',
+				headers: {'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'},
+				body: body.toString(),
+			});
+			if (!res.ok) {
+				throw new Error(await res.text());
+			}
+		};
+
 		const currentFrequency = () => {
 			const input = document.getElementById('frequency-input');
 			return input ? input.value : '';
 		};
 
 		const setFrequency = async () => {
-			await postFrequency(currentFrequency(), document.querySelector('#live-state')?.textContent === 'offline' ? 'normal' : getCurrentMode());
+			await postFrequency(currentFrequency(), document.querySelector('#live-state')?.textContent === 'offline' ? 'forward' : getCurrentMode());
 		};
 
 		const getCurrentMode = () => {
 			const active = document.querySelector('button.mode.active');
-			return active ? active.getAttribute('data-mode') || 'normal' : 'normal';
+			return active ? active.getAttribute('data-mode') || 'forward' : 'forward';
 		};
 
 		const setMode = async (mode) => {
-			await postFrequency(currentFrequency(), mode);
+			await postMode(mode);
 		};
 
 		const retract = async () => {
