@@ -5,7 +5,10 @@ PTZ / rotator. It can talk to the unit over a directly attached serial port or a
 TCP serial bridge, and it can act as a **network rotator controller** that
 external tracking software drives over the **Yaesu GS-232** and **Hamlib
 rotctld** protocols. Optional **cable-wrap protection** guards infinite-azimuth
-rotators against over-winding.
+rotators against over-winding. 
+
+## Status
+WIP, mostly untested 
 
 ## Build
 
@@ -23,7 +26,7 @@ Requires Go (see `go.mod` for the version).
 ./pelcots
 ```
 
-A Bubble Tea UI showing live azimuth/elevation readback, a TX/RX trace, and the
+A Text UI showing live azimuth/elevation readback, a TX/RX trace, and the
 connection / server / cable-wrap state. **Local motion is hold-to-move**:
 the unit moves only while a key is held and stops as soon as you release it, so
 the TUI never leaves the rotator moving unattended.
