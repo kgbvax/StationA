@@ -121,8 +121,12 @@ addr: 1                      # Pelco-D camera address (1-255)
 log: pelcots.log             # TX/RX trace file ("" disables)
 control:
   bind: 127.0.0.1            # listen address for inbound servers
-  gs232:   { enabled: false, port: 4000 }
-  rotctld: { enabled: false, port: 4533 }
+  gs232:
+    enabled: false
+    port: 4000
+  rotctld:
+    enabled: false
+    port: 4533
 wrap:
   enabled: false
   limit: 270                 # ± degrees of permitted wind
