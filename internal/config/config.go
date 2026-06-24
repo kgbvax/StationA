@@ -5,6 +5,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -15,13 +16,71 @@ const (
 	TransportTCP    = "tcp"
 )
 
+// LogLevel selects how much detail is recorded in the trace/log. Ordered from
+// quietest (LogError) to most verbose (LogTrace); a line is emitted when its
+// level is at or below the configured level.
+type LogLevel int8
+
+const (
+	LogError LogLevel = iota // failures that abort an operation
+	LogWarn                  // recoverable problems (read errors, TX while disconnected)
+	LogInfo                  // operational milestones (connect, server start/stop)
+	LogDebug                 // per-frame TX and decoded RX readback
+	LogTrace                 // raw bytes and unrecognized frames
+)
+
+var logLevelNames = [...]string{
+	LogError: "error",
+	LogWarn:  "warn",
+	LogInfo:  "info",
+	LogDebug: "debug",
+	LogTrace: "trace",
+}
+
+// String returns the lowercase level name (also its YAML/flag representation).
+func (l LogLevel) String() string {
+	if l < 0 || int(l) >= len(logLevelNames) {
+		return "info"
+	}
+	return logLevelNames[l]
+}
+
+// ParseLogLevel maps a name (case-insensitive) to a LogLevel.
+func ParseLogLevel(s string) (LogLevel, error) {
+	want := strings.ToLower(strings.TrimSpace(s))
+	for i, name := range logLevelNames {
+		if name == want {
+			return LogLevel(i), nil
+		}
+	}
+	return LogInfo, fmt.Errorf("invalid log level %q (want error|warn|info|debug|trace)", s)
+}
+
+// MarshalYAML writes the level as its name so the config stays human-readable.
+func (l LogLevel) MarshalYAML() (any, error) { return l.String(), nil }
+
+// UnmarshalYAML accepts the level name; an empty/missing value keeps the zero
+// value (the caller seeds it from Default first).
+func (l *LogLevel) UnmarshalYAML(n *yaml.Node) error {
+	if n.Value == "" {
+		return nil
+	}
+	lvl, err := ParseLogLevel(n.Value)
+	if err != nil {
+		return err
+	}
+	*l = lvl
+	return nil
+}
+
 // Config is the full persisted application state.
 type Config struct {
 	Transport string        `yaml:"transport"` // serial | tcp
 	Serial    SerialConfig  `yaml:"serial"`
 	TCP       TCPConfig     `yaml:"tcp"`
-	Addr      byte          `yaml:"addr"` // Pelco-D camera address (1-255)
-	Log       string        `yaml:"log"`  // TX/RX trace file ("" disables)
+	Addr      byte          `yaml:"addr"`      // Pelco-D camera address (1-255)
+	Log       string        `yaml:"log"`       // TX/RX trace file ("" disables)
+	LogLevel  LogLevel      `yaml:"log_level"` // error | warn | info | debug | trace
 	Control   ControlConfig `yaml:"control"`
 	Wrap      WrapConfig    `yaml:"wrap"`
 }
@@ -66,6 +125,7 @@ func Default() Config {
 		TCP:       TCPConfig{Address: "127.0.0.1:4001"},
 		Addr:      1,
 		Log:       "pelcots.log",
+		LogLevel:  LogInfo,
 		Control: ControlConfig{
 			Bind:    "127.0.0.1",
 			GS232:   ServerConfig{Enabled: false, Port: 4000},

@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"strings"
 	"sync"
 	"time"
 
@@ -51,6 +52,7 @@ type Options struct {
 	GS232       config.ServerConfig
 	Rotctld     config.ServerConfig
 	Logw        io.Writer
+	LogLevel    config.LogLevel
 }
 
 // State is an immutable snapshot of the engine for rendering / persistence.
@@ -139,6 +141,7 @@ type Engine struct {
 	pos *control.Pos // latest position published for the servers
 
 	logw     io.Writer
+	logLevel config.LogLevel
 	logLines []string
 	status   string
 
@@ -164,6 +167,7 @@ func New(o Options) *Engine {
 		rotctldPort: o.Rotctld.Port,
 		pos:         &control.Pos{},
 		logw:        o.Logw,
+		logLevel:    o.LogLevel,
 		reqs:        make(chan func(), 64),
 		quit:        make(chan struct{}),
 		status:      "starting",
@@ -344,6 +348,7 @@ func (e *Engine) startGoto(az, el float64) {
 		switch plan.Kind {
 		case MoveBlock:
 			e.status = fmt.Sprintf("wrap: %.0f° unreachable within ±%.0f°", az, e.wrapLimit)
+			e.logf(config.LogWarn, "wrap: blocked goto %.0f° (wind %+.0f°, limit ±%.0f°)", az, e.wrap, e.wrapLimit)
 			return
 		case MoveUnwrap:
 			e.beginUnwrap(az, el, plan)
@@ -369,6 +374,7 @@ func (e *Engine) beginUnwrap(az, el float64, plan MovePlan) {
 	e.mvWrapStart = e.wrap
 	e.mvTravel = math.Abs(plan.Travel)
 	e.status = fmt.Sprintf("wrap: unwinding %s to reach %.0f°", dirArrow(plan.Dir), az)
+	e.logf(config.LogInfo, "wrap: unwinding %s %.0f° to reach %.0f°", dirArrow(plan.Dir), e.mvTravel, az)
 	e.send(pelco.SetTilt(e.addr, el))
 	e.send(pelco.Jog(e.addr, pelco.Direction{Pan: plan.Dir}.Cmd2(), jogKeySpeed, 0))
 	e.setMovePoll(true)
@@ -385,6 +391,7 @@ func (e *Engine) stepMove() {
 		e.mvActive, e.gotoing, e.unwrapping = false, false, false
 		e.setMovePoll(false)
 		e.status = "wrap unwind complete"
+		e.logf(config.LogInfo, "wrap: unwind complete (wind %+.0f°)", e.wrap)
 	}
 }
 
@@ -414,15 +421,16 @@ func (e *Engine) poll() {
 func (e *Engine) handleFrame(ev serialio.Event, ok bool) {
 	if !ok {
 		e.status = "port closed"
+		e.logf(config.LogWarn, "port closed")
 		e.frames = nil
 		return
 	}
 	switch {
 	case ev.Raw != nil:
 		e.bytesIn += len(ev.Raw)
-		e.logf("RX  raw % X", ev.Raw)
+		e.logf(config.LogTrace, "RX  raw % X", ev.Raw)
 	case ev.Err != nil:
-		e.logf("RX  ! %v", ev.Err)
+		e.logf(config.LogWarn, "RX  ! %v", ev.Err)
 	case ev.Frame.IsPanResponse():
 		raw := ev.Frame.Word()
 		newPan := pelco.HundredthsToDeg(raw)
@@ -431,15 +439,15 @@ func (e *Engine) handleFrame(ev serialio.Event, ok bool) {
 		}
 		e.curPanRaw, e.curPan, e.havePan, e.lastPan = raw, newPan, true, time.Now()
 		e.pos.Set(e.curPan, e.curTilt)
-		e.logf("RX  pan=%.2f° (raw %d)", e.curPan, raw)
+		e.logf(config.LogDebug, "RX  pan=%.2f° (raw %d)", e.curPan, raw)
 		e.stepMove()
 	case ev.Frame.IsTiltResponse():
 		raw := ev.Frame.Word()
 		e.curTiltRaw, e.curTilt, e.haveTilt, e.lastTilt = raw, pelco.HundredthsToDeg(raw), true, time.Now()
 		e.pos.Set(e.curPan, e.curTilt)
-		e.logf("RX  tilt=%.2f° (raw %d)", e.curTilt, raw)
+		e.logf(config.LogDebug, "RX  tilt=%.2f° (raw %d)", e.curTilt, raw)
 	default:
-		e.logf("RX  % X", ev.Frame.Bytes())
+		e.logf(config.LogTrace, "RX  % X", ev.Frame.Bytes())
 	}
 }
 
@@ -461,11 +469,21 @@ func (e *Engine) reconnect(spec ConnSpec) {
 	}
 	if err != nil {
 		e.status = "connect failed: " + err.Error()
+		e.logf(config.LogError, "connect failed (%s %s): %v", spec.Transport, e.endpoint(), err)
 		return
 	}
 	e.port, e.frames = p, p.Frames()
 	e.havePan, e.haveTilt = false, false // fresh readback for the new link
 	e.status = "connected"
+	e.logf(config.LogInfo, "connected (%s %s)", spec.Transport, e.endpoint())
+}
+
+// endpoint returns the active transport's human-readable target.
+func (e *Engine) endpoint() string {
+	if e.transport == config.TransportTCP {
+		return e.tcpAddr
+	}
+	return e.serialPort
 }
 
 func (e *Engine) setServer(proto control.Protocol, enabled bool, port int) {
@@ -474,6 +492,7 @@ func (e *Engine) setServer(proto control.Protocol, enabled bool, port int) {
 		if e.gs232Srv != nil {
 			_ = e.gs232Srv.Close()
 			e.gs232Srv, e.gs232On = nil, false
+			e.logf(config.LogInfo, "gs232 stopped")
 		}
 		e.gs232Port = port
 		if !enabled {
@@ -482,14 +501,17 @@ func (e *Engine) setServer(proto control.Protocol, enabled bool, port int) {
 		srv, err := control.Start(proto, e.bind, port, e.pos, e.Submit)
 		if err != nil {
 			e.status = fmt.Sprintf("gs232: %v", err)
+			e.logf(config.LogError, "gs232 start failed: %v", err)
 			return
 		}
 		e.gs232Srv, e.gs232On = srv, true
 		e.status = fmt.Sprintf("gs232 listening on %s", srv.Addr())
+		e.logf(config.LogInfo, "gs232 listening on %s", srv.Addr())
 	case control.Rotctld:
 		if e.rotctldSrv != nil {
 			_ = e.rotctldSrv.Close()
 			e.rotctldSrv, e.rotctldOn = nil, false
+			e.logf(config.LogInfo, "rotctld stopped")
 		}
 		e.rotctldPort = port
 		if !enabled {
@@ -498,10 +520,12 @@ func (e *Engine) setServer(proto control.Protocol, enabled bool, port int) {
 		srv, err := control.Start(proto, e.bind, port, e.pos, e.Submit)
 		if err != nil {
 			e.status = fmt.Sprintf("rotctld: %v", err)
+			e.logf(config.LogError, "rotctld start failed: %v", err)
 			return
 		}
 		e.rotctldSrv, e.rotctldOn = srv, true
 		e.status = fmt.Sprintf("rotctld listening on %s", srv.Addr())
+		e.logf(config.LogInfo, "rotctld listening on %s", srv.Addr())
 	}
 }
 
@@ -530,18 +554,25 @@ func (e *Engine) setMovePoll(fast bool) {
 
 func (e *Engine) send(f pelco.Frame) {
 	if e.port == nil {
-		e.logf("TX  ! not connected")
+		e.logf(config.LogWarn, "TX  ! not connected")
 		return
 	}
 	if err := e.port.Send(f); err != nil {
-		e.logf("TX  ! %v", err)
+		e.logf(config.LogError, "TX  ! %v", err)
 		return
 	}
-	e.logf("TX  % X", f.Bytes())
+	e.logf(config.LogDebug, "TX  % X", f.Bytes())
 }
 
-func (e *Engine) logf(format string, args ...any) {
-	line := time.Now().Format("15:04:05.000 ") + fmt.Sprintf(format, args...)
+// logf records a line at the given level. Lines more verbose than the
+// configured level are dropped entirely (neither buffered for the TUI panel nor
+// written to the log file/stderr), so the level controls verbosity uniformly.
+func (e *Engine) logf(level config.LogLevel, format string, args ...any) {
+	if level > e.logLevel {
+		return
+	}
+	line := fmt.Sprintf("%s%-5s %s", time.Now().Format("15:04:05.000 "),
+		strings.ToUpper(level.String()), fmt.Sprintf(format, args...))
 	e.logLines = append(e.logLines, line)
 	if len(e.logLines) > logSize {
 		e.logLines = e.logLines[len(e.logLines)-logSize:]

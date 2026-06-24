@@ -50,7 +50,7 @@ Keys:
 ### Daemon (headless network controller)
 
 ```sh
-./pelcots -daemon
+./pelcots -d
 ```
 
 No TUI, no console required. Inbound control servers drive the rotator directly
@@ -119,6 +119,7 @@ tcp:
   address: 192.168.1.50:4001
 addr: 1                      # Pelco-D camera address (1-255)
 log: pelcots.log             # TX/RX trace file ("" disables)
+log_level: info              # error | warn | info | debug | trace
 control:
   bind: 127.0.0.1            # listen address for inbound servers
   gs232:
@@ -133,6 +134,23 @@ wrap:
   accumulated: 0             # signed wind state, persisted across runs
 ```
 
+### Logging
+
+`log_level` (or `-loglevel`) controls how much detail is recorded, both in the
+TUI trace panel and in the `log` file / daemon stderr. Each level includes the
+ones above it:
+
+| Level | Adds |
+| --- | --- |
+| `error` | failures that abort an operation (send/connect/server-start errors) |
+| `warn` | recoverable problems (read errors, TX while disconnected, blocked over-wrap) |
+| `info` | operational milestones (connect, server start/stop, cable unwind) *(default)* |
+| `debug` | per-frame TX and decoded RX position readback |
+| `trace` | raw bytes and unrecognized frames |
+
+`info` is the default — operational events only. Use `debug` or `trace` for
+live diagnostics of the TX/RX traffic.
+
 ## Flags
 
 Flags override the corresponding config values for that run:
@@ -146,7 +164,8 @@ Flags override the corresponding config values for that run:
 | `-tcp <host:port>` | TCP bridge address (implies `-transport tcp`) |
 | `-addr <1-255>` | Pelco-D camera address |
 | `-log <path>` | TX/RX trace file |
-| `-daemon` | run headless as a network controller |
+| `-loglevel <level>` | log verbosity: `error`\|`warn`\|`info`\|`debug`\|`trace` |
+| `-d` | run headless as a network controller |
 
 ## Safety
 

@@ -30,9 +30,10 @@ func main() {
 	baud := flag.Int("baud", 0, "serial baud rate (overrides config)")
 	addr := flag.Uint("addr", 0, "Pelco-D camera address 1-255 (overrides config)")
 	logPath := flag.String("log", "", "append TX/RX trace to this file (overrides config)")
+	logLevel := flag.String("loglevel", "", "log verbosity: error | warn | info | debug | trace (overrides config)")
 	tcp := flag.String("tcp", "", "TCP serial-bridge address host:port (overrides config)")
 	transport := flag.String("transport", "", "outbound transport: serial | tcp (overrides config)")
-	daemon := flag.Bool("daemon", false, "run headless as a network controller (no TUI)")
+	daemon := flag.Bool("d", false, "run headless as a network controller (no TUI)")
 	flag.Parse()
 
 	cfg, err := config.Load(*cfgPath)
@@ -60,6 +61,14 @@ func main() {
 	if set["log"] {
 		cfg.Log = *logPath
 	}
+	if set["loglevel"] {
+		lvl, err := config.ParseLogLevel(*logLevel)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(2)
+		}
+		cfg.LogLevel = lvl
+	}
 	if set["tcp"] {
 		cfg.TCP.Address = *tcp
 	}
@@ -85,6 +94,7 @@ func main() {
 		GS232:       cfg.Control.GS232,
 		Rotctld:     cfg.Control.Rotctld,
 		Logw:        logw,
+		LogLevel:    cfg.LogLevel,
 	})
 	eng.Start()
 

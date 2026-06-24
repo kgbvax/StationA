@@ -14,7 +14,7 @@ go test ./internal/engine/ -run TestPlanMoveUnwrap   # a single test
 gofmt -w internal/ main.go           # format
 ```
 
-Run modes: `./pelcots` (interactive TUI), `./pelcots -daemon` (headless network controller). Flags override `pelcots.yaml`; see `README.md` for the full flag/protocol/config reference.
+Run modes: `./pelcots` (interactive TUI), `./pelcots -d` (headless network controller). Flags override `pelcots.yaml`; see `README.md` for the full flag/protocol/config reference.
 
 ## Architecture
 
