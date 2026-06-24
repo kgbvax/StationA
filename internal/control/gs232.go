@@ -12,7 +12,9 @@ import (
 // Supported: C (azimuth), B (elevation), C2 (both); W aaa eee / M aaa (absolute
 // move); S/A/E (stop); R/L (pan CW/CCW) and U/D (tilt up/down) continuous jog.
 // Azimuth↔pan, elevation↔tilt. A/E map to a full stop (Pelco-D has no per-axis
-// stop).
+// stop). Position queries are withheld (empty reply) until the first readback
+// arrives, since GS-232 has no "unknown position" reply and AZ=000 would be
+// indistinguishable from a real reading.
 func (s *Server) gs232(line string) string {
 	line = strings.TrimSpace(line)
 	if line == "" {
@@ -22,13 +24,22 @@ func (s *Server) gs232(line string) string {
 
 	switch {
 	case up == "C2":
-		az, el, _ := s.pos.Get()
+		az, el, ok := s.pos.Get()
+		if !ok {
+			return ""
+		}
 		return fmt.Sprintf("AZ=%03.0f EL=%03.0f\r", az, el)
 	case up[0] == 'C':
-		az, _, _ := s.pos.Get()
+		az, _, ok := s.pos.Get()
+		if !ok {
+			return ""
+		}
 		return fmt.Sprintf("AZ=%03.0f\r", az)
 	case up[0] == 'B':
-		_, el, _ := s.pos.Get()
+		_, el, ok := s.pos.Get()
+		if !ok {
+			return ""
+		}
 		return fmt.Sprintf("EL=%03.0f\r", el)
 
 	case up[0] == 'W':

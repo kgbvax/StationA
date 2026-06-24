@@ -53,8 +53,11 @@ func (m Model) View() string {
 	}
 
 	connState := staleStyle.Render("disconnected")
-	if s.Connected {
+	switch {
+	case s.Connected:
 		connState = liveStyle.Render("connected")
+	case s.Reconnecting:
+		connState = warnStyle.Render("reconnecting…")
 	}
 	transport := "serial"
 	if s.Transport == config.TransportTCP {

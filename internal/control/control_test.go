@@ -76,6 +76,15 @@ func TestGS232Queries(t *testing.T) {
 	}
 }
 
+func TestGS232QueriesNoData(t *testing.T) {
+	s, _ := newTestServer(0, 0, false)
+	for _, q := range []string{"C\r", "B\r", "C2\r"} {
+		if r := s.gs232(q); r != "" {
+			t.Fatalf("%q with no readback = %q, want empty", q, r)
+		}
+	}
+}
+
 func TestGS232Moves(t *testing.T) {
 	s, got := newTestServer(0, 10, true)
 

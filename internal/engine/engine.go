@@ -28,6 +28,7 @@ const (
 	jogKeySpeed      = 0x20                   // fixed speed for keyboard/unwrap jogging
 	moveTolerance    = 2.0                    // degrees: how close to the target ends an unwrap
 	logSize          = 200                    // TX/RX ring-buffer depth
+	reconnectDelay   = 200 * time.Millisecond // retry cadence while the link is down
 )
 
 // ConnSpec describes an outbound connection target.
@@ -65,6 +66,7 @@ type State struct {
 	TCPAddr               string
 	Baud                  int
 	Addr                  byte
+	Reconnecting          bool
 	HavePan, HaveTilt     bool
 	CurPan, CurTilt       float64
 	CurPanRaw, CurTiltRaw uint16
@@ -110,6 +112,8 @@ type Engine struct {
 	frames   <-chan serialio.Event
 	ticker   *time.Ticker
 	pollFast bool
+	retry    *time.Timer // fires reconnectDelay after the link drops; stopped while connected
+	retrying bool        // disconnected and auto-retrying (throttles repeat failure logs)
 
 	reqs chan func()
 	quit chan struct{}
@@ -212,11 +216,15 @@ func (e *Engine) do(f func()) {
 }
 
 func (e *Engine) run() {
+	e.ticker = time.NewTicker(pollInterval)
+	defer e.ticker.Stop()
+	e.retry = time.NewTimer(reconnectDelay)
+	e.retry.Stop() // armed only while disconnected
+	defer e.retry.Stop()
+
 	e.reconnect(ConnSpec{Transport: e.transport, SerialPort: e.serialPort, Baud: e.baud, TCPAddr: e.tcpAddr})
 	e.setServer(control.GS232, e.gs232Want.Enabled, e.gs232Want.Port)
 	e.setServer(control.Rotctld, e.rotctldWant.Enabled, e.rotctldWant.Port)
-	e.ticker = time.NewTicker(pollInterval)
-	defer e.ticker.Stop()
 	e.publish()
 	for {
 		select {
@@ -234,6 +242,9 @@ func (e *Engine) run() {
 			e.publish()
 		case <-e.ticker.C:
 			e.poll()
+			e.publish()
+		case <-e.retry.C: // disconnected → attempt to re-open the link
+			e.tryReconnect()
 			e.publish()
 		case ev, ok := <-e.frames: // nil channel when disconnected → never selected
 			e.handleFrame(ev, ok)
@@ -420,9 +431,7 @@ func (e *Engine) poll() {
 
 func (e *Engine) handleFrame(ev serialio.Event, ok bool) {
 	if !ok {
-		e.status = "port closed"
-		e.logf(config.LogWarn, "port closed")
-		e.frames = nil
+		e.linkFailed("link closed")
 		return
 	}
 	switch {
@@ -451,31 +460,94 @@ func (e *Engine) handleFrame(ev serialio.Event, ok bool) {
 	}
 }
 
+// reconnect closes the current link and opens a new one per spec. It is the
+// explicit (user-initiated) path, so it resets the auto-retry throttle and logs
+// normally.
 func (e *Engine) reconnect(spec ConnSpec) {
+	e.closePort()
+	e.transport, e.serialPort, e.baud, e.tcpAddr = spec.Transport, spec.SerialPort, spec.Baud, spec.TCPAddr
+	e.retrying = false
+	e.connect()
+}
+
+// tryReconnect is the timer-driven path: re-open the current target if (still)
+// disconnected. A no-op once a link is up.
+func (e *Engine) tryReconnect() {
 	if e.port != nil {
-		e.stop()
+		return
+	}
+	e.connect()
+}
+
+// closePort halts motion and tears down the current link (best-effort). Used
+// before an explicit reconnect; safe when already disconnected.
+func (e *Engine) closePort() {
+	if e.port == nil {
+		return
+	}
+	e.stop()           // best-effort halt before swapping links
+	if e.port != nil { // stop()'s write may have already dropped a dead link
 		_ = e.port.Close()
 		e.port, e.frames = nil, nil
 	}
-	e.transport, e.serialPort, e.baud, e.tcpAddr = spec.Transport, spec.SerialPort, spec.Baud, spec.TCPAddr
+}
+
+// linkFailed drops a link that has died mid-session (peer close or write error)
+// and schedules an automatic reconnect. Idempotent: a no-op if already down.
+func (e *Engine) linkFailed(reason string) {
+	if e.port == nil {
+		return
+	}
+	_ = e.port.Close()
+	e.port, e.frames = nil, nil
+	e.havePan, e.haveTilt = false, false
+	e.retrying = true
+	e.status = "disconnected — reconnecting"
+	e.logf(config.LogWarn, "%s; reconnecting every %v", reason, reconnectDelay)
+	e.armRetry()
+}
+
+// connect opens the currently configured target. On failure it schedules a
+// retry; repeated failures while retrying are logged only once (on the first)
+// to avoid flooding the trace when a device is absent.
+func (e *Engine) connect() {
 	var (
 		p   *serialio.Port
 		err error
 	)
-	if spec.Transport == config.TransportTCP {
-		p, err = serialio.Dial(spec.TCPAddr)
+	if e.transport == config.TransportTCP {
+		p, err = serialio.Dial(e.tcpAddr)
 	} else {
-		p, err = serialio.Open(spec.SerialPort, spec.Baud)
+		p, err = serialio.Open(e.serialPort, e.baud)
 	}
 	if err != nil {
 		e.status = "connect failed: " + err.Error()
-		e.logf(config.LogError, "connect failed (%s %s): %v", spec.Transport, e.endpoint(), err)
+		if !e.retrying {
+			e.logf(config.LogError, "connect failed (%s %s): %v; retrying every %v",
+				e.transport, e.endpoint(), err, reconnectDelay)
+			e.retrying = true
+		}
+		e.armRetry()
 		return
 	}
 	e.port, e.frames = p, p.Frames()
 	e.havePan, e.haveTilt = false, false // fresh readback for the new link
+	e.retry.Stop()                       // connected: cancel any pending retry
+	if e.retrying {
+		e.logf(config.LogInfo, "reconnected (%s %s)", e.transport, e.endpoint())
+		e.retrying = false
+	} else {
+		e.logf(config.LogInfo, "connected (%s %s)", e.transport, e.endpoint())
+	}
 	e.status = "connected"
-	e.logf(config.LogInfo, "connected (%s %s)", spec.Transport, e.endpoint())
+}
+
+// armRetry (re)schedules the reconnect timer. Called only from the actor
+// goroutine, so the timer is never touched concurrently.
+func (e *Engine) armRetry() {
+	if e.retry != nil {
+		e.retry.Reset(reconnectDelay)
+	}
 }
 
 // endpoint returns the active transport's human-readable target.
@@ -554,11 +626,10 @@ func (e *Engine) setMovePoll(fast bool) {
 
 func (e *Engine) send(f pelco.Frame) {
 	if e.port == nil {
-		e.logf(config.LogWarn, "TX  ! not connected")
-		return
+		return // disconnected: the retry loop is responsible for restoring the link
 	}
 	if err := e.port.Send(f); err != nil {
-		e.logf(config.LogError, "TX  ! %v", err)
+		e.linkFailed("write failed: " + err.Error())
 		return
 	}
 	e.logf(config.LogDebug, "TX  % X", f.Bytes())
@@ -592,37 +663,38 @@ func (e *Engine) publish() {
 
 	e.mu.Lock()
 	e.state = State{
-		Status:      e.status,
-		Connected:   e.port != nil,
-		Transport:   e.transport,
-		Endpoint:    endpoint,
-		SerialPort:  e.serialPort,
-		TCPAddr:     e.tcpAddr,
-		Baud:        e.baud,
-		Addr:        e.addr,
-		HavePan:     e.havePan,
-		HaveTilt:    e.haveTilt,
-		CurPan:      e.curPan,
-		CurTilt:     e.curTilt,
-		CurPanRaw:   e.curPanRaw,
-		CurTiltRaw:  e.curTiltRaw,
-		LastPan:     e.lastPan,
-		LastTilt:    e.lastTilt,
-		BytesIn:     e.bytesIn,
-		Jogging:     e.jogging,
-		JogPan:      e.jogPan,
-		JogTilt:     e.jogTilt,
-		Gotoing:     e.gotoing,
-		Unwrapping:  e.unwrapping,
-		WrapEnabled: e.wrapEnabled,
-		WrapLimit:   e.wrapLimit,
-		Wrap:        e.wrap,
-		Bind:        e.bind,
-		GS232On:     e.gs232On,
-		GS232Port:   e.gs232Port,
-		RotctldOn:   e.rotctldOn,
-		RotctldPort: e.rotctldPort,
-		Log:         logCopy,
+		Status:       e.status,
+		Connected:    e.port != nil,
+		Reconnecting: e.retrying,
+		Transport:    e.transport,
+		Endpoint:     endpoint,
+		SerialPort:   e.serialPort,
+		TCPAddr:      e.tcpAddr,
+		Baud:         e.baud,
+		Addr:         e.addr,
+		HavePan:      e.havePan,
+		HaveTilt:     e.haveTilt,
+		CurPan:       e.curPan,
+		CurTilt:      e.curTilt,
+		CurPanRaw:    e.curPanRaw,
+		CurTiltRaw:   e.curTiltRaw,
+		LastPan:      e.lastPan,
+		LastTilt:     e.lastTilt,
+		BytesIn:      e.bytesIn,
+		Jogging:      e.jogging,
+		JogPan:       e.jogPan,
+		JogTilt:      e.jogTilt,
+		Gotoing:      e.gotoing,
+		Unwrapping:   e.unwrapping,
+		WrapEnabled:  e.wrapEnabled,
+		WrapLimit:    e.wrapLimit,
+		Wrap:         e.wrap,
+		Bind:         e.bind,
+		GS232On:      e.gs232On,
+		GS232Port:    e.gs232Port,
+		RotctldOn:    e.rotctldOn,
+		RotctldPort:  e.rotctldPort,
+		Log:          logCopy,
 	}
 	e.mu.Unlock()
 }

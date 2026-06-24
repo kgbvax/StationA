@@ -71,6 +71,15 @@ control path). At least one control server must be enabled in the config.
 Switch live in the TUI with `m` (transport) and `r` (reconnect), or set it at
 launch with `-transport` / `-tcp`.
 
+The link is **self-healing**: if the device is unplugged, the bridge drops, or a
+write stalls, the engine tears the connection down and automatically retries
+every 200 ms until it reconnects — in both the TUI (status shows
+`reconnecting…`) and the headless daemon. No manual `r` is needed; it also
+applies before the first successful connect, so starting with the device absent
+just waits for it to appear. Repeated failures are logged once (not every
+retry) to keep the trace clean. The `warn`-level interplay with `loglevel` is
+unchanged.
+
 ## Inbound control protocols
 
 Both servers are **disabled by default** and **bind to `127.0.0.1`** (set

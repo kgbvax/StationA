@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"sync"
+	"time"
 
 	"go.bug.st/serial"
 
@@ -17,6 +18,13 @@ import (
 
 // errClosed is returned by Send after the port has been closed.
 var errClosed = errors.New("serialio: port closed")
+
+// writeTimeout bounds a single frame write. The actor goroutine is the only
+// writer and writes synchronously, so without a deadline a wedged TCP bridge
+// (full send buffer) would block polling, command execution, and the whole
+// engine indefinitely. Only applied to transports that support deadlines
+// (net.Conn); direct serial writes are left as-is.
+const writeTimeout = 2 * time.Second
 
 // Event is something observed on the serial link, delivered on the Frames
 // channel. Exactly one of Raw, a decoded Frame, or Err is meaningful:
@@ -76,12 +84,17 @@ func Dial(address string) (*Port, error) {
 // Frames returns the channel of inbound decoded frames / read errors.
 func (p *Port) Frames() <-chan Event { return p.frames }
 
-// Send writes a single Pelco-D frame to the port.
+// Send writes a single Pelco-D frame to the port. For deadline-capable
+// transports (TCP bridges) the write is bounded by writeTimeout so a stalled
+// link surfaces as an error instead of blocking the engine.
 func (p *Port) Send(f pelco.Frame) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.closed {
 		return errClosed
+	}
+	if c, ok := p.rwc.(net.Conn); ok {
+		_ = c.SetWriteDeadline(time.Now().Add(writeTimeout))
 	}
 	_, err := p.rwc.Write(f.Bytes())
 	return err
