@@ -15,14 +15,21 @@
 #   INSTALL_DIR     remote install dir    (default: /opt/ubctrl)
 #   BINARY          binary name           (default: ubctrl)
 #
-#   HTTP_ADDR       -http  value          (default: 0.0.0.0:8080)
-#   SERIAL_PORT     -port  value          (default: empty -> mock)
-#   BAUD            -baud  value          (default: 19200)
-#   MQTT_BROKER     -mqtt-broker value    (default: empty -> disabled)
-#   MQTT_CLIENT_ID  -mqtt-client-id       (default: ubctrl)
-#   MQTT_PREFIX     -mqtt-prefix          (default: ubctrl)
-#   MQTT_USER       -mqtt-user            (default: empty)
-#   MQTT_PASSWORD   -mqtt-password        (default: empty)
+#   HTTP_ADDR       http_addr  value        (default: 0.0.0.0:8080)
+#   SERIAL_PORT     serial_port value        (default: empty -> mock)
+#   BAUD            baud  value              (default: 19200)
+#   MQTT_BROKER     mqtt.broker value        (default: empty -> disabled)
+#   MQTT_CLIENT_ID  mqtt.client_id           (default: ubctrl)
+#   MQTT_PREFIX     mqtt.prefix              (default: ubctrl)
+#   MQTT_USER       mqtt.user                (default: empty)
+#   MQTT_PASSWORD   mqtt.password            (default: empty)
+#
+# Configuration (including the MQTT password) lives in a single 0600 TOML file
+# on the target, NOT in the systemd unit or process command line. The file is
+# SEEDED ONCE on first deploy from the variables above; subsequent deploys leave
+# the on-device file untouched so the Pi owns its own settings. To change a
+# setting after the first deploy, edit the file on the device (or delete it and
+# redeploy to re-seed).
 #
 set -euo pipefail
 
@@ -33,6 +40,8 @@ SERVICE_NAME="${SERVICE_NAME:-ubctrl}"
 SERVICE_USER="${SERVICE_USER:-ubctrl}"
 SERIAL_GROUP="${SERIAL_GROUP:-dialout}"
 INSTALL_DIR="${INSTALL_DIR:-/opt/ubctrl}"
+CONFIG_DIR="${CONFIG_DIR:-/etc/ubctrl}"
+CONFIG_FILE="${CONFIG_FILE:-${CONFIG_DIR}/config.toml}"
 BINARY="${BINARY:-ubctrl}"
 PKG="./cmd/ubctrl"
 
@@ -55,14 +64,33 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-# --- build the command-line flags for the service --------------------------
-ARGS="-http ${HTTP_ADDR} -baud ${BAUD}"
-[[ -n "$SERIAL_PORT"    ]] && ARGS="$ARGS -port ${SERIAL_PORT}"
-[[ -n "$MQTT_BROKER"    ]] && ARGS="$ARGS -mqtt-broker ${MQTT_BROKER}"
-[[ -n "$MQTT_CLIENT_ID" ]] && ARGS="$ARGS -mqtt-client-id ${MQTT_CLIENT_ID}"
-[[ -n "$MQTT_PREFIX"    ]] && ARGS="$ARGS -mqtt-prefix ${MQTT_PREFIX}"
-[[ -n "$MQTT_USER"      ]] && ARGS="$ARGS -mqtt-user ${MQTT_USER}"
-[[ -n "$MQTT_PASSWORD"  ]] && ARGS="$ARGS -mqtt-password ${MQTT_PASSWORD}"
+# --- TOML escaping helper ---------------------------------------------------
+# Escape backslashes and double quotes for a TOML basic string.
+toml_escape() {
+  local s="$1"
+  s="${s//\\/\\\\}"
+  s="${s//\"/\\\"}"
+  printf '%s' "$s"
+}
+
+# --- generate the seed config file (used only if none exists on target) -----
+# Written with umask 077 so the local temp copy is never world-readable.
+SEED_CONFIG="$(umask 077; mktemp)"
+trap 'rm -f "$SEED_CONFIG" "${UNIT_FILE:-}"' EXIT
+{
+  echo "# ubctrl configuration. Contains the MQTT password -- keep this file 0600."
+  echo "# Seeded by deploy.sh on first deploy; edit here to change settings."
+  echo "http_addr   = \"$(toml_escape "$HTTP_ADDR")\""
+  echo "serial_port = \"$(toml_escape "$SERIAL_PORT")\""
+  echo "baud        = ${BAUD}"
+  echo ""
+  echo "[mqtt]"
+  echo "broker    = \"$(toml_escape "$MQTT_BROKER")\""
+  echo "client_id = \"$(toml_escape "$MQTT_CLIENT_ID")\""
+  echo "prefix    = \"$(toml_escape "$MQTT_PREFIX")\""
+  echo "user      = \"$(toml_escape "$MQTT_USER")\""
+  echo "password  = \"$(toml_escape "$MQTT_PASSWORD")\""
+} > "$SEED_CONFIG"
 
 # --- build for the Pi (Linux arm64) ----------------------------------------
 echo ">> Building ${BINARY} for linux/arm64..."
@@ -73,7 +101,6 @@ echo "   built $OUT"
 
 # --- generate the systemd unit ---------------------------------------------
 UNIT_FILE="$(mktemp)"
-trap 'rm -f "$UNIT_FILE"' EXIT
 cat > "$UNIT_FILE" <<EOF
 [Unit]
 Description=UltraBeam antenna controller (ubctrl)
@@ -82,7 +109,9 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=${INSTALL_DIR}/${BINARY} ${ARGS}
+# All settings (including the MQTT password) come from the config file, so no
+# secrets appear on the command line / in the unit.
+ExecStart=${INSTALL_DIR}/${BINARY} -config ${CONFIG_FILE}
 Restart=on-failure
 RestartSec=5
 # Run as a dedicated unprivileged user...
@@ -90,6 +119,8 @@ User=${SERVICE_USER}
 Group=${SERVICE_USER}
 # ...that is a member of the serial group so it can open /dev/tty* devices.
 SupplementaryGroups=${SERIAL_GROUP}
+# systemd manages /etc/ubctrl (created 0755, owned by the service user).
+ConfigurationDirectory=${SERVICE_NAME}
 # Hardening.
 NoNewPrivileges=true
 ProtectSystem=full
@@ -108,11 +139,17 @@ EOF
 echo ">> Copying files to ${SSH_TARGET}..."
 scp "$OUT" "${SSH_TARGET}:/tmp/${BINARY}.new"
 scp "$UNIT_FILE" "${SSH_TARGET}:/tmp/${SERVICE_NAME}.service"
+# Transfer the seed config to a restrictive temp path; the remote installs it
+# only if no config exists yet, then removes the temp copy.
+scp "$SEED_CONFIG" "${SSH_TARGET}:/tmp/${SERVICE_NAME}.config.seed"
 
 # --- install remotely -------------------------------------------------------
 echo ">> Installing on ${SSH_TARGET}..."
-ssh "$SSH_TARGET" "INSTALL_DIR='${INSTALL_DIR}' BINARY='${BINARY}' SERVICE_NAME='${SERVICE_NAME}' SERVICE_USER='${SERVICE_USER}' SERIAL_GROUP='${SERIAL_GROUP}' bash -s" <<'REMOTE'
+ssh "$SSH_TARGET" "INSTALL_DIR='${INSTALL_DIR}' BINARY='${BINARY}' SERVICE_NAME='${SERVICE_NAME}' SERVICE_USER='${SERVICE_USER}' SERIAL_GROUP='${SERIAL_GROUP}' CONFIG_DIR='${CONFIG_DIR}' CONFIG_FILE='${CONFIG_FILE}' bash -s" <<'REMOTE'
 set -euo pipefail
+SEED="/tmp/${SERVICE_NAME}.config.seed"
+# Always remove the transferred seed (with its secret) when we're done.
+trap 'rm -f "$SEED"' EXIT
 # Create a dedicated system user/group (no login, no home) if missing.
 if ! id -u "$SERVICE_USER" >/dev/null 2>&1; then
   sudo useradd --system --no-create-home --shell /usr/sbin/nologin "$SERVICE_USER"
@@ -121,6 +158,16 @@ fi
 getent group "$SERIAL_GROUP" >/dev/null 2>&1 || sudo groupadd --system "$SERIAL_GROUP"
 sudo usermod -aG "$SERIAL_GROUP" "$SERVICE_USER"
 sudo mkdir -p "$INSTALL_DIR"
+# Ensure the config directory exists (systemd also creates it via
+# ConfigurationDirectory, but seed-once runs before the unit starts).
+sudo install -d -o "$SERVICE_USER" -g "$SERVICE_USER" -m 0755 "$CONFIG_DIR"
+# Seed the config ONCE: install only if the device has no config yet.
+if [ -e "$CONFIG_FILE" ]; then
+  echo "   config exists at $CONFIG_FILE -- leaving it untouched (seed-once)."
+else
+  sudo install -o "$SERVICE_USER" -g "$SERVICE_USER" -m 0600 "$SEED" "$CONFIG_FILE"
+  echo "   seeded config at $CONFIG_FILE (0600, owner $SERVICE_USER)."
+fi
 sudo systemctl stop "${SERVICE_NAME}.service" 2>/dev/null || true
 sudo mv "/tmp/${BINARY}.new" "${INSTALL_DIR}/${BINARY}"
 sudo chmod 755 "${INSTALL_DIR}/${BINARY}"
