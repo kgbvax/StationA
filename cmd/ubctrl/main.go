@@ -2,39 +2,58 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"os"
 	"os/signal"
 	"time"
 
+	"ubctrl/internal/config"
 	mqttbridge "ubctrl/internal/mqtt"
 	"ubctrl/internal/ub/service"
 	"ubctrl/internal/ub/transport"
 	"ubctrl/internal/web"
 )
 
+const defaultConfigPath = "/etc/ubctrl/config.toml"
+
 func main() {
-	httpAddr := flag.String("http", "127.0.0.1:8080", "HTTP listen address")
-	port := flag.String("port", "", "Serial port path (leave empty to use mock)")
-	baud := flag.Int("baud", 19200, "Serial baud rate")
-	mqttBroker := flag.String("mqtt-broker", "", "MQTT broker URL (optional)")
-	mqttClientID := flag.String("mqtt-client-id", "ubctrl", "MQTT client ID")
-	mqttPrefix := flag.String("mqtt-prefix", "ubctrl", "MQTT topic prefix")
-	mqttUser := flag.String("mqtt-user", "", "MQTT username (optional)")
-	mqttPassword := flag.String("mqtt-password", "", "MQTT password (optional)")
+	// Defaults come from the config package so the file, flags, and built-in
+	// defaults all agree on a single source of truth.
+	def := config.Default()
+
+	configPath := flag.String("config", defaultConfigPath, "Path to the TOML config file")
+	httpAddr := flag.String("http", def.HTTPAddr, "HTTP listen address")
+	port := flag.String("port", def.SerialPort, "Serial port path (leave empty to use mock)")
+	baud := flag.Int("baud", def.Baud, "Serial baud rate")
+	mqttBroker := flag.String("mqtt-broker", def.MQTT.Broker, "MQTT broker URL (optional)")
+	mqttClientID := flag.String("mqtt-client-id", def.MQTT.ClientID, "MQTT client ID")
+	mqttPrefix := flag.String("mqtt-prefix", def.MQTT.Prefix, "MQTT topic prefix")
+	mqttUser := flag.String("mqtt-user", def.MQTT.User, "MQTT username (optional)")
+	mqttPassword := flag.String("mqtt-password", def.MQTT.Password, "MQTT password (optional)")
 	flag.Parse()
+
+	// Resolve effective config: defaults < config file < explicitly-set flags.
+	cfg := loadConfig(*configPath, isFlagSet("config"))
+	applyFlagOverrides(&cfg, map[string]string{
+		"http": *httpAddr, "port": *port,
+		"mqtt-broker": *mqttBroker, "mqtt-client-id": *mqttClientID,
+		"mqtt-prefix": *mqttPrefix, "mqtt-user": *mqttUser,
+		"mqtt-password": *mqttPassword,
+	}, *baud)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
 	var dev transport.Client
 	var err error
-	if *port == "" {
+	if cfg.SerialPort == "" {
 		dev = transport.NewMock()
 	} else {
-		dev, err = transport.OpenSerial(*port, *baud)
+		dev, err = transport.OpenSerial(cfg.SerialPort, cfg.Baud)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
@@ -44,8 +63,8 @@ func main() {
 	ui := web.New(ctrl)
 
 	var mqttClient *mqttbridge.Client
-	if *mqttBroker != "" {
-		mqttClient, err = mqttbridge.New(*mqttBroker, *mqttClientID, *mqttPrefix, *mqttUser, *mqttPassword, ctrl)
+	if cfg.MQTT.Broker != "" {
+		mqttClient, err = mqttbridge.New(cfg.MQTT.Broker, cfg.MQTT.ClientID, cfg.MQTT.Prefix, cfg.MQTT.User, cfg.MQTT.Password, ctrl)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "mqtt disabled: %v\n", err)
 		} else {
@@ -83,7 +102,7 @@ func main() {
 	}
 
 	srv := &http.Server{
-		Addr:    *httpAddr,
+		Addr:    cfg.HTTPAddr,
 		Handler: ui.Routes(),
 	}
 
@@ -97,9 +116,69 @@ func main() {
 		}
 	}()
 
-	fmt.Printf("ubctrl listening on http://%s\n", *httpAddr)
+	fmt.Printf("ubctrl listening on http://%s\n", cfg.HTTPAddr)
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+}
+
+// loadConfig returns the file-backed config, or defaults when the default
+// config path is simply absent. A missing file is fatal only when -config was
+// set explicitly (the operator asked for a file that must exist); a malformed
+// file is always fatal.
+func loadConfig(path string, explicit bool) config.Config {
+	cfg, err := config.Load(path)
+	if err == nil {
+		return cfg
+	}
+	if errors.Is(err, fs.ErrNotExist) && !explicit {
+		// Default path with no file present: run on defaults + flags.
+		return config.Default()
+	}
+	fmt.Fprintf(os.Stderr, "config: %v\n", err)
+	os.Exit(1)
+	return config.Default() // unreachable
+}
+
+// applyFlagOverrides overlays onto cfg only the flags the user explicitly set,
+// so that flag > file > default precedence holds deterministically (a flag set
+// to its default value still wins over a file value).
+func applyFlagOverrides(cfg *config.Config, strs map[string]string, baud int) {
+	if isFlagSet("http") {
+		cfg.HTTPAddr = strs["http"]
+	}
+	if isFlagSet("port") {
+		cfg.SerialPort = strs["port"]
+	}
+	if isFlagSet("baud") {
+		cfg.Baud = baud
+	}
+	if isFlagSet("mqtt-broker") {
+		cfg.MQTT.Broker = strs["mqtt-broker"]
+	}
+	if isFlagSet("mqtt-client-id") {
+		cfg.MQTT.ClientID = strs["mqtt-client-id"]
+	}
+	if isFlagSet("mqtt-prefix") {
+		cfg.MQTT.Prefix = strs["mqtt-prefix"]
+	}
+	if isFlagSet("mqtt-user") {
+		cfg.MQTT.User = strs["mqtt-user"]
+	}
+	if isFlagSet("mqtt-password") {
+		cfg.MQTT.Password = strs["mqtt-password"]
+	}
+}
+
+// isFlagSet reports whether the named flag was explicitly provided on the
+// command line (as opposed to carrying its default value).
+func isFlagSet(name string) bool {
+	set := false
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == name {
+			set = true
+		}
+	})
+	return set
 }
