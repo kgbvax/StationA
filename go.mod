@@ -4,6 +4,7 @@ go 1.26.2
 
 require (
 	github.com/eclipse/paho.mqtt.golang v1.5.1
+	github.com/pelletier/go-toml/v2 v2.4.2
 	go.bug.st/serial v1.6.4
 )
 
