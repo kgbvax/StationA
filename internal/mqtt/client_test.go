@@ -1,5 +1,4 @@
 package mqtt
-package mqtt
 
 import (
 	"testing"
