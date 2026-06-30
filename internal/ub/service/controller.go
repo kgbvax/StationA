@@ -154,6 +154,8 @@ func bandName(freqKHz uint16, bandIndex byte) string {
 		return "12m"
 	case freqKHz >= 28000 && freqKHz < 29700:
 		return "10m"
+	case freqKHz >= 50000 && freqKHz < 54000:
+		return "6m"
 	default:
 		return fmt.Sprintf("band-%d", bandIndex)
 	}

@@ -296,6 +296,8 @@ const indexHTML = `<!doctype html>
 		button.secondary{background:#334155;border-color:#475569}
 		button.mode{background:#172033;border-color:#2d3d5b}
 		button.mode.active{background:linear-gradient(180deg,#2d6bff,#2456cc);border-color:#2456cc}
+		button.band,button.nudge{background:#172033;border-color:#2d3d5b}
+		button.nudge{min-width:3.6rem}
 		.row{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:1rem}
 		.row-inline{display:flex;flex-wrap:wrap;gap:.75rem;align-items:center}
 		.kv{padding:.25rem 0}
@@ -328,9 +330,14 @@ const indexHTML = `<!doctype html>
 	</div>
 
 	<div class="card actions">
-		<div class="row">
-			<div><label>Frequency (kHz)</label><input id="frequency-input" type="number" min="1" max="65535" value="{{.FrequencyKHz}}"></div>
-			<div style="align-self:end"><button id="freq-btn" type="button" onclick="setFrequency()">Set frequency</button></div>
+		<div>
+			<label>Band (IARU R1 centre)</label>
+			<div class="row-inline"><button class="band" type="button" onclick="setBand(14175)">20m</button><button class="band" type="button" onclick="setBand(18118)">17m</button><button class="band" type="button" onclick="setBand(21225)">15m</button><button class="band" type="button" onclick="setBand(24940)">12m</button><button class="band" type="button" onclick="setBand(28850)">10m</button><button class="band" type="button" onclick="setBand(51000)">6m</button></div>
+		</div>
+
+		<div>
+			<label>Frequency (kHz)</label>
+			<div class="row-inline"><button class="nudge" type="button" onclick="nudgeFrequency(-25)">&minus;25</button><input id="frequency-input" type="number" min="1" max="65535" step="25" value="{{.FrequencyKHz}}" style="width:auto;max-width:11rem"><button class="nudge" type="button" onclick="nudgeFrequency(25)">+25</button><button id="freq-btn" type="button" onclick="setFrequency()">Set</button></div>
 		</div>
 
 		<div>
@@ -372,13 +379,21 @@ const indexHTML = `<!doctype html>
 			if (offlineCard) offlineCard.classList.toggle('hidden', !data.offline);
 
 			const freqInput = document.getElementById('frequency-input');
-			if (freqInput) freqInput.disabled = data.motors_moving;
+			if (freqInput) {
+				freqInput.disabled = data.motors_moving;
+				if (document.activeElement !== freqInput && typeof data.frequency_khz === 'number') {
+					freqInput.value = data.frequency_khz;
+				}
+			}
 			const freqBtn = document.getElementById('freq-btn');
 			if (freqBtn) freqBtn.disabled = data.motors_moving;
 			const modeButtons = document.querySelectorAll('button.mode');
 			modeButtons.forEach(btn => {
 				btn.disabled = data.motors_moving;
 				btn.classList.toggle('active', btn.getAttribute('data-mode') === data.mode_name);
+			});
+			document.querySelectorAll('button.band, button.nudge').forEach(btn => {
+				btn.disabled = data.motors_moving;
 			});
 
 			const live = document.getElementById('live-state');
@@ -440,6 +455,23 @@ const indexHTML = `<!doctype html>
 
 		const setFrequency = async () => {
 			await postFrequency(currentFrequency(), document.querySelector('#live-state')?.textContent === 'offline' ? 'forward' : getCurrentMode());
+		};
+
+		const modeForFrequency = () =>
+			document.querySelector('#live-state')?.textContent === 'offline' ? 'forward' : getCurrentMode();
+
+		const applyFrequency = async (khz) => {
+			khz = Math.max(1, Math.min(65535, Math.round(khz)));
+			const input = document.getElementById('frequency-input');
+			if (input) input.value = khz;
+			await postFrequency(khz, modeForFrequency());
+		};
+
+		const setBand = async (khz) => { await applyFrequency(khz); };
+
+		const nudgeFrequency = async (delta) => {
+			const cur = parseInt(currentFrequency(), 10);
+			await applyFrequency((Number.isFinite(cur) ? cur : 0) + delta);
 		};
 
 		const getCurrentMode = () => {
@@ -508,6 +540,8 @@ const indexHTML = `<!doctype html>
 		window.setMode = setMode;
 		window.retract = retract;
 		window.toggleDebug = toggleDebug;
+		window.setBand = setBand;
+		window.nudgeFrequency = nudgeFrequency;
 	</script>
 </body>
 </html>`
