@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"strconv"
+	"strings"
 	"sync"
 
 	paho "github.com/eclipse/paho.mqtt.golang"
@@ -13,6 +14,19 @@ import (
 	"ubctrl/internal/ub/protocol"
 	"ubctrl/internal/ub/service"
 )
+
+// bandCenterKHz maps a band label to its IARU Region 1 mid-band frequency.
+var bandCenterKHz = map[string]uint16{
+	"20m": 14175,
+	"17m": 18118,
+	"15m": 21225,
+	"12m": 24940,
+	"10m": 28850,
+	"6m":  51000,
+}
+
+// bandOptions is the ordered list of bands exposed as a Home Assistant select.
+var bandOptions = []string{"20m", "17m", "15m", "12m", "10m", "6m"}
 
 type Client struct {
 	client   paho.Client
@@ -184,6 +198,19 @@ func (c *Client) PublishDiscovery() {
 		"value_template":        "{{ value_json.mode }}",
 		"device":                device,
 	}, 1, true)
+	c.publishJSON(c.discoveryTopic("select", "band"), map[string]any{
+		"name":                  "UBCtrl Band",
+		"unique_id":             "ubctrl_band_set",
+		"command_topic":         c.topic("command/band"),
+		"state_topic":           c.topic("status/frequency"),
+		"availability_topic":    c.topic("status/availability"),
+		"payload_available":     "online",
+		"payload_not_available": "offline",
+		"options":               bandOptions,
+		"value_template":        "{{ value_json.band }}",
+		"icon":                  "mdi:radio-tower",
+		"device":                device,
+	}, 1, true)
 	c.publishJSON(c.discoveryTopic("button", "retract"), map[string]any{
 		"name":                  "UBCtrl Retract",
 		"unique_id":             "ubctrl_retract",
@@ -208,6 +235,24 @@ func (c *Client) BindCommands(ctx context.Context) {
 	_ = c.subscribe(c.topic("command/retract"), func(_ paho.Client, _ paho.Message) {
 		log.Printf("[mqtt] rx topic=%s", c.topic("command/retract"))
 		_ = c.ctrl.Retract(context.Background())
+	})
+	_ = c.subscribe(c.topic("command/band"), func(_ paho.Client, msg paho.Message) {
+		log.Printf("[mqtt] rx topic=%s payload=%q", msg.Topic(), string(msg.Payload()))
+		khz, ok := bandCenterKHz[strings.TrimSpace(string(msg.Payload()))]
+		if !ok {
+			return
+		}
+		_ = c.ctrl.SetFrequency(context.Background(), khz, c.ctrl.State().ModeName)
+	})
+	// Re-announce discovery whenever Home Assistant comes online, so the device
+	// appears even if HA (re)starts after ubctrl. This is the standard MQTT
+	// discovery birth-message pattern.
+	_ = c.subscribe("homeassistant/status", func(_ paho.Client, msg paho.Message) {
+		if strings.EqualFold(strings.TrimSpace(string(msg.Payload())), "online") {
+			log.Printf("[mqtt] Home Assistant online -> re-publishing discovery")
+			c.PublishDiscovery()
+			c.PublishState(c.ctrl.State())
+		}
 	})
 	_ = ctx
 }

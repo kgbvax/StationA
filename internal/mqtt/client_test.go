@@ -7,6 +7,24 @@ import (
 	"ubctrl/internal/ub/service"
 )
 
+func TestBandOptionsHaveCenters(t *testing.T) {
+	for _, b := range bandOptions {
+		khz, ok := bandCenterKHz[b]
+		if !ok {
+			t.Errorf("band option %q has no center frequency", b)
+		}
+		if khz == 0 {
+			t.Errorf("band %q center is zero", b)
+		}
+	}
+	if got := bandCenterKHz["6m"]; got != 51000 {
+		t.Errorf("6m center = %d, want 51000", got)
+	}
+	if got := bandCenterKHz["20m"]; got != 14175 {
+		t.Errorf("20m center = %d, want 14175", got)
+	}
+}
+
 func TestStateSnapshotIgnoresUpdatedAt(t *testing.T) {
 	s1 := service.State{
 		FrequencyKHz: 14000,
