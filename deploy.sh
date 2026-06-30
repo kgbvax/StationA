@@ -7,11 +7,12 @@
 #   SSH_HOST=pi@shari.local ./deploy.sh
 #
 # Configurable via environment variables (with defaults):
-#   SSH_HOST        SSH target            (default: shari)
-#   SSH_USER        SSH user              (default: pi)  [used only if SSH_HOST has no user@]
+#   SSH_HOST        SSH target            (default: 192.168.1.139)
+#   SSH_USER        SSH user              (default: io)  [used only if SSH_HOST has no user@]
 #   SERVICE_NAME    systemd service name  (default: ubctrl)
 #   SERVICE_USER    system user to run as (default: ubctrl)
 #   SERIAL_GROUP    group owning serial   (default: dialout)
+#   SERIAL_USB_VENDOR USB vendor id for the udev serial-group rule (default: 0403=FTDI; empty=skip)
 #   INSTALL_DIR     remote install dir    (default: /opt/ubctrl)
 #   BINARY          binary name           (default: ubctrl)
 #
@@ -34,11 +35,16 @@
 set -euo pipefail
 
 # --- configuration ----------------------------------------------------------
-SSH_HOST="${SSH_HOST:-shari}"
-SSH_USER="${SSH_USER:-pi}"
+SSH_HOST="${SSH_HOST:-192.168.1.139}"
+SSH_USER="${SSH_USER:-io}"
 SERVICE_NAME="${SERVICE_NAME:-ubctrl}"
 SERVICE_USER="${SERVICE_USER:-ubctrl}"
 SERIAL_GROUP="${SERIAL_GROUP:-dialout}"
+# USB vendor id of the serial adapter. A udev rule forces matching tty devices
+# into SERIAL_GROUP so the service user can always open them, regardless of the
+# distro's default (e.g. Raspberry Pi OS uses dialout, some images use plugdev).
+# Default 0403 = FTDI. Set empty to skip installing the udev rule.
+SERIAL_USB_VENDOR="${SERIAL_USB_VENDOR:-0403}"
 INSTALL_DIR="${INSTALL_DIR:-/opt/ubctrl}"
 CONFIG_DIR="${CONFIG_DIR:-/etc/ubctrl}"
 CONFIG_FILE="${CONFIG_FILE:-${CONFIG_DIR}/config.toml}"
@@ -145,7 +151,7 @@ scp "$SEED_CONFIG" "${SSH_TARGET}:/tmp/${SERVICE_NAME}.config.seed"
 
 # --- install remotely -------------------------------------------------------
 echo ">> Installing on ${SSH_TARGET}..."
-ssh "$SSH_TARGET" "INSTALL_DIR='${INSTALL_DIR}' BINARY='${BINARY}' SERVICE_NAME='${SERVICE_NAME}' SERVICE_USER='${SERVICE_USER}' SERIAL_GROUP='${SERIAL_GROUP}' CONFIG_DIR='${CONFIG_DIR}' CONFIG_FILE='${CONFIG_FILE}' bash -s" <<'REMOTE'
+ssh "$SSH_TARGET" "INSTALL_DIR='${INSTALL_DIR}' BINARY='${BINARY}' SERVICE_NAME='${SERVICE_NAME}' SERVICE_USER='${SERVICE_USER}' SERIAL_GROUP='${SERIAL_GROUP}' SERIAL_USB_VENDOR='${SERIAL_USB_VENDOR}' CONFIG_DIR='${CONFIG_DIR}' CONFIG_FILE='${CONFIG_FILE}' bash -s" <<'REMOTE'
 set -euo pipefail
 SEED="/tmp/${SERVICE_NAME}.config.seed"
 # Always remove the transferred seed (with its secret) when we're done.
@@ -157,6 +163,16 @@ fi
 # Make sure the serial group exists and the service user is a member of it.
 getent group "$SERIAL_GROUP" >/dev/null 2>&1 || sudo groupadd --system "$SERIAL_GROUP"
 sudo usermod -aG "$SERIAL_GROUP" "$SERVICE_USER"
+# Install a udev rule so the USB-serial adapter is owned by SERIAL_GROUP. Some
+# distros assign FTDI tty devices to plugdev (not dialout) by default, which
+# would deny the service user access; this pins the group to match.
+if [ -n "$SERIAL_USB_VENDOR" ]; then
+  printf 'SUBSYSTEM=="tty", SUBSYSTEMS=="usb", ATTRS{idVendor}=="%s", GROUP="%s", MODE="0660"\n' \
+    "$SERIAL_USB_VENDOR" "$SERIAL_GROUP" | sudo tee /etc/udev/rules.d/99-ubctrl-serial.rules >/dev/null
+  sudo udevadm control --reload-rules
+  sudo udevadm trigger --subsystem-match=tty
+  echo "   installed udev rule: FTDI/vendor $SERIAL_USB_VENDOR tty -> group $SERIAL_GROUP."
+fi
 sudo mkdir -p "$INSTALL_DIR"
 # Ensure the config directory exists (systemd also creates it via
 # ConfigurationDirectory, but seed-once runs before the unit starts).
