@@ -105,3 +105,39 @@ func ModeName(mode byte) string {
 		return "unknown"
 	}
 }
+
+// CommandName returns a human-readable label for a request command byte.
+func CommandName(com byte) string {
+	switch com {
+	case CmdStatusQuery:
+		return "status_query"
+	case CmdRetract:
+		return "retract"
+	case CmdChangeFrequency:
+		return "change_frequency"
+	case CmdMovingStatus:
+		return "moving_status"
+	case CmdModifyElementLen:
+		return "modify_element_len"
+	default:
+		return fmt.Sprintf("cmd_0x%02X", com)
+	}
+}
+
+// ReplyName returns a human-readable label for a reply command byte.
+func ReplyName(com byte) string {
+	switch com {
+	case ReplyOK:
+		return "ok"
+	case ReplyError:
+		return "error"
+	case ReplyBadParams:
+		return "bad_params"
+	case ReplyInvalidCommand:
+		return "invalid_command"
+	case ReplyDebug:
+		return "debug"
+	default:
+		return fmt.Sprintf("reply_0x%02X", com)
+	}
+}

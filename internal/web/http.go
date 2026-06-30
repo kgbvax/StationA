@@ -11,18 +11,26 @@ import (
 )
 
 type Server struct {
-	ctrl *service.Controller
-	tmpl *template.Template
-	mu   sync.RWMutex
-	seq  int
-	chs  map[chan []byte]struct{}
+	ctrl  *service.Controller
+	tmpl  *template.Template
+	debug *DebugHub
+	mu    sync.RWMutex
+	seq   int
+	chs   map[chan []byte]struct{}
 }
 
 func New(ctrl *service.Controller) *Server {
+	return NewWithHub(ctrl, NewDebugHub())
+}
+
+// NewWithHub builds a Server using the provided DebugHub so the caller can wire
+// the same hub into the transport tracer (see cmd/ubctrl).
+func NewWithHub(ctrl *service.Controller, debug *DebugHub) *Server {
 	return &Server{
-		ctrl: ctrl,
-		tmpl: template.Must(template.New("index").Parse(indexHTML)),
-		chs:  make(map[chan []byte]struct{}),
+		ctrl:  ctrl,
+		tmpl:  template.Must(template.New("index").Parse(indexHTML)),
+		debug: debug,
+		chs:   make(map[chan []byte]struct{}),
 	}
 }
 
@@ -35,6 +43,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/retract", s.handleRetract)
 	mux.HandleFunc("/api/frequency", s.handleFrequency)
 	mux.HandleFunc("/api/mode", s.handleMode)
+	mux.HandleFunc("/api/debug", s.handleDebug)
+	mux.HandleFunc("/api/debug/events", s.handleDebugEvents)
 	return mux
 }
 
@@ -195,6 +205,68 @@ func (s *Server) handleMode(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]string{"status": "ok"})
 }
 
+func (s *Server) handleDebug(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		writeJSON(w, map[string]bool{"enabled": s.debug.Enabled()})
+	case http.MethodPost:
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		switch r.FormValue("enabled") {
+		case "1", "true", "on":
+			s.debug.SetEnabled(true)
+		case "0", "false", "off", "":
+			s.debug.SetEnabled(false)
+		default:
+			http.Error(w, "invalid enabled value", http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, map[string]bool{"enabled": s.debug.Enabled()})
+	default:
+		methodNotAllowed(w)
+	}
+}
+
+func (s *Server) handleDebugEvents(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w)
+		return
+	}
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+
+	ch := s.debug.subscribe()
+	defer s.debug.unsubscribe(ch)
+
+	done := r.Context().Done()
+	for {
+		select {
+		case <-done:
+			return
+		case payload := <-ch:
+			if _, err := w.Write([]byte("event: trace\ndata: ")); err != nil {
+				return
+			}
+			if _, err := w.Write(payload); err != nil {
+				return
+			}
+			if _, err := w.Write([]byte("\n\n")); err != nil {
+				return
+			}
+			flusher.Flush()
+		}
+	}
+}
+
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	enc := json.NewEncoder(w)
@@ -270,6 +342,14 @@ const indexHTML = `<!doctype html>
 			<button class="secondary" type="button" onclick="retract()">Retract</button>
 			<a class="pill small" href="/api/status" style="text-decoration:none;align-self:center">JSON status</a>
 		</div>
+	</div>
+
+	<div class="card">
+		<div class="toolbar">
+			<strong>UltraBeam debug log</strong>
+			<label class="pill" style="cursor:pointer"><input type="checkbox" id="debug-toggle" onchange="toggleDebug()" style="width:auto;margin:0 .45rem 0 0"> stream tx/rx</label>
+		</div>
+		<pre id="debug-log" class="hidden" style="margin:.8rem 0 0;max-height:18rem;overflow:auto;background:#0b1220;border:1px solid #24324d;border-radius:12px;padding:.6rem .75rem;font-size:.82rem;line-height:1.4;white-space:pre-wrap;word-break:break-word"></pre>
 	</div>
 
 	<div class="foot muted small">
@@ -376,9 +456,58 @@ const indexHTML = `<!doctype html>
 			if (!res.ok) throw new Error(await res.text());
 		};
 
+		let debugSource = null;
+		const debugLogEl = () => document.getElementById('debug-log');
+		const appendTrace = (t) => {
+			const el = debugLogEl();
+			if (!el) return;
+			const arrow = t.dir === 'tx' ? '\u2192' : '\u2190';
+			const name = t.name || ('0x' + (t.com || 0).toString(16));
+			const data = t.data ? '  ' + t.data : '';
+			const err = t.err ? '  ERR: ' + t.err : '';
+			el.textContent += t.at + '  ' + arrow + ' ' + t.dir.toUpperCase() + ' ' + name + data + err + '\n';
+			const lines = el.textContent.split('\n');
+			if (lines.length > 300) el.textContent = lines.slice(lines.length - 300).join('\n');
+			el.scrollTop = el.scrollHeight;
+		};
+		const openDebugStream = () => {
+			if (debugSource) return;
+			debugSource = new EventSource('/api/debug/events');
+			debugSource.addEventListener('trace', (e) => {
+				try { appendTrace(JSON.parse(e.data)); } catch (_) {}
+			});
+		};
+		const closeDebugStream = () => {
+			if (debugSource) { debugSource.close(); debugSource = null; }
+		};
+		const toggleDebug = async () => {
+			const on = document.getElementById('debug-toggle').checked;
+			try {
+				await fetch('/api/debug', {
+					method: 'POST',
+					headers: {'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'},
+					body: 'enabled=' + (on ? '1' : '0'),
+				});
+			} catch (_) {}
+			const el = debugLogEl();
+			if (on) { if (el) el.classList.remove('hidden'); openDebugStream(); }
+			else { closeDebugStream(); }
+		};
+
+		fetch('/api/debug').then(r => r.json()).then(d => {
+			const cb = document.getElementById('debug-toggle');
+			if (cb && d && d.enabled) {
+				cb.checked = true;
+				const el = debugLogEl();
+				if (el) el.classList.remove('hidden');
+				openDebugStream();
+			}
+		}).catch(() => {});
+
 		window.setFrequency = setFrequency;
 		window.setMode = setMode;
 		window.retract = retract;
+		window.toggleDebug = toggleDebug;
 	</script>
 </body>
 </html>`

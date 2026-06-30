@@ -59,9 +59,13 @@ func main() {
 			os.Exit(1)
 		}
 	}
-	ctrl := service.NewController(dev)
-	ui := web.New(ctrl)
+	// Wrap the device so tx/rx exchanges can be streamed to the UI when the
+	// debug toggle is on. The hub is shared with the web server.
+	debugHub := web.NewDebugHub()
+	dev = transport.NewTracing(dev, debugHub.Enabled, debugHub.Publish)
 
+	ctrl := service.NewController(dev)
+	ui := web.NewWithHub(ctrl, debugHub)
 	var mqttClient *mqttbridge.Client
 	if cfg.MQTT.Broker != "" {
 		mqttClient, err = mqttbridge.New(cfg.MQTT.Broker, cfg.MQTT.ClientID, cfg.MQTT.Prefix, cfg.MQTT.User, cfg.MQTT.Password, ctrl)
