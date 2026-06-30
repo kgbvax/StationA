@@ -296,7 +296,10 @@ const indexHTML = `<!doctype html>
 			const freqBtn = document.getElementById('freq-btn');
 			if (freqBtn) freqBtn.disabled = data.motors_moving;
 			const modeButtons = document.querySelectorAll('button.mode');
-			modeButtons.forEach(btn => btn.disabled = data.motors_moving);
+			modeButtons.forEach(btn => {
+				btn.disabled = data.motors_moving;
+				btn.classList.toggle('active', btn.getAttribute('data-mode') === data.mode_name);
+			});
 
 			const live = document.getElementById('live-state');
 			const pillDot = document.querySelector('#live-pill .dot');
