@@ -263,7 +263,7 @@ func (b *Bridge) handleMeterDef(f flexradio.Frame) {
 	// Find the SOURCE=name token in fields.
 	var source, name string
 	for _, tok := range splitFields(fieldsString(f)) {
-		for _, src := range []string{"SLC=", "TX=", "RAD=", "COD-=", "AMP="} {
+		for _, src := range []string{"SLC=", "TX-=", "RAD=", "COD-=", "AMP="} {
 			if startsWith(tok, src) {
 				source = src[:len(src)-1]
 				name = tok[len(src):]

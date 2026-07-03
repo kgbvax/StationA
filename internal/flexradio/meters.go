@@ -19,7 +19,7 @@ type MeterSource string
 
 const (
 	SourceSlice MeterSource = "SLC"  // per-slice receiver meter
-	SourceTX    MeterSource = "TX"   // transmit chain meter
+	SourceTX    MeterSource = "TX-"  // transmit chain meter (firmware uses "TX-")
 	SourceRadio MeterSource = "RAD"  // radio-wide hardware meter
 	SourceCodec MeterSource = "COD-" // codec / microphone input
 	SourceAmp   MeterSource = "AMP"  // optional PGXL/TGXL amplifier
@@ -81,8 +81,9 @@ var wantedMeters = []MeterDef{
 	{SourceSlice, "LEVEL", GroupRX, "dBm", "dBm", "s_meter", "S-Meter"},
 	{SourceSlice, "24kHz", GroupRX, "dBFS", "dBFS", "broadband", "Broadband Level (24kHz)"},
 
-	// --- Radio hardware (0.1 Hz; radio polls internally, slow) ---
-	{SourceRadio, "PATEMP", GroupHW, "degC", "°C", "pa_temp", "PA Temperature"},
+	// --- Radio hardware (event-driven; fps=0 in meter list) ---
+	// PATEMP is omitted: it lives under the TX- source with fps=0 and is
+	// never streamed via VITA-49 (confirmed absent from live datagrams).
 	{SourceRadio, "+13.8A", GroupHW, "Volts", "V", "supply_voltage_a", "Supply Voltage (pre-fuse)"},
 	{SourceRadio, "+13.8B", GroupHW, "Volts", "V", "supply_voltage_b", "Supply Voltage (post-fuse)"},
 }

@@ -215,19 +215,20 @@ func TestParseVITA49_WithTimestamps(t *testing.T) {
 // meter datagram (after the IP/UDP headers), so any future regression in
 // the class-id offset / bit parsing will trip this test.
 func TestParseVITA49_RealFlexPacket(t *testing.T) {
-	// Layout (word0 = 0x38530010 -> T=00,C=1,Tr=1,TSI=00,TSF=11):
+	// Layout (word0 = 0x33530010 -> T=00,C=1,Tr=1,TSI=00,TSF=11):
 	//   word0..word3: header + 3-word class id (0x8002 = meter stream)
-	//   8-byte fractional timestamp (TSF=11)
+	//   12-byte fractional timestamp (TSF=11: 8-byte frac + 4-byte sample word)
 	//   meter pairs (uint16 idx, int16 raw)
 	//   4-byte trailer (Tr=1)
+	// 0x33 = 0011 0011: C=1,Tr=1,TSI=00,TSF=11
 	raw := []byte{
-		0x38, 0x53, 0x00, 0x10, // word0
+		0x33, 0x53, 0x00, 0x10, // word0: T=00,C=1,Tr=1,TSI=00,TSF=11
 		0x00, 0x00, 0x07, 0x00, // word1 (OUI)
 		0x00, 0x00, 0x1c, 0x2d, // word2 (info hi)
 		0x53, 0x4c, 0x80, 0x02, // word3 (info lo: 0x8002 = meter stream)
-		0x6a, 0x48, 0x28, 0x7e, // fractional ts (hi)
-		0x00, 0x00, 0x00, 0x00, // fractional ts (lo)
-		0x00, 0x00, 0x00, 0x00, // sample/sequence word
+		0x6a, 0x48, 0x28, 0x7e, // fractional ts (bytes 0-7)
+		0x00, 0x00, 0x00, 0x00, // fractional ts (bytes 4-7)
+		0x00, 0x00, 0x00, 0x00, // sample/sequence word (bytes 8-11)
 		// meter pairs
 		0x00, 0x01, 0xc4, 0x00, // idx 1, raw 0xc400
 		0x00, 0x02, 0xc4, 0x00, // idx 2

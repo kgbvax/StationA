@@ -42,14 +42,14 @@ func newTestBridge(t *testing.T) (*Bridge, *MemoPublisher) {
 // 0x8002 and the given (index, raw) pairs.
 func buildMeterPacket(t *testing.T, readings []flexradio.MeterReading) []byte {
 	t.Helper()
-	const meterClassIDLow uint16 = 0x8002
-	w0 := uint32(1 << 29) // class present
-	out := make([]byte, 12+4*len(readings))
+	w0 := uint32(1 << 29) // class present (3-word class id, no trailer, no timestamps)
+	out := make([]byte, 16+4*len(readings))
 	binary.BigEndian.PutUint32(out[0:4], w0)
-	binary.BigEndian.PutUint32(out[4:8], 0)
-	binary.BigEndian.PutUint32(out[8:12], uint32(meterClassIDLow))
+	binary.BigEndian.PutUint32(out[4:8], 0x00000700)   // word1: OUI
+	binary.BigEndian.PutUint32(out[8:12], 0x00001c2d)  // word2: info hi
+	binary.BigEndian.PutUint32(out[12:16], 0x534c8002) // word3: info lo (0x8002 = meters)
 	for i, r := range readings {
-		o := 12 + i*4
+		o := 16 + i*4
 		binary.BigEndian.PutUint16(out[o:o+2], r.Index)
 		binary.BigEndian.PutUint16(out[o+2:o+4], uint16(r.Raw))
 	}
@@ -87,7 +87,7 @@ func TestBridge_TxMetersGatedOnTransmit(t *testing.T) {
 	pub.Reset()
 
 	// Register a TX meter (index 3 = FWDPWR) via a meter def status line.
-	def, _ := flexradio.ParseFrame("S0|meter 3 0 TX=FWDPWR")
+	def, _ := flexradio.ParseFrame("S0|meter 3 0 TX-=FWDPWR")
 	b.HandleStatus(def)
 
 	// While RECEIVING: a FWDPWR packet must NOT be published.
@@ -190,24 +190,24 @@ func TestBridge_BandRepublishesOnlyOnBandChange(t *testing.T) {
 }
 
 func TestBridge_HWMetersPublishedWithoutTx(t *testing.T) {
-	// PA temp is radio hardware; it should publish even while receiving.
+	// Supply voltage is radio hardware; it should publish even while receiving.
 	b, pub := newTestBridge(t)
 	pub.Reset()
 
-	def, _ := flexradio.ParseFrame("S0|meter 9 0 RAD=PATEMP")
+	def, _ := flexradio.ParseFrame("S0|meter 9 0 RAD=+13.8A")
 	b.HandleStatus(def)
 
-	pkt := buildMeterPacket(t, []flexradio.MeterReading{{Index: 9, Raw: 45 * 64}}) // 45 degC
+	pkt := buildMeterPacket(t, []flexradio.MeterReading{{Index: 9, Raw: 3533}}) // ~13.8V (13.8*256=3532.8)
 	b.HandleMeterPacket(pkt)
 	msgs := pub.Messages()
 	if len(msgs) != 1 {
 		t.Fatalf("got %d msgs, want 1: %+v", len(msgs), msgs)
 	}
-	if !strings.HasSuffix(msgs[0].Topic, "/meter/hw/pa_temp") {
+	if !strings.HasSuffix(msgs[0].Topic, "/meter/hw/supply_voltage_a") {
 		t.Errorf("topic = %q", msgs[0].Topic)
 	}
-	if !strings.Contains(string(msgs[0].Payload), "45") {
-		t.Errorf("pa_temp payload = %q, want ~45", msgs[0].Payload)
+	if !strings.Contains(string(msgs[0].Payload), "13") {
+		t.Errorf("supply_voltage_a payload = %q, want ~13.8", msgs[0].Payload)
 	}
 }
 
@@ -332,7 +332,7 @@ func TestBridge_Discovery_ContainsMetersAndStatus(t *testing.T) {
 		}
 	}
 	// A couple of representative meters.
-	for _, want := range []string{"tx_fwd_power", "tx_swr", "pa_temp", "supply_voltage_a"} {
+	for _, want := range []string{"tx_fwd_power", "tx_swr", "supply_voltage_a"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("discovery missing %q", want)
 		}
@@ -353,7 +353,7 @@ func TestBridge_ResetClearsMeterRegistry(t *testing.T) {
 	b, pub := newTestBridge(t)
 	pub.Reset()
 
-	def, _ := flexradio.ParseFrame("S0|meter 3 0 TX=FWDPWR")
+	def, _ := flexradio.ParseFrame("S0|meter 3 0 TX-=FWDPWR")
 	b.HandleStatus(def)
 	b.interlock.Transmitting = true // cheat to allow TX meter
 	pkt := buildMeterPacket(t, []flexradio.MeterReading{{Index: 3, Raw: 6400}})

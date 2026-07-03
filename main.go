@@ -230,8 +230,17 @@ func runOnce(ctx context.Context, cfg config.Config, host string, b *bridge.Brid
 		}
 	})
 
-	if err := client.Handshake(cctx, cfg.RadioUDPPort); err != nil {
+	info, err := client.Handshake(cctx, cfg.RadioUDPPort)
+	if err != nil {
 		return fmt.Errorf("handshake: %w", err)
+	}
+	if info.Serial != "" {
+		b.SetDevice(ha.Device{
+			Serial: info.Serial,
+			Model:  info.Model,
+			Name:   "FlexRadio " + info.Model,
+		})
+		log.Info("radio identified", "model", info.Model, "serial", info.Serial)
 	}
 	log.Info("handshake complete; observing")
 

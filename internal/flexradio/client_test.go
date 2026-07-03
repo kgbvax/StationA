@@ -53,6 +53,9 @@ func TestHandshake_SendsExpectedCommands(t *testing.T) {
 			if strings.Contains(line, "|version") {
 				reply = "R1|0|0|v3.4.1.10\n"
 			}
+			if strings.Contains(line, "|info") {
+				reply = "R1|0|model=\"FLEX-8400\",chassis_serial=\"test-1234\"\n"
+			}
 			if _, err := io.WriteString(radioConn, reply); err != nil {
 				return
 			}
@@ -61,8 +64,12 @@ func TestHandshake_SendsExpectedCommands(t *testing.T) {
 
 	ctx, cancel2 := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel2()
-	if err := client.Handshake(ctx, 4991); err != nil {
+	info, err := client.Handshake(ctx, 4991)
+	if err != nil {
 		t.Fatalf("Handshake: %v", err)
+	}
+	if info.Model != "FLEX-8400" || info.Serial != "test-1234" {
+		t.Errorf("RadioInfo = %+v, want Model=FLEX-8400 Serial=test-1234", info)
 	}
 	t.Log("Handshake returned OK")
 	client.Close()
@@ -90,6 +97,7 @@ func TestHandshake_SendsExpectedCommands(t *testing.T) {
 		"sub interlock all",
 		"sub atu all",
 		"sub meter all",
+		"|info",
 	}
 	for _, w := range wantSubs {
 		if !strings.Contains(joined, w) {

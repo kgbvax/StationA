@@ -95,9 +95,9 @@ func TestDeadband(t *testing.T) {
 
 func TestMeterRegistry_RegisterWantedOnly(t *testing.T) {
 	r := NewMeterRegistry()
-	// Wanted meter: TX/FWDPWR
-	if !r.Register(5, "TX", 0, "FWDPWR") {
-		t.Error("Register(TX/FWDPWR) = false, want true")
+	// Wanted meter: TX-/FWDPWR (firmware uses "TX-" source)
+	if !r.Register(5, "TX-", 0, "FWDPWR") {
+		t.Error("Register(TX-/FWDPWR) = false, want true")
 	}
 	// Unwanted meter: RAD/PACURRENT (excluded deliberately)
 	if r.Register(6, "RAD", 0, "PACURRENT") {
@@ -118,8 +118,8 @@ func TestMeterRegistry_RegisterWantedOnly(t *testing.T) {
 
 func TestMeterRegistry_Reset(t *testing.T) {
 	r := NewMeterRegistry()
-	r.Register(1, "TX", 0, "FWDPWR")
-	r.Register(2, "TX", 0, "SWR")
+	r.Register(1, "TX-", 0, "FWDPWR")
+	r.Register(2, "TX-", 0, "SWR")
 	if r.Count() != 2 {
 		t.Fatalf("Count = %d, want 2", r.Count())
 	}
@@ -147,8 +147,8 @@ func TestMeterRegistry_PerSliceMeters(t *testing.T) {
 
 func TestWantedMeterKeys(t *testing.T) {
 	keys := WantedMeterKeys()
-	// 12 wanted meters, but (COD-/MIC) etc are unique; expect 12 distinct keys.
-	want := 12
+	// 11 wanted meters (PATEMP removed; never streamed via VITA-49).
+	want := 11
 	if len(keys) != want {
 		t.Errorf("len(keys) = %d, want %d", len(keys), want)
 	}
