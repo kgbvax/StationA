@@ -1,0 +1,50 @@
+[Unit]
+Description=FlexRadio 6000-series to MQTT/Home Assistant bridge
+Documentation=https://github.com/yourorg/flexbridge
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=flexbridge
+Group=flexbridge
+
+# Config file location; override with systemctl edit flexbridge if needed.
+EnvironmentFile=-/etc/flexbridge/flexbridge.env
+ExecStart=/usr/local/bin/flexbridge -config /etc/flexbridge/config.toml
+
+# Restart on any failure (radio reboot, broker outage, crash). Backoff is
+# handled by StartSec + systemd's linear backoff up to the rate limit.
+Restart=on-failure
+RestartSec=5
+
+# Resource and security hardening. flexbridge needs only:
+#   - outbound TCP to the radio (4992) and MQTT broker
+#   - a local UDP socket (4991) to receive the meter stream
+#   - a UDP socket for discovery broadcast (4992)
+# All ports are >1024, so no elevated capabilities are required.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictNamespaces=true
+LockPersonality=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+RemoveIPC=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+# Allow writing the (text) log to stderr; nothing else needs disk.
+ReadWritePaths=/var/lib/flexbridge
+# journald captures stderr.
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=flexbridge
+
+[Install]
+WantedBy=multi-user.target
