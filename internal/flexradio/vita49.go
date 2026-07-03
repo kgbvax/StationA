@@ -64,8 +64,24 @@ var ErrShortPacket = errors.New("flexradio: VITA-49 packet too short")
 var ErrNotMeterPacket = errors.New("flexradio: not a FlexRadio meter packet")
 
 // ParseVITA49 decodes a VITA-49 datagram into its structural parts.
+//
+// FlexRadio's meter/spectrum packets use a 3-word class identifier after the
+// header word (observed on SmartSDR v3/v4):
+//
+//	word0: header (T/C/Tr/TSI/TSF bits)
+//	word1: class id word 1 (OUI / packet count)
+//	word2: class id word 2 (info high)
+//	word3: class id word 3 (info low)  -- low 16 bits = stream discriminator
+//	         0x8002 = meter stream, 0x8003 = spectrum/display, ...
+//	[timestamp: TSI=00 -> none; TSF=11 -> 64-bit sample timestamp (8 bytes)]
+//	[payload]
+//	[trailer: 4 bytes if Tr=1]
+//
+// Note: word1..word3 are 3 words (12 bytes), so the discriminator is at
+// b[12:16] (low 16 bits). Earlier revisions read only 2 class-id words and
+// so mis-read the class id, rejecting every real meter packet.
 func ParseVITA49(b []byte) (VITAPacket, error) {
-	if len(b) < 8 { // word0 (header) + word1 (first class-id / reserved)
+	if len(b) < 4 { // at least the header word
 		return VITAPacket{}, ErrShortPacket
 	}
 	w0 := binary.BigEndian.Uint32(b[0:4])
@@ -80,16 +96,15 @@ func ParseVITA49(b []byte) (VITAPacket, error) {
 	tsf := (w0 >> 24) & 0x3
 	p.HasTS = tsi != 0 || tsf != 0
 
-	// word0 is the header. When a class id is present, word1..word2 carry
-	// the OUI and the information word whose low 16 bits discriminate the
-	// stream (0x8002 = meters).
 	off := 4
 	if p.HasClass {
-		if off+8 > len(b) { // word1 (OUI) + word2 (info low)
+		// 3-word class id: word1 (OUI) + word2 (info hi) + word3 (info lo).
+		// word3's low 16 bits are the stream discriminator (0x8002 = meters).
+		if off+12 > len(b) {
 			return p, ErrShortPacket
 		}
-		p.ClassIDLow = uint16(binary.BigEndian.Uint32(b[off+4 : off+8]))
-		off += 8
+		p.ClassIDLow = uint16(binary.BigEndian.Uint32(b[off+8 : off+12]))
+		off += 12
 	}
 
 	if p.HasTS {
@@ -101,11 +116,16 @@ func ParseVITA49(b []byte) (VITAPacket, error) {
 			off += 4
 		}
 		if tsf != 0 {
-			if off+8 > len(b) {
+			// FlexRadio sets TSF=11 (sample timestamp). On the wire (observed
+			// on SmartSDR v3/v4) this occupies 12 bytes, not the 8 the VITA-49
+			// spec describes: a 64-bit fractional timestamp followed by a
+			// 32-bit sample/sequence word. We consume all 12 so the meter
+			// payload starts at the right offset.
+			if off+12 > len(b) {
 				return p, ErrShortPacket
 			}
 			p.FractionalTS = binary.BigEndian.Uint64(b[off : off+8])
-			off += 8
+			off += 12
 		}
 	}
 

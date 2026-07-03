@@ -21,22 +21,15 @@ func TestHandshake_SendsExpectedCommands(t *testing.T) {
 	clientConn, radioConn := net.Pipe()
 	client := newClientFromConn(clientConn)
 
-	// On the radio side, log commands the client sends and feed a version
-	// banner so readVersionBanner returns. net.Pipe is synchronous, so the
-	// reader and writer must run concurrently to avoid deadlock.
+	// The radio side reads each C1|... command the client sends and replies
+	// with an R1|0|... line (matching the real SmartSDR protocol: the client
+	// sends first, the radio replies). net.Pipe is synchronous, so the
+	// reader/writer run concurrently to avoid deadlock.
 	var gotCmds []string
 	var mu sync.Mutex
 	radioCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Writer: sends the version banner (and any unsolicited status). Runs
-	// concurrently so the reader below never blocks on a write.
-	go func() {
-		_, _ = io.WriteString(radioConn, "S0|version v3.4.1.10\n")
-		<-radioCtx.Done()
-	}()
-
-	// Reader: collects client commands until we see "meter list".
 	go func() {
 		defer radioConn.Close()
 		sc := bufio.NewScanner(radioConn)
@@ -45,8 +38,22 @@ func TestHandshake_SendsExpectedCommands(t *testing.T) {
 			mu.Lock()
 			gotCmds = append(gotCmds, line)
 			mu.Unlock()
+			// meter list is fire-and-forget on the client side: Handshake
+			// sends it but never reads the reply. On net.Pipe a synchronous
+			// write would deadlock once the client closes, so don't reply to
+			// it -- just finish capturing.
 			if strings.Contains(line, "meter list") {
 				cancel()
+				return
+			}
+			// Reply synchronously to awaited commands. These replies are
+			// consumed in order by the client's sendAwaitReply, so the write
+			// returns promptly.
+			reply := "R1|0|OK\n"
+			if strings.Contains(line, "|version") {
+				reply = "R1|0|0|v3.4.1.10\n"
+			}
+			if _, err := io.WriteString(radioConn, reply); err != nil {
 				return
 			}
 		}
@@ -57,23 +64,32 @@ func TestHandshake_SendsExpectedCommands(t *testing.T) {
 	if err := client.Handshake(ctx, 4991); err != nil {
 		t.Fatalf("Handshake: %v", err)
 	}
+	t.Log("Handshake returned OK")
 	client.Close()
 
-	// Wait for the radio goroutine to finish capturing.
-	<-radioCtx.Done()
-	time.Sleep(20 * time.Millisecond)
+	// Wait for the radio goroutine to finish capturing (it cancels after
+	// reading "meter list"). Give it a bounded window so a deadlock fails
+	// fast instead of hanging the whole test binary.
+	select {
+	case <-radioCtx.Done():
+	case <-time.After(2 * time.Second):
+		t.Fatal("radio goroutine did not finish; possible deadlock")
+	}
 
 	mu.Lock()
 	defer mu.Unlock()
 	joined := strings.Join(gotCmds, "\n")
+	// The client sends C1|<cmd> for each handshake step. Note: with the new
+	// sendAwaitReply flow, the meter list is NOT awaited, so the client
+	// sends it but doesn't read its reply before Handshake returns.
 	wantSubs := []string{
+		"|version",
 		"client udpport 4991",
 		"sub slice all",
 		"sub radio all",
 		"sub interlock all",
 		"sub atu all",
 		"sub meter all",
-		"meter list",
 	}
 	for _, w := range wantSubs {
 		if !strings.Contains(joined, w) {

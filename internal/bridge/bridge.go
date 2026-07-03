@@ -3,6 +3,7 @@ package bridge
 import (
 	"fmt"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -139,6 +140,35 @@ func (b *Bridge) HandleStatus(f flexradio.Frame) {
 	case "meter":
 		b.handleMeterDef(f)
 	}
+}
+
+// HandleReply routes a parsed SmartSDR reply frame (R<h>|<seq>|<body>).
+// Currently only the "meter list" reply is handled: its body is a packed
+// list of meter definitions which we use to populate the meter index map.
+func (b *Bridge) HandleReply(f flexradio.Frame) {
+	body := f.Body
+	// Reply bodies look like "<seq>|<body>"; strip the leading seq field if
+	// present so body starts at the actual content.
+	if i := strings.IndexByte(body, '|'); i >= 0 {
+		body = body[i+1:]
+	}
+	if !strings.Contains(body, "meter") || !strings.Contains(body, ".src=") {
+		return // not the meter list reply
+	}
+	entries := flexradio.ParseMeterListReply(body)
+	if len(entries) == 0 {
+		return
+	}
+	b.mu.Lock()
+	b.meters.Reset()
+	registered := 0
+	for _, e := range entries {
+		if b.meters.Register(e.Index, e.Source, e.SourceNum, e.Name) {
+			registered++
+		}
+	}
+	b.mu.Unlock()
+	b.log.Infof("meter list: %d entries, %d published", len(entries), registered)
 }
 
 // handleInterlock updates transmit state and publishes the binary_sensor.

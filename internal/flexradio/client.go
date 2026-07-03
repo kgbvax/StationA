@@ -101,22 +101,28 @@ func (c *Client) Close() error {
 	return c.conn.Close()
 }
 
-// Handshake performs the version-banner read, sets the UDP port for the
-// meter stream, and subscribes to the status topics. It must be called
-// exactly once after Dial, before Run.
+// Handshake performs the version exchange, sets the UDP port for the meter
+// stream, and subscribes to the status topics. It must be called exactly
+// once after Dial, before Run.
+//
+// Note: the SmartSDR radio does NOT send an unsolicited banner on connect.
+// The client must send the first command. We probe with `version` (whose
+// reply confirms the connection is live and the radio speaks the protocol),
+// then configure UDP meter streaming and subscribe to status topics.
 func (c *Client) Handshake(ctx context.Context, udpPort int) error {
-	// 1. Read the radio's version banner line. The radio sends this
-	//    unsolicited on connect: "S<handle>|version v3.x.x ...".
-	if err := c.readVersionBanner(ctx); err != nil {
-		return fmt.Errorf("version banner: %w", err)
+	// 1. Send `version` and wait for its R1 reply. This is the connectivity
+	//    / protocol probe; the reply body contains the firmware version.
+	if _, err := c.sendAwaitReply(ctx, "version"); err != nil {
+		return fmt.Errorf("version exchange: %w", err)
 	}
 
-	// 2. Tell the radio which UDP port to stream meters to.
-	if err := c.send(ctx, fmt.Sprintf("client udpport %d", udpPort)); err != nil {
+	// 2. Tell the radio which UDP port to stream meters to. Await the reply
+	//    so we know the radio accepted the port before we subscribe.
+	if _, err := c.sendAwaitReply(ctx, fmt.Sprintf("client udpport %d", udpPort)); err != nil {
 		return fmt.Errorf("set udpport: %w", err)
 	}
 
-	// 3. Subscribe to all the status topics we publish.
+	// 3. Subscribe to all the status topics we publish. Each sub gets a reply.
 	subs := []string{
 		"sub slice all",
 		"sub radio all",
@@ -125,13 +131,15 @@ func (c *Client) Handshake(ctx context.Context, udpPort int) error {
 		"sub meter all",
 	}
 	for _, s := range subs {
-		if err := c.send(ctx, s); err != nil {
-			return fmt.Errorf("subscribe: %w", err)
+		if _, err := c.sendAwaitReply(ctx, s); err != nil {
+			return fmt.Errorf("subscribe %q: %w", s, err)
 		}
 	}
 
-	// 4. Request the current meter list (one-shot) so the meter index map
-	//    is populated without waiting for async "meter N" pushes.
+	// 4. Request the current meter list (one-shot) so the meter index map is
+	//    populated without waiting for async "meter N" pushes. The reply is
+	//    delivered as multiple "M" / "S" lines via the read loop below, so we
+	//    don't await it here.
 	if err := c.send(ctx, "meter list"); err != nil {
 		// Non-fatal: we'll get meters via async status.
 		_ = err
@@ -139,39 +147,51 @@ func (c *Client) Handshake(ctx context.Context, udpPort int) error {
 	return nil
 }
 
-// readVersionBanner reads lines until it sees the version status line or
-// times out. Replies to other incidental lines are ignored.
-func (c *Client) readVersionBanner(ctx context.Context) error {
+// sendAwaitReply writes a C1|<cmd> command and reads lines until the matching
+// R1|<seq>|... reply arrives. Any interleaved asynchronous status frames
+// (S|...) are dispatched to the handler so none are lost during the
+// handshake. Returns the reply body (the part after "R1|<seq>|").
+//
+// Sequence numbers: SmartSDR replies echo a per-command sequence number in
+// the second field. We always use sequence 0 (we send one command at a time
+// during the handshake), so we match the first R1| reply we see.
+func (c *Client) sendAwaitReply(ctx context.Context, cmd string) (string, error) {
+	if err := c.send(ctx, cmd); err != nil {
+		return "", err
+	}
+
 	deadline, ok := ctx.Deadline()
 	if !ok {
-		deadline = time.Now().Add(10 * time.Second)
+		deadline = time.Now().Add(5 * time.Second)
 	}
 	_ = c.conn.SetReadDeadline(deadline)
 	defer c.conn.SetReadDeadline(time.Time{})
 
 	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
+		if ctx.Err() != nil {
+			return "", ctx.Err()
 		}
 		line, err := c.rd.ReadString('\n')
 		if err != nil {
-			return err
+			return "", err
 		}
 		frame, err := ParseFrame(line)
 		if err != nil {
 			continue
 		}
-		if frame.Kind == FrameStatus && (frame.Topic == "version" || strings.HasPrefix(frame.Body, "version")) {
-			return nil
+		switch frame.Kind {
+		case FrameReply:
+			// R1|<seq>|<body>. We sent C1|..., so the matching reply is R1|...
+			return frame.Body, nil
+		case FrameStatus:
+			// Dispatch interleaved status so it isn't lost.
+			c.handler(frame)
 		}
 	}
 }
 
 // send writes a C1|... command. It does NOT wait for the R1 reply; replies
-// are surfaced through Run as FrameReply and most commands don't need the
-// ack. Callers that need the reply should use sendAwait.
+// are surfaced through Run as FrameReply (or consumed by sendAwaitReply).
 func (c *Client) send(ctx context.Context, cmd string) error {
 	deadline, ok := ctx.Deadline()
 	if !ok {

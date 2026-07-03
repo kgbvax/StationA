@@ -135,18 +135,24 @@ func ParseStatusFields(s string) map[string]string {
 type SliceStatus struct {
 	Index      int    // first topic arg (slice list index)
 	RcvrIndex  int    // second topic arg (receiver/panadapter index, may be absent)
-	FreqHz     int64  // freq value, parsed (e.g. "14.100.000" -> 14100000)
+	FreqHz     int64  // frequency in Hz (parsed from RF_frequency in MHz or freq)
 	Mode       string // USB, LSB, CW, ...
 	Active     bool   // active=1
 	TX         bool   // tx=1
-	AGCMode    string // agc=...
+	AGCMode    string // agc_mode / agc
 	FilterLow  int    // filter_lo (Hz)
 	FilterHigh int    // filter_hi (Hz)
 }
 
 // ParseSlice parses an "S|slice ..." status line body into a SliceStatus.
-// The body format is: "<index> [<rcvr-index>] freq=... mode=... active=1 ...".
-// freq is written with dot digit grouping, e.g. "14.100.000".
+//
+// Firmware field names (SmartSDR v3/v4):
+//   - RF_frequency=<MHz float>  (e.g. "3.800000") -- the live VFO frequency
+//   - freq=<dotted Hz>          (legacy/older firmware, e.g. "14.100.000")
+//   - agc_mode=<mode>           (med, fast, slow, off; older fw used "agc")
+//   - mode, active, tx, filter_lo, filter_hi
+//
+// We accept both naming conventions.
 func ParseSlice(topicArgs, fieldsStr string) (SliceStatus, error) {
 	f := ParseStatusFields(fieldsStr)
 	args := strings.Fields(topicArgs)
@@ -157,7 +163,14 @@ func ParseSlice(topicArgs, fieldsStr string) (SliceStatus, error) {
 	if len(args) > 1 {
 		s.RcvrIndex, _ = strconv.Atoi(args[1])
 	}
-	if v, ok := f["freq"]; ok {
+	// Frequency: prefer RF_frequency (MHz float); fall back to legacy freq.
+	if v, ok := f["RF_frequency"]; ok {
+		mhz, err := strconv.ParseFloat(v, 64)
+		if err != nil {
+			return s, fmt.Errorf("slice RF_frequency: %w", err)
+		}
+		s.FreqHz = int64(mhz * 1e6)
+	} else if v, ok := f["freq"]; ok {
 		hz, err := parseFlexFreq(v)
 		if err != nil {
 			return s, fmt.Errorf("slice freq: %w", err)
@@ -165,7 +178,12 @@ func ParseSlice(topicArgs, fieldsStr string) (SliceStatus, error) {
 		s.FreqHz = hz
 	}
 	s.Mode = f["mode"]
-	s.AGCMode = f["agc"]
+	// AGC mode: newer firmware uses agc_mode, older used agc.
+	if v, ok := f["agc_mode"]; ok {
+		s.AGCMode = v
+	} else {
+		s.AGCMode = f["agc"]
+	}
 	s.Active = f["active"] == "1"
 	s.TX = f["tx"] == "1"
 	if v, err := strconv.Atoi(f["filter_lo"]); err == nil {
@@ -270,4 +288,81 @@ func ParseTunePower(fieldsStr string) (int, bool) {
 		return 0, false
 	}
 	return n, true
+}
+
+// MeterListEntry is one parsed entry from the packed "meter list" reply.
+type MeterListEntry struct {
+	Index     uint16 // the runtime meter index (1-based in the reply)
+	Source    string // COD-, TX-, RAD, SLC, AMP
+	SourceNum int    // source-internal num (slice index for SLC)
+	Name      string // meter name (MICPEAK, FWDPWR, LEVEL, ...)
+}
+
+// ParseMeterListReply parses the body of the "meter list" command reply.
+//
+// The radio returns a single R<h>|<seq>|0 line whose body is:
+//
+//	meter 1.src=COD-#1.num=1#1.nam=MICPEAK#1.low=-150.0#1.hi=20.0#1.desc=...
+//	#2.src=COD-#2.num=2#2.nam=MIC#...#3.src=TX-#3.num=5#3.nam=HWALC#...
+//
+// Tokens are '#'-separated, each of the form "<idx>.<field>=<value>". Fields
+// per meter: src, num, nam, low, hi, desc, unit, fps. We extract src, num and
+// nam for every index that appears.
+//
+// body is the reply body (the part after "R<h>|<seq>|"). Pass the full body
+// and this function skips the leading "meter " prefix if present.
+func ParseMeterListReply(body string) []MeterListEntry {
+	s := strings.TrimSpace(body)
+	// Strip an optional leading "meter " prefix (the reply body starts with
+	// "0 meter 1.src=..." or "meter 1.src=...").
+	if i := strings.Index(s, "meter "); i >= 0 {
+		s = strings.TrimLeft(s[i+len("meter "):], " ")
+	}
+	type mf struct {
+		src, nam string
+		num      int
+	}
+	byIndex := make(map[int]*mf)
+	var order []int
+	for _, tok := range strings.Split(s, "#") {
+		tok = strings.TrimSpace(tok)
+		eq := strings.IndexByte(tok, '=')
+		dot := strings.IndexByte(tok, '.')
+		if eq <= 0 || dot <= 0 || dot >= eq {
+			continue
+		}
+		idx, err := strconv.Atoi(tok[:dot])
+		if err != nil {
+			continue
+		}
+		field := tok[dot+1 : eq]
+		value := tok[eq+1:]
+		m, ok := byIndex[idx]
+		if !ok {
+			m = &mf{}
+			byIndex[idx] = m
+			order = append(order, idx)
+		}
+		switch field {
+		case "src":
+			m.src = value
+		case "nam":
+			m.nam = value
+		case "num":
+			if n, err := strconv.Atoi(value); err == nil {
+				m.num = n
+			}
+		}
+	}
+	out := make([]MeterListEntry, 0, len(order))
+	for _, idx := range order {
+		m := byIndex[idx]
+		if m.src == "" || m.nam == "" {
+			continue
+		}
+		out = append(out, MeterListEntry{
+			Index: uint16(idx), Source: m.src, SourceNum: m.num, Name: m.nam,
+		})
+	}
+	return out
 }

@@ -212,15 +212,21 @@ func runOnce(ctx context.Context, cfg config.Config, host string, b *bridge.Brid
 		return fmt.Errorf("dial radio: %w", err)
 	}
 	defer client.Close()
+	// Unblock client.Run when ctx is cancelled. Without this, ReadString
+	// holds the goroutine until SIGKILL (90 s systemd timeout).
+	go func() { <-cctx.Done(); client.Close() }()
 	log.Info("TCP connected to radio", "host", host)
 
 	client.SetHandler(func(f flexradio.Frame) {
-		if f.Kind == flexradio.FrameStatus {
+		switch f.Kind {
+		case flexradio.FrameStatus:
 			b.HandleStatus(f)
 			// Lazily emit per-slice discovery when a slice first appears.
 			if f.Topic == "slice" {
 				b.MaybePublishSliceDiscovery()
 			}
+		case flexradio.FrameReply:
+			b.HandleReply(f)
 		}
 	})
 
