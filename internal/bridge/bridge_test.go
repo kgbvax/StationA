@@ -152,6 +152,55 @@ func TestBridge_SliceStatusDiff(t *testing.T) {
 	}
 }
 
+func TestBridge_ActiveSliceFollowsActiveFlag(t *testing.T) {
+	b, pub := newTestBridge(t)
+	pub.Reset()
+
+	findMsg := func(msgs []MemoMsg, suffix string) (string, bool) {
+		for _, m := range msgs {
+			if strings.HasSuffix(m.Topic, suffix) {
+				return string(m.Payload), true
+			}
+		}
+		return "", false
+	}
+
+	// Slice 0 becomes active on 20m.
+	f0, _ := flexradio.ParseFrame("S0|slice 0 0 RF_frequency=14.100000 mode=USB active=1")
+	b.HandleStatus(f0)
+	msgs := pub.Messages()
+	if v, ok := findMsg(msgs, "/state/active/band"); !ok || v != "20m" {
+		t.Errorf("active band = (%q,%v), want (\"20m\", true)", v, ok)
+	}
+	if _, ok := findMsg(msgs, "/state/active/frequency"); !ok {
+		t.Error("active frequency not published")
+	}
+
+	// Slice 0 tunes to 40m: active band updates.
+	pub.Reset()
+	f1, _ := flexradio.ParseFrame("S0|slice 0 0 RF_frequency=7.100000 mode=LSB active=1")
+	b.HandleStatus(f1)
+	if v, ok := findMsg(pub.Messages(), "/state/active/band"); !ok || v != "40m" {
+		t.Errorf("active band after retune = (%q,%v), want (\"40m\", true)", v, ok)
+	}
+
+	// Slice 1 appears inactive: active topic unchanged.
+	pub.Reset()
+	f2, _ := flexradio.ParseFrame("S0|slice 1 0 RF_frequency=3.600000 mode=LSB active=0")
+	b.HandleStatus(f2)
+	if _, ok := findMsg(pub.Messages(), "/state/active/"); ok {
+		t.Error("active topic should not publish when non-active slice changes")
+	}
+
+	// Slice 1 becomes active (slice 0 deactivated separately): active should track slice 1.
+	pub.Reset()
+	f3, _ := flexradio.ParseFrame("S0|slice 1 0 RF_frequency=3.600000 mode=LSB active=1")
+	b.HandleStatus(f3)
+	if v, ok := findMsg(pub.Messages(), "/state/active/band"); !ok || v != "80m" {
+		t.Errorf("active band after slice switch = (%q,%v), want (\"80m\", true)", v, ok)
+	}
+}
+
 func TestBridge_BandRepublishesOnlyOnBandChange(t *testing.T) {
 	b, pub := newTestBridge(t)
 	pub.Reset()

@@ -198,6 +198,40 @@ func (b *Bridge) handleSlice(f flexradio.Frame) {
 	b.mu.Unlock()
 
 	b.publishSliceDiff(prev, s)
+	b.maybePublishActiveSlice(prev, s)
+}
+
+// maybePublishActiveSlice updates the active/frequency and active/band topics
+// when the active slice changes or its frequency moves.
+func (b *Bridge) maybePublishActiveSlice(prev, cur flexradio.SliceStatus) {
+	if cur.Active && (prev.FreqHz != cur.FreqHz || !prev.Active) {
+		// This slice is active and its frequency changed, or it just became active.
+		b.publishActiveFreqBand(cur)
+		return
+	}
+	if prev.Active && !cur.Active {
+		// This slice just became inactive; find the new active slice.
+		b.mu.RLock()
+		var active *flexradio.SliceStatus
+		for _, s := range b.slices {
+			if s.Active {
+				sc := s
+				active = &sc
+				break
+			}
+		}
+		b.mu.RUnlock()
+		if active != nil {
+			b.publishActiveFreqBand(*active)
+		}
+	}
+}
+
+// publishActiveFreqBand publishes the active-slice frequency and band summary.
+func (b *Bridge) publishActiveFreqBand(s flexradio.SliceStatus) {
+	mhz := float64(s.FreqHz) / 1e6
+	_ = b.pub.Publish(b.statusTopic("active/frequency"), true, []byte(formatFloat(mhz)))
+	_ = b.pub.Publish(b.statusTopic("active/band"), true, []byte(flexradio.BandForFreq(s.FreqHz)))
 }
 
 // handleATU updates the ATU status sensor.
@@ -436,6 +470,13 @@ func (b *Bridge) publishStatusDiscovery(d ha.Device, nodeID string) {
 	// ATU status (string).
 	cfg, comp = ha.StatusEntity("ATU Status", "atu", b.statusTopic("atu"), "", d, b.cfg.AvailTopic)
 	_ = publishDiscovery(b.pub, ha.ConfigTopic(b.cfg.DiscoveryPrefix, comp, nodeID, "atu"), cfg)
+
+	// Active slice summary: single frequency and band for antenna/PA control.
+	cfg, comp = ha.StatusEntity("Active Frequency", "active_frequency", b.statusTopic("active/frequency"), "MHz", d, b.cfg.AvailTopic)
+	_ = publishDiscovery(b.pub, ha.ConfigTopic(b.cfg.DiscoveryPrefix, comp, nodeID, "active_frequency"), cfg)
+
+	cfg, comp = ha.StatusEntity("Active Band", "active_band", b.statusTopic("active/band"), "", d, b.cfg.AvailTopic)
+	_ = publishDiscovery(b.pub, ha.ConfigTopic(b.cfg.DiscoveryPrefix, comp, nodeID, "active_band"), cfg)
 }
 
 // publishSliceDiscovery emits discovery for one slice's status fields and
