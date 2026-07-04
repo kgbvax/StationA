@@ -191,4 +191,4 @@ deploy/                       # systemd unit, config example, install script
 
 ## License
 
-MIT.
+GPLv3 — see [LICENSE](LICENSE).
