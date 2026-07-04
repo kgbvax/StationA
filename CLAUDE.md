@@ -5,8 +5,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-make build        # local binary -> bin/flexbridge
-make pi           # cross-compile for Raspberry Pi arm64 -> bin/flexbridge-linux-arm64
+make build        # local binary -> bin/flex2mqtt
+make pi           # cross-compile for Raspberry Pi arm64 -> bin/flex2mqtt-linux-arm64
 make test         # unit tests (no network required)
 make test-race    # tests with race detector
 make vet          # go vet
@@ -22,7 +22,7 @@ go test ./internal/bridge/... -run TestGate
 
 ## Architecture
 
-flexbridge is a read-only bridge: it never sends commands to the radio — only listens and forwards state to MQTT.
+flex2mqtt is a read-only bridge: it never sends commands to the radio — only listens and forwards state to MQTT.
 
 **Data flows:**
 
@@ -41,9 +41,9 @@ flexbridge is a read-only bridge: it never sends commands to the radio — only 
 **Reconnect loop** (`main.go:radioLoop`): connects, runs until disconnect, then exponential-backoffs and retries. Calls `Bridge.Reset()` between attempts to clear stale state and force republish on reconnect.
 
 **MQTT topics:**
-- `flexbridge/<serial>/status` — bridge LWT (online/offline)
-- `flexbridge/<serial>/state/...` — retained status fields (frequency, mode, PTT, ATU, etc.)
-- `flexbridge/<serial>/meter/<group>/[<slice>/]<object_id>` — non-retained live meter values
+- `flex2mqtt/<serial>/status` — bridge LWT (online/offline)
+- `flex2mqtt/<serial>/state/...` — retained status fields (frequency, mode, PTT, ATU, etc.)
+- `flex2mqtt/<serial>/meter/<group>/[<slice>/]<object_id>` — non-retained live meter values
 
 **Home Assistant discovery** is published once per connect cycle by `Bridge.PublishDiscovery`. Per-slice entities are published lazily when slices first appear via `Bridge.MaybePublishSliceDiscovery` (slices are dynamic).
 
@@ -54,11 +54,11 @@ flexbridge is a read-only bridge: it never sends commands to the radio — only 
 | `internal/flexradio` | Protocol: discovery, TCP client, frame parser, VITA-49 decoder, meter registry, status parsers, band lookup |
 | `internal/bridge` | Radio events → MQTT: state tracking, throttle/dedup gate, discovery payloads |
 | `internal/ha` | Home Assistant discovery payload builders and topic helpers |
-| `internal/config` | TOML config, flags, `FLEXBRIDGE_*` env overrides |
+| `internal/config` | TOML config, flags, `FLEX2MQTT_*` env overrides |
 
 ## Configuration and secrets
 
-Config is TOML (`/etc/flexbridge/config.toml` by default, or `-config <path>`). Secrets can be passed via `FLEXBRIDGE_MQTT_PASSWORD` (and other `FLEXBRIDGE_*` env vars) from a systemd `EnvironmentFile` instead of hard-coding in the TOML.
+Config is TOML (`/etc/flex2mqtt/config.toml` by default, or `-config <path>`). Secrets can be passed via `FLEX2MQTT_MQTT_PASSWORD` (and other `FLEX2MQTT_*` env vars) from a systemd `EnvironmentFile` instead of hard-coding in the TOML.
 
 ## Deployment
 

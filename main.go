@@ -1,4 +1,4 @@
-// Command flexbridge observes a FlexRadio 6000-series radio and mirrors its
+// Command flex2mqtt observes a FlexRadio 6000-series radio and mirrors its
 // state to MQTT for Home Assistant. See README.md for details.
 package main
 
@@ -15,34 +15,34 @@ import (
 
 	pahomqtt "github.com/eclipse/paho.mqtt.golang"
 
-	"flexbridge/internal/bridge"
-	"flexbridge/internal/config"
-	"flexbridge/internal/flexradio"
-	"flexbridge/internal/ha"
+	"flex2mqtt/internal/bridge"
+	"flex2mqtt/internal/config"
+	"flex2mqtt/internal/flexradio"
+	"flex2mqtt/internal/ha"
 )
 
 func main() {
-	fs := flag.NewFlagSet("flexbridge", flag.ExitOnError)
+	fs := flag.NewFlagSet("flex2mqtt", flag.ExitOnError)
 	flags := config.RegisterFlags(fs)
 	_ = fs.Parse(os.Args[1:])
 
 	cfg, err := config.Load(flags)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "flexbridge: load config: %v\n", err)
+		fmt.Fprintf(os.Stderr, "flex2mqtt: load config: %v\n", err)
 		os.Exit(2)
 	}
 
 	logger := newLogger(cfg.Log.Level)
-	logger.Info("flexbridge starting")
+	logger.Info("flex2mqtt starting")
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
 	if err := run(ctx, cfg, logger); err != nil {
-		logger.Error("flexbridge exited", "err", err)
+		logger.Error("flex2mqtt exited", "err", err)
 		os.Exit(1)
 	}
-	logger.Info("flexbridge stopped")
+	logger.Info("flex2mqtt stopped")
 }
 
 func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
@@ -85,7 +85,7 @@ func connectMQTT(ctx context.Context, cfg config.Config, log *slog.Logger) (paho
 	opts.AddBroker(cfg.MQTT.Broker)
 	clientID := cfg.MQTT.ClientID
 	if clientID == "" {
-		clientID = "flexbridge"
+		clientID = "flex2mqtt"
 	}
 	opts.SetClientID(clientID)
 	if cfg.MQTT.User != "" {
@@ -117,7 +117,7 @@ func connectMQTT(ctx context.Context, cfg config.Config, log *slog.Logger) (paho
 func availabilityTopic(cfg config.Config) string {
 	id := cfg.MQTT.ClientID
 	if id == "" {
-		id = "flexbridge"
+		id = "flex2mqtt"
 	}
 	return cfg.MQTT.StatePrefix + "/" + id + "/status"
 }

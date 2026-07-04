@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"flexbridge/internal/flexradio"
-	"flexbridge/internal/ha"
+	"flex2mqtt/internal/flexradio"
+	"flex2mqtt/internal/ha"
 )
 
 // Bridge owns the radio state model and translates radio events (TCP
@@ -42,7 +42,7 @@ type Bridge struct {
 // Config is the subset of config the bridge needs.
 type Config struct {
 	Serial          string
-	StatePrefix     string // e.g. "flexbridge"
+	StatePrefix     string // e.g. "flex2mqtt"
 	DiscoveryPrefix string // e.g. "homeassistant"
 	AvailTopic      string // LWT topic for the bridge
 	Rates           map[flexradio.MeterGroup]time.Duration
@@ -428,14 +428,9 @@ func (b *Bridge) PublishDiscovery() {
 	// 1. Meter entities (one per wanted meter def).
 	for _, def := range wantedMeters() {
 		objectID := def.ObjectID
-		// Per-slice meters get a per-slice object id at publish time; for
-		// discovery we use a generic name. HA creates one entity that all
-		// slices publish to? No — we need per-slice discovery. But slices
-		// are dynamic. Compromise: emit discovery for slice 0..3 up front.
-		// Simpler: emit a per-meter generic entity; per-slice topics embed
-		// the slice index and we emit discovery lazily when a slice appears.
 		if def.Source == flexradio.SourceSlice {
-			// Defer slice-meter discovery to when slices are known.
+			// Per-slice meters: discovery is published lazily as slices appear
+			// (MaybePublishSliceDiscovery), so any number of slices is supported.
 			continue
 		}
 		topic := b.meterTopic(def, 0)
@@ -490,7 +485,7 @@ func (b *Bridge) publishSliceDiscovery(d ha.Device, nodeID string, sliceIdx int)
 		suffix, name, unit string
 	}{
 		{"frequency", "Frequency", "MHz"},
-		{"band", "Band", ""}, // derived from frequency by flexbridge
+		{"band", "Band", ""}, // derived from frequency by flex2mqtt
 		{"mode", "Mode", ""},
 		{"agc", "AGC Mode", ""},
 		{"filter_low", "Filter Low", "Hz"},

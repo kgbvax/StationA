@@ -8,7 +8,7 @@ import (
 
 	pahomqtt "github.com/eclipse/paho.mqtt.golang"
 
-	"flexbridge/internal/ha"
+	"flex2mqtt/internal/ha"
 )
 
 // Publisher is the MQTT surface the bridge needs. It's a small interface so

@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"flexbridge/internal/flexradio"
+	"flex2mqtt/internal/flexradio"
 )
 
 // fakeClock is a controllable clock for tests.

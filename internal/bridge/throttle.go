@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"flexbridge/internal/flexradio"
+	"flex2mqtt/internal/flexradio"
 )
 
 // Gate implements per-meter publish throttling plus duplicate removal.

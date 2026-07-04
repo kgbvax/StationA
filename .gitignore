@@ -1,7 +1,7 @@
 # Compiled binaries (cross-compile output and local dev build).
 bin/
-/flexbridge
-/flexbridge-*
+/flex2mqtt
+/flex2mqtt-*
 
 # Local config overrides (keep deploy/config.example.toml, ignore real config).
 config.toml

@@ -13,7 +13,7 @@ import (
 	"fmt"
 	"strings"
 
-	"flexbridge/internal/flexradio"
+	"flex2mqtt/internal/flexradio"
 )
 
 // Components.

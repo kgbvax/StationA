@@ -1,4 +1,4 @@
-module flexbridge
+module flex2mqtt
 
 go 1.26.4
 

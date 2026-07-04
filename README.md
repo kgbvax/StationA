@@ -1,4 +1,4 @@
-# flexbridge
+# flex2mqtt
 
 A small Go service that **observes** a FlexRadio 6000-series radio (tested
 against the FLEX-8400) and publishes its state and telemetry to MQTT, with
@@ -8,7 +8,7 @@ It is designed to run on a Raspberry Pi as a hardened systemd service.
 
 ## How it works (no polling)
 
-flexbridge never polls the radio on a timer. The FlexRadio streams its
+flex2mqtt never polls the radio on a timer. The FlexRadio streams its
 real-time data; we just listen:
 
 1. **Discovery** — UDP broadcast to `255.255.255.255:4992`; the radio replies
@@ -62,9 +62,9 @@ so the values below are the stable handles for dashboards/automations.
 | `supply_voltage_a` | hw | supply voltage, pre-fuse | V | 0.1 Hz |
 | `supply_voltage_b` | hw | supply voltage, post-fuse | V | 0.1 Hz |
 
-Meter MQTT topic: `flexbridge/<serial>/meter/<group>/[<slice>/]<object_id>`
+Meter MQTT topic: `flex2mqtt/<serial>/meter/<group>/[<slice>/]<object_id>`
 (not retained). Per-slice meters (`s_meter`, `broadband`) carry the slice
-index, e.g. `flexbridge/<serial>/meter/rx/0/s_meter`.
+index, e.g. `flex2mqtt/<serial>/meter/rx/0/s_meter`.
 
 ### Status object_ids (retained)
 
@@ -89,22 +89,22 @@ Per-slice receiver state (one set per slice `<n>`; `object_id = slice_<n>_<suffi
 | `slice_<n>_filter_high` | filter high edge | Hz |
 | `slice_<n>_active` | slice active flag | 0 / 1 |
 
-`band` is not sent by the radio — flexbridge derives it from the slice
+`band` is not sent by the radio — flex2mqtt derives it from the slice
 frequency, so it covers all bands the radio can tune (160 m through 23 cm
 including 6 m, plus `gen` for general-coverage HF). It only republishes
 when the resolved band changes, not on every kHz of drift within a band.
 
-Status MQTT topic: `flexbridge/<serial>/state/[slice/<n>/]<suffix>`.
+Status MQTT topic: `flex2mqtt/<serial>/state/[slice/<n>/]<suffix>`.
 
 ## MQTT topics
 
 ```
-flexbridge/<serial>/status                         # bridge LWT: online/offline
-flexbridge/<serial>/state/...                      # retained status fields
-flexbridge/<serial>/meter/tx/<object_id>           # live meters (not retained)
-flexbridge/<serial>/meter/audio/<object_id>
-flexbridge/<serial>/meter/rx/<slice>/<object_id>
-flexbridge/<serial>/meter/hw/<object_id>
+flex2mqtt/<serial>/status                         # bridge LWT: online/offline
+flex2mqtt/<serial>/state/...                      # retained status fields
+flex2mqtt/<serial>/meter/tx/<object_id>           # live meters (not retained)
+flex2mqtt/<serial>/meter/audio/<object_id>
+flex2mqtt/<serial>/meter/rx/<slice>/<object_id>
+flex2mqtt/<serial>/meter/hw/<object_id>
 homeassistant/<component>/flexradio-<serial>/<object_id>/config   # discovery
 ```
 
@@ -122,24 +122,24 @@ make test        # unit tests (no network)
 
 ```bash
 # from your dev machine
-scp bin/flexbridge-linux-arm64 pi@raspberrypi:/tmp/flexbridge
-scp -r deploy pi@raspberrypi:/tmp/flexbridge-deploy
+scp bin/flex2mqtt-linux-arm64 pi@raspberrypi:/tmp/flex2mqtt
+scp -r deploy pi@raspberrypi:/tmp/flex2mqtt-deploy
 ssh pi@raspberrypi
 
 # on the Pi
-sudo bash /tmp/flexbridge-deploy/install.sh
-sudoedit /etc/flexbridge/config.toml          # set broker + radio_serial
-sudo systemctl enable --now flexbridge
-journalctl -u flexbridge -f
+sudo bash /tmp/flex2mqtt-deploy/install.sh
+sudoedit /etc/flex2mqtt/config.toml          # set broker + radio_serial
+sudo systemctl enable --now flex2mqtt
+journalctl -u flex2mqtt -f
 ```
 
-The install script creates a dedicated `flexbridge` user and a hardened
+The install script creates a dedicated `flex2mqtt` user and a hardened
 systemd unit (no capabilities, `ProtectSystem=strict`, etc.). The binary
 uses only high ports (>1024), so it runs fully unprivileged.
 
 ## Configure
 
-`/etc/flexbridge/config.toml` (see `deploy/config.example.toml`):
+`/etc/flex2mqtt/config.toml` (see `deploy/config.example.toml`):
 
 ```toml
 radio_host = ""            # empty = UDP autodiscovery
@@ -157,12 +157,12 @@ rx = 1.0
 hw = 10.0
 ```
 
-Secrets can go in `/etc/flexbridge/flexbridge.env` (mode 0600), read by the
-unit's `EnvironmentFile=`: `FLEXBRIDGE_MQTT_PASSWORD=...`.
+Secrets can go in `/etc/flex2mqtt/flex2mqtt.env` (mode 0600), read by the
+unit's `EnvironmentFile=`: `FLEX2MQTT_MQTT_PASSWORD=...`.
 
 ## Home Assistant
 
-Nothing to configure beyond enabling MQTT discovery. On startup flexbridge
+Nothing to configure beyond enabling MQTT discovery. On startup flex2mqtt
 publishes discovery for every entity under one device ("FlexRadio 8400",
 identified by serial), so multiple radios coexist cleanly. Entities:
 

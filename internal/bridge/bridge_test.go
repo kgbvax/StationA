@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"flexbridge/internal/flexradio"
-	"flexbridge/internal/ha"
+	"flex2mqtt/internal/flexradio"
+	"flex2mqtt/internal/ha"
 )
 
 // testLogger records nothing but satisfies Logger.
@@ -23,9 +23,9 @@ func newTestBridge(t *testing.T) (*Bridge, *MemoPublisher) {
 	pub := NewMemoPublisher()
 	cfg := Config{
 		Serial:          "TESTSERIAL",
-		StatePrefix:     "flexbridge",
+		StatePrefix:     "flex2mqtt",
 		DiscoveryPrefix: "homeassistant",
-		AvailTopic:      "flexbridge/status",
+		AvailTopic:      "flex2mqtt/status",
 		Rates: map[flexradio.MeterGroup]time.Duration{
 			flexradio.GroupTX:    500 * time.Millisecond,
 			flexradio.GroupRX:    1000 * time.Millisecond,
@@ -343,11 +343,11 @@ func TestBridge_TunePowerStatus(t *testing.T) {
 	for _, m := range msgs {
 		got[m.Topic] = string(m.Payload)
 	}
-	if !strings.Contains(got["flexbridge/TESTSERIAL/state/tx_power"], "100") {
-		t.Errorf("tx_power = %q, want 100", got["flexbridge/TESTSERIAL/state/tx_power"])
+	if !strings.Contains(got["flex2mqtt/TESTSERIAL/state/tx_power"], "100") {
+		t.Errorf("tx_power = %q, want 100", got["flex2mqtt/TESTSERIAL/state/tx_power"])
 	}
-	if !strings.Contains(got["flexbridge/TESTSERIAL/state/tune_power"], "25") {
-		t.Errorf("tune_power = %q, want 25", got["flexbridge/TESTSERIAL/state/tune_power"])
+	if !strings.Contains(got["flex2mqtt/TESTSERIAL/state/tune_power"], "25") {
+		t.Errorf("tune_power = %q, want 25", got["flex2mqtt/TESTSERIAL/state/tune_power"])
 	}
 }
 

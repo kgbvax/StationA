@@ -1,5 +1,5 @@
-# flexbridge example configuration.
-# Copy to /etc/flexbridge/config.toml and edit. Sensitive values (MQTT
+# flex2mqtt example configuration.
+# Copy to /etc/flex2mqtt/config.toml and edit. Sensitive values (MQTT
 # password) can also be supplied via an EnvironmentFile; see install.sh.
 
 # Radio connection. Leave radio_host empty to use UDP autodiscovery
@@ -11,11 +11,11 @@ radio_udp_port = 4991      # local UDP port for the VITA-49 meter stream
 
 [mqtt]
 broker = "tcp://homeassistant.local:1883"
-client_id = "flexbridge"
-user = ""                  # set here or via FLEXBRIDGE_MQTT_USER
-password = ""              # set here or via FLEXBRIDGE_MQTT_PASSWORD
+client_id = "flex2mqtt"
+user = ""                  # set here or via FLEX2MQTT_MQTT_USER
+password = ""              # set here or via FLEX2MQTT_MQTT_PASSWORD
 discovery_prefix = "homeassistant"  # HA MQTT discovery prefix
-state_prefix = "flexbridge"         # top-level topic prefix for state/meters
+state_prefix = "flex2mqtt"         # top-level topic prefix for state/meters
 
 [log]
 level = "info"             # debug | info | warn | error
@@ -30,11 +30,11 @@ audio = 0.5   # compression, ALC, mic levels (2 Hz)
 rx = 1.0      # S-meter, broadband per slice (1 Hz)
 hw = 10.0     # PA temp, supply rails (0.1 Hz; radio polls these slowly)
 
-# Optional EnvironmentFile overrides (systemd reads /etc/flexbridge/flexbridge.env):
-#   FLEXBRIDGE_MQTT_BROKER
-#   FLEXBRIDGE_MQTT_CLIENT_ID
-#   FLEXBRIDGE_MQTT_USER
-#   FLEXBRIDGE_MQTT_PASSWORD
-#   FLEXBRIDGE_RADIO_HOST
-#   FLEXBRIDGE_RADIO_SERIAL
-#   FLEXBRIDGE_RADIO_UDP_PORT
+# Optional EnvironmentFile overrides (systemd reads /etc/flex2mqtt/flex2mqtt.env):
+#   FLEX2MQTT_MQTT_BROKER
+#   FLEX2MQTT_MQTT_CLIENT_ID
+#   FLEX2MQTT_MQTT_USER
+#   FLEX2MQTT_MQTT_PASSWORD
+#   FLEX2MQTT_RADIO_HOST
+#   FLEX2MQTT_RADIO_SERIAL
+#   FLEX2MQTT_RADIO_UDP_PORT

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"flexbridge/internal/flexradio"
+	"flex2mqtt/internal/flexradio"
 )
 
 func TestMeterEntity_FwdPower(t *testing.T) {
@@ -14,7 +14,7 @@ func TestMeterEntity_FwdPower(t *testing.T) {
 		Group: flexradio.GroupTX,
 	}
 	d := Device{Serial: "1234-5678-8400.12345", Model: "FLEX-8400", Name: "FlexRadio 8400"}
-	cfg, comp := MeterEntity(def, d, "flexbridge/1234/state/tx_fwd_power", "tx_fwd_power", "flexbridge/status")
+	cfg, comp := MeterEntity(def, d, "flex2mqtt/1234/state/tx_fwd_power", "tx_fwd_power", "flex2mqtt/status")
 
 	if comp != ComponentSensor {
 		t.Errorf("comp = %q, want sensor", comp)
@@ -51,7 +51,7 @@ func TestMeterEntity_SWR_NoDeviceClass(t *testing.T) {
 
 func TestStatusEntity_Frequency(t *testing.T) {
 	d := Device{Serial: "S1"}
-	cfg, comp := StatusEntity("Frequency", "slice_0_frequency", "flexbridge/S1/state/slice/0/frequency", "MHz", d, "")
+	cfg, comp := StatusEntity("Frequency", "slice_0_frequency", "flex2mqtt/S1/state/slice/0/frequency", "MHz", d, "")
 	if comp != ComponentSensor {
 		t.Errorf("comp = %q, want sensor", comp)
 	}

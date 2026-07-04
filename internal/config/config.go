@@ -1,6 +1,6 @@
-// Package config holds runtime configuration for flexbridge.
+// Package config holds runtime configuration for flex2mqtt.
 //
-// flexbridge observes a FlexRadio 6000-series radio over the network and
+// flex2mqtt observes a FlexRadio 6000-series radio over the network and
 // mirrors its state to MQTT for Home Assistant. This package defines the
 // configuration shape, defaults and loading (TOML file + flags + env
 // overrides for the [mqtt] section).
@@ -89,9 +89,9 @@ func Defaults() Config {
 		RadioSerial:  "",
 		MQTT: MQTTConfig{
 			Broker:          "tcp://homeassistant.local:1883",
-			ClientID:        "flexbridge",
+			ClientID:        "flex2mqtt",
 			DiscoveryPrefix: "homeassistant",
-			StatePrefix:     "flexbridge",
+			StatePrefix:     "flex2mqtt",
 		},
 		Log: LogConfig{Level: "info"},
 		Rates: RatesConfig{
@@ -103,16 +103,16 @@ func Defaults() Config {
 	}
 }
 
-// Flags describes the command-line flags flexbridge understands.
+// Flags describes the command-line flags flex2mqtt understands.
 type Flags struct {
 	ConfigPath string
 	LogLevel   string
 }
 
-// RegisterFlags wires flexbridge's flags onto fs.
+// RegisterFlags wires flex2mqtt's flags onto fs.
 func RegisterFlags(fs *flag.FlagSet) *Flags {
 	var f Flags
-	fs.StringVar(&f.ConfigPath, "config", "/etc/flexbridge/config.toml", "path to config file")
+	fs.StringVar(&f.ConfigPath, "config", "/etc/flex2mqtt/config.toml", "path to config file")
 	fs.StringVar(&f.LogLevel, "log.level", "", "log level (debug|info|warn|error); overrides config")
 	return &f
 }
@@ -148,34 +148,34 @@ func Load(f *Flags) (Config, error) {
 		cfg.MQTT.DiscoveryPrefix = "homeassistant"
 	}
 	if cfg.MQTT.StatePrefix == "" {
-		cfg.MQTT.StatePrefix = "flexbridge"
+		cfg.MQTT.StatePrefix = "flex2mqtt"
 	}
 
 	return cfg, nil
 }
 
-// applyEnv overlays FLEXBRIDGE_* env vars on top of cfg, used for the
+// applyEnv overlays FLEX2MQTT_* env vars on top of cfg, used for the
 // systemd EnvironmentFile workflow where secrets aren't in the TOML.
 func applyEnv(cfg *Config) {
-	if v := os.Getenv("FLEXBRIDGE_MQTT_BROKER"); v != "" {
+	if v := os.Getenv("FLEX2MQTT_MQTT_BROKER"); v != "" {
 		cfg.MQTT.Broker = v
 	}
-	if v := os.Getenv("FLEXBRIDGE_MQTT_CLIENT_ID"); v != "" {
+	if v := os.Getenv("FLEX2MQTT_MQTT_CLIENT_ID"); v != "" {
 		cfg.MQTT.ClientID = v
 	}
-	if v := os.Getenv("FLEXBRIDGE_MQTT_USER"); v != "" {
+	if v := os.Getenv("FLEX2MQTT_MQTT_USER"); v != "" {
 		cfg.MQTT.User = v
 	}
-	if v := os.Getenv("FLEXBRIDGE_MQTT_PASSWORD"); v != "" {
+	if v := os.Getenv("FLEX2MQTT_MQTT_PASSWORD"); v != "" {
 		cfg.MQTT.Password = v
 	}
-	if v := os.Getenv("FLEXBRIDGE_RADIO_HOST"); v != "" {
+	if v := os.Getenv("FLEX2MQTT_RADIO_HOST"); v != "" {
 		cfg.RadioHost = v
 	}
-	if v := os.Getenv("FLEXBRIDGE_RADIO_SERIAL"); v != "" {
+	if v := os.Getenv("FLEX2MQTT_RADIO_SERIAL"); v != "" {
 		cfg.RadioSerial = v
 	}
-	if v := os.Getenv("FLEXBRIDGE_RADIO_UDP_PORT"); v != "" {
+	if v := os.Getenv("FLEX2MQTT_RADIO_UDP_PORT"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 && n < 65536 {
 			cfg.RadioUDPPort = n
 		}

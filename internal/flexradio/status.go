@@ -21,7 +21,7 @@ import (
 //
 //	S<handle>|<topic> <key=value> <key=value> ...
 //
-// All flexbridge cares about are status (S|) messages and the R| ack to
+// All flex2mqtt cares about are status (S|) messages and the R| ack to
 // the version handshake. This file parses the status payloads into typed
 // events; framing (splitting C|R|S lines) lives in client.go.
 
@@ -130,7 +130,7 @@ func ParseStatusFields(s string) map[string]string {
 	return out
 }
 
-// SliceStatus holds the per-slice fields flexbridge publishes. Populated
+// SliceStatus holds the per-slice fields flex2mqtt publishes. Populated
 // from "slice" status lines.
 type SliceStatus struct {
 	Index      int    // first topic arg (slice list index)
