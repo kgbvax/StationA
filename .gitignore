@@ -1,0 +1,6 @@
+# Project repos live adjacent as subdirectories but are tracked separately.
+# Ignore them here so "git add ." doesn't accidentally include them.
+acombridge/
+flexbridge/
+pelcobridge/
+ubctrl/
