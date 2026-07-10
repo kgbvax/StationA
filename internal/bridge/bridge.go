@@ -193,7 +193,7 @@ func (b *Bridge) PublishMeta() {
 		Capabilities: metaCapabilities{
 			Bands:      acom.BandOptions,
 			MaxPowerW:  1200,
-			BandSource: "cat",
+			BandSource: "rf_sense", // amp auto-bands by sensing the RF drive; no CAT band-data cable (serial adapter)
 			RfSample:   false,
 			KeyInput:   "hardware",
 			AlcOut:     true,

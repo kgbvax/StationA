@@ -78,7 +78,7 @@ Retained JSON, published once per connect cycle (after the serial port opens).
   "capabilities": {
     "bands":       ["160m","80m","40m","30m","20m","17m","15m","12m","10m","6m"],
     "max_power_w": 1200,
-    "band_source": "cat",
+    "band_source": "rf_sense",
     "rf_sample":   false,
     "key_input":   "hardware",
     "alc_out":     true,
@@ -137,16 +137,11 @@ canonical model — `mode`/`keyed`/`fault` are.
 | `location` / `host` | string | From config — deployment facts |
 | `capabilities.bands` | string[] | The amp's own 10 bands (no 60m — the ACOM 1200S has no 60m band) |
 | `capabilities.max_power_w` | int | 1200 |
-| `capabilities.band_source` | string | `cat` — band follows the radio via CAT |
+| `capabilities.band_source` | string | `rf_sense` — the amp auto-bands by sensing the RF drive; this serial adapter has no CAT band-data cable |
 | `capabilities.rf_sample` | bool | `false` — no independent RF sampling |
 | `capabilities.key_input` | string | `hardware` — keyed by a hardware key line, not MQTT |
 | `capabilities.alc_out` | bool | `true` — ALC output to the radio |
 | `capabilities.modes` | string[] | `["operate","standby"]` |
-
-> **Model doc note:** `station-integration-model.md` §7.1 lists this slot as
-> "ACOM 1200S, ethernet". The deployed transport is USB-serial (Prolific), so
-> the bridge publishes `link: "serial"`. Reconciling the model doc is a flagged
-> follow-up, out of scope for this bridge.
 
 ---
 
