@@ -17,6 +17,13 @@ type Controller struct {
 	state State
 }
 
+// freqDeadbandKHz is the minimum frequency delta that is actually sent to the RCU-06.
+// Commands within this band of the current setting are suppressed: the antenna does not
+// need to be told again when it is already tuned within 25 kHz, and re-driving the motors
+// for a sub-25 kHz change just wears them and churns the serial bus. 25 kHz matches the
+// UI nudge step, so a single nudge (exactly 25 kHz) still goes through.
+const freqDeadbandKHz = 25
+
 func NewController(dev transport.Client) *Controller {
 	return &Controller{dev: dev}
 }
@@ -97,6 +104,26 @@ func (c *Controller) SetFrequency(ctx context.Context, frequencyKHz uint16, mode
 	if err != nil {
 		return err
 	}
+	// Deadband: suppress the command when the antenna is already tuned within
+	// freqDeadbandKHz of the requested frequency AND the direction is unchanged. A
+	// direction change at the same frequency must still go through (handled by
+	// SetMode, which bypasses this check); comparing modeByte guards against any
+	// caller that happens to pass a different direction here. When the current
+	// frequency is unknown (0 — before the first Refresh or while the device is
+	// offline) the deadband is skipped so the command always reaches the controller.
+	cur := c.State()
+	curModeByte, _ := protocol.ParseMode(cur.ModeName)
+	if cur.FrequencyKHz != 0 && absDiffU16(frequencyKHz, cur.FrequencyKHz) < freqDeadbandKHz && modeByte == curModeByte {
+		return nil
+	}
+	return c.sendFrequency(ctx, frequencyKHz, modeByte)
+}
+
+// sendFrequency issues the raw RCU-06 change-frequency command (frequency + direction in
+// one packet) and refreshes state. It is the unguarded primitive used by both SetFrequency
+// (which applies the deadband) and SetMode (which must always reach the device to change
+// direction at the current frequency).
+func (c *Controller) sendFrequency(ctx context.Context, frequencyKHz uint16, modeByte byte) error {
 	data := []byte{byte(frequencyKHz & 0xFF), byte(frequencyKHz >> 8), modeByte}
 	pkt, err := c.dev.Exchange(ctx, protocol.CmdChangeFrequency, data, 5*time.Second)
 	if err != nil {
@@ -113,6 +140,10 @@ func (c *Controller) SetFrequency(ctx context.Context, frequencyKHz uint16, mode
 }
 
 func (c *Controller) SetMode(ctx context.Context, mode string) error {
+	modeByte, err := protocol.ParseMode(mode)
+	if err != nil {
+		return err
+	}
 	state := c.State()
 	if state.FrequencyKHz == 0 {
 		if err := c.Refresh(ctx); err != nil {
@@ -123,7 +154,9 @@ func (c *Controller) SetMode(ctx context.Context, mode string) error {
 			return fmt.Errorf("current frequency unknown")
 		}
 	}
-	return c.SetFrequency(ctx, state.FrequencyKHz, mode)
+	// Direction change at the current frequency: bypass the SetFrequency deadband so
+	// the direction byte always reaches the controller.
+	return c.sendFrequency(ctx, state.FrequencyKHz, modeByte)
 }
 
 func (c *Controller) setOffline(err error) {
@@ -132,6 +165,14 @@ func (c *Controller) setOffline(err error) {
 	state.LastError = err.Error()
 	state.UpdatedAt = time.Now()
 	c.setState(state)
+}
+
+// absDiffU16 returns the absolute difference between two uint16 values without overflow.
+func absDiffU16(a, b uint16) uint16 {
+	if a > b {
+		return a - b
+	}
+	return b - a
 }
 
 func bandName(freqKHz uint16, bandIndex byte) string {
