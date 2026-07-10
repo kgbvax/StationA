@@ -13,6 +13,13 @@
 location = "bauwagen"     # building
 host     = "shari"        # compute node this service runs on
 
+# --- Home Assistant area ------------------------------------------------------
+# Every discovered device is suggested into this HA area when the slot's own
+# expose.device.area does not name one. Maps to HA's device-level `suggested_area`
+# (a hint applied at device creation; HA will not override a manual UI assignment).
+# Default "Bauwagen"; set to "" to emit no suggested_area at all.
+area = "Bauwagen"
+
 # --- MQTT -------------------------------------------------------------------
 [mqtt]
 broker           = "tcp://192.168.1.50:1883"

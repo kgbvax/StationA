@@ -108,10 +108,19 @@ From `expose.device`, falling back to `meta.device`:
 | `model` | `expose.device.model`, else `meta.device.model` |
 | `manufacturer` | `expose.device.manufacturer` |
 | `sw_version` | `expose.device.sw_version`, else `meta.device.firmware` |
-| `suggested_area` | `expose.device.area` |
+| `suggested_area` | `expose.device.area`, else the deployment-wide default (see below) |
+
+`suggested_area` is HA's device-level area hint: it places the device (and all its
+entities) into an HA area when the device is first created. HA will **not** override a
+manual area assignment made in the UI, so this is a suggestion, not a hard setting. The
+value is `expose.device.area` when the slot names one; otherwise hadiscovery fills in a
+**deployment-wide default area** so every discovered device lands in a sensible place
+without each bridge having to set it. The default is configured by `area` in
+`config.toml` (default `"Bauwagen"`); set it to `""` to emit no `suggested_area` at all.
 
 Logic slots may omit `expose.device` entirely; they then get a device named
-`<role> <addr>` with just the identifier.
+`<role> <addr>` with just the identifier — and the deployment default area, since they
+name no area of their own.
 
 ### 2.5 command rendering
 

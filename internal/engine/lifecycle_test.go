@@ -2,6 +2,7 @@ package engine
 
 import (
 	"bytes"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -52,7 +53,7 @@ func metaFor(slot string, fields []expose.Field) ([]byte, string) {
 // TestOnMetaPublishes runs a slot meta through the engine and asserts retained discovery
 // config messages land on the right topics.
 func TestOnMetaPublishes(t *testing.T) {
-	eng := NewEngine("homeassistant")
+	eng := NewEngine("homeassistant", "")
 	pub := &fakePub{}
 	eng.SetPub(pub)
 
@@ -80,7 +81,7 @@ func TestOnMetaPublishes(t *testing.T) {
 // TestOnMetaIdempotent asserts a byte-identical re-delivery of a retained /meta does not
 // re-publish (the engine's idempotency guard).
 func TestOnMetaIdempotent(t *testing.T) {
-	eng := NewEngine("homeassistant")
+	eng := NewEngine("homeassistant", "")
 	pub := &fakePub{}
 	eng.SetPub(pub)
 
@@ -96,7 +97,7 @@ func TestOnMetaIdempotent(t *testing.T) {
 // TestOnMetaChangedRepublishes asserts a changed meta (different field set) republishes
 // the new config and clears the dropped entity's topic.
 func TestOnMetaChangedRepublishes(t *testing.T) {
-	eng := NewEngine("homeassistant")
+	eng := NewEngine("homeassistant", "")
 	pub := &fakePub{}
 	eng.SetPub(pub)
 
@@ -133,7 +134,7 @@ func TestOnMetaChangedRepublishes(t *testing.T) {
 
 // TestOnHAStatusRepublish asserts an "online" HA birth re-publishes all known discovery.
 func TestOnHAStatusRepublish(t *testing.T) {
-	eng := NewEngine("homeassistant")
+	eng := NewEngine("homeassistant", "")
 	pub := &fakePub{}
 	eng.SetPub(pub)
 
@@ -158,7 +159,7 @@ func TestOnHAStatusRepublish(t *testing.T) {
 // TestOnMetaCleared asserts a zero-length meta payload clears that slot's discovery topics
 // and drops the slot from known.
 func TestOnMetaCleared(t *testing.T) {
-	eng := NewEngine("homeassistant")
+	eng := NewEngine("homeassistant", "")
 	pub := &fakePub{}
 	eng.SetPub(pub)
 
@@ -186,7 +187,7 @@ func TestOnMetaCleared(t *testing.T) {
 
 // TestOnMetaClearedUnknownSlot asserts clearing a slot we never saw is a silent no-op.
 func TestOnMetaClearedUnknownSlot(t *testing.T) {
-	eng := NewEngine("homeassistant")
+	eng := NewEngine("homeassistant", "")
 	pub := &fakePub{}
 	eng.SetPub(pub)
 	eng.OnMeta("muehle/hf/pa/meta", []byte{})
@@ -198,7 +199,7 @@ func TestOnMetaClearedUnknownSlot(t *testing.T) {
 // TestOnMetaNoExposeDiagnostic asserts a slot with no expose block gets exactly one
 // diagnostic binary_sensor.
 func TestOnMetaNoExposeDiagnostic(t *testing.T) {
-	eng := NewEngine("homeassistant")
+	eng := NewEngine("homeassistant", "")
 	pub := &fakePub{}
 	eng.SetPub(pub)
 
@@ -217,12 +218,40 @@ func TestOnMetaNoExposeDiagnostic(t *testing.T) {
 	}
 }
 
+// TestOnMetaDefaultArea asserts the engine's deployment-wide area reaches the published
+// discovery payload as `suggested_area` for a slot that does not name its own. A no-expose
+// slot (diagnostic) has no device.area, so the default fills in.
+func TestOnMetaDefaultArea(t *testing.T) {
+	eng := NewEngine("homeassistant", "Bauwagen")
+	pub := &fakePub{}
+	eng.SetPub(pub)
+
+	payload, topic := metaFor("pa", nil) // no expose -> diagnostic, no device.area
+	eng.OnMeta(topic, payload)
+
+	cfgs := pub.callsTo("/config")
+	if len(cfgs) != 1 {
+		t.Fatalf("config publishes = %d, want 1", len(cfgs))
+	}
+	var p struct {
+		Device struct {
+			SuggestedArea string `json:"suggested_area"`
+		} `json:"device"`
+	}
+	if err := json.Unmarshal(cfgs[0].payload, &p); err != nil {
+		t.Fatalf("unmarshal diagnostic: %v", err)
+	}
+	if p.Device.SuggestedArea != "Bauwagen" {
+		t.Errorf("device.suggested_area = %q, want \"Bauwagen\"", p.Device.SuggestedArea)
+	}
+}
+
 // TestOnMetaNoExposeIdempotent asserts a byte-identical re-delivery of a no-expose /meta
 // is a no-op: the diagnostic is published once on first sight and never re-published. A
 // slot that republishes its /meta on a heartbeat must not churn the bus (Diagnostic is
 // deterministic, so the idempotency guard short-circuits) nor spam the log.
 func TestOnMetaNoExposeIdempotent(t *testing.T) {
-	eng := NewEngine("homeassistant")
+	eng := NewEngine("homeassistant", "")
 	pub := &fakePub{}
 	eng.SetPub(pub)
 
@@ -238,7 +267,7 @@ func TestOnMetaNoExposeIdempotent(t *testing.T) {
 // TestOnMetaParseErrorSkipped asserts a malformed meta is logged+skipped, not stored, and
 // clears nothing.
 func TestOnMetaParseErrorSkipped(t *testing.T) {
-	eng := NewEngine("homeassistant")
+	eng := NewEngine("homeassistant", "")
 	pub := &fakePub{}
 	eng.SetPub(pub)
 	eng.OnMeta("muehle/hf/radio/meta", []byte("{not json"))
@@ -253,7 +282,7 @@ func TestOnMetaParseErrorSkipped(t *testing.T) {
 // TestNoopPubUntilSetPub asserts the engine does not panic before SetPub is called and
 // silently drops publishes (used in the brief window before the bus client is wired).
 func TestNoopPubUntilSetPub(t *testing.T) {
-	eng := NewEngine("homeassistant")
+	eng := NewEngine("homeassistant", "")
 	// No SetPub — should not panic.
 	payload, topic := metaFor("radio", []expose.Field{{Key: "freq_hz", Type: "number"}})
 	eng.OnMeta(topic, payload)
@@ -263,7 +292,7 @@ func TestNoopPubUntilSetPub(t *testing.T) {
 
 // TestSetPubNilRevertsToNoop asserts SetPub(nil) is safe and reverts to the noop publisher.
 func TestSetPubNilRevertsToNoop(t *testing.T) {
-	eng := NewEngine("homeassistant")
+	eng := NewEngine("homeassistant", "")
 	pub := &fakePub{}
 	eng.SetPub(pub)
 	eng.SetPub(nil)

@@ -29,6 +29,7 @@
 #   DISCOVERY_PREFIX   mqtt.discovery_prefix value (default: homeassistant)
 #   LOCATION           location            value (default: bauwagen)  [published in /meta]
 #   HOST_NAME          host                value (default: shari)     [published in /meta]
+#   HA_AREA             area               value (default: Bauwagen)  [HA suggested_area]
 #
 # Configuration (including the MQTT password) lives in a single 0600 TOML file on the
 # target, NOT in the systemd unit or process command line. The file is SEEDED ONCE on
@@ -58,6 +59,9 @@ MQTT_PASSWORD="${MQTT_PASSWORD:-}"
 DISCOVERY_PREFIX="${DISCOVERY_PREFIX:-homeassistant}"
 LOCATION="${LOCATION:-bauwagen}"
 HOST_NAME="${HOST_NAME:-shari}"
+# HA area every discovered device is suggested into when its own expose.device.area is unset.
+# Maps to HA's device-level `suggested_area`. Default "Bauwagen"; set to "" to suppress.
+HA_AREA="${HA_AREA:-Bauwagen}"
 
 # Allow "user@host" in SSH_HOST; otherwise prepend SSH_USER.
 if [[ "$SSH_HOST" == *"@"* ]]; then
@@ -90,6 +94,9 @@ trap 'rm -f "$SEED_CONFIG" "${UNIT_FILE:-}"' EXIT
   echo "# hadiscovery is a logic slot: role \"discovery\", link \"none\", no device."
   echo "location = \"$(toml_escape "$LOCATION")\""
   echo "host     = \"$(toml_escape "$HOST_NAME")\""
+  echo "# HA area suggested for every discovered device whose expose.device.area is unset."
+  echo "# Set to \"\" to emit no suggested_area. Default \"Bauwagen\"."
+  echo "area     = \"$(toml_escape "$HA_AREA")\""
   echo ""
   echo "[mqtt]"
   echo "broker           = \"$(toml_escape "$MQTT_BROKER")\""

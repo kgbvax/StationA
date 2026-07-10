@@ -80,14 +80,16 @@ type discoveryPayload struct {
 }
 
 // Render maps a slot's parsed meta (with its expose block) to the HA discovery entities for
-// that slot. If the slot has no expose block, it returns nil (the engine decides what to do
-// for undiscoverable slots — typically one diagnostic sensor).
-func Render(prefix string, m expose.SlotMeta) []Entity {
+// that slot. area is the deployment-wide HA area used as `suggested_area` when the slot's
+// own expose.device.area does not name one; pass "" to emit no suggested_area fallback. If
+// the slot has no expose block, it returns nil (the engine decides what to do for
+// undiscoverable slots — typically one diagnostic sensor).
+func Render(prefix, area string, m expose.SlotMeta) []Entity {
 	if m.Expose == nil {
 		return nil
 	}
 	nodeID := NodeID(m)
-	dev := deviceBlock(m, nodeID)
+	dev := deviceBlock(m, nodeID, area)
 	avail := []availability{{
 		Topic:               m.Addr + "/status",
 		PayloadAvailable:    "online",
@@ -223,8 +225,10 @@ func actionEntity(a expose.Action, cmdTopic, nodeID string, dev devicePayload, a
 
 // deviceBlock builds the HA device block for a slot: identifiers are the nodeID (one device
 // per slot); name/model/manufacturer/sw_version/area come from expose.device, falling back
-// to meta.device.
-func deviceBlock(m expose.SlotMeta, nodeID string) devicePayload {
+// to meta.device. The HA `suggested_area` is expose.device.area, or — when the slot does
+// not name one — the deployment-wide default area (so every discovered device lands in the
+// configured area unless a slot opts out). area == "" suppresses the fallback.
+func deviceBlock(m expose.SlotMeta, nodeID, area string) devicePayload {
 	d := devicePayload{Identifiers: []string{nodeID}}
 	var name, model, sw string
 	if m.Expose != nil && m.Expose.Device != nil {
@@ -232,6 +236,9 @@ func deviceBlock(m expose.SlotMeta, nodeID string) devicePayload {
 		name, model, sw = ed.Name, ed.Model, ed.SWVersion
 		d.Manufacturer = ed.Manufacturer
 		d.SuggestedArea = ed.Area
+	}
+	if d.SuggestedArea == "" {
+		d.SuggestedArea = area
 	}
 	if model == "" {
 		model = m.Device.Model

@@ -22,19 +22,21 @@ type Pub interface {
 // Engine tracks the slots it has rendered discovery for and drives (re)publish/clear.
 type Engine struct {
 	prefix string
+	area   string
 	pub    Pub
 
 	mu    sync.Mutex
 	known map[string][]ha.Entity // key = slot addr
 }
 
-// NewEngine returns an engine that publishes discovery under prefix. It starts with a
-// noop publisher; call SetPub once the bus client exists so renders reach the broker.
-func NewEngine(prefix string) *Engine {
+// NewEngine returns an engine that publishes discovery under prefix and suggests area as
+// the HA `suggested_area` for any device whose own expose.device.area is unset. It starts
+// with a noop publisher; call SetPub once the bus client exists so renders reach the broker.
+func NewEngine(prefix, area string) *Engine {
 	if prefix == "" {
 		prefix = "homeassistant"
 	}
-	return &Engine{prefix: prefix, pub: noopPub{}, known: map[string][]ha.Entity{}}
+	return &Engine{prefix: prefix, area: area, pub: noopPub{}, known: map[string][]ha.Entity{}}
 }
 
 // SetPub replaces the publisher. Called once after the bus client is constructed but
@@ -76,10 +78,10 @@ func (e *Engine) OnMeta(metaTopic string, payload []byte) {
 		log.Printf("[hadiscovery] skip meta %s: %v", metaTopic, err)
 		return
 	}
-	ents := ha.Render(e.prefix, m)
+	ents := ha.Render(e.prefix, e.area, m)
 	noExpose := len(ents) == 0
 	if noExpose {
-		ents = []ha.Entity{ha.Diagnostic(e.prefix, m)}
+		ents = []ha.Entity{ha.Diagnostic(e.prefix, e.area, m)}
 	}
 
 	e.mu.Lock()

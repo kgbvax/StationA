@@ -76,7 +76,7 @@ func TestSanitize(t *testing.T) {
 // TestNumberReadOnly renders a read-only number field (sensor) and asserts the unit-derived
 // device_class, state_class, value_template, state_topic, and the shared envelope.
 func TestNumberReadOnly(t *testing.T) {
-	ents := Render("homeassistant", metaFixture([]expose.Field{{
+	ents := Render("homeassistant", "", metaFixture([]expose.Field{{
 		Key: "freq_hz", Name: "Frequency", Type: "number", Unit: "Hz",
 		Class: "frequency", StateClass: "measurement",
 	}}, nil, map[string]any{"bands": []string{"40m"}}))
@@ -115,7 +115,7 @@ func TestNumberReadOnly(t *testing.T) {
 // TestNumberWritable renders a writable number (HA number component) with min/max/step and
 // a command_template rendered from the command descriptor.
 func TestNumberWritable(t *testing.T) {
-	ents := Render("homeassistant", metaFixture([]expose.Field{{
+	ents := Render("homeassistant", "", metaFixture([]expose.Field{{
 		Key: "freq_hz", Name: "Frequency", Type: "number", Unit: "Hz", Class: "frequency",
 		Writable: true, Min: 1800000, Max: 54000000, Step: 1000,
 		Command: &expose.Command{Action: "frequency", ValueKey: "freq_hz", ValueType: "int"},
@@ -148,7 +148,7 @@ func TestNumberWritable(t *testing.T) {
 
 // TestEnumReadOnly renders a read-only enum as a sensor.
 func TestEnumReadOnly(t *testing.T) {
-	ents := Render("homeassistant", metaFixture([]expose.Field{{
+	ents := Render("homeassistant", "", metaFixture([]expose.Field{{
 		Key: "band", Name: "Band", Type: "enum", OptionsRef: "bands",
 	}}, nil, map[string]any{"bands": []string{"40m", "20m"}}))
 	if len(ents) != 1 || ents[0].Component != "sensor" {
@@ -163,7 +163,7 @@ func TestEnumReadOnly(t *testing.T) {
 // TestEnumWritable renders a writable enum as a select, resolving options_ref against the
 // capabilities map, and rendering the command_template.
 func TestEnumWritable(t *testing.T) {
-	ents := Render("homeassistant", metaFixture([]expose.Field{{
+	ents := Render("homeassistant", "", metaFixture([]expose.Field{{
 		Key: "mode", Name: "Mode", Type: "enum", OptionsRef: "modes", Writable: true,
 		Command: &expose.Command{Action: "mode", ValueKey: "value", ValueType: "string"},
 	}}, nil, map[string]any{"modes": []string{"cw", "usb", "lsb"}}))
@@ -191,7 +191,7 @@ func TestEnumWritable(t *testing.T) {
 
 // TestEnumWritableInlineOptions uses inline options (no options_ref).
 func TestEnumWritableInlineOptions(t *testing.T) {
-	ents := Render("homeassistant", metaFixture([]expose.Field{{
+	ents := Render("homeassistant", "", metaFixture([]expose.Field{{
 		Key: "selected", Name: "Selected", Type: "enum",
 		Options: []string{"off", "p1", "p2"}, Writable: true,
 		Command: &expose.Command{ValueKey: "select", ValueType: "string"},
@@ -212,7 +212,7 @@ func TestEnumWritableInlineOptions(t *testing.T) {
 // TestEnumWritableMissingCommand is unrenderable (writable enum with no command) and must
 // be skipped (empty component), not emitted as a broken select.
 func TestEnumWritableMissingCommand(t *testing.T) {
-	ents := Render("homeassistant", metaFixture([]expose.Field{{
+	ents := Render("homeassistant", "", metaFixture([]expose.Field{{
 		Key: "mode", Name: "Mode", Type: "enum", OptionsRef: "modes", Writable: true,
 	}}, nil, map[string]any{"modes": []string{"cw"}}))
 	if len(ents) != 0 {
@@ -226,7 +226,7 @@ func TestEnumWritableMissingCommand(t *testing.T) {
 // (CONF_OPTIONS is vol.Required in the mqtt select discovery schema).
 func TestEnumWritableEmptyOptions(t *testing.T) {
 	// options_ref "modes" but capabilities has no "modes" key.
-	ents := Render("homeassistant", metaFixture([]expose.Field{{
+	ents := Render("homeassistant", "", metaFixture([]expose.Field{{
 		Key: "mode", Name: "Mode", Type: "enum", OptionsRef: "modes", Writable: true,
 		Command: &expose.Command{Action: "mode", ValueKey: "value", ValueType: "string"},
 	}}, nil, map[string]any{"bands": []string{"40m"}}))
@@ -238,7 +238,7 @@ func TestEnumWritableEmptyOptions(t *testing.T) {
 // TestEnumWritableEmptyOptionsList covers the empty-list case: options_ref resolves to an
 // empty slice (present but empty capabilities key). Still no valid select.
 func TestEnumWritableEmptyOptionsList(t *testing.T) {
-	ents := Render("homeassistant", metaFixture([]expose.Field{{
+	ents := Render("homeassistant", "", metaFixture([]expose.Field{{
 		Key: "mode", Name: "Mode", Type: "enum", OptionsRef: "modes", Writable: true,
 		Command: &expose.Command{Action: "mode", ValueKey: "value", ValueType: "string"},
 	}}, nil, map[string]any{"modes": []string{}}))
@@ -250,7 +250,7 @@ func TestEnumWritableEmptyOptionsList(t *testing.T) {
 // TestBooleanDefault renders a boolean whose state holds a real bool (no on/off payloads):
 // value_template maps truthiness to ON/OFF.
 func TestBooleanDefault(t *testing.T) {
-	ents := Render("homeassistant", metaFixture([]expose.Field{{
+	ents := Render("homeassistant", "", metaFixture([]expose.Field{{
 		Key: "tuning", Name: "Tuning", Type: "boolean",
 	}}, nil, nil))
 	if len(ents) != 1 || ents[0].Component != "binary_sensor" {
@@ -268,7 +268,7 @@ func TestBooleanDefault(t *testing.T) {
 // TestBooleanCustomPayloads renders a boolean whose state holds string payloads (tx/rx):
 // value_template passes the value through, payload_on/off are the state strings.
 func TestBooleanCustomPayloads(t *testing.T) {
-	ents := Render("homeassistant", metaFixture([]expose.Field{{
+	ents := Render("homeassistant", "", metaFixture([]expose.Field{{
 		Key: "tx", Name: "Transmitting", Type: "boolean", On: "tx", Off: "rx",
 	}}, nil, nil))
 	if len(ents) != 1 || ents[0].Component != "binary_sensor" {
@@ -286,7 +286,7 @@ func TestBooleanCustomPayloads(t *testing.T) {
 // TestAction renders a one-shot button: payload_press is the static command JSON, no
 // value_template, command_topic set.
 func TestAction(t *testing.T) {
-	ents := Render("homeassistant", metaFixture(nil, []expose.Action{{
+	ents := Render("homeassistant", "", metaFixture(nil, []expose.Action{{
 		Key: "retract", Name: "Retract", Command: &expose.Command{Action: "retract"},
 	}}, nil))
 	if len(ents) != 1 || ents[0].Component != "button" {
@@ -310,7 +310,7 @@ func TestAction(t *testing.T) {
 
 // TestNilExpose returns nil (engine handles the no-expose diagnostic).
 func TestNilExpose(t *testing.T) {
-	ents := Render("homeassistant", expose.SlotMeta{Addr: "muehle/hf/radio", Role: "radio"})
+	ents := Render("homeassistant", "", expose.SlotMeta{Addr: "muehle/hf/radio", Role: "radio"})
 	if ents != nil {
 		t.Fatalf("got %+v, want nil for no expose", ents)
 	}
@@ -341,7 +341,7 @@ func TestDeviceBlockFallback(t *testing.T) {
 	t.Run("expose_device_wins", func(t *testing.T) {
 		m := metaFixture(nil, nil, nil)
 		m.Device = expose.MetaDevice{Model: "OtherModel", Firmware: "1.0"}
-		d := deviceBlock(m, "muehle-hf-radio")
+		d := deviceBlock(m, "muehle-hf-radio", "")
 		if d.Model != "FLEX-8400" {
 			t.Errorf("model = %q, want expose.device FLEX-8400", d.Model)
 		}
@@ -351,12 +351,71 @@ func TestDeviceBlockFallback(t *testing.T) {
 	})
 	t.Run("logic_slot", func(t *testing.T) {
 		m := expose.SlotMeta{Addr: "muehle/hf/discovery", Role: "discovery"}
-		d := deviceBlock(m, "muehle-hf-discovery")
+		d := deviceBlock(m, "muehle-hf-discovery", "")
 		if d.Name != "discovery muehle/hf/discovery" {
 			t.Errorf("name = %q", d.Name)
 		}
 		if len(d.Identifiers) != 1 || d.Identifiers[0] != "muehle-hf-discovery" {
 			t.Errorf("identifiers = %v", d.Identifiers)
+		}
+	})
+}
+
+// TestDeviceBlockArea covers the HA `suggested_area` fallback: a slot's own expose.device.area
+// wins; when it is unset, the deployment-wide default area fills in; an empty default
+// suppresses the field entirely (it is omitempty, so HA never sees it).
+func TestDeviceBlockArea(t *testing.T) {
+	t.Run("per_slot_area_wins", func(t *testing.T) {
+		m := metaFixture(nil, nil, nil) // expose.device.area == "Radio shack"
+		d := deviceBlock(m, "muehle-hf-radio", "Bauwagen")
+		if d.SuggestedArea != "Radio shack" {
+			t.Errorf("suggested_area = %q, want per-slot \"Radio shack\"", d.SuggestedArea)
+		}
+	})
+	t.Run("default_fills_when_unset", func(t *testing.T) {
+		m := metaFixture(nil, nil, nil)
+		m.Expose.Device.Area = "" // slot names no area
+		d := deviceBlock(m, "muehle-hf-radio", "Bauwagen")
+		if d.SuggestedArea != "Bauwagen" {
+			t.Errorf("suggested_area = %q, want deployment default \"Bauwagen\"", d.SuggestedArea)
+		}
+	})
+	t.Run("logic_slot_gets_default", func(t *testing.T) {
+		m := expose.SlotMeta{Addr: "muehle/hf/discovery", Role: "discovery"} // no device
+		d := deviceBlock(m, "muehle-hf-discovery", "Bauwagen")
+		if d.SuggestedArea != "Bauwagen" {
+			t.Errorf("suggested_area = %q, want \"Bauwagen\" for a deviceless slot", d.SuggestedArea)
+		}
+	})
+	t.Run("empty_default_suppresses", func(t *testing.T) {
+		m := metaFixture(nil, nil, nil)
+		m.Expose.Device.Area = ""
+		d := deviceBlock(m, "muehle-hf-radio", "")
+		if d.SuggestedArea != "" {
+			t.Errorf("suggested_area = %q, want empty (omitempty -> omitted)", d.SuggestedArea)
+		}
+	})
+}
+
+// TestRenderAreaOnWire asserts the deployment default area reaches the discovery payload as
+// `suggested_area` for a slot that does not name its own, and that a per-slot area overrides it.
+func TestRenderAreaOnWire(t *testing.T) {
+	t.Run("default", func(t *testing.T) {
+		m := metaFixture([]expose.Field{{Key: "freq_hz", Name: "Frequency", Type: "number"}}, nil, nil)
+		m.Expose.Device.Area = "" // no per-slot area -> default applies
+		ents := Render("homeassistant", "Bauwagen", m)
+		p := decode(t, ents[0])
+		if p.Device.SuggestedArea != "Bauwagen" {
+			t.Errorf("device.suggested_area = %q, want \"Bauwagen\"", p.Device.SuggestedArea)
+		}
+	})
+	t.Run("per_slot_override", func(t *testing.T) {
+		m := metaFixture([]expose.Field{{Key: "freq_hz", Name: "Frequency", Type: "number"}}, nil, nil)
+		// metaFixture sets area "Radio shack"; default must not override it.
+		ents := Render("homeassistant", "Bauwagen", m)
+		p := decode(t, ents[0])
+		if p.Device.SuggestedArea != "Radio shack" {
+			t.Errorf("device.suggested_area = %q, want per-slot \"Radio shack\"", p.Device.SuggestedArea)
 		}
 	})
 }
@@ -407,7 +466,7 @@ func TestValuePlaceholder(t *testing.T) {
 // TestRenderFieldOrder verifies fields render before actions, in declared order (the engine
 // relies on deterministic order for idempotent byte comparison).
 func TestRenderFieldOrder(t *testing.T) {
-	ents := Render("homeassistant", metaFixture(
+	ents := Render("homeassistant", "", metaFixture(
 		[]expose.Field{
 			{Key: "freq_hz", Name: "Frequency", Type: "number", Unit: "Hz"},
 			{Key: "tx", Name: "TX", Type: "boolean"},
@@ -428,7 +487,7 @@ func TestRenderFieldOrder(t *testing.T) {
 
 // TestStringField renders a plain string field as a sensor with no unit/class.
 func TestStringField(t *testing.T) {
-	ents := Render("homeassistant", metaFixture([]expose.Field{{
+	ents := Render("homeassistant", "", metaFixture([]expose.Field{{
 		Key: "target", Name: "Target", Type: "string",
 	}}, nil, nil))
 	if len(ents) != 1 || ents[0].Component != "sensor" {

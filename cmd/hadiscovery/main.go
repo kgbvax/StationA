@@ -41,7 +41,7 @@ func main() {
 		log.Fatal("no MQTT broker configured (set [mqtt].broker or -broker)")
 	}
 
-	eng := engine.NewEngine(cfg.MQTT.DiscoveryPrefix)
+	eng := engine.NewEngine(cfg.MQTT.DiscoveryPrefix, cfg.Area)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -52,8 +52,8 @@ func main() {
 	}
 	defer client.Close()
 
-	log.Printf("running; slot=%s/%s/%s filter=%s prefix=%s",
-		cfg.MQTT.Site, cfg.MQTT.Station, cfg.MQTT.Slot, cfg.MQTT.MetaFilter, cfg.MQTT.DiscoveryPrefix)
+	log.Printf("running; slot=%s/%s/%s filter=%s prefix=%s area=%s",
+		cfg.MQTT.Site, cfg.MQTT.Station, cfg.MQTT.Slot, cfg.MQTT.MetaFilter, cfg.MQTT.DiscoveryPrefix, cfg.Area)
 	<-ctx.Done()
 	log.Print("shutting down")
 }

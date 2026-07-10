@@ -35,6 +35,12 @@ type Config struct {
 	Location string `toml:"location"`
 	Host     string `toml:"host"`
 
+	// Area is the Home Assistant area every discovered device is suggested into when the
+	// slot's own expose.device.area does not name one. It maps to HA's device-level
+	// `suggested_area` (a hint applied at device creation; HA will not override a manual UI
+	// assignment). Default "Bauwagen"; set to "" to emit no suggested_area at all.
+	Area string `toml:"area"`
+
 	MQTT MQTT `toml:"mqtt"`
 }
 
@@ -42,6 +48,7 @@ type Config struct {
 // must supply them via the config file); slot defaults to "discovery".
 func Default() Config {
 	return Config{
+		Area: "Bauwagen",
 		MQTT: MQTT{
 			Slot:            "discovery",
 			DiscoveryPrefix: "homeassistant",

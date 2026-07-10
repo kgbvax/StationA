@@ -51,7 +51,7 @@ func (b *blockingPub) Publish(string, byte, bool, []byte) error {
 // returns immediately and the deferred publish later runs on the worker goroutine.
 func TestOnMetaDefersEngineWork(t *testing.T) {
 	pub := &blockingPub{release: make(chan struct{}), reached: make(chan struct{})}
-	eng := engine.NewEngine("homeassistant")
+	eng := engine.NewEngine("homeassistant", "")
 	eng.SetPub(pub)
 
 	c := &Client{
@@ -108,7 +108,7 @@ func TestOnMetaDefersEngineWork(t *testing.T) {
 // promptly and never blocks the caller even with a blocking publisher wired up.)
 func TestOnHAStatusDefersEngineWork(t *testing.T) {
 	pub := &blockingPub{release: make(chan struct{}), reached: make(chan struct{})}
-	eng := engine.NewEngine("homeassistant")
+	eng := engine.NewEngine("homeassistant", "")
 	eng.SetPub(pub)
 
 	c := &Client{
