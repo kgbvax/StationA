@@ -1,0 +1,17 @@
+# build artifacts
+/dist/
+/acombridge
+/acom_mon
+
+# editor swap files
+*.swp
+*.swo
+
+# macOS
+.DS_Store
+
+# Claude Code local session state
+.claude/
+
+# protocol reference (not for the repo)
+docs/*.pdf
