@@ -1,0 +1,35 @@
+# hadiscovery — example configuration
+#
+# hadiscovery is the central Home Assistant discovery consumer (integration model §3.1,
+# §9). It subscribes to slot /meta announcements and renders HA discovery from each
+# slot's consumer-neutral `expose` block. It is a passive consumer: no device, no /cmd.
+#
+# On the target this lives at /etc/hadiscovery/config.toml (0600, owned by the service
+# user); deploy.sh seeds it once. See ../docs/conventions/config-and-secrets.md.
+
+# --- Deployment identity ------------------------------------------------------
+# Facts about this deployment, published in /meta (integration model §3). Required.
+# hadiscovery is a logic slot: role "discovery", link "none", no device block.
+location = "bauwagen"     # building
+host     = "shari"        # compute node this service runs on
+
+# --- MQTT -------------------------------------------------------------------
+[mqtt]
+broker           = "tcp://192.168.1.50:1883"
+# client_id defaults to "<site>-<station>-<slot>" (model §8); set only to override.
+site             = "muehle"
+station          = "hf"
+slot             = "discovery"
+user             = "hf"
+password         = ""            # set on the device; never on the command line
+
+# --- HA discovery -----------------------------------------------------------
+# discovery_prefix is the root of the HA discovery tree. HA's default is "homeassistant";
+# change only if your HA mqtt integration is configured with a different discovery prefix.
+discovery_prefix = "homeassistant"
+
+# meta_filter is the MQTT subscription that scopes which slots are discovered. It defaults
+# to "<site>/+/+/meta" — i.e. every slot under the configured site. The trailing "/meta"
+# is required (hadiscovery parses the address from the meta topic). Narrow it only to
+# exclude parts of the bus from discovery.
+# meta_filter = "muehle/+/+/meta"
