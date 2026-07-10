@@ -216,6 +216,12 @@ RemoveIPC=true
 CapabilityBoundingSet=
 AmbientCapabilities=
 ReadWritePaths=/var/lib/${SERVICE_NAME}
+# Resource ceilings. shari is the single shared host running every station
+# service; a single leaky/goroutine-spawning bridge with no limit could OOM the
+# whole Pi and take the entire station down. 256M is generous for this small
+# static binary (Go runtime + paho + serial); 64 tasks covers its few goroutines.
+MemoryMax=256M
+TasksMax=64
 # Grant access to serial / USB-serial character devices under the sandbox.
 DeviceAllow=char-ttyUSB rw
 DeviceAllow=char-ttyACM rw

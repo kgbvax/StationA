@@ -6,6 +6,7 @@ package bridge
 
 import (
 	"encoding/json"
+	"math"
 	"sync"
 	"time"
 
@@ -248,7 +249,7 @@ func (b *Bridge) HandleTelemetry(obs acom.Observation) {
 		Keyed:        acom.CanonicalKeyed(obs.ModeRaw),
 		FwdPowerW:    obs.ForwardPower,
 		RflPowerW:    obs.ReflectedPower,
-		TempC:        obs.Temperature,
+		TempC:        roundTempC(obs.Temperature),
 		SWR:          obs.SWR,
 		Fault:        acom.CanonicalFault(obs.ErrByte, obs.ErrMsg),
 		PaState:      obs.ModeRaw,
@@ -259,6 +260,12 @@ func (b *Bridge) HandleTelemetry(obs acom.Observation) {
 	b.mu.Unlock()
 	b.publishState(snap)
 }
+
+// roundTempC rounds a Celsius temperature to 0.1 °C before publishing. The
+// Kelvin→Celsius conversion (K − 273.15) accumulates float64 representation
+// noise (e.g. 28.850000000000023); 0.1 °C is well within the amp's reported
+// precision and keeps the bus payload clean.
+func roundTempC(c float64) float64 { return math.Round(c*10) / 10 }
 
 // SetDeviceOnline updates the device_online/error fields and publishes a
 // snapshot. Called when the serial port is lost or regained; /status itself

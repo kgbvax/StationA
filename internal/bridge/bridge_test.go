@@ -2,6 +2,8 @@ package bridge
 
 import (
 	"encoding/json"
+	"fmt"
+	"math"
 	"strings"
 	"testing"
 
@@ -123,6 +125,25 @@ func TestHandleTelemetryStateSnapshot(t *testing.T) {
 	}
 	if snap.TS == "" || !strings.Contains(snap.TS, "T") {
 		t.Errorf("ts = %q, want RFC3339", snap.TS)
+	}
+	// temp_c is rounded to 0.1 °C; a clean input stays clean.
+	if snap.TempC != 42.1 {
+		t.Errorf("temp_c = %v, want 42.1 (rounded to 0.1°C)", snap.TempC)
+	}
+}
+
+// TestTempCRoundedToTenth locks the bus-cleanliness fix: a Kelvin→Celsius
+// conversion leaves float64 noise (e.g. 28.850000000000023); the bridge must
+// publish only 28.9 (one decimal), not the noisy value.
+func TestTempCRoundedToTenth(t *testing.T) {
+	for _, c := range []float64{28.850000000000023, 29.850000000000023, 42.05, 0.049} {
+		if got := roundTempC(c); got != math.Round(c*10)/10 {
+			t.Errorf("roundTempC(%v) = %v, want %v", c, got, math.Round(c*10)/10)
+		}
+	}
+	// Noisy 28.850000000000023 must publish as exactly 28.9.
+	if got := roundTempC(28.850000000000023); fmt.Sprintf("%.1f", got) != "28.9" {
+		t.Errorf("roundTempC noisy = %v, want 28.9", got)
 	}
 }
 
