@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Deploy ubctrl to a Raspberry Pi and install it as a systemd service.
+# Deploy ultrabridge to a Raspberry Pi and install it as a systemd service.
 #
 # Usage:
 #   ./deploy.sh                       # deploy to default host "shari"
@@ -9,19 +9,22 @@
 # Configurable via environment variables (with defaults):
 #   SSH_HOST        SSH target            (default: 192.168.1.139)
 #   SSH_USER        SSH user              (default: io)  [used only if SSH_HOST has no user@]
-#   SERVICE_NAME    systemd service name  (default: ubctrl)
-#   SERVICE_USER    system user to run as (default: ubctrl)
+#   SERVICE_NAME    systemd service name  (default: ultrabridge)
+#   SERVICE_USER    system user to run as (default: ultrabridge)
 #   SERIAL_GROUP    group owning serial   (default: dialout)
 #   SERIAL_USB_VENDOR USB vendor id for the udev serial-group rule (default: 0403=FTDI; empty=skip)
-#   INSTALL_DIR     remote install dir    (default: /opt/ubctrl)
-#   BINARY          binary name           (default: ubctrl)
+#   INSTALL_DIR     remote install dir    (default: /opt/ultrabridge)
+#   BINARY          binary name           (default: ultrabridge)
 #
 #   HTTP_ADDR       http_addr  value        (default: 0.0.0.0:8080)
 #   SERIAL_PORT     serial_port value        (default: empty -> mock)
 #   BAUD            baud  value              (default: 19200)
+#   LOCATION        location value           (default: bauwagen)  [published in /meta]
+#   HOST_NAME       host value               (default: shari)     [published in /meta]
 #   MQTT_BROKER     mqtt.broker value        (default: empty -> disabled)
-#   MQTT_CLIENT_ID  mqtt.client_id           (default: ubctrl)
-#   MQTT_PREFIX     mqtt.prefix              (default: ubctrl)
+#   MQTT_SITE       mqtt.site                (default: empty)
+#   MQTT_STATION    mqtt.station             (default: empty)
+#   MQTT_SLOT       mqtt.slot                (default: ant-ctrl, the canonical role)
 #   MQTT_USER       mqtt.user                (default: empty)
 #   MQTT_PASSWORD   mqtt.password            (default: empty)
 #
@@ -37,26 +40,29 @@ set -euo pipefail
 # --- configuration ----------------------------------------------------------
 SSH_HOST="${SSH_HOST:-192.168.1.139}"
 SSH_USER="${SSH_USER:-io}"
-SERVICE_NAME="${SERVICE_NAME:-ubctrl}"
-SERVICE_USER="${SERVICE_USER:-ubctrl}"
+SERVICE_NAME="${SERVICE_NAME:-ultrabridge}"
+SERVICE_USER="${SERVICE_USER:-ultrabridge}"
 SERIAL_GROUP="${SERIAL_GROUP:-dialout}"
 # USB vendor id of the serial adapter. A udev rule forces matching tty devices
 # into SERIAL_GROUP so the service user can always open them, regardless of the
 # distro's default (e.g. Raspberry Pi OS uses dialout, some images use plugdev).
 # Default 0403 = FTDI. Set empty to skip installing the udev rule.
 SERIAL_USB_VENDOR="${SERIAL_USB_VENDOR:-0403}"
-INSTALL_DIR="${INSTALL_DIR:-/opt/ubctrl}"
-CONFIG_DIR="${CONFIG_DIR:-/etc/ubctrl}"
+INSTALL_DIR="${INSTALL_DIR:-/opt/ultrabridge}"
+CONFIG_DIR="${CONFIG_DIR:-/etc/ultrabridge}"
 CONFIG_FILE="${CONFIG_FILE:-${CONFIG_DIR}/config.toml}"
-BINARY="${BINARY:-ubctrl}"
-PKG="./cmd/ubctrl"
+BINARY="${BINARY:-ultrabridge}"
+PKG="./cmd/ultrabridge"
 
 HTTP_ADDR="${HTTP_ADDR:-0.0.0.0:8080}"
 SERIAL_PORT="${SERIAL_PORT:-}"
 BAUD="${BAUD:-19200}"
+LOCATION="${LOCATION:-bauwagen}"
+HOST_NAME="${HOST_NAME:-shari}"
 MQTT_BROKER="${MQTT_BROKER:-}"
-MQTT_CLIENT_ID="${MQTT_CLIENT_ID:-ubctrl}"
-MQTT_PREFIX="${MQTT_PREFIX:-ubctrl}"
+MQTT_SITE="${MQTT_SITE:-}"
+MQTT_STATION="${MQTT_STATION:-}"
+MQTT_SLOT="${MQTT_SLOT:-ant-ctrl}"
 MQTT_USER="${MQTT_USER:-}"
 MQTT_PASSWORD="${MQTT_PASSWORD:-}"
 
@@ -84,18 +90,27 @@ toml_escape() {
 SEED_CONFIG="$(umask 077; mktemp)"
 trap 'rm -f "$SEED_CONFIG" "${UNIT_FILE:-}"' EXIT
 {
-  echo "# ubctrl configuration. Contains the MQTT password -- keep this file 0600."
+  echo "# ultrabridge configuration. Contains the MQTT password -- keep this file 0600."
   echo "# Seeded by deploy.sh on first deploy; edit here to change settings."
   echo "http_addr   = \"$(toml_escape "$HTTP_ADDR")\""
   echo "serial_port = \"$(toml_escape "$SERIAL_PORT")\""
   echo "baud        = ${BAUD}"
+  echo "# Deployment identity, published in /meta (integration model §3)."
+  echo "location    = \"$(toml_escape "$LOCATION")\""
+  echo "host        = \"$(toml_escape "$HOST_NAME")\""
   echo ""
   echo "[mqtt]"
-  echo "broker    = \"$(toml_escape "$MQTT_BROKER")\""
-  echo "client_id = \"$(toml_escape "$MQTT_CLIENT_ID")\""
-  echo "prefix    = \"$(toml_escape "$MQTT_PREFIX")\""
-  echo "user      = \"$(toml_escape "$MQTT_USER")\""
-  echo "password  = \"$(toml_escape "$MQTT_PASSWORD")\""
+  echo "broker           = \"$(toml_escape "$MQTT_BROKER")\""
+  echo '# client_id defaults to "<site>-<station>-<slot>" (model §8).'
+  echo "site             = \"$(toml_escape "$MQTT_SITE")\""
+  echo "station          = \"$(toml_escape "$MQTT_STATION")\""
+  echo "slot             = \"$(toml_escape "$MQTT_SLOT")\""
+  echo "discovery_prefix = \"homeassistant\""
+  echo "# Legacy embedded HA discovery is OFF by default; the standalone hadiscovery"
+  echo "# consumer renders discovery from this bridge's expose block in /meta (model §9)."
+  echo "publish_ha_discovery = false"
+  echo "user             = \"$(toml_escape "$MQTT_USER")\""
+  echo "password         = \"$(toml_escape "$MQTT_PASSWORD")\""
 } > "$SEED_CONFIG"
 
 # --- build for the Pi (Linux arm64) ----------------------------------------
@@ -109,7 +124,7 @@ echo "   built $OUT"
 UNIT_FILE="$(mktemp)"
 cat > "$UNIT_FILE" <<EOF
 [Unit]
-Description=UltraBeam antenna controller (ubctrl)
+Description=UltraBeam antenna controller (ultrabridge)
 After=network-online.target
 Wants=network-online.target
 
@@ -125,7 +140,7 @@ User=${SERVICE_USER}
 Group=${SERVICE_USER}
 # ...that is a member of the serial group so it can open /dev/tty* devices.
 SupplementaryGroups=${SERIAL_GROUP}
-# systemd manages /etc/ubctrl (created 0755, owned by the service user).
+# systemd manages /etc/ultrabridge (created 0755, owned by the service user).
 ConfigurationDirectory=${SERVICE_NAME}
 # Hardening.
 NoNewPrivileges=true
@@ -168,7 +183,7 @@ sudo usermod -aG "$SERIAL_GROUP" "$SERVICE_USER"
 # would deny the service user access; this pins the group to match.
 if [ -n "$SERIAL_USB_VENDOR" ]; then
   printf 'SUBSYSTEM=="tty", SUBSYSTEMS=="usb", ATTRS{idVendor}=="%s", GROUP="%s", MODE="0660"\n' \
-    "$SERIAL_USB_VENDOR" "$SERIAL_GROUP" | sudo tee /etc/udev/rules.d/99-ubctrl-serial.rules >/dev/null
+    "$SERIAL_USB_VENDOR" "$SERIAL_GROUP" | sudo tee /etc/udev/rules.d/99-ultrabridge-serial.rules >/dev/null
   sudo udevadm control --reload-rules
   sudo udevadm trigger --subsystem-match=tty
   echo "   installed udev rule: FTDI/vendor $SERIAL_USB_VENDOR tty -> group $SERIAL_GROUP."
@@ -196,6 +211,6 @@ sudo systemctl --no-pager --full status "${SERVICE_NAME}.service" || true
 REMOTE
 
 echo ""
-echo ">> Done. ubctrl deployed to ${SSH_TARGET} as systemd service '${SERVICE_NAME}'."
+echo ">> Done. ultrabridge deployed to ${SSH_TARGET} as systemd service '${SERVICE_NAME}'."
 echo "   Logs:    ssh ${SSH_TARGET} 'journalctl -u ${SERVICE_NAME} -f'"
 echo "   Web UI:  http://${SSH_HOST%%@*}:${HTTP_ADDR##*:}/"

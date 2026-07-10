@@ -1,4 +1,4 @@
-module ubctrl
+module ultrabridge
 
 go 1.26.2
 

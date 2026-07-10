@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
-	"ubctrl/internal/ub/protocol"
-	"ubctrl/internal/ub/transport"
+	"ultrabridge/internal/ub/protocol"
+	"ultrabridge/internal/ub/transport"
 )
 
 type Controller struct {

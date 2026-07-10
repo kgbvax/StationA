@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"ubctrl/internal/ub/protocol"
-	"ubctrl/internal/ub/transport"
+	"ultrabridge/internal/ub/protocol"
+	"ultrabridge/internal/ub/transport"
 )
 
 func TestDebugHubToggle(t *testing.T) {

@@ -1,11 +1,18 @@
 # ubctrl MQTT API
 
-This document describes the MQTT interface exposed by **ubctrl** (the UltraBeam
-RCU-06 antenna controller) so another application can read antenna status and
-send control commands.
+This document describes the MQTT interface exposed by **ubctrl** (the bridge to the
+UltraBeam RCU-06 controller). ubctrl implements the `ant-ctrl` slot of the
+station integration model (`../docs/station-integration-model.md`) — the canonical
+role for a tunable-antenna controller (§4). The device name never appears in the
+address or role; it lives in `/meta.device`.
 
-It is the authoritative integration contract for the topics, payloads, and
-semantics — derived from `internal/mqtt/client.go`.
+> **This slot is a *controller*, not "the antenna."** ubctrl controls the element
+> tuning and direction of one specific antenna — the remotely-tunable Ultrabeam. The
+> physical antennas of the station (`ant/ultrabeam`, `ant/fan-dipole`, `ant/dummy-load`)
+> are passive resources selected by the `ant-switch` actuator under the `antenna-select`
+> reconciler; they are not this slot. See the integration model §3 and §7.1.
+
+It is the authoritative on-the-wire contract — derived from `internal/mqtt/client.go`.
 
 ---
 
@@ -15,278 +22,307 @@ semantics — derived from `internal/mqtt/client.go`.
 |----------|-------|
 | Protocol | MQTT 3.1.1 (plain TCP, e.g. `tcp://host:1883`) |
 | Authentication | Username/password if the broker requires it |
-| Clean session | Yes |
+| Clean session | **No** — subscriptions survive ubctrl restarts |
 | Auto-reconnect | ubctrl reconnects automatically |
-| ubctrl client ID | `ubctrl` (configurable via `-mqtt-client-id`) |
-
-> **Use a unique client ID.** Your application **must** connect with a client ID
-> different from ubctrl's (`ubctrl`). Two clients sharing one ID will repeatedly
-> disconnect each other.
-
-All ubctrl and your app must be connected to **the same broker** for this to work.
+| ubctrl client ID | derived from the slot address, `<site>-<station>-<slot>` (configurable via `mqtt.client_id`) |
 
 ---
 
-## 2. Topic conventions
+## 2. Topic addressing
 
-All ubctrl topics are namespaced under a configurable **prefix** (default
-`ubctrl`, set via `-mqtt-prefix`). Throughout this document the prefix is shown
-as `ubctrl`. If you change the prefix, substitute it everywhere.
+All ubctrl topics are addressed as:
 
 ```
-<prefix>/status/<name>     # published BY ubctrl   (read these)
-<prefix>/command/<name>    # consumed BY ubctrl    (publish to these)
+<site>/<station>/<slot>/<suffix>
 ```
 
-| Direction | QoS | Retained |
-|-----------|-----|----------|
-| Status (ubctrl → you) | 0 | **Yes** (last value is retained) |
-| Commands (you → ubctrl) | 0 | Publish **non-retained** |
+Configured via `[mqtt]` in `config.toml`:
 
-Because status topics are retained, a freshly connected subscriber immediately
-receives the current values without waiting for the next change.
+```toml
+site    = "muehle"     # physical site
+station = "hf"         # transmitting entity
+slot    = "ant-ctrl"   # canonical role (default: ant-ctrl)
+```
+
+Example for the default Mühle HF station:
+
+```
+muehle/hf/ant-ctrl/meta
+muehle/hf/ant-ctrl/state
+muehle/hf/ant-ctrl/status
+muehle/hf/ant-ctrl/cmd
+```
+
+| Suffix | Retained | Direction | Purpose |
+|--------|----------|-----------|---------|
+| `/meta` | yes | ubctrl → bus | birth certificate: identity + capabilities |
+| `/state` | yes | ubctrl → bus | live controller state (JSON snapshot) |
+| `/status` | yes | broker LWT | liveness: `online` / `offline` |
+| `/cmd` | yes | bus → ubctrl | desired state / command |
 
 ---
 
-## 3. Status topics (published by ubctrl)
+## 3. `/status` — liveness
 
-ubctrl publishes status **only when a value changes** (it de-duplicates
-identical snapshots), not on a fixed interval. Do not rely on these as a
-periodic heartbeat. A change to any of frequency, band, mode, motion, or
-online/error state triggers a republish of all status topics.
+Plain string, retained, QoS 1.
 
-### 3.1 `ubctrl/status/frequency`
+| Value | When |
+|-------|------|
+| `online` | published on every (re)connect |
+| `offline` | broker Last Will on unclean disconnect; ubctrl publishes on clean shutdown |
 
-Primary state. JSON object.
+---
 
-```json
-{ "frequency": 21225, "band": "15m", "mode": "forward" }
-```
+## 4. `/meta` — birth certificate
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `frequency` | integer | Current frequency in **kHz** (1–65535) |
-| `band` | string | Band label (see [§5.2](#52-band-labels)) |
-| `mode` | string | Beam direction: `forward` \| `reverse` \| `bidirectional` |
-
-### 3.2 `ubctrl/status/motors`
-
-Motor / movement state. JSON object.
-
-```json
-{ "moving": false, "motor_bits": 0 }
-```
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `moving` | boolean | `true` while the antenna elements are physically moving |
-| `motor_bits` | integer | Raw motor status bitmask from the controller (advanced/diagnostic) |
-
-While `moving` is `true`, the antenna is retuning; avoid issuing new
-frequency/band/mode commands until it returns to `false`.
-
-### 3.3 `ubctrl/status/availability`
-
-Plain string (not JSON): `online` or `offline`.
-
-- `online` — ubctrl is communicating with the antenna controller.
-- `offline` — the last controller exchange failed (serial error / timeout). See
-  `last_error` in [§3.4](#34-ubctrlstatusraw).
-
-> **Caveat — no Last Will (LWT).** ubctrl does not currently register an MQTT
-> Last Will. If the ubctrl process or its host dies abruptly, the retained
-> `availability` value stays at its last published state (often `online`).
-> `offline` is only published when ubctrl itself detects a controller
-> communication error while running. If your app needs hard liveness detection,
-> treat a stale `updated_at` (see §3.4) as a secondary signal.
-
-### 3.4 `ubctrl/status/raw`
-
-Full state object — superset of the above, useful for diagnostics.
+Retained JSON, published once per connect cycle (after connecting to broker).
 
 ```json
 {
-  "frequency_khz": 21225,
-  "band_name": "15m",
-  "band_index": 3,
-  "mode_name": "forward",
-  "motors_moving": false,
-  "motor_bits": 0,
-  "updated_at": "2026-06-30T12:29:49.506+02:00",
-  "offline": false,
-  "last_error": ""
+  "schema": "1.0",
+  "role": "ant-ctrl",
+  "device": {
+    "model": "Ultrabeam RCU-06"
+  },
+  "link": "serial",
+  "location": "bauwagen",
+  "host": "shari",
+  "capabilities": {
+    "bands": ["20m", "17m", "15m", "12m", "10m", "6m"],
+    "directions": ["forward", "reverse", "bidirectional"]
+  },
+  "expose": {
+    "device": {
+      "name": "UltraBeam Antenna",
+      "model": "RCU-06",
+      "manufacturer": "Ultrabeam",
+      "area": "Radio shack"
+    },
+    "fields": [
+      { "key": "freq_hz", "name": "Frequency", "type": "number", "unit": "Hz",
+        "class": "frequency", "state_class": "measurement", "writable": true,
+        "min": 1800000, "max": 54000000, "step": 1000,
+        "command": { "action": "frequency", "value_key": "freq_hz", "value_type": "int" } },
+      { "key": "band", "name": "Band", "type": "enum", "options_ref": "bands",
+        "writable": true,
+        "command": { "action": "band", "value_key": "value", "value_type": "string" } },
+      { "key": "direction", "name": "Direction", "type": "enum", "options_ref": "directions",
+        "writable": true,
+        "command": { "action": "direction", "value_key": "value", "value_type": "string" } },
+      { "key": "moving", "name": "Moving", "type": "boolean" },
+      { "key": "device_online", "name": "Device online", "type": "boolean" },
+      { "key": "error", "name": "Last error", "type": "string" }
+    ],
+    "actions": [
+      { "key": "retract", "name": "Retract", "command": { "action": "retract" } }
+    ]
+  }
 }
 ```
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `frequency_khz` | integer | Frequency in kHz |
-| `band_name` | string | Band label |
-| `band_index` | integer | Raw band index reported by the controller (advanced) |
-| `mode_name` | string | `forward` \| `reverse` \| `bidirectional` |
-| `motors_moving` | boolean | Same as `status/motors.moving` |
-| `motor_bits` | integer | Raw motor bitmask |
-| `updated_at` | string (RFC 3339) | Timestamp of the last state refresh |
-| `offline` | boolean | `true` when controller comms failed |
-| `last_error` | string | Last error message (omitted/empty when none) |
+`location` and `host` come from config (deployment facts, model §3/§7.3); they are
+omitted when not configured.
+
+> `directions` is the Ultrabeam's element-direction capability. It is deliberately
+> **not** named `modes`: on the station bus `mode` is the canonical radio-mode
+> vocabulary (`cw`, `usb`, `lsb`, …, integration model §4), a different concept.
+
+### The `expose` block — consumer-neutral field surface
+
+`expose` (integration model §3.1, Appendix C) is the **consumer-neutral** description of
+this slot's observable/controllable field surface — no consumer vocabulary (no
+`device_class`, no Jinja, no `payload_on/off`). The standalone `hadiscovery` consumer
+renders Home Assistant discovery from it; other consumers (historians, dashboards,
+Prometheus) can render theirs from the same block. ubctrl is **read-write**, so
+`freq_hz`/`band`/`direction` are `writable` setpoints backed by `/cmd` (their `command`
+descriptor is the structured form of the `/cmd` payloads in §6), `moving` is a read-only
+boolean, and `retract` is a one-shot `action`. `device_online` and `error` are read-only
+diagnostics: the bridge stays up (`/status` online) while the RCU-06 is down, so these
+surface device health that `/status` alone cannot — `hadiscovery` renders them as a
+`binary_sensor` and a `sensor`. The enum options resolve via `options_ref` into
+`capabilities.bands` / `capabilities.directions` (single source of truth).
 
 ---
 
-## 4. Command topics (consumed by ubctrl)
+## 5. `/state` — live controller state
 
-Publish to these topics to control the antenna. Commands are **fire-and-forget**
-— there is no per-command acknowledgement topic. To confirm a command took
-effect, watch the relevant `status/...` topic for the resulting change (and
-`status/availability` / `last_error` for failures).
+Retained JSON snapshot, QoS 1. Published only when a field value changes.
 
-### 4.1 `ubctrl/command/frequency`
-
-Set the exact frequency. Payload is the frequency in **kHz** as a decimal
-string.
-
-| Payload | Example | Notes |
-|---------|---------|-------|
-| integer kHz, 1–65535 | `21225` | Mode is preserved (uses the current mode) |
-
-```
-publish  ubctrl/command/frequency  "21225"
+```json
+{
+  "ts":           "2026-07-06T12:34:56Z",
+  "freq_hz":      21225000,
+  "band":         "15m",
+  "direction":    "forward",
+  "moving":       false,
+  "device_online": true
+}
 ```
 
-### 4.2 `ubctrl/command/mode`
-
-Set the beam direction. Frequency is preserved.
-
-| Payload | Meaning |
-|---------|---------|
-| `forward` | Forward (canonical) — aliases: `normal` |
-| `reverse` | Reverse (canonical) — aliases: `180` |
-| `bidirectional` | Bidirectional (canonical) — aliases: `bidir` |
-
-```
-publish  ubctrl/command/mode  "reverse"
-```
-
-> Unknown payloads are coerced to `forward`. Prefer the three canonical values.
-
-### 4.3 `ubctrl/command/band`
-
-Jump to the **centre of a band** (IARU Region 1). The current mode is preserved.
-Payload is a band label.
-
-| Payload | Tunes to (kHz) |
-|---------|----------------|
-| `20m` | 14175 |
-| `17m` | 18118 |
-| `15m` | 21225 |
-| `12m` | 24940 |
-| `10m` | 28850 |
-| `6m`  | 51000 |
-
-```
-publish  ubctrl/command/band  "20m"
-```
-
-> Any payload not in the table above is ignored (no-op).
-
-### 4.4 `ubctrl/command/retract`
-
-Retract the antenna elements. **Any** payload triggers it (the content is
-ignored).
-
-```
-publish  ubctrl/command/retract  ""
-```
+| Field | Type | Unit | Notes |
+|-------|------|------|-------|
+| `ts` | string | — | RFC 3339 UTC timestamp of this publish |
+| `freq_hz` | integer | Hz | Frequency the beam is tuned to |
+| `band` | string | — | Band label derived from `freq_hz`; see §7.2 |
+| `direction` | string | — | Beam direction: `forward` \| `reverse` \| `bidirectional` |
+| `moving` | bool | — | `true` while elements are physically moving (feeds the interlock mirror, model §6) |
+| `device_online` | bool | — | `true` while the RCU-06 is reachable over serial, `false` when it is not (and the bridge itself is still up). Always present so consumers can distinguish "online" from "no data". Bridge liveness is `/status`, never a state field (model §3). |
+| `error` | string | — | Last error message; omitted when empty |
 
 ---
 
-## 5. Enumerations
+## 6. `/cmd` — desired state
 
-### 5.1 Modes (beam direction)
+Retained JSON, QoS 1. **Published by external systems** (the `antenna-select`
+reconciler's band-follow binding, HA, or an operator). ubctrl subscribes and executes
+the command on receipt.
 
-| Canonical | Aliases accepted on input |
-|-----------|---------------------------|
-| `forward` | `normal` |
-| `reverse` | `180` |
-| `bidirectional` | `bidir` |
+Because `/cmd` is retained, ubctrl re-applies the last command on reconnect
+— providing self-healing behaviour after restarts (model §8 actuator exception).
 
-Status topics always report the **canonical** value.
+### Command payloads
 
-### 5.2 Band labels
+**Set frequency (Hz):**
+```json
+{"action": "frequency", "freq_hz": 21225000}
+```
 
-Reported in `status/frequency.band` and `status/raw.band_name`, derived from the
-current frequency:
+**Set direction:**
+```json
+{"action": "direction", "value": "reverse"}
+```
+Valid values: `forward`, `reverse`, `bidirectional`. (`{"action":"mode",...}` is still
+accepted as a deprecated alias for backward compatibility.)
 
-`160m`, `80m`, `40m`, `30m`, `20m`, `17m`, `15m`, `12m`, `10m`, `6m`.
+**Jump to band centre:**
+```json
+{"action": "band", "value": "15m"}
+```
+Valid bands: `20m`, `17m`, `15m`, `12m`, `10m`, `6m`. Tunes to IARU Region 1
+centre frequency (see §7.1), preserving current direction.
 
-If the frequency falls outside all known amateur bands, the label is
-`band-<index>` (e.g. `band-2`). Only `20m`–`6m` are valid inputs for
-`command/band`.
+**Retract elements:**
+```json
+{"action": "retract"}
+```
+One-shot physical command. After executing, ubctrl **clears** the retained
+`/cmd` topic (publishes an empty payload) so retract does not re-execute on
+the next restart.
+
+All other commands remain retained and are re-applied on restart.
 
 ---
 
-## 6. Typical interaction flows
+## 7. Enumerations and tables
 
-**Read current state on startup**
-1. Subscribe to `ubctrl/status/#`.
-2. The broker immediately delivers the retained `frequency`, `motors`,
-   `availability`, and `raw` values.
+### 7.1 Band centre frequencies
 
-**Set a frequency and confirm**
-1. Publish `ubctrl/command/frequency` = `18118`.
-2. Watch `ubctrl/status/motors` → `moving:true` then `moving:false`.
-3. Confirm `ubctrl/status/frequency.frequency` == `18118`.
+| Band | Centre (kHz) | Centre (Hz) |
+|------|-------------|-------------|
+| `20m` | 14175 | 14175000 |
+| `17m` | 18118 | 18118000 |
+| `15m` | 21225 | 21225000 |
+| `12m` | 24940 | 24940000 |
+| `10m` | 28850 | 28850000 |
+| `6m`  | 51000 | 51000000 |
 
-**Change band**
-1. Publish `ubctrl/command/band` = `17m`.
-2. ubctrl retunes to 18118 kHz (band centre), preserving mode; confirm via
-   `status/frequency`.
+### 7.2 Band labels from frequency
 
-**Change direction**
-1. Publish `ubctrl/command/mode` = `bidirectional`.
-2. Confirm via `ubctrl/status/frequency.mode`.
+Derived from `freq_hz` at publish time:
 
-**Detect a fault**
-- `ubctrl/status/availability` == `offline`, and
-- `ubctrl/status/raw.last_error` contains the error string.
-
----
-
-## 7. Home Assistant discovery (informational)
-
-ubctrl also publishes Home Assistant MQTT discovery configs (retained, QoS 1)
-under the `homeassistant/` prefix, creating a device **"UltraBeam Antenna"**
-with these entities. Your application does **not** need these — they use the
-same command/status topics documented above — but they are listed for context:
-
-| Discovery topic | HA domain | unique_id | Uses |
-|-----------------|-----------|-----------|------|
-| `homeassistant/sensor/ubctrl/frequency/config` | sensor | `ubctrl_frequency` | `status/frequency.frequency` |
-| `homeassistant/sensor/ubctrl/band/config` | sensor | `ubctrl_band` | `status/frequency.band` |
-| `homeassistant/binary_sensor/ubctrl/motors_moving/config` | binary_sensor | `ubctrl_motors_moving` | `status/motors.moving` |
-| `homeassistant/number/ubctrl/frequency_set/config` | number | `ubctrl_frequency_set` | cmd `command/frequency` |
-| `homeassistant/select/ubctrl/mode/config` | select | `ubctrl_mode` | cmd `command/mode` |
-| `homeassistant/select/ubctrl/band/config` | select | `ubctrl_band_set` | cmd `command/band` |
-| `homeassistant/button/ubctrl/retract/config` | button | `ubctrl_retract` | cmd `command/retract` |
-
-ubctrl re-publishes discovery whenever Home Assistant announces `online` on
-`homeassistant/status`.
+| Band | Low (Hz) | High (Hz) |
+|------|----------|-----------|
+| `160m` | 1,800,000 | 1,999,999 |
+| `80m` | 3,500,000 | 3,999,999 |
+| `40m` | 7,000,000 | 7,299,999 |
+| `30m` | 10,100,000 | 10,149,999 |
+| `20m` | 14,000,000 | 14,349,999 |
+| `17m` | 18,068,000 | 18,167,999 |
+| `15m` | 21,000,000 | 21,449,999 |
+| `12m` | 24,890,000 | 24,989,999 |
+| `10m` | 28,000,000 | 29,699,999 |
+| `6m`  | 50,000,000 | 53,999,999 |
+| `band-<N>` | — | outside known allocations |
 
 ---
 
-## 8. Quick reference
+## 8. Home Assistant auto-discovery
 
-**Subscribe (read):**
-```
-ubctrl/status/frequency        {"frequency":<kHz>,"band":"<band>","mode":"<mode>"}
-ubctrl/status/motors           {"moving":<bool>,"motor_bits":<int>}
-ubctrl/status/availability      online | offline
-ubctrl/status/raw              {full state object}
-```
+> **Two paths now exist (integration model §9).** The preferred path is the standalone
+> `hadiscovery` consumer, which reads this bridge's `expose` block from `/meta` and
+> renders HA discovery centrally. The legacy **embedded** discovery below is retained for
+> reversibility but is **gated off** by `[mqtt] publish_ha_discovery = false` (the
+> default). Set it `true` only to fall back during migration. Once `hadiscovery` is
+> proven, the embedded discovery code (and this section's embedded table) will be deleted.
+>
+> The two paths use **different node IDs**: embedded uses `<station>-<slot>` (`hf-ant-ctrl`);
+> `hadiscovery` uses `muehle-hf-ant-ctrl` (the sanitized slot address). Switching moves
+> entities to a new HA device — clear the old `hf-ant-ctrl` discovery topics to avoid
+> duplicates.
 
-**Publish (control):**
-```
-ubctrl/command/frequency       "<kHz 1..65535>"
-ubctrl/command/mode            "forward" | "reverse" | "bidirectional"
-ubctrl/command/band            "20m" | "17m" | "15m" | "12m" | "10m" | "6m"
-ubctrl/command/retract         "" (any payload)
-```
+### Standalone discovery via `hadiscovery` (preferred, default)
+
+With `publish_ha_discovery = false` (default), ubctrl publishes only the `expose` block in
+`/meta`. The `hadiscovery` service renders HA discovery under node ID `muehle-hf-ant-ctrl`.
+A HA `number`/`select` both displays state from `/state` **and** commands via `/cmd`, so the
+read and write surfaces collapse into one entity each — **5 entities** instead of the
+embedded path's 8:
+
+| Entity | Component | Object ID | Source |
+|--------|-----------|-----------|--------|
+| Frequency | `number` | `freq_hz` | state `/state.freq_hz` + cmd `{"action":"frequency","freq_hz":...}` |
+| Band | `select` | `band` | state `/state.band` + cmd `{"action":"band","value":...}` (options from `capabilities.bands`) |
+| Direction | `select` | `direction` | state `/state.direction` + cmd `{"action":"direction","value":...}` |
+| Moving | `binary_sensor` | `moving` | state `/state.moving` |
+| Retract | `button` | `retract` | cmd `{"action":"retract"}` |
+
+Discovery topics: `homeassistant/<component>/muehle-hf-ant-ctrl/<object_id>/config`. See
+`../stationa/hadiscovery/docs/discovery-mqtt-api.md` for the full neutral→HA mapping.
+
+### Embedded discovery (legacy, gated, default off)
+
+ubctrl publishes discovery configs under `homeassistant/` (configurable via
+`mqtt.discovery_prefix`). All entities read from the single `/state` topic using
+`value_template`. Node ID: `<station>-<slot>` (e.g. `hf-ant-ctrl`).
+
+> Embedded HA discovery is a **documented deviation** from design invariant §9 (no core
+> component publishes under a consumer tree). It is non-load-bearing and gated off by
+> default; the target is the standalone `hadiscovery` consumer, at which point this
+> section disappears.
+
+| Entity | Component | Object ID | Template | Notes |
+|--------|-----------|-----------|----------|-------|
+| Frequency | `sensor` | `frequency` | `{{ value_json.freq_hz }}` | unit: Hz |
+| Band | `sensor` | `band` | `{{ value_json.band }}` | |
+| Direction | `sensor` | `direction` | `{{ value_json.direction }}` | |
+| Moving | `binary_sensor` | `moving` | `{{ 'ON' if value_json.moving else 'OFF' }}` | |
+| Frequency set | `number` | `frequency_set` | `{{ value_json.freq_hz }}` | cmd via `/cmd` |
+| Direction set | `select` | `direction_set` | `{{ value_json.direction }}` | cmd via `/cmd` |
+| Band set | `select` | `band_set` | `{{ value_json.band }}` | cmd via `/cmd` |
+| Retract | `button` | `retract` | — | payload: `{"action":"retract"}` |
+
+ubctrl re-publishes embedded discovery whenever Home Assistant announces `online` on
+`homeassistant/status` (only when the gate is on; otherwise `hadiscovery` handles rebirth).
+
+---
+
+## 9. Typical interaction flows
+
+**Read current state on startup:**
+Subscribe to `<slot>/#`. The broker immediately delivers retained `/meta`,
+`/state`, and `/status`.
+
+**Command antenna to 17m, confirm:**
+1. Publish retained to `<slot>/cmd`: `{"action":"band","value":"17m"}`
+2. Watch `<slot>/state` → `moving:true` then `moving:false`
+3. Confirm `freq_hz == 18118000`
+
+**Change direction:**
+1. Publish retained to `<slot>/cmd`: `{"action":"direction","value":"bidirectional"}`
+2. Confirm via `/state` `direction == "bidirectional"`
+
+**Detect RCU fault:**
+- `/state` contains `"device_online":false` and `"error":"..."` while ubctrl is still
+  running. `/status` stays `online`.
+- If ubctrl itself crashes or loses broker connection, `/status` → `offline`
+  (LWT fires).

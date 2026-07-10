@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"ubctrl/internal/ub/protocol"
+	"ultrabridge/internal/ub/protocol"
 )
 
 type mockClient struct {

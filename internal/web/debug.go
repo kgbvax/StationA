@@ -7,8 +7,8 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"ubctrl/internal/ub/protocol"
-	"ubctrl/internal/ub/transport"
+	"ultrabridge/internal/ub/protocol"
+	"ultrabridge/internal/ub/transport"
 )
 
 // DebugHub holds the global debug-trace toggle and fans out trace entries to

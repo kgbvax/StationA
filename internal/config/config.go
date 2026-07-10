@@ -19,11 +19,19 @@ import (
 // MQTT holds the MQTT bridge settings. Password is a secret; the file that
 // contains it must be 0600 on the target machine.
 type MQTT struct {
-	Broker   string `toml:"broker"`
-	ClientID string `toml:"client_id"`
-	Prefix   string `toml:"prefix"`
-	User     string `toml:"user"`
-	Password string `toml:"password"`
+	Broker          string `toml:"broker"`
+	ClientID        string `toml:"client_id"`
+	Site            string `toml:"site"`
+	Station         string `toml:"station"`
+	Slot            string `toml:"slot"`
+	DiscoveryPrefix string `toml:"discovery_prefix"`
+	// PublishHADiscovery gates the legacy embedded HA discovery. It defaults to
+	// false now that a standalone consumer (hadiscovery) renders discovery from
+	// this bridge's consumer-neutral `expose` block in /meta (integration model
+	// §9). Set true only to fall back to the embedded discovery during migration.
+	PublishHADiscovery bool   `toml:"publish_ha_discovery"`
+	User               string `toml:"user"`
+	Password           string `toml:"password"`
 }
 
 // Config is the full runtime configuration for ubctrl.
@@ -31,22 +39,30 @@ type Config struct {
 	HTTPAddr   string `toml:"http_addr"`
 	SerialPort string `toml:"serial_port"`
 	Baud       int    `toml:"baud"`
-	MQTT       MQTT   `toml:"mqtt"`
+	// Location and Host are deployment facts published in /meta (integration
+	// model §3): the building the device sits in and the compute node this
+	// bridge runs on. They come from config, never from code.
+	Location string `toml:"location"`
+	Host     string `toml:"host"`
+	MQTT     MQTT   `toml:"mqtt"`
 }
 
 // Default returns the built-in defaults. These match the historical flag
 // defaults so behaviour is unchanged when no config file is present.
+// ClientID is left empty so the MQTT client derives it from the slot address
+// (model §8); Slot defaults to the canonical ant-ctrl role (model §4).
 func Default() Config {
 	return Config{
 		HTTPAddr:   "127.0.0.1:8080",
 		SerialPort: "",
 		Baud:       19200,
 		MQTT: MQTT{
-			Broker:   "",
-			ClientID: "ubctrl",
-			Prefix:   "ubctrl",
-			User:     "",
-			Password: "",
+			Broker:          "",
+			ClientID:        "",
+			Slot:            "ant-ctrl",
+			DiscoveryPrefix: "homeassistant",
+			User:            "",
+			Password:        "",
 		},
 	}
 }

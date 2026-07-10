@@ -15,8 +15,11 @@ func TestDefault(t *testing.T) {
 		SerialPort: "",
 		Baud:       19200,
 		MQTT: MQTT{
-			ClientID: "ubctrl",
-			Prefix:   "ubctrl",
+			// ClientID empty: derived from the slot address by the MQTT client
+			// (model §8). Slot is the canonical ant-ctrl role (model §4).
+			ClientID:        "",
+			Slot:            "ant-ctrl",
+			DiscoveryPrefix: "homeassistant",
 		},
 	}
 	if got != want {
@@ -39,13 +42,18 @@ func TestLoadCompleteFile(t *testing.T) {
 http_addr   = "0.0.0.0:9090"
 serial_port = "/dev/ttyUSB0"
 baud        = 38400
+location    = "bauwagen"
+host        = "shari"
 
 [mqtt]
-broker    = "tcp://broker.local:1883"
-client_id = "shari"
-prefix    = "antenna"
-user      = "ham"
-password  = "s3cr3t"
+broker           = "tcp://broker.local:1883"
+client_id        = "custom-id"
+site             = "muehle"
+station          = "hf"
+slot             = "ant-ctrl"
+discovery_prefix = "homeassistant"
+user             = "ham"
+password         = "s3cr3t"
 `)
 
 	got, err := Load(path)
@@ -56,12 +64,17 @@ password  = "s3cr3t"
 		HTTPAddr:   "0.0.0.0:9090",
 		SerialPort: "/dev/ttyUSB0",
 		Baud:       38400,
+		Location:   "bauwagen",
+		Host:       "shari",
 		MQTT: MQTT{
-			Broker:   "tcp://broker.local:1883",
-			ClientID: "shari",
-			Prefix:   "antenna",
-			User:     "ham",
-			Password: "s3cr3t",
+			Broker:          "tcp://broker.local:1883",
+			ClientID:        "custom-id",
+			Site:            "muehle",
+			Station:         "hf",
+			Slot:            "ant-ctrl",
+			DiscoveryPrefix: "homeassistant",
+			User:            "ham",
+			Password:        "s3cr3t",
 		},
 	}
 	if got != want {
@@ -86,7 +99,7 @@ broker = "tcp://broker.local:1883"
 	if got.Baud != 19200 {
 		t.Errorf("Baud = %d, want default 19200", got.Baud)
 	}
-	if got.MQTT.ClientID != "ubctrl" || got.MQTT.Prefix != "ubctrl" {
+	if got.MQTT.ClientID != "" || got.MQTT.Slot != "ant-ctrl" {
 		t.Errorf("MQTT defaults lost: %+v", got.MQTT)
 	}
 	if got.MQTT.Broker != "tcp://broker.local:1883" {

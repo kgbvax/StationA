@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"ubctrl/internal/ub/protocol"
+	"ultrabridge/internal/ub/protocol"
 )
 
 type fakeClient struct {

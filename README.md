@@ -1,8 +1,7 @@
 # ubctrl
 
-Go project initialized with Git.
-
-UltraBeam antenna controller for the RCU-06 protocol, with:
+UltraBeam RCU-06 antenna-controller bridge — implements the `ant-ctrl` slot of the
+station integration model (`../docs/station-integration-model.md`), with:
 
 - live status polling
 - minimal web UI with auto-refresh
@@ -38,13 +37,18 @@ Example `config.toml`:
 http_addr   = "0.0.0.0:8080"
 serial_port = "/dev/ttyUSB0"   # empty -> mock device
 baud        = 19200
+location    = "bauwagen"       # published in /meta
+host        = "shari"          # published in /meta
 
 [mqtt]
-broker    = "tcp://127.0.0.1:1883"  # empty -> MQTT disabled
-client_id = "ubctrl"
-prefix    = "ubctrl"
-user      = "ham"
-password  = "change-me"
+broker           = "tcp://127.0.0.1:1883"  # empty -> MQTT disabled
+site             = "muehle"
+station          = "hf"
+slot             = "ant-ctrl"              # canonical role (default)
+discovery_prefix = "homeassistant"
+user             = "ham"
+password         = "change-me"
+# client_id defaults to "<site>-<station>-<slot>"
 ```
 
 > **Secret handling:** the file holds the MQTT password in plaintext, so on the

@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"ubctrl/internal/ub/protocol"
+	"ultrabridge/internal/ub/protocol"
 )
 
 // Trace is a single observed exchange direction: a request sent to the device

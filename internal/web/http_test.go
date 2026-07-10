@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"ubctrl/internal/ub/service"
-	"ubctrl/internal/ub/transport"
+	"ultrabridge/internal/ub/service"
+	"ultrabridge/internal/ub/transport"
 )
 
 type nonFlushingRecorder struct {

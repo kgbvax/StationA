@@ -11,11 +11,11 @@ import (
 	"os/signal"
 	"time"
 
-	"ubctrl/internal/config"
-	mqttbridge "ubctrl/internal/mqtt"
-	"ubctrl/internal/ub/service"
-	"ubctrl/internal/ub/transport"
-	"ubctrl/internal/web"
+	"ultrabridge/internal/config"
+	mqttbridge "ultrabridge/internal/mqtt"
+	"ultrabridge/internal/ub/service"
+	"ultrabridge/internal/ub/transport"
+	"ultrabridge/internal/web"
 )
 
 const defaultConfigPath = "/etc/ubctrl/config.toml"
@@ -31,7 +31,6 @@ func main() {
 	baud := flag.Int("baud", def.Baud, "Serial baud rate")
 	mqttBroker := flag.String("mqtt-broker", def.MQTT.Broker, "MQTT broker URL (optional)")
 	mqttClientID := flag.String("mqtt-client-id", def.MQTT.ClientID, "MQTT client ID")
-	mqttPrefix := flag.String("mqtt-prefix", def.MQTT.Prefix, "MQTT topic prefix")
 	mqttUser := flag.String("mqtt-user", def.MQTT.User, "MQTT username (optional)")
 	mqttPassword := flag.String("mqtt-password", def.MQTT.Password, "MQTT password (optional)")
 	flag.Parse()
@@ -41,8 +40,7 @@ func main() {
 	applyFlagOverrides(&cfg, map[string]string{
 		"http": *httpAddr, "port": *port,
 		"mqtt-broker": *mqttBroker, "mqtt-client-id": *mqttClientID,
-		"mqtt-prefix": *mqttPrefix, "mqtt-user": *mqttUser,
-		"mqtt-password": *mqttPassword,
+		"mqtt-user": *mqttUser, "mqtt-password": *mqttPassword,
 	}, *baud)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
@@ -68,11 +66,21 @@ func main() {
 	ui := web.NewWithHub(ctrl, debugHub)
 	var mqttClient *mqttbridge.Client
 	if cfg.MQTT.Broker != "" {
-		mqttClient, err = mqttbridge.New(cfg.MQTT.Broker, cfg.MQTT.ClientID, cfg.MQTT.Prefix, cfg.MQTT.User, cfg.MQTT.Password, ctrl)
+		mqttClient, err = mqttbridge.New(
+			cfg.MQTT.Broker, cfg.MQTT.ClientID,
+			cfg.MQTT.Site, cfg.MQTT.Station, cfg.MQTT.Slot,
+			cfg.MQTT.DiscoveryPrefix,
+			cfg.Location, cfg.Host,
+			cfg.MQTT.User, cfg.MQTT.Password,
+			cfg.MQTT.PublishHADiscovery,
+			ctrl,
+		)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "mqtt disabled: %v\n", err)
 		} else {
-			mqttClient.PublishDiscovery()
+			// Embedded HA discovery is gated off by default (model §9); hadiscovery
+			// renders discovery from /meta.expose instead.
+			mqttClient.PublishDiscoveryIfEnabled()
 			mqttClient.BindCommands(ctx)
 		}
 	}
@@ -163,9 +171,6 @@ func applyFlagOverrides(cfg *config.Config, strs map[string]string, baud int) {
 	}
 	if isFlagSet("mqtt-client-id") {
 		cfg.MQTT.ClientID = strs["mqtt-client-id"]
-	}
-	if isFlagSet("mqtt-prefix") {
-		cfg.MQTT.Prefix = strs["mqtt-prefix"]
 	}
 	if isFlagSet("mqtt-user") {
 		cfg.MQTT.User = strs["mqtt-user"]

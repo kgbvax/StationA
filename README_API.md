@@ -19,9 +19,9 @@ All endpoints are relative to the server root (e.g., `http://localhost:8080`).
     ```json
     {
       "frequency_khz": 14000,
-      "band_name": "2m",
+      "band_name": "20m",
       "motors_moving": false,
-      "mode_name": "normal",
+      "mode_name": "forward",
       "offline": false,
       "updated_at": "2026-05-19T12:34:56Z"
     }
@@ -115,43 +115,8 @@ curl -X POST http://localhost:8080/api/retract
 
 ---
 
-## Home Assistant / MQTT Binding
+## MQTT
 
-When MQTT is enabled, ubctrl publishes Home Assistant discovery payloads and state topics.
-
-### Topic Prefixes
-
-- Base prefix (configurable): `<prefix>` (default: `ubctrl`)
-- Discovery prefix: `homeassistant/...`
-
-### Published State Topics
-
-- `<prefix>/status/frequency`
-  - JSON: `{ "frequency": <kHz>, "band": "...", "mode": "forward|reverse|bidirectional" }`
-- `<prefix>/status/motors`
-  - JSON: `{ "moving": <bool>, "motor_bits": <int> }`
-- `<prefix>/status/availability`
-  - String: `online`
-- `<prefix>/status/raw`
-  - Full state object from `/api/status`
-
-### Command Topics
-
-- `<prefix>/command/frequency`
-  - Payload: integer frequency in kHz (e.g. `14000`)
-- `<prefix>/command/mode`
-  - Payload: `forward`, `reverse`, or `bidirectional`
-  - Compatibility aliases also accepted: `normal`, `180`, `bidir`
-- `<prefix>/command/retract`
-  - Any payload triggers retract
-
-### Home Assistant Discovery Entities
-
-Published discovery configs include:
-
-- Sensor: frequency
-- Sensor: band
-- Binary sensor: motors moving
-- Number: frequency setpoint
-- Select: mode (`forward`, `reverse`, `bidirectional`)
-- Button: retract
+The MQTT interface (station-model slot `<site>/<station>/ant-ctrl` plus Home Assistant
+discovery) is documented in `ultrabeam-mqtt-api.md` — that file is the authoritative
+on-the-wire contract. This document covers the web REST API only.

@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"sync"
 
-	"ubctrl/internal/ub/service"
+	"ultrabridge/internal/ub/service"
 )
 
 type Server struct {
