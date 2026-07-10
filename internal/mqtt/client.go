@@ -240,7 +240,9 @@ func (c *Client) metaPayload() map[string]any {
 				"name":         "UltraBeam Antenna",
 				"model":        "RCU-06",
 				"manufacturer": "Ultrabeam",
-				"area":         "Radio shack",
+				// No "area": hadiscovery supplies the deployment-wide default HA area
+				// (config `area`, default "Bauwagen") for slots that do not name one
+				// (integration model §9 — the bridge carries no HA/area knowledge).
 			},
 			"fields": []map[string]any{
 				{
