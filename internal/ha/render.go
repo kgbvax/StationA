@@ -161,7 +161,14 @@ func fieldEntity(f expose.Field, stateTopic, cmdTopic, nodeID string, caps map[s
 			opts = expose.CapStringList(caps, f.OptionsRef)
 		}
 		if f.Writable {
-			if f.Command == nil {
+			// A HA select requires a non-empty `options` list (CONF_OPTIONS is
+			// vol.Required in the mqtt select discovery schema). An enum whose options
+			// resolve to empty — inline options missing and options_ref points at a
+			// missing/empty capabilities key — would be published as a select with no
+			// `options` key (the omitempty tag drops nil), which HA rejects. Skip it
+			// instead, matching this function's "enum without options → unrenderable"
+			// contract (see docstring above).
+			if f.Command == nil || len(opts) == 0 {
 				return "", nil
 			}
 			base.CommandTopic = cmdTopic
@@ -170,6 +177,8 @@ func fieldEntity(f expose.Field, stateTopic, cmdTopic, nodeID string, caps map[s
 			base.Retain = true
 			return "select", marshal(base)
 		}
+		// A read-only enum renders as a plain sensor (its value_template just reads
+		// the state field); an empty option set is harmless here, so no guard needed.
 		return "sensor", marshal(base)
 
 	case "boolean":

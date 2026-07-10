@@ -217,6 +217,24 @@ func TestOnMetaNoExposeDiagnostic(t *testing.T) {
 	}
 }
 
+// TestOnMetaNoExposeIdempotent asserts a byte-identical re-delivery of a no-expose /meta
+// is a no-op: the diagnostic is published once on first sight and never re-published. A
+// slot that republishes its /meta on a heartbeat must not churn the bus (Diagnostic is
+// deterministic, so the idempotency guard short-circuits) nor spam the log.
+func TestOnMetaNoExposeIdempotent(t *testing.T) {
+	eng := NewEngine("homeassistant")
+	pub := &fakePub{}
+	eng.SetPub(pub)
+
+	payload, topic := metaFor("pa", nil) // no expose
+	eng.OnMeta(topic, payload)
+	first := len(pub.calls)
+	eng.OnMeta(topic, payload) // identical retained re-delivery
+	if len(pub.calls) != first {
+		t.Errorf("no-expose re-delivery published: before=%d after=%d (want no new publishes)", first, len(pub.calls))
+	}
+}
+
 // TestOnMetaParseErrorSkipped asserts a malformed meta is logged+skipped, not stored, and
 // clears nothing.
 func TestOnMetaParseErrorSkipped(t *testing.T) {

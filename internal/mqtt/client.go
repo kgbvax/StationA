@@ -24,6 +24,20 @@ type Client struct {
 	site    string
 	station string
 	slot    string
+
+	// jobs serializes engine work (OnMeta / OnHAStatus) on a single goroutine that is
+	// NOT one of paho's dispatch goroutines. This is required because paho delivers message
+	// handlers INLINE on its matchAndDispatch goroutine when OrderMatters is true (the
+	// default — see paho Subscribe docs: "callback must not block or call functions within
+	// this package that may block (e.g. Publish) other than in a new go routine"). The
+	// engine's OnMeta publishes synchronously (engine.Pub.Publish -> token.Wait()); running
+	// that inline stalls dispatch after the first message: the handler blocks waiting for
+	// the outgoing PUBACK while the read loop blocks pushing the next retained PUBLISH into
+	// the now-full message channel the stalled dispatcher is no longer draining. Routing
+	// the work here lets the handler return immediately, unblocking paho, while keeping the
+	// engine single-threaded (its idempotency depends on sequential, ordered OnMeta).
+	jobs chan func()
+	done chan struct{}
 }
 
 // New connects to the broker, registers the last-will, and subscribes to the meta filter
@@ -35,7 +49,10 @@ func New(cfg config.Config, eng *engine.Engine) (*Client, error) {
 		site:    cfg.MQTT.Site,
 		station: cfg.MQTT.Station,
 		slot:    cfg.MQTT.Slot,
+		jobs:    make(chan func(), 256),
+		done:    make(chan struct{}),
 	}
+	go c.runJobs()
 
 	opts := paho.NewClientOptions().
 		AddBroker(cfg.MQTT.Broker).
@@ -72,7 +89,12 @@ func New(cfg config.Config, eng *engine.Engine) (*Client, error) {
 
 // Close publishes offline and disconnects cleanly.
 func (c *Client) Close() {
-	if c != nil && c.client.IsConnectionOpen() {
+	if c == nil {
+		return
+	}
+	// Stop the worker first so no engine work (which publishes) races with shutdown.
+	close(c.done)
+	if c.client.IsConnectionOpen() {
 		c.publishString(c.selfTopic("status"), "offline", 1, true)
 		c.client.Disconnect(250)
 	}
@@ -97,11 +119,42 @@ func (c *Client) subscribeAll() {
 }
 
 func (c *Client) onMeta(_ paho.Client, msg paho.Message) {
-	c.eng.OnMeta(msg.Topic(), msg.Payload())
+	// Copy out of the paho message: it is only guaranteed valid for the duration of the
+	// handler, but we run the engine work later, off this goroutine.
+	topic := msg.Topic()
+	payload := append([]byte(nil), msg.Payload()...)
+	c.enqueue(func() { c.eng.OnMeta(topic, payload) })
 }
 
 func (c *Client) onHAStatus(_ paho.Client, msg paho.Message) {
-	c.eng.OnHAStatus(string(msg.Payload()))
+	payload := string(msg.Payload()) // string copy; outlives the handler
+	c.enqueue(func() { c.eng.OnHAStatus(payload) })
+}
+
+// enqueue hands work to the worker without blocking paho's dispatch goroutine. It blocks
+// only if the queue is full AND the service is not shutting down — impossible in practice
+// (a handful of slots, drained by the worker as fast as it can publish); the `done` arm
+// guarantees it never blocks during shutdown.
+func (c *Client) enqueue(job func()) {
+	select {
+	case c.jobs <- job:
+	case <-c.done:
+	}
+}
+
+// runJobs is the single goroutine that owns the engine. It exits when Close closes `done`.
+func (c *Client) runJobs() {
+	for {
+		select {
+		case job, ok := <-c.jobs:
+			if !ok {
+				return
+			}
+			job()
+		case <-c.done:
+			return
+		}
+	}
 }
 
 // --- own meta ---------------------------------------------------------------

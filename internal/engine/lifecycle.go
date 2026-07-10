@@ -77,8 +77,8 @@ func (e *Engine) OnMeta(metaTopic string, payload []byte) {
 		return
 	}
 	ents := ha.Render(e.prefix, m)
-	if len(ents) == 0 {
-		log.Printf("[hadiscovery] slot %s role=%s has no expose block; emitting diagnostic only", m.Addr, m.Role)
+	noExpose := len(ents) == 0
+	if noExpose {
 		ents = []ha.Entity{ha.Diagnostic(e.prefix, m)}
 	}
 
@@ -88,6 +88,13 @@ func (e *Engine) OnMeta(metaTopic string, payload []byte) {
 
 	if entitiesEqual(prev, ents) {
 		return // idempotent: retained re-delivery, nothing changed
+	}
+	// Log the no-expose fallback only when the rendered set actually changed (first
+	// sighting or a transition), not on every byte-identical meta re-delivery — a slot
+	// that republishes its /meta on a heartbeat would otherwise spam journald forever
+	// even though the bus publish is correctly a no-op (Diagnostic is deterministic).
+	if noExpose {
+		log.Printf("[hadiscovery] slot %s role=%s has no expose block; emitting diagnostic only", m.Addr, m.Role)
 	}
 	pub := e.pubSnap()
 

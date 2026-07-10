@@ -220,6 +220,33 @@ func TestEnumWritableMissingCommand(t *testing.T) {
 	}
 }
 
+// TestEnumWritableEmptyOptions is unrenderable: a writable enum whose options resolve to
+// empty (options_ref points at a missing/empty capabilities key, no inline options) must be
+// skipped. Emitting it would publish a select with no `options` key, which HA rejects
+// (CONF_OPTIONS is vol.Required in the mqtt select discovery schema).
+func TestEnumWritableEmptyOptions(t *testing.T) {
+	// options_ref "modes" but capabilities has no "modes" key.
+	ents := Render("homeassistant", metaFixture([]expose.Field{{
+		Key: "mode", Name: "Mode", Type: "enum", OptionsRef: "modes", Writable: true,
+		Command: &expose.Command{Action: "mode", ValueKey: "value", ValueType: "string"},
+	}}, nil, map[string]any{"bands": []string{"40m"}}))
+	if len(ents) != 0 {
+		t.Fatalf("writable enum with empty options must be skipped, got %+v", ents)
+	}
+}
+
+// TestEnumWritableEmptyOptionsList covers the empty-list case: options_ref resolves to an
+// empty slice (present but empty capabilities key). Still no valid select.
+func TestEnumWritableEmptyOptionsList(t *testing.T) {
+	ents := Render("homeassistant", metaFixture([]expose.Field{{
+		Key: "mode", Name: "Mode", Type: "enum", OptionsRef: "modes", Writable: true,
+		Command: &expose.Command{Action: "mode", ValueKey: "value", ValueType: "string"},
+	}}, nil, map[string]any{"modes": []string{}}))
+	if len(ents) != 0 {
+		t.Fatalf("writable enum with empty options list must be skipped, got %+v", ents)
+	}
+}
+
 // TestBooleanDefault renders a boolean whose state holds a real bool (no on/off payloads):
 // value_template maps truthiness to ON/OFF.
 func TestBooleanDefault(t *testing.T) {
