@@ -12,11 +12,15 @@ surface (the same `expose` is reusable by InfluxDB / Node-RED / dashboards / Pro
 
 Runs on `shari`.
 
-> **Status: scaffolded, pending live deploy.** The Go service — config, neutral `expose`
+> **Status: deployed and running on shari.** The Go service — config, neutral `expose`
 > parsing, the deterministic neutral→HA render, the discovery lifecycle engine, the MQTT
-> client, golden unit tests, `deploy.sh` + hardened systemd unit — is in place and passes
-> `go test ./... -race`. What remains is the on-device deploy + smoke against the live
-> broker and the bridge migrations (publish `expose`, gate embedded discovery off).
+> client, golden unit tests, `deploy.sh` + hardened systemd unit — is in place, passes
+> `go test ./... -race`, and is live on shari as the `hadiscovery` systemd service. Smoke
+> against the live broker confirmed 22 rendered entities across 5 slots (`ant-ctrl`, `pa`,
+> `antenna-select`, `radio`, `discovery`) in the `homeassistant/#` tree. Remaining work is
+> in the **bridge repos**, not here: `radio` (flexbridge) still publishes `/meta` without an
+> `expose` block (hadiscovery renders a liveness diagnostic for it), and any bridge still
+> embedding its own HA discovery should gate that off now that hadiscovery owns rendering.
 
 ---
 
