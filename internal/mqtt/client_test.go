@@ -84,7 +84,12 @@ func TestOnRadioStateDefersReconcile(t *testing.T) {
 		jobs: make(chan func(), 256),
 		done: make(chan struct{}),
 	}
-	go c.runJobs()
+	// The worker is started only after the Phase-1 calls==0 check below, so that
+	// assertion is deterministic — no goroutine is draining the queue while
+	// onRadioState runs. Starting the worker here would race the check: the worker
+	// could reach the (blocking) publish and increment `calls` before the assertion,
+	// producing a false "work ran inline" failure. The deadlock teeth come from the
+	// Phase-1 timeout, which fires against inline code whether or not a worker exists.
 
 	msg := fakeMessage{
 		topic:   "s/st/radio/state",
@@ -107,6 +112,7 @@ func TestOnRadioStateDefersReconcile(t *testing.T) {
 	}
 
 	// Phase 2 — the worker runs the deferred update and reaches the blocking publish.
+	go c.runJobs()
 	select {
 	case <-reached:
 	case <-time.After(time.Second):
