@@ -18,7 +18,7 @@ import (
 	"ultrabridge/internal/web"
 )
 
-const defaultConfigPath = "/etc/ubctrl/config.toml"
+const defaultConfigPath = "/etc/ultrabridge/config.toml"
 
 func main() {
 	// Defaults come from the config package so the file, flags, and built-in
@@ -128,7 +128,7 @@ func main() {
 		}
 	}()
 
-	fmt.Printf("ubctrl listening on http://%s\n", cfg.HTTPAddr)
+	fmt.Printf("ultrabridge listening on http://%s\n", cfg.HTTPAddr)
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
