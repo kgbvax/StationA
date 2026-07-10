@@ -204,7 +204,10 @@ func (b *Bridge) PublishMeta() {
 				Name:         b.cfg.DeviceModel,
 				Model:        b.cfg.DeviceModel,
 				Manufacturer: "ACOM",
-				Area:         loc,
+				// No Area: hadiscovery supplies the deployment-wide default HA area
+				// (config `area`, default "Bauwagen") for slots that do not name one
+				// (integration model §9 — the bridge carries no HA/area knowledge).
+				// `loc` is still published above as the bus-identity location (model §3).
 			},
 			Fields: []metaExposeField{
 				{Key: "mode", Name: "Mode", Type: "enum", OptionsRef: "modes", Writable: true,
