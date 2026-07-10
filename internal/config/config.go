@@ -1,4 +1,4 @@
-// Package config loads ubctrl's persistent on-disk configuration.
+// Package config loads ultrabridge's persistent on-disk configuration.
 //
 // Configuration is layered with the following precedence (highest wins):
 //
@@ -34,7 +34,7 @@ type MQTT struct {
 	Password           string `toml:"password"`
 }
 
-// Config is the full runtime configuration for ubctrl.
+// Config is the full runtime configuration for ultrabridge.
 type Config struct {
 	HTTPAddr   string `toml:"http_addr"`
 	SerialPort string `toml:"serial_port"`

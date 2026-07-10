@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-BINARY="ubctrl"
-PKG="./cmd/ubctrl"
+BINARY="ultrabridge"
+PKG="./cmd/ultrabridge"
 OUT="dist"
 
 mkdir -p "$OUT"

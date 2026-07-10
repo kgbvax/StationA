@@ -1,12 +1,12 @@
-# ubctrl MQTT API
+# ultrabridge MQTT API
 
-This document describes the MQTT interface exposed by **ubctrl** (the bridge to the
-UltraBeam RCU-06 controller). ubctrl implements the `ant-ctrl` slot of the
+This document describes the MQTT interface exposed by **ultrabridge** (the bridge to the
+UltraBeam RCU-06 controller). ultrabridge implements the `ant-ctrl` slot of the
 station integration model (`../docs/station-integration-model.md`) — the canonical
 role for a tunable-antenna controller (§4). The device name never appears in the
 address or role; it lives in `/meta.device`.
 
-> **This slot is a *controller*, not "the antenna."** ubctrl controls the element
+> **This slot is a *controller*, not "the antenna."** ultrabridge controls the element
 > tuning and direction of one specific antenna — the remotely-tunable Ultrabeam. The
 > physical antennas of the station (`ant/ultrabeam`, `ant/fan-dipole`, `ant/dummy-load`)
 > are passive resources selected by the `ant-switch` actuator under the `antenna-select`
@@ -22,15 +22,15 @@ It is the authoritative on-the-wire contract — derived from `internal/mqtt/cli
 |----------|-------|
 | Protocol | MQTT 3.1.1 (plain TCP, e.g. `tcp://host:1883`) |
 | Authentication | Username/password if the broker requires it |
-| Clean session | **No** — subscriptions survive ubctrl restarts |
-| Auto-reconnect | ubctrl reconnects automatically |
-| ubctrl client ID | derived from the slot address, `<site>-<station>-<slot>` (configurable via `mqtt.client_id`) |
+| Clean session | **No** — subscriptions survive ultrabridge restarts |
+| Auto-reconnect | ultrabridge reconnects automatically |
+| ultrabridge client ID | derived from the slot address, `<site>-<station>-<slot>` (configurable via `mqtt.client_id`) |
 
 ---
 
 ## 2. Topic addressing
 
-All ubctrl topics are addressed as:
+All ultrabridge topics are addressed as:
 
 ```
 <site>/<station>/<slot>/<suffix>
@@ -55,10 +55,10 @@ muehle/hf/ant-ctrl/cmd
 
 | Suffix | Retained | Direction | Purpose |
 |--------|----------|-----------|---------|
-| `/meta` | yes | ubctrl → bus | birth certificate: identity + capabilities |
-| `/state` | yes | ubctrl → bus | live controller state (JSON snapshot) |
+| `/meta` | yes | ultrabridge → bus | birth certificate: identity + capabilities |
+| `/state` | yes | ultrabridge → bus | live controller state (JSON snapshot) |
 | `/status` | yes | broker LWT | liveness: `online` / `offline` |
-| `/cmd` | yes | bus → ubctrl | desired state / command |
+| `/cmd` | yes | bus → ultrabridge | desired state / command |
 
 ---
 
@@ -69,7 +69,7 @@ Plain string, retained, QoS 1.
 | Value | When |
 |-------|------|
 | `online` | published on every (re)connect |
-| `offline` | broker Last Will on unclean disconnect; ubctrl publishes on clean shutdown |
+| `offline` | broker Last Will on unclean disconnect; ultrabridge publishes on clean shutdown |
 
 ---
 
@@ -133,7 +133,7 @@ omitted when not configured.
 this slot's observable/controllable field surface — no consumer vocabulary (no
 `device_class`, no Jinja, no `payload_on/off`). The standalone `hadiscovery` consumer
 renders Home Assistant discovery from it; other consumers (historians, dashboards,
-Prometheus) can render theirs from the same block. ubctrl is **read-write**, so
+Prometheus) can render theirs from the same block. ultrabridge is **read-write**, so
 `freq_hz`/`band`/`direction` are `writable` setpoints backed by `/cmd` (their `command`
 descriptor is the structured form of the `/cmd` payloads in §6), `moving` is a read-only
 boolean, and `retract` is a one-shot `action`. `device_online` and `error` are read-only
@@ -174,10 +174,10 @@ Retained JSON snapshot, QoS 1. Published only when a field value changes.
 ## 6. `/cmd` — desired state
 
 Retained JSON, QoS 1. **Published by external systems** (the `antenna-select`
-reconciler's band-follow binding, HA, or an operator). ubctrl subscribes and executes
+reconciler's band-follow binding, HA, or an operator). ultrabridge subscribes and executes
 the command on receipt.
 
-Because `/cmd` is retained, ubctrl re-applies the last command on reconnect
+Because `/cmd` is retained, ultrabridge re-applies the last command on reconnect
 — providing self-healing behaviour after restarts (model §8 actuator exception).
 
 ### Command payloads
@@ -205,7 +205,7 @@ centre frequency (see §7.1), preserving current direction.
 ```json
 {"action": "retract"}
 ```
-One-shot physical command. After executing, ubctrl **clears** the retained
+One-shot physical command. After executing, ultrabridge **clears** the retained
 `/cmd` topic (publishes an empty payload) so retract does not re-execute on
 the next restart.
 
@@ -262,7 +262,7 @@ Derived from `freq_hz` at publish time:
 
 ### Standalone discovery via `hadiscovery` (preferred, default)
 
-With `publish_ha_discovery = false` (default), ubctrl publishes only the `expose` block in
+With `publish_ha_discovery = false` (default), ultrabridge publishes only the `expose` block in
 `/meta`. The `hadiscovery` service renders HA discovery under node ID `muehle-hf-ant-ctrl`.
 A HA `number`/`select` both displays state from `/state` **and** commands via `/cmd`, so the
 read and write surfaces collapse into one entity each — **5 entities** instead of the
@@ -281,7 +281,7 @@ Discovery topics: `homeassistant/<component>/muehle-hf-ant-ctrl/<object_id>/conf
 
 ### Embedded discovery (legacy, gated, default off)
 
-ubctrl publishes discovery configs under `homeassistant/` (configurable via
+ultrabridge publishes discovery configs under `homeassistant/` (configurable via
 `mqtt.discovery_prefix`). All entities read from the single `/state` topic using
 `value_template`. Node ID: `<station>-<slot>` (e.g. `hf-ant-ctrl`).
 
@@ -301,7 +301,7 @@ ubctrl publishes discovery configs under `homeassistant/` (configurable via
 | Band set | `select` | `band_set` | `{{ value_json.band }}` | cmd via `/cmd` |
 | Retract | `button` | `retract` | — | payload: `{"action":"retract"}` |
 
-ubctrl re-publishes embedded discovery whenever Home Assistant announces `online` on
+ultrabridge re-publishes embedded discovery whenever Home Assistant announces `online` on
 `homeassistant/status` (only when the gate is on; otherwise `hadiscovery` handles rebirth).
 
 ---
@@ -322,7 +322,7 @@ Subscribe to `<slot>/#`. The broker immediately delivers retained `/meta`,
 2. Confirm via `/state` `direction == "bidirectional"`
 
 **Detect RCU fault:**
-- `/state` contains `"device_online":false` and `"error":"..."` while ubctrl is still
+- `/state` contains `"device_online":false` and `"error":"..."` while ultrabridge is still
   running. `/status` stays `online`.
-- If ubctrl itself crashes or loses broker connection, `/status` → `offline`
+- If ultrabridge itself crashes or loses broker connection, `/status` → `offline`
   (LWT fires).

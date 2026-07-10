@@ -232,7 +232,7 @@ func (c *Client) metaPayload() map[string]any {
 		},
 		// Consumer-neutral field surface (integration model §3.1, Appendix C). No
 		// consumer vocabulary here — hadiscovery renders HA discovery from this.
-		// ubctrl is read-write: freq_hz/band/direction are writable setpoints backed
+		// ultrabridge is read-write: freq_hz/band/direction are writable setpoints backed
 		// by /cmd, moving is a read-only boolean, and retract is a one-shot action.
 		// The enum options resolve via options_ref against capabilities above.
 		"expose": map[string]any{

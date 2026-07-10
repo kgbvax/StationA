@@ -24,7 +24,7 @@ func New(ctrl *service.Controller) *Server {
 }
 
 // NewWithHub builds a Server using the provided DebugHub so the caller can wire
-// the same hub into the transport tracer (see cmd/ubctrl).
+// the same hub into the transport tracer (see cmd/ultrabridge).
 func NewWithHub(ctrl *service.Controller, debug *DebugHub) *Server {
 	return &Server{
 		ctrl:  ctrl,
@@ -283,7 +283,7 @@ const indexHTML = `<!doctype html>
 <head>
 	<meta charset="utf-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1">
-	<title>ubctrl</title>
+	<title>ultrabridge</title>
 	<style>
 		:root{color-scheme:dark}
 		body{font-family:system-ui,-apple-system,sans-serif;max-width:980px;margin:2rem auto;padding:0 1rem;background:linear-gradient(180deg,#08111f,#0b1220 45%,#10192c);color:#e5eefc}
@@ -317,7 +317,7 @@ const indexHTML = `<!doctype html>
 </head>
 <body>
 	<div class="toolbar">
-		<h1>ubctrl <span id="live-pill" class="pill"><span class="dot {{if .Offline}}bad{{else}}ok{{end}}"></span><span id="live-state">{{if .Offline}}offline{{else}}live{{end}}</span></span></h1>
+		<h1>ultrabridge <span id="live-pill" class="pill"><span class="dot {{if .Offline}}bad{{else}}ok{{end}}"></span><span id="live-state">{{if .Offline}}offline{{else}}live{{end}}</span></span></h1>
 		<div class="pill">Live updates <span id="refresh-count">SSE</span></div>
 	</div>
 

@@ -1,6 +1,6 @@
-# CLAUDE.md — ubctrl
+# CLAUDE.md — ultrabridge
 
-ubctrl bridges a **UltraBeam RCU-06** antenna controller (serial) to MQTT, exposing
+ultrabridge bridges a **UltraBeam RCU-06** antenna controller (serial) to MQTT, exposing
 the `muehle/hf/ant-ctrl` slot on the station bus (canonical role `ant-ctrl`; the device
 name lives in `/meta.device`, never in the address). It also serves a small web UI.
 
@@ -13,7 +13,7 @@ actuator under the `antenna-select` reconciler; see the station integration mode
 ## Commands
 
 ```bash
-go build ./cmd/ubctrl          # local binary
+go build ./cmd/ultrabridge          # local binary
 go test ./...                  # all tests
 go test -race ./...            # with race detector
 go test ./internal/mqtt/...    # MQTT client tests only
@@ -21,7 +21,7 @@ go vet ./...                   # vet
 gofmt -s -w .                  # format
 
 # Run locally with mock serial (no hardware needed)
-go run ./cmd/ubctrl -http 127.0.0.1:8080
+go run ./cmd/ultrabridge -http 127.0.0.1:8080
 
 # Deploy to shari
 ./deploy.sh
@@ -31,7 +31,7 @@ go run ./cmd/ubctrl -http 127.0.0.1:8080
 
 ## Architecture
 
-ubctrl is a **read-write** bridge: it reads antenna state over serial, publishes it to
+ultrabridge is a **read-write** bridge: it reads antenna state over serial, publishes it to
 MQTT, and also subscribes to `/cmd` to move the antenna on request.
 
 **Layers:**
@@ -70,7 +70,7 @@ not — always present), `error` (string, omitempty).
 `direction` is deliberately not called `mode` — on the station bus `mode` is the
 canonical radio-mode vocabulary (`cw`/`usb`/…, integration model §4).
 
-The RCU-06 uses kHz internally; ubctrl multiplies by 1000 before publishing `freq_hz`.
+The RCU-06 uses kHz internally; ultrabridge multiplies by 1000 before publishing `freq_hz`.
 
 See `ultrabeam-mqtt-api.md` for the full on-the-wire contract.
 
@@ -78,7 +78,7 @@ See `ultrabeam-mqtt-api.md` for the full on-the-wire contract.
 
 ## Configuration
 
-Config is TOML at `/etc/ubctrl/config.toml` (0600, owned by the `ubctrl` service user).
+Config is TOML at `/etc/ultrabridge/config.toml` (0600, owned by the `ultrabridge` service user).
 The MQTT password is stored in this file — never on the command line.
 
 Key fields:
@@ -112,12 +112,12 @@ See `../docs/conventions/config-and-secrets.md` for the full convention.
 ./deploy.sh      # cross-compile arm64, copy to shari, install systemd service
 ```
 
-The script seeds `/etc/ubctrl/config.toml` on first deploy only (seed-once). To change
+The script seeds `/etc/ultrabridge/config.toml` on first deploy only (seed-once). To change
 settings after the first deploy, edit the file on shari directly.
 
 ```bash
-ssh io@192.168.1.139 'journalctl -u ubctrl -f'
-ssh io@192.168.1.139 'sudo systemctl restart ubctrl'
+ssh io@192.168.1.139 'journalctl -u ultrabridge -f'
+ssh io@192.168.1.139 'sudo systemctl restart ultrabridge'
 ```
 
 See `../docs/conventions/deployment.md` for the general pattern.

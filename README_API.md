@@ -1,6 +1,6 @@
-# ubctrl Web API Documentation
+# ultrabridge Web API Documentation
 
-This document describes the RESTful web service endpoints provided by the ubctrl web interface.
+This document describes the RESTful web service endpoints provided by the ultrabridge web interface.
 
 ## Base URL
 

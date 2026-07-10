@@ -108,7 +108,7 @@ func TestTopicHelpers(t *testing.T) {
 }
 
 // TestMetaPayloadExpose locks the consumer-neutral expose block in /meta (integration
-// model §3.1). ubctrl is read-write: freq_hz/band/direction are writable setpoints, moving
+// model §3.1). ultrabridge is read-write: freq_hz/band/direction are writable setpoints, moving
 // is a read-only boolean, retract is a one-shot action. Enum options resolve via
 // options_ref into capabilities, so the keys must match.
 func TestMetaPayloadExpose(t *testing.T) {

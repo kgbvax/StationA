@@ -1,4 +1,4 @@
-# ubctrl
+# ultrabridge
 
 UltraBeam RCU-06 antenna-controller bridge — implements the `ant-ctrl` slot of the
 station integration model (`../docs/station-integration-model.md`), with:
@@ -9,26 +9,26 @@ station integration model (`../docs/station-integration-model.md`), with:
 
 ## Run
 
-go run ./cmd/ubctrl
+go run ./cmd/ultrabridge
 
 Use a real serial device with:
 
-go run ./cmd/ubctrl -port /dev/cu.usbserial-XXXX
+go run ./cmd/ultrabridge -port /dev/cu.usbserial-XXXX
 
 Optional MQTT:
 
-go run ./cmd/ubctrl -mqtt-broker tcp://127.0.0.1:1883
+go run ./cmd/ultrabridge -mqtt-broker tcp://127.0.0.1:1883
 
 ## Configuration
 
-ubctrl reads settings from a single TOML config file, defaulting to
-`/etc/ubctrl/config.toml`. Point at a different file with `-config`:
+ultrabridge reads settings from a single TOML config file, defaulting to
+`/etc/ultrabridge/config.toml`. Point at a different file with `-config`:
 
-go run ./cmd/ubctrl -config ./config.toml
+go run ./cmd/ultrabridge -config ./config.toml
 
 Settings resolve with the precedence **flag > config file > built-in default**,
 so any explicit flag overrides the file. If the *default* config path is absent,
-ubctrl runs on defaults (and flags) — handy for local/mock runs. If a path given
+ultrabridge runs on defaults (and flags) — handy for local/mock runs. If a path given
 explicitly via `-config` is missing or malformed, startup fails.
 
 Example `config.toml`:
@@ -64,4 +64,4 @@ edit the file on the device (or delete it and redeploy to re-seed).
 
 ## Build
 
-go build ./cmd/ubctrl
+go build ./cmd/ultrabridge
