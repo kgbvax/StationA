@@ -81,7 +81,7 @@ SERVICE_MQTT_PASSWORD=s3cr3t
 ```
 
 The application reads `SERVICE_MQTT_PASSWORD` and overrides the config value.
-`flex2mqtt` uses this pattern (`FLEX2MQTT_MQTT_PASSWORD`).
+`flexbridge` uses this pattern (`FLEXBRIDGE_MQTT_PASSWORD`).
 
 ### 5. Deploy seeds the config once, then never overwrites it
 
@@ -136,18 +136,18 @@ round-trips.
 Before — secret on the command line (visible in `systemctl cat` and `ps`):
 
 ```ini
-ExecStart=/opt/ubctrl/ubctrl -http 0.0.0.0:8080 -mqtt-broker tcp://h:1883 -mqtt-password s3cr3t
+ExecStart=/opt/ultrabridge/ultrabridge -http 0.0.0.0:8080 -mqtt-broker tcp://h:1883 -mqtt-password s3cr3t
 ```
 
 After — secret confined to a `0600` file the app reads:
 
 ```ini
-ExecStart=/opt/ubctrl/ubctrl -config /etc/ubctrl/config.toml
-ConfigurationDirectory=ubctrl
+ExecStart=/opt/ultrabridge/ultrabridge -config /etc/ultrabridge/config.toml
+ConfigurationDirectory=ultrabridge
 ```
 
 ```toml
-# /etc/ubctrl/config.toml  (0600, owned by the service user)
+# /etc/ultrabridge/config.toml  (0600, owned by the service user)
 http_addr = "0.0.0.0:8080"
 baud      = 19200
 

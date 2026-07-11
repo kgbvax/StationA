@@ -19,7 +19,7 @@ It is the authoritative on-the-wire contract — derived from `internal/mqtt/cli
 | Authentication | Username/password if the broker requires it |
 | Clean session | **No** — subscriptions survive restarts |
 | Auto-reconnect | [component] reconnects automatically |
-| Client ID | `[client-id]` (configurable via `mqtt.client_id`) |
+| Client ID | derived from the slot address, e.g. `[site]-[station]-[slot]` (configurable via `mqtt.client_id`) |
 
 ---
 
@@ -83,17 +83,33 @@ Retained JSON, published once per connect cycle.
   },
   "link": "[ethernet|serial|wifi]",
   "location": "[bauwagen]",
+  "host": "[compute-node]",
   "capabilities": {
     "[key]": "[value]"
+  },
+  "expose": {
+    "device":  { "name": "[name]", "model": "[model]", "manufacturer": "[mfr]",
+                 "sw_version": "[firmware-if-known]", "area": "[area]" },
+    "fields":  [
+      { "key": "[state-field]", "name": "[Name]", "type": "[number|enum|boolean|string]",
+        "unit": "[Hz|...]", "class": "[frequency|...]", "state_class": "[measurement|...]",
+        "options_ref": "[capabilities-key]", "writable": true,
+        "command": { "action": "[action]", "value_key": "[cmd-key]", "value_type": "[string|int|float]" } }
+    ],
+    "actions": [
+      { "key": "[action]", "name": "[Name]", "command": { "action": "[action]" } }
+    ]
   }
 }
 ```
 
 | Field | Notes |
 |-------|-------|
-| `role` | canonical role name (see station-integration-model §4) |
+| `role` | canonical role name (see station-integration-model §4) — never a device name |
 | `device` | omit `serial`/`firmware` if not available |
+| `location` / `host` | from config — deployment facts, never code constants |
 | `capabilities` | [describe what capabilities this component declares] |
+| `expose` | OPTIONAL (model §3.1, Appendix C): the slot's consumer-neutral field surface. Omit entirely if the slot does not want to be discovered by `expose`-driven consumers. `options_ref` points into `capabilities` so enum lists stay single-sourced. No consumer-specific vocabulary (no `device_class`, no templates, no `payload_on/off`) — consumers render their own representation from this. |
 
 ---
 
@@ -150,10 +166,40 @@ reconnect — providing self-healing behaviour after restarts. One-shot physical
 
 ---
 
-## 8. Home Assistant auto-discovery
+## 8. Home Assistant discovery
 
-[component] publishes discovery configs under `homeassistant/` (configurable via
-`mqtt.discovery_prefix`). Node ID: `<station>-<slot>` (e.g. `hf-[slot]`).
+Two paths now exist (integration model §9). **The standalone `hadiscovery` consumer is
+the preferred path** for new components; the legacy embedded path is retained only as a
+config-gated fallback during migration.
+
+### 8.1 Preferred — standalone `hadiscovery` consumer
+
+`hadiscovery` (`muehle/hf/discovery`, runs on `shari`) is a passive service that reads each
+slot's consumer-neutral `expose` block from `/meta` (§4 above; model §3.1, Appendix C) and
+renders HA discovery. The component itself contains **no HA knowledge** — it only publishes
+`expose` in its `/meta`. `hadiscovery` owns the neutral→HA mapping, the discovery topic
+layout, and the `homeassistant/status` rebirth behavior; see
+`hadiscovery/docs/discovery-mqtt-api.md` for that mapping.
+
+- Discovery node ID: `<site>-<station>-<slot>` (e.g. `muehle-hf-[slot]`); HA device
+  `identifiers` = `[<node ID>]` — one HA device per slot.
+- Discovery topic: `<discovery_prefix>/<component>/<node ID>/<object ID>/config`.
+- No component-side config is required for this path — just publish `expose`.
+
+To adopt: populate the `expose` block in `/meta` (§4) and ensure `hadiscovery` is running.
+This is the only path new components should use.
+
+### 8.2 Legacy — embedded discovery (config-gated, off by default)
+
+> **Deprecated deviation from design invariant §9.** Retained only as a migration
+> fallback; slated for deletion once `hadiscovery` is proven live. A component that ships
+> embedded discovery MUST gate it behind `[mqtt] publish_ha_discovery = false` (default
+> false) so that with it off (or HA absent) the canonical planes are unaffected and the
+> station runs identically. Omit this subsection for new components.
+
+When `publish_ha_discovery = true`, [component] publishes discovery configs under
+`homeassistant/` (configurable via `mqtt.discovery_prefix`). Node ID: `<station>-<slot>`
+(e.g. `hf-[slot]`); HA device `identifiers` differ from the `hadiscovery` path.
 
 All entities read from the single `/state` topic using `value_template`.
 
@@ -162,7 +208,13 @@ All entities read from the single `/state` topic using `value_template`.
 | [name] | `sensor` | `[id]` | `{{ value_json.[field] }}` | [notes] |
 
 [component] re-publishes discovery whenever Home Assistant announces `online` on
-`homeassistant/status`.
+`homeassistant/status` (this subscription is also gated behind `publish_ha_discovery`).
+
+> **Switching paths moves entities to a new HA device.** The two paths use different node
+> IDs and `identifiers`, so they are separate HA devices, not a rename. When migrating
+> from embedded to `hadiscovery`, clear the old embedded discovery topics (publish an empty
+> retained payload to each old `.../config` topic) so HA does not keep ghost entities
+> alongside the new `muehle-hf-[slot]` device.
 
 ---
 
@@ -178,6 +230,7 @@ and `/status`.
 3. [Step 3 — confirm via /state]
 
 **Detect component fault:**
-- `/state` contains `"offline":true` and `"error":"..."` while the bridge is still
-  running. `/status` stays `online`.
+- `/state` contains `"device_online":false` and `"error":"..."` while the bridge is
+  still running (the fronted hardware is unreachable). `/status` stays `online`.
 - If the bridge crashes or loses broker connection, `/status` → `offline` (LWT fires).
+- Liveness itself is never a `/state` field — see model §3.

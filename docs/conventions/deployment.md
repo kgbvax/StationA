@@ -80,21 +80,21 @@ for FTDI). Set `SERIAL_USB_VENDOR=""` to skip.
 
 ---
 
-## EnvironmentFile for secrets (flex2mqtt pattern)
+## EnvironmentFile for secrets (flexbridge pattern)
 
-`flex2mqtt` stores its MQTT password separately from the TOML config, using a systemd
+`flexbridge` stores its MQTT password separately from the TOML config, using a systemd
 `EnvironmentFile`:
 
 ```ini
-EnvironmentFile=/etc/flex2mqtt/flex2mqtt.env
+EnvironmentFile=/etc/flexbridge/flexbridge.env
 ```
 
 ```bash
-# /etc/flex2mqtt/flex2mqtt.env  (0600, owned by flex2mqtt user)
-FLEX2MQTT_MQTT_PASSWORD=<password>
+# /etc/flexbridge/flexbridge.env  (0600, owned by flexbridge user)
+FLEXBRIDGE_MQTT_PASSWORD=<password>
 ```
 
-The application reads `FLEX2MQTT_MQTT_PASSWORD` and overrides the config value. This
+The application reads `FLEXBRIDGE_MQTT_PASSWORD` and overrides the config value. This
 lets the TOML config be less sensitive while the password stays confined to its own
 `0600` file.
 
@@ -107,17 +107,17 @@ lets the TOML config be less sensitive while the password stays confined to its 
 cd /path/to/project && ./deploy.sh
 
 # Check logs
-ssh io@192.168.1.139 'journalctl -u flex2mqtt -f'
-ssh io@192.168.1.139 'journalctl -u ubctrl -f'
+ssh io@192.168.1.139 'journalctl -u flexbridge -f'
+ssh io@192.168.1.139 'journalctl -u ultrabridge -f'
 
 # Restart a service
-ssh io@192.168.1.139 'sudo systemctl restart flex2mqtt'
+ssh io@192.168.1.139 'sudo systemctl restart flexbridge'
 
 # Check status
-ssh io@192.168.1.139 'sudo systemctl status flex2mqtt'
+ssh io@192.168.1.139 'sudo systemctl status flexbridge'
 
 # Edit config on device (seed-once, safe to change here)
-ssh io@192.168.1.139 'sudo -e /etc/ubctrl/config.toml'
+ssh io@192.168.1.139 'sudo -e /etc/ultrabridge/config.toml'
 ```
 
 ---

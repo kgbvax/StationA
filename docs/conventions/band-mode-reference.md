@@ -14,6 +14,7 @@ Edges are DL / IARU Region 1 allocations.
 |------|----------|-----------|-----------|------------|
 | `160m` | 1,800,000 | 1,999,999 | 1800 | 1999 |
 | `80m` | 3,500,000 | 3,999,999 | 3500 | 3999 |
+| `60m` | 5,351,500 | 5,366,500 | 5351.5 | 5366.5 |
 | `40m` | 7,000,000 | 7,299,999 | 7000 | 7299 |
 | `30m` | 10,100,000 | 10,149,999 | 10100 | 10149 |
 | `20m` | 14,000,000 | 14,349,999 | 14000 | 14349 |
@@ -42,7 +43,7 @@ Outside these ranges, the band label is `band-N` where N is derived from the fre
 
 ## HF band centre frequencies (IARU R1)
 
-Used by the antenna controller (ubctrl) when jumping to a band by name.
+Used by the antenna controller (ultrabridge) when jumping to a band by name.
 
 | Band | Centre (Hz) | Centre (kHz) |
 |------|------------|--------------|
@@ -60,11 +61,18 @@ Used by the antenna controller (ubctrl) when jumping to a band by name.
 | Canonical name | Description | Firmware variants (normalise → canonical) |
 |----------------|-------------|------------------------------------------|
 | `cw` | CW | `CW`, `CW-U`, `CW-L`, `CW_U`, `CW_L` |
-| `usb` | Upper sideband | `USB`, `USB-D`, `DIGU` |
-| `lsb` | Lower sideband | `LSB`, `LSB-D`, `DIGL` |
+| `usb` | Upper sideband (voice) | `USB` |
+| `lsb` | Lower sideband (voice) | `LSB` |
 | `am` | AM | `AM`, `SAM` |
-| `fm` | FM | `FM`, `DFM`, `FDV` (Codec2/FreeDV with FM carrier) |
-| `data` | Digital data | `RTTY`, `RTTY-U`, `RTTY-L`, `FT8`, `FT4`, `PSK31`, `WSPR`, `JS8` |
+| `fm` | FM | `FM`, `DFM` |
+| `data` | Digital data | `DIGU`, `DIGL`, `USB-D`, `LSB-D`, `FDV`, `RTTY`, `RTTY-U`, `RTTY-L`, `FT8`, `FT4`, `PSK31`, `WSPR`, `JS8` |
+
+Digital-over-sideband firmware modes (`DIGU`, `DIGL`, `USB-D`, `LSB-D`) and digital
+voice (`FDV`/FreeDV) normalize to `data` regardless of which sideband carries them:
+canonical `mode` describes the content, not the RF carrier. This matters downstream —
+e.g. a PA consumer derates for the continuous duty cycle of digital modes. (FT8/FT4/
+PSK31 etc. are transmitted *in* DIGU/DIGL on most SDRs, so mapping DIGU to `usb` would
+make digital operation indistinguishable from voice.)
 
 **Normalization is the adapter's responsibility.** Consumers see only the canonical
 names above. Adapters must publish a canonical mode or omit the field; they must never
@@ -82,9 +90,9 @@ adapters.
 `freq_hz` is always an integer in **Hz**. This is the single source of truth on the
 MQTT bus. Never publish kHz, MHz, or floating-point frequency values.
 
-Components that use kHz internally (e.g. the RCU-06 controller in ubctrl) multiply
+Components that use kHz internally (e.g. the RCU-06 controller in ultrabridge) multiply
 by 1000 before publishing. Components that use Hz natively (e.g. SmartSDR in
-flex2mqtt) publish directly.
+flexbridge) publish directly.
 
 `band` is always a derived label from the canonical table above, never a primary value.
 There is no `set_band` intent for radios — commanders set `freq_hz` and band falls out.

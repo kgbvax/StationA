@@ -1,6 +1,10 @@
-# Project repos live adjacent as subdirectories but are tracked separately.
-# Ignore them here so "git add ." doesn't accidentally include them.
+# Project repos live as nested subdirectories but are tracked separately.
+# Ignore them here so "git add ." does not accidentally include them.
 acombridge/
+antennaselect/
+antswitchbridge/
 flexbridge/
+hadiscovery/
 pelcobridge/
-ubctrl/
+ultrabridge/
+wrcrotorbridge/

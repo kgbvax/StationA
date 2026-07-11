@@ -1,8 +1,8 @@
 # CLAUDE.md — stationa meta-repo
 
 This repo contains shared documentation for the Mühle station automation ecosystem.
-No Go code lives here. Each component project is a separate repo in the adjacent
-directories.
+No Go code lives here at the top level. Each component project is a separately-tracked
+git repo nested as a subdirectory of this one (and gitignored here).
 
 ---
 
@@ -10,10 +10,14 @@ directories.
 
 | Project | Path | What it does |
 |---------|------|-------------|
-| flex2mqtt | `../flexbridge/` | FLEX-8400 radio → MQTT bridge |
-| ubctrl | `../ubctrl/` | Ultrabeam RCU-06 antenna controller |
-| acombridge | `../acombridge/` | ACOM 1200S PA bridge |
-| pelcobridge | `../pelcobridge/` | Pelco-D rotator controller |
+| flexbridge | `flexbridge/` | FLEX-8400 radio → MQTT bridge |
+| ultrabridge | `ultrabridge/` | Ultrabeam RCU-06 controller (tunes one antenna) |
+| acombridge | `acombridge/` | ACOM 1200S PA bridge |
+| wrcrotorbridge | `wrcrotorbridge/` | HF rotator bridge (Yaesu G-450DC via AF6SA WRC, websocket) |
+| pelcobridge | `pelcobridge/` | Pelco-D rotator controller (UHF sat rotator) |
+| antswitchbridge | `antswitchbridge/` | 1:6 antenna switch bridge (ESPHome) |
+| antennaselect | `antennaselect/` | Antenna-selection reconciler (core implemented) |
+| hadiscovery | `hadiscovery/` | Home Assistant discovery consumer (reads `/meta` `expose`, renders HA discovery) |
 
 Each project has its own `CLAUDE.md` and is independently buildable. Open a project
 by navigating into its directory.
@@ -24,10 +28,22 @@ by navigating into its directory.
 
 | Slot address | Component | Physical device |
 |-------------|-----------|-----------------|
-| `muehle/hf/radio` | flex2mqtt | FLEX-8400, ethernet |
-| `muehle/hf/antenna` | ubctrl | Ultrabeam RCU-06, USB-serial via FTDI |
+| `muehle/hf/radio` | flexbridge | FLEX-8400, ethernet |
+| `muehle/hf/ant-ctrl` | ultrabridge | Ultrabeam RCU-06, USB-serial via FTDI |
+| `muehle/hf/ant-switch` | antswitchbridge | 1:6 antenna switch, wifi (ESPHome) |
+| `muehle/hf/antenna-select` | antennaselect | logic slot — no device (runs on shari) |
 | `muehle/hf/pa` | acombridge | ACOM 1200S, serial |
-| `muehle/hf/rotator` | pelcobridge | Rotator, serial |
+| `muehle/hf/rotator` | wrcrotorbridge | Yaesu G-450DC via AF6SA WRC, websocket |
+| `muehle/uhf/rotator` | pelcobridge | UHF sat rotator, Pelco-D, serial |
+| `muehle/hf/discovery` | hadiscovery | logic slot — no device (runs on shari); passive consumer of `/meta` |
+
+**Antennas are not slots.** `ant-ctrl` is the *controller* that tunes the Ultrabeam
+(canonical role `ant-ctrl`; the device name Ultrabeam RCU-06 lives in `/meta.device`,
+never in the address), not "the antenna." The physical antennas are **passive
+resources** — `ant/ultrabeam` (port 3), `ant/fan-dipole` 80/40 (port 2),
+`ant/dummy-load` (port 1) — with no MQTT presence; they exist only in the
+`antennaselect` wiring map. Routing among them is `ant-switch` (actuator) driven by
+`antenna-select` (policy). See the integration model §2–§4, §7.1.
 
 ---
 
@@ -40,20 +56,20 @@ All services run on shari, a Raspberry Pi at `192.168.1.139`.
 ssh io@192.168.1.139
 
 # Check service status
-sudo systemctl status flex2mqtt ubctrl
+sudo systemctl status flexbridge ultrabridge
 
 # Follow logs
-journalctl -u flex2mqtt -f
-journalctl -u ubctrl -f
+journalctl -u flexbridge -f
+journalctl -u ultrabridge -f
 
 # Config files (0600, owned by service user — contain MQTT credentials)
-sudo cat /etc/flex2mqtt/config.toml    # MQTT password via EnvironmentFile, not here
-sudo cat /etc/flex2mqtt/flex2mqtt.env  # FLEX2MQTT_MQTT_PASSWORD
-sudo cat /etc/ubctrl/config.toml       # contains password directly
+sudo cat /etc/flexbridge/config.toml    # MQTT password via EnvironmentFile, not here
+sudo cat /etc/flexbridge/flexbridge.env # FLEXBRIDGE_MQTT_PASSWORD
+sudo cat /etc/ultrabridge/config.toml        # contains password directly
 
 # Restart a service
-sudo systemctl restart flex2mqtt
-sudo systemctl restart ubctrl
+sudo systemctl restart flexbridge
+sudo systemctl restart ultrabridge
 ```
 
 The MQTT broker runs separately at `192.168.1.50:1883`.
@@ -72,9 +88,9 @@ All shared docs are in `docs/` in this repo:
 | Canonical band/mode reference | `docs/conventions/band-mode-reference.md` |
 | MQTT schema template | `docs/templates/mqtt-schema.md` |
 
-Each component's `CLAUDE.md` references these as `../../docs/` (relative to the
-component repo adjacent to this one). The shared docs path relative to any component
-is `../stationa/docs/` (or just `../docs/` if `stationa/` is used as the repo name).
+The component repos are nested inside this one, so the shared docs path relative to
+any component is `../docs/` (e.g. `../docs/station-integration-model.md` from
+`flexbridge/`).
 
 ---
 
