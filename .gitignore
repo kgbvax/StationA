@@ -8,3 +8,7 @@ hadiscovery/
 pelcobridge/
 ultrabridge/
 wrcrotorbridge/
+
+# macOS / local tooling noise
+.DS_Store
+.claude/
