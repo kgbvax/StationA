@@ -69,6 +69,21 @@ type Actions struct {
 	// FollowFreqHz is non-zero when the band-follow binding should push this frequency
 	// to the configured controller slot (only while the followed antenna is selected).
 	FollowFreqHz int64
+
+	// SetBand is non-empty when the PA band-follow binding should push this band label to
+	// the configured PA slot's /cmd (model §7.1 soft binding pa.set_band ← radio.band).
+	// The PA is always in the RF path, so (unlike FollowFreqHz) this is NOT gated on
+	// antenna selection — only on radio online + a known band. No TX gate: PA hot-switch
+	// protection is hardware (model/ACOM design).
+	SetBand string
+
+	// SetInline is non-nil when the tuner-follow binding should push an in-line/bypass
+	// intent to the configured tuner slot's /cmd (model §7.1 soft binding
+	// tuner.set_inline ← band_policy, §10 residual). nil = no emit; non-nil = emit that
+	// bool (true = ATU in line, false = bypass). Engages the ATU when the selected
+	// resource is the tuner's resource AND the band is non-resonant; bypasses otherwise.
+	// Gated on radio online + a known band (§10), like SetBand.
+	SetInline *bool
 }
 
 // Reconciler holds config and the followed resource's port resolved from the wiring map.
@@ -78,6 +93,7 @@ type Reconciler struct {
 	cfg            config.Config
 	resourceToPort map[string]string
 	followPort     string // port of band_follow.resource; empty = band-follow disabled
+	tunerPort      string // port of tuner_follow.resource; empty = tuner-follow disabled
 }
 
 // New builds a Reconciler from validated config.
@@ -87,6 +103,7 @@ func New(cfg config.Config) *Reconciler {
 		cfg:            cfg,
 		resourceToPort: r2p,
 		followPort:     r2p[cfg.BandFollow.Resource],
+		tunerPort:      r2p[cfg.TunerFollow.Resource],
 	}
 }
 
@@ -170,5 +187,35 @@ func (r *Reconciler) Next(in Inputs) Actions {
 		act.FollowFreqHz = in.RadioFreqHz
 	}
 
+	// PA band-follow (§7.1 soft binding pa.set_band ← radio.band): pre-position the amp to
+	// the radio's band so the ACOM (which auto-bands by RF sense) doesn't trip on the 1st
+	// TX on a new band. The PA is always in the RF path, so this is NOT gated on antenna
+	// selection — only on radio online (§10: don't trust radio state otherwise) + a known
+	// band. No TX guard: hot-switch protection is hardware.
+	if r.cfg.PAFollow.Enabled && in.RadioOnline && in.RadioBand != "" {
+		act.SetBand = in.RadioBand
+	}
+
+	// Tuner follow (§7.1 soft binding tuner.set_inline ← band_policy, §10 residual):
+	// engage the ATU in-line when the selected resource is its resource AND the band is
+	// non-resonant; bypass it otherwise (so leaving a non-resonant band drops the ATU out
+	// of line). Gated on radio online + a known band (§10). The ATU engages only while the
+	// tuner's resource is the resolved target — cold-switch sequencing above already
+	// withholds a port change during TX, so the ATU is not re-keyed mid-TX.
+	if r.cfg.TunerFollow.Enabled && r.tunerPort != "" && in.RadioOnline && in.RadioBand != "" {
+		desired := d.Target == r.tunerPort && contains(r.cfg.TunerFollow.ATUBands, in.RadioBand)
+		act.SetInline = &desired
+	}
+
 	return act
+}
+
+// contains reports whether s lists v. A nil/empty slice matches nothing.
+func contains(s []string, v string) bool {
+	for _, x := range s {
+		if x == v {
+			return true
+		}
+	}
+	return false
 }

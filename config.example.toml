@@ -35,8 +35,8 @@ off = "grounded"
 [band_policy]
 # Unmatched bands (incl. 160m — no resonant antenna assigned) route to the fallback
 # resource. Decision (integration model §11 item #1): fan-dipole via the ATU.
-# NOTE: 30/60/160m on the fan dipole are non-resonant — this assumes the ATU/tuner is
-# engaged in-line (a `tuner` slot concern, model §10 residual).
+# 30/60/160m on the fan dipole are non-resonant — the ATU is engaged in-line for those
+# bands by [tuner_follow] (integration model §7.1, §10 residual).
 fallback = "fan-dipole"
 
 [band_policy.bands]
@@ -59,3 +59,26 @@ order = ["idle", "operator", "auto"]
 [band_follow]
 resource = "ultrabeam"    # wiring_map resource to follow
 slot     = "ant-ctrl"     # controller slot that receives {action: frequency} intents
+
+# --- PA band-follow (§7.1 soft binding pa.set_band ← radio.band) ---------------
+# Pre-position the ACOM to the radio's band so the amp (which auto-bands by sensing the
+# RF drive) doesn't trip on the 1st TX on a new band. The PA is always in the RF path,
+# so this is NOT gated on antenna selection — it fires whenever the radio is online and
+# reporting a band. No TX guard: hot-switch protection is hardware. Set enabled=false
+# to disable.
+[pa_follow]
+enabled = true
+slot    = "pa"            # PA slot that receives {action: set_band} intents (not retained)
+
+# --- Tuner in-line follow (§7.1 soft binding tuner.set_inline ← band_policy) --
+# Engage the ATU in-line when the selected antenna is `resource` AND the band is one of
+# `atu_bands` (the non-resonant bands), and bypass it otherwise — so leaving a non-resonant
+# band drops the ATU out of line. Like band_follow, this IS gated on antenna selection: the
+# ATU only matters when its resource is in circuit. The tuner /cmd is NOT retained (the ATU
+# self-heals from this reconciler re-resolving on the retained radio/state replay at
+# reconnect). Set enabled=false to disable.
+[tuner_follow]
+enabled   = true
+slot      = "tuner"            # tuner slot that receives {action: set_inline} intents
+resource  = "fan-dipole"       # engage only when this wiring_map resource is selected
+atu_bands = ["30m", "60m", "160m"]  # non-resonant bands needing the ATU in-line

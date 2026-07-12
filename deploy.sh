@@ -29,6 +29,12 @@
 #   HOST_NAME         host           value (default: shari)     [published in /meta]
 #   BAND_FOLLOW_RESOURCE  band_follow.resource (default: ultrabeam; empty disables)
 #   BAND_FOLLOW_SLOT      band_follow.slot     (default: ant-ctrl)
+#   PA_FOLLOW_ENABLED     pa_follow.enabled   (default: true; set false to disable)
+#   PA_FOLLOW_SLOT        pa_follow.slot       (default: pa)
+#   TUNER_FOLLOW_ENABLED  tuner_follow.enabled  (default: true; set false to disable)
+#   TUNER_FOLLOW_SLOT     tuner_follow.slot     (default: tuner)
+#   TUNER_FOLLOW_RESOURCE tuner_follow.resource (default: fan-dipole)
+#   TUNER_FOLLOW_ATU_BANDS tuner_follow.atu_bands (default: 30m,60m,160m; comma-separated)
 #
 # Configuration (including the MQTT password) lives in a single 0600 TOML file
 # on the target, NOT in the systemd unit or process command line. The file is
@@ -61,6 +67,26 @@ LOCATION="${LOCATION:-bauwagen}"
 HOST_NAME="${HOST_NAME:-shari}"
 BAND_FOLLOW_RESOURCE="${BAND_FOLLOW_RESOURCE:-ultrabeam}"
 BAND_FOLLOW_SLOT="${BAND_FOLLOW_SLOT:-ant-ctrl}"
+PA_FOLLOW_ENABLED="${PA_FOLLOW_ENABLED:-true}"
+PA_FOLLOW_SLOT="${PA_FOLLOW_SLOT:-pa}"
+TUNER_FOLLOW_ENABLED="${TUNER_FOLLOW_ENABLED:-true}"
+TUNER_FOLLOW_SLOT="${TUNER_FOLLOW_SLOT:-tuner}"
+TUNER_FOLLOW_RESOURCE="${TUNER_FOLLOW_RESOURCE:-fan-dipole}"
+TUNER_FOLLOW_ATU_BANDS="${TUNER_FOLLOW_ATU_BANDS:-30m,60m,160m}"
+
+# Render the comma-separated ATU bands list as a TOML array (["30m", "60m", "160m"]).
+atu_bands_toml() {
+  local out="[" first=1 band
+  IFS=',' read -ra _bands <<<"$TUNER_FOLLOW_ATU_BANDS"
+  for band in "${_bands[@]}"; do
+    band="$(echo "$band" | xargs)"  # trim whitespace
+    [[ -z "$band" ]] && continue
+    if [[ $first -eq 1 ]]; then first=0; else out+=", "; fi
+    out+="\"$(toml_escape "$band")\""
+  done
+  out+="]"
+  printf '%s' "$out"
+}
 
 # Allow "user@host" in SSH_HOST; otherwise prepend SSH_USER.
 if [[ "$SSH_HOST" == *"@"* ]]; then
@@ -113,8 +139,8 @@ trap 'rm -f "$SEED_CONFIG" "${UNIT_FILE:-}"' EXIT
   echo ""
   echo "[band_policy]"
   echo "# Unmatched bands (incl. 160m -- no resonant antenna) route to fallback."
-  echo "# 30/60/160m on the fan dipole are non-resonant -- assumes the ATU is in line"
-  echo '# (a "tuner" slot concern, integration model §10 residual).'
+  echo "# 30/60/160m on the fan dipole are non-resonant -- the ATU is engaged in-line for"
+  echo "# those bands by [tuner_follow] (model §7.1, §10 residual closed)."
   echo "fallback = \"fan-dipole\""
   echo ""
   echo "[band_policy.bands]"
@@ -126,6 +152,24 @@ trap 'rm -f "$SEED_CONFIG" "${UNIT_FILE:-}"' EXIT
   echo "# the selected antenna. Empty resource disables."
   echo "resource = \"$(toml_escape "$BAND_FOLLOW_RESOURCE")\""
   echo "slot     = \"$(toml_escape "$BAND_FOLLOW_SLOT")\""
+  echo ""
+  echo "[pa_follow]"
+  echo "# PA band-follow (model §7.1 soft binding pa.set_band <- radio.band): pre-position"
+  echo "# the ACOM to the radio's band so the amp (auto-bands by RF sense) doesn't trip on"
+  echo "# the 1st TX on a new band. NOT gated on antenna selection (PA is always in the RF"
+  echo "# path). No TX guard: hot-switch protection is hardware. Emit is NOT retained."
+  echo "enabled = ${PA_FOLLOW_ENABLED}"
+  echo "slot    = \"$(toml_escape "$PA_FOLLOW_SLOT")\""
+  echo ""
+  echo "[tuner_follow]"
+  echo "# Tuner in-line follow (model §7.1 soft binding tuner.set_inline <- band_policy):"
+  echo '# engage the ATU in-line when `resource` is the selected antenna AND the band is in'
+  echo "# atu_bands (the non-resonant bands); bypass otherwise. Gated on antenna selection"
+  echo "# (the ATU only matters when its resource is in circuit). Emit is NOT retained."
+  echo "enabled   = ${TUNER_FOLLOW_ENABLED}"
+  echo "slot      = \"$(toml_escape "$TUNER_FOLLOW_SLOT")\""
+  echo "resource  = \"$(toml_escape "$TUNER_FOLLOW_RESOURCE")\""
+  echo "atu_bands = $(atu_bands_toml)"
 } > "$SEED_CONFIG"
 
 # --- build for the Pi (Linux arm64) ----------------------------------------

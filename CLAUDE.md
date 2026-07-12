@@ -31,8 +31,8 @@ go run ./cmd/antennaselect -broker tcp://192.168.1.50:1883   # broker via flag
 | Path | Purpose |
 |---|---|
 | `cmd/antennaselect/main.go` | entry point: config load + flag overrides, connect, run |
-| `internal/config` | TOML config (`[mqtt]`, `[wiring_map]`, `[band_policy]`, `[band_follow]`) + `Validate()` |
-| `internal/reconcile` | **the heart** — priority ladder (§5), cold-switch sequencing (§6), band-follow (§7); pure logic, fully unit-tested |
+| `internal/config` | TOML config (`[mqtt]`, `[wiring_map]`, `[band_policy]`, `[band_follow]`, `[pa_follow]`, `[tuner_follow]`) + `Validate()` |
+| `internal/reconcile` | **the heart** — priority ladder (§5), cold-switch sequencing (§6), band-follow + PA/tuner bindings (§7); pure logic, fully unit-tested |
 | `internal/mqtt` | thin bus layer: subscribes to inputs (§8), feeds the reconciler, emits its actions |
 | `docs/antenna-select-mqtt-api.md` | **authoritative** slot contract + decision logic |
 | `config.example.toml` | wiring map, band policy, ladder |
@@ -54,10 +54,10 @@ ssh io@192.168.1.139 'journalctl -u antenna-select -f'
 ```
 
 The seed config bakes the Mühle wiring map and band policy (matching
-`config.example.toml`); the MQTT connection details, `location`/`host`, and the
-`[band_follow]` controller map (`resource`/`slot`) are env-overridable. After the first
-deploy, edit `/etc/antenna-select/config.toml` on the device — `deploy.sh` will not
-overwrite it.
+`config.example.toml`); the MQTT connection details, `location`/`host`, the
+`[band_follow]` controller map (`resource`/`slot`), and the `[tuner_follow]` binding
+(`resource`/`slot`/`atu_bands`) are env-overridable. After the first deploy, edit
+`/etc/antenna-select/config.toml` on the device — `deploy.sh` will not overwrite it.
 
 ## Still to do
 
@@ -87,11 +87,13 @@ overwrite it.
 
 - The station `activity` flag (`muehle/hf`) needs a publisher (operator/HA). If absent,
   treat as `active` and log — never silently assume inactive.
-- 30/60/160m on the fan dipole are non-resonant; routing there assumes the ATU/tuner is
-  engaged in-line (a `tuner` slot concern, §10 residual).
-- This reconciler is a coordination single point (§10): if it dies, band-follow and antenna
-  selection stop and the station degrades to manual — acceptable only because safety is
-  hardware. Consider supervision/restart and an explicit "reconciler offline" indication.
+- 30/60/160m on the fan dipole are non-resonant; the `[tuner_follow]` binding now engages
+  the `hf/tuner` ATU in-line for those bands and bypasses it otherwise (integration model
+  §7.1 soft binding `tuner.set_inline ← band_policy`), closing the former §10 residual.
+- This reconciler is a coordination single point (§10): if it dies, band-follow, tuner
+  inline-follow, and antenna selection stop and the station degrades to manual —
+  acceptable only because safety is hardware. Consider supervision/restart and an
+  explicit "reconciler offline" indication.
 
 ---
 

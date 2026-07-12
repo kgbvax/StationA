@@ -35,12 +35,14 @@ type Client struct {
 	station string
 	slot    string
 
-	mu             sync.Mutex
-	in             reconcile.Inputs
-	lastDecision   reconcile.Decision
-	haveDecision   bool
-	lastSelect     string
-	lastFollowFreq int64
+	mu              sync.Mutex
+	in              reconcile.Inputs
+	lastDecision    reconcile.Decision
+	haveDecision    bool
+	lastSelect      string
+	lastFollowFreq  int64
+	lastPaBand      string
+	lastTunerInline *bool
 
 	// jobs serializes reconcile+publish work on a single goroutine that is NOT one of
 	// paho's dispatch goroutines. paho delivers message handlers INLINE on its
@@ -249,6 +251,8 @@ func (c *Client) update(mutate func(*reconcile.Inputs)) {
 		pubState  *statePayload
 		pubSelect string
 		pubFreq   int64
+		pubBand   string
+		pubInline *bool
 	)
 
 	if !c.haveDecision || act.Decision != c.lastDecision {
@@ -269,6 +273,21 @@ func (c *Client) update(mutate func(*reconcile.Inputs)) {
 		c.lastFollowFreq = act.FollowFreqHz
 		pubFreq = act.FollowFreqHz
 	}
+	// PA band-follow: dedup against the last band we pushed so a retained radio/state
+	// replay on reconnect doesn't re-emit an unchanged band. (acombridge's SetBand also
+	// short-circuits current==target, so a duplicate is harmless, but we avoid the noise.)
+	if act.SetBand != "" && act.SetBand != c.lastPaBand {
+		c.lastPaBand = act.SetBand
+		pubBand = act.SetBand
+	}
+	// Tuner in-line follow: dedup against the last inline intent we pushed so a retained
+	// radio/state replay on reconnect doesn't re-emit an unchanged value. The tuner /cmd is
+	// NOT retained (the ATU self-heals from this reconciler re-resolving on the retained
+	// radio/state replay at its own reconnect), exactly like the PA /cmd above.
+	if act.SetInline != nil && (c.lastTunerInline == nil || *c.lastTunerInline != *act.SetInline) {
+		c.lastTunerInline = act.SetInline
+		pubInline = act.SetInline
+	}
 	deferred := act.DeferredForTX
 	c.mu.Unlock()
 
@@ -288,6 +307,21 @@ func (c *Client) update(mutate func(*reconcile.Inputs)) {
 			map[string]any{"action": "frequency", "freq_hz": pubFreq}, 1, true)
 		log.Printf("[reconcile] band-follow %s freq_hz=%d", c.cfg.BandFollow.Slot, pubFreq)
 	}
+	if pubBand != "" {
+		// PA /cmd is NOT retained (acombridge subscribes not-retained; pa-mqtt-api.md).
+		// Self-heal comes from this reconciler re-resolving on the retained radio/state
+		// replay at its own reconnect — not from a retained pa/cmd.
+		c.publishJSON(c.siblingTopic(c.cfg.PAFollow.Slot, "cmd"),
+			map[string]any{"action": "set_band", "value": pubBand}, 1, false)
+		log.Printf("[reconcile] pa band-follow %s -> %s", c.cfg.PAFollow.Slot, pubBand)
+	}
+	if pubInline != nil {
+		// Tuner /cmd is NOT retained (the ATU self-heals from this reconciler re-resolving on
+		// the retained radio/state replay at reconnect), exactly like the PA /cmd above.
+		c.publishJSON(c.siblingTopic(c.cfg.TunerFollow.Slot, "cmd"),
+			map[string]any{"action": "set_inline", "value": *pubInline}, 1, false)
+		log.Printf("[reconcile] tuner inline-follow %s -> %v", c.cfg.TunerFollow.Slot, *pubInline)
+	}
 }
 
 // --- publish helpers --------------------------------------------------------
@@ -304,8 +338,22 @@ func (c *Client) publishMeta() {
 		"controls": slotAntSwitch,
 		"ladder":   []string{reconcile.SourceIdle, reconcile.SourceOperator, reconcile.SourceAuto},
 	}
+	// `follows` advertises the radio-follow bindings this reconciler drives: a passive
+	// antenna resource -> its controller slot (band-follow), plus the PA slot -> itself
+	// (band-follow, §7.1) and the tuner slot -> itself (inline-follow, §7.1) when enabled.
+	// Keyed by the resource/slot that tracks the radio.
+	follows := map[string]string{}
 	if c.cfg.BandFollow.Resource != "" {
-		capabilities["follows"] = map[string]string{c.cfg.BandFollow.Resource: c.cfg.BandFollow.Slot}
+		follows[c.cfg.BandFollow.Resource] = c.cfg.BandFollow.Slot
+	}
+	if c.cfg.PAFollow.Enabled {
+		follows[c.cfg.PAFollow.Slot] = c.cfg.PAFollow.Slot
+	}
+	if c.cfg.TunerFollow.Enabled {
+		follows[c.cfg.TunerFollow.Slot] = c.cfg.TunerFollow.Slot
+	}
+	if len(follows) > 0 {
+		capabilities["follows"] = follows
 	}
 	meta := map[string]any{
 		"schema":       "1.0",

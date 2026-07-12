@@ -44,6 +44,33 @@ type BandFollow struct {
 	Slot     string `toml:"slot"`
 }
 
+// PAFollow is the PA band-follow binding (integration model §7.1 soft binding
+// pa.set_band ← radio.band): it makes the reconciler push the radio's band to the PA
+// slot's /cmd so the amp is pre-positioned before transmit (the ACOM auto-bands by
+// sensing the RF drive, which trips the amp on the 1st TX on a new band). Unlike
+// BandFollow, the PA is NOT a passive wiring-map resource — it is always in the RF path
+// regardless of which antenna is selected — so this binding is NOT gated on a switch
+// port / antenna selection. Enabled defaults false; the deploy seed turns it on. No TX
+// guard: PA hot-switch protection is handled in hardware (model/ACOM design).
+type PAFollow struct {
+	Enabled bool   `toml:"enabled"`
+	Slot    string `toml:"slot"` // target slot, default "pa" (canonical role)
+}
+
+// TunerFollow is the ATU in-line binding (integration model §7.1 soft binding
+// tuner.set_inline ← band_policy, §10 residual): it makes the reconciler engage the
+// ATU in-line when the selected antenna is the (non-resonant) Resource and the band
+// is one of ATUBands, and bypass it otherwise. Like BandFollow, this IS gated on
+// antenna selection — the ATU only matters when its resource is in circuit. Unlike
+// PAFollow, the tuner /cmd is NOT retained (self-heal from the retained radio/state
+// replay at reconnect). Enabled defaults false; the deploy seed turns it on.
+type TunerFollow struct {
+	Enabled  bool     `toml:"enabled"`
+	Slot     string   `toml:"slot"`      // target slot, default "tuner" (canonical role)
+	Resource string   `toml:"resource"`  // wiring-map resource the ATU serves (e.g. "fan-dipole")
+	ATUBands []string `toml:"atu_bands"` // non-resonant bands needing the ATU in-line
+}
+
 // Config is the full runtime configuration for the reconciler.
 type Config struct {
 	// Location and Host are deployment facts published in /meta (integration model §3).
@@ -53,20 +80,25 @@ type Config struct {
 	MQTT MQTT `toml:"mqtt"`
 	// WiringMap maps switch ports (p1..p5, off) to named passive resources. It is the
 	// single editable place the antenna arrangement lives (integration model §4).
-	WiringMap  map[string]string `toml:"wiring_map"`
-	BandPolicy BandPolicy        `toml:"band_policy"`
-	BandFollow BandFollow        `toml:"band_follow"`
+	WiringMap   map[string]string `toml:"wiring_map"`
+	BandPolicy  BandPolicy        `toml:"band_policy"`
+	BandFollow  BandFollow        `toml:"band_follow"`
+	PAFollow    PAFollow          `toml:"pa_follow"`
+	TunerFollow TunerFollow       `toml:"tuner_follow"`
 }
 
 // Default returns the built-in defaults. Maps are left nil; a usable deployment must
 // supply wiring_map and band_policy via the config file. Band-follow is disabled until
-// the config names a resource; its slot defaults to the canonical ant-ctrl role.
+// the config names a resource; its slot defaults to the canonical ant-ctrl role. PA
+// follow is disabled by default (opt-in); its slot defaults to the canonical pa role.
 func Default() Config {
 	return Config{
 		MQTT: MQTT{
 			Slot: "antenna-select",
 		},
-		BandFollow: BandFollow{Slot: "ant-ctrl"},
+		BandFollow:  BandFollow{Slot: "ant-ctrl"},
+		PAFollow:    PAFollow{Slot: "pa"},
+		TunerFollow: TunerFollow{Slot: "tuner"},
 	}
 }
 
@@ -136,6 +168,22 @@ func (c Config) Validate() error {
 		}
 		if c.BandFollow.Slot == "" {
 			problems = append(problems, "band_follow.slot is required when band_follow.resource is set")
+		}
+	}
+	// PA follow is NOT gated on the wiring map: the PA is always in the RF path, not a
+	// passive antenna resource. Only require a slot when the binding is enabled.
+	if c.PAFollow.Enabled && c.PAFollow.Slot == "" {
+		problems = append(problems, "pa_follow.slot is required when pa_follow.enabled is true")
+	}
+	// Tuner follow IS gated on a wiring-map resource (the ATU serves one antenna).
+	if c.TunerFollow.Enabled {
+		if c.TunerFollow.Slot == "" {
+			problems = append(problems, "tuner_follow.slot is required when tuner_follow.enabled is true")
+		}
+		if c.TunerFollow.Resource == "" {
+			problems = append(problems, "tuner_follow.resource is required when tuner_follow.enabled is true")
+		} else if _, ok := r2p[c.TunerFollow.Resource]; !ok {
+			problems = append(problems, fmt.Sprintf("tuner_follow.resource %q is not in wiring_map", c.TunerFollow.Resource))
 		}
 	}
 	if len(problems) > 0 {

@@ -46,7 +46,7 @@ Configured via `[mqtt]` in `config.toml` (`slot = "antenna-select"`).
   "host": "shari",
   "capabilities": {
     "controls": "ant-switch",
-    "follows": { "ultrabeam": "ant-ctrl" },
+    "follows": { "ultrabeam": "ant-ctrl", "pa": "pa", "tuner": "tuner" },
     "ladder": ["idle", "operator", "auto"]
   },
   "expose": {
@@ -61,8 +61,11 @@ Configured via `[mqtt]` in `config.toml` (`slot = "antenna-select"`).
 ```
 
 `role` is `reconciler` (a logic slot, model §4). `location` and `host` come from config
-(deployment facts, model §3/§7.3). `follows` documents the configured controller map
-(`[band_follow]`); it is omitted when band-follow is disabled.
+(deployment facts, model §3/§7.3). `follows` documents the radio-follow bindings this
+reconciler drives: the controller map (`[band_follow]`: resource → controller slot) and,
+when enabled, the PA band-follow (`[pa_follow]`: `pa` → `pa`, §7.1) and the tuner in-line
+follow (`[tuner_follow]`: `tuner` → `tuner`, §7.1). It is omitted entirely when all three
+are disabled.
 
 ### The `expose` block — consumer-neutral field surface
 
@@ -169,9 +172,58 @@ slot `ant-ctrl`), never code:
 - Emit `<band_follow.slot>/cmd {"action":"frequency","freq_hz": <radio.freq_hz>}` on
   radio frequency change while `target == <band_follow.resource>'s port`.
 
-This is the only non-ant-switch binding in scope here. The PA bindings (`pa.set_band`,
-`pa-arm`) are the same reconciler's eventual responsibility but are **out of scope** for the
-antenna work.
+### 7.1 PA band-follow — `pa.set_band ← radio.band` (model §7.1 soft binding)
+
+The reconciler also pre-positions the **PA** to the radio's band. The ACOM 1200S auto-bands
+by sensing the RF drive (`band_source: rf_sense`), which by ACOM design **trips the amp on
+the 1st transmit on a new band** — the amp is still on the old band when RF appears. Pushing
+the band during RX, before the operator transmits, avoids that trip.
+
+This binding is **not** the controller map: the PA is always in the RF path, so it is **not
+gated on antenna selection** — it fires whenever the radio is online and reporting a band.
+No TX guard is applied; PA hot-switch protection is handled in hardware (the same series
+interlock the antenna cold-switch relies on, model §6). Gated by `[pa_follow].enabled`
+(default `true` on shari; `false` in the built-in defaults).
+
+- Emit `<pa_follow.slot>/cmd {"action":"set_band","value": <radio.band>}` on radio band
+  change while `radio.status == online`. **Not retained** (QoS 1) — the PA `/cmd` contract
+  is not retained (see `../acombridge/docs/pa-mqtt-api.md`); self-heal comes from this
+  reconciler re-resolving on the retained `radio/state` replay at its own reconnect, not
+  from a retained `pa/cmd`. Deduped against the last band pushed.
+
+`pa-arm` remains out of scope here (no MQTT keying path — the ACOM is keyed in hardware,
+`key_input: hardware`). The `set_band` vocabulary matches acombridge's existing `/cmd`
+contract; the PA bridge needs no change for this feature — it already dispatches `set_band`
+and dedups `current == target`.
+
+**Edge cases (v1):** if the amp is OFF when the band changes, `set_band` is rejected by
+acombridge (`current band unknown`) and the amp later auto-bands by RF sense on its next TX
+(the trip returns for that one transition); re-emitting on PA online is a future
+enhancement. 60m is not an ACOM band, so a 60m `set_band` is rejected by acombridge and
+logged once (deduped here); harmless.
+
+### 7.2 Tuner in-line follow — `tuner.set_inline ← band_policy` (model §7.1 soft binding)
+
+The reconciler also engages the **ATU** (ATR-1000, slot `hf/tuner`) in-line for the
+non-resonant bands, and bypasses it otherwise — so leaving a non-resonant band drops the
+ATU out of line. This closes the model §10 residual (30/60/160 m on the fan-dipole were
+routed to a non-resonant antenna with the ATU *assumed* but never driven).
+
+Unlike the PA binding, this **is** gated on antenna selection: the ATU only matters when
+its served resource (`[tuner_follow].resource`, `fan-dipole` at Mühle) is the resolved
+target. The ATU engages when the resource is selected **and** the band is in
+`[tuner_follow].atu_bands` (`30m`, `60m`, `160m` at Mühle); it is bypassed for any other
+selection or band. Gated on radio online + a known band (§10). The reconciler's cold-switch
+sequencing already withholds a port change during TX, so the ATU is not re-keyed mid-TX.
+
+- Emit `<tuner_follow.slot>/cmd {"action":"set_inline","value": <bool>}` on radio band or
+  selection change while `radio.status == online`. **Not retained** (QoS 1) — self-heal
+  comes from this reconciler re-resolving on the retained `radio/state` replay at its own
+  reconnect, not from a retained `tuner/cmd`. Deduped against the last inline value pushed.
+  `true` = ATU in line, `false` = bypass.
+
+Gated by `[tuner_follow].enabled` (default `true` on shari; `false` in the built-in
+defaults). The `set_inline` vocabulary matches atr1k-tuner-bridge's `/cmd` contract.
 
 ---
 
@@ -186,7 +238,12 @@ antenna work.
 | `muehle/hf/ant-switch/state` | `selected` — confirm (`settled`: received, gating is backlog) |
 
 **Emits:** `muehle/hf/ant-switch/cmd` (`select`); `muehle/hf/<band_follow.slot>/cmd`
-(`frequency`, while the followed antenna is selected — `ant-ctrl` at Mühle).
+(`frequency`, while the followed antenna is selected — `ant-ctrl` at Mühle);
+`muehle/hf/<pa_follow.slot>/cmd` (`set_band`, not retained — `pa` at Mühle, while the
+radio is online and reporting a band; gated by `[pa_follow].enabled`);
+`muehle/hf/<tuner_follow.slot>/cmd` (`set_inline`, not retained — `tuner` at Mühle, while
+the tuner's resource is selected and the band is non-resonant; gated by
+`[tuner_follow].enabled`).
 
 **Dependency not built here:** the station `activity` flag needs a publisher (operator/HA
 sets `muehle/hf`). If absent, treat as `active` and log — never silently assume inactive.
