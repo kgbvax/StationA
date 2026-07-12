@@ -15,6 +15,7 @@ git repo nested as a subdirectory of this one (and gitignored here).
 | acombridge | `acombridge/` | ACOM 1200S PA bridge |
 | wrcrotorbridge | `wrcrotorbridge/` | HF rotator bridge (Yaesu G-450DC via AF6SA WRC, websocket) |
 | pelcobridge | `pelcobridge/` | Pelco-D rotator controller (UHF sat rotator) |
+| atr1k-tuner-bridge | `atr1k-tuner-bridge/` | ATR-1000 ATU bridge (in-line/bypass + tune, binary WebSocket) |
 | antswitchbridge | `antswitchbridge/` | 1:6 antenna switch bridge (ESPHome) |
 | antennaselect | `antennaselect/` | Antenna-selection reconciler (core implemented) |
 | hadiscovery | `hadiscovery/` | Home Assistant discovery consumer (reads `/meta` `expose`, renders HA discovery) |
@@ -34,6 +35,7 @@ by navigating into its directory.
 | `muehle/hf/antenna-select` | antennaselect | logic slot — no device (runs on shari) |
 | `muehle/hf/pa` | acombridge | ACOM 1200S, serial |
 | `muehle/hf/rotator` | wrcrotorbridge | Yaesu G-450DC via AF6SA WRC, websocket |
+| `muehle/hf/tuner` | atr1k-tuner-bridge | ATR-1000 ATU, wifi (binary WebSocket) |
 | `muehle/uhf/rotator` | pelcobridge | UHF sat rotator, Pelco-D, serial |
 | `muehle/hf/discovery` | hadiscovery | logic slot — no device (runs on shari); passive consumer of `/meta` |
 
@@ -85,6 +87,7 @@ All shared docs are in `docs/` in this repo:
 | Station integration model | `docs/station-integration-model.md` |
 | Config and secrets convention | `docs/conventions/config-and-secrets.md` |
 | Deployment convention | `docs/conventions/deployment.md` |
+| Bridge-naming convention | `docs/conventions/naming.md` |
 | Canonical band/mode reference | `docs/conventions/band-mode-reference.md` |
 | MQTT schema template | `docs/templates/mqtt-schema.md` |
 
@@ -127,3 +130,6 @@ All components follow these shared conventions:
 6. **freq_hz in Hz as integer** — never kHz or MHz on the bus
 7. **Canonical mode names** — `cw`, `usb`, `lsb`, `am`, `fm`, `data`
    (see `docs/conventions/band-mode-reference.md`)
+8. **Bridge naming** — device bridges are `<devtag>-<function>-bridge` where
+   `<devtag>` is the device family/control interface (e.g. `atr1k-tuner-bridge`)
+   (see `docs/conventions/naming.md`)

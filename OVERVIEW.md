@@ -44,16 +44,24 @@ routing among them is `ant-switch` (actuator) driven by `antenna-select` (policy
 
 | Slot | Component | Role | Interface |
 |---|---|---|---|
-| `radio` | flexbridge | FLEX-8400 radio bridge (read-only) | Ethernet (SmartSDR) |
-| `ant-ctrl` | ultrabridge | Ultrabeam RCU-06 antenna controller | USB-serial |
-| `ant-switch` | antswitchbridge | 1:6 antenna switch — dumb actuator | Wi-Fi (contract-first) |
-| `antenna-select` | antennaselect | antenna-selection reconciler (logic) | — |
-| `pa` | acombridge | ACOM 1200S PA bridge | Serial |
-| `rotator` | pelcobridge | Pelco-D rotator controller | Serial |
-| `discovery` | hadiscovery | HA discovery consumer (logic) | reads `/meta.expose` |
+| `hf/radio` | flexbridge | FLEX-8400 radio bridge (read-only) | Ethernet (SmartSDR) |
+| `hf/ant-ctrl` | ultrabridge | Ultrabeam RCU-06 antenna controller | USB-serial |
+| `hf/ant-switch` | antswitchbridge | 1:6 antenna switch — dumb actuator | Wi-Fi (contract-first) |
+| `hf/antenna-select` | antennaselect | antenna-selection reconciler (logic) | — |
+| `hf/pa` | acombridge | ACOM 1200S PA bridge | Serial |
+| `hf/rotator` | wrcrotorbridge | HF rotator (Yaesu G-450DC via AF6SA WRC) | WebSocket |
+| `hf/tuner` | atr1k-tuner-bridge | ATR-1000 ATU bridge (in-line / bypass, tune) | Wi-Fi (binary WebSocket) |
+| `hf/discovery` | hadiscovery | HA discovery consumer (logic) | reads `/meta.expose` |
+| `uhf/rotator` | pelcobridge | Pelco-D rotator controller (UHF sat rotator) | Serial |
 
 All run on **shari** (Raspberry Pi, `192.168.1.139`) against the MQTT broker at
-`192.168.1.50:1883`, under the `muehle/hf/…` address tree.
+`192.168.1.50:1883`, under the `muehle/…` address tree.
+
+> **Bridge naming:** device-specific bridges follow `<devtag>-<function>-bridge`
+> (e.g. `atr1k-tuner-bridge`); the `<devtag>` is the device *family / control
+> interface*, not the model number, so swapping a box within a family changes
+> nothing. Existing bridges predate the convention; their rename is a tracked
+> TODO. See `docs/conventions/naming.md`.
 
 ## Shared conventions
 

@@ -366,8 +366,20 @@ state:        online; selected {off|p1..p5}; settled
 intent:       select {off|p1..p5}
 ```
 
-**`muehle/hf/tuner`** — ATR-1000 (BTR-1000 / N7DDC design), wifi — schema TBD, follows
-the standard template.
+**`muehle/hf/tuner`** — ATR-1000 (BTR-1000 / N7DDC design), wifi (binary WebSocket)
+```
+capabilities: inline true; tune_modes [mem, full]
+state:        online; inline (bool); swr (float, ratio); fwd (W, forward power);
+              l_uh (inductance µH, diagnostic); c_pf (capacitance pF, diagnostic);
+              settling (bool); fault (string, omitempty); device_online (bool)
+intent:       set_inline {true|false}; tune {full|mem}
+```
+The ATU is engaged in-line only when its served resource is the resolved antenna AND the
+band is non-resonant (e.g. 30/60/160 m on the fan-dipole); it is bypassed otherwise. The
+`set_inline` intent is driven by `antenna-select` (see the soft binding below), gated on
+radio online + a known band, and engages only while the tuner's resource is the resolved
+target — the reconciler's cold-switch sequencing already withholds a port change during
+TX, so the ATU is not re-keyed mid-TX.
 
 **`muehle/hf/rotator`** — Yaesu G-450DC. Control path: AF6SA WRC, with bridge software
 on `shari` presenting it to the automation. `capabilities: axes [az]`.
@@ -416,6 +428,8 @@ override / pre-position path, not the primary follow mechanism.
 
 **Soft bindings (reconciler, state → intent):**
 - `pa.set_band` ← `radio.band`
+- `tuner.set_inline` ← `band_policy` (engage the ATU in-line when the selected resource is
+  its resource and the band is non-resonant; bypass otherwise — closes the §10 residual)
 - `ant-ctrl.{band,freq}` ← `radio.{band,freq}` (via the controller map)
 - `ant-switch.select` ← arbiter(band_policy, wiring_map, ladder)
 - `ant-switch.select` → `off` when `station.activity = inactive` (ladder tier 1)
@@ -621,11 +635,14 @@ Stated plainly rather than left implied.
   heartbeats, but any consumer that acts on retained state must check liveness first.
   This is why no safety decision may depend on it.
 - **Band-policy residual.** 30/40/60/80 m now map to the dipole and 6-20 m (incl. 17/12)
-  to the Ultrabeam. Two riders remain: 30/60 m on the 80/40 dipole are not resonant, so
+  to the Ultrabeam. Two riders: 30/60 m on the 80/40 dipole are not resonant, so
   the policy implicitly requires the ATU in-line and tuning on those bands; and 160 m has
   no antenna assigned. **Resolved:** unmatched bands (incl. 160 m) route to a named
   fallback — the fan-dipole (via the ATU). Configured as `band_policy.fallback` in the
-  `antenna-select` reconciler.
+  `antenna-select` reconciler. The ATU is engaged in-line for the non-resonant bands by
+  the `tuner.set_inline ← band_policy` soft binding (§7.1), driven by the `antenna-select`
+  `[tuner_follow]` block against the `hf/tuner` slot (the former "tuner is assumed but
+  never driven" residual is closed).
 - **Hosts are now single points too.** `shari` fronts the HF PA, tuner, rotator, and
   Ultrabeam, and also hosts the `antenna-select` reconciler and logging; `shack-pc`
   fronts only the VHF rotator (PSTRotator). A host loss takes its whole cluster offline
@@ -665,7 +682,8 @@ those answers:
 
 The reconciler's internal implementation; horstprop Layer-3 modelling; multi-multi
 arbitration beyond the single-station ladder; and the mechanical field layouts for the
-slots still marked TBD in §7. None of these change the shapes above.
+slots still marked TBD in §7 (`rx-loop-ctrl`, `uhf/radio`, the host-liveness nodes).
+None of these change the shapes above.
 
 **Live meter data (VITA-49).** The real-time meter stream from the radio (S-meter, SWR,
 PA power, temperatures — decoded from VITA-49 datagrams at 10–20 fps) was intentionally

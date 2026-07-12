@@ -16,6 +16,7 @@ Each component is a separate Go service; this repo contains only shared document
 | [acombridge](acombridge/) | ACOM 1200S PA bridge | `muehle/hf/pa` | shari | Serial |
 | [wrcrotorbridge](wrcrotorbridge/) | HF rotator bridge (Yaesu G-450DC via AF6SA WRC) | `muehle/hf/rotator` | shari | WebSocket (AF6SA WRC) |
 | [pelcobridge](pelcobridge/) | Pelco-D rotator controller (UHF sat rotator) | `muehle/uhf/rotator` | shari | Serial |
+| [atr1k-tuner-bridge](atr1k-tuner-bridge/) | ATR-1000 ATU bridge | `muehle/hf/tuner` | shari | wifi (binary WebSocket) |
 | [hadiscovery](hadiscovery/) | Home Assistant discovery consumer | `muehle/hf/discovery` | shari | logic slot — reads `/meta`, renders HA discovery |
 
 All components publish to a shared MQTT broker (`tcp://192.168.1.50:1883`) using the
@@ -36,6 +37,7 @@ muehle/
     antenna-select/  ← antennaselect    (reconciler — picks the antenna)
     pa/              ← acombridge       (ACOM 1200S)
     rotator/         ← wrcrotorbridge   (Yaesu G-450DC via AF6SA WRC, websocket)
+    tuner/           ← atr1k-tuner-bridge (ATR-1000 ATU, wifi)
     discovery/       ← hadiscovery      (HA discovery consumer — reads /meta.expose)
   uhf/
     rotator/         ← pelcobridge      (UHF sat rotator, Pelco-D)
@@ -66,6 +68,7 @@ Each slot publishes four topics:
 | [Config and secrets](docs/conventions/config-and-secrets.md) | 0600 TOML file, seed-once deploy, EnvironmentFile pattern |
 | [Deployment](docs/conventions/deployment.md) | Cross-compile, systemd hardening, udev rules, shari service management |
 | [Band/mode reference](docs/conventions/band-mode-reference.md) | Canonical Hz ranges and mode names |
+| [Bridge naming](docs/conventions/naming.md) | `<devtag>-<function>-bridge` for device bridges |
 | [MQTT schema template](docs/templates/mqtt-schema.md) | Template for per-component MQTT API docs |
 
 ---
