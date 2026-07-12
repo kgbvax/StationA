@@ -11,7 +11,7 @@ Each component is a separate Go service; this repo contains only shared document
 |---------|------|-------------|------|-----------|
 | [flexbridge](flexbridge/) | FLEX-8400 radio bridge | `muehle/hf/radio` | shari | Ethernet (SmartSDR API) |
 | [ultrabridge](ultrabridge/) | Antenna controller (Ultrabeam RCU-06) | `muehle/hf/ant-ctrl` | shari | USB-serial (FTDI) |
-| [antswitchbridge](antswitchbridge/) | 1:5 antenna switch bridge | `muehle/hf/ant-switch` | shari | wifi (contract-first) |
+| [antswitchbridge](antswitchbridge/) | 1:6 antenna switch bridge | `muehle/hf/ant-switch` | shari | wifi (contract-first) |
 | [antennaselect](antennaselect/) | Antenna-selection reconciler | `muehle/hf/antenna-select` | shari | logic slot (core implemented) |
 | [acombridge](acombridge/) | ACOM 1200S PA bridge | `muehle/hf/pa` | shari | Serial |
 | [wrcrotorbridge](wrcrotorbridge/) | HF rotator bridge (Yaesu G-450DC via AF6SA WRC) | `muehle/hf/rotator` | shari | WebSocket (AF6SA WRC) |
@@ -32,7 +32,7 @@ muehle/
   hf/
     radio/           ← flexbridge       (FLEX-8400)
     ant-ctrl/        ← ultrabridge           (Ultrabeam RCU-06 — tunes one antenna)
-    ant-switch/      ← antswitchbridge  (1:5 antenna switch, dumb actuator)
+    ant-switch/      ← antswitchbridge  (1:6 antenna switch, dumb actuator)
     antenna-select/  ← antennaselect    (reconciler — picks the antenna)
     pa/              ← acombridge       (ACOM 1200S)
     rotator/         ← wrcrotorbridge   (Yaesu G-450DC via AF6SA WRC, websocket)

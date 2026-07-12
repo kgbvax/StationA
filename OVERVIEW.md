@@ -46,7 +46,7 @@ routing among them is `ant-switch` (actuator) driven by `antenna-select` (policy
 |---|---|---|---|
 | `radio` | flexbridge | FLEX-8400 radio bridge (read-only) | Ethernet (SmartSDR) |
 | `ant-ctrl` | ultrabridge | Ultrabeam RCU-06 antenna controller | USB-serial |
-| `ant-switch` | antswitchbridge | 1:5 antenna switch — dumb actuator | Wi-Fi (contract-first) |
+| `ant-switch` | antswitchbridge | 1:6 antenna switch — dumb actuator | Wi-Fi (contract-first) |
 | `antenna-select` | antennaselect | antenna-selection reconciler (logic) | — |
 | `pa` | acombridge | ACOM 1200S PA bridge | Serial |
 | `rotator` | pelcobridge | Pelco-D rotator controller | Serial |
