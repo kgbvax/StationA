@@ -119,12 +119,13 @@ type metaCommand struct {
 	ValueType string `json:"value_type,omitempty"`
 }
 
-// cmdPayload is the /cmd JSON the bridge accepts. set_inline carries a bool;
-// tune carries a mode ("mem"|"full").
+// cmdPayload is the /cmd JSON the bridge accepts. Both actions carry their
+// argument under the conventional `value` key (matching acombridge's
+// set_band: {"action":"set_band","value":"20m"}) — set_inline a bool, tune a
+// mode ("mem"|"full").
 type cmdPayload struct {
-	Action string  `json:"action"`
-	Inline *bool   `json:"inline,omitempty"`
-	Mode   *string `json:"mode,omitempty"`
+	Action string          `json:"action"`
+	Value  json.RawMessage `json:"value,omitempty"`
 }
 
 // New constructs a Bridge.
@@ -165,7 +166,7 @@ func (b *Bridge) PublishMeta() {
 				{Key: "fwd", Name: "Forward Power", Type: "number", Unit: "W",
 					Class: "power", StateClass: "measurement"},
 				{Key: "inline", Name: "In Line", Type: "boolean", Writable: true,
-					Command: &metaCommand{Action: "set_inline", ValueKey: "inline", ValueType: "bool"}},
+					Command: &metaCommand{Action: "set_inline", ValueKey: "value", ValueType: "bool"}},
 				{Key: "l_uh", Name: "Inductance", Type: "number", Unit: "µH"},
 				{Key: "c_pf", Name: "Capacitance", Type: "number", Unit: "pF"},
 				{Key: "settling", Name: "Tuning", Type: "boolean"},
@@ -173,7 +174,7 @@ func (b *Bridge) PublishMeta() {
 				{Key: "device_online", Name: "Device Online", Type: "boolean"},
 			},
 			Actions: []metaExposeAction{
-				{Key: "tune", Name: "Tune", Command: &metaCommand{Action: "tune", ValueKey: "mode", ValueType: "enum"}},
+				{Key: "tune", Name: "Tune", Command: &metaCommand{Action: "tune", ValueKey: "value", ValueType: "enum"}},
 			},
 		},
 	}
@@ -250,19 +251,29 @@ func (b *Bridge) HandleCommand(payload []byte) {
 	}
 	switch c.Action {
 	case "set_inline":
-		if c.Inline == nil {
-			b.log.Warnf("cmd set_inline: missing inline")
+		if len(c.Value) == 0 {
+			b.log.Warnf("cmd set_inline: missing value")
 			return
 		}
-		if err := b.cfg.Commander.SetInline(*c.Inline); err != nil {
+		var v bool
+		if err := json.Unmarshal(c.Value, &v); err != nil {
+			b.log.Warnf("cmd set_inline: bad value: %v", err)
+			return
+		}
+		if err := b.cfg.Commander.SetInline(v); err != nil {
 			b.log.Warnf("cmd set_inline: %v", err)
 		}
 	case "tune":
-		if c.Mode == nil {
-			b.log.Warnf("cmd tune: missing mode")
+		if len(c.Value) == 0 {
+			b.log.Warnf("cmd tune: missing value")
 			return
 		}
-		switch *c.Mode {
+		var mode string
+		if err := json.Unmarshal(c.Value, &mode); err != nil {
+			b.log.Warnf("cmd tune: bad value: %v", err)
+			return
+		}
+		switch mode {
 		case "mem":
 			if err := b.cfg.Commander.Tune(false); err != nil {
 				b.log.Warnf("cmd tune mem: %v", err)
@@ -272,7 +283,7 @@ func (b *Bridge) HandleCommand(payload []byte) {
 				b.log.Warnf("cmd tune full: %v", err)
 			}
 		default:
-			b.log.Warnf("cmd tune: unknown mode %q", *c.Mode)
+			b.log.Warnf("cmd tune: unknown mode %q", mode)
 		}
 	default:
 		b.log.Warnf("cmd: unknown action %q", c.Action)

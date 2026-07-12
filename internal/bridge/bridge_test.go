@@ -108,8 +108,8 @@ func TestPublishMeta(t *testing.T) {
 		t.Error("inline field must be writable")
 	}
 	cmd, _ := inlineField["command"].(map[string]any)
-	if cmd["action"] != "set_inline" || cmd["value_key"] != "inline" || cmd["value_type"] != "bool" {
-		t.Errorf("inline command = %v, want action=set_inline value_key=inline value_type=bool", cmd)
+	if cmd["action"] != "set_inline" || cmd["value_key"] != "value" || cmd["value_type"] != "bool" {
+		t.Errorf("inline command = %v, want action=set_inline value_key=value value_type=bool", cmd)
 	}
 	actions, _ := expose["actions"].([]any)
 	if len(actions) != 1 {
@@ -117,8 +117,8 @@ func TestPublishMeta(t *testing.T) {
 	} else {
 		act := actions[0].(map[string]any)
 		actCmd, _ := act["command"].(map[string]any)
-		if actCmd["action"] != "tune" || actCmd["value_key"] != "mode" || actCmd["value_type"] != "enum" {
-			t.Errorf("tune command = %v, want action=tune value_key=mode value_type=enum", actCmd)
+		if actCmd["action"] != "tune" || actCmd["value_key"] != "value" || actCmd["value_type"] != "enum" {
+			t.Errorf("tune command = %v, want action=tune value_key=value value_type=enum", actCmd)
 		}
 	}
 }
@@ -129,22 +129,22 @@ func TestHandleCommand(t *testing.T) {
 		payload string
 		check   func(*fakeCommander)
 	}{
-		{"set_inline_true", `{"action":"set_inline","inline":true}`, func(c *fakeCommander) {
+		{"set_inline_true", `{"action":"set_inline","value":true}`, func(c *fakeCommander) {
 			if len(c.inlines) != 1 || c.inlines[0] != true {
 				t.Errorf("inlines = %v, want [true]", c.inlines)
 			}
 		}},
-		{"set_inline_false", `{"action":"set_inline","inline":false}`, func(c *fakeCommander) {
+		{"set_inline_false", `{"action":"set_inline","value":false}`, func(c *fakeCommander) {
 			if len(c.inlines) != 1 || c.inlines[0] != false {
 				t.Errorf("inlines = %v, want [false]", c.inlines)
 			}
 		}},
-		{"tune_mem", `{"action":"tune","mode":"mem"}`, func(c *fakeCommander) {
+		{"tune_mem", `{"action":"tune","value":"mem"}`, func(c *fakeCommander) {
 			if len(c.tunes) != 1 || c.tunes[0] != false {
 				t.Errorf("tunes = %v, want [false]", c.tunes)
 			}
 		}},
-		{"tune_full", `{"action":"tune","mode":"full"}`, func(c *fakeCommander) {
+		{"tune_full", `{"action":"tune","value":"full"}`, func(c *fakeCommander) {
 			if len(c.tunes) != 1 || c.tunes[0] != true {
 				t.Errorf("tunes = %v, want [true]", c.tunes)
 			}

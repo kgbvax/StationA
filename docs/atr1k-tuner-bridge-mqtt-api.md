@@ -85,7 +85,7 @@ Retained JSON, republished on every (re)connect.
       { "key": "swr",           "name": "SWR",            "type": "number",  "unit": "ratio", "class": "swr",   "state_class": "measurement" },
       { "key": "fwd",           "name": "Forward Power",  "type": "number",  "unit": "W",    "class": "power", "state_class": "measurement" },
       { "key": "inline",        "name": "In Line",        "type": "boolean", "writable": true,
-        "command": { "action": "set_inline", "value_key": "inline", "value_type": "bool" } },
+        "command": { "action": "set_inline", "value_key": "value", "value_type": "bool" } },
       { "key": "l_uh",          "name": "Inductance",     "type": "number",  "unit": "µH" },
       { "key": "c_pf",          "name": "Capacitance",    "type": "number",  "unit": "pF" },
       { "key": "settling",      "name": "Tuning",         "type": "boolean" },
@@ -94,7 +94,7 @@ Retained JSON, republished on every (re)connect.
     ],
     "actions": [
       { "key": "tune", "name": "Tune",
-        "command": { "action": "tune", "value_key": "mode", "value_type": "enum" } }
+        "command": { "action": "tune", "value_key": "value", "value_type": "enum" } }
     ]
   }
 }
@@ -167,10 +167,11 @@ Not retained, QoS 1. Two actions:
 ### set_inline
 
 Put the tuner in line (true) or bypass (false). Drives the ATR `TuneStatus`
-command.
+command. The argument rides under the conventional `value` key (matching
+acombridge's `set_band`).
 
 ```json
-{ "action": "set_inline", "inline": true }
+{ "action": "set_inline", "value": true }
 ```
 
 This is the soft-binding target the `antennaselect` reconciler drives for
@@ -181,14 +182,14 @@ publishes `set_inline=true` when the fan-dipole is selected on 30/60/160 m and
 
 ### tune
 
-Start a tune cycle. `mode` is `mem` (memory recall, fast) or `full` (full tune,
+Start a tune cycle. `value` is `mem` (memory recall, fast) or `full` (full tune,
 slower search). Drives the ATR `TuneMode` command. While tuning, `/state.
 settling` is `true`; it clears when the relays update (settled) or on a 12 s
 timeout (→ `fault: "tune timeout"`).
 
 ```json
-{ "action": "tune", "mode": "full" }
-{ "action": "tune", "mode": "mem" }
+{ "action": "tune", "value": "full" }
+{ "action": "tune", "value": "mem" }
 ```
 
 Unknown actions or modes are logged and ignored.
