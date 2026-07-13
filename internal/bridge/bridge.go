@@ -10,8 +10,8 @@ import (
 	"sync"
 	"time"
 
-	"acombridge/internal/acom"
-	"acombridge/internal/ha"
+	"acom1200s-pa-bridge/internal/acom"
+	"acom1200s-pa-bridge/internal/ha"
 )
 
 // Commander is the amplifier control surface the bridge drives from /cmd. The

@@ -1,10 +1,10 @@
 # pa-mqtt-api — ACOM 1200S PA bridge MQTT schema
 
-Reference for the MQTT topics and payloads published by **acombridge**. This is
+Reference for the MQTT topics and payloads published by **acom1200s-pa-bridge**. This is
 the on-the-wire contract: what a subscriber sees, what every field means, and
 what values to expect.
 
-acombridge implements the `pa` slot of the station integration model
+acom1200s-pa-bridge implements the `pa` slot of the station integration model
 (`../stationa/docs/station-integration-model.md` §7.1). It bridges an ACOM
 600S/1200S linear amplifier to MQTT over a USB-serial adapter (Prolific,
 9600 8N1). The four planes are:
@@ -261,7 +261,7 @@ the ACOM serial protocol as implemented exposes no fault-clear TX command.
 
 ### Embedded discovery (legacy, gated, default off)
 
-When `publish_ha_discovery = true`, acombridge publishes discovery configs under
+When `publish_ha_discovery = true`, acom1200s-pa-bridge publishes discovery configs under
 `homeassistant/` (the `discovery_prefix` in config). Discovery node ID:
 `acom-<sanitized-serial>`.
 
@@ -285,7 +285,7 @@ expects.
 
 ### Standalone discovery via `hadiscovery` (preferred)
 
-With `publish_ha_discovery = false` (default), acombridge publishes only the
+With `publish_ha_discovery = false` (default), acom1200s-pa-bridge publishes only the
 `expose` block in `/meta`. The `hadiscovery` service subscribes to
 `muehle/+/+/meta`, reads `expose`, and renders HA discovery under node ID
 `muehle-hf-pa`:

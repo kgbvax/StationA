@@ -1,12 +1,12 @@
-# config.example.toml — configuration for acombridge (ACOM 1200S PA → MQTT bridge).
-# Default location: /etc/acombridge/config.toml
-# Override with: acombridge -config /path/to/config.toml
+# config.example.toml — configuration for acom1200s-pa-bridge (ACOM 1200S PA → MQTT bridge).
+# Default location: /etc/acom1200s-pa-bridge/config.toml
+# Override with: acom1200s-pa-bridge -config /path/to/config.toml
 #
 # All values shown are the built-in defaults used when this file is absent.
 # Only include the keys you want to change.
 #
-# The MQTT password is NOT kept here — it is loaded from the ACOMBRIDGE_MQTT_PASSWORD
-# environment variable (systemd EnvironmentFile /etc/acombridge/acombridge.env, 0600),
+# The MQTT password is NOT kept here — it is loaded from the ACOM1200S_PA_BRIDGE_MQTT_PASSWORD
+# environment variable (systemd EnvironmentFile /etc/acom1200s-pa-bridge/acom1200s-pa-bridge.env, 0600),
 # so it never appears in the TOML, the unit file, or the process command line.
 # See ../stationa/docs/conventions/config-and-secrets.md.
 
@@ -43,7 +43,7 @@ discovery_prefix = "homeassistant"
 # consumer renders discovery from this bridge's expose block in /meta (model §9).
 publish_ha_discovery = false
 user             = "hf"
-# password is loaded from ACOMBRIDGE_MQTT_PASSWORD (EnvironmentFile), not here.
+# password is loaded from ACOM1200S_PA_BRIDGE_MQTT_PASSWORD (EnvironmentFile), not here.
 password         = ""
 
 [log]
@@ -51,9 +51,9 @@ password         = ""
 level = "info"
 
 # --- env overrides (systemd EnvironmentFile) ---------------------------------
-# These ACOMBRIDGE_* env vars overlay the [mqtt]/[serial] sections above and are
+# These ACOM1200S_PA_BRIDGE_* env vars overlay the [mqtt]/[serial] sections above and are
 # used by deploy.sh so the secret never sits in the TOML:
-#   ACOMBRIDGE_MQTT_BROKER      ACOMBRIDGE_MQTT_CLIENT_ID
-#   ACOMBRIDGE_MQTT_USER        ACOMBRIDGE_MQTT_PASSWORD   (EnvironmentFile)
-#   ACOMBRIDGE_MQTT_SITE        ACOMBRIDGE_MQTT_STATION     ACOMBRIDGE_MQTT_SLOT
-#   ACOMBRIDGE_SERIAL_PORT
+#   ACOM1200S_PA_BRIDGE_MQTT_BROKER      ACOM1200S_PA_BRIDGE_MQTT_CLIENT_ID
+#   ACOM1200S_PA_BRIDGE_MQTT_USER        ACOM1200S_PA_BRIDGE_MQTT_PASSWORD   (EnvironmentFile)
+#   ACOM1200S_PA_BRIDGE_MQTT_SITE        ACOM1200S_PA_BRIDGE_MQTT_STATION     ACOM1200S_PA_BRIDGE_MQTT_SLOT
+#   ACOM1200S_PA_BRIDGE_SERIAL_PORT

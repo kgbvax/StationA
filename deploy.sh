@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 #
-# Deploy acombridge (the ACOM 1200S PA bridge, binary `acombridge`) to a
+# Deploy acom1200s-pa-bridge (the ACOM 1200S PA bridge, binary `acom1200s-pa-bridge`) to a
 # Raspberry Pi and install it as a hardened systemd service.
 #
-# acombridge is a serial bridge: it reads the ACOM 600S/1200S proprietary
+# acom1200s-pa-bridge is a serial bridge: it reads the ACOM 600S/1200S proprietary
 # telemetry protocol over a USB-serial adapter (Prolific, vendor 067b) at
 # 9600 8N1 and publishes canonical PA state to MQTT on the station three-plane
 # topics (muehle/hf/pa/{meta,state,status,cmd}). It also subscribes to /cmd
@@ -19,12 +19,12 @@
 # Configurable via environment variables (with defaults):
 #   SSH_HOST        SSH target            (default: 192.168.1.139)
 #   SSH_USER        SSH user              (default: io)  [used only if SSH_HOST has no user@]
-#   SERVICE_NAME    systemd service name  (default: acombridge)
-#   SERVICE_USER    system user to run as (default: acombridge)
+#   SERVICE_NAME    systemd service name  (default: acom1200s-pa-bridge)
+#   SERVICE_USER    system user to run as (default: acom1200s-pa-bridge)
 #   SERIAL_GROUP    group owning serial   (default: dialout)
 #   SERIAL_USB_VENDOR USB vendor id for the udev serial-group rule (default: 067b=Prolific; empty=skip)
-#   INSTALL_DIR     remote install dir    (default: /opt/acombridge)
-#   BINARY          binary name           (default: acombridge)
+#   INSTALL_DIR     remote install dir    (default: /opt/acom1200s-pa-bridge)
+#   BINARY          binary name           (default: acom1200s-pa-bridge)
 #
 #   SERIAL_PORT     serial.port value        (default: /dev/serial/by-id/usb-Prolific_..._if00-port0)
 #   AVG_TIME_MS     serial.avg_time_ms value (default: 300)
@@ -39,12 +39,12 @@
 #   MQTT_STATION    mqtt.station             (default: hf)
 #   MQTT_SLOT       mqtt.slot                (default: pa)
 #   MQTT_USER       mqtt.user                (default: hf)
-#   MQTT_PASSWORD   ACOMBRIDGE_MQTT_PASSWORD (default: empty -> set on device)
+#   MQTT_PASSWORD   ACOM1200S_PA_BRIDGE_MQTT_PASSWORD (default: empty -> set on device)
 #   DISCOVERY_PREFIX mqtt.discovery_prefix   (default: homeassistant)
 #
 # Configuration lives in a 0600 TOML file on the target
-# (/etc/acombridge/config.toml); the MQTT password is NOT in the TOML — it is
-# loaded from an EnvironmentFile (/etc/acombridge/acombridge.env, 0600) so it
+# (/etc/acom1200s-pa-bridge/config.toml); the MQTT password is NOT in the TOML — it is
+# loaded from an EnvironmentFile (/etc/acom1200s-pa-bridge/acom1200s-pa-bridge.env, 0600) so it
 # never appears in the unit file or process command line. Both files are
 # SEEDED ONCE on first deploy from the variables above; subsequent deploys
 # leave the on-device files untouched so the Pi owns its own settings. To
@@ -56,20 +56,20 @@ set -euo pipefail
 # --- configuration ----------------------------------------------------------
 SSH_HOST="${SSH_HOST:-192.168.1.139}"
 SSH_USER="${SSH_USER:-io}"
-SERVICE_NAME="${SERVICE_NAME:-acombridge}"
-SERVICE_USER="${SERVICE_USER:-acombridge}"
+SERVICE_NAME="${SERVICE_NAME:-acom1200s-pa-bridge}"
+SERVICE_USER="${SERVICE_USER:-acom1200s-pa-bridge}"
 SERIAL_GROUP="${SERIAL_GROUP:-dialout}"
 # USB vendor id of the serial adapter. A udev rule forces matching tty devices
 # into SERIAL_GROUP so the service user can always open them, regardless of the
 # distro's default. Default 067b = Prolific (the ACOM's adapter). Set empty to
 # skip installing the udev rule.
 SERIAL_USB_VENDOR="${SERIAL_USB_VENDOR:-067b}"
-INSTALL_DIR="${INSTALL_DIR:-/opt/acombridge}"
-CONFIG_DIR="${CONFIG_DIR:-/etc/acombridge}"
+INSTALL_DIR="${INSTALL_DIR:-/opt/acom1200s-pa-bridge}"
+CONFIG_DIR="${CONFIG_DIR:-/etc/acom1200s-pa-bridge}"
 CONFIG_FILE="${CONFIG_FILE:-${CONFIG_DIR}/config.toml}"
-ENV_FILE="${ENV_FILE:-${CONFIG_DIR}/acombridge.env}"
-BINARY="${BINARY:-acombridge}"
-PKG="./cmd/acombridge"
+ENV_FILE="${ENV_FILE:-${CONFIG_DIR}/acom1200s-pa-bridge.env}"
+BINARY="${BINARY:-acom1200s-pa-bridge}"
+PKG="./cmd/acom1200s-pa-bridge"
 
 SERIAL_PORT="${SERIAL_PORT:-/dev/serial/by-id/usb-Prolific_Technology_Inc._USB-Serial_Controller_D-if00-port0}"
 AVG_TIME_MS="${AVG_TIME_MS:-300}"
@@ -116,8 +116,8 @@ SEED_CONFIG="$(umask 077; mktemp)"
 SEED_ENV="$(umask 077; mktemp)"
 trap 'rm -f "$SEED_CONFIG" "$SEED_ENV" "${UNIT_FILE:-}"' EXIT
 {
-  echo "# acombridge configuration. Sensitive values are NOT here — the MQTT"
-  echo "# password lives in the EnvironmentFile (acombridge.env). Keep both 0600."
+  echo "# acom1200s-pa-bridge configuration. Sensitive values are NOT here — the MQTT"
+  echo "# password lives in the EnvironmentFile (acom1200s-pa-bridge.env). Keep both 0600."
   echo "# Seeded by deploy.sh on first deploy; edit here to change settings."
   echo ""
   echo "host = \"$(toml_escape "$HOST_NAME")\""
@@ -147,7 +147,7 @@ trap 'rm -f "$SEED_CONFIG" "$SEED_ENV" "${UNIT_FILE:-}"' EXIT
   echo "# consumer renders discovery from this bridge's expose block in /meta (model §9)."
   echo "publish_ha_discovery = false"
   echo "user             = \"$(toml_escape "$MQTT_USER")\""
-  echo "# password is loaded from ACOMBRIDGE_MQTT_PASSWORD in acombridge.env, not here."
+  echo "# password is loaded from ACOM1200S_PA_BRIDGE_MQTT_PASSWORD in acom1200s-pa-bridge.env, not here."
   echo "password         = \"\""
   echo ""
   echo "[log]"
@@ -155,12 +155,12 @@ trap 'rm -f "$SEED_CONFIG" "$SEED_ENV" "${UNIT_FILE:-}"' EXIT
 } > "$SEED_CONFIG"
 
 {
-  echo "# acombridge EnvironmentFile (read by the systemd unit). Keep 0600."
+  echo "# acom1200s-pa-bridge EnvironmentFile (read by the systemd unit). Keep 0600."
   echo "# Seeded by deploy.sh on first deploy; edit here to change the password."
   if [[ -n "$MQTT_PASSWORD" ]]; then
-    echo "ACOMBRIDGE_MQTT_PASSWORD=\"$(toml_escape "$MQTT_PASSWORD")\""
+    echo "ACOM1200S_PA_BRIDGE_MQTT_PASSWORD=\"$(toml_escape "$MQTT_PASSWORD")\""
   else
-    echo "# ACOMBRIDGE_MQTT_PASSWORD=\"...\"   # set on the device (copy from another hf service config)"
+    echo "# ACOM1200S_PA_BRIDGE_MQTT_PASSWORD=\"...\"   # set on the device (copy from another hf service config)"
   fi
 } > "$SEED_ENV"
 
@@ -175,7 +175,7 @@ echo "   built $OUT"
 UNIT_FILE="$(mktemp)"
 cat > "$UNIT_FILE" <<EOF
 [Unit]
-Description=ACOM 1200S PA to MQTT bridge (acombridge)
+Description=ACOM 1200S PA to MQTT bridge (acom1200s-pa-bridge)
 After=network-online.target
 Wants=network-online.target
 
@@ -192,11 +192,11 @@ User=${SERVICE_USER}
 Group=${SERVICE_USER}
 # ...that is a member of the serial group so it can open /dev/tty* devices.
 SupplementaryGroups=${SERIAL_GROUP}
-# systemd owns /etc/acombridge (created 0755, owned by the service user).
+# systemd owns /etc/acom1200s-pa-bridge (created 0755, owned by the service user).
 ConfigurationDirectory=${SERVICE_NAME}
 StateDirectory=${SERVICE_NAME}
 
-# Hardening. acombridge needs the serial char devices (no PrivateDevices) and
+# Hardening. acom1200s-pa-bridge needs the serial char devices (no PrivateDevices) and
 # outbound TCP to the MQTT broker — nothing else: no disk writes, no elevated
 # capabilities, no inbound sockets.
 NoNewPrivileges=true
@@ -263,7 +263,7 @@ sudo usermod -aG "$SERIAL_GROUP" "$SERVICE_USER"
 # to a group the service user isn't in, which would deny access — this pins it.
 if [ -n "$SERIAL_USB_VENDOR" ]; then
   printf 'SUBSYSTEM=="tty", SUBSYSTEMS=="usb", ATTRS{idVendor}=="%s", GROUP="%s", MODE="0660"\n' \
-    "$SERIAL_USB_VENDOR" "$SERIAL_GROUP" | sudo tee /etc/udev/rules.d/99-acombridge-serial.rules >/dev/null
+    "$SERIAL_USB_VENDOR" "$SERIAL_GROUP" | sudo tee /etc/udev/rules.d/99-acom1200s-pa-bridge-serial.rules >/dev/null
   sudo udevadm control --reload-rules
   sudo udevadm trigger --subsystem-match=tty
   echo "   installed udev rule: Prolific/vendor $SERIAL_USB_VENDOR tty -> group $SERIAL_GROUP."
@@ -285,7 +285,7 @@ if [ -e "$ENV_FILE" ]; then
 else
   sudo install -o "$SERVICE_USER" -g "$SERVICE_USER" -m 0600 "$SEED_ENV" "$ENV_FILE"
   echo "   seeded env file at $ENV_FILE (0600, owner $SERVICE_USER)."
-  echo "   !! Set ACOMBRIDGE_MQTT_PASSWORD in $ENV_FILE before relying on the bridge."
+  echo "   !! Set ACOM1200S_PA_BRIDGE_MQTT_PASSWORD in $ENV_FILE before relying on the bridge."
 fi
 sudo systemctl stop "${SERVICE_NAME}.service" 2>/dev/null || true
 sudo mv "/tmp/${BINARY}.new" "${INSTALL_DIR}/${BINARY}"
@@ -299,8 +299,8 @@ sudo systemctl --no-pager --full status "${SERVICE_NAME}.service" || true
 REMOTE
 
 echo ""
-echo ">> Done. acombridge deployed to ${SSH_TARGET} as systemd service '${SERVICE_NAME}'."
+echo ">> Done. acom1200s-pa-bridge deployed to ${SSH_TARGET} as systemd service '${SERVICE_NAME}'."
 echo "   Logs:    ssh ${SSH_TARGET} 'journalctl -u ${SERVICE_NAME} -f'"
 echo "   Config:  ${CONFIG_FILE}"
-echo "   Secret:  ${ENV_FILE}  (set ACOMBRIDGE_MQTT_PASSWORD if not seeded)"
+echo "   Secret:  ${ENV_FILE}  (set ACOM1200S_PA_BRIDGE_MQTT_PASSWORD if not seeded)"
 echo "   Topics:  muehle/hf/pa/{meta,state,status,cmd}"

@@ -29,7 +29,7 @@ func TestDefaults(t *testing.T) {
 }
 
 func TestLoadMissingFileNonFatal(t *testing.T) {
-	t.Setenv("ACOMBRIDGE_MQTT_PASSWORD", "") // ensure env doesn't taint
+	t.Setenv("ACOM1200S_PA_BRIDGE_MQTT_PASSWORD", "") // ensure env doesn't taint
 	c, err := Load(&Flags{ConfigPath: filepath.Join(t.TempDir(), "does-not-exist.toml")})
 	if err != nil {
 		t.Fatalf("missing config file should be non-fatal, got %v", err)
@@ -52,10 +52,10 @@ func TestLoadParseError(t *testing.T) {
 
 func TestLoadAppliesEnvPassword(t *testing.T) {
 	// The password must come from the env (EnvironmentFile), not the TOML.
-	t.Setenv("ACOMBRIDGE_MQTT_PASSWORD", "s3cr3t")
-	t.Setenv("ACOMBRIDGE_MQTT_SITE", "envsite")
-	t.Setenv("ACOMBRIDGE_MQTT_SLOT", "envpa")
-	t.Setenv("ACOMBRIDGE_SERIAL_PORT", "/dev/env-port")
+	t.Setenv("ACOM1200S_PA_BRIDGE_MQTT_PASSWORD", "s3cr3t")
+	t.Setenv("ACOM1200S_PA_BRIDGE_MQTT_SITE", "envsite")
+	t.Setenv("ACOM1200S_PA_BRIDGE_MQTT_SLOT", "envpa")
+	t.Setenv("ACOM1200S_PA_BRIDGE_SERIAL_PORT", "/dev/env-port")
 
 	c, err := Load(&Flags{ConfigPath: filepath.Join(t.TempDir(), "none.toml")})
 	if err != nil {
@@ -86,10 +86,10 @@ func TestLoadFlagLogLevelOverrides(t *testing.T) {
 }
 
 func TestLoadTomlOverridesDefaults(t *testing.T) {
-	// Guard against ambient secrets: never let a real ACOMBRIDGE_MQTT_PASSWORD
+	// Guard against ambient secrets: never let a real ACOM1200S_PA_BRIDGE_MQTT_PASSWORD
 	// taint the config under test (and never dump the whole MQTTConfig — it
 	// carries the Password field — in an error message).
-	t.Setenv("ACOMBRIDGE_MQTT_PASSWORD", "")
+	t.Setenv("ACOM1200S_PA_BRIDGE_MQTT_PASSWORD", "")
 	dir := t.TempDir()
 	path := filepath.Join(dir, "cfg.toml")
 	toml := `

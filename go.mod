@@ -1,4 +1,4 @@
-module acombridge
+module acom1200s-pa-bridge
 
 go 1.24.0
 

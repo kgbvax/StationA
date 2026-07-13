@@ -1,6 +1,6 @@
-# CLAUDE.md — acombridge
+# CLAUDE.md — acom1200s-pa-bridge
 
-acombridge bridges an **ACOM 600S/1200S linear amplifier** to MQTT using the
+acom1200s-pa-bridge bridges an **ACOM 600S/1200S linear amplifier** to MQTT using the
 station integration model (slot `muehle/hf/pa`). It reads the amplifier's
 proprietary serial protocol over a USB-serial adapter (Prolific, 9600 8N1),
 publishes a canonical PA state snapshot, and dispatches `/cmd` intent
@@ -11,10 +11,10 @@ publishes a canonical PA state snapshot, and dispatches `/cmd` intent
 ## Commands
 
 ```bash
-go build ./cmd/acombridge                 # local build
+go build ./cmd/acom1200s-pa-bridge                 # local build
 GOOS=linux GOARCH=arm64 CGO_ENABLED=0 \
   go build -trimpath -ldflags="-s -w" \
-  -o dist/acombridge-linux-arm64 ./cmd/acombridge   # Pi cross-compile
+  -o dist/acom1200s-pa-bridge-linux-arm64 ./cmd/acom1200s-pa-bridge   # Pi cross-compile
 go test ./...                             # unit tests (no network/hardware)
 go test ./... -race                       # tests with race detector
 go vet ./...                              # vet
@@ -32,7 +32,7 @@ CLI flags:
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `-config` | `/etc/acombridge/config.toml` | Path to TOML config file |
+| `-config` | `/etc/acom1200s-pa-bridge/config.toml` | Path to TOML config file |
 | `-log.level` | (from config) | `debug` \| `info` \| `warn` \| `error`; overrides config |
 | `-debug` | `false` | Hex-dump all serial I/O to stderr |
 
@@ -42,7 +42,7 @@ CLI flags:
 
 **Data flow:** serial run loop → `internal/acom` → `internal/bridge` → MQTT.
 
-1. `cmd/acombridge/main.go` — flags, config load, signal ctx, MQTT connect+LWT,
+1. `cmd/acom1200s-pa-bridge/main.go` — flags, config load, signal ctx, MQTT connect+LWT,
    `/cmd` subscription, serial restart loop with exponential backoff, watchdog.
 2. `internal/acom` — serial protocol: open port, frame scan + checksum, ACK,
    enable-telemetry, 72-byte telemetry parser, forward-power averager, band
@@ -51,7 +51,7 @@ CLI flags:
 3. `internal/bridge` — canonical PA state model + MQTT publishing: `/meta`
    (capabilities + `expose`), retained `/state` snapshot, `/cmd` dispatch via a
    `Commander` interface, gated legacy HA discovery.
-4. `internal/config` — TOML config, flags, `ACOMBRIDGE_*` env overrides.
+4. `internal/config` — TOML config, flags, `ACOM1200S_PA_BRIDGE_*` env overrides.
 5. `internal/ha` — legacy embedded HA discovery payload builders (gated off by
    default; slated for deletion once `hadiscovery` is proven, model §9).
 
@@ -73,7 +73,7 @@ interface (mutex-guarded).
 
 ## MQTT topics
 
-acombridge publishes to the station integration model topics:
+acom1200s-pa-bridge publishes to the station integration model topics:
 
 ```
 muehle/hf/pa/meta      retained  birth certificate (capabilities + expose)
@@ -94,18 +94,18 @@ on-the-wire contract and the firmware→canonical mapping.
 
 ## Configuration and secrets
 
-Config is TOML (`/etc/acombridge/config.toml` by default, or `-config <path>`).
+Config is TOML (`/etc/acom1200s-pa-bridge/config.toml` by default, or `-config <path>`).
 The MQTT password is **not** in the TOML — it is loaded from an
 `EnvironmentFile` so it never appears in the unit file or process command line:
 
 ```bash
-# /etc/acombridge/acombridge.env  (0600, owned by acombridge user)
-ACOMBRIDGE_MQTT_PASSWORD=<password>
+# /etc/acom1200s-pa-bridge/acom1200s-pa-bridge.env  (0600, owned by acom1200s-pa-bridge user)
+ACOM1200S_PA_BRIDGE_MQTT_PASSWORD=<password>
 ```
 
-The systemd unit contains `EnvironmentFile=/etc/acombridge/acombridge.env`.
-Env overrides: `ACOMBRIDGE_MQTT_BROKER`/`_CLIENT_ID`/`_USER`/`_PASSWORD`/
-`_SITE`/`_STATION`/`_SLOT`, `ACOMBRIDGE_SERIAL_PORT`.
+The systemd unit contains `EnvironmentFile=/etc/acom1200s-pa-bridge/acom1200s-pa-bridge.env`.
+Env overrides: `ACOM1200S_PA_BRIDGE_MQTT_BROKER`/`_CLIENT_ID`/`_USER`/`_PASSWORD`/
+`_SITE`/`_STATION`/`_SLOT`, `ACOM1200S_PA_BRIDGE_SERIAL_PORT`.
 
 See `../stationa/docs/conventions/config-and-secrets.md` for the full convention.
 
@@ -118,6 +118,15 @@ Target: Raspberry Pi (`shari`, `192.168.1.139`, user `io`).
 ```bash
 ./deploy.sh              # cross-compile, ship, install as a hardened systemd service
 ```
+
+**Migrating from the legacy `acombridge` install:** run the one-time
+`./migrate-from-acombridge.sh` **before** the first `./deploy.sh`. It stops +
+disables the old `acombridge` service, copies `/etc/acombridge/{config.toml,acombridge.env}`
+to `/etc/acom1200s-pa-bridge/` (rewriting `ACOMBRIDGE_` → `ACOM1200S_PA_BRIDGE_` in the
+env file **on the device** so the MQTT password never leaves the Pi), then removes the
+old unit, `/opt/acombridge`, `/etc/acombridge`, the old udev rule, and (best-effort) the
+old user. Idempotent — safe to re-run. Ordering matters: migration first, then
+`./deploy.sh` whose seed-once keeps the migrated real config.
 
 The unit is hardened like flexbridge **minus `PrivateDevices`** (the bridge
 must open `/dev/ttyUSB*`). It keeps `SupplementaryGroups=dialout`, the three

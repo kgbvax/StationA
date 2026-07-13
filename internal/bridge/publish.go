@@ -8,7 +8,7 @@ import (
 
 	pahomqtt "github.com/eclipse/paho.mqtt.golang"
 
-	"acombridge/internal/ha"
+	"acom1200s-pa-bridge/internal/ha"
 )
 
 // Publisher is the MQTT surface the bridge needs. It's a small interface so

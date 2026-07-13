@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"acombridge/internal/acom"
+	"acom1200s-pa-bridge/internal/acom"
 )
 
 // testLogger satisfies Logger by routing to the test log.

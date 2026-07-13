@@ -1,4 +1,4 @@
-# acombridge
+# acom1200s-pa-bridge
 
 A Go service that bridges an **ACOM 600S / 1200S linear amplifier** to the
 station MQTT bus using the station integration model (slot `muehle/hf/pa`). It
@@ -20,13 +20,22 @@ It is part of the Mühle station automation ecosystem; see the meta-repo at
 ## Build & run
 
 ```sh
-go build ./cmd/acombridge                 # local build
+go build ./cmd/acom1200s-pa-bridge                 # local build
 ./deploy.sh                               # cross-compile for the Pi and install as a systemd service
 ```
 
+> **Upgrading from the legacy `acombridge` install?** Run the one-time migration
+> **before** the first `./deploy.sh` so the new service keeps the real config + MQTT
+> password instead of seeded defaults:
+> ```sh
+> ./migrate-from-acombridge.sh            # on shari: stop/disable old service, copy config+env
+>                                         # (rewrites ACOMBRIDGE_ -> ACOM1200S_PA_BRIDGE_ on device),
+> ./deploy.sh                             # then install acom1200s-pa-bridge (seed-once keeps migrated files)
+> ```
+
 | Flag | Default | Description |
 |------|---------|-------------|
-| `-config` | `/etc/acombridge/config.toml` | Path to TOML configuration file |
+| `-config` | `/etc/acom1200s-pa-bridge/config.toml` | Path to TOML configuration file |
 | `-log.level` | (from config) | `debug` \| `info` \| `warn` \| `error` |
 | `-debug` | `false` | Hex-dump all serial I/O to stderr |
 
@@ -39,14 +48,14 @@ detects the amplifier has been switched off and back on (watchdog).
 All non-secret settings live in a TOML file (`config.example.toml` is a fully
 annotated starting point). The binary works without one — built-in defaults are
 used when the file is absent. The MQTT password is **not** in the TOML; it is
-loaded from the `ACOMBRIDGE_MQTT_PASSWORD` environment variable (systemd
+loaded from the `ACOM1200S_PA_BRIDGE_MQTT_PASSWORD` environment variable (systemd
 `EnvironmentFile`), so it never appears in the unit file or process command line.
 
 ```sh
-sudo mkdir -p /etc/acombridge
-sudo cp config.example.toml /etc/acombridge/config.toml
-# /etc/acombridge/acombridge.env  (0600):
-#   ACOMBRIDGE_MQTT_PASSWORD="..."
+sudo mkdir -p /etc/acom1200s-pa-bridge
+sudo cp config.example.toml /etc/acom1200s-pa-bridge/config.toml
+# /etc/acom1200s-pa-bridge/acom1200s-pa-bridge.env  (0600):
+#   ACOM1200S_PA_BRIDGE_MQTT_PASSWORD="..."
 ```
 
 | Key | Default | Description |
@@ -66,7 +75,7 @@ sudo cp config.example.toml /etc/acombridge/config.toml
 
 ## MQTT
 
-acombridge publishes the station three-plane topics under `<site>/<station>/<slot>`:
+acom1200s-pa-bridge publishes the station three-plane topics under `<site>/<station>/<slot>`:
 
 ```
 muehle/hf/pa/meta      retained  birth certificate (capabilities + expose)

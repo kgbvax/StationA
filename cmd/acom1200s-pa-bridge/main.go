@@ -1,4 +1,4 @@
-// Command acombridge bridges an ACOM 600S/1200S linear amplifier to MQTT using
+// Command acom1200s-pa-bridge bridges an ACOM 600S/1200S linear amplifier to MQTT using
 // the station integration model (slot muehle/hf/pa). It reads the amplifier's
 // serial protocol over a USB-serial adapter, publishes a canonical PA state
 // snapshot, and dispatches /cmd intent (set_mode, set_band) back to the amp.
@@ -18,28 +18,28 @@ import (
 
 	pahomqtt "github.com/eclipse/paho.mqtt.golang"
 
-	"acombridge/internal/acom"
-	"acombridge/internal/bridge"
-	"acombridge/internal/config"
+	"acom1200s-pa-bridge/internal/acom"
+	"acom1200s-pa-bridge/internal/bridge"
+	"acom1200s-pa-bridge/internal/config"
 )
 
 func main() {
-	fs := flag.NewFlagSet("acombridge", flag.ExitOnError)
+	fs := flag.NewFlagSet("acom1200s-pa-bridge", flag.ExitOnError)
 	flags := config.RegisterFlags(fs)
 	_ = fs.Parse(os.Args[1:])
 
 	cfg, err := config.Load(flags)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "acombridge: load config: %v\n", err)
+		fmt.Fprintf(os.Stderr, "acom1200s-pa-bridge: load config: %v\n", err)
 		os.Exit(2)
 	}
 	if err := cfg.Validate(); err != nil {
-		fmt.Fprintf(os.Stderr, "acombridge: %v\n", err)
+		fmt.Fprintf(os.Stderr, "acom1200s-pa-bridge: %v\n", err)
 		os.Exit(2)
 	}
 
 	logger := newLogger(cfg.Log.Level)
-	logger.Info("acombridge starting", "port", cfg.Serial.Port, "slot", cfg.MQTT.Slot)
+	logger.Info("acom1200s-pa-bridge starting", "port", cfg.Serial.Port, "slot", cfg.MQTT.Slot)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
@@ -48,13 +48,13 @@ func main() {
 		// A SIGTERM/SIGINT cancels the root context; that's a clean shutdown,
 		// not a failure — exit 0 so `systemctl stop` doesn't report FAILURE.
 		if errors.Is(err, context.Canceled) {
-			logger.Info("acombridge stopped")
+			logger.Info("acom1200s-pa-bridge stopped")
 			return
 		}
-		logger.Error("acombridge exited", "err", err)
+		logger.Error("acom1200s-pa-bridge exited", "err", err)
 		os.Exit(1)
 	}
-	logger.Info("acombridge stopped")
+	logger.Info("acom1200s-pa-bridge stopped")
 }
 
 func run(ctx context.Context, cfg config.Config, debug bool, log *slog.Logger) error {

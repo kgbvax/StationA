@@ -1,6 +1,6 @@
-// Package config holds runtime configuration for acombridge.
+// Package config holds runtime configuration for acom1200s-pa-bridge.
 //
-// acombridge bridges an ACOM 600S/1200S linear amplifier to MQTT using the
+// acom1200s-pa-bridge bridges an ACOM 600S/1200S linear amplifier to MQTT using the
 // station integration model (slot muehle/hf/pa). It reads a proprietary serial
 // protocol over a USB-serial adapter and publishes a canonical PA state
 // snapshot. This package defines the configuration shape, defaults and loading
@@ -94,17 +94,17 @@ func Defaults() Config {
 	}
 }
 
-// Flags describes the command-line flags acombridge understands.
+// Flags describes the command-line flags acom1200s-pa-bridge understands.
 type Flags struct {
 	ConfigPath string
 	LogLevel   string
 	Debug      bool
 }
 
-// RegisterFlags wires acombridge's flags onto fs.
+// RegisterFlags wires acom1200s-pa-bridge's flags onto fs.
 func RegisterFlags(fs *flag.FlagSet) *Flags {
 	var f Flags
-	fs.StringVar(&f.ConfigPath, "config", "/etc/acombridge/config.toml", "path to config file")
+	fs.StringVar(&f.ConfigPath, "config", "/etc/acom1200s-pa-bridge/config.toml", "path to config file")
 	fs.StringVar(&f.LogLevel, "log.level", "", "log level (debug|info|warn|error); overrides config")
 	fs.BoolVar(&f.Debug, "debug", false, "hex-dump serial I/O")
 	return &f
@@ -168,31 +168,31 @@ func (c Config) Validate() error {
 	return nil
 }
 
-// applyEnv overlays ACOMBRIDGE_* env vars on top of cfg, used for the
+// applyEnv overlays ACOM1200S_PA_BRIDGE_* env vars on top of cfg, used for the
 // systemd EnvironmentFile workflow where the secret isn't in the TOML.
 func applyEnv(cfg *Config) {
-	if v := os.Getenv("ACOMBRIDGE_MQTT_BROKER"); v != "" {
+	if v := os.Getenv("ACOM1200S_PA_BRIDGE_MQTT_BROKER"); v != "" {
 		cfg.MQTT.Broker = v
 	}
-	if v := os.Getenv("ACOMBRIDGE_MQTT_CLIENT_ID"); v != "" {
+	if v := os.Getenv("ACOM1200S_PA_BRIDGE_MQTT_CLIENT_ID"); v != "" {
 		cfg.MQTT.ClientID = v
 	}
-	if v := os.Getenv("ACOMBRIDGE_MQTT_USER"); v != "" {
+	if v := os.Getenv("ACOM1200S_PA_BRIDGE_MQTT_USER"); v != "" {
 		cfg.MQTT.User = v
 	}
-	if v := os.Getenv("ACOMBRIDGE_MQTT_PASSWORD"); v != "" {
+	if v := os.Getenv("ACOM1200S_PA_BRIDGE_MQTT_PASSWORD"); v != "" {
 		cfg.MQTT.Password = v
 	}
-	if v := os.Getenv("ACOMBRIDGE_MQTT_SITE"); v != "" {
+	if v := os.Getenv("ACOM1200S_PA_BRIDGE_MQTT_SITE"); v != "" {
 		cfg.MQTT.Site = v
 	}
-	if v := os.Getenv("ACOMBRIDGE_MQTT_STATION"); v != "" {
+	if v := os.Getenv("ACOM1200S_PA_BRIDGE_MQTT_STATION"); v != "" {
 		cfg.MQTT.Station = v
 	}
-	if v := os.Getenv("ACOMBRIDGE_MQTT_SLOT"); v != "" {
+	if v := os.Getenv("ACOM1200S_PA_BRIDGE_MQTT_SLOT"); v != "" {
 		cfg.MQTT.Slot = v
 	}
-	if v := os.Getenv("ACOMBRIDGE_SERIAL_PORT"); v != "" {
+	if v := os.Getenv("ACOM1200S_PA_BRIDGE_SERIAL_PORT"); v != "" {
 		cfg.Serial.Port = v
 	}
 }
