@@ -35,7 +35,6 @@
 #   MQTT_SLOT       mqtt.slot             (default: tuner)
 #   MQTT_USER       mqtt.user             (default: hf)
 #   MQTT_PASSWORD   ATR1K_TUNER_BRIDGE_MQTT_PASSWORD (default: empty -> set on device)
-#   DISCOVERY_PREFIX mqtt.discovery_prefix (default: homeassistant)
 #
 # Configuration lives in a 0600 TOML file on the target
 # (/etc/atr1k-tuner-bridge/config.toml); the MQTT password is NOT in the TOML — it
@@ -72,7 +71,6 @@ MQTT_STATION="${MQTT_STATION:-hf}"
 MQTT_SLOT="${MQTT_SLOT:-tuner}"
 MQTT_USER="${MQTT_USER:-hf}"
 MQTT_PASSWORD="${MQTT_PASSWORD:-}"
-DISCOVERY_PREFIX="${DISCOVERY_PREFIX:-homeassistant}"
 
 # Allow "user@host" in SSH_HOST; otherwise prepend SSH_USER.
 if [[ "$SSH_HOST" == *"@"* ]]; then
@@ -125,10 +123,8 @@ trap 'rm -f "$SEED_CONFIG" "$SEED_ENV" "${UNIT_FILE:-}"' EXIT
   echo "station          = \"$(toml_escape "$MQTT_STATION")\""
   echo "slot             = \"$(toml_escape "$MQTT_SLOT")\""
   echo "location         = \"$(toml_escape "$LOCATION")\""
-  echo "discovery_prefix = \"$(toml_escape "$DISCOVERY_PREFIX")\""
-  echo "# Legacy embedded HA discovery is OFF by default; the standalone hadiscovery"
-  echo "# consumer renders discovery from this bridge's expose block in /meta (model §9)."
-  echo "publish_ha_discovery = false"
+  echo "# Home Assistant discovery is rendered by the standalone hadiscovery consumer"
+  echo "# from this bridge's expose block in /meta (model §9) — no embedded discovery."
   echo "user             = \"$(toml_escape "$MQTT_USER")\""
   echo "# password is loaded from ATR1K_TUNER_BRIDGE_MQTT_PASSWORD in the EnvironmentFile, not here."
   echo "password         = \"\""

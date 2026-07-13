@@ -35,16 +35,10 @@ type TunerConfig struct {
 
 // MQTTConfig holds broker connection settings and station-model addressing.
 type MQTTConfig struct {
-	Broker          string `toml:"broker"`
-	ClientID        string `toml:"client_id"`
-	User            string `toml:"user"`
-	Password        string `toml:"password"`
-	DiscoveryPrefix string `toml:"discovery_prefix"`
-	// PublishHADiscovery gates the legacy embedded HA discovery. It defaults to
-	// false now that a standalone consumer (hadiscovery) renders discovery from
-	// this bridge's consumer-neutral `expose` block in /meta (integration model
-	// §9). Retained only as a migration fallback; new components omit it.
-	PublishHADiscovery bool `toml:"publish_ha_discovery"`
+	Broker   string `toml:"broker"`
+	ClientID string `toml:"client_id"`
+	User     string `toml:"user"`
+	Password string `toml:"password"`
 
 	// Station-model slot addressing: <site>/<station>/<slot>
 	Site     string `toml:"site"`     // e.g. "muehle"
@@ -72,14 +66,13 @@ func Defaults() Config {
 			URL: "ws://192.168.1.20:60001",
 		},
 		MQTT: MQTTConfig{
-			Broker:          "tcp://192.168.1.50:1883",
-			ClientID:        "",
-			User:            "hf",
-			DiscoveryPrefix: "homeassistant",
-			Site:            "muehle",
-			Station:         "hf",
-			Slot:            "tuner",
-			Location:        "bauwagen",
+			Broker:   "tcp://192.168.1.50:1883",
+			ClientID: "",
+			User:     "hf",
+			Site:     "muehle",
+			Station:  "hf",
+			Slot:     "tuner",
+			Location: "bauwagen",
 		},
 		Log:    LogConfig{Level: "info"},
 		Device: DeviceConfig{Model: "ATR-1000", Link: "wifi"},
@@ -127,9 +120,6 @@ func Load(f *Flags) (Config, error) {
 	}
 	if cfg.Log.Level == "" {
 		cfg.Log.Level = "info"
-	}
-	if cfg.MQTT.DiscoveryPrefix == "" {
-		cfg.MQTT.DiscoveryPrefix = "homeassistant"
 	}
 	if cfg.MQTT.Slot == "" {
 		cfg.MQTT.Slot = "tuner"

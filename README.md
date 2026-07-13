@@ -38,8 +38,7 @@ convention `<devtag>-<function>-bridge`.
   WebSocket (default `ws://192.168.1.111:60001`)
 - MQTT broker (e.g. Mosquitto at `192.168.1.50:1883`)
 - (Optional) Home Assistant — discovery is rendered by the standalone
-  `hadiscovery` consumer from this bridge's `expose` block; the legacy embedded
-  discovery is gated off by default (model §9)
+  `hadiscovery` consumer from this bridge's `expose` block in `/meta` (model §9)
 
 ## Build & run
 
@@ -91,8 +90,6 @@ sudo cp config.example.toml /etc/atr1k-tuner-bridge/config.toml
 | `mqtt.location` | `bauwagen` | Physical location label (in `/meta`) |
 | `mqtt.user` | `hf` | MQTT username |
 | `mqtt.password` | _(empty — use EnvironmentFile)_ | MQTT password |
-| `mqtt.discovery_prefix` | `homeassistant` | Legacy embedded HA discovery prefix |
-| `mqtt.publish_ha_discovery` | `false` | Gate legacy embedded HA discovery (model §9) |
 | `device.model` / `link` | `ATR-1000` / `wifi` | Identity published in `/meta` |
 | `host` | `shari` | Compute node (in `/meta`) |
 | `log.level` | `info` | Log level |
@@ -155,9 +152,8 @@ on a 12 s timeout (→ `fault: "tune timeout"`). See
 ### Home Assistant discovery
 
 Discovery is rendered by the standalone `hadiscovery` consumer from this
-bridge's `expose` block in `/meta` (preferred, model §9). The legacy embedded
-discovery is retained but gated behind `mqtt.publish_ha_discovery = false`
-(default off); set it `true` only as a migration fallback.
+bridge's `expose` block in `/meta` (model §9). This bridge carries no Home
+Assistant vocabulary and publishes no embedded discovery.
 
 ## Deployment
 

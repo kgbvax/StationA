@@ -1,8 +1,6 @@
 package bridge
 
 import (
-	"encoding/json"
-	"fmt"
 	"sync"
 	"time"
 
@@ -93,15 +91,3 @@ func (p *PahoPublisher) Publish(topic string, retained bool, payload []byte) err
 
 // IsConnected proxies to paho.
 func (p *PahoPublisher) IsConnected() bool { return p.Client.IsConnected() }
-
-// publishDiscovery serializes a discovery config to JSON and publishes it to
-// the config topic (always retained). Retained for the legacy embedded path,
-// which this bridge does not ship; kept here for symmetry with the sibling
-// bridges in case the gated path is ever added.
-func publishDiscovery(pub Publisher, topic string, cfg any) error {
-	b, err := json.Marshal(cfg)
-	if err != nil {
-		return fmt.Errorf("marshal discovery: %w", err)
-	}
-	return pub.Publish(topic, true, b)
-}
