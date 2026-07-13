@@ -87,7 +87,7 @@ Retained JSON snapshot, QoS 1. Published whenever the resolution changes.
 {
   "ts":     "2026-07-06T12:34:56Z",
   "mode":   "auto",
-  "target": "p3",
+  "target": "port3",
   "source": "auto"
 }
 ```
@@ -96,7 +96,7 @@ Retained JSON snapshot, QoS 1. Published whenever the resolution changes.
 |-------|------|-------|
 | `ts` | string | RFC 3339 UTC |
 | `mode` | string | `auto` \| `manual`. **Derived**: `manual` whenever an operator hold is active, else `auto`. There is no separate auto/manual switch — the presence of a hold *is* manual. |
-| `target` | string | the port the reconciler currently wants: `off` \| `p1`..`p5` |
+| `target` | string | the port the reconciler currently wants: `off` \| `port1`..`port6` |
 | `source` | string | *why* the target is what it is: `idle` \| `operator` \| `auto` (model §5). Published so the live config documents the reason, not just the value. |
 
 `target` is what the reconciler *wants*; the switch's own `selected`/`settled` report what
@@ -110,12 +110,12 @@ Retained JSON, QoS 1. This is the UI-agnostic operator surface (model §9) — a
 (CLI, web, M5Stack button, HA) may publish it.
 
 ```json
-{ "request": "p2" }
+{ "request": "port2" }
 ```
 
 | `request` | Effect |
 |-----------|--------|
-| `p1`..`p5` \| `off` | engage an **operator hold** (ladder tier 2) on that port |
+| `port1`..`port6` \| `off` | engage an **operator hold** (ladder tier 2) on that port |
 | `auto` | release the hold; return to band-policy selection (tier 3) |
 
 Retained so an operator hold survives a reconciler restart (self-healing). Note the
@@ -206,13 +206,13 @@ logged once (deduped here); harmless.
 
 The reconciler also engages the **ATU** (ATR-1000, slot `hf/tuner`) in-line for the
 non-resonant bands, and bypasses it otherwise — so leaving a non-resonant band drops the
-ATU out of line. This closes the model §10 residual (30/60/160 m on the fan-dipole were
+ATU out of line. This closes the model §10 residual (30/60/80/160 m on the fan-dipole were
 routed to a non-resonant antenna with the ATU *assumed* but never driven).
 
 Unlike the PA binding, this **is** gated on antenna selection: the ATU only matters when
 its served resource (`[tuner_follow].resource`, `fan-dipole` at Mühle) is the resolved
 target. The ATU engages when the resource is selected **and** the band is in
-`[tuner_follow].atu_bands` (`30m`, `60m`, `160m` at Mühle); it is bypassed for any other
+`[tuner_follow].atu_bands` (`30m`, `60m`, `80m`, `160m` at Mühle); it is bypassed for any other
 selection or band. Gated on radio online + a known band (§10). The reconciler's cold-switch
 sequencing already withholds a port change during TX, so the ATU is not re-keyed mid-TX.
 

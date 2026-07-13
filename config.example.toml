@@ -23,11 +23,11 @@ password  = ""            # set on the device; never on the command line
 # The single editable place antenna arrangement lives (integration model §4).
 # Maps switch ports to named PASSIVE resources. Devices never contain this.
 [wiring_map]
-p1  = "dummy-load"
-p2  = "fan-dipole"    # 80/40 fan dipole on the HF mast (passive)
-p3  = "ultrabeam"     # Ultrabeam — controlled by the ant-ctrl slot (see [band_follow])
-# p4, p5 unused for now
-off = "grounded"
+port1 = "dummy-load"
+port3 = "ultrabeam"     # Ultrabeam — controlled by the ant-ctrl slot (see [band_follow])
+# port2, port4, port5 unused for now
+port6 = "fan-dipole"    # 80/40 fan dipole on the HF mast (passive)
+off   = "grounded"
 
 # --- Band policy ------------------------------------------------------------
 # Auto tier (3): resource -> the band names it serves. The reconciler resolves the
@@ -35,7 +35,7 @@ off = "grounded"
 [band_policy]
 # Unmatched bands (incl. 160m — no resonant antenna assigned) route to the fallback
 # resource. Decision (integration model §11 item #1): fan-dipole via the ATU.
-# 30/60/160m on the fan dipole are non-resonant — the ATU is engaged in-line for those
+# 30/60/80/160m on the fan dipole are non-resonant — the ATU is engaged in-line for those
 # bands by [tuner_follow] (integration model §7.1, §10 residual).
 fallback = "fan-dipole"
 
@@ -81,4 +81,4 @@ slot    = "pa"            # PA slot that receives {action: set_band} intents (no
 enabled   = true
 slot      = "tuner"            # tuner slot that receives {action: set_inline} intents
 resource  = "fan-dipole"       # engage only when this wiring_map resource is selected
-atu_bands = ["30m", "60m", "160m"]  # non-resonant bands needing the ATU in-line
+atu_bands = ["30m", "60m", "80m", "160m"]  # non-resonant bands needing the ATU in-line

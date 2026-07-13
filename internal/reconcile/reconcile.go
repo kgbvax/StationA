@@ -40,15 +40,15 @@ type Inputs struct {
 	RadioFreqHz     int64
 	RadioTX         string // TXReceive | TXTransmit | "" (unknown)
 	StationActivity string // "active" | "inactive" | "" (unknown -> treated as active)
-	OperatorRequest string // "" | requestAuto | "off" | "p1".."p5"
-	SwitchSelected  string // "off" | "p1".."p5" | "" (unknown)
+	OperatorRequest string // "" | requestAuto | "off" | any switch port (e.g. "port1", "port3", "port6")
+	SwitchSelected  string // "off" | any switch port | "" (unknown)
 	SwitchSettled   bool
 }
 
 // Decision is the resolved intent: which port the reconciler wants and why.
 type Decision struct {
 	Mode   string // ModeAuto | ModeManual (derived: manual iff an operator hold is active)
-	Target string // "off" | "p1".."p5"; empty when unresolvable (hold last)
+	Target string // "off" | any switch port; empty when unresolvable (hold last)
 	Source string // SourceIdle | SourceOperator | SourceAuto
 }
 

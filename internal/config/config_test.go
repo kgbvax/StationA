@@ -26,10 +26,10 @@ site    = "muehle"
 station = "hf"
 
 [wiring_map]
-p1  = "dummy-load"
-p2  = "fan-dipole"
-p3  = "ultrabeam"
-off = "grounded"
+port1 = "dummy-load"
+port3 = "ultrabeam"
+port6 = "fan-dipole"
+off   = "grounded"
 
 [band_policy]
 fallback = "fan-dipole"
@@ -57,8 +57,8 @@ resource = "ultrabeam"
 	if err := cfg.Validate(); err != nil {
 		t.Errorf("valid config rejected: %v", err)
 	}
-	if got := cfg.ResourceToPort()["ultrabeam"]; got != "p3" {
-		t.Errorf("ResourceToPort[ultrabeam] = %q, want p3", got)
+	if got := cfg.ResourceToPort()["ultrabeam"]; got != "port3" {
+		t.Errorf("ResourceToPort[ultrabeam] = %q, want port3", got)
 	}
 	if _, ok := cfg.ResourceToPort()["grounded"]; ok {
 		t.Error("off/grounded should be excluded from ResourceToPort")
@@ -70,7 +70,7 @@ func TestValidateMissingFallback(t *testing.T) {
 		Location:  "bauwagen",
 		Host:      "shari",
 		MQTT:      MQTT{Site: "muehle", Station: "hf"},
-		WiringMap: map[string]string{"p2": "fan-dipole"},
+		WiringMap: map[string]string{"port2": "fan-dipole"},
 		BandPolicy: BandPolicy{
 			Bands: map[string][]string{"fan-dipole": {"40m"}},
 		},
@@ -85,7 +85,7 @@ func TestValidateUnwiredResource(t *testing.T) {
 		Location:  "bauwagen",
 		Host:      "shari",
 		MQTT:      MQTT{Site: "muehle", Station: "hf"},
-		WiringMap: map[string]string{"p2": "fan-dipole"},
+		WiringMap: map[string]string{"port2": "fan-dipole"},
 		BandPolicy: BandPolicy{
 			Bands:    map[string][]string{"ultrabeam": {"20m"}}, // ultrabeam not wired
 			Fallback: "fan-dipole",
@@ -101,7 +101,7 @@ func TestValidateUnwiredFollowResource(t *testing.T) {
 		Location:  "bauwagen",
 		Host:      "shari",
 		MQTT:      MQTT{Site: "muehle", Station: "hf"},
-		WiringMap: map[string]string{"p2": "fan-dipole"},
+		WiringMap: map[string]string{"port2": "fan-dipole"},
 		BandPolicy: BandPolicy{
 			Bands:    map[string][]string{"fan-dipole": {"40m"}},
 			Fallback: "fan-dipole",

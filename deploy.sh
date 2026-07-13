@@ -24,7 +24,8 @@
 #   MQTT_STATION      mqtt.station    value (default: hf)
 #   MQTT_SLOT         mqtt.slot       value (default: antenna-select)
 #   MQTT_USER         mqtt.user      value (default: hf)
-#   MQTT_PASSWORD     mqtt.password  value (default: empty -> set on device)
+#   MQTT_PASSWORD     mqtt.password  value (default: empty -> auto-pulled on-device
+#                     from an existing hf service env, so a re-seed is self-sufficient)
 #   LOCATION          location       value (default: bauwagen)  [published in /meta]
 #   HOST_NAME         host           value (default: shari)     [published in /meta]
 #   BAND_FOLLOW_RESOURCE  band_follow.resource (default: ultrabeam; empty disables)
@@ -34,7 +35,7 @@
 #   TUNER_FOLLOW_ENABLED  tuner_follow.enabled  (default: true; set false to disable)
 #   TUNER_FOLLOW_SLOT     tuner_follow.slot     (default: tuner)
 #   TUNER_FOLLOW_RESOURCE tuner_follow.resource (default: fan-dipole)
-#   TUNER_FOLLOW_ATU_BANDS tuner_follow.atu_bands (default: 30m,60m,160m; comma-separated)
+#   TUNER_FOLLOW_ATU_BANDS tuner_follow.atu_bands (default: 30m,60m,80m,160m; comma-separated)
 #
 # Configuration (including the MQTT password) lives in a single 0600 TOML file
 # on the target, NOT in the systemd unit or process command line. The file is
@@ -43,6 +44,11 @@
 # wired at deploy time); subsequent deploys leave the on-device file untouched so
 # the Pi owns its own settings. To change a setting after the first deploy, edit
 # the file on the device (or delete it and redeploy to re-seed).
+#
+# When MQTT_PASSWORD is not supplied, the seed is written with an empty password
+# and the remote install step pulls the shared hf MQTT password from an existing
+# station service env ON THE DEVICE and injects it into the seed before
+# installing — so the password never leaves the Pi and a re-seed is self-sufficient.
 #
 set -euo pipefail
 
@@ -72,7 +78,7 @@ PA_FOLLOW_SLOT="${PA_FOLLOW_SLOT:-pa}"
 TUNER_FOLLOW_ENABLED="${TUNER_FOLLOW_ENABLED:-true}"
 TUNER_FOLLOW_SLOT="${TUNER_FOLLOW_SLOT:-tuner}"
 TUNER_FOLLOW_RESOURCE="${TUNER_FOLLOW_RESOURCE:-fan-dipole}"
-TUNER_FOLLOW_ATU_BANDS="${TUNER_FOLLOW_ATU_BANDS:-30m,60m,160m}"
+TUNER_FOLLOW_ATU_BANDS="${TUNER_FOLLOW_ATU_BANDS:-30m,60m,80m,160m}"
 
 # Render the comma-separated ATU bands list as a TOML array (["30m", "60m", "160m"]).
 atu_bands_toml() {
@@ -132,14 +138,14 @@ trap 'rm -f "$SEED_CONFIG" "${UNIT_FILE:-}"' EXIT
   echo "password  = \"$(toml_escape "$MQTT_PASSWORD")\""
   echo ""
   echo "[wiring_map]"
-  echo "p1  = \"dummy-load\""
-  echo "p2  = \"fan-dipole\"     # 80/40 fan dipole on the HF mast (passive)"
-  echo "p3  = \"ultrabeam\"      # Ultrabeam -- controlled by the ant-ctrl slot"
-  echo "off = \"grounded\""
+  echo "port1 = \"dummy-load\""
+  echo "port3 = \"ultrabeam\"      # Ultrabeam -- controlled by the ant-ctrl slot"
+  echo "port6 = \"fan-dipole\"     # 80/40 fan dipole on the HF mast (passive)"
+  echo "off   = \"grounded\""
   echo ""
   echo "[band_policy]"
   echo "# Unmatched bands (incl. 160m -- no resonant antenna) route to fallback."
-  echo "# 30/60/160m on the fan dipole are non-resonant -- the ATU is engaged in-line for"
+  echo "# 30/60/80/160m on the fan dipole are non-resonant -- the ATU is engaged in-line for"
   echo "# those bands by [tuner_follow] (model §7.1, §10 residual closed)."
   echo "fallback = \"fan-dipole\""
   echo ""
@@ -239,7 +245,43 @@ if [ -e "$CONFIG_FILE" ]; then
 else
   sudo install -o "$SERVICE_USER" -g "$SERVICE_USER" -m 0600 "$SEED" "$CONFIG_FILE"
   echo "   seeded config at $CONFIG_FILE (0600, owner $SERVICE_USER)."
-  echo "   NOTE: set the MQTT password on the device:  sudo -e $CONFIG_FILE"
+  # If the seed has an empty password (MQTT_PASSWORD not supplied at deploy time),
+  # pull the shared hf MQTT password from an existing station service env on the
+  # device and inject it into the freshly-installed config — so a re-seed is
+  # self-sufficient and the password never leaves the Pi. We inject into the
+  # INSTALLED config (in /etc, a non-sticky dir) rather than the /tmp seed
+  # because fs.protected_regular blocks root from opening an other-user-owned
+  # file in world-writable sticky /tmp for writing; the service-user-owned file
+  # in /etc is writable by root (which is how the live config fix worked).
+  if sudo grep -qE '^[[:space:]]*password[[:space:]]*=[[:space:]]*""' "$CONFIG_FILE"; then
+    pw=""
+    for f in \
+      /etc/acom1200s-pa-bridge/acom1200s-pa-bridge.env \
+      /etc/flexbridge/flexbridge.env \
+      /etc/hadiscovery/hadiscovery.env \
+      /etc/atr1k-tuner-bridge/atr1k-tuner-bridge.env ; do
+      # These env files are 0600 owned by their service users; test readability via
+      # sudo (not `[ -r ]`, which runs as the deploying user and skips every file).
+      sudo test -r "$f" || continue
+      v=$(sudo grep -hE '^[A-Z0-9_]*MQTT_PASSWORD=' "$f" 2>/dev/null | head -1 | sed -E 's/^[^=]*=//; s/^"(.*)"$/\1/')
+      [ -n "$v" ] && pw="$v" && break
+    done
+    if [ -n "$pw" ]; then
+      sudo CFG_PATH="$CONFIG_FILE" HF_PW="$pw" python3 - <<'PY'
+import os, re, pathlib
+pw = os.environ["HF_PW"]
+cfg = pathlib.Path(os.environ["CFG_PATH"])
+t = cfg.read_text()
+esc = pw.replace("\\", "\\\\").replace("\"", "\\\"")
+t2, n = re.subn(r"^[ \t]*password[ \t]*=.*$", f'password = "{esc}"', t, count=1, flags=re.MULTILINE)
+assert n == 1, "password line not found in config"
+cfg.write_text(t2)  # opens existing file in place — owner/mode (service user, 0600) preserved
+PY
+      echo "   injected hf MQTT password (pulled on-device from an existing service env) into the config."
+    else
+      echo "   !! No hf service env found to copy the password from. Set it on the device: sudo -e $CONFIG_FILE"
+    fi
+  fi
 fi
 sudo systemctl stop "${SERVICE_NAME}.service" 2>/dev/null || true
 sudo mv "/tmp/${BINARY}.new" "${INSTALL_DIR}/${BINARY}"

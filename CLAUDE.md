@@ -87,7 +87,7 @@ The seed config bakes the Mühle wiring map and band policy (matching
 
 - The station `activity` flag (`muehle/hf`) needs a publisher (operator/HA). If absent,
   treat as `active` and log — never silently assume inactive.
-- 30/60/160m on the fan dipole are non-resonant; the `[tuner_follow]` binding now engages
+- 30/60/80/160m on the fan dipole are non-resonant; the `[tuner_follow]` binding now engages
   the `hf/tuner` ATU in-line for those bands and bypasses it otherwise (integration model
   §7.1 soft binding `tuner.set_inline ← band_policy`), closing the former §10 residual.
 - This reconciler is a coordination single point (§10): if it dies, band-follow, tuner

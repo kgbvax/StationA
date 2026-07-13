@@ -78,8 +78,9 @@ type Config struct {
 	Host     string `toml:"host"`
 
 	MQTT MQTT `toml:"mqtt"`
-	// WiringMap maps switch ports (p1..p5, off) to named passive resources. It is the
-	// single editable place the antenna arrangement lives (integration model §4).
+	// WiringMap maps switch ports (the switch's own port names — at Mühle "port1",
+	// "port3", "port6", plus "off") to named passive resources. It is the single
+	// editable place the antenna arrangement lives (integration model §4).
 	WiringMap   map[string]string `toml:"wiring_map"`
 	BandPolicy  BandPolicy        `toml:"band_policy"`
 	BandFollow  BandFollow        `toml:"band_follow"`
@@ -118,7 +119,7 @@ func Load(path string) (Config, error) {
 }
 
 // ResourceToPort inverts the wiring map into resource-name -> port (e.g. "ultrabeam" ->
-// "p3"). The "off" entry is excluded — it is a position, not a routable resource.
+// "port3"). The "off" entry is excluded — it is a position, not a routable resource.
 func (c Config) ResourceToPort() map[string]string {
 	out := make(map[string]string, len(c.WiringMap))
 	for port, resource := range c.WiringMap {

@@ -153,7 +153,7 @@ func TestPABandFollowPublishesSetBandNotRetained(t *testing.T) {
 		Location: "bauwagen", Host: "shari",
 		MQTT: config.MQTT{Site: "muehle", Station: "hf", Slot: "antenna-select"},
 		WiringMap: map[string]string{
-			"p1": "dummy-load", "p2": "fan-dipole", "p3": "ultrabeam", "off": "grounded",
+			"port1": "dummy-load", "port3": "ultrabeam", "port6": "fan-dipole", "off": "grounded",
 		},
 		BandPolicy: config.BandPolicy{
 			Bands:    map[string][]string{"ultrabeam": {"20m"}, "fan-dipole": {"40m"}},
@@ -247,7 +247,7 @@ func TestPABandFollowPublishesSetBandNotRetained(t *testing.T) {
 	}
 
 	// Contrast: the ant-switch select emit (and any frequency emit) IS retained. The
-	// first update resolved target p3 against an unknown switch selection, so a select
+	// first update resolved target port3 against an unknown switch selection, so a select
 	// was published retained to ant-switch/cmd.
 	mu.Lock()
 	var antSwitch *recordedMsg
@@ -279,7 +279,7 @@ func TestTunerFollowPublishesSetInlineNotRetained(t *testing.T) {
 		Location: "bauwagen", Host: "shari",
 		MQTT: config.MQTT{Site: "muehle", Station: "hf", Slot: "antenna-select"},
 		WiringMap: map[string]string{
-			"p1": "dummy-load", "p2": "fan-dipole", "p3": "ultrabeam", "off": "grounded",
+			"port1": "dummy-load", "port3": "ultrabeam", "port6": "fan-dipole", "off": "grounded",
 		},
 		BandPolicy: config.BandPolicy{
 			Bands:    map[string][]string{"ultrabeam": {"20m"}, "fan-dipole": {"30m", "40m"}},
@@ -316,13 +316,13 @@ func TestTunerFollowPublishesSetInlineNotRetained(t *testing.T) {
 		return out
 	}
 
-	// First update: radio online on 30m, fan-dipole (p2) selected -> set_inline true, not retained.
+	// First update: radio online on 30m, fan-dipole (port6) selected -> set_inline true, not retained.
 	c.update(func(in *reconcile.Inputs) {
 		in.RadioOnline = true
 		in.RadioBand = "30m"
 		in.RadioTX = reconcile.TXReceive
 		in.StationActivity = "active"
-		in.SwitchSelected = "p2"
+		in.SwitchSelected = "port6"
 	})
 	if got := tunerCmds(); len(got) != 1 {
 		t.Fatalf("after 30m: expected 1 tuner/cmd publish, got %d", len(got))
@@ -352,7 +352,7 @@ func TestTunerFollowPublishesSetInlineNotRetained(t *testing.T) {
 		in.RadioBand = "30m"
 		in.RadioTX = reconcile.TXReceive
 		in.StationActivity = "active"
-		in.SwitchSelected = "p2"
+		in.SwitchSelected = "port6"
 	})
 	if got := tunerCmds(); len(got) != 1 {
 		t.Errorf("after repeat 30m: expected still 1 tuner/cmd (dedup), got %d", len(got))
@@ -364,7 +364,7 @@ func TestTunerFollowPublishesSetInlineNotRetained(t *testing.T) {
 		in.RadioBand = "40m"
 		in.RadioTX = reconcile.TXReceive
 		in.StationActivity = "active"
-		in.SwitchSelected = "p2"
+		in.SwitchSelected = "port6"
 	})
 	if got := tunerCmds(); len(got) != 2 {
 		t.Fatalf("after 40m: expected 2 tuner/cmd publishes, got %d", len(got))
@@ -397,7 +397,7 @@ func TestTunerFollowDisabledEmitsNothing(t *testing.T) {
 		Location: "bauwagen", Host: "shari",
 		MQTT: config.MQTT{Site: "muehle", Station: "hf", Slot: "antenna-select"},
 		WiringMap: map[string]string{
-			"p1": "dummy-load", "p2": "fan-dipole", "p3": "ultrabeam", "off": "grounded",
+			"port1": "dummy-load", "port3": "ultrabeam", "port6": "fan-dipole", "off": "grounded",
 		},
 		BandPolicy: config.BandPolicy{
 			Bands:    map[string][]string{"fan-dipole": {"30m", "40m"}},
@@ -425,7 +425,7 @@ func TestTunerFollowDisabledEmitsNothing(t *testing.T) {
 		in.RadioBand = "30m"
 		in.RadioTX = reconcile.TXReceive
 		in.StationActivity = "active"
-		in.SwitchSelected = "p2"
+		in.SwitchSelected = "port6"
 	})
 	mu.Lock()
 	defer mu.Unlock()
