@@ -65,7 +65,7 @@ number) per the rule above.
 |---|---|---|
 | `flexbridge` | `flex-radio-bridge` | device (legacy; SmartSDR family) |
 | `ultrabridge` | `ultrabeam-ant-ctrl-bridge` | device (legacy; Ultrabeam family) |
-| `acombridge` | `acom-pa-bridge` | device (legacy; ACOM serial family) |
+| `acombridge` | `acom1200s-pa-bridge` | device (legacy; ACOM serial family; **renamed model-specific by choice, deviating from the family-tag rule above**) |
 | `wrcrotorbridge` | `wrc-rotator-bridge` | device (legacy; fronts the WRC controller) |
 | `pelcobridge` | `pelcod-rotator-bridge` | device (legacy; Pelco-D protocol family) |
 | `antswitchbridge` | `ant-switch-bridge` (exception: contract-first) | exception |

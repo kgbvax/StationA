@@ -1,6 +1,6 @@
 # Project repos live as nested subdirectories but are tracked separately.
 # Ignore them here so "git add ." does not accidentally include them.
-acombridge/
+acom1200s-pa-bridge/
 antennaselect/
 antswitchbridge/
 atr1k-tuner-bridge/
