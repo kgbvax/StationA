@@ -355,15 +355,23 @@ published. If a multi-slice configuration is added later, promote the declaratio
 capabilities: bands [...]; max_power_w <spec>; band_source rf_sense; rf_sample false;
               key_input hardware; alc_out true; modes [operate,standby]
 state:        online; mode {operate|standby|bypass}; band; keyed {rx|tx|inhibited};
-              fwd_power_w; rfl_power_w; temp_c; fault {none|swr|temp|reflected}
-intent:       set_band; set_mode {operate|standby}; clear_fault
+              fwd_power_w; rfl_power_w; temp_c; fault {none|swr|temp|reflected};
+              power {on|off}
+intent:       set_band; set_mode {operate|standby}; set_power {on|off}; clear_fault
 ```
+`set_power` / `power` is an acom1200s-pa-bridge extension to the canonical PA
+contract: power-on asserts the host's RTS wake line over the serial cable (the
+amp boots to STB; with the CPU off no data command can wake it), power-off sends
+the graceful `0x0A` Turn-OFF data command then releases the line. `power` state
+is the *actual* power from telemetry (`off` only when the amp reports OFF).
+Recorded as a per-adapter extension (cf. §9 deviation notes); revisit if a
+second PA adapter needs a different mechanism.
 
 **`muehle/hf/ant-switch`** — wifi 1-to-5 (dumb actuator)
 ```
 capabilities: ports [1,2,3,4,5]; off true; exclusive true; hot_switch false
-state:        online; selected {off|p1..p5}; settled
-intent:       select {off|p1..p5}
+state:        online; selected {off|port1..port5}; settled
+intent:       select {off|port1..port5}
 ```
 
 **`muehle/hf/tuner`** — ATR-1000 (BTR-1000 / N7DDC design), wifi (binary WebSocket)
@@ -375,7 +383,7 @@ state:        online; inline (bool); swr (float, ratio); fwd (W, forward power);
 intent:       set_inline {true|false}; tune {full|mem}
 ```
 The ATU is engaged in-line only when its served resource is the resolved antenna AND the
-band is non-resonant (e.g. 30/60/160 m on the fan-dipole); it is bypassed otherwise. The
+band is non-resonant (e.g. 30/60/80/160 m on the fan-dipole); it is bypassed otherwise. The
 `set_inline` intent is driven by `antenna-select` (see the soft binding below), gated on
 radio online + a known band, and engages only while the tuner's resource is the resolved
 target — the reconciler's cold-switch sequencing already withholds a port change during
@@ -400,12 +408,12 @@ firmware — an embedded node that is device, adapter, and host in one.
 ```
 subscribes: radio.band, radio.tx, station.activity, operator.request, ant-switch.selected
 emits:      ant-switch.select; <controller>.cmd (band/freq follow, per controller map)
-config:     wiring_map  { p1: dummy-load, p2: fan-dipole, p3: ultrabeam, off: grounded }
+config:     wiring_map  { port1: dummy-load, port3: ultrabeam, port6: fan-dipole, off: grounded }
             controllers { ultrabeam: ant-ctrl }            # resource → controller slot
             band_policy { 6,10,12,15,17,20m: ultrabeam;
-                          30,40,60,80m:     fan-dipole }   # 30/60m require the ATU
+                          30,40,60,80m:     fan-dipole }   # 30/60/80/160m require the ATU
             priority   { 1 idle, 2 operator, 3 auto }
-state:      mode {auto|manual}; target {off|p1..p5}; source {idle|operator|auto}
+state:      mode {auto|manual}; target {off|port1..port6}; source {idle|operator|auto}
 ```
 
 **`muehle/hf/discovery`** — HA discovery consumer (logic slot, `hadiscovery`; see §7.3, §9)
@@ -841,7 +849,7 @@ template string):
 The consumer renders this into its own command syntax. The three observed shapes:
 - `action` + `value_key`: `{"action":"<action>","<value_key>":<value>}` — e.g. mode ⇒
   `{"action":"mode","value":"cw"}`; frequency ⇒ `{"action":"frequency","freq_hz":14074000}`
-- `value_key` only: `{"<value_key>":<value>}` — e.g. ant-switch ⇒ `{"select":"p2"}`
+- `value_key` only: `{"<value_key>":<value>}` — e.g. ant-switch ⇒ `{"select":"port2"}`
 - `action` only (button): `{"action":"<action>"}` — e.g. `{"action":"retract"}`
 
 ### How a consumer maps `expose` (informative, non-normative)

@@ -42,7 +42,7 @@ by navigating into its directory.
 **Antennas are not slots.** `ant-ctrl` is the *controller* that tunes the Ultrabeam
 (canonical role `ant-ctrl`; the device name Ultrabeam RCU-06 lives in `/meta.device`,
 never in the address), not "the antenna." The physical antennas are **passive
-resources** — `ant/ultrabeam` (port 3), `ant/fan-dipole` 80/40 (port 2),
+resources** — `ant/ultrabeam` (port 3), `ant/fan-dipole` 80/40 (port 6),
 `ant/dummy-load` (port 1) — with no MQTT presence; they exist only in the
 `antennaselect` wiring map. Routing among them is `ant-switch` (actuator) driven by
 `antenna-select` (policy). See the integration model §2–§4, §7.1.
