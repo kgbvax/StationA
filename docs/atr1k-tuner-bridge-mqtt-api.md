@@ -34,7 +34,14 @@ All topics are addressed as:
 <site>/<station>/<slot>/<suffix>
 ```
 
-Configured via `[mqtt]` in `config.toml`:
+The slot address is **not** hardcoded — it is built from the three `[mqtt]`
+fields, with built-in defaults so the bridge works with no config file:
+
+| Key | Default | Meaning |
+|------|---------|---------|
+| `site` | `muehle` | physical site |
+| `station` | `hf` | transmitting entity |
+| `slot` | `tuner` | role |
 
 ```toml
 site    = "muehle"      # physical site
@@ -42,12 +49,20 @@ station = "hf"          # transmitting entity
 slot    = "tuner"       # role
 ```
 
+The defaults give `muehle/hf/tuner`:
+
 ```
 muehle/hf/tuner/meta
 muehle/hf/tuner/state
 muehle/hf/tuner/status
 muehle/hf/tuner/cmd
 ```
+
+To place the slot elsewhere, set the fields in `config.toml`, override via the
+`ATR1K_TUNER_BRIDGE_MQTT_SITE` / `_STATION` / `_SLOT` env vars, or seed them via
+`deploy.sh`'s `MQTT_SITE` / `MQTT_STATION` / `MQTT_SLOT`. Site and station are
+**mandatory** (model §2/§8.1) — `Validate` refuses to start if either is empty,
+so a malformed path can never be published.
 
 | Suffix | Retained | Direction | Purpose |
 |--------|----------|-----------|---------|
