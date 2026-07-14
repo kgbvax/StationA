@@ -2,12 +2,12 @@
 # Ignore them here so "git add ." does not accidentally include them.
 acom1200s-pa-bridge/
 antennaselect/
-antswitchbridge/
 atr1k-tuner-bridge/
 flexbridge/
 hadiscovery/
 pelcobridge/
 ultrabridge/
+waveshare_relay-ant-switch-bridge/
 wrc-rotator-bridge/
 
 # macOS / local tooling noise

@@ -29,6 +29,16 @@ A bridge that fronts one specific piece of hardware is named
 | ATR-1000 / BTR-1000 / N7DDC ATU (shared binary WS) | `atr1k` | `atr1k-tuner-bridge` |
 | AF6SA WRC controller | `wrc` | `wrc-rotator-bridge` |
 | Pelco-D protocol | `pelcod` | `pelcod-rotator-bridge` |
+| WaveShare relay-board family (ESPHome-managed relay expanders, e.g. PCA9554) | `waveshare_relay` | `waveshare_relay-ant-switch-bridge` |
+
+> **Deviation — `waveshare_relay`:** the `<devtag>` for this row uses an underscore
+> rather than a hyphen (`waveshare_relay` vs. `waveshare-relay`). This is a deliberate
+> exception: the rest of the convention is strictly hyphenated, and the `waveshare`
+> family name is shared with other WaveShare boards that are not relay controllers.
+> Underscoring the *function* suffix (`relay`) within the devtag keeps a future
+> `waveshare-display-…` or `waveshare-io-…` family free to land under `waveshare-…`
+> without colliding. The dir name, env overload prefix, systemd unit, and binary all
+> follow from the devtag as usual.
 
 ### Derived names (must follow)
 
@@ -47,9 +57,6 @@ A bridge that fronts one specific piece of hardware is named
 
 - **Logic slots** with no device — `antennaselect` (the reconciler), `hadiscovery` (the HA
   discovery consumer). They are not device bridges.
-- **Contract-first, model-agnostic bridges** — `antswitchbridge` fronts a generic 1:N switch
-  by contract, not a specific product, so it stays function-named. If a second switch model
-  appears later, split it then (e.g. `<devtag>-ant-switch-bridge`).
 
 ---
 
@@ -68,7 +75,7 @@ number) per the rule above.
 | `acombridge` | `acom1200s-pa-bridge` | device (legacy; ACOM serial family; **renamed model-specific by choice, deviating from the family-tag rule above**) |
 | `wrcrotorbridge` | `wrc-rotator-bridge` | device (legacy; fronts the WRC controller; **renamed**) |
 | `pelcobridge` | `pelcod-rotator-bridge` | device (legacy; Pelco-D protocol family) |
-| `antswitchbridge` | `ant-switch-bridge` (exception: contract-first) | exception |
 | `antennaselect` | — | logic slot (exception) |
 | `hadiscovery` | — | logic slot (exception) |
 | _(new)_ `atr1k-tuner-bridge` | `atr1k-tuner-bridge` | device (convention; ATR-1000 / N7DDC family) |
+| _(renamed)_ `antswitchbridge` | `waveshare_relay-ant-switch-bridge` | device (formerly contract-first exception; **renamed 2026-07** to follow the family-tag pattern; `_` in `waveshare_relay` is a recorded deviation, see §1) |

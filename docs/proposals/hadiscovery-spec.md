@@ -363,13 +363,13 @@ Generic — not per-role. Also log at INFO: `slot <addr> role=<role> has no expo
   populating** (the state payload is `{ts, mode, target, source}`).
 - No embedded discovery to remove (none exists).
 
-### antswitchbridge (`antswitchbridge/`, contract-first, role `ant-switch`)
+### waveshare_relay-ant-switch-bridge (`waveshare_relay-ant-switch-bridge/`, ESPHome firmware, role `ant-switch`)
 - `docs/ant-switch-mqtt-api.md` §4 meta example: add `expose`. Fields: `selected` (enum,
-  options inline `["off","p1","p2","p3","p4","p5"]`, writable, command `{value_key:select,
+  options inline `["off","port1","port2","port3","port4","port5","port6"]`, writable, command `{value_key:select,
   value_type:string}` — no action), `settled` (boolean). `expose.device` from `device.model`.
 - No code yet; the contract doc is the authoritative surface the future bridge must
-  publish. (Options are inlined because `capabilities.ports` is `[1..5]` ints while
-  `selected` is `"p1".."p5"` strings — shapes differ.)
+  publish. (Options are inlined because `capabilities.ports` is `[1..6]` ints while
+  `selected` is `"port1".."port6"` strings — shapes differ.)
 
 ---
 
@@ -450,7 +450,7 @@ Migrate flexbridge/ultrabridge, redeploy, confirm HA shows one device per slot u
 3. **Migrate flexbridge:** add `expose` to meta, gate embedded discovery off.
 4. **Migrate ultrabridge:** add `expose` to meta, gate embedded discovery + `homeassistant/status` off.
 5. **Migrate antennaselect:** add `expose` to meta.
-6. **antswitchbridge contract:** add `expose` to the contract doc.
+6. **waveshare_relay-ant-switch-bridge contract:** add `expose` to the contract doc.
 7. **stationa meta edits:** CLAUDE.md, README.md, .gitignore, §9 update.
 8. `git init hadiscovery`; full live smoke; confirm no duplicate entities.
 
@@ -469,7 +469,7 @@ Migrate flexbridge/ultrabridge, redeploy, confirm HA shows one device per slot u
 - Migrate: `flexbridge/internal/bridge/bridge.go` (publishMeta + gate PublishDiscovery),
   `ultrabridge/internal/mqtt/client.go` (PublishMeta + gate PublishDiscovery/HA-status sub),
   `antennaselect/internal/mqtt/client.go` (publishMeta)
-- Contract: `antswitchbridge/docs/ant-switch-mqtt-api.md`
+- Contract: `waveshare_relay-ant-switch-bridge/docs/ant-switch-mqtt-api.md`
 - Model: `docs/station-integration-model.md` (§3, §8.1, §9, expose appendix),
   `docs/templates/mqtt-schema.md`
 - Meta-repo: `CLAUDE.md`, `README.md`, `.gitignore`
