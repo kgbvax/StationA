@@ -363,7 +363,7 @@ Generic — not per-role. Also log at INFO: `slot <addr> role=<role> has no expo
   populating** (the state payload is `{ts, mode, target, source}`).
 - No embedded discovery to remove (none exists).
 
-### waveshare_relay-ant-switch-bridge (`waveshare_relay-ant-switch-bridge/`, ESPHome firmware, role `ant-switch`)
+### waveshare_relay-antswitch-bridge (`waveshare_relay-antswitch-bridge/`, ESPHome firmware, role `ant-switch`)
 - `docs/ant-switch-mqtt-api.md` §4 meta example: add `expose`. Fields: `selected` (enum,
   options inline `["off","port1","port2","port3","port4","port5","port6"]`, writable, command `{value_key:select,
   value_type:string}` — no action), `settled` (boolean). `expose.device` from `device.model`.
@@ -450,7 +450,7 @@ Migrate flexbridge/ultrabridge, redeploy, confirm HA shows one device per slot u
 3. **Migrate flexbridge:** add `expose` to meta, gate embedded discovery off.
 4. **Migrate ultrabridge:** add `expose` to meta, gate embedded discovery + `homeassistant/status` off.
 5. **Migrate antennaselect:** add `expose` to meta.
-6. **waveshare_relay-ant-switch-bridge contract:** add `expose` to the contract doc.
+6. **waveshare_relay-antswitch-bridge contract:** add `expose` to the contract doc.
 7. **stationa meta edits:** CLAUDE.md, README.md, .gitignore, §9 update.
 8. `git init hadiscovery`; full live smoke; confirm no duplicate entities.
 
@@ -469,7 +469,7 @@ Migrate flexbridge/ultrabridge, redeploy, confirm HA shows one device per slot u
 - Migrate: `flexbridge/internal/bridge/bridge.go` (publishMeta + gate PublishDiscovery),
   `ultrabridge/internal/mqtt/client.go` (PublishMeta + gate PublishDiscovery/HA-status sub),
   `antennaselect/internal/mqtt/client.go` (publishMeta)
-- Contract: `waveshare_relay-ant-switch-bridge/docs/ant-switch-mqtt-api.md`
+- Contract: `waveshare_relay-antswitch-bridge/docs/ant-switch-mqtt-api.md`
 - Model: `docs/station-integration-model.md` (§3, §8.1, §9, expose appendix),
   `docs/templates/mqtt-schema.md`
 - Meta-repo: `CLAUDE.md`, `README.md`, `.gitignore`

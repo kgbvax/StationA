@@ -46,7 +46,7 @@ routing among them is `ant-switch` (actuator) driven by `antenna-select` (policy
 |---|---|---|---|
 | `hf/radio` | flexbridge | FLEX-8400 radio bridge (read-only) | Ethernet (SmartSDR) |
 | `hf/ant-ctrl` | ultrabridge | Ultrabeam RCU-06 antenna controller | USB-serial |
-| `hf/ant-switch` | waveshare_relay-ant-switch-bridge | 1:6 antenna switch — dumb actuator | Wi-Fi (contract-first) |
+| `hf/ant-switch` | waveshare_relay-antswitch-bridge | 1:6 antenna switch — dumb actuator | Wi-Fi (contract-first) |
 | `hf/antenna-select` | antennaselect | antenna-selection reconciler (logic) | — |
 | `hf/pa` | acombridge | ACOM 1200S PA bridge | Serial |
 | `hf/rotator` | wrc-rotator-bridge | HF rotator (Yaesu G-450DC via AF6SA WRC) | WebSocket |

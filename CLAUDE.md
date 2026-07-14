@@ -16,7 +16,7 @@ git repo nested as a subdirectory of this one (and gitignored here).
 | wrc-rotator-bridge | `wrc-rotator-bridge/` | HF rotator bridge (Yaesu G-450DC via AF6SA WRC, websocket) |
 | pelcobridge | `pelcobridge/` | Pelco-D rotator controller (UHF sat rotator) |
 | atr1k-tuner-bridge | `atr1k-tuner-bridge/` | ATR-1000 ATU bridge (in-line/bypass + tune, binary WebSocket) |
-| waveshare_relay-ant-switch-bridge | `waveshare_relay-ant-switch-bridge/` | 1:6 antenna switch bridge (ESPHome, WaveShare relay-board family) |
+| waveshare_relay-antswitch-bridge | `waveshare_relay-antswitch-bridge/` | 1:6 antenna switch bridge (ESPHome, WaveShare relay-board family) |
 | antennaselect | `antennaselect/` | Antenna-selection reconciler (core implemented) |
 | hadiscovery | `hadiscovery/` | Home Assistant discovery consumer (reads `/meta` `expose`, renders HA discovery) |
 
@@ -31,7 +31,7 @@ by navigating into its directory.
 |-------------|-----------|-----------------|
 | `muehle/hf/radio` | flexbridge | FLEX-8400, ethernet |
 | `muehle/hf/ant-ctrl` | ultrabridge | Ultrabeam RCU-06, USB-serial via FTDI |
-| `muehle/hf/ant-switch` | waveshare_relay-ant-switch-bridge | 1:6 antenna switch, wifi (ESPHome) |
+| `muehle/hf/ant-switch` | waveshare_relay-antswitch-bridge | 1:6 antenna switch, wifi (ESPHome) |
 | `muehle/hf/antenna-select` | antennaselect | logic slot — no device (runs on shari) |
 | `muehle/hf/pa` | acom1200s-pa-bridge | ACOM 1200S, serial |
 | `muehle/hf/rotator` | wrc-rotator-bridge | Yaesu G-450DC via AF6SA WRC, websocket |
