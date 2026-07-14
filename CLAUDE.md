@@ -13,9 +13,10 @@ reconciler (see `../antennaselect/`).
 > secondary consumer / manual bring-up surface (`discovery: false`, `topic_prefix: null`).
 > The authoritative contract the reconciler binds to is `docs/ant-switch-mqtt-api.md`.
 
-The `antenna-select` reconciler models `p1..p5` in its wiring map; `p6` is a spare port on
-this switch that the reconciler does not command. No `antennaselect` change is required for
-this 1:6 surface.
+The `antenna-select` reconciler wires a subset of the six ports in its `wiring_map` (at the
+Mühle HF station: `port1` = dummy-load, `port3` = ultrabeam, `port6` = fan-dipole; ports 2,
+4, 5 are unused). All six ports remain hardware-selectable, and the reconciler may command any
+wired port — including `port6`. No `antennaselect` change is required for this 1:6 surface.
 
 ---
 
@@ -32,12 +33,12 @@ this 1:6 surface.
 | Port | Relay | PCA9554 pin |
 |------|-------|-------------|
 | `off` | — | all off |
-| `p1` | relay_3 | 2 |
-| `p2` | relay_4 | 3 |
-| `p3` | relay_5 | 4 |
-| `p4` | relay_6 | 5 |
-| `p5` | relay_7 | 6 |
-| `p6` | relay_8 | 7 |
+| `port1` | relay_3 | 2 |
+| `port2` | relay_4 | 3 |
+| `port3` | relay_5 | 4 |
+| `port4` | relay_6 | 5 |
+| `port5` | relay_7 | 6 |
+| `port6` | relay_8 | 7 |
 
 Relays 1–2 (independent), the buzzer, RGB LED, digital inputs, RS485 UART, and RTC are
 unrelated to the switch slot and are left as-is.

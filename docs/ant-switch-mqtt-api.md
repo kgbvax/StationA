@@ -91,7 +91,7 @@ Retained JSON, published once per connect cycle.
     "device": { "name": "Antenna switch", "model": "WaveShare ESP32-S3-POE-ETH-8DI-8DO (1:6 relay switch)" },
     "fields": [
       { "key": "selected", "name": "Selected port", "type": "enum",
-        "options": ["off", "p1", "p2", "p3", "p4", "p5", "p6"],
+        "options": ["off", "port1", "port2", "port3", "port4", "port5", "port6"],
         "writable": true,
         "command": { "value_key": "select", "value_type": "string" } },
       { "key": "settled", "name": "Settled", "type": "boolean" }
@@ -102,7 +102,7 @@ Retained JSON, published once per connect cycle.
 
 | Capability | Meaning |
 |---|---|
-| `ports` | the selectable port numbers (six; relay group 3–8 → `p1`..`p6`) |
+| `ports` | the selectable port numbers (six; relay group 3–8 → `port1`..`port6`) |
 | `off` | an explicit no-port / grounded position exists (all relays off) |
 | `exclusive` | exactly one port is selected at a time (never two) |
 | `hot_switch` | **false** — RF must be inhibited and RX confirmed before a port moves (§6, model §6 cold-switch ordering) |
@@ -118,8 +118,8 @@ block. The switch is a dumb actuator, so it exposes just two fields:
 - `selected` — a **writable** enum: HA renders it as a `select` whose state reads
   `/state.selected` and whose command publishes `{"select":"<value>"}` to `/cmd` (the
   `command` descriptor has no `action`, only `value_key: "select"`). The options are
-  **inlined** (`off`, `p1`..`p6`) rather than `options_ref`-ed into `capabilities.ports`:
-  `ports` is `[1,2,3,4,5,6]` (ints) while `selected` is `"p1".."p6"` (strings) — the shapes
+  **inlined** (`off`, `port1`..`port6`) rather than `options_ref`-ed into `capabilities.ports`:
+  `ports` is `[1,2,3,4,5,6]` (ints) while `selected` is `"port1".."port6"` (strings) — the shapes
   differ, so the consumer-neutral option list is stated directly.
 - `settled` — a read-only `boolean` rendered as a `binary_sensor`; `true` only when the
   relay has physically finished moving (load-bearing for cold-switch sequencing, §6).
@@ -135,7 +135,7 @@ Retained JSON snapshot, QoS 1. Published whenever `selected` or `settled` change
 ```json
 {
   "ts":       "2026-07-06T12:34:56Z",
-  "selected": "p2",
+  "selected": "port2",
   "settled":  true
 }
 ```
@@ -143,7 +143,7 @@ Retained JSON snapshot, QoS 1. Published whenever `selected` or `settled` change
 | Field | Type | Notes |
 |-------|------|-------|
 | `ts` | string | RFC 3339 UTC timestamp of this publish |
-| `selected` | string | the port the **hardware actually reports**: `off` \| `p1` \| `p2` \| `p3` \| `p4` \| `p5` \| `p6`. Never assumed from the last command — read back from the device. |
+| `selected` | string | the port the **hardware actually reports**: `off` \| `port1` \| `port2` \| `port3` \| `port4` \| `port5` \| `port6`. Never assumed from the last command — read back from the device. |
 | `settled` | bool | `true` only when the relay has finished moving and RF may safely pass. `false` while transitioning. |
 
 **Hardware readback note (this implementation).** The relay coils are driven by a PCA9554
@@ -169,10 +169,10 @@ JSON, QoS 1. Published by the `antenna-select` reconciler (and, in manual bring-
 operator or HA).
 
 ```json
-{ "select": "p2" }
+{ "select": "port2" }
 ```
 
-Valid values: `off`, `p1`, `p2`, `p3`, `p4`, `p5`, `p6`.
+Valid values: `off`, `port1`, `port2`, `port3`, `port4`, `port5`, `port6`.
 
 **Retention (model §8 actuator exception):** `/cmd` **is retained** with the desired
 steady-state port, because re-applying the same select on reconnect reproduces the same
@@ -205,9 +205,9 @@ Subscribe to `<slot>/#`. The broker immediately delivers retained `/meta`, `/sta
 
 **Reconciler selects the dipole (port 2):**
 1. Reconciler confirms the radio is in RX (§ model §6).
-2. Reconciler publishes retained `<slot>/cmd`: `{"select":"p2"}`.
-3. Bridge commands the hardware; `/state` → `selected:"p2"`, `settled:false`.
-4. When the relay settles: `/state` → `selected:"p2"`, `settled:true`.
+2. Reconciler publishes retained `<slot>/cmd`: `{"select":"port2"}`.
+3. Bridge commands the hardware; `/state` → `selected:"port2"`, `settled:false`.
+4. When the relay settles: `/state` → `selected:"port2"`, `settled:true`.
 5. Reconciler observes `settled:true` before RF is re-enabled.
 
 **Detect switch fault:**

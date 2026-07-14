@@ -31,7 +31,7 @@ substitutions:
   # --- Conservative relay settle guard (cold-switch sequencing, §5) ---
   # Hold settled=false for this long after a commanded change before
   # publishing settled=true. Tunable; never publish settled=true optimistically.
-  relay_settle_ms: "250"
+  relay_settle_ms: "200"
 
 # ==========================================================
 # Core ESPHome Configuration
@@ -149,7 +149,7 @@ light:
 # Outputs (Relays and Buzzer)
 # ==========================================================
 switch:
-  # --- Mutually Exclusive Relays (3-8) → antenna ports p1..p6 ---
+  # --- Mutually Exclusive Relays (3-8) → antenna ports port1..port6 ---
   - platform: gpio
     name: "Relay 3"
     id: relay_3
@@ -332,7 +332,7 @@ mqtt:
         qos: 1
         retain: true
         payload: |-
-          {"schema":"1.0","role":"ant-switch","device":{"model":"WaveShare ESP32-S3-POE-ETH-8DI-8DO (1:6 relay switch)"},"link":"wifi","location":"bauwagen","capabilities":{"ports":[1,2,3,4,5,6],"off":true,"exclusive":true,"hot_switch":false},"expose":{"device":{"name":"Antenna switch","model":"WaveShare ESP32-S3-POE-ETH-8DI-8DO (1:6 relay switch)"},"fields":[{"key":"selected","name":"Selected port","type":"enum","options":["off","p1","p2","p3","p4","p5","p6"],"writable":true,"command":{"value_key":"select","value_type":"string"}},{"key":"settled","name":"Settled","type":"boolean"}]}}
+          {"schema":"1.0","role":"ant-switch","device":{"model":"WaveShare ESP32-S3-POE-ETH-8DI-8DO (1:6 relay switch)"},"link":"wifi","location":"bauwagen","capabilities":{"ports":[1,2,3,4,5,6],"off":true,"exclusive":true,"hot_switch":false},"expose":{"device":{"name":"Antenna switch","model":"WaveShare ESP32-S3-POE-ETH-8DI-8DO (1:6 relay switch)"},"fields":[{"key":"selected","name":"Selected port","type":"enum","options":["off","port1","port2","port3","port4","port5","port6"],"writable":true,"command":{"value_key":"select","value_type":"string"}},{"key":"settled","name":"Settled","type":"boolean"}]}}
     - script.execute: publish_state
 
   # /cmd — desired port. Retained by the commander; re-applied on reconnect.
@@ -346,12 +346,12 @@ mqtt:
           std::string sel = x["select"].as<std::string>();
           int r = -1;
           if      (sel == "off") r = 0;
-          else if (sel == "p1") r = 3;
-          else if (sel == "p2") r = 4;
-          else if (sel == "p3") r = 5;
-          else if (sel == "p4") r = 6;
-          else if (sel == "p5") r = 7;
-          else if (sel == "p6") r = 8;
+          else if (sel == "port1") r = 3;
+          else if (sel == "port2") r = 4;
+          else if (sel == "port3") r = 5;
+          else if (sel == "port4") r = 6;
+          else if (sel == "port5") r = 7;
+          else if (sel == "port6") r = 8;
           if (r < 0) return;          // ignore unknown values; do not move relays
           id(select_relay).execute(r);
 
@@ -373,20 +373,20 @@ script:
       - lambda: |-
           // map relay_number -> target port
           std::string tgt = "off";
-          if      (relay_number == 3) tgt = "p1";
-          else if (relay_number == 4) tgt = "p2";
-          else if (relay_number == 5) tgt = "p3";
-          else if (relay_number == 6) tgt = "p4";
-          else if (relay_number == 7) tgt = "p5";
-          else if (relay_number == 8) tgt = "p6";
+          if      (relay_number == 3) tgt = "port1";
+          else if (relay_number == 4) tgt = "port2";
+          else if (relay_number == 5) tgt = "port3";
+          else if (relay_number == 6) tgt = "port4";
+          else if (relay_number == 7) tgt = "port5";
+          else if (relay_number == 8) tgt = "port6";
           // current selection from relay group state
           std::string cur = "off";
-          if      (id(relay_3).state) cur = "p1";
-          else if (id(relay_4).state) cur = "p2";
-          else if (id(relay_5).state) cur = "p3";
-          else if (id(relay_6).state) cur = "p4";
-          else if (id(relay_7).state) cur = "p5";
-          else if (id(relay_8).state) cur = "p6";
+          if      (id(relay_3).state) cur = "port1";
+          else if (id(relay_4).state) cur = "port2";
+          else if (id(relay_5).state) cur = "port3";
+          else if (id(relay_6).state) cur = "port4";
+          else if (id(relay_7).state) cur = "port5";
+          else if (id(relay_8).state) cur = "port6";
           if (cur == tgt) { id(publish_state).execute(); return; }  // idempotent
           // move: all off, then the selected one on
           id(relay_3).turn_off();
@@ -426,12 +426,12 @@ script:
           qos: 1
           payload: |-
             std::string sel = "off";
-            if      (id(relay_3).state) sel = "p1";
-            else if (id(relay_4).state) sel = "p2";
-            else if (id(relay_5).state) sel = "p3";
-            else if (id(relay_6).state) sel = "p4";
-            else if (id(relay_7).state) sel = "p5";
-            else if (id(relay_8).state) sel = "p6";
+            if      (id(relay_3).state) sel = "port1";
+            else if (id(relay_4).state) sel = "port2";
+            else if (id(relay_5).state) sel = "port3";
+            else if (id(relay_6).state) sel = "port4";
+            else if (id(relay_7).state) sel = "port5";
+            else if (id(relay_8).state) sel = "port6";
             root["ts"] = id(ha_time).now().strftime("%Y-%m-%dT%H:%M:%SZ");
             root["selected"] = sel;
             root["settled"] = id(g_settled);
@@ -448,12 +448,12 @@ select:
     optimistic: false
     options:
       - "off"
-      - "p1"
-      - "p2"
-      - "p3"
-      - "p4"
-      - "p5"
-      - "p6"
+      - "port1"
+      - "port2"
+      - "port3"
+      - "port4"
+      - "port5"
+      - "port6"
     set_action:
       - if:
           condition:
@@ -464,52 +464,52 @@ select:
                 relay_number: 0
       - if:
           condition:
-            lambda: 'return x == "p1";'
+            lambda: 'return x == "port1";'
           then:
             - script.execute:
                 id: select_relay
                 relay_number: 3
       - if:
           condition:
-            lambda: 'return x == "p2";'
+            lambda: 'return x == "port2";'
           then:
             - script.execute:
                 id: select_relay
                 relay_number: 4
       - if:
           condition:
-            lambda: 'return x == "p3";'
+            lambda: 'return x == "port3";'
           then:
             - script.execute:
                 id: select_relay
                 relay_number: 5
       - if:
           condition:
-            lambda: 'return x == "p4";'
+            lambda: 'return x == "port4";'
           then:
             - script.execute:
                 id: select_relay
                 relay_number: 6
       - if:
           condition:
-            lambda: 'return x == "p5";'
+            lambda: 'return x == "port5";'
           then:
             - script.execute:
                 id: select_relay
                 relay_number: 7
       - if:
           condition:
-            lambda: 'return x == "p6";'
+            lambda: 'return x == "port6";'
           then:
             - script.execute:
                 id: select_relay
                 relay_number: 8
     lambda: |-
-      if (id(relay_3).state) return std::string("p1");
-      if (id(relay_4).state) return std::string("p2");
-      if (id(relay_5).state) return std::string("p3");
-      if (id(relay_6).state) return std::string("p4");
-      if (id(relay_7).state) return std::string("p5");
-      if (id(relay_8).state) return std::string("p6");
+      if (id(relay_3).state) return std::string("port1");
+      if (id(relay_4).state) return std::string("port2");
+      if (id(relay_5).state) return std::string("port3");
+      if (id(relay_6).state) return std::string("port4");
+      if (id(relay_7).state) return std::string("port5");
+      if (id(relay_8).state) return std::string("port6");
       return std::string("off");
     update_interval: 1s
