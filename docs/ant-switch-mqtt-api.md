@@ -1,7 +1,7 @@
 # ant-switch MQTT API
 
-This document describes the MQTT interface exposed by **antswitchbridge** (the bridge to
-the station's 1:6 antenna switch). antswitchbridge implements the `ant-switch` slot of the
+This document describes the MQTT interface exposed by **waveshare_relay-ant-switch-bridge** (the bridge to
+the station's 1:6 antenna switch). waveshare_relay-ant-switch-bridge implements the `ant-switch` slot of the
 station integration model (`../../docs/station-integration-model.md`).
 
 > **Status: implemented as an ESPHome config.** The bridge **is** the ESPHome firmware at
