@@ -49,7 +49,7 @@ routing among them is `ant-switch` (actuator) driven by `antenna-select` (policy
 | `hf/ant-switch` | antswitchbridge | 1:6 antenna switch — dumb actuator | Wi-Fi (contract-first) |
 | `hf/antenna-select` | antennaselect | antenna-selection reconciler (logic) | — |
 | `hf/pa` | acombridge | ACOM 1200S PA bridge | Serial |
-| `hf/rotator` | wrcrotorbridge | HF rotator (Yaesu G-450DC via AF6SA WRC) | WebSocket |
+| `hf/rotator` | wrc-rotator-bridge | HF rotator (Yaesu G-450DC via AF6SA WRC) | WebSocket |
 | `hf/tuner` | atr1k-tuner-bridge | ATR-1000 ATU bridge (in-line / bypass, tune) | Wi-Fi (binary WebSocket) |
 | `hf/discovery` | hadiscovery | HA discovery consumer (logic) | reads `/meta.expose` |
 | `uhf/rotator` | pelcobridge | Pelco-D rotator controller (UHF sat rotator) | Serial |

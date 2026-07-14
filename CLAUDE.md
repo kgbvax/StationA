@@ -13,7 +13,7 @@ git repo nested as a subdirectory of this one (and gitignored here).
 | flexbridge | `flexbridge/` | FLEX-8400 radio → MQTT bridge |
 | ultrabridge | `ultrabridge/` | Ultrabeam RCU-06 controller (tunes one antenna) |
 | acom1200s-pa-bridge | `acom1200s-pa-bridge/` | ACOM 1200S PA bridge |
-| wrcrotorbridge | `wrcrotorbridge/` | HF rotator bridge (Yaesu G-450DC via AF6SA WRC, websocket) |
+| wrc-rotator-bridge | `wrc-rotator-bridge/` | HF rotator bridge (Yaesu G-450DC via AF6SA WRC, websocket) |
 | pelcobridge | `pelcobridge/` | Pelco-D rotator controller (UHF sat rotator) |
 | atr1k-tuner-bridge | `atr1k-tuner-bridge/` | ATR-1000 ATU bridge (in-line/bypass + tune, binary WebSocket) |
 | antswitchbridge | `antswitchbridge/` | 1:6 antenna switch bridge (ESPHome) |
@@ -34,7 +34,7 @@ by navigating into its directory.
 | `muehle/hf/ant-switch` | antswitchbridge | 1:6 antenna switch, wifi (ESPHome) |
 | `muehle/hf/antenna-select` | antennaselect | logic slot — no device (runs on shari) |
 | `muehle/hf/pa` | acom1200s-pa-bridge | ACOM 1200S, serial |
-| `muehle/hf/rotator` | wrcrotorbridge | Yaesu G-450DC via AF6SA WRC, websocket |
+| `muehle/hf/rotator` | wrc-rotator-bridge | Yaesu G-450DC via AF6SA WRC, websocket |
 | `muehle/hf/tuner` | atr1k-tuner-bridge | ATR-1000 ATU, wifi (binary WebSocket) |
 | `muehle/uhf/rotator` | pelcobridge | UHF sat rotator, Pelco-D, serial |
 | `muehle/hf/discovery` | hadiscovery | logic slot — no device (runs on shari); passive consumer of `/meta` |
