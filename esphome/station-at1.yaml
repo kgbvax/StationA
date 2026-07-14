@@ -325,14 +325,13 @@ mqtt:
     qos: 1
     retain: true
 
-  # On connect: publish the birth certificate (/meta) once, then /state.
+  # On connect: publish the birth certificate (/meta), then /state. /meta is
+  # published via the publish_meta script (not inline) so the publish runs
+  # through the same event loop path as publish_state — keeps the /meta
+  # JSON byte-identical to /state's reference, and a small delay makes
+  # the connect-time publish robust against reconnect-timing jitter.
   on_connect:
-    - mqtt.publish:
-        topic: ${site}/${station}/${slot}/meta
-        qos: 1
-        retain: true
-        payload: |-
-          {"schema":"1.0","role":"ant-switch","device":{"model":"WaveShare ESP32-S3-POE-ETH-8DI-8DO (1:6 relay switch)"},"link":"wifi","location":"bauwagen","capabilities":{"ports":[1,2,3,4,5,6],"off":true,"exclusive":true,"hot_switch":false},"expose":{"device":{"name":"Antenna switch","model":"WaveShare ESP32-S3-POE-ETH-8DI-8DO (1:6 relay switch)"},"fields":[{"key":"selected","name":"Selected port","type":"enum","options":["off","port1","port2","port3","port4","port5","port6"],"writable":true,"command":{"value_key":"select","value_type":"string"}},{"key":"settled","name":"Settled","type":"boolean"}]}}
+    - script.execute: publish_meta
     - script.execute: publish_state
 
   # /cmd — desired port. Retained by the commander; re-applied on reconnect.
@@ -359,6 +358,23 @@ mqtt:
 # Scripts
 # ==========================================================
 script:
+  # publish_meta — retained birth certificate on /meta. Run from on_connect via
+  # script.execute. The 100ms delay is a small jitter guard for the connect-time
+  # publish window; the inline mqtt.publish form would also retain correctly
+  # (the broker honors retain on PUBLISH once CONNACK is received), but routing
+  # through this script keeps the /meta payload in one place if it ever needs
+  # to be republished (e.g. on a meta schema bump).
+  - id: publish_meta
+    mode: single
+    then:
+      - delay: 100ms
+      - mqtt.publish:
+          topic: ${site}/${station}/${slot}/meta
+          qos: 1
+          retain: true
+          payload: |-
+            {"schema":"1.0","role":"ant-switch","device":{"model":"WaveShare ESP32-S3-POE-ETH-8DI-8DO (1:6 relay switch)"},"link":"wifi","location":"bauwagen","capabilities":{"ports":[1,2,3,4,5,6],"off":true,"exclusive":true,"hot_switch":false},"expose":{"device":{"name":"Antenna switch","model":"WaveShare ESP32-S3-POE-ETH-8DI-8DO (1:6 relay switch)"},"fields":[{"key":"selected","name":"Selected port","type":"enum","options":["off","port1","port2","port3","port4","port5","port6"],"writable":true,"command":{"value_key":"select","value_type":"string"}},{"key":"settled","name":"Settled","type":"boolean"}]}}
+
   # select_relay — the single command entry point. Driven by /cmd and by
   # the local select entity. Idempotent: if the target equals the current
   # relay position it does nothing (no relay chatter, settled stays true).
