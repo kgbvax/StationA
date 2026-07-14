@@ -1,6 +1,6 @@
-# CLAUDE.md — waveshare_relay-ant-switch-bridge
+# CLAUDE.md — waveshare_relay-antswitch-bridge
 
-waveshare_relay-ant-switch-bridge bridges the station's **1:6 antenna switch** to MQTT, exposing the
+waveshare_relay-antswitch-bridge bridges the station's **1:6 antenna switch** to MQTT, exposing the
 `muehle/hf/ant-switch` slot on the station bus. The switch is a **dumb actuator**: it
 selects one of six ports (or off) and reports what is actually selected — it holds no band
 policy or selection logic. *Which* antenna is chosen is decided by the `antenna-select`

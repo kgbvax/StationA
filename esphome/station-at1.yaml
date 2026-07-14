@@ -1,7 +1,7 @@
 # ==========================================================
 # station-at1 — 1:6 antenna switch, canonical ant-switch slot
 #
-# This ESPHome config IS the waveshare_relay-ant-switch-bridge: it publishes the canonical
+# This ESPHome config IS the waveshare_relay-antswitch-bridge: it publishes the canonical
 # muehle/hf/ant-switch MQTT surface (meta/state/status/cmd) directly. It is
 # a dumb actuator (integration model §5): it selects one of six ports (or
 # off), reports what is selected, and reports when the relay has settled.
