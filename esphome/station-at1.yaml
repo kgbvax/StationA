@@ -512,4 +512,3 @@ select:
       if (id(relay_7).state) return std::string("port5");
       if (id(relay_8).state) return std::string("port6");
       return std::string("off");
-    update_interval: 1s
