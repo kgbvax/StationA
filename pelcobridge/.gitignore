@@ -1,0 +1,12 @@
+# Build artifact
+/pelcots
+
+# Runtime / local state
+pelcots.log
+pelcots.yaml
+
+# Local Claude Code settings
+.claude/
+
+# OS cruft
+.DS_Store
