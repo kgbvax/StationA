@@ -28,8 +28,9 @@ func TestBandForFreq(t *testing.T) {
 		{1_296_000_000, "23cm"},
 		{0, "unknown"},
 		{-1, "unknown"},
-		{5_060_000, "60m"}, // UK 5MHz allocation low edge
-		{5_250_000, "60m"}, // UK 5MHz allocation mid
+		{5_355_000, "60m"}, // 60m allocation (5351.5–5366.5 kHz)
+		{5_060_000, "gen"}, // 5.06 MHz — HF, outside the 60m allocation → gen
+		{5_250_000, "gen"}, // 5.25 MHz — HF, outside the 60m allocation → gen
 	}
 	for _, c := range cases {
 		if got := BandForFreq(c.hz); got != c.want {
