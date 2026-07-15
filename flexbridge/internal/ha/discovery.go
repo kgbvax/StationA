@@ -1,0 +1,182 @@
+// Package ha builds Home Assistant MQTT discovery payloads and topic names.
+//
+// Each radio becomes one HA "device" (grouping all its entities). Status
+// fields become individual sensors under that device. We use the standard
+// discovery layout:
+//
+//	<discovery_prefix>/<component>/<node_id>/<object_id>/config
+//
+// node_id is "flexradio-<serial>", so multiple radios coexist cleanly.
+package ha
+
+import (
+	"fmt"
+	"strings"
+)
+
+// Components.
+const (
+	ComponentSensor       = "sensor"
+	ComponentBinarySensor = "binary_sensor"
+)
+
+// Device info shared by every entity of one radio.
+type Device struct {
+	Serial   string
+	Model    string // e.g. "FLEX-8400"
+	Name     string // e.g. "FlexRadio 8400"
+	Firmware string // e.g. "3.8.19"; empty if unknown
+}
+
+// DiscoveryConfig is a Home Assistant MQTT discovery payload. Field names
+// use the lower-case keys HA expects in JSON. We keep this hand-rolled
+// (rather than importing a schema) so the payload stays minimal and the
+// dependency list stays empty.
+type DiscoveryConfig struct {
+	// UniqueID is HA's stable id for this entity across restarts.
+	UniqueID string `json:"unique_id"`
+	// Name is the friendly entity name.
+	Name string `json:"name"`
+	// StateTopic is where the value is published.
+	StateTopic string `json:"state_topic"`
+	// ValueTemplate, if set, extracts the value from a JSON payload.
+	ValueTemplate string `json:"value_template,omitempty"`
+	// UnitOfMeasurement for numeric sensors.
+	UnitOfMeasurement string `json:"unit_of_measurement,omitempty"`
+	// DeviceClass (temperature, voltage, power, signal_strength, ...).
+	DeviceClass string `json:"device_class,omitempty"`
+	// StateClass (measurement / total). measurement for live telemetry.
+	StateClass string `json:"state_class,omitempty"`
+	// Category "diagnostic" or "config" to hide from the main UI.
+	EntityType string `json:"entity_category,omitempty"`
+	// For binary_sensors: the payload that maps to ON.
+	PayloadOn string `json:"payload_on,omitempty"`
+	// For binary_sensors: the payload that maps to OFF.
+	PayloadOff string `json:"payload_off,omitempty"`
+	// Device groups this entity under the radio.
+	Device DeviceInfo `json:"device"`
+	// AvailabilityTopic / Payload for the bridge LWT.
+	AvailabilityTopic string `json:"availability_topic,omitempty"`
+	AvailabilityMode  string `json:"availability_mode,omitempty"`
+}
+
+// DeviceInfo is the HA "device" block.
+type DeviceInfo struct {
+	Identifiers  []string `json:"identifiers"`
+	Name         string   `json:"name"`
+	Manufacturer string   `json:"manufacturer"`
+	Model        string   `json:"model"`
+	SWVersion    string   `json:"sw_version,omitempty"` // firmware version
+}
+
+// NodeID returns the discovery node id for a radio ("flexradio-<serial>").
+func NodeID(serial string) string {
+	return "flexradio-" + sanitize(serial)
+}
+
+// ConfigTopic returns the discovery config topic for an entity.
+//
+//	<discovery_prefix>/<component>/<node_id>/<object_id>/config
+func ConfigTopic(discoveryPrefix, component, nodeID, objectID string) string {
+	return fmt.Sprintf("%s/%s/%s/%s/config", discoveryPrefix, component, nodeID, objectID)
+}
+
+// DeviceInfoFor builds the HA device block for a radio.
+func DeviceInfoFor(d Device) DeviceInfo {
+	model := d.Model
+	if model == "" {
+		model = "FlexRadio"
+	}
+	name := d.Name
+	if name == "" {
+		name = "FlexRadio " + d.Serial
+	}
+	return DeviceInfo{
+		Identifiers:  []string{d.Serial},
+		Name:         name,
+		Manufacturer: "FlexRadio",
+		Model:        model,
+		SWVersion:    d.Firmware,
+	}
+}
+
+// StatusEntity builds the discovery config for a status sensor.
+// valueTemplate extracts the field from the JSON state snapshot
+// (e.g. "{{ value_json.freq_hz }}"). unit may be empty for string sensors.
+func StatusEntity(name, objectID, stateTopic, unit, valueTemplate string, d Device, availTopic string) (DiscoveryConfig, string) {
+	cfg := DiscoveryConfig{
+		UniqueID:          fmt.Sprintf("%s_%s", NodeID(d.Serial), objectID),
+		Name:              name,
+		StateTopic:        stateTopic,
+		ValueTemplate:     valueTemplate,
+		UnitOfMeasurement: unit,
+		DeviceClass:       deviceClassForUnit(unit),
+		Device:            DeviceInfoFor(d),
+		AvailabilityTopic: availTopic,
+		AvailabilityMode:  "all",
+	}
+	if unit != "" {
+		cfg.StateClass = "measurement"
+	}
+	return cfg, ComponentSensor
+}
+
+// BinaryEntity builds the discovery config for a binary_sensor.
+// valueTemplate extracts the field from the JSON state snapshot.
+// on/off payloads match what the template produces.
+func BinaryEntity(name, objectID, stateTopic, onPayload, offPayload, valueTemplate string, d Device, availTopic string) (DiscoveryConfig, string) {
+	cfg := DiscoveryConfig{
+		UniqueID:          fmt.Sprintf("%s_%s", NodeID(d.Serial), objectID),
+		Name:              name,
+		StateTopic:        stateTopic,
+		ValueTemplate:     valueTemplate,
+		DeviceClass:       "running",
+		PayloadOn:         onPayload,
+		PayloadOff:        offPayload,
+		Device:            DeviceInfoFor(d),
+		AvailabilityTopic: availTopic,
+		AvailabilityMode:  "all",
+	}
+	return cfg, ComponentBinarySensor
+}
+
+// deviceClassFor maps a publish unit to the HA device class, where one is
+// valid.
+func deviceClassFor(publishUnit string) string {
+	switch publishUnit {
+	case "°C", "degC":
+		return "temperature"
+	case "V", "Volts":
+		return "voltage"
+	case "W", "Watts":
+		return "power"
+	case "A", "Amps":
+		return "current"
+	case "dBm":
+		return "signal_strength"
+	case "Hz":
+		return "frequency"
+	default:
+		return ""
+	}
+}
+
+// deviceClassForUnit handles status fields.
+func deviceClassForUnit(unit string) string {
+	return deviceClassFor(unit)
+}
+
+// sanitize lowercases and strips characters that aren't valid in HA object
+// ids / topic segments.
+func sanitize(s string) string {
+	s = strings.ToLower(s)
+	var b strings.Builder
+	for _, r := range s {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '_' || r == '-' {
+			b.WriteRune(r)
+		} else {
+			b.WriteRune('_')
+		}
+	}
+	return b.String()
+}

@@ -1,0 +1,41 @@
+# flexbridge example configuration.
+# Copy to /etc/flexbridge/config.toml and edit. Sensitive values (MQTT
+# password) can also be supplied via an EnvironmentFile; see deploy.sh.
+
+# Radio connection. Leave radio_host empty to use UDP autodiscovery
+# (recommended — works even if the radio's IP changes via DHCP). Set
+# radio_serial to pick a specific radio if more than one is on the LAN.
+radio_host = ""            # e.g. "192.168.1.50"; empty = discover
+radio_serial = ""          # e.g. "1234-5678-8400.12345"; empty = first found
+
+[mqtt]
+broker = "tcp://homeassistant.local:1883"
+client_id = "flexbridge"
+user = ""                  # set here or via FLEXBRIDGE_MQTT_USER
+password = ""              # set here or via FLEXBRIDGE_MQTT_PASSWORD
+discovery_prefix = "homeassistant"  # HA MQTT discovery prefix (legacy embedded path)
+# Legacy embedded HA discovery is OFF by default now that the standalone `hadiscovery`
+# consumer renders discovery from this bridge's `expose` block in /meta (integration
+# model §9). Set true only to fall back to the embedded discovery during migration.
+publish_ha_discovery = false
+
+# Station-model slot addressing: topics publish to <site>/<station>/<slot>/*
+# The radio slot address must match the station-integration-model.
+site     = "muehle"        # physical site name
+station  = "hf"            # transmitting entity (hf | uhf)
+slot     = "radio"         # role (default: radio)
+location = "bauwagen"      # physical location label, included in /meta
+
+[log]
+level = "info"             # debug | info | warn | error
+
+# Environment variable overrides (systemd reads /etc/flexbridge/flexbridge.env):
+#   FLEXBRIDGE_MQTT_BROKER
+#   FLEXBRIDGE_MQTT_CLIENT_ID
+#   FLEXBRIDGE_MQTT_USER
+#   FLEXBRIDGE_MQTT_PASSWORD
+#   FLEXBRIDGE_RADIO_HOST
+#   FLEXBRIDGE_RADIO_SERIAL
+#   FLEXBRIDGE_SITE
+#   FLEXBRIDGE_STATION
+#   FLEXBRIDGE_SLOT

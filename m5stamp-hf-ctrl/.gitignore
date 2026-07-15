@@ -1,0 +1,19 @@
+# Secrets — never commit (wifi + mqtt credentials). Copy secrets.example.h -> src/secrets.h
+# and fill in. The build fails fast if src/secrets.h is missing.
+src/secrets.h
+
+# PlatformIO build artifacts and caches
+.pio/
+.pioenvs/
+build/
+
+# Python (PlatformIO tooling)
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# macOS / local tooling noise
+.DS_Store
+*.swp
+*~

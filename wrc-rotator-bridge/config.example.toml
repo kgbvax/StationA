@@ -1,0 +1,63 @@
+# config.example.toml — configuration for wrc-rotator-bridge (HF rotator → MQTT bridge).
+# Default location: /etc/wrc-rotator-bridge/config.toml
+# Override with: wrc-rotator-bridge -config /path/to/config.toml
+#
+# All values shown are the built-in defaults used when this file is absent.
+# Only include the keys you want to change.
+#
+# The MQTT password is NOT kept here — it is loaded from the
+# WRC_ROTATOR_BRIDGE_MQTT_PASSWORD environment variable (systemd EnvironmentFile
+# /etc/wrc-rotator-bridge/wrc-rotator-bridge.env, 0600), so it never appears in the TOML,
+# the unit file, or the process command line.
+# See ../docs/conventions/config-and-secrets.md.
+
+# host is the compute node this adapter runs on (published in /meta, model §8.1).
+host = "shari"
+
+[rotor]
+# AF6SA WRC (Web Remote Control) controller WebSocket endpoint that steers the
+# Yaesu G-450DC rotator.
+url = "ws://192.168.1.108/wsrotor"
+
+[gs232]
+# Optional GS-232B inbound TCP server so legacy rotator-control software
+# (PSTRotator, N1MM, rotctld) can drive the rotator directly. Orthogonal to the
+# MQTT three-plane contract: it drives the same device the bridge does, and the
+# resulting motion still surfaces in /state on the bus. Disable if unused.
+enabled = true
+bind    = "0.0.0.0"
+port    = 7373
+
+[device]
+# Identity published in /meta. link reflects the transport to the WRC.
+model = "Yaesu G-450DC"
+link  = "ethernet"
+
+[mqtt]
+broker           = "tcp://192.168.1.50:1883"
+# client_id defaults to "<site>-<station>-<slot>" (model §8) when empty.
+client_id        = ""
+# Station-model slot addressing: <site>/<station>/<slot>/{meta,state,status,cmd}
+site             = "muehle"
+station          = "hf"
+slot             = "rotator"
+location         = "bauwagen"   # physical location label, published in /meta
+discovery_prefix = "homeassistant"
+# Legacy embedded HA discovery is OFF by default; the standalone hadiscovery
+# consumer renders discovery from this bridge's expose block in /meta (model §9).
+publish_ha_discovery = false
+user             = "hf"
+# password is loaded from WRC_ROTATOR_BRIDGE_MQTT_PASSWORD (EnvironmentFile), not here.
+password         = ""
+
+[log]
+# debug | info | warn | error
+level = "info"
+
+# --- env overrides (systemd EnvironmentFile) ---------------------------------
+# These WRC_ROTATOR_BRIDGE_* env vars overlay the [mqtt]/[rotor] sections above and
+# are used by deploy.sh so the secret never sits in the TOML:
+#   WRC_ROTATOR_BRIDGE_MQTT_BROKER      WRC_ROTATOR_BRIDGE_MQTT_CLIENT_ID
+#   WRC_ROTATOR_BRIDGE_MQTT_USER        WRC_ROTATOR_BRIDGE_MQTT_PASSWORD   (EnvironmentFile)
+#   WRC_ROTATOR_BRIDGE_MQTT_SITE        WRC_ROTATOR_BRIDGE_MQTT_STATION    WRC_ROTATOR_BRIDGE_MQTT_SLOT
+#   WRC_ROTATOR_BRIDGE_ROTOR_URL

@@ -4,7 +4,8 @@ This is the single authoritative table for HF/VHF band frequency ranges and cano
 mode names used across all stationa components. Components implement against this
 reference; when it changes, each affected component needs a corresponding code update.
 
-Edges are DL / IARU Region 1 allocations.
+Edges are DL / IARU Region 1 allocations. Both edges are inclusive (the high edge is
+the round kHz value, e.g. 20m runs 14,000,000–14,350,000 Hz).
 
 ---
 
@@ -12,20 +13,27 @@ Edges are DL / IARU Region 1 allocations.
 
 | Band | Low (Hz) | High (Hz) | Low (kHz) | High (kHz) |
 |------|----------|-----------|-----------|------------|
-| `160m` | 1,800,000 | 1,999,999 | 1800 | 1999 |
-| `80m` | 3,500,000 | 3,999,999 | 3500 | 3999 |
+| `160m` | 1,800,000 | 2,000,000 | 1800 | 2000 |
+| `80m` | 3,500,000 | 4,000,000 | 3500 | 4000 |
 | `60m` | 5,351,500 | 5,366,500 | 5351.5 | 5366.5 |
-| `40m` | 7,000,000 | 7,299,999 | 7000 | 7299 |
-| `30m` | 10,100,000 | 10,149,999 | 10100 | 10149 |
-| `20m` | 14,000,000 | 14,349,999 | 14000 | 14349 |
-| `17m` | 18,068,000 | 18,167,999 | 18068 | 18167 |
-| `15m` | 21,000,000 | 21,449,999 | 21000 | 21449 |
-| `12m` | 24,890,000 | 24,989,999 | 24890 | 24989 |
-| `10m` | 28,000,000 | 29,699,999 | 28000 | 29699 |
-| `6m` | 50,000,000 | 53,999,999 | 50000 | 53999 |
+| `40m` | 7,000,000 | 7,300,000 | 7000 | 7300 |
+| `30m` | 10,100,000 | 10,150,000 | 10100 | 10150 |
+| `20m` | 14,000,000 | 14,350,000 | 14000 | 14350 |
+| `17m` | 18,068,000 | 18,168,000 | 18068 | 18168 |
+| `15m` | 21,000,000 | 21,450,000 | 21000 | 21450 |
+| `12m` | 24,890,000 | 24,990,000 | 24890 | 24990 |
+| `10m` | 28,000,000 | 29,700,000 | 28000 | 29700 |
+| `6m` | 50,000,000 | 54,000,000 | 50000 | 54000 |
 
-Outside these ranges, the band label is `band-N` where N is derived from the frequency
-(implementation-specific fallback; do not rely on it downstream).
+Frequencies outside the allocations resolve to a general-coverage / out-of-range
+label, not a synthesized one:
+
+- **HF general coverage** — a frequency in the 1.8–30 MHz HF range that is not inside
+  any ham allocation (e.g. 9.9 MHz shortwave broadcast) → `gen`.
+- **Out of range** — anything outside the allocations and outside the HF
+  general-coverage range (VHF/UHF gaps, non-HF, zero/negative) → `unknown`.
+
+`gen` is a recognized band label (accepted by band-validation helpers, case-insensitive).
 
 ---
 

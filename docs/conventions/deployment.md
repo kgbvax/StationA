@@ -19,7 +19,17 @@ GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o dis
 
 Each project's `deploy.sh` wraps this and copies the result to the Pi.
 
----
+> **Monorepo + go.work (dev-time only).** Every Go component is a subdirectory of
+> this repo and a member of the root `go.work` workspace, and each imports the
+> shared module `codeberg.org/kgbvax/stationa/shared` (resolved by a
+> `replace … => ../shared` in its own `go.mod`). `go.work` is a **development-time
+> convenience** — `go build ./...` at the repo root builds them all. `deploy.sh`,
+> however, runs a plain per-module `go build ./cmd/SERVICE` from inside the
+> component directory, which resolves `shared/` through the `replace` **without**
+> needing `go.work`. So the Pi does not need `go.work` or the sibling modules
+> checked out — only the deployed binary and its `0600` config. Keep the `replace`
+> in every `go.mod`; never rely on `go.work` for a deploy build (`go mod tidy`
+> ignores `go.work`).
 
 ## Seed-once config
 

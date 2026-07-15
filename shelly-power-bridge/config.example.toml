@@ -1,0 +1,98 @@
+# config.example.toml — configuration for shelly-power-bridge
+# (Shelly Gen2+ smart plugs → station integration model `power` slots).
+# Default location: /etc/shelly-power-bridge/config.toml
+# Override with: shelly-power-bridge -config /path/to/config.toml
+#
+# shelly-power-bridge is a compound bridge: one process fronts N Shelly plugs,
+# each becoming one site-level `power` slot at <site>/<station>/<slot>. Each
+# [[slot]] runs its own paho client with its own LWT, so a process death takes
+# every fronted slot offline with no stale-online gap.
+#
+# All values shown are the built-in defaults used when this file is absent.
+# Only include the keys you want to change.
+#
+# The MQTT password is NOT kept here — it is loaded from the
+# SHELLY_POWER_BRIDGE_MQTT_PASSWORD environment variable (systemd EnvironmentFile
+# /etc/shelly-power-bridge/shelly-power-bridge.env, 0600), so it never appears
+# in the TOML, the unit file, or the process command line.
+# See ../docs/conventions/config-and-secrets.md.
+
+# host is the compute node this adapter runs on (published in /meta, model §8.1).
+host = "shari"
+
+[mqtt]
+broker           = "tcp://192.168.1.50:1883"
+# client_id defaults to "<site>-<station>-<slot>" PER slot (each [[slot]] gets
+# its own client) when empty.
+client_id        = ""
+# Station-model addressing: the SITE here prefixes every slot address. For the
+# site-level power layer the site is "muehle" and each [[slot]] sets its own
+# station/slot (e.g. station="power", slot="master").
+site             = "muehle"
+# Home Assistant discovery is rendered by the standalone hadiscovery consumer
+# from this bridge's expose block in /meta (model §9) — no embedded discovery.
+discovery_prefix = "homeassistant"
+user             = "hf"
+# password is loaded from SHELLY_POWER_BRIDGE_MQTT_PASSWORD (EnvironmentFile), not here.
+password         = ""
+
+[log]
+# debug | info | warn | error
+level = "info"
+
+# --- slots -------------------------------------------------------------------
+# One [[slot]] per Shelly plug. Each becomes one canonical power slot with its
+# own /meta /state /status /cmd and its own paho client + LWT.
+#
+# shelly_id   = the Gen2+ MQTT prefix the Shelly publishes under
+#               (its device id, e.g. "shellyplus1pm-aabbccddeeff"). The bridge
+#               subscribes "<shelly_id>/status/switch:0" and "<shelly_id>/online"
+#               and commands "<shelly_id>/rpc".
+# device_model / device_serial = the Shelly identity published in /meta.
+#               Use device_serial = shelly_id (the stable Gen2 device id).
+# fail_safe   = the Shelly power-on default published in capabilities:
+#               "off" means the plug restores OFF after a mains blip (a power
+#               blip drops the station rather than re-energizing it). Default "off".
+# feeds       = downstream slot addresses this supply powers (model §4). Empty
+#               for the station master mains; populated for the 13.8 V PSU.
+
+# Station master mains — the upstream supply for the whole station.
+[[slot]]
+station       = "power"
+slot          = "master"
+location      = "bauwagen"
+device_model  = "Shelly Plus 1PM"
+device_serial = "shellyplus1pm-A1"
+shelly_id     = "shellyplus1pm-aabbccddeeff"
+fail_safe     = "off"
+# master feeds everything; feeds is left empty — it is the top of the tree.
+
+# 13.8 V PSU — site-level DC rail feeding both HF and UHF (radio, tuner,
+# ant-ctrl, ant-switch, rotator, the M5 Stamps). Declares `feeds` so consumers
+# know what goes dark when this supply drops.
+[[slot]]
+station       = "power"
+slot          = "psu-13v8"
+location      = "bauwagen"
+device_model  = "Shelly Plus 1PM"
+device_serial = "shellyplus1pm-B2"
+shelly_id     = "shellyplus1pm-112233445566"
+fail_safe     = "off"
+feeds = [
+  "hf/radio",
+  "uhf/radio",
+  "hf/tuner",
+  "hf/ant-ctrl",
+  "hf/ant-switch",
+  "hf/rotator",
+  "hf/switch",
+  "hf/pa-arm",
+]
+
+# --- env overrides (systemd EnvironmentFile) ---------------------------------
+# These SHELLY_POWER_BRIDGE_MQTT_* env vars overlay the [mqtt] section above and
+# are used by deploy.sh so the secret never sits in the TOML:
+#   SHELLY_POWER_BRIDGE_MQTT_BROKER      SHELLY_POWER_BRIDGE_MQTT_CLIENT_ID
+#   SHELLY_POWER_BRIDGE_MQTT_USER        SHELLY_POWER_BRIDGE_MQTT_PASSWORD  (EnvironmentFile)
+#   SHELLY_POWER_BRIDGE_MQTT_SITE
+# Per-slot values (station/slot/shelly_id/device_*/feeds) come from the TOML only.
