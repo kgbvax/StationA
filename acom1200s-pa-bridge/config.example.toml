@@ -1,0 +1,59 @@
+# config.example.toml — configuration for acom1200s-pa-bridge (ACOM 1200S PA → MQTT bridge).
+# Default location: /etc/acom1200s-pa-bridge/config.toml
+# Override with: acom1200s-pa-bridge -config /path/to/config.toml
+#
+# All values shown are the built-in defaults used when this file is absent.
+# Only include the keys you want to change.
+#
+# The MQTT password is NOT kept here — it is loaded from the ACOM1200S_PA_BRIDGE_MQTT_PASSWORD
+# environment variable (systemd EnvironmentFile /etc/acom1200s-pa-bridge/acom1200s-pa-bridge.env, 0600),
+# so it never appears in the TOML, the unit file, or the process command line.
+# See ../stationa/docs/conventions/config-and-secrets.md.
+
+# host is the compute node this adapter runs on (published in /meta, model §8.1).
+host = "shari"
+
+[serial]
+# Prolific USB-serial adapter (vendor 067b). Prefer the /dev/serial/by-id/...
+# symlink so the path is stable across replugs. The deploy.sh udev rule pins
+# this tty to the dialout group so the service user can always open it.
+# Serial is always 9600 8N1 (protocol constant, not configurable).
+port        = "/dev/serial/by-id/usb-Prolific_Technology_Inc._USB-Serial_Controller_D-if00-port0"
+avg_time_ms = 300   # forward-power moving-average window in ms
+
+[device]
+# Identity published in /meta. The ACOM serial protocol reports no serial
+# number, so device.serial is a stable configured id; left empty, the bridge
+# derives "acom-1200s". link reflects the deployed USB-serial transport.
+model  = "ACOM 1200S"
+serial = ""
+link   = "serial"
+
+[mqtt]
+broker           = "tcp://192.168.1.50:1883"
+# client_id defaults to "<site>-<station>-<slot>" (model §8) when empty.
+client_id        = ""
+# Station-model slot addressing: <site>/<station>/<slot>/{meta,state,status,cmd}
+site             = "muehle"
+station          = "hf"
+slot             = "pa"
+location         = "bauwagen"   # physical location label, published in /meta
+discovery_prefix = "homeassistant"
+# Legacy embedded HA discovery is OFF by default; the standalone hadiscovery
+# consumer renders discovery from this bridge's expose block in /meta (model §9).
+publish_ha_discovery = false
+user             = "hf"
+# password is loaded from ACOM1200S_PA_BRIDGE_MQTT_PASSWORD (EnvironmentFile), not here.
+password         = ""
+
+[log]
+# debug | info | warn | error
+level = "info"
+
+# --- env overrides (systemd EnvironmentFile) ---------------------------------
+# These ACOM1200S_PA_BRIDGE_* env vars overlay the [mqtt]/[serial] sections above and are
+# used by deploy.sh so the secret never sits in the TOML:
+#   ACOM1200S_PA_BRIDGE_MQTT_BROKER      ACOM1200S_PA_BRIDGE_MQTT_CLIENT_ID
+#   ACOM1200S_PA_BRIDGE_MQTT_USER        ACOM1200S_PA_BRIDGE_MQTT_PASSWORD   (EnvironmentFile)
+#   ACOM1200S_PA_BRIDGE_MQTT_SITE        ACOM1200S_PA_BRIDGE_MQTT_STATION     ACOM1200S_PA_BRIDGE_MQTT_SLOT
+#   ACOM1200S_PA_BRIDGE_SERIAL_PORT
