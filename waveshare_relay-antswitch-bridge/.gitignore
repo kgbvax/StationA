@@ -1,0 +1,17 @@
+# Secrets — never commit (wifi + mqtt credentials live here)
+secrets.yaml
+secrets/
+
+# ESPHome build artifacts and cache
+.esphome/
+build/
+
+# Python (local validation tooling)
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# macOS / local tooling noise
+.DS_Store
