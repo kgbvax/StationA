@@ -46,7 +46,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	client, err := mqtt.New(cfg, eng)
+	client, err := mqtt.New(ctx, cfg, eng)
 	if err != nil {
 		log.Fatalf("mqtt connect: %v", err)
 	}

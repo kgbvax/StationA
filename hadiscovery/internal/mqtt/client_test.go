@@ -1,10 +1,13 @@
 package mqtt
 
 import (
+	"context"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	sharedmqtt "codeberg.org/kgbvax/stationa/shared/mqtt"
 
 	"hadiscovery/internal/engine"
 )
@@ -58,8 +61,9 @@ func TestOnMetaDefersEngineWork(t *testing.T) {
 		eng:  eng,
 		site: "s", station: "st", slot: "sl",
 		jobs: make(chan func(), 256),
-		done: make(chan struct{}),
 	}
+	ctx, cancel := context.WithCancel(context.Background())
+	c.ctx, c.cancel = ctx, cancel
 
 	meta := []byte(`{"schema":"1.0","role":"x","expose":{"fields":[{"key":"f","name":"F","type":"string"}]}}`)
 	msg := fakeMessage{topic: "s/st/sl/meta", payload: meta}
@@ -82,7 +86,7 @@ func TestOnMetaDefersEngineWork(t *testing.T) {
 	// Phase 2 — the worker drains the queue and runs the deferred engine publish.
 	workerDone := make(chan struct{})
 	go func() {
-		c.runJobs()
+		sharedmqtt.RunJobs(ctx, c.jobs)
 		close(workerDone)
 	}()
 	select {
@@ -91,11 +95,11 @@ func TestOnMetaDefersEngineWork(t *testing.T) {
 		t.Fatal("worker never reached the deferred engine publish")
 	}
 	close(pub.release) // let the publish complete
-	close(c.done)      // tell the worker to exit
+	cancel()           // tell the worker to exit (cancels its ctx)
 	select {
 	case <-workerDone:
 	case <-time.After(time.Second):
-		t.Fatal("worker did not exit after done")
+		t.Fatal("worker did not exit after ctx cancel")
 	}
 	if got := atomic.LoadInt32(&pub.calls); got < 1 {
 		t.Fatalf("deferred engine work never ran on the worker (publishes=%d)", got)
@@ -115,7 +119,6 @@ func TestOnHAStatusDefersEngineWork(t *testing.T) {
 		eng:  eng,
 		site: "s", station: "st", slot: "sl",
 		jobs: make(chan func(), 256),
-		done: make(chan struct{}),
 	}
 
 	returned := make(chan struct{})
@@ -128,5 +131,4 @@ func TestOnHAStatusDefersEngineWork(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("onHAStatus blocked the caller goroutine")
 	}
-	close(c.done)
 }

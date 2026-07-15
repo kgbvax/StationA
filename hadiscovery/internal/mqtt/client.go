@@ -6,10 +6,14 @@
 package mqtt
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 
 	paho "github.com/eclipse/paho.mqtt.golang"
+
+	sharedmqtt "codeberg.org/kgbvax/stationa/shared/mqtt"
+	schema "codeberg.org/kgbvax/stationa/shared/schema"
 
 	"hadiscovery/internal/config"
 	"hadiscovery/internal/engine"
@@ -25,24 +29,32 @@ type Client struct {
 	station string
 	slot    string
 
-	// jobs serializes engine work (OnMeta / OnHAStatus) on a single goroutine that is
-	// NOT one of paho's dispatch goroutines. This is required because paho delivers message
-	// handlers INLINE on its matchAndDispatch goroutine when OrderMatters is true (the
-	// default — see paho Subscribe docs: "callback must not block or call functions within
-	// this package that may block (e.g. Publish) other than in a new go routine"). The
-	// engine's OnMeta publishes synchronously (engine.Pub.Publish -> token.Wait()); running
-	// that inline stalls dispatch after the first message: the handler blocks waiting for
-	// the outgoing PUBACK while the read loop blocks pushing the next retained PUBLISH into
-	// the now-full message channel the stalled dispatcher is no longer draining. Routing
-	// the work here lets the handler return immediately, unblocking paho, while keeping the
-	// engine single-threaded (its idempotency depends on sequential, ordered OnMeta).
-	jobs chan func()
-	done chan struct{}
+	// ctx governs this client's lifecycle: it is a child of the ctx passed to New,
+	// so a SIGTERM cancels it, and Close cancels it directly to stop the worker
+	// before disconnecting. jobs serializes engine work (OnMeta / OnHAStatus) on a
+	// single goroutine that is NOT one of paho's dispatch goroutines. This is
+	// required because paho delivers message handlers INLINE on its matchAndDispatch
+	// goroutine when OrderMatters is true (the default — see paho Subscribe docs:
+	// "callback must not block or call functions within this package that may block
+	// (e.g. Publish) other than in a new go routine"). The engine's OnMeta publishes
+	// synchronously (engine.Pub.Publish -> token.Wait()); running that inline stalls
+	// dispatch after the first message: the handler blocks waiting for the outgoing
+	// PUBACK while the read loop blocks pushing the next retained PUBLISH into the
+	// now-full message channel the stalled dispatcher is no longer draining. Routing
+	// the work here lets the handler return immediately, unblocking paho, while
+	// keeping the engine single-threaded (its idempotency depends on sequential,
+	// ordered OnMeta). The queue + worker live in shared/mqtt (Enqueue/RunJobs) so
+	// the same fix is shared with every other stationa consumer.
+	ctx    context.Context
+	cancel context.CancelFunc
+	jobs   chan func()
 }
 
 // New connects to the broker, registers the last-will, and subscribes to the meta filter
-// and homeassistant/status.
-func New(cfg config.Config, eng *engine.Engine) (*Client, error) {
+// and homeassistant/status. ctx governs the connect (a SIGTERM while the broker is
+// unreachable interrupts it — paho's Connect().Wait() alone ignores ctx) and the worker
+// lifecycle.
+func New(ctx context.Context, cfg config.Config, eng *engine.Engine) (*Client, error) {
 	c := &Client{
 		cfg:     cfg,
 		eng:     eng,
@@ -50,9 +62,9 @@ func New(cfg config.Config, eng *engine.Engine) (*Client, error) {
 		station: cfg.MQTT.Station,
 		slot:    cfg.MQTT.Slot,
 		jobs:    make(chan func(), 256),
-		done:    make(chan struct{}),
 	}
-	go c.runJobs()
+	c.ctx, c.cancel = context.WithCancel(ctx)
+	go sharedmqtt.RunJobs(c.ctx, c.jobs)
 
 	opts := paho.NewClientOptions().
 		AddBroker(cfg.MQTT.Broker).
@@ -81,19 +93,20 @@ func New(cfg config.Config, eng *engine.Engine) (*Client, error) {
 	// Wire the engine's publisher to this client before Connect so retained /meta
 	// delivered on OnConnect reaches the real broker, not the noop publisher.
 	eng.SetPub(c)
-	if token := c.client.Connect(); token.Wait() && token.Error() != nil {
-		return nil, token.Error()
+	if err := sharedmqtt.Connect(c.ctx, c.client); err != nil {
+		c.cancel()
+		return nil, err
 	}
 	return c, nil
 }
 
-// Close publishes offline and disconnects cleanly.
+// Close stops the worker, publishes offline, and disconnects cleanly. The worker is
+// stopped before the disconnect so no engine work (which publishes) races with shutdown.
 func (c *Client) Close() {
 	if c == nil {
 		return
 	}
-	// Stop the worker first so no engine work (which publishes) races with shutdown.
-	close(c.done)
+	c.cancel()
 	if c.client.IsConnectionOpen() {
 		c.publishString(c.selfTopic("status"), "offline", 1, true)
 		c.client.Disconnect(250)
@@ -123,38 +136,12 @@ func (c *Client) onMeta(_ paho.Client, msg paho.Message) {
 	// handler, but we run the engine work later, off this goroutine.
 	topic := msg.Topic()
 	payload := append([]byte(nil), msg.Payload()...)
-	c.enqueue(func() { c.eng.OnMeta(topic, payload) })
+	sharedmqtt.Enqueue(c.jobs, func() { c.eng.OnMeta(topic, payload) })
 }
 
 func (c *Client) onHAStatus(_ paho.Client, msg paho.Message) {
 	payload := string(msg.Payload()) // string copy; outlives the handler
-	c.enqueue(func() { c.eng.OnHAStatus(payload) })
-}
-
-// enqueue hands work to the worker without blocking paho's dispatch goroutine. It blocks
-// only if the queue is full AND the service is not shutting down — impossible in practice
-// (a handful of slots, drained by the worker as fast as it can publish); the `done` arm
-// guarantees it never blocks during shutdown.
-func (c *Client) enqueue(job func()) {
-	select {
-	case c.jobs <- job:
-	case <-c.done:
-	}
-}
-
-// runJobs is the single goroutine that owns the engine. It exits when Close closes `done`.
-func (c *Client) runJobs() {
-	for {
-		select {
-		case job, ok := <-c.jobs:
-			if !ok {
-				return
-			}
-			job()
-		case <-c.done:
-			return
-		}
-	}
+	sharedmqtt.Enqueue(c.jobs, func() { c.eng.OnHAStatus(payload) })
 }
 
 // --- own meta ---------------------------------------------------------------
@@ -201,10 +188,12 @@ func (c *Client) publishString(topic, payload string, qos byte, retained bool) {
 }
 
 // --- topic helpers ----------------------------------------------------------
+// The address format lives in shared/schema; these wrap it for the suffix style this
+// consumer uses (own meta/status).
 
-func (c *Client) selfBase() string { return c.site + "/" + c.station + "/" + c.slot }
+func (c *Client) selfBase() string { return schema.SlotBase(c.site, c.station, c.slot) }
 func (c *Client) selfTopic(suffix string) string {
-	return c.selfBase() + "/" + suffix
+	return schema.SiblingTopic(c.site, c.station, c.slot, suffix)
 }
 
 func orDefault(v, def string) string {
