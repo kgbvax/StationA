@@ -35,6 +35,7 @@ separate per-component remotes to push to.
 | powerseq | `powerseq/` | Startup/shutdown sequencer → `hf/power-seq` (ordered, delay + liveness confirmations) |
 | antennaselect | `antennaselect/` | Antenna-selection reconciler (core implemented) |
 | hadiscovery | `hadiscovery/` | Home Assistant discovery consumer (reads `/meta` `expose`, renders HA discovery) |
+| testui | `testui/` | MQTT relay + schema-aware browser UI for the bus (not a slot; passive consumer + /cmd stimulator) |
 
 Each project has its own `CLAUDE.md` and is independently buildable (`go build`/`go test`
 from its own directory works without the workspace, via the `replace … => ../shared`).

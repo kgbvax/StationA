@@ -1,0 +1,19 @@
+# testui — example configuration.
+#
+# Copy to config.toml and fill in the password, then `chmod 600 config.toml`.
+# Or omit the password here and export TESTUI_MQTT_PASSWORD in the shell instead
+# (EnvironmentFile pattern) so the TOML itself holds no secret.
+#
+#   cp config.example.toml config.toml
+#   chmod 600 config.toml
+#   $EDITOR config.toml
+#   make run   # => ./bin/testui -config config.toml
+
+http_addr = "127.0.0.1:8090"   # serve UI + HTTP API here
+site      = "muehle"           # subscribe <site>/# ; browser may only publish under <site>/
+
+[mqtt]
+broker   = "tcp://192.168.1.50:1883"
+client_id = "testui"           # distinct from any slot-derived bridge client ID
+user     = "hf"
+password = ""                  # fill locally OR use TESTUI_MQTT_PASSWORD env var

@@ -8,8 +8,9 @@ use (
 	./hadiscovery
 	./pelcobridge
 	./powerseq
-	./shelly-power-bridge
 	./shared
+	./shelly-power-bridge
+	./testui
 	./ultrabridge
 	./wrc-rotator-bridge
 )
