@@ -44,3 +44,21 @@ pelcots drives a Pelco-D PTZ/rotator. The central design choice is a **headless 
 
 - Pelco-D angles are azimuth = pan (0–359.99°, wraps), elevation = tilt (0–90°, clamped). The unit reports position in hundredths of a degree.
 - All TX flows through the engine so it is logged once in the unified trace and the port has a single writer; don't write to the port from elsewhere.
+
+---
+
+## Station model and shared conventions
+
+Shared documentation lives in `../stationa/docs/` (the stationa meta-repo, cloned
+adjacent to this repo).
+
+| Document | Path |
+|---|---|
+| Station integration model (three-plane MQTT contract) | `../stationa/docs/station-integration-model.md` |
+| Config and secrets convention | `../stationa/docs/conventions/config-and-secrets.md` |
+| Deployment convention | `../stationa/docs/conventions/deployment.md` |
+| Canonical band/mode vocabulary | `../stationa/docs/conventions/band-mode-reference.md` |
+
+This project implements the `muehle/hf/rotator` slot. When aligning this bridge with
+the station model, the component-specific MQTT schema should be documented in `docs/`
+in this repo following the template at `../stationa/docs/templates/mqtt-schema.md`.
