@@ -5,7 +5,9 @@ antennaselect/
 atr1k-tuner-bridge/
 flexbridge/
 hadiscovery/
+m5stamp-hf-ctrl/
 pelcobridge/
+powerseq/
 ultrabridge/
 waveshare_relay-antswitch-bridge/
 wrc-rotator-bridge/

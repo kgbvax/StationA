@@ -1,0 +1,8 @@
+/dist/
+/shelly-power-bridge
+*.test
+*.out
+.DS_Store
+*.swp
+*~
+.claude/
