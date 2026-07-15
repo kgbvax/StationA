@@ -12,6 +12,8 @@ import (
 
 	"acom1200s-pa-bridge/internal/acom"
 	"acom1200s-pa-bridge/internal/ha"
+
+	schema "codeberg.org/kgbvax/stationa/shared/schema"
 )
 
 // Commander is the amplifier control surface the bridge drives from /cmd. The
@@ -158,11 +160,9 @@ type metaCommand struct {
 	ValueType string `json:"value_type,omitempty"`
 }
 
-// cmdPayload is the /cmd JSON the bridge accepts.
-type cmdPayload struct {
-	Action string `json:"action"`
-	Value  string `json:"value"`
-}
+// cmdPayload is the /cmd JSON the bridge accepts — the shared value-key
+// convention (schema.CmdPayload): the argument rides under `value`.
+type cmdPayload = schema.CmdPayload
 
 // New constructs a Bridge.
 func New(cfg Config, pub Publisher, log Logger) *Bridge {
@@ -430,13 +430,15 @@ func errMsgFor(errByte byte, errMsg string) string {
 // Topic helpers
 // ------------------------------------------------------------------
 
-func (b *Bridge) slotBase() string {
-	return b.cfg.Site + "/" + b.cfg.Station + "/" + b.cfg.Slot
+func (b *Bridge) metaTopic() string {
+	return schema.MetaTopic(b.cfg.Site, b.cfg.Station, b.cfg.Slot)
 }
-
-func (b *Bridge) metaTopic() string  { return b.slotBase() + "/meta" }
-func (b *Bridge) stateTopic() string { return b.slotBase() + "/state" }
-func (b *Bridge) cmdTopic() string   { return b.slotBase() + "/cmd" }
+func (b *Bridge) stateTopic() string {
+	return schema.StateTopic(b.cfg.Site, b.cfg.Station, b.cfg.Slot)
+}
+func (b *Bridge) cmdTopic() string {
+	return schema.CmdTopic(b.cfg.Site, b.cfg.Station, b.cfg.Slot)
+}
 
 // CmdTopic returns the /cmd topic (exported for main to subscribe).
 func (b *Bridge) CmdTopic() string { return b.cmdTopic() }
