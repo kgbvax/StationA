@@ -80,7 +80,17 @@ func New(cfg config.Config, rec *reconcile.Reconciler) (*Client, error) {
 		// connection is diagnosable on the broker.
 		SetClientID(orDefault(cfg.MQTT.ClientID, c.site+"-"+c.station+"-"+c.slot)).
 		SetAutoReconnect(true).
-		SetCleanSession(false).
+		// Clean session (not persistent). On every (re)connect the broker drops any prior
+		// session and creates fresh subscriptions, which is what re-delivers the retained
+		// radio/state, radio/status, and ant-switch/state the reconciler seeds its inputs
+		// from. A persistent session (CleanSession=false) resumes on reconnect and does
+		// NOT replay retained for existing subscriptions — the reconciler wakes with empty
+		// inputs, never resolves, and never follows the radio. That breaks the very
+		// self-heal-from-retained behavior the PA/tuner follow bindings below depend on
+		// (they re-emit on the retained radio/state replay at reconnect). The reconciler is
+		// stateless and re-derives from retained state, so dropping messages published
+		// during a brief offline window is acceptable — and is the documented model.
+		SetCleanSession(true).
 		SetWill(c.selfTopic("status"), "offline", 1, true)
 	if cfg.MQTT.User != "" {
 		opts.SetUsername(cfg.MQTT.User)
