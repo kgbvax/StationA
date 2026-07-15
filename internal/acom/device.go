@@ -32,18 +32,28 @@ type Device struct {
 	closed bool
 
 	stateMu sync.RWMutex
-	mode    string // raw firmware mode, for the watchdog
+	mode    string // raw firmware mode (diagnostic)
 	band    int    // amp band index 1..10 (0 = unknown), for navigation
 	online  bool
 }
 
 // New constructs a Device for the given port path and averaging window.
 func New(portPath string, avgMs int, debug bool, log Logger) *Device {
-	return &Device{portPath: portPath, avgMs: avgMs, debug: debug, log: log}
+	return &Device{
+		portPath: portPath,
+		avgMs:    avgMs,
+		debug:    debug,
+		log:      log,
+	}
 }
 
 // Open opens the serial port (9600 8N1), resets the buffers, marks the device
 // online, and sends the initial enable-telemetry command.
+//
+// The bridge is a pure observer of the amplifier: it neither drives the amp's
+// power state nor touches the host's RTS line. PA power-on/off is owned by the
+// power-distribution layer (the hf/switch slot's remote-on relays); this slot
+// only reports the resulting power state in telemetry (pa.power).
 func (d *Device) Open() error {
 	mode := &serial.Mode{
 		BaudRate: 9600,
@@ -158,7 +168,7 @@ func (d *Device) Online() bool {
 	return d.online
 }
 
-// CurrentMode returns the last raw firmware mode (for the watchdog).
+// CurrentMode returns the last raw firmware mode (diagnostic).
 func (d *Device) CurrentMode() string {
 	d.stateMu.RLock()
 	defer d.stateMu.RUnlock()

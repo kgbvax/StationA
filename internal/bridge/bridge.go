@@ -16,6 +16,10 @@ import (
 
 // Commander is the amplifier control surface the bridge drives from /cmd. The
 // device (internal/acom.Device) implements it; tests use a fake.
+//
+// Power is deliberately absent: the bridge is a pure observer of the amp's
+// power state (pa.power, read from telemetry). Powering the PA on/off is owned
+// by the power-distribution layer (the hf/switch slot's remote-on relays).
 type Commander interface {
 	SetMode(mode string) error // "operate" | "standby"
 	SetBand(band string) error // canonical band label, e.g. "20m"
@@ -73,6 +77,7 @@ type paState struct {
 	SWR          float64 `json:"swr"`
 	Fault        string  `json:"fault"`    // none | swr | temp | reflected | other
 	PaState      string  `json:"pa_state"` // raw firmware mode (diagnostic)
+	Power        string  `json:"power"`    // on | off (actual, from telemetry)
 	DeviceOnline bool    `json:"device_online"`
 	Error        string  `json:"error,omitempty"`
 }
@@ -214,6 +219,10 @@ func (b *Bridge) PublishMeta() {
 					Command: &metaCommand{Action: "set_mode", ValueKey: "value", ValueType: "string"}},
 				{Key: "band", Name: "Band", Type: "enum", OptionsRef: "bands", Writable: true,
 					Command: &metaCommand{Action: "set_band", ValueKey: "value", ValueType: "string"}},
+				// power is read-only telemetry of the amp's actual power state
+				// (CanonicalPower from the firmware mode). Powering the PA on/off is
+				// owned by the power-distribution layer (hf/switch), not this slot.
+				{Key: "power", Name: "Power", Type: "enum", Options: []string{"on", "off"}},
 				{Key: "keyed", Name: "Keyed", Type: "enum", Options: []string{"rx", "tx", "inhibited"}},
 				{Key: "fwd_power_w", Name: "Forward Power", Type: "number", Unit: "W", Class: "power", StateClass: "measurement"},
 				{Key: "rfl_power_w", Name: "Reflected Power", Type: "number", Unit: "W", Class: "power", StateClass: "measurement"},
@@ -256,6 +265,7 @@ func (b *Bridge) HandleTelemetry(obs acom.Observation) {
 		SWR:          obs.SWR,
 		Fault:        acom.CanonicalFault(obs.ErrByte, obs.ErrMsg),
 		PaState:      obs.ModeRaw,
+		Power:        acom.CanonicalPower(obs.ModeRaw),
 		DeviceOnline: true,
 		Error:        errMsgFor(obs.ErrByte, obs.ErrMsg),
 	}
@@ -277,6 +287,12 @@ func (b *Bridge) SetDeviceOnline(online bool, errMsg string) {
 	b.mu.Lock()
 	b.state.DeviceOnline = online
 	b.state.Error = errMsg
+	// Losing the serial port means the amp is no longer reachable/powered from
+	// the bus's point of view. Gaining it leaves Power for the next telemetry
+	// frame to set from the actual firmware mode.
+	if !online {
+		b.state.Power = "off"
+	}
 	snap := b.state
 	b.mu.Unlock()
 	b.publishState(snap)
@@ -304,6 +320,8 @@ func (b *Bridge) HandleCommand(payload []byte) {
 			b.log.Warnf("cmd set_band: %v", err)
 		}
 	default:
+		// set_power is intentionally not handled here: the PA is a pure observer
+		// of its power state; power-on/off is owned by the hf/switch slot.
 		b.log.Warnf("cmd: unknown action %q", c.Action)
 	}
 }
@@ -342,6 +360,8 @@ func (b *Bridge) PublishDiscovery() {
 		{name: "Band", objectID: "band", template: "{{ value_json.band }}",
 			cmdTemplate: `{"action":"set_band","value":"{{ value }}"}`,
 			options:     acom.BandOptions},
+		// power is exposed as a read-only sensor below (the amp's actual power
+		// state); it is not a writable select since the PA owns no power actuator.
 	}
 	for _, e := range selects {
 		cfg, comp := ha.SelectEntity(e.name, e.objectID, st, cmd, e.template, e.cmdTemplate, e.options, dev, avail)
@@ -360,6 +380,7 @@ func (b *Bridge) PublishDiscovery() {
 		{name: "SWR", objectID: "swr", unit: "", template: "{{ value_json.swr }}"},
 		{name: "Keyed", objectID: "keyed", unit: "", template: "{{ value_json.keyed }}"},
 		{name: "Fault", objectID: "fault", unit: "", template: "{{ value_json.fault }}"},
+		{name: "Power", objectID: "power", unit: "", template: "{{ value_json.power }}"},
 		{name: "PA State", objectID: "pa_state", unit: "", template: "{{ value_json.pa_state }}"},
 	}
 	for _, e := range sensors {

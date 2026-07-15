@@ -393,3 +393,15 @@ func CanonicalKeyed(raw string) string {
 		return "inhibited"
 	}
 }
+
+// CanonicalPower maps a raw firmware mode to the PA power enum {on|off}. The
+// amplifier is only "off" when it reports the OFF state (firmware mode 0xA0,
+// i.e. fully powered down); every other state — including STANDBY, where the
+// amp is powered but not transmitting — is "on". This reflects *actual* power
+// state from telemetry, not the desired/intended state the bridge is driving.
+func CanonicalPower(raw string) string {
+	if raw == "OFF" {
+		return "off"
+	}
+	return "on"
+}

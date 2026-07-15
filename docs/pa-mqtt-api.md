@@ -96,6 +96,7 @@ Retained JSON, published once per connect cycle (after the serial port opens).
         "command": { "action": "set_mode", "value_key": "value", "value_type": "string" } },
       { "key": "band",          "name": "Band",            "type": "enum",   "options_ref": "bands", "writable": true,
         "command": { "action": "set_band", "value_key": "value", "value_type": "string" } },
+      { "key": "power",         "name": "Power",           "type": "enum",   "options": ["on","off"] },
       { "key": "keyed",         "name": "Keyed",           "type": "enum",   "options": ["rx","tx","inhibited"] },
       { "key": "fwd_power_w",   "name": "Forward Power",   "type": "number", "unit": "W",  "class": "power",       "state_class": "measurement" },
       { "key": "rfl_power_w",   "name": "Reflected Power", "type": "number", "unit": "W",  "class": "power",       "state_class": "measurement" },
@@ -121,9 +122,14 @@ primitives.
 `mode` and `band` are `writable` with a `command` descriptor: a consumer
 renders the setpoint and emits the `/cmd` action JSON itself. The `mode`/`band`
 enum options resolve via `options_ref` against `capabilities.modes` /
-`capabilities.bands` (single source of truth). `pa_state` is a raw diagnostic
-string (the firmware mode) kept for dashboards; it is **not** part of the
-canonical model — `mode`/`keyed`/`fault` are.
+`capabilities.bands` (single source of truth). `power` is a **read-only** enum
+telemetry of the amp's actual power state (`on`/`off`); it is **not** writable
+and carries no `command` — this slot owns no power actuator. Powering the PA
+on/off is the job of the power-distribution layer: the `hf/switch` slot's
+remote-on relays assert the amp's remote-power-on input, and this slot only
+reports the result (`pa.power` mirrors the firmware mode). `pa_state` is a raw
+diagnostic string (the firmware mode) kept for dashboards; it is **not** part
+of the canonical model — `mode`/`keyed`/`fault` are.
 
 ### `/meta` field reference
 
@@ -163,6 +169,7 @@ state (model §8). The document is always complete.
   "swr":           1.2,
   "fault":         "none",
   "pa_state":      "OPR/TX",
+  "power":         "on",
   "device_online": true,
   "error":         ""
 }
@@ -182,6 +189,7 @@ state (model §8). The document is always complete.
 | `swr` | float | ratio | raw SWR / 100 |
 | `fault` | string | — | canonical: `none` \| `swr` \| `temp` \| `reflected` \| `other` |
 | `pa_state` | string | — | raw firmware mode (diagnostic): `OPR/RX`, `OPR/TX`, `STANDBY`, `OFF`, … |
+| `power` | string | — | canonical: `on` \| `off` (actual, read-only telemetry). `off` only when `pa_state == OFF` or the port is lost. Powering the PA is owned by the `hf/switch` slot, not this `/cmd` |
 | `device_online` | bool | — | `true` while the serial loop has data; `false` when the port is lost |
 | `error` | string | — | verbatim fault message when `fault != none`; empty otherwise |
 
@@ -238,6 +246,17 @@ must be one of `capabilities.bands`. If the current band is unknown (no
 telemetry yet), the command is rejected. Band follows the radio via CAT in
 normal operation; this command is for manual override.
 
+**No `set_power`.** This slot is a pure observer of the amplifier: it neither
+drives the amp's power state nor touches the host's RTS line. Powering the PA
+on/off is owned by the power-distribution layer — the `hf/switch` slot's
+remote-on relays assert the amp's remote-power-on input. The bridge simply
+reports the resulting state in telemetry: `pa.power` mirrors the firmware mode
+(`on` unless the amp reports fully-off, `off` otherwise, plus `off` when the
+serial port is lost). When the amp is unpowered the serial port goes silent
+and the bridge backs off and reconnects once telemetry returns; there is no
+"park" state and no `power_default` config. (The previous RTS-wake-line
+`set_power` mechanism never worked reliably and has been removed.)
+
 Unknown actions are logged and ignored. There is no `clear_fault` command —
 the ACOM serial protocol as implemented exposes no fault-clear TX command.
 
@@ -269,6 +288,7 @@ When `publish_ha_discovery = true`, acom1200s-pa-bridge publishes discovery conf
 |---|---|---|---|---|
 | Mode | `select` | `mode` | `{{ value_json.mode }}` | options operate/standby; `command_template` wraps into `set_mode` JSON |
 | Band | `select` | `band` | `{{ value_json.band }}` | options = capabilities.bands; `command_template` wraps into `set_band` JSON |
+| Power | `sensor` | `power` | `{{ value_json.power }}` | read-only: the amp's actual power state (on/off); no `set_power` command |
 | Forward Power | `sensor` | `fwd_power_w` | `{{ value_json.fwd_power_w }}` | W, power, measurement |
 | Reflected Power | `sensor` | `rfl_power_w` | `{{ value_json.rfl_power_w }}` | W, power, measurement |
 | Temperature | `sensor` | `temp_c` | `{{ value_json.temp_c }}` | °C, temperature, measurement |
@@ -281,7 +301,7 @@ When `publish_ha_discovery = true`, acom1200s-pa-bridge publishes discovery conf
 The `select` entities use a `command_template` of
 `{"action":"set_mode","value":"{{ value }}"}` / `{"action":"set_band",...}`
 so HA's selected option is published to `/cmd` in the JSON shape the bridge
-expects.
+expects. `power` is a read-only `sensor` (no `set_power` command exists).
 
 ### Standalone discovery via `hadiscovery` (preferred)
 
@@ -304,7 +324,13 @@ The bridge itself contains no HA knowledge in this path. See
 | Event | Topic updated |
 |---|---|
 | Connect / reconnect | `/status` (`online`); `/meta` (incl. `expose`); embedded HA discovery only if `publish_ha_discovery = true` |
-| Each telemetry frame | `/state` (full snapshot) |
-| Serial port lost (30 s silence / read error) | `/state` with `device_online:false`, `error:"..."`; `/status` stays `online` |
-| Amp power-cycles back (mode `OFF` → live) | watchdog re-arms telemetry; `/state` resumes |
+| Each telemetry frame | `/state` (full snapshot, incl. `power`) |
+| Serial port lost (30 s silence / read error) | `/state` with `device_online:false`, `power:"off"`, `error:"..."`; `/status` stays `online` |
+| Amp powered on via `hf/switch` `pa` relay | serial loop reconnects; `/state` resumes with `power:"on"` once telemetry returns |
+| Amp powered off via `hf/switch` `pa` relay | port goes silent → serial loop backs off; `/state` `device_online:false`, `power:"off"` |
 | Disconnect / crash | `/status` → `offline` (broker LWT) |
+
+> The bridge no longer issues any power command or drives the RTS line — power
+> on/off is observed, not commanded. (The former watchdog that re-armed
+> telemetry after an amp-initiated power cycle is gone with the `set_power`
+> machinery; the 30 s-silence reconnect path handles amp power cycles.)

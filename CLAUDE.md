@@ -4,7 +4,10 @@ acom1200s-pa-bridge bridges an **ACOM 600S/1200S linear amplifier** to MQTT usin
 station integration model (slot `muehle/hf/pa`). It reads the amplifier's
 proprietary serial protocol over a USB-serial adapter (Prolific, 9600 8N1),
 publishes a canonical PA state snapshot, and dispatches `/cmd` intent
-(`set_mode`, `set_band`) back to the amp. Unlike flexbridge it is **read-write**.
+(`set_mode`, `set_band`) back to the amp. It is a **pure observer of the amp's
+power state**: `pa.power` is read-only telemetry, and powering the PA on/off is
+owned by the power-distribution layer (the `hf/switch` slot's remote-on relays).
+The bridge drives no host control lines and issues no power commands.
 
 ---
 
@@ -43,11 +46,11 @@ CLI flags:
 **Data flow:** serial run loop → `internal/acom` → `internal/bridge` → MQTT.
 
 1. `cmd/acom1200s-pa-bridge/main.go` — flags, config load, signal ctx, MQTT connect+LWT,
-   `/cmd` subscription, serial restart loop with exponential backoff, watchdog.
+   `/cmd` subscription, serial restart loop with exponential backoff.
 2. `internal/acom` — serial protocol: open port, frame scan + checksum, ACK,
    enable-telemetry, 72-byte telemetry parser, forward-power averager, band
    navigation (next/prev walk), mode/band commands. Owns protocol-level state
-   (raw mode for the watchdog, band index for navigation).
+   (band index for navigation).
 3. `internal/bridge` — canonical PA state model + MQTT publishing: `/meta`
    (capabilities + `expose`), retained `/state` snapshot, `/cmd` dispatch via a
    `Commander` interface, gated legacy HA discovery.
@@ -57,10 +60,13 @@ CLI flags:
 
 **Restart loop** (`serialLoop`): opens the port, publishes meta, runs the
 telemetry loop until the port errors / 30 s silence / ctx cancel, then marks
-the device offline and backoffs-and-retries. `/status` stays `online` while the
-bridge retries — only `/state.device_online` flips. **Watchdog** goroutine:
-every 3 s, if the amp reports `OFF`, re-sends the enable-telemetry command so
-the amp resumes streaming after a power cycle.
+the device offline and backs off and retries. `/status` stays `online` while
+the bridge retries — only `/state.device_online` flips. The loop is a pure
+observer: it neither drives the amp's power state nor parks. When the amp is
+unpowered (its remote-on relay released by the `hf/switch` slot) the port goes
+silent and the loop backs off; once the amp is powered again telemetry resumes
+and the loop reconnects (Open re-sends the enable-telemetry command). There is
+no watchdog and no `power_default`.
 
 **Concurrency:** `acom.Device.mu` guards the serial port and all writes (ACK,
 enable, mode/band commands) — fixes the original single-file's ACK-without-lock
@@ -85,10 +91,14 @@ muehle/hf/pa/cmd       not retained  set_mode | set_band intent (bus → bridge)
 `/state` is a single retained JSON document. Canonical fields: `mode`
 (`operate`/`standby`), `band`, `keyed` (`rx`/`tx`/`inhibited`), `fwd_power_w`,
 `rfl_power_w`, `temp_c`, `swr`, `fault` (`none`/`swr`/`temp`/`reflected`/`other`),
-plus the raw diagnostic `pa_state` (firmware mode string) and `device_online`/
-`error`. The raw firmware mode is **only** in `pa_state`/`error`, never in the
-canonical `mode`/`keyed`/`fault` fields. See `docs/pa-mqtt-api.md` for the full
-on-the-wire contract and the firmware→canonical mapping.
+`power` (`on`/`off`, **read-only actual** — `off` only when `pa_state == OFF` or
+the port is lost), plus the raw diagnostic `pa_state` (firmware mode string) and
+`device_online`/`error`. The raw firmware mode is **only** in `pa_state`/`error`,
+never in the canonical `mode`/`keyed`/`fault` fields. `power` is **telemetry
+only** — there is no `set_power` command and no `power_default` config; powering
+the PA is the job of the `hf/switch` slot's remote-on relays. See
+`docs/pa-mqtt-api.md` for the full on-the-wire contract and the
+firmware→canonical mapping.
 
 ---
 

@@ -1,8 +1,8 @@
 // Command acom1200s-pa-bridge bridges an ACOM 600S/1200S linear amplifier to MQTT using
 // the station integration model (slot muehle/hf/pa). It reads the amplifier's
 // serial protocol over a USB-serial adapter, publishes a canonical PA state
-// snapshot, and dispatches /cmd intent (set_mode, set_band) back to the amp.
-// See README.md and docs/pa-mqtt-api.md for details.
+// snapshot, and dispatches /cmd intent (set_mode, set_band, set_power) back to
+// the amp. See README.md and docs/pa-mqtt-api.md for details.
 package main
 
 import (
@@ -197,9 +197,17 @@ func connectMQTT(ctx context.Context, cfg config.Config, log *slog.Logger) (paho
 
 // serialLoop opens the serial port, runs the telemetry loop, and restarts on
 // failure with exponential backoff until ctx is cancelled.
+//
+// The loop is a pure observer: it does not drive the amp's power state and
+// touches no host control lines. When the amp is unpowered (its remote-on
+// relay released by the hf/switch slot) the serial port goes silent and the
+// loop backs off; once the amp is powered on again telemetry resumes and the
+// loop reconnects. There is no "park" mode — the loop simply keeps retrying
+// while the bridge process is up.
 func serialLoop(ctx context.Context, cfg config.Config, b *bridge.Bridge, dev *acom.Device, log *slog.Logger) error {
 	const maxBackoff = 60 * time.Second
-	backoff := 2 * time.Second
+	const initialBackoff = 2 * time.Second
+	backoff := initialBackoff
 
 	for {
 		if ctx.Err() != nil {
@@ -212,8 +220,11 @@ func serialLoop(ctx context.Context, cfg config.Config, b *bridge.Bridge, dev *a
 		}
 		log.Warn("serial run ended", "err", runErr)
 		b.SetDeviceOnline(false, fmt.Sprintf("serial: %v", runErr))
-		if !sleepCtx(ctx, backoff) {
+
+		select {
+		case <-ctx.Done():
 			return ctx.Err()
+		case <-time.After(backoff):
 		}
 		backoff = scaleBackoff(backoff, maxBackoff)
 	}
@@ -234,32 +245,7 @@ func runOnce(ctx context.Context, cfg config.Config, b *bridge.Bridge, dev *acom
 	b.PublishMeta()
 	b.PublishDiscovery()
 
-	// Watchdog: if the amp powers off (mode OFF) and comes back, re-arm telemetry.
-	wdCtx, wdCancel := context.WithCancel(ctx)
-	defer wdCancel()
-	go watchdog(wdCtx, dev, log)
-
 	return dev.Run(ctx, b.HandleTelemetry)
-}
-
-// watchdog polls the device mode every 3s; if it reads OFF, re-sends the
-// telemetry-enable command so the amp resumes streaming after a power cycle.
-func watchdog(ctx context.Context, dev *acom.Device, log *slog.Logger) {
-	t := time.NewTicker(3 * time.Second)
-	defer t.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-t.C:
-			if dev.CurrentMode() == "OFF" {
-				log.Info("watchdog: amp OFF, re-arming telemetry")
-				if err := dev.EnableTelemetry(); err != nil {
-					log.Warn("watchdog: re-arm failed", "err", err)
-				}
-			}
-		}
-	}
 }
 
 // availabilityTopic returns the LWT topic: <site>/<station>/<slot>/status.
@@ -278,17 +264,6 @@ func cmdTopic(cfg config.Config) string {
 		slot = "pa"
 	}
 	return cfg.MQTT.Site + "/" + cfg.MQTT.Station + "/" + slot + "/cmd"
-}
-
-func sleepCtx(ctx context.Context, d time.Duration) bool {
-	t := time.NewTimer(d)
-	defer t.Stop()
-	select {
-	case <-ctx.Done():
-		return false
-	case <-t.C:
-		return true
-	}
 }
 
 func scaleBackoff(cur, max time.Duration) time.Duration {

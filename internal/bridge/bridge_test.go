@@ -256,6 +256,18 @@ func TestPublishMeta(t *testing.T) {
 	if bcmd == nil || bcmd["action"] != "set_band" {
 		t.Error("band field command must be {action:set_band}")
 	}
+	// power is read-only telemetry of the amp's actual power state; it must not
+	// be writable or carry a command (power-on/off moved to the hf/switch slot).
+	if pwr, ok := fieldByKey["power"]; ok {
+		if pwr["writable"] == true {
+			t.Error("power field must NOT be writable (PA owns no power actuator)")
+		}
+		if pwr["command"] != nil {
+			t.Error("power field must NOT carry a command descriptor")
+		}
+	} else {
+		t.Error("power field must still be exposed as read-only telemetry")
+	}
 	if fieldByKey["keyed"]["type"] != "enum" {
 		t.Error("keyed field must be enum")
 	}
@@ -289,6 +301,19 @@ func TestCmdDispatchSetBand(t *testing.T) {
 	b.HandleCommand([]byte(`{"action":"set_band","value":"20m"}`))
 	if len(cmd.bands) != 1 || cmd.bands[0] != "20m" {
 		t.Errorf("set_band dispatch = %v, want [20m]", cmd.bands)
+	}
+}
+
+// TestCmdDispatchSetPowerRejected asserts the bridge no longer accepts
+// set_power: the PA owns no power actuator (power-on/off moved to the
+// hf/switch slot's remote-on relays). set_power now falls into the unknown
+// action path and must not reach the commander.
+func TestCmdDispatchSetPowerRejected(t *testing.T) {
+	cmd := &fakeCommander{}
+	b, _ := newTestBridge(t, cmd, false)
+	b.HandleCommand([]byte(`{"action":"set_power","value":"off"}`))
+	if len(cmd.modes)+len(cmd.bands) != 0 {
+		t.Error("set_power must not dispatch to the commander (PA owns no power actuator)")
 	}
 }
 

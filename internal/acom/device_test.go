@@ -42,3 +42,8 @@ func TestProcessBufferResyncsPastGarbage(t *testing.T) {
 		// Acceptable either way; the point is no panic and no mis-slice.
 	}
 }
+
+// Power control (SetPower / RTS wake line / desiredPower) was removed from the
+// device: the PA bridge is a pure observer, and power-on/off is owned by the
+// hf/switch slot's remote-on relays. The former TestSetPower* cases are gone
+// with the machinery they covered.
