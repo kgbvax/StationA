@@ -1,17 +1,3 @@
-# Project repos live as nested subdirectories but are tracked separately.
-# Ignore them here so "git add ." does not accidentally include them.
-acom1200s-pa-bridge/
-antennaselect/
-atr1k-tuner-bridge/
-flexbridge/
-hadiscovery/
-m5stamp-hf-ctrl/
-pelcobridge/
-powerseq/
-ultrabridge/
-waveshare_relay-antswitch-bridge/
-wrc-rotator-bridge/
-
 # macOS / local tooling noise
 .DS_Store
 .claude/

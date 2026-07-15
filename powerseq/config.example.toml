@@ -1,0 +1,246 @@
+# config.example.toml — configuration for powerseq (the station startup/shutdown
+# sequencer). Default location: /etc/powerseq/config.toml
+# Override with: powerseq -config /path/to/config.toml
+#
+# powerseq is a logic slot (no device) implementing the `sequencer` role
+# (integration model §4, §7.1). On the operator one-button /cmd (start|stop, NOT
+# retained) it runs an ordered startup/shutdown over the controlled slots'
+# retained /cmd with delays and liveness confirmations. It is one writer but
+# does not lock the channels — they stay directly toggleable while idle.
+#
+# The sequence is CONFIG-DRIVEN: the [[startup]] and [[shutdown]] step lists
+# below define it, not Go code. Edit them to change the order, targets, waits,
+# or delays for a different setup. This file ships the integration-model §7.1
+# sequence as the default.
+#
+# Only include the keys you want to change; the transport + timing defaults
+# below are baked in when this file is absent.
+#
+# The MQTT password is NOT kept here — it is loaded from the
+# POWERSEQ_MQTT_PASSWORD environment variable (systemd EnvironmentFile
+# /etc/powerseq/powerseq.env, 0600), so it never appears in the TOML, the unit
+# file, or the process command line.
+# See ../stationa/docs/conventions/config-and-secrets.md.
+
+# host is the compute node this service runs on (published in /meta, model §8.1).
+host = "shari"
+# location is a physical label published in /meta.
+location = "bauwagen"
+
+[mqtt]
+broker = "tcp://192.168.1.50:1883"
+# client_id defaults to "<site>-<station>-<slot>" (model §8) when empty.
+client_id = ""
+# The sequencer's OWN address: <site>/<station>/<slot>/{meta,state,status,cmd}.
+site = "muehle"
+station = "hf"
+slot = "power-seq"
+# Home Assistant discovery is rendered by the standalone hadiscovery consumer
+# from this slot's expose block in /meta (model §9) — no embedded discovery.
+discovery_prefix = "homeassistant"
+user = "hf"
+# password is loaded from POWERSEQ_MQTT_PASSWORD (EnvironmentFile), not here.
+password = ""
+
+[timing]
+# Pause referenced by delay steps with duration = "network" — let the network
+# (the broker, the Shelies' WiFi) come up after the station master mains. ~30 s.
+network_delay_s = 30
+# DEFAULT deadline for every wait step (overridden by a step's timeout_s). Max
+# wait for a liveness confirmation before the step (and the sequence) faults.
+step_timeout_s = 120
+# Pause referenced by delay steps with duration = "stagger" — between shutdown
+# steps for inrush control.
+shutdown_stagger_s = 2
+# How often the runner re-checks a wait condition (ms).
+poll_interval_ms = 200
+# Default hold (debounce) window for a wait step that omits hold_ms — the
+# condition must hold continuously this long. 0 = pass as soon as true.
+default_hold_ms = 0
+
+[log]
+# debug | info | warn | error
+level = "info"
+
+# --- step schema --------------------------------------------------------------
+# Each [[startup]] / [[shutdown]] entry is ONE step. Steps run in array order.
+# A step has: name (string, REQUIRED, unique within its array) + kind + kind keys.
+# `kind` is the discriminator:
+#
+#   kind = "cmd"          emit a retained /cmd to a site-relative slot.
+#     slot   = "hf/switch"        # site-relative → <site>/<slot>/cmd
+#     action = "set_power"        # /cmd JSON "action"
+#     value  = "on"               # /cmd JSON "value" (ALWAYS a string — the
+#                                 # value-key convention; model value_type is
+#                                 # string|int|float, NO bool)
+#     retain = true               # optional, default true (controlled /cmd
+#                                 # retained, model §8)
+#
+#   kind = "wait_status"  wait until every listed slot's /status == state.
+#     slots     = ["hf/switch", "hf/pa-arm"]   # site-relative; logical AND;
+#                                             # every entry must be non-empty
+#     state     = "online"                     # optional, default "online";
+#                                             # "offline" confirms a slot went
+#                                             # down (an actual offline payload,
+#                                             # not absence)
+#     hold_ms   = 500            # optional: omitted → default_hold_ms; an
+#                                # EXPLICIT 0 = edge-triggered even when a
+#                                # default hold is set
+#     timeout_s = 60             # optional: per-step override of step_timeout_s;
+#                                 # must be > 0 if given
+#
+#   kind = "wait_state"   wait until a slot's /state top-level field == value.
+#     slot      = "hf/pa"        # site-relative
+#     field     = "power"        # top-level JSON key in the /state snapshot
+#     value     = "on"           # string; observed JSON coerced to string. May
+#                                # be "" — then the wait passes when the field
+#                                # is absent/nil/empty (wait for a field to clear)
+#     hold_ms   = 500            # optional (see wait_status)
+#     timeout_s = 60            # optional, must be > 0 if given
+#     # IMPLICIT liveness precondition: the slot's /status MUST also be online,
+#     # so a dead device whose LWT fired cannot pass on a stale retained /state.
+#     # A malformed /state drops the slot's prior snapshot (no stale poisoning).
+#     # A wait_state on the sequencer's OWN slot is a config error.
+#
+#   kind = "delay"        sleep a fixed duration.
+#     duration_s = 30                       # literal seconds (integer, > 0)
+#     # OR
+#     duration  = "network" | "stagger"      # symbolic ref into [timing]
+#     # exactly one of duration_s / duration; unknown symbolic value → load
+#     # error; a non-positive duration_s → load error (no silent no-op).
+#
+# Phase transitions are implicit: entering the first startup step → phase=
+# starting; completing the last → running. Entering the first shutdown step →
+# stopping; completing the last → idle. A wait timeout → phase=idle, fault=
+# "<step>: <reason>", NO rollback (driven slots hold their last retained /cmd).
+
+# --- startup (model §7.1) -----------------------------------------------------
+# 1. Energize station master mains.
+[[startup]]
+name = "master-on"
+kind = "cmd"
+slot = "power/master"
+action = "set_power"
+value = "on"
+
+# 2. Network settle delay (~30 s, from [timing].network_delay_s).
+[[startup]]
+name = "network-delay"
+kind = "delay"
+duration = "network"
+
+# 3. Energize the 13.8 V PSU (site-level; feeds HF + UHF).
+[[startup]]
+name = "psu-on"
+kind = "cmd"
+slot = "power/psu-13v8"
+action = "set_power"
+value = "on"
+
+# 4. Wait for the PSU-fed control devices to report online (they boot on 13.8 V).
+[[startup]]
+name = "wait-controllers-online"
+kind = "wait_status"
+slots = ["hf/switch", "hf/pa-arm", "hf/ant-switch"]
+
+# 5. Power on the TRX (FLEX-8400) via the remote-on relay.
+[[startup]]
+name = "trx-on"
+kind = "cmd"
+slot = "hf/switch"
+action = "set_trx"
+value = "on"
+
+# 6. Wait for the radio to come online after TRX power-on.
+[[startup]]
+name = "wait-radio-online"
+kind = "wait_status"
+slots = ["hf/radio"]
+
+# 7. Engage the PA enable relay.
+[[startup]]
+name = "pa-on"
+kind = "cmd"
+slot = "hf/switch"
+action = "set_pa"
+value = "on"
+
+# 8. Wait for the PA to report power on (state.power == "on"). The implicit
+#    /status-online precondition means a dead PA cannot pass on stale /state.
+[[startup]]
+name = "wait-pa-power-on"
+kind = "wait_state"
+slot = "hf/pa"
+field = "power"
+value = "on"
+
+# 9. Arm the PA (permit RF). Last startup step → phase=running.
+[[startup]]
+name = "pa-arm-enable"
+kind = "cmd"
+slot = "hf/pa-arm"
+action = "set_enabled"
+value = "true"
+
+# --- shutdown (reverse, short staggers for inrush) ----------------------------
+[[shutdown]]
+name = "pa-arm-disable"
+kind = "cmd"
+slot = "hf/pa-arm"
+action = "set_enabled"
+value = "false"
+
+[[shutdown]]
+name = "stagger-1"
+kind = "delay"
+duration = "stagger"
+
+[[shutdown]]
+name = "pa-off"
+kind = "cmd"
+slot = "hf/switch"
+action = "set_pa"
+value = "off"
+
+[[shutdown]]
+name = "stagger-2"
+kind = "delay"
+duration = "stagger"
+
+[[shutdown]]
+name = "trx-off"
+kind = "cmd"
+slot = "hf/switch"
+action = "set_trx"
+value = "off"
+
+[[shutdown]]
+name = "stagger-3"
+kind = "delay"
+duration = "stagger"
+
+[[shutdown]]
+name = "psu-off"
+kind = "cmd"
+slot = "power/psu-13v8"
+action = "set_power"
+value = "off"
+
+[[shutdown]]
+name = "stagger-4"
+kind = "delay"
+duration = "stagger"
+
+[[shutdown]]
+name = "master-off"
+kind = "cmd"
+slot = "power/master"
+action = "set_power"
+value = "off"
+
+# --- env overrides (systemd EnvironmentFile) ---------------------------------
+# These POWERSEQ_MQTT_* env vars overlay the [mqtt] section above and are used
+# by deploy.sh so the secret never sits in the TOML:
+#   POWERSEQ_MQTT_BROKER      POWERSEQ_MQTT_CLIENT_ID
+#   POWERSEQ_MQTT_USER        POWERSEQ_MQTT_PASSWORD   (EnvironmentFile)
+#   POWERSEQ_MQTT_SITE

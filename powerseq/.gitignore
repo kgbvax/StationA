@@ -1,0 +1,8 @@
+/dist/
+/powerseq
+*.test
+*.out
+.DS_Store
+*.swp
+*~
+.claude/
