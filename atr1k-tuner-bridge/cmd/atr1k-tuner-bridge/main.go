@@ -18,6 +18,9 @@ import (
 
 	pahomqtt "github.com/eclipse/paho.mqtt.golang"
 
+	sharedmqtt "codeberg.org/kgbvax/stationa/shared/mqtt"
+	schema "codeberg.org/kgbvax/stationa/shared/schema"
+
 	"atr1k-tuner-bridge/internal/bridge"
 	"atr1k-tuner-bridge/internal/config"
 	"atr1k-tuner-bridge/internal/tuner"
@@ -172,24 +175,13 @@ func connectMQTT(ctx context.Context, cfg config.Config, log *slog.Logger) (paho
 	}
 
 	client := pahomqtt.NewClient(opts)
-	tok := client.Connect()
-	// Wait for the connect in a goroutine so ctx (SIGTERM/SIGINT) can interrupt
-	// it. paho's token has no Done() channel, so we bridge Wait() through a
-	// select. On ctx cancel, tear the client down so it isn't left retrying.
-	waitErr := make(chan error, 1)
-	go func() {
-		tok.Wait()
-		waitErr <- tok.Error()
-	}()
-	select {
-	case err := <-waitErr:
-		if err != nil {
-			client.Disconnect(0)
-			return nil, err
-		}
-	case <-ctx.Done():
-		client.Disconnect(0)
-		return nil, ctx.Err()
+	// Context-aware connect: paho's Connect().Wait() blocks ignoring ctx, so a
+	// SIGTERM while the broker is unreachable (or auth is failing) can't
+	// interrupt it and systemd must SIGKILL after TimeoutStopSec. sharedmqtt.Connect
+	// bridges the wait through a goroutine + select on ctx.Done (see the
+	// stationa memory on paho connect).
+	if err := sharedmqtt.Connect(ctx, client); err != nil {
+		return nil, err
 	}
 	return client, nil
 }
@@ -241,7 +233,7 @@ func availabilityTopic(cfg config.Config) string {
 	if slot == "" {
 		slot = "tuner"
 	}
-	return cfg.MQTT.Site + "/" + cfg.MQTT.Station + "/" + slot + "/status"
+	return schema.StatusTopic(cfg.MQTT.Site, cfg.MQTT.Station, slot)
 }
 
 // cmdTopic returns the /cmd topic: <site>/<station>/<slot>/cmd.
@@ -250,7 +242,7 @@ func cmdTopic(cfg config.Config) string {
 	if slot == "" {
 		slot = "tuner"
 	}
-	return cfg.MQTT.Site + "/" + cfg.MQTT.Station + "/" + slot + "/cmd"
+	return schema.CmdTopic(cfg.MQTT.Site, cfg.MQTT.Station, slot)
 }
 
 func sleepCtx(ctx context.Context, d time.Duration) bool {

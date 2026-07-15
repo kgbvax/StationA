@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"atr1k-tuner-bridge/internal/tuner"
+
+	schema "codeberg.org/kgbvax/stationa/shared/schema"
 )
 
 // Commander is the tuner control surface the bridge drives from /cmd. The
@@ -316,13 +318,15 @@ type stateEnvelope struct {
 // Topic helpers
 // ------------------------------------------------------------------
 
-func (b *Bridge) slotBase() string {
-	return b.cfg.Site + "/" + b.cfg.Station + "/" + b.cfg.Slot
+func (b *Bridge) metaTopic() string {
+	return schema.MetaTopic(b.cfg.Site, b.cfg.Station, b.cfg.Slot)
 }
-
-func (b *Bridge) metaTopic() string  { return b.slotBase() + "/meta" }
-func (b *Bridge) stateTopic() string { return b.slotBase() + "/state" }
-func (b *Bridge) cmdTopic() string   { return b.slotBase() + "/cmd" }
+func (b *Bridge) stateTopic() string {
+	return schema.StateTopic(b.cfg.Site, b.cfg.Station, b.cfg.Slot)
+}
+func (b *Bridge) cmdTopic() string {
+	return schema.CmdTopic(b.cfg.Site, b.cfg.Station, b.cfg.Slot)
+}
 
 // CmdTopic returns the /cmd topic (exported for main to subscribe).
 func (b *Bridge) CmdTopic() string { return b.cmdTopic() }
