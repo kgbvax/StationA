@@ -31,6 +31,8 @@ import (
 	"strconv"
 	"sync"
 	"time"
+
+	schema "codeberg.org/kgbvax/stationa/shared/schema"
 )
 
 // Phase is the sequencer state.
@@ -157,7 +159,7 @@ type Sequencer struct {
 // and validating self-waits (a wait_state on the sequencer's own slot is a
 // config error: the sequencer's /state is an output, not an input).
 func New(cfg Config, pub Publisher, log Logger) (*Sequencer, error) {
-	self := cfg.Site + "/" + cfg.Station + "/" + cfg.Slot
+	self := schema.SlotBase(cfg.Site, cfg.Station, cfg.Slot)
 	startup, err := resolve(cfg.Startup, cfg, self, "startup")
 	if err != nil {
 		return nil, err

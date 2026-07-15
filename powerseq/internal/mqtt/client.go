@@ -29,6 +29,8 @@ import (
 
 	pahomqtt "github.com/eclipse/paho.mqtt.golang"
 
+	sharedmqtt "codeberg.org/kgbvax/stationa/shared/mqtt"
+
 	"powerseq/internal/config"
 	"powerseq/internal/seq"
 )
@@ -145,7 +147,7 @@ func New(ctx context.Context, cfg config.Config, log *slog.Logger) (*Client, *se
 	}
 
 	client := pahomqtt.NewClient(opts)
-	if err := connectMQTT(ctx, client); err != nil {
+	if err := sharedmqtt.Connect(ctx, client); err != nil {
 		return nil, nil, fmt.Errorf("mqtt connect: %w", err)
 	}
 	// OnConnect may fire just before or after the connect token resolves; set
@@ -258,30 +260,6 @@ func toSeqSteps(cs []config.Step) []seq.Step {
 		}
 	}
 	return out
-}
-
-// ---------------------------------------------------------------------------
-// ctx-aware connect (same pattern as shelly-power-bridge / acom1200s-pa-bridge)
-// ---------------------------------------------------------------------------
-
-func connectMQTT(ctx context.Context, client pahomqtt.Client) error {
-	tok := client.Connect()
-	waitErr := make(chan error, 1)
-	go func() {
-		tok.Wait()
-		waitErr <- tok.Error()
-	}()
-	select {
-	case err := <-waitErr:
-		if err != nil {
-			client.Disconnect(0)
-			return err
-		}
-	case <-ctx.Done():
-		client.Disconnect(0)
-		return ctx.Err()
-	}
-	return nil
 }
 
 // slogAdapter adapts *slog.Logger to the seq.Logger interface.
