@@ -139,7 +139,7 @@ trap 'rm -f "$SEED_CONFIG" "${UNIT_FILE:-}"' EXIT
   echo ""
   echo "[wiring_map]"
   echo "port1 = \"dummy-load\""
-  echo "port3 = \"ultrabeam\"      # Ultrabeam -- controlled by the ant-ctrl slot"
+  echo "port4 = \"ultrabeam\"      # Ultrabeam -- controlled by the ant-ctrl slot"
   echo "port6 = \"fan-dipole\"     # 80/40 fan dipole on the HF mast (passive)"
   echo "off   = \"grounded\""
   echo ""

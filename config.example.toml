@@ -24,8 +24,8 @@ password  = ""            # set on the device; never on the command line
 # Maps switch ports to named PASSIVE resources. Devices never contain this.
 [wiring_map]
 port1 = "dummy-load"
-port3 = "ultrabeam"     # Ultrabeam — controlled by the ant-ctrl slot (see [band_follow])
-# port2, port4, port5 unused for now
+port4 = "ultrabeam"     # Ultrabeam — controlled by the ant-ctrl slot (see [band_follow])
+# port2, port3, port5 unused for now
 port6 = "fan-dipole"    # 80/40 fan dipole on the HF mast (passive)
 off   = "grounded"
 

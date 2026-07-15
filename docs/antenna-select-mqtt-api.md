@@ -87,7 +87,7 @@ Retained JSON snapshot, QoS 1. Published whenever the resolution changes.
 {
   "ts":     "2026-07-06T12:34:56Z",
   "mode":   "auto",
-  "target": "port3",
+  "target": "port4",
   "source": "auto"
 }
 ```
