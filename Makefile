@@ -1,6 +1,6 @@
-# flex2mqtt Makefile. Cross-compiles for Raspberry Pi (arm64).
-BINARY := flex2mqtt
-PKG := .
+# flexbridge Makefile. Cross-compiles for Raspberry Pi (arm64).
+BINARY := flexbridge
+PKG := ./cmd/flexbridge
 VERSION := $(shell git describe --tags --dirty --always 2>/dev/null || echo dev)
 LDFLAGS := -s -w
 BIN_DIR := bin
@@ -15,7 +15,7 @@ build:
 
 # Build and run with a config file.
 run: build
-	./$(BIN_DIR)/$(BINARY) -config deploy/config.example.toml
+	./$(BIN_DIR)/$(BINARY) -config config.example.toml
 
 # Cross-compile for Raspberry Pi 3B+/4/5 (64-bit, arm64).
 pi:

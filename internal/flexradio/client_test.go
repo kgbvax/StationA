@@ -32,23 +32,13 @@ func TestHandshake_SendsExpectedCommands(t *testing.T) {
 
 	go func() {
 		defer radioConn.Close()
+		defer cancel()
 		sc := bufio.NewScanner(radioConn)
 		for sc.Scan() {
 			line := sc.Text()
 			mu.Lock()
 			gotCmds = append(gotCmds, line)
 			mu.Unlock()
-			// meter list is fire-and-forget on the client side: Handshake
-			// sends it but never reads the reply. On net.Pipe a synchronous
-			// write would deadlock once the client closes, so don't reply to
-			// it -- just finish capturing.
-			if strings.Contains(line, "meter list") {
-				cancel()
-				return
-			}
-			// Reply synchronously to awaited commands. These replies are
-			// consumed in order by the client's sendAwaitReply, so the write
-			// returns promptly.
 			reply := "R1|0|OK\n"
 			if strings.Contains(line, "|version") {
 				reply = "R1|0|0|v3.4.1.10\n"
@@ -64,19 +54,15 @@ func TestHandshake_SendsExpectedCommands(t *testing.T) {
 
 	ctx, cancel2 := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel2()
-	info, err := client.Handshake(ctx, 4991)
+	info, err := client.Handshake(ctx)
 	if err != nil {
 		t.Fatalf("Handshake: %v", err)
 	}
 	if info.Model != "FLEX-8400" || info.Serial != "test-1234" {
 		t.Errorf("RadioInfo = %+v, want Model=FLEX-8400 Serial=test-1234", info)
 	}
-	t.Log("Handshake returned OK")
 	client.Close()
 
-	// Wait for the radio goroutine to finish capturing (it cancels after
-	// reading "meter list"). Give it a bounded window so a deadlock fails
-	// fast instead of hanging the whole test binary.
 	select {
 	case <-radioCtx.Done():
 	case <-time.After(2 * time.Second):
@@ -86,22 +72,22 @@ func TestHandshake_SendsExpectedCommands(t *testing.T) {
 	mu.Lock()
 	defer mu.Unlock()
 	joined := strings.Join(gotCmds, "\n")
-	// The client sends C1|<cmd> for each handshake step. Note: with the new
-	// sendAwaitReply flow, the meter list is NOT awaited, so the client
-	// sends it but doesn't read its reply before Handshake returns.
-	wantSubs := []string{
+	wantCmds := []string{
 		"|version",
-		"client udpport 4991",
 		"sub slice all",
 		"sub radio all",
 		"sub interlock all",
 		"sub atu all",
-		"sub meter all",
 		"|info",
 	}
-	for _, w := range wantSubs {
+	for _, w := range wantCmds {
 		if !strings.Contains(joined, w) {
 			t.Errorf("missing command %q in:\n%s", w, joined)
+		}
+	}
+	for _, absent := range []string{"udpport", "meter"} {
+		if strings.Contains(joined, absent) {
+			t.Errorf("unexpected command containing %q in:\n%s", absent, joined)
 		}
 	}
 }

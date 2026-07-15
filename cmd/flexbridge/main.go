@@ -1,5 +1,5 @@
-// Command flex2mqtt observes a FlexRadio 6000-series radio and mirrors its
-// state to MQTT for Home Assistant. See README.md for details.
+// Command flexbridge observes a FlexRadio 6000-series radio and mirrors its
+// state to MQTT using the station integration model. See README.md for details.
 package main
 
 import (
@@ -7,7 +7,6 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
-	"net"
 	"os"
 	"os/signal"
 	"syscall"
@@ -15,34 +14,40 @@ import (
 
 	pahomqtt "github.com/eclipse/paho.mqtt.golang"
 
-	"flex2mqtt/internal/bridge"
-	"flex2mqtt/internal/config"
-	"flex2mqtt/internal/flexradio"
-	"flex2mqtt/internal/ha"
+	"flexbridge/internal/bridge"
+	"flexbridge/internal/config"
+	"flexbridge/internal/flexradio"
+	"flexbridge/internal/ha"
 )
 
 func main() {
-	fs := flag.NewFlagSet("flex2mqtt", flag.ExitOnError)
+	fs := flag.NewFlagSet("flexbridge", flag.ExitOnError)
 	flags := config.RegisterFlags(fs)
 	_ = fs.Parse(os.Args[1:])
 
 	cfg, err := config.Load(flags)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "flex2mqtt: load config: %v\n", err)
+		fmt.Fprintf(os.Stderr, "flexbridge: load config: %v\n", err)
+		os.Exit(2)
+	}
+	if cfg.MQTT.Site == "" || cfg.MQTT.Station == "" {
+		// Station-model addressing is mandatory (model §2/§8.1): without site
+		// and station the slot topics would be malformed.
+		fmt.Fprintln(os.Stderr, "flexbridge: mqtt site and station must be configured for station-model addressing")
 		os.Exit(2)
 	}
 
 	logger := newLogger(cfg.Log.Level)
-	logger.Info("flex2mqtt starting")
+	logger.Info("flexbridge starting")
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
 	if err := run(ctx, cfg, logger); err != nil {
-		logger.Error("flex2mqtt exited", "err", err)
+		logger.Error("flexbridge exited", "err", err)
 		os.Exit(1)
 	}
-	logger.Info("flex2mqtt stopped")
+	logger.Info("flexbridge stopped")
 }
 
 func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
@@ -56,25 +61,18 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 
 	pub := &bridge.PahoPublisher{Client: mqttClient}
 
-	rates := map[flexradio.MeterGroup]time.Duration{
-		flexradio.GroupTX:    cfg.Rates.Rate("tx"),
-		flexradio.GroupAudio: cfg.Rates.Rate("audio"),
-		flexradio.GroupRX:    cfg.Rates.Rate("rx"),
-		flexradio.GroupHW:    cfg.Rates.Rate("hw"),
-	}
-
 	b := bridge.New(bridge.Config{
-		Serial:          cfg.RadioSerial,
-		StatePrefix:     cfg.MQTT.StatePrefix,
-		DiscoveryPrefix: cfg.MQTT.DiscoveryPrefix,
-		AvailTopic:      availabilityTopic(cfg),
-		Rates:           rates,
+		Site:               cfg.MQTT.Site,
+		Station:            cfg.MQTT.Station,
+		Slot:               cfg.MQTT.Slot,
+		Location:           cfg.MQTT.Location,
+		DiscoveryPrefix:    cfg.MQTT.DiscoveryPrefix,
+		AvailTopic:         availabilityTopic(cfg),
+		PublishHADiscovery: cfg.MQTT.PublishHADiscovery,
 	}, pub, &slogAdapter{log})
 
-	// 2. Run the radio-connection loop until ctx is cancelled. Reconnects
-	// internally on TCP drop or radio reboot.
-	serial, err := radioLoop(ctx, cfg, b, pub, log)
-	_ = serial
+	// 2. Run the radio-connection loop until ctx is cancelled.
+	_, err = radioLoop(ctx, cfg, b, pub, log)
 	return err
 }
 
@@ -85,7 +83,13 @@ func connectMQTT(ctx context.Context, cfg config.Config, log *slog.Logger) (paho
 	opts.AddBroker(cfg.MQTT.Broker)
 	clientID := cfg.MQTT.ClientID
 	if clientID == "" {
-		clientID = "flex2mqtt"
+		// Client ID derives from the slot address (model §8) so a duplicate
+		// connection is diagnosable on the broker.
+		slot := cfg.MQTT.Slot
+		if slot == "" {
+			slot = "radio"
+		}
+		clientID = cfg.MQTT.Site + "-" + cfg.MQTT.Station + "-" + slot
 	}
 	opts.SetClientID(clientID)
 	if cfg.MQTT.User != "" {
@@ -113,19 +117,18 @@ func connectMQTT(ctx context.Context, cfg config.Config, log *slog.Logger) (paho
 	return client, nil
 }
 
-// availabilityTopic is the bridge's Last-Will-Testament topic.
+// availabilityTopic returns the LWT topic: <site>/<station>/<slot>/status.
+// Site and station are validated non-empty at startup.
 func availabilityTopic(cfg config.Config) string {
-	id := cfg.MQTT.ClientID
-	if id == "" {
-		id = "flex2mqtt"
+	slot := cfg.MQTT.Slot
+	if slot == "" {
+		slot = "radio"
 	}
-	return cfg.MQTT.StatePrefix + "/" + id + "/status"
+	return cfg.MQTT.Site + "/" + cfg.MQTT.Station + "/" + slot + "/status"
 }
 
-// radioLoop connects to the radio (discovery or direct), runs the bridge,
-// and reconnects on failure until ctx is cancelled.
-//
-// It returns only when ctx is cancelled; reconnects are internal.
+// radioLoop connects to the radio, runs the bridge, and reconnects on
+// failure until ctx is cancelled.
 func radioLoop(ctx context.Context, cfg config.Config, b *bridge.Bridge, pub *bridge.PahoPublisher, log *slog.Logger) (string, error) {
 	const maxBackoff = 60 * time.Second
 	backoff := 2 * time.Second
@@ -135,7 +138,6 @@ func radioLoop(ctx context.Context, cfg config.Config, b *bridge.Bridge, pub *br
 			return "", ctx.Err()
 		}
 
-		// Resolve the radio host (discovery or direct).
 		host, serial, err := resolveRadio(ctx, cfg, log)
 		if err != nil {
 			log.Warn("radio discovery failed", "err", err)
@@ -145,13 +147,17 @@ func radioLoop(ctx context.Context, cfg config.Config, b *bridge.Bridge, pub *br
 			backoff = scaleBackoff(backoff, maxBackoff)
 			continue
 		}
+		// NOTE: do NOT call SetDevice here. The serial returned by resolveRadio
+		// may be a placeholder ("flexradio") when discovery failed but a host is
+		// configured — publishing /meta now would clobber the real retained
+		// birth certificate with a bogus FLEX-6000/flexradio identity on every
+		// retry while the radio is off. SetDevice is called only from runOnce
+		// after a successful handshake, so /meta is (re)written solely with the
+		// radio's real identity (or left untouched when the radio is unreachable).
 		log.Info("radio resolved", "host", host, "serial", serial)
-		b.SetDevice(ha.Device{Serial: serial, Model: radioModel(serial, cfg), Name: "FlexRadio " + radioModel(serial, cfg)})
 
-		// Run the bridge against this radio until it disconnects.
 		runErr := runOnce(ctx, cfg, host, b, log)
 
-		// On ctx cancel: exit cleanly.
 		if ctx.Err() != nil {
 			return serial, ctx.Err()
 		}
@@ -164,15 +170,12 @@ func radioLoop(ctx context.Context, cfg config.Config, b *bridge.Bridge, pub *br
 	}
 }
 
-// resolveRadio returns the radio host (and serial) to connect to, via either
-// the configured host or UDP discovery.
+// resolveRadio returns the radio host (and serial) to connect to.
 func resolveRadio(ctx context.Context, cfg config.Config, log *slog.Logger) (host, serial string, err error) {
 	if cfg.RadioHost != "" {
-		// Direct host: use it, serial is best-effort from the connection.
 		if cfg.RadioSerial != "" {
 			return cfg.RadioHost, cfg.RadioSerial, nil
 		}
-		// Discover just to get the serial for topic namespacing.
 		dctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 		defer cancel()
 		if d, derr := flexradio.Discover(dctx, ""); derr == nil && d != nil {
@@ -194,16 +197,6 @@ func resolveRadio(ctx context.Context, cfg config.Config, log *slog.Logger) (hos
 
 // runOnce performs one full connect/handshake/run cycle against the radio.
 func runOnce(ctx context.Context, cfg config.Config, host string, b *bridge.Bridge, log *slog.Logger) error {
-	// 1. Open the local UDP listener for VITA-49 meters.
-	udpAddr := &net.UDPAddr{IP: net.IPv4zero, Port: cfg.RadioUDPPort}
-	udpConn, err := net.ListenUDP("udp4", udpAddr)
-	if err != nil {
-		return fmt.Errorf("listen udp %d: %w", cfg.RadioUDPPort, err)
-	}
-	defer udpConn.Close()
-	log.Info("UDP meter listener open", "port", cfg.RadioUDPPort)
-
-	// 2. Connect TCP and handshake.
 	cctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -212,69 +205,33 @@ func runOnce(ctx context.Context, cfg config.Config, host string, b *bridge.Brid
 		return fmt.Errorf("dial radio: %w", err)
 	}
 	defer client.Close()
-	// Unblock client.Run when ctx is cancelled. Without this, ReadString
-	// holds the goroutine until SIGKILL (90 s systemd timeout).
 	go func() { <-cctx.Done(); client.Close() }()
 	log.Info("TCP connected to radio", "host", host)
 
 	client.SetHandler(func(f flexradio.Frame) {
-		switch f.Kind {
-		case flexradio.FrameStatus:
+		if f.Kind == flexradio.FrameStatus {
 			b.HandleStatus(f)
-			// Lazily emit per-slice discovery when a slice first appears.
-			if f.Topic == "slice" {
-				b.MaybePublishSliceDiscovery()
-			}
-		case flexradio.FrameReply:
-			b.HandleReply(f)
 		}
 	})
 
-	info, err := client.Handshake(cctx, cfg.RadioUDPPort)
+	info, err := client.Handshake(cctx)
 	if err != nil {
 		return fmt.Errorf("handshake: %w", err)
 	}
 	if info.Serial != "" {
 		b.SetDevice(ha.Device{
-			Serial: info.Serial,
-			Model:  info.Model,
-			Name:   "FlexRadio " + info.Model,
+			Serial:   info.Serial,
+			Model:    info.Model,
+			Name:     "FlexRadio " + info.Model,
+			Firmware: info.Firmware,
 		})
-		log.Info("radio identified", "model", info.Model, "serial", info.Serial)
+		log.Info("radio identified", "model", info.Model, "serial", info.Serial, "firmware", info.Firmware)
 	}
 	log.Info("handshake complete; observing")
 
-	// 3. UDP meter reader goroutine.
-	go udpReadLoop(cctx, udpConn, b, log)
-
-	// 4. TCP status reader (blocks until disconnect).
 	return client.Run(cctx)
 }
 
-// udpReadLoop reads VITA-49 datagrams and forwards them to the bridge.
-func udpReadLoop(ctx context.Context, conn *net.UDPConn, b *bridge.Bridge, log *slog.Logger) {
-	buf := make([]byte, 9000) // jumbo-safe; typical VITA datagrams are <1500
-	for {
-		if ctx.Err() != nil {
-			return
-		}
-		conn.SetReadDeadline(time.Now().Add(2 * time.Second))
-		n, _, err := conn.ReadFromUDP(buf)
-		if err != nil {
-			if ctx.Err() != nil {
-				return
-			}
-			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-				continue // loop back, check ctx
-			}
-			log.Warn("udp read error", "err", err)
-			return
-		}
-		b.HandleMeterPacket(buf[:n])
-	}
-}
-
-// sleepCtx sleeps for d, returning false if ctx is cancelled first.
 func sleepCtx(ctx context.Context, d time.Duration) bool {
 	t := time.NewTimer(d)
 	defer t.Stop()
@@ -294,16 +251,6 @@ func scaleBackoff(cur, max time.Duration) time.Duration {
 	return next
 }
 
-// radioModel infers a model from the serial (FLEX-8400 etc.) when the
-// discovery reply isn't available. Falls back to "FLEX-6000".
-func radioModel(serial string, cfg config.Config) string {
-	if cfg.RadioSerial != "" {
-		// Heuristic: we only really know it's an 8400 from config intent.
-		return "FLEX-8400"
-	}
-	return "FLEX-6000"
-}
-
 func defaultSerial(cfg config.Config) string {
 	if cfg.RadioSerial != "" {
 		return cfg.RadioSerial
@@ -311,7 +258,6 @@ func defaultSerial(cfg config.Config) string {
 	return "flexradio"
 }
 
-// newLogger builds a slog.Logger at the configured level.
 func newLogger(level string) *slog.Logger {
 	var lv slog.Level
 	switch level {
@@ -328,7 +274,6 @@ func newLogger(level string) *slog.Logger {
 	return slog.New(h)
 }
 
-// slogAdapter adapts *slog.Logger to bridge.Logger.
 type slogAdapter struct{ l *slog.Logger }
 
 func (s *slogAdapter) Infof(format string, args ...any) {

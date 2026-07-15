@@ -152,6 +152,46 @@ func TestParseTxPower(t *testing.T) {
 	}
 }
 
+func TestParseDrive(t *testing.T) {
+	n, ok := ParseDrive("drive=75 status=Available")
+	if !ok || n != 75 {
+		t.Errorf("got (%d,%v), want (75,true)", n, ok)
+	}
+	if _, ok := ParseDrive("tx_power=100"); ok {
+		t.Error("absent drive should return ok=false")
+	}
+}
+
+func TestParseRadioTuning(t *testing.T) {
+	if v, ok := ParseRadioTuning("tuning=1 status=Available"); !ok || !v {
+		t.Errorf("tuning=1: got (%v,%v), want (true,true)", v, ok)
+	}
+	if v, ok := ParseRadioTuning("tuning=0"); !ok || v {
+		t.Errorf("tuning=0: got (%v,%v), want (false,true)", v, ok)
+	}
+	if _, ok := ParseRadioTuning("status=Available"); ok {
+		t.Error("absent tuning should return ok=false")
+	}
+}
+
+func TestNormalizeMode(t *testing.T) {
+	cases := map[string]string{
+		"USB": "usb", "LSB": "lsb",
+		"CW-U": "cw", "CW-L": "cw", "CW": "cw",
+		"AM": "am", "SAM": "am",
+		"FM": "fm", "NFM": "fm",
+		"DIGU": "data", "DIGL": "data",
+		"RTTY-U": "data", "PKTUSB": "data",
+		"FDV": "data",
+		"":    "",
+	}
+	for in, want := range cases {
+		if got := NormalizeMode(in); got != want {
+			t.Errorf("NormalizeMode(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 func TestParseStatusFields_NoEquals(t *testing.T) {
 	f := ParseStatusFields("foo bar baz")
 	if len(f) != 0 {

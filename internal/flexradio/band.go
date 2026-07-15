@@ -1,19 +1,22 @@
 package flexradio
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 )
 
-// BandForFreq maps a frequency in Hz to an amateur-radio band label.
-// The radio does not expose a "band" field directly; it is derived from
-// the slice frequency. Returns "unknown" when no band matches (out of all
-// ham allocations, or frequency zero / not yet tuned).
+// BandForFreq maps a frequency in Hz to the canonical band label. The radio
+// does not expose a "band" field directly; it is derived from the slice
+// frequency.
 //
-// Bands follow the conventional labels used by transceivers ("160m",
-// "80m", ..., "70cm"). Edge frequencies use the standard ITU region 1/2
-// allocations; slight overlaps are tolerated so a value right at a band
-// edge (e.g. 14.000 MHz) still resolves to "20m".
+// The table is the canonical band reference
+// (../../docs/conventions/band-mode-reference.md, DL / IARU Region 1 edges);
+// when that reference changes this table needs the corresponding update.
+// Frequencies outside the table resolve to the canonical fallback
+// "band-<N>" (N ≈ wavelength in metres — implementation-specific, do not
+// rely on it downstream). Returns "" for zero/invalid frequencies so the
+// caller can omit the band field.
 func BandForFreq(hz int64) string {
 	type rng struct {
 		lo, hi int64
@@ -21,50 +24,44 @@ func BandForFreq(hz int64) string {
 	}
 	// Sorted by lo so we can binary-search; ranges are non-overlapping.
 	bands := []rng{
-		{1_800_000, 2_000_000, "160m"},
-		{3_500_000, 4_000_000, "80m"},
-		{5_060_000, 5_450_000, "60m"}, // includes UK 5MHz
-		{7_000_000, 7_300_000, "40m"},
-		{10_000_000, 10_200_000, "30m"},
-		{14_000_000, 14_400_000, "20m"},
-		{18_000_000, 18_200_000, "17m"},
-		{21_000_000, 21_500_000, "15m"},
-		{24_890_000, 25_000_000, "12m"},
-		{28_000_000, 30_000_000, "10m"},
-		{50_000_000, 54_000_000, "6m"},
-		{69_000_000, 71_000_000, "4m"}, // UK 70MHz
-		{144_000_000, 148_000_000, "2m"},
-		{222_000_000, 225_000_000, "1.25m"},
+		{1_800_000, 1_999_999, "160m"},
+		{3_500_000, 3_999_999, "80m"},
+		{5_351_500, 5_366_500, "60m"},
+		{7_000_000, 7_299_999, "40m"},
+		{10_100_000, 10_149_999, "30m"},
+		{14_000_000, 14_349_999, "20m"},
+		{18_068_000, 18_167_999, "17m"},
+		{21_000_000, 21_449_999, "15m"},
+		{24_890_000, 24_989_999, "12m"},
+		{28_000_000, 29_699_999, "10m"},
+		{50_000_000, 53_999_999, "6m"},
+		{144_000_000, 146_000_000, "2m"},
 		{430_000_000, 440_000_000, "70cm"},
-		{902_000_000, 928_000_000, "33cm"},
 		{1_240_000_000, 1_300_000_000, "23cm"},
 	}
 	if hz <= 0 {
-		return "unknown"
+		return ""
 	}
 	// sort.Search for the first band whose hi >= hz, then verify lo <= hz.
 	idx := sort.Search(len(bands), func(i int) bool { return bands[i].hi >= hz })
 	if idx < len(bands) && hz >= bands[idx].lo {
 		return bands[idx].label
 	}
-	// General-coverage fallback: HF frequencies outside the ham allocations
-	// (e.g. shortwave broadcast bands) still resolve to "gen" rather than
-	// "unknown", since a FlexRadio is often used to receive them. Only HF
-	// qualifies; VHF/UHF out-of-allocation frequencies stay "unknown".
-	if hz >= 1_800_000 && hz <= 30_000_000 {
-		return "gen"
-	}
-	return "unknown"
+	// Canonical fallback: band-<N> with N the approximate wavelength in
+	// metres. Covers general-coverage RX (shortwave broadcast) as well as
+	// out-of-allocation VHF/UHF.
+	return fmt.Sprintf("band-%d", 300_000_000/hz)
 }
 
 // BandIsValid reports whether a band label is one we recognize (case- and
-// dash-insensitive). Used mainly for sanity-checking external inputs.
+// dash-insensitive), including the band-<N> fallback form. Used mainly for
+// sanity-checking external inputs.
 func BandIsValid(label string) bool {
 	lc := strings.ToLower(strings.TrimSpace(label))
 	switch lc {
 	case "160m", "80m", "60m", "40m", "30m", "20m", "17m", "15m", "12m",
-		"10m", "6m", "4m", "2m", "1.25m", "70cm", "33cm", "23cm", "gen":
+		"10m", "6m", "2m", "70cm", "23cm":
 		return true
 	}
-	return false
+	return strings.HasPrefix(lc, "band-")
 }

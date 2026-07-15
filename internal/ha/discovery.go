@@ -1,8 +1,8 @@
 // Package ha builds Home Assistant MQTT discovery payloads and topic names.
 //
-// Each radio becomes one HA "device" (grouping all its entities). Meters
-// and status fields become individual sensors under that device. We use the
-// standard discovery layout:
+// Each radio becomes one HA "device" (grouping all its entities). Status
+// fields become individual sensors under that device. We use the standard
+// discovery layout:
 //
 //	<discovery_prefix>/<component>/<node_id>/<object_id>/config
 //
@@ -12,8 +12,6 @@ package ha
 import (
 	"fmt"
 	"strings"
-
-	"flex2mqtt/internal/flexradio"
 )
 
 // Components.
@@ -24,9 +22,10 @@ const (
 
 // Device info shared by every entity of one radio.
 type Device struct {
-	Serial string
-	Model  string // e.g. "FLEX-8400"
-	Name   string // e.g. "FlexRadio 8400"
+	Serial   string
+	Model    string // e.g. "FLEX-8400"
+	Name     string // e.g. "FlexRadio 8400"
+	Firmware string // e.g. "3.8.19"; empty if unknown
 }
 
 // DiscoveryConfig is a Home Assistant MQTT discovery payload. Field names
@@ -40,8 +39,7 @@ type DiscoveryConfig struct {
 	Name string `json:"name"`
 	// StateTopic is where the value is published.
 	StateTopic string `json:"state_topic"`
-	// ValueTemplate, if set, extracts the value from a JSON payload. We
-	// publish plain values, so this is usually empty.
+	// ValueTemplate, if set, extracts the value from a JSON payload.
 	ValueTemplate string `json:"value_template,omitempty"`
 	// UnitOfMeasurement for numeric sensors.
 	UnitOfMeasurement string `json:"unit_of_measurement,omitempty"`
@@ -68,6 +66,7 @@ type DeviceInfo struct {
 	Name         string   `json:"name"`
 	Manufacturer string   `json:"manufacturer"`
 	Model        string   `json:"model"`
+	SWVersion    string   `json:"sw_version,omitempty"` // firmware version
 }
 
 // NodeID returns the discovery node id for a radio ("flexradio-<serial>").
@@ -97,62 +96,41 @@ func DeviceInfoFor(d Device) DeviceInfo {
 		Name:         name,
 		Manufacturer: "FlexRadio",
 		Model:        model,
+		SWVersion:    d.Firmware,
 	}
-}
-
-// MeterEntity builds the discovery config for a meter sensor.
-// stateTopic is the full topic the bridge publishes the meter value to.
-// availTopic is the bridge LWT topic (may be empty).
-func MeterEntity(def flexradio.MeterDef, d Device, stateTopic, objectID, availTopic string) (DiscoveryConfig, string) {
-	cfg := DiscoveryConfig{
-		UniqueID:          fmt.Sprintf("%s_%s", NodeID(d.Serial), objectID),
-		Name:              def.Label,
-		StateTopic:        stateTopic,
-		UnitOfMeasurement: publishUnitSymbol(def.PublishUnit),
-		DeviceClass:       deviceClassFor(def.PublishUnit),
-		StateClass:        "measurement",
-		Device:            DeviceInfoFor(d),
-		AvailabilityTopic: availTopic,
-		AvailabilityMode:  "all",
-	}
-	if cfg.UnitOfMeasurement == "" {
-		// dB / dBFS / SWR have no official device class unit; keep plain.
-		cfg.UnitOfMeasurement = def.PublishUnit
-	}
-	component := ComponentSensor
-	return cfg, component
 }
 
 // StatusEntity builds the discovery config for a status sensor.
-// unit may be empty (e.g. for mode, a string state).
-func StatusEntity(name, objectID, stateTopic, unit string, d Device, availTopic string) (DiscoveryConfig, string) {
+// valueTemplate extracts the field from the JSON state snapshot
+// (e.g. "{{ value_json.freq_hz }}"). unit may be empty for string sensors.
+func StatusEntity(name, objectID, stateTopic, unit, valueTemplate string, d Device, availTopic string) (DiscoveryConfig, string) {
 	cfg := DiscoveryConfig{
 		UniqueID:          fmt.Sprintf("%s_%s", NodeID(d.Serial), objectID),
 		Name:              name,
 		StateTopic:        stateTopic,
+		ValueTemplate:     valueTemplate,
 		UnitOfMeasurement: unit,
 		DeviceClass:       deviceClassForUnit(unit),
 		Device:            DeviceInfoFor(d),
 		AvailabilityTopic: availTopic,
 		AvailabilityMode:  "all",
 	}
-	if unit == "" {
-		// String-valued state (mode, atu status): no state class, no unit.
-	} else {
+	if unit != "" {
 		cfg.StateClass = "measurement"
 	}
 	return cfg, ComponentSensor
 }
 
-// BinaryEntity builds the discovery config for a binary_sensor (e.g. the
-// transmitting flag). on/off payloads default to "1"/"0" but can be set to
-// "true"/"false" or "TRANSMITTING"/"RECEIVING".
-func BinaryEntity(name, objectID, stateTopic, onPayload, offPayload string, d Device, availTopic string) (DiscoveryConfig, string) {
+// BinaryEntity builds the discovery config for a binary_sensor.
+// valueTemplate extracts the field from the JSON state snapshot.
+// on/off payloads match what the template produces.
+func BinaryEntity(name, objectID, stateTopic, onPayload, offPayload, valueTemplate string, d Device, availTopic string) (DiscoveryConfig, string) {
 	cfg := DiscoveryConfig{
 		UniqueID:          fmt.Sprintf("%s_%s", NodeID(d.Serial), objectID),
 		Name:              name,
 		StateTopic:        stateTopic,
-		DeviceClass:       "running", // "transmitting" reads as a running/active state
+		ValueTemplate:     valueTemplate,
+		DeviceClass:       "running",
 		PayloadOn:         onPayload,
 		PayloadOff:        offPayload,
 		Device:            DeviceInfoFor(d),
@@ -163,8 +141,7 @@ func BinaryEntity(name, objectID, stateTopic, onPayload, offPayload string, d De
 }
 
 // deviceClassFor maps a publish unit to the HA device class, where one is
-// valid. Returns "" when there's no valid class (HA rejects invalid combos
-// like unit=MHz + device_class=frequency, which expects Hz).
+// valid.
 func deviceClassFor(publishUnit string) string {
 	switch publishUnit {
 	case "°C", "degC":
@@ -177,43 +154,16 @@ func deviceClassFor(publishUnit string) string {
 		return "current"
 	case "dBm":
 		return "signal_strength"
+	case "Hz":
+		return "frequency"
 	default:
-		// dB, dBFS, SWR, MHz, plain strings: no device class.
 		return ""
 	}
 }
 
-// deviceClassForUnit handles status fields, where unit may be "MHz" (no
-// class) or "W" (power).
+// deviceClassForUnit handles status fields.
 func deviceClassForUnit(unit string) string {
 	return deviceClassFor(unit)
-}
-
-// publishUnitSymbol normalizes a unit string to the symbol HA displays.
-// "degC" -> "°C", "Volts" -> "V", etc.
-func publishUnitSymbol(publishUnit string) string {
-	switch publishUnit {
-	case "°C", "degC":
-		return "°C"
-	case "V", "Volts":
-		return "V"
-	case "W", "Watts":
-		return "W"
-	case "A", "Amps":
-		return "A"
-	case "dBm":
-		return "dBm"
-	case "dB":
-		return "dB"
-	case "dBFS":
-		return "dBFS"
-	case "SWR":
-		return "" // ratio, no unit symbol
-	case "MHz":
-		return "MHz"
-	default:
-		return publishUnit
-	}
 }
 
 // sanitize lowercases and strips characters that aren't valid in HA object

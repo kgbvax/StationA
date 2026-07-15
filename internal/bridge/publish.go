@@ -8,7 +8,7 @@ import (
 
 	pahomqtt "github.com/eclipse/paho.mqtt.golang"
 
-	"flex2mqtt/internal/ha"
+	"flexbridge/internal/ha"
 )
 
 // Publisher is the MQTT surface the bridge needs. It's a small interface so
@@ -74,11 +74,18 @@ type PahoPublisher struct {
 	Client pahomqtt.Client
 }
 
-// Publish via paho at QoS 0 (telemetry is high-frequency and stateless).
+// Publish via paho. Retained documents (meta, state, discovery) go at QoS 1
+// per the station model §8 — a dropped retained update would leave a stale
+// snapshot on the broker until the next change. Non-retained telemetry stays
+// QoS 0 (fire-and-forget).
 func (p *PahoPublisher) Publish(topic string, retained bool, payload []byte) error {
-	tok := p.Client.Publish(topic, 0, retained, payload)
-	// QoS 0 is fire-and-forget in paho; we don't wait on the token to avoid
-	// serializing the hot meter path. Connection errors surface via
+	qos := byte(0)
+	if retained {
+		qos = 1
+	}
+	tok := p.Client.Publish(topic, qos, retained, payload)
+	// We don't wait on the token to avoid serializing the hot path; paho
+	// queues QoS 1 messages for delivery. Connection errors surface via
 	// IsConnected() and OnConnectionLost.
 	_ = tok
 	return nil

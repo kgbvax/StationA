@@ -1,51 +1,133 @@
 package bridge
 
 import (
-	"fmt"
+	"encoding/json"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
-	"flex2mqtt/internal/flexradio"
-	"flex2mqtt/internal/ha"
+	"flexbridge/internal/flexradio"
+	"flexbridge/internal/ha"
 )
 
 // Bridge owns the radio state model and translates radio events (TCP
-// status frames + VITA-49 meter packets) into MQTT publishes with
-// Home Assistant discovery.
-//
-// It is concurrency-safe: the TCP reader goroutine calls HandleStatus,
-// the UDP reader goroutine calls HandleMeterPacket, and discovery may be
-// republished on reconnect. All shared state is guarded by mu.
+// status frames) into MQTT publishes following the station integration model.
+// All shared state is guarded by mu.
 type Bridge struct {
-	cfg    Config
-	pub    Publisher
-	log    Logger
-	gate   *Gate
-	meters *flexradio.MeterRegistry
+	cfg Config
+	pub Publisher
+	log Logger
 
 	mu        sync.RWMutex
-	device    ha.Device // set on first successful connect
+	device    ha.Device
 	interlock flexradio.InterlockStatus
 	slices    map[int]flexradio.SliceStatus
-	txPower   int
-	tunePower int
 	tuStatus  flexradio.ATUStatus
+	state     radioState
 
-	// discoveredMeters tracks which HA discovery configs we've already
-	// published, so we only emit them once per (re)connect cycle.
-	discoDone   bool
-	discoSlices map[int]bool // slice indices we've emitted per-slice discovery for
+	discoDone bool
+}
+
+// radioState is the mutable radio state held under Bridge.mu.
+type radioState struct {
+	freqHz       int64
+	band         string
+	mode         string // canonical (NormalizeMode applied)
+	txing        bool   // true while interlock.Transmitting
+	tuning       bool   // true while ATU or radio is in tuning state
+	drive        int    // 0-100 transmit drive level
+	deviceOnline bool   // true while the radio TCP link is up (handshake done)
+}
+
+// statePayload is the JSON shape published to <slot>/state (retained).
+// band and mode are omitted (not published raw or as placeholders) when the
+// frequency is unknown or the firmware mode has no canonical mapping.
+// device_online is always present (true/false) so consumers can distinguish a
+// live radio from a frozen snapshot left over from a disconnect — /status is
+// the MQTT/LWT bridge liveness, not the radio link.
+type statePayload struct {
+	TS           string `json:"ts"`
+	FreqHz       int64  `json:"freq_hz"`
+	Band         string `json:"band,omitempty"`
+	Mode         string `json:"mode,omitempty"`
+	TX           string `json:"tx"` // "rx" | "tx"
+	Tuning       bool   `json:"tuning"`
+	Drive        int    `json:"drive"`        // 0-100
+	DeviceOnline bool   `json:"device_online"` // radio link liveness
+}
+
+// metaPayload is the JSON shape published to <slot>/meta (retained birth cert).
+type metaPayload struct {
+	Schema       string           `json:"schema"`
+	Role         string           `json:"role"`
+	Device       metaDevice       `json:"device"`
+	Link         string           `json:"link,omitempty"`
+	Location     string           `json:"location,omitempty"`
+	Capabilities metaCapabilities `json:"capabilities"`
+	Expose       *metaExpose      `json:"expose,omitempty"`
+}
+
+type metaDevice struct {
+	Model    string `json:"model"`
+	Serial   string `json:"serial"`
+	Firmware string `json:"firmware,omitempty"`
+}
+
+// metaExpose is the consumer-neutral field surface (integration model §3.1, Appendix C).
+// It carries NO consumer vocabulary (no device_class strings, no Jinja, no payload_on/off);
+// consumers such as hadiscovery render their own representation from these neutral
+// primitives. flexbridge is read-only, so none of its fields are writable and it exposes no
+// actions — every field is a sensor/binary_sensor.
+type metaExpose struct {
+	Device metaExposeDevice  `json:"device"`
+	Fields []metaExposeField `json:"fields"`
+}
+
+type metaExposeDevice struct {
+	Name         string `json:"name,omitempty"`
+	Model        string `json:"model,omitempty"`
+	Manufacturer string `json:"manufacturer,omitempty"`
+	SWVersion    string `json:"sw_version,omitempty"`
+	Area         string `json:"area,omitempty"`
+}
+
+// metaExposeField describes one /state field. type is number|enum|boolean|string.
+// options_ref names a key in capabilities (e.g. "bands") that holds the enum options.
+// on/off carry the boolean's state payload strings when the state holds strings, not a bool.
+type metaExposeField struct {
+	Key        string `json:"key"`
+	Name       string `json:"name"`
+	Type       string `json:"type"`
+	Unit       string `json:"unit,omitempty"`
+	Class      string `json:"class,omitempty"`
+	StateClass string `json:"state_class,omitempty"`
+	OptionsRef string `json:"options_ref,omitempty"`
+	On         string `json:"on,omitempty"`
+	Off        string `json:"off,omitempty"`
+}
+
+type metaCapabilities struct {
+	Bands     []string `json:"bands"`
+	Modes     []string `json:"modes"`
+	Receivers int      `json:"receivers"`
+	Diversity bool     `json:"diversity"`
+	AmpKey    bool     `json:"amp_key"`
+	Tune      bool     `json:"tune"`
+	BiasT     bool     `json:"bias_t"`
+	RxInputs  []string `json:"rx_inputs,omitempty"`
+	TxOutputs []string `json:"tx_outputs,omitempty"`
 }
 
 // Config is the subset of config the bridge needs.
 type Config struct {
-	Serial          string
-	StatePrefix     string // e.g. "flex2mqtt"
-	DiscoveryPrefix string // e.g. "homeassistant"
-	AvailTopic      string // LWT topic for the bridge
-	Rates           map[flexradio.MeterGroup]time.Duration
+	Site               string // e.g. "muehle"
+	Station            string // e.g. "hf"
+	Slot               string // e.g. "radio"
+	Location           string // physical location label, e.g. "bauwagen"
+	DiscoveryPrefix    string // e.g. "homeassistant"
+	AvailTopic         string // <site>/<station>/<slot>/status  (LWT topic)
+	PublishHADiscovery bool   // gate the legacy embedded HA discovery (model §9); default false
 }
 
 // Logger is the minimal logging surface the bridge uses.
@@ -58,68 +140,46 @@ type Logger interface {
 // New constructs a Bridge.
 func New(cfg Config, pub Publisher, log Logger) *Bridge {
 	return &Bridge{
-		cfg:         cfg,
-		pub:         pub,
-		log:         log,
-		gate:        NewGate(cfg.Rates),
-		meters:      flexradio.NewMeterRegistry(),
-		slices:      make(map[int]flexradio.SliceStatus),
-		discoSlices: make(map[int]bool),
+		cfg:    cfg,
+		pub:    pub,
+		log:    log,
+		slices: make(map[int]flexradio.SliceStatus),
 	}
 }
 
-// SetDevice records the radio identity (called after discovery / handshake).
-// Triggers HA discovery publication once.
+// SetDevice records the radio identity (called after a successful handshake).
+// Triggers meta and HA discovery publication, and marks the radio link online
+// in /state so consumers can distinguish a live radio from a frozen snapshot.
 func (b *Bridge) SetDevice(d ha.Device) {
 	b.mu.Lock()
 	b.device = d
 	b.discoDone = false
-	b.discoSlices = make(map[int]bool)
+	b.state.deviceOnline = true
+	snap := b.state
 	b.mu.Unlock()
-	b.PublishDiscovery()
+	b.publishMeta()
+	b.publishStateSnapshot(snap)
+	if b.cfg.PublishHADiscovery {
+		b.PublishDiscovery()
+	}
 }
 
 // Reset clears runtime radio state on disconnect/reconnect so stale values
-// aren't carried over and the gate forces republish.
+// aren't carried over and all fields are republished on reconnect. It also
+// publishes a /state snapshot with device_online=false (and zeroed radio
+// values) so the bus sees the radio link go down — /state is otherwise
+// on-change-only and would freeze on the last live values, hiding the
+// disconnect from consumers that only watch /state.
 func (b *Bridge) Reset() {
 	b.mu.Lock()
-	b.meters.Reset()
 	b.slices = make(map[int]flexradio.SliceStatus)
 	b.interlock = flexradio.InterlockStatus{}
-	b.txPower = 0
-	b.tunePower = 0
 	b.tuStatus = flexradio.ATUStatus{}
+	b.state = radioState{} // deviceOnline defaults false
 	b.discoDone = false
-	b.discoSlices = make(map[int]bool)
+	snap := b.state
 	b.mu.Unlock()
-	b.gate.Reset()
-}
-
-// MaybePublishSliceDiscovery emits HA discovery for any slices we've learned
-// about but not yet announced. Slices are dynamic, so discovery is published
-// lazily as slices appear (driven by the "slice" status handler in main).
-func (b *Bridge) MaybePublishSliceDiscovery() {
-	b.mu.Lock()
-	if b.device.Serial == "" {
-		b.mu.Unlock()
-		return
-	}
-	d := b.device
-	pending := make([]int, 0)
-	for idx := range b.slices {
-		if !b.discoSlices[idx] {
-			pending = append(pending, idx)
-		}
-	}
-	b.mu.Unlock()
-
-	nodeID := ha.NodeID(d.Serial)
-	for _, idx := range pending {
-		b.publishSliceDiscovery(d, nodeID, idx)
-		b.mu.Lock()
-		b.discoSlices[idx] = true
-		b.mu.Unlock()
-	}
+	b.publishStateSnapshot(snap)
 }
 
 // ------------------------------------------------------------------
@@ -137,281 +197,225 @@ func (b *Bridge) HandleStatus(f flexradio.Frame) {
 		b.handleATU(f)
 	case "radio":
 		b.handleRadio(f)
-	case "meter":
-		b.handleMeterDef(f)
 	}
 }
 
-// HandleReply routes a parsed SmartSDR reply frame (R<h>|<seq>|<body>).
-// Currently only the "meter list" reply is handled: its body is a packed
-// list of meter definitions which we use to populate the meter index map.
-func (b *Bridge) HandleReply(f flexradio.Frame) {
-	body := f.Body
-	// Reply bodies look like "<seq>|<body>"; strip the leading seq field if
-	// present so body starts at the actual content.
-	if i := strings.IndexByte(body, '|'); i >= 0 {
-		body = body[i+1:]
-	}
-	if !strings.Contains(body, "meter") || !strings.Contains(body, ".src=") {
-		return // not the meter list reply
-	}
-	entries := flexradio.ParseMeterListReply(body)
-	if len(entries) == 0 {
-		return
-	}
-	b.mu.Lock()
-	b.meters.Reset()
-	registered := 0
-	for _, e := range entries {
-		if b.meters.Register(e.Index, e.Source, e.SourceNum, e.Name) {
-			registered++
-		}
-	}
-	b.mu.Unlock()
-	b.log.Infof("meter list: %d entries, %d published", len(entries), registered)
-}
-
-// handleInterlock updates transmit state and publishes the binary_sensor.
+// handleInterlock updates the TX state in the radio snapshot.
 func (b *Bridge) handleInterlock(f flexradio.Frame) {
 	is := flexradio.ParseInterlock(joinArgsFields(f))
 	b.mu.Lock()
 	prev := b.interlock
 	b.interlock = is
+	changed := prev.Transmitting != is.Transmitting
+	if changed {
+		b.state.txing = is.Transmitting
+	}
+	snap := b.state
 	b.mu.Unlock()
 
-	if prev.Transmitting != is.Transmitting {
-		b.publishTransmitting(is)
+	if changed {
+		b.publishStateSnapshot(snap)
 	}
 }
 
-// handleSlice updates per-slice state and publishes the changed status
-// fields (frequency, mode, filter, agc).
+// handleSlice updates per-slice state and, if the active/TX slice changed,
+// republishes the radio state snapshot.
 func (b *Bridge) handleSlice(f flexradio.Frame) {
-	s, err := flexradio.ParseSlice(f.TopicArgs, fieldsString(f))
+	var idx int
+	if args := strings.Fields(f.TopicArgs); len(args) > 0 {
+		idx, _ = strconv.Atoi(args[0])
+	}
+	b.mu.RLock()
+	prev := b.slices[idx]
+	b.mu.RUnlock()
+
+	s, err := flexradio.ParseSlice(f.TopicArgs, fieldsString(f), prev)
 	if err != nil {
 		b.log.Warnf("parse slice: %v", err)
 		return
 	}
 	b.mu.Lock()
-	prev := b.slices[s.Index]
 	b.slices[s.Index] = s
+	changed := b.updateActiveSliceState()
+	snap := b.state
 	b.mu.Unlock()
 
-	b.publishSliceDiff(prev, s)
-	b.maybePublishActiveSlice(prev, s)
-}
-
-// maybePublishActiveSlice updates the active/frequency and active/band topics
-// when the active slice changes or its frequency moves.
-func (b *Bridge) maybePublishActiveSlice(prev, cur flexradio.SliceStatus) {
-	if cur.Active && (prev.FreqHz != cur.FreqHz || !prev.Active) {
-		// This slice is active and its frequency changed, or it just became active.
-		b.publishActiveFreqBand(cur)
-		return
-	}
-	if prev.Active && !cur.Active {
-		// This slice just became inactive; find the new active slice.
-		b.mu.RLock()
-		var active *flexradio.SliceStatus
-		for _, s := range b.slices {
-			if s.Active {
-				sc := s
-				active = &sc
-				break
-			}
-		}
-		b.mu.RUnlock()
-		if active != nil {
-			b.publishActiveFreqBand(*active)
-		}
+	if changed {
+		b.publishStateSnapshot(snap)
 	}
 }
 
-// publishActiveFreqBand publishes the active-slice frequency and band summary.
-func (b *Bridge) publishActiveFreqBand(s flexradio.SliceStatus) {
-	mhz := float64(s.FreqHz) / 1e6
-	_ = b.pub.Publish(b.statusTopic("active/frequency"), true, []byte(formatFloat(mhz)))
-	_ = b.pub.Publish(b.statusTopic("active/band"), true, []byte(flexradio.BandForFreq(s.FreqHz)))
+// updateActiveSliceState updates b.state from the current TX/active slice.
+// Must be called with b.mu held. Returns true if state changed.
+func (b *Bridge) updateActiveSliceState() bool {
+	active, ok := resolveActiveSlice(b.slices)
+	if !ok {
+		return false
+	}
+	newFreq := active.FreqHz
+	newBand := flexradio.BandForFreq(newFreq)
+	newMode := flexradio.NormalizeMode(active.Mode)
+	if b.state.freqHz == newFreq && b.state.mode == newMode {
+		return false
+	}
+	b.state.freqHz = newFreq
+	b.state.band = newBand
+	b.state.mode = newMode
+	return true
 }
 
-// handleATU updates the ATU status sensor.
+// resolveActiveSlice returns the slice that drives the radio state.
+// Prefers the TX slice; falls back to the Active slice.
+func resolveActiveSlice(slices map[int]flexradio.SliceStatus) (flexradio.SliceStatus, bool) {
+	for _, s := range slices {
+		if s.TX {
+			return s, true
+		}
+	}
+	for _, s := range slices {
+		if s.Active {
+			return s, true
+		}
+	}
+	return flexradio.SliceStatus{}, false
+}
+
+// handleATU updates the tuning flag when the ATU transitions into or out of
+// active tuning.
 func (b *Bridge) handleATU(f flexradio.Frame) {
 	st := flexradio.ParseATU(joinArgsFields(f))
 	b.mu.Lock()
-	prev := b.tuStatus
 	b.tuStatus = st
+	newTuning := st.Status == "tuning"
+	changed := b.state.tuning != newTuning
+	if changed {
+		b.state.tuning = newTuning
+	}
+	snap := b.state
 	b.mu.Unlock()
 
-	if prev.Status != st.Status {
-		topic := b.statusTopic("atu")
-		_ = b.pub.Publish(topic, true, []byte(st.Status))
+	if changed {
+		b.publishStateSnapshot(snap)
 	}
 }
 
-// handleRadio updates radio-wide fields like tx_power.
+// handleRadio updates drive level and radio-level tuning flag.
 func (b *Bridge) handleRadio(f flexradio.Frame) {
 	fs := fieldsString(f)
-	if power, ok := flexradio.ParseTxPower(fs); ok {
-		b.mu.Lock()
-		prev := b.txPower
-		b.txPower = power
-		b.mu.Unlock()
-		if prev != power {
-			topic := b.statusTopic("tx_power")
-			_ = b.pub.Publish(topic, true, []byte(strconv.Itoa(power)))
-		}
-	}
-	if power, ok := flexradio.ParseTunePower(fs); ok {
-		b.mu.Lock()
-		prev := b.tunePower
-		b.tunePower = power
-		b.mu.Unlock()
-		if prev != power {
-			topic := b.statusTopic("tune_power")
-			_ = b.pub.Publish(topic, true, []byte(strconv.Itoa(power)))
-		}
-	}
-}
-
-// handleMeterDef rebuilds the meter index map from "meter N" status lines.
-// The body looks like: "0 0 TX=FWDPWR" or "5 0 SLC=LEVEL num=0".
-func (b *Bridge) handleMeterDef(f flexradio.Frame) {
-	// Format: "<index> <num> <SOURCE>=<name>". TopicArgs holds "index num"
-	// as bare words; the fields portion has "SOURCE=name" plus more.
-	rawArgs := splitFields(f.TopicArgs)
-	if len(rawArgs) < 2 {
-		return
-	}
-	idx, err := strconv.Atoi(rawArgs[0])
-	if err != nil {
-		return
-	}
-	// Second positional word is the source-internal num: for SLC meters
-	// this is the slice index; for others it's a manifest slot.
-	sourceNum := 0
-	if len(rawArgs) > 1 {
-		if n, err := strconv.Atoi(rawArgs[1]); err == nil {
-			sourceNum = n
-		}
-	}
-	// Find the SOURCE=name token in fields.
-	var source, name string
-	for _, tok := range splitFields(fieldsString(f)) {
-		for _, src := range []string{"SLC=", "TX-=", "RAD=", "COD-=", "AMP="} {
-			if startsWith(tok, src) {
-				source = src[:len(src)-1]
-				name = tok[len(src):]
-			}
-		}
-	}
-	if source == "" || name == "" {
-		return
-	}
 	b.mu.Lock()
-	registered := b.meters.Register(uint16(idx), source, sourceNum, name)
+	changed := false
+	if drive, ok := flexradio.ParseDrive(fs); ok && b.state.drive != drive {
+		b.state.drive = drive
+		changed = true
+	}
+	if tuning, ok := flexradio.ParseRadioTuning(fs); ok && b.state.tuning != tuning {
+		b.state.tuning = tuning
+		changed = true
+	}
+	snap := b.state
 	b.mu.Unlock()
-	if registered {
-		b.log.Debugf("registered meter %d = %s/%s", idx, source, name)
-	}
-}
 
-// ------------------------------------------------------------------
-// Meter packet handling (VITA-49 UDP)
-// ------------------------------------------------------------------
-
-// HandleMeterPacket decodes one VITA-49 datagram and publishes the meters
-// it contains (subject to throttle/dedup and TX gating).
-func (b *Bridge) HandleMeterPacket(data []byte) {
-	p, err := flexradio.ParseVITA49(data)
-	if err != nil {
-		return // malformed; ignore quietly (non-meter or garbage)
+	if changed {
+		b.publishStateSnapshot(snap)
 	}
-	readings, err := p.MeterReadings()
-	if err != nil {
-		return
-	}
-	b.mu.RLock()
-	transmitting := b.interlock.Transmitting
-	b.mu.RUnlock()
-
-	for _, r := range readings {
-		b.handleReading(r, transmitting)
-	}
-}
-
-// handleReading converts, gates, throttles, and publishes one meter reading.
-func (b *Bridge) handleReading(r flexradio.MeterReading, transmitting bool) {
-	b.mu.RLock()
-	rm, ok := b.meters.LookupIndex(r.Index)
-	b.mu.RUnlock()
-	if !ok {
-		return // not a meter we publish
-	}
-	def := rm.Definition()
-
-	// TX gating: TX-chain meters only make sense while actively transmitting.
-	// Publishing them while receiving yields full-scale garbage.
-	if def.Group == flexradio.GroupTX || def.Group == flexradio.GroupAudio {
-		if !transmitting {
-			return
-		}
-	}
-
-	value, unit := flexradio.ConvertRaw(def.Unit, r.Raw, def)
-	topic := b.meterTopic(def, rm.SourceNum())
-
-	if !b.gate.Allow(topic, def.Group, unit, value) {
-		return
-	}
-	_ = b.pub.Publish(topic, false, []byte(formatValue(value, unit)))
 }
 
 // ------------------------------------------------------------------
 // Publishing helpers
 // ------------------------------------------------------------------
 
-// publishTransmitting emits the transmitting binary_sensor state.
-func (b *Bridge) publishTransmitting(is flexradio.InterlockStatus) {
-	topic := b.statusTopic("transmitting")
-	payload := "RECEIVING"
-	if is.Transmitting {
-		payload = "TRANSMITTING"
+// publishStateSnapshot marshals the current state to JSON and publishes it
+// to the retained state topic.
+func (b *Bridge) publishStateSnapshot(st radioState) {
+	tx := "rx"
+	if st.txing {
+		tx = "tx"
 	}
-	_ = b.pub.Publish(topic, true, []byte(payload))
+	p := statePayload{
+		TS:           time.Now().UTC().Format(time.RFC3339),
+		FreqHz:       st.freqHz,
+		Band:         st.band,
+		Mode:         st.mode,
+		TX:           tx,
+		Tuning:       st.tuning,
+		Drive:        st.drive,
+		DeviceOnline: st.deviceOnline,
+	}
+	data, err := json.Marshal(p)
+	if err != nil {
+		b.log.Warnf("marshal state: %v", err)
+		return
+	}
+	_ = b.pub.Publish(b.stateTopic(), true, data)
 }
 
-// publishSliceDiff publishes only the per-slice status fields that changed.
-// Band is derived from frequency (the radio exposes no band field), so it is
-// republished whenever the resolved band label changes.
-func (b *Bridge) publishSliceDiff(prev, cur flexradio.SliceStatus) {
-	base := fmt.Sprintf("slice/%d/", cur.Index)
-	if prev.FreqHz != cur.FreqHz {
-		mhz := float64(cur.FreqHz) / 1e6
-		_ = b.pub.Publish(b.statusTopic(base+"frequency"), true, []byte(formatFloat(mhz)))
-		// Band follows frequency; only republish when the band label actually
-		// changes (not on every Hz of drift within a band).
-		if flexradio.BandForFreq(prev.FreqHz) != flexradio.BandForFreq(cur.FreqHz) {
-			_ = b.pub.Publish(b.statusTopic(base+"band"), true, []byte(flexradio.BandForFreq(cur.FreqHz)))
-		}
+// publishMeta publishes the retained birth-certificate topic with device
+// identity and capabilities. Called once per connect cycle from SetDevice.
+func (b *Bridge) publishMeta() {
+	b.mu.RLock()
+	d := b.device
+	loc := b.cfg.Location
+	b.mu.RUnlock()
+
+	if d.Serial == "" {
+		return
 	}
-	if prev.Mode != cur.Mode {
-		_ = b.pub.Publish(b.statusTopic(base+"mode"), true, []byte(cur.Mode))
+
+	// Capabilities are static knowledge for the FLEX-8400.
+	p := metaPayload{
+		Schema: "1.0",
+		Role:   "radio",
+		Device: metaDevice{
+			Model:    d.Model,
+			Serial:   d.Serial,
+			Firmware: d.Firmware,
+		},
+		Link:     "ethernet",
+		Location: loc,
+		Capabilities: metaCapabilities{
+			Bands:     []string{"160m", "80m", "60m", "40m", "30m", "20m", "17m", "15m", "12m", "10m", "6m"},
+			Modes:     []string{"cw", "usb", "lsb", "am", "fm", "data"},
+			Receivers: 1,
+			Diversity: false,
+			AmpKey:    true,
+			Tune:      true,
+			BiasT:     false,
+			RxInputs:  []string{"ant1", "ant2", "rx_a"},
+			TxOutputs: []string{"ant1", "ant2"},
+		},
+		// Consumer-neutral field surface (model §3.1). flexbridge is read-only:
+		// no field is writable and there are no actions — every field renders as a
+		// sensor/binary_sensor. The enum options resolve via options_ref against
+		// the capabilities above (bands/modes). HA-specific rendering lives in
+		// hadiscovery, not here.
+		Expose: &metaExpose{
+			Device: metaExposeDevice{
+				Name:         d.Name,
+				Model:        d.Model,
+				Manufacturer: "FlexRadio Systems",
+				SWVersion:    d.Firmware,
+				Area:         loc,
+			},
+			Fields: []metaExposeField{
+				{Key: "device_online", Name: "Device online", Type: "boolean"},
+				{Key: "freq_hz", Name: "Frequency", Type: "number", Unit: "Hz", Class: "frequency", StateClass: "measurement"},
+				{Key: "band", Name: "Band", Type: "enum", OptionsRef: "bands"},
+				{Key: "mode", Name: "Mode", Type: "enum", OptionsRef: "modes"},
+				{Key: "drive", Name: "Drive", Type: "number", Unit: "%"},
+				{Key: "tx", Name: "Transmitting", Type: "boolean", On: "tx", Off: "rx"},
+				{Key: "tuning", Name: "Tuning", Type: "boolean"},
+			},
+		},
 	}
-	if prev.AGCMode != cur.AGCMode {
-		_ = b.pub.Publish(b.statusTopic(base+"agc"), true, []byte(cur.AGCMode))
+	data, err := json.Marshal(p)
+	if err != nil {
+		b.log.Warnf("marshal meta: %v", err)
+		return
 	}
-	if prev.FilterLow != cur.FilterLow {
-		_ = b.pub.Publish(b.statusTopic(base+"filter_low"), true, []byte(strconv.Itoa(cur.FilterLow)))
-	}
-	if prev.FilterHigh != cur.FilterHigh {
-		_ = b.pub.Publish(b.statusTopic(base+"filter_high"), true, []byte(strconv.Itoa(cur.FilterHigh)))
-	}
-	if prev.Active != cur.Active {
-		_ = b.pub.Publish(b.statusTopic(base+"active"), true, []byte(boolStr(cur.Active)))
-	}
+	_ = b.pub.Publish(b.metaTopic(), true, data)
 }
 
-// PublishDiscovery emits HA discovery for all entities. Safe to call
+// PublishDiscovery emits HA discovery for all radio entities. Safe to call
 // repeatedly; only emits once per connect cycle.
 func (b *Bridge) PublishDiscovery() {
 	b.mu.Lock()
@@ -424,93 +428,54 @@ func (b *Bridge) PublishDiscovery() {
 	b.mu.Unlock()
 
 	nodeID := ha.NodeID(d.Serial)
+	st := b.stateTopic()
+	avail := b.cfg.AvailTopic
 
-	// 1. Meter entities (one per wanted meter def).
-	for _, def := range wantedMeters() {
-		objectID := def.ObjectID
-		if def.Source == flexradio.SourceSlice {
-			// Per-slice meters: discovery is published lazily as slices appear
-			// (MaybePublishSliceDiscovery), so any number of slices is supported.
-			continue
-		}
-		topic := b.meterTopic(def, 0)
-		cfg, comp := ha.MeterEntity(def, d, topic, objectID, b.cfg.AvailTopic)
-		discoTopic := ha.ConfigTopic(b.cfg.DiscoveryPrefix, comp, nodeID, objectID)
-		_ = publishDiscovery(b.pub, discoTopic, cfg)
-	}
-
-	// 2. Status entities (radio-wide).
-	b.publishStatusDiscovery(d, nodeID)
-
-	// Per-slice discovery is published lazily by MaybePublishSliceDiscovery
-	// as slices appear (they're dynamic). Emit for any already known here.
-	b.MaybePublishSliceDiscovery()
-}
-
-// publishStatusDiscovery emits the radio-wide status entities.
-func (b *Bridge) publishStatusDiscovery(d ha.Device, nodeID string) {
-	// Transmitting binary_sensor.
-	cfg, comp := ha.BinaryEntity("Transmitting", "transmitting",
-		b.statusTopic("transmitting"), "TRANSMITTING", "RECEIVING", d, b.cfg.AvailTopic)
-	_ = publishDiscovery(b.pub, ha.ConfigTopic(b.cfg.DiscoveryPrefix, comp, nodeID, "transmitting"), cfg)
-
-	// TX power.
-	cfg, comp = ha.StatusEntity("TX Power", "tx_power", b.statusTopic("tx_power"), "W", d, b.cfg.AvailTopic)
-	_ = publishDiscovery(b.pub, ha.ConfigTopic(b.cfg.DiscoveryPrefix, comp, nodeID, "tx_power"), cfg)
-
-	// Tune power (carrier level during ATU/tune).
-	cfg, comp = ha.StatusEntity("Tune Power", "tune_power", b.statusTopic("tune_power"), "W", d, b.cfg.AvailTopic)
-	_ = publishDiscovery(b.pub, ha.ConfigTopic(b.cfg.DiscoveryPrefix, comp, nodeID, "tune_power"), cfg)
-
-	// ATU status (string).
-	cfg, comp = ha.StatusEntity("ATU Status", "atu", b.statusTopic("atu"), "", d, b.cfg.AvailTopic)
-	_ = publishDiscovery(b.pub, ha.ConfigTopic(b.cfg.DiscoveryPrefix, comp, nodeID, "atu"), cfg)
-
-	// Active slice summary: single frequency and band for antenna/PA control.
-	cfg, comp = ha.StatusEntity("Active Frequency", "active_frequency", b.statusTopic("active/frequency"), "MHz", d, b.cfg.AvailTopic)
-	_ = publishDiscovery(b.pub, ha.ConfigTopic(b.cfg.DiscoveryPrefix, comp, nodeID, "active_frequency"), cfg)
-
-	cfg, comp = ha.StatusEntity("Active Band", "active_band", b.statusTopic("active/band"), "", d, b.cfg.AvailTopic)
-	_ = publishDiscovery(b.pub, ha.ConfigTopic(b.cfg.DiscoveryPrefix, comp, nodeID, "active_band"), cfg)
-}
-
-// publishSliceDiscovery emits discovery for one slice's status fields and
-// per-slice meters. Called when a slice first appears.
-func (b *Bridge) publishSliceDiscovery(d ha.Device, nodeID string, sliceIdx int) {
-	prefix := fmt.Sprintf("slice_%d_", sliceIdx)
-	base := fmt.Sprintf("slice/%d/", sliceIdx)
-
-	// Status fields.
-	statusFields := []struct {
-		suffix, name, unit string
+	entities := []struct {
+		name, objectID, template, unit string
+		binary                         bool
+		onPayload, offPayload          string
 	}{
-		{"frequency", "Frequency", "MHz"},
-		{"band", "Band", ""}, // derived from frequency by flex2mqtt
-		{"mode", "Mode", ""},
-		{"agc", "AGC Mode", ""},
-		{"filter_low", "Filter Low", "Hz"},
-		{"filter_high", "Filter High", "Hz"},
-		{"active", "Active", ""},
-	}
-	for _, sf := range statusFields {
-		cfg, comp := ha.StatusEntity(
-			fmt.Sprintf("Slice %d %s", sliceIdx, sf.name),
-			prefix+sf.suffix,
-			b.statusTopic(base+sf.suffix),
-			sf.unit, d, b.cfg.AvailTopic,
-		)
-		_ = publishDiscovery(b.pub, ha.ConfigTopic(b.cfg.DiscoveryPrefix, comp, nodeID, prefix+sf.suffix), cfg)
+		{
+			name: "Frequency", objectID: "frequency",
+			template: "{{ value_json.freq_hz }}", unit: "Hz",
+		},
+		{
+			name: "Band", objectID: "band",
+			template: "{{ value_json.band }}", unit: "",
+		},
+		{
+			name: "Mode", objectID: "mode",
+			template: "{{ value_json.mode }}", unit: "",
+		},
+		{
+			name: "Drive", objectID: "drive",
+			template: "{{ value_json.drive }}", unit: "%",
+		},
+		{
+			name: "Transmitting", objectID: "transmitting", binary: true,
+			template: "{{ value_json.tx }}", onPayload: "tx", offPayload: "rx",
+		},
+		{
+			name: "Tuning", objectID: "tuning", binary: true,
+			template: "{{ value_json.tuning | lower }}", onPayload: "true", offPayload: "false",
+		},
+		{
+			name: "Device online", objectID: "device_online", binary: true,
+			template: "{{ value_json.device_online }}", onPayload: "true", offPayload: "false",
+		},
 	}
 
-	// Per-slice meters.
-	for _, def := range wantedMeters() {
-		if def.Source != flexradio.SourceSlice {
-			continue
+	for _, e := range entities {
+		var cfg ha.DiscoveryConfig
+		var comp string
+		if e.binary {
+			cfg, comp = ha.BinaryEntity(e.name, e.objectID, st, e.onPayload, e.offPayload, e.template, d, avail)
+		} else {
+			cfg, comp = ha.StatusEntity(e.name, e.objectID, st, e.unit, e.template, d, avail)
 		}
-		topic := b.meterTopic(def, sliceIdx)
-		objectID := fmt.Sprintf("slice_%d_%s", sliceIdx, def.ObjectID)
-		cfg, comp := ha.MeterEntity(def, d, topic, objectID, b.cfg.AvailTopic)
-		_ = publishDiscovery(b.pub, ha.ConfigTopic(b.cfg.DiscoveryPrefix, comp, nodeID, objectID), cfg)
+		topic := ha.ConfigTopic(b.cfg.DiscoveryPrefix, comp, nodeID, e.objectID)
+		_ = publishDiscovery(b.pub, topic, cfg)
 	}
 }
 
@@ -518,54 +483,21 @@ func (b *Bridge) publishSliceDiscovery(d ha.Device, nodeID string, sliceIdx int)
 // Topic helpers
 // ------------------------------------------------------------------
 
-func (b *Bridge) stateBase() string {
-	return b.cfg.StatePrefix + "/" + b.device.Serial
+func (b *Bridge) slotBase() string {
+	return b.cfg.Site + "/" + b.cfg.Station + "/" + b.cfg.Slot
 }
 
-// statusTopic builds a retained state topic: <state_prefix>/<serial>/state/<rel...>
-func (b *Bridge) statusTopic(rel string) string {
-	b.mu.RLock()
-	defer b.mu.RUnlock()
-	return b.stateBase() + "/state/" + rel
-}
-
-// meterTopic builds a non-retained meter topic. sourceNum disambiguates
-// per-slice meters.
-//
-//	<state_prefix>/<serial>/meter/<bucket>/[<slice>/]<object_id>
-func (b *Bridge) meterTopic(def flexradio.MeterDef, sourceNum int) string {
-	b.mu.RLock()
-	defer b.mu.RUnlock()
-	bucket := string(def.Group)
-	var topic string
-	if def.Source == flexradio.SourceSlice {
-		topic = fmt.Sprintf("%s/meter/%s/%d/%s", b.stateBase(), bucket, sourceNum, def.ObjectID)
-	} else {
-		topic = fmt.Sprintf("%s/meter/%s/%s", b.stateBase(), bucket, def.ObjectID)
-	}
-	return topic
-}
+func (b *Bridge) metaTopic() string  { return b.slotBase() + "/meta" }
+func (b *Bridge) stateTopic() string { return b.slotBase() + "/state" }
 
 // ------------------------------------------------------------------
 // Internal helpers (free functions)
 // ------------------------------------------------------------------
 
-// wantedMeters returns the static wanted-meter list. Wrapped so tests can
-// access it without import cycles.
-func wantedMeters() []flexradio.MeterDef {
-	// flexradio doesn't export wantedMeters; we list the defs here to keep
-	// the bridge self-contained and to drive discovery. Keep in sync with
-	// flexradio.wantedMeters.
-	return flexradio.WantedMeterDefs()
-}
-
-// joinArgsFields reconstructs "args fields" for the parsers that take a
-// single string.
 func joinArgsFields(f flexradio.Frame) string {
 	return f.TopicArgs + " " + fieldsString(f)
 }
 
-// fieldsString rebuilds the "key=value key=value" portion from f.Fields.
 func fieldsString(f flexradio.Frame) string {
 	out := ""
 	for k, v := range f.Fields {
@@ -575,59 +507,4 @@ func fieldsString(f flexradio.Frame) string {
 		out += k + "=" + v
 	}
 	return out
-}
-
-// splitFields tokenizes on whitespace.
-func splitFields(s string) []string {
-	var out []string
-	cur := ""
-	for _, r := range s {
-		if r == ' ' || r == '\t' {
-			if cur != "" {
-				out = append(out, cur)
-				cur = ""
-			}
-			continue
-		}
-		cur += string(r)
-	}
-	if cur != "" {
-		out = append(out, cur)
-	}
-	return out
-}
-
-func startsWith(s, prefix string) bool {
-	return len(s) >= len(prefix) && s[:len(prefix)] == prefix
-}
-
-func formatValue(v float64, unit string) string {
-	// SWR and ratio-like values: 2 decimals. dB: 1 decimal. Watts: 1 decimal.
-	switch unit {
-	case "SWR":
-		return formatFloatPrec(v, 2)
-	case "dBm", "dB", "dBFS":
-		return formatFloatPrec(v, 1)
-	case "W", "Watts":
-		return formatFloatPrec(v, 1)
-	case "V", "Volts", "A", "Amps":
-		return formatFloatPrec(v, 2)
-	case "°C", "degC":
-		return formatFloatPrec(v, 1)
-	default:
-		return formatFloatPrec(v, 2)
-	}
-}
-
-func formatFloat(v float64) string { return strconv.FormatFloat(v, 'f', 3, 64) }
-
-func formatFloatPrec(v float64, prec int) string {
-	return strconv.FormatFloat(v, 'f', prec, 64)
-}
-
-func boolStr(b bool) string {
-	if b {
-		return "1"
-	}
-	return "0"
 }

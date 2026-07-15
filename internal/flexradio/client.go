@@ -17,22 +17,11 @@ import (
 //
 // The client performs a one-time handshake:
 //
-//  1. Read the radio's version banner (an "S|version ..." line).
-//  2. Send "C1|client udpport <port>" to tell the radio where to stream
-//     VITA-49 meters.
-//  3. Send the subscription commands (slice/radio/interlock/atu/meter).
-//  4. Optionally request the meter list and slice list (one-shot) so the
-//     meter index map and initial state are populated immediately instead
-//     of waiting for the first async status push.
+//  1. Send `version` to probe the connection and confirm the protocol.
+//  2. Send the subscription commands (slice/radio/interlock/atu).
+//  3. Query the radio identity via `info`.
 //
 // After the handshake the read loop pushes every status frame to Handler.
-// Nothing is read on a timer after this — all updates arrive as async
-// status lines or as VITA-49 UDP datagrams (handled by the bridge's UDP
-// goroutine, not here).
-//
-// The client owns the TCP connection only. Meter UDP packets are read by
-// the bridge from its own UDP listener; this client just configures the
-// radio to send them.
 
 // CommandPort is the SmartSDR TCP API port.
 const CommandPort = 4992
@@ -101,41 +90,21 @@ func (c *Client) Close() error {
 	return c.conn.Close()
 }
 
-// Handshake performs the version exchange, sets the UDP port for the meter
-// stream, and subscribes to the status topics. It must be called exactly
-// once after Dial, before Run.
+// Handshake probes the connection, subscribes to status topics, and queries
+// the radio identity. Must be called exactly once after Dial, before Run.
 //
-// Note: the SmartSDR radio does NOT send an unsolicited banner on connect.
-// The client must send the first command. We probe with `version` (whose
-// reply confirms the connection is live and the radio speaks the protocol),
-// then configure UDP meter streaming and subscribe to status topics.
-// Handshake performs the version exchange, sets the UDP port for the meter
-// stream, subscribes to status topics, and queries the radio identity. It
-// must be called exactly once after Dial, before Run.
-//
-// It returns the radio's self-reported model and serial so the caller can set
-// up HA device identity without a separate round-trip. The RadioInfo fields
+// It returns the radio's self-reported model and serial. The RadioInfo fields
 // may be empty if the radio did not supply them (non-fatal).
-func (c *Client) Handshake(ctx context.Context, udpPort int) (RadioInfo, error) {
-	// 1. Send `version` and wait for its R1 reply. This is the connectivity
-	//    / protocol probe; the reply body contains the firmware version.
+func (c *Client) Handshake(ctx context.Context) (RadioInfo, error) {
 	if _, err := c.sendAwaitReply(ctx, "version"); err != nil {
 		return RadioInfo{}, fmt.Errorf("version exchange: %w", err)
 	}
 
-	// 2. Tell the radio which UDP port to stream meters to. Await the reply
-	//    so we know the radio accepted the port before we subscribe.
-	if _, err := c.sendAwaitReply(ctx, fmt.Sprintf("client udpport %d", udpPort)); err != nil {
-		return RadioInfo{}, fmt.Errorf("set udpport: %w", err)
-	}
-
-	// 3. Subscribe to all the status topics we publish. Each sub gets a reply.
 	subs := []string{
 		"sub slice all",
 		"sub radio all",
 		"sub interlock all",
 		"sub atu all",
-		"sub meter all",
 	}
 	for _, s := range subs {
 		if _, err := c.sendAwaitReply(ctx, s); err != nil {
@@ -143,19 +112,9 @@ func (c *Client) Handshake(ctx context.Context, udpPort int) (RadioInfo, error) 
 		}
 	}
 
-	// 4. Query model and serial before the fire-and-forget meter list so the
-	//    reply arrives in order (meter list is unawaited; its reply would
-	//    otherwise be picked up first by any subsequent sendAwaitReply call).
 	var info RadioInfo
 	if reply, err := c.sendAwaitReply(ctx, "info"); err == nil {
 		info = parseInfoReply(reply)
-	}
-
-	// 5. Request the current meter list (one-shot) so the meter index map is
-	//    populated without waiting for async "meter N" pushes. The reply is
-	//    delivered asynchronously via the read loop; we don't await it here.
-	if err := c.send(ctx, "meter list"); err != nil {
-		_ = err // non-fatal: we'll get meters via async status
 	}
 	return info, nil
 }
@@ -243,10 +202,12 @@ func (c *Client) Run(ctx context.Context) error {
 // RemoteAddr returns the radio address.
 func (c *Client) RemoteAddr() string { return c.addr }
 
-// RadioInfo holds the model and serial reported by the radio's "info" command.
+// RadioInfo holds the model, serial, and firmware version reported by the
+// radio's "info" command.
 type RadioInfo struct {
-	Model  string // e.g. "FLEX-8400"
-	Serial string // e.g. "1126-1213-8400-3564"
+	Model    string // e.g. "FLEX-8400"
+	Serial   string // e.g. "1126-1213-8400-3564"
+	Firmware string // e.g. "3.8.19"
 }
 
 // parseInfoReply parses the comma-separated key="value" info reply body.
@@ -269,6 +230,8 @@ func parseInfoReply(reply string) RadioInfo {
 			ri.Model = v
 		case "chassis_serial":
 			ri.Serial = v
+		case "firmware_version":
+			ri.Firmware = v
 		}
 	}
 	return ri

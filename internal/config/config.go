@@ -1,18 +1,16 @@
-// Package config holds runtime configuration for flex2mqtt.
+// Package config holds runtime configuration for flexbridge.
 //
-// flex2mqtt observes a FlexRadio 6000-series radio over the network and
-// mirrors its state to MQTT for Home Assistant. This package defines the
-// configuration shape, defaults and loading (TOML file + flags + env
-// overrides for the [mqtt] section).
+// flexbridge observes a FlexRadio 6000-series radio over the network and
+// mirrors its state to MQTT using the station integration model. This
+// package defines the configuration shape, defaults and loading (TOML file
+// + flags + env overrides for the [mqtt] section).
 package config
 
 import (
 	"flag"
 	"fmt"
 	"os"
-	"strconv"
 	"strings"
-	"time"
 
 	"github.com/BurntSushi/toml"
 )
@@ -21,26 +19,32 @@ import (
 type Config struct {
 	// RadioHost is the radio hostname/IP. Empty -> use UDP discovery.
 	RadioHost string `toml:"radio_host"`
-	// RadioUDPPort is the local UDP port the radio will stream VITA-49
-	// meters to (we tell the radio this port during the TCP handshake).
-	RadioUDPPort int `toml:"radio_udp_port"`
 	// RadioSerial, when non-empty, selects a specific discovered radio by
 	// serial number. Empty -> first discovered radio.
 	RadioSerial string `toml:"radio_serial"`
 
-	MQTT  MQTTConfig  `toml:"mqtt"`
-	Log   LogConfig   `toml:"log"`
-	Rates RatesConfig `toml:"rates"`
+	MQTT MQTTConfig `toml:"mqtt"`
+	Log  LogConfig  `toml:"log"`
 }
 
-// MQTTConfig holds broker connection settings.
+// MQTTConfig holds broker connection settings and station-model addressing.
 type MQTTConfig struct {
 	Broker          string `toml:"broker"`
 	ClientID        string `toml:"client_id"`
 	User            string `toml:"user"`
 	Password        string `toml:"password"`
 	DiscoveryPrefix string `toml:"discovery_prefix"`
-	StatePrefix     string `toml:"state_prefix"`
+	// PublishHADiscovery gates the legacy embedded HA discovery. It defaults to
+	// false now that a standalone consumer (hadiscovery) renders discovery from
+	// this bridge's consumer-neutral `expose` block in /meta (integration model
+	// §9). Set true only to fall back to the embedded discovery during migration.
+	PublishHADiscovery bool `toml:"publish_ha_discovery"`
+
+	// Station-model slot addressing: <site>/<station>/<slot>
+	Site     string `toml:"site"`     // e.g. "muehle"
+	Station  string `toml:"station"`  // e.g. "hf"
+	Slot     string `toml:"slot"`     // e.g. "radio"
+	Location string `toml:"location"` // physical location label, e.g. "bauwagen"
 }
 
 // LogConfig controls logging verbosity.
@@ -48,71 +52,31 @@ type LogConfig struct {
 	Level string `toml:"level"`
 }
 
-// RatesConfig sets the minimum publish interval per meter group, in seconds.
-// A meter whose value changes is published only if at least this long has
-// elapsed since its last publish (and the value differs by more than the
-// unit deadband).
-type RatesConfig struct {
-	TX    float64 `toml:"tx"`
-	Audio float64 `toml:"audio"`
-	RX    float64 `toml:"rx"`
-	HW    float64 `toml:"hw"`
-}
-
-// Rate returns the min-publish interval for a meter group as a Duration.
-// Falls back to the default when zero or negative.
-func (r RatesConfig) Rate(group string) time.Duration {
-	var v float64
-	switch group {
-	case "tx":
-		v = r.TX
-	case "audio":
-		v = r.Audio
-	case "rx":
-		v = r.RX
-	case "hw":
-		v = r.HW
-	default:
-		v = 1.0
-	}
-	if v <= 0 {
-		v = 1.0
-	}
-	return time.Duration(v * float64(time.Second))
-}
-
 // Defaults returns a Config with sensible default values.
 func Defaults() Config {
 	return Config{
-		RadioHost:    "",
-		RadioUDPPort: 4991,
-		RadioSerial:  "",
+		RadioHost:   "",
+		RadioSerial: "",
 		MQTT: MQTTConfig{
 			Broker:          "tcp://homeassistant.local:1883",
-			ClientID:        "flex2mqtt",
+			ClientID:        "flexbridge",
 			DiscoveryPrefix: "homeassistant",
-			StatePrefix:     "flex2mqtt",
+			Slot:            "radio",
 		},
 		Log: LogConfig{Level: "info"},
-		Rates: RatesConfig{
-			TX:    0.5,
-			Audio: 0.5,
-			RX:    1.0,
-			HW:    10.0,
-		},
 	}
 }
 
-// Flags describes the command-line flags flex2mqtt understands.
+// Flags describes the command-line flags flexbridge understands.
 type Flags struct {
 	ConfigPath string
 	LogLevel   string
 }
 
-// RegisterFlags wires flex2mqtt's flags onto fs.
+// RegisterFlags wires flexbridge's flags onto fs.
 func RegisterFlags(fs *flag.FlagSet) *Flags {
 	var f Flags
-	fs.StringVar(&f.ConfigPath, "config", "/etc/flex2mqtt/config.toml", "path to config file")
+	fs.StringVar(&f.ConfigPath, "config", "/etc/flexbridge/config.toml", "path to config file")
 	fs.StringVar(&f.LogLevel, "log.level", "", "log level (debug|info|warn|error); overrides config")
 	return &f
 }
@@ -129,7 +93,6 @@ func Load(f *Flags) (Config, error) {
 			return Config{}, fmt.Errorf("decode %s: %w", f.ConfigPath, err)
 		}
 		if undecoded := md.Undecoded(); len(undecoded) > 0 {
-			// Surface typos but don't hard-fail; unknown keys are logged by caller.
 			_ = undecoded // intentionally not fatal
 		}
 	} else if !os.IsNotExist(err) {
@@ -147,37 +110,41 @@ func Load(f *Flags) (Config, error) {
 	if cfg.MQTT.DiscoveryPrefix == "" {
 		cfg.MQTT.DiscoveryPrefix = "homeassistant"
 	}
-	if cfg.MQTT.StatePrefix == "" {
-		cfg.MQTT.StatePrefix = "flex2mqtt"
+	if cfg.MQTT.Slot == "" {
+		cfg.MQTT.Slot = "radio"
 	}
 
 	return cfg, nil
 }
 
-// applyEnv overlays FLEX2MQTT_* env vars on top of cfg, used for the
+// applyEnv overlays FLEXBRIDGE_* env vars on top of cfg, used for the
 // systemd EnvironmentFile workflow where secrets aren't in the TOML.
 func applyEnv(cfg *Config) {
-	if v := os.Getenv("FLEX2MQTT_MQTT_BROKER"); v != "" {
+	if v := os.Getenv("FLEXBRIDGE_MQTT_BROKER"); v != "" {
 		cfg.MQTT.Broker = v
 	}
-	if v := os.Getenv("FLEX2MQTT_MQTT_CLIENT_ID"); v != "" {
+	if v := os.Getenv("FLEXBRIDGE_MQTT_CLIENT_ID"); v != "" {
 		cfg.MQTT.ClientID = v
 	}
-	if v := os.Getenv("FLEX2MQTT_MQTT_USER"); v != "" {
+	if v := os.Getenv("FLEXBRIDGE_MQTT_USER"); v != "" {
 		cfg.MQTT.User = v
 	}
-	if v := os.Getenv("FLEX2MQTT_MQTT_PASSWORD"); v != "" {
+	if v := os.Getenv("FLEXBRIDGE_MQTT_PASSWORD"); v != "" {
 		cfg.MQTT.Password = v
 	}
-	if v := os.Getenv("FLEX2MQTT_RADIO_HOST"); v != "" {
+	if v := os.Getenv("FLEXBRIDGE_RADIO_HOST"); v != "" {
 		cfg.RadioHost = v
 	}
-	if v := os.Getenv("FLEX2MQTT_RADIO_SERIAL"); v != "" {
+	if v := os.Getenv("FLEXBRIDGE_RADIO_SERIAL"); v != "" {
 		cfg.RadioSerial = v
 	}
-	if v := os.Getenv("FLEX2MQTT_RADIO_UDP_PORT"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 && n < 65536 {
-			cfg.RadioUDPPort = n
-		}
+	if v := os.Getenv("FLEXBRIDGE_SITE"); v != "" {
+		cfg.MQTT.Site = v
+	}
+	if v := os.Getenv("FLEXBRIDGE_STATION"); v != "" {
+		cfg.MQTT.Station = v
+	}
+	if v := os.Getenv("FLEXBRIDGE_SLOT"); v != "" {
+		cfg.MQTT.Slot = v
 	}
 }

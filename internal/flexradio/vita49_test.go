@@ -85,7 +85,7 @@ func TestParseVITA49_ShortPacket(t *testing.T) {
 
 func TestParseVITA49_NonMeterClassRejected(t *testing.T) {
 	// Build a packet with a non-meter class id (0x8003 = spectrum) in word3.
-	w0 := uint32(1 << 29) // class present
+	w0 := uint32(1 << 29)     // class present
 	out := make([]byte, 16+4) // header + 3-word class id + dummy payload
 	binary.BigEndian.PutUint32(out[0:4], w0)
 	binary.BigEndian.PutUint32(out[4:8], 0x00000700)   // word1 (OUI)
@@ -178,17 +178,17 @@ func TestParseVITA49_WithTimestamps(t *testing.T) {
 	// class + integer ts + fractional ts. FlexRadio's TSF field consumes 12
 	// bytes on the wire (8-byte fractional ts + 4-byte sample word).
 	w0 := uint32(0)
-	w0 |= 1 << 29    // class
-	w0 |= 0b01 << 26 // TSI = 01 (integer ts present)
-	w0 |= 0b10 << 24 // TSF = 10 (fractional ts present)
+	w0 |= 1 << 29                // class
+	w0 |= 0b01 << 26             // TSI = 01 (integer ts present)
+	w0 |= 0b10 << 24             // TSF = 10 (fractional ts present)
 	out := make([]byte, 16+4+12) // header + 3-word class id + int ts + frac ts(12)
 	binary.BigEndian.PutUint32(out[0:4], w0)
-	binary.BigEndian.PutUint32(out[4:8], 0x00000700)   // word1
-	binary.BigEndian.PutUint32(out[8:12], 0x00001c2d)  // word2
-	binary.BigEndian.PutUint32(out[12:16], 0x534c8002) // word3 (meter)
-	binary.BigEndian.PutUint32(out[16:20], 0x12345678)           // integer ts
-	binary.BigEndian.PutUint64(out[20:28], 0x9ABCDEF012345678)   // fractional ts (hi)
-	binary.BigEndian.PutUint32(out[28:32], 0)                    // sample word
+	binary.BigEndian.PutUint32(out[4:8], 0x00000700)           // word1
+	binary.BigEndian.PutUint32(out[8:12], 0x00001c2d)          // word2
+	binary.BigEndian.PutUint32(out[12:16], 0x534c8002)         // word3 (meter)
+	binary.BigEndian.PutUint32(out[16:20], 0x12345678)         // integer ts
+	binary.BigEndian.PutUint64(out[20:28], 0x9ABCDEF012345678) // fractional ts (hi)
+	binary.BigEndian.PutUint32(out[28:32], 0)                  // sample word
 
 	p, err := ParseVITA49(out)
 	if err != nil {

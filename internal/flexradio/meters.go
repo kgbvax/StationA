@@ -56,7 +56,7 @@ type MeterDef struct {
 	Label string
 }
 
-// wantedMeters lists the meters flex2mqtt publishes, per the user's
+// wantedMeters lists the meters flexbridge publishes, per the user's
 // selections. TX RF + TX audio + mic input levels, RX S-meter + broadband,
 // and slow hardware telemetry. PACURRENT is deliberately excluded: it is
 // flagged unreliable/erroneous on the 8000-series (incl. the 8400).
@@ -117,7 +117,7 @@ func NewMeterRegistry() *MeterRegistry {
 	}
 }
 
-// LookupDef returns the static MeterDef for a (source,name) if flex2mqtt
+// LookupDef returns the static MeterDef for a (source,name) if flexbridge
 // publishes it. ok is false for meters we don't care about.
 func LookupDef(source MeterSource, name string) (MeterDef, bool) {
 	for _, d := range wantedMeters {

@@ -132,6 +132,30 @@ func TestParseMeterListReply_EmptyOrMalformed(t *testing.T) {
 	}
 }
 
+func TestParseSlice_PartialUpdatePreservesActive(t *testing.T) {
+	// SmartSDR sends partial updates: only changed fields are included.
+	// A frequency-only update must not clobber Active=true from the previous state.
+	prev, _ := ParseSlice("0", "RF_frequency=14.100000 mode=USB active=1 tx=0")
+	if !prev.Active {
+		t.Fatal("initial parse: Active should be true")
+	}
+
+	// Frequency-only update — no active= key in the payload.
+	cur, err := ParseSlice("0", "RF_frequency=14.200000", prev)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cur.FreqHz != 14_200_000 {
+		t.Errorf("FreqHz = %d, want 14200000", cur.FreqHz)
+	}
+	if !cur.Active {
+		t.Error("Active dropped to false on partial frequency update; want true carried over from prev")
+	}
+	if cur.Mode != "USB" {
+		t.Errorf("Mode = %q, want USB carried over from prev", cur.Mode)
+	}
+}
+
 func TestParseSlice_RealInterlock(t *testing.T) {
 	// Confirm the interlock parser copes with the real READY state.
 	is := ParseInterlock("state=READY reason= source= tx_allowed=1 amplifier=")

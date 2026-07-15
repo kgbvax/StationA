@@ -1,17 +1,21 @@
-# CLAUDE.md
+# CLAUDE.md — flexbridge
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+flexbridge is a **read-only** bridge: it observes a FlexRadio 6000-series radio over the
+SmartSDR TCP/IP API and UDP meter stream, and publishes state to MQTT. It never sends
+commands to the radio.
+
+---
 
 ## Commands
 
 ```bash
-make build        # local binary -> bin/flex2mqtt
-make pi           # cross-compile for Raspberry Pi arm64 -> bin/flex2mqtt-linux-arm64
+make build        # local binary -> bin/flexbridge
+make pi           # cross-compile for Raspberry Pi arm64 -> bin/flexbridge-linux-arm64
 make test         # unit tests (no network required)
 make test-race    # tests with race detector
 make vet          # go vet
 make fmt          # gofmt -s -w .
-make run          # build + run with deploy/config.example.toml
+make run          # build + run with config.example.toml
 ```
 
 Run a single test package or test:
@@ -20,52 +24,116 @@ go test ./internal/flexradio/...
 go test ./internal/bridge/... -run TestGate
 ```
 
-## Architecture
+---
 
-flex2mqtt is a read-only bridge: it never sends commands to the radio — only listens and forwards state to MQTT.
+## Architecture
 
 **Data flows:**
 
-1. **UDP discovery** (`flexradio.Discover`) — broadcast to `255.255.255.255:4992`, receives the radio's IP, serial, and model.
-2. **TCP connection** (`flexradio.Client`) — port 4992 (SmartSDR TCP/IP API). On connect it runs a handshake: sends `version`, sets the local UDP port for meter streaming, subscribes to `slice/radio/interlock/atu/meter all`. After that, `Client.Run` blocks reading async status lines.
-3. **UDP meter stream** (VITA-49) — the radio sends real-time meter datagrams at 10–20 fps to the port registered during handshake. Decoded in `flexradio.ParseVITA49` / `VITAPacket.MeterReadings`.
+1. **UDP discovery** (`flexradio.Discover`) — broadcast to `255.255.255.255:4992`,
+   receives the radio's IP, serial, and model.
+2. **TCP connection** (`flexradio.Client`) — port 4992 (SmartSDR TCP/IP API). On connect
+   runs a handshake: sends `version`, sets local UDP port for meter streaming, subscribes
+   to `slice/radio/interlock/atu/meter all`. After that, `Client.Run` blocks reading
+   async status lines.
+3. **UDP meter stream** (VITA-49) — the radio sends real-time meter datagrams at 10–20 fps
+   to the port registered during handshake. Decoded in `flexradio.ParseVITA49` /
+   `VITAPacket.MeterReadings`.
 
-**Two concurrent goroutines feed the bridge:**
+Two concurrent goroutines feed the bridge:
 - TCP goroutine calls `Bridge.HandleStatus` (and `Bridge.HandleReply` for the one-shot meter list)
 - UDP goroutine calls `Bridge.HandleMeterPacket`
 
-`Bridge` (`internal/bridge/bridge.go`) owns all shared state under `sync.RWMutex`. It deduplicates and throttles meter publishes via `Gate` (`throttle.go`), which gates on per-group minimum intervals and per-unit deadbands.
+`Bridge` (`internal/bridge/bridge.go`) owns all shared state under `sync.RWMutex`.
 
-**TX gating**: TX-chain and audio meters are suppressed while `interlock.Transmitting == false` to avoid publishing full-scale garbage during receive.
+**Reconnect loop** (`cmd/flexbridge/main.go:radioLoop`): connects, runs until disconnect, then
+exponential-backoffs and retries. Calls `Bridge.Reset()` between attempts to clear stale
+state and force republish on reconnect.
 
-**Reconnect loop** (`main.go:radioLoop`): connects, runs until disconnect, then exponential-backoffs and retries. Calls `Bridge.Reset()` between attempts to clear stale state and force republish on reconnect.
+---
 
-**MQTT topics:**
-- `flex2mqtt/<serial>/status` — bridge LWT (online/offline)
-- `flex2mqtt/<serial>/state/...` — retained status fields (frequency, mode, PTT, ATU, etc.)
-- `flex2mqtt/<serial>/meter/<group>/[<slice>/]<object_id>` — non-retained live meter values
+## MQTT topics
 
-**Home Assistant discovery** is published once per connect cycle by `Bridge.PublishDiscovery`. Per-slice entities are published lazily when slices first appear via `Bridge.MaybePublishSliceDiscovery` (slices are dynamic).
+flexbridge publishes to the station integration model topics:
+
+```
+muehle/hf/radio/meta      retained  birth certificate (capabilities JSON)
+muehle/hf/radio/state     retained  live state JSON snapshot
+muehle/hf/radio/status    retained  online | offline (LWT)
+```
+
+The `site`, `station`, and `slot` values are configurable via `config.toml`.
+
+**State is a single retained JSON document** (not per-field topics). Fields:
+`ts`, `freq_hz` (Hz integer), `band` (derived), `mode` (canonical: `cw`/`usb`/`lsb`/`am`/`fm`/`data`),
+`tx` (`rx`/`tx`), `tuning` (bool), `drive` (0–100).
+
+**flexbridge is read-only** — it publishes no `/cmd` topic and does not subscribe to commands.
+
+See `docs/radio2mqtt-schema.md` for the full on-the-wire contract.
+
+---
 
 ## Key packages
 
 | Package | Role |
 |---|---|
 | `internal/flexradio` | Protocol: discovery, TCP client, frame parser, VITA-49 decoder, meter registry, status parsers, band lookup |
-| `internal/bridge` | Radio events → MQTT: state tracking, throttle/dedup gate, discovery payloads |
+| `internal/bridge` | Radio events → MQTT: state tracking, discovery payloads |
 | `internal/ha` | Home Assistant discovery payload builders and topic helpers |
-| `internal/config` | TOML config, flags, `FLEX2MQTT_*` env overrides |
+| `internal/config` | TOML config, flags, `FLEXBRIDGE_*` env overrides |
+
+---
 
 ## Configuration and secrets
 
-Config is TOML (`/etc/flex2mqtt/config.toml` by default, or `-config <path>`). Secrets can be passed via `FLEX2MQTT_MQTT_PASSWORD` (and other `FLEX2MQTT_*` env vars) from a systemd `EnvironmentFile` instead of hard-coding in the TOML.
+Config is TOML (`/etc/flexbridge/config.toml` by default, or `-config <path>`). The MQTT
+password is **not** in the TOML — it is loaded from an `EnvironmentFile` so it never
+appears in the unit file or process command line:
+
+```bash
+# /etc/flexbridge/flexbridge.env  (0600, owned by flexbridge user)
+FLEXBRIDGE_MQTT_PASSWORD=<password>
+```
+
+The systemd unit contains `EnvironmentFile=/etc/flexbridge/flexbridge.env`.
+
+See `../stationa/docs/conventions/config-and-secrets.md` for the full convention.
+
+---
 
 ## Deployment
 
-The deploy target is a Raspberry Pi running as a hardened systemd service (see `deploy/`). Build with `make pi`, copy binary + `deploy/` to the Pi, run `deploy/install.sh`.
+Target: Raspberry Pi (`shari`, `192.168.1.139`, user `io`).
+
+```bash
+./deploy.sh              # cross-compile, ship, install as a hardened systemd service
+```
+
+See `../stationa/docs/conventions/deployment.md` for the general pattern and systemd
+hardening requirements.
+
+---
 
 ## Testing notes
 
-Tests in `internal/flexradio/status_real_test.go` capture real FLEX-8400 firmware output formats observed in production. These are regression guards for parser mismatches that broke the live deployment — keep them faithful to actual firmware output.
+Tests in `internal/flexradio/status_real_test.go` capture real FLEX-8400 firmware output
+formats observed in production. These are regression guards for parser mismatches that
+broke the live deployment — keep them faithful to actual firmware output.
 
-The `Gate` clock is injectable via `SetNow` for deterministic throttle tests.
+---
+
+## Station model and shared conventions
+
+Shared documentation lives in `../stationa/docs/` (the stationa meta-repo, cloned
+adjacent to this repo).
+
+| Document | Path |
+|---|---|
+| Station integration model (three-plane MQTT contract) | `../stationa/docs/station-integration-model.md` |
+| Config and secrets convention | `../stationa/docs/conventions/config-and-secrets.md` |
+| Deployment convention | `../stationa/docs/conventions/deployment.md` |
+| Canonical band/mode vocabulary | `../stationa/docs/conventions/band-mode-reference.md` |
+
+This project must conform to those conventions. Component-specific schema lives in
+`docs/radio2mqtt-schema.md` in this repo.

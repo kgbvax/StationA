@@ -21,7 +21,7 @@ import (
 //
 //	S<handle>|<topic> <key=value> <key=value> ...
 //
-// All flex2mqtt cares about are status (S|) messages and the R| ack to
+// All flexbridge cares about are status (S|) messages and the R| ack to
 // the version handshake. This file parses the status payloads into typed
 // events; framing (splitting C|R|S lines) lives in client.go.
 
@@ -130,7 +130,7 @@ func ParseStatusFields(s string) map[string]string {
 	return out
 }
 
-// SliceStatus holds the per-slice fields flex2mqtt publishes. Populated
+// SliceStatus holds the per-slice fields flexbridge publishes. Populated
 // from "slice" status lines.
 type SliceStatus struct {
 	Index      int    // first topic arg (slice list index)
@@ -153,10 +153,18 @@ type SliceStatus struct {
 //   - mode, active, tx, filter_lo, filter_hi
 //
 // We accept both naming conventions.
-func ParseSlice(topicArgs, fieldsStr string) (SliceStatus, error) {
+// ParseSlice parses a (possibly partial) SmartSDR slice status update and
+// merges it onto prev. SmartSDR sends incremental updates — only changed
+// fields appear — so callers should pass the currently stored SliceStatus as
+// prev; fields absent from the update are carried over unchanged.
+// When prev is omitted (e.g. in tests for a full update), a zero value is used.
+func ParseSlice(topicArgs, fieldsStr string, prev ...SliceStatus) (SliceStatus, error) {
 	f := ParseStatusFields(fieldsStr)
 	args := strings.Fields(topicArgs)
 	var s SliceStatus
+	if len(prev) > 0 {
+		s = prev[0]
+	}
 	if len(args) > 0 {
 		s.Index, _ = strconv.Atoi(args[0])
 	}
@@ -177,15 +185,21 @@ func ParseSlice(topicArgs, fieldsStr string) (SliceStatus, error) {
 		}
 		s.FreqHz = hz
 	}
-	s.Mode = f["mode"]
+	if v, ok := f["mode"]; ok {
+		s.Mode = v
+	}
 	// AGC mode: newer firmware uses agc_mode, older used agc.
 	if v, ok := f["agc_mode"]; ok {
 		s.AGCMode = v
-	} else {
-		s.AGCMode = f["agc"]
+	} else if v, ok := f["agc"]; ok {
+		s.AGCMode = v
 	}
-	s.Active = f["active"] == "1"
-	s.TX = f["tx"] == "1"
+	if v, ok := f["active"]; ok {
+		s.Active = v == "1"
+	}
+	if v, ok := f["tx"]; ok {
+		s.TX = v == "1"
+	}
 	if v, err := strconv.Atoi(f["filter_lo"]); err == nil {
 		s.FilterLow = v
 	}
@@ -288,6 +302,60 @@ func ParseTunePower(fieldsStr string) (int, bool) {
 		return 0, false
 	}
 	return n, true
+}
+
+// ParseDrive extracts the transmit drive level from a "radio" status line's
+// drive field (0–100). Returns ok=false when absent.
+func ParseDrive(fieldsStr string) (int, bool) {
+	f := ParseStatusFields(fieldsStr)
+	v, ok := f["drive"]
+	if !ok {
+		return 0, false
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return 0, false
+	}
+	return n, true
+}
+
+// ParseRadioTuning extracts the tuning flag from a "radio" status line.
+// Returns (true, true) when tuning=1 is present, (false, true) when
+// tuning=0 is present, and (false, false) when the field is absent.
+func ParseRadioTuning(fieldsStr string) (bool, bool) {
+	f := ParseStatusFields(fieldsStr)
+	v, ok := f["tuning"]
+	if !ok {
+		return false, false
+	}
+	return v == "1", true
+}
+
+// NormalizeMode maps a SmartSDR firmware mode string to the canonical
+// vocabulary used by the station model: cw, usb, lsb, am, fm, data.
+// Unknown modes return "" so the caller omits the field — the model forbids
+// publishing raw firmware mode strings (band-mode-reference.md).
+func NormalizeMode(s string) string {
+	switch strings.ToUpper(s) {
+	case "USB":
+		return "usb"
+	case "LSB":
+		return "lsb"
+	case "CW", "CW-U", "CW-L":
+		return "cw"
+	case "AM", "SAM":
+		return "am"
+	case "FM", "NFM", "DFM":
+		return "fm"
+	case "DIGU", "DIGL", "DATA-U", "DATA-L",
+		"FDV", "FDVU", "FDVL",
+		"RTTY-U", "RTTY-L",
+		"PKTUSB", "PKTLSB",
+		"DSTR":
+		return "data"
+	default:
+		return ""
+	}
 }
 
 // MeterListEntry is one parsed entry from the packed "meter list" reply.
