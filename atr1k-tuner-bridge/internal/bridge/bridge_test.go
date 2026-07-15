@@ -116,6 +116,9 @@ func TestPublishMeta(t *testing.T) {
 		t.Errorf("expose.actions len = %d, want 1 (tune)", len(actions))
 	} else {
 		act := actions[0].(map[string]any)
+		if act["options_ref"] != "tune_modes" {
+			t.Errorf("tune options_ref = %v, want tune_modes (so consumers resolve capabilities.tune_modes)", act["options_ref"])
+		}
 		actCmd, _ := act["command"].(map[string]any)
 		if actCmd["action"] != "tune" || actCmd["value_key"] != "value" || actCmd["value_type"] != "enum" {
 			t.Errorf("tune command = %v, want action=tune value_key=value value_type=enum", actCmd)
@@ -169,9 +172,23 @@ func TestHandleCommandUnknown(t *testing.T) {
 
 func TestHandleCommandTuneBadMode(t *testing.T) {
 	b, _, cmd := newTestBridge(t)
-	b.HandleCommand([]byte(`{"action":"tune","mode":"fine"}`))
+	// The argument rides under the `value` key (not `mode`); a value that is not
+	// a recognized tune mode (mem|full) must be rejected without calling Tune.
+	b.HandleCommand([]byte(`{"action":"tune","value":"fine"}`))
 	if len(cmd.tunes) != 0 {
 		t.Error("unknown tune mode must not call Tune")
+	}
+}
+
+// TestHandleCommandTuneNullValue guards the live testui bug: an action carrying
+// value_key but a JSON-null value unmarshals to the zero string "" with no error,
+// which must NOT be accepted as a tune (it would log "unknown mode \"\"" and drop
+// the command — the symptom the testui produced before it rendered the enum).
+func TestHandleCommandTuneNullValue(t *testing.T) {
+	b, _, cmd := newTestBridge(t)
+	b.HandleCommand([]byte(`{"action":"tune","value":null}`))
+	if len(cmd.tunes) != 0 {
+		t.Error("null tune value must not call Tune")
 	}
 }
 
