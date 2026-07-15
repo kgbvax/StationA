@@ -11,6 +11,9 @@ import (
 
 	paho "github.com/eclipse/paho.mqtt.golang"
 
+	sharedmqtt "codeberg.org/kgbvax/stationa/shared/mqtt"
+	schema "codeberg.org/kgbvax/stationa/shared/schema"
+
 	"ultrabridge/internal/ub/service"
 )
 
@@ -54,9 +57,15 @@ type Client struct {
 	// clear); the HA-birth handler republishes state/discovery. Running any of that inline
 	// blocks dispatch — and with retained bursts can deadlock it the same way hadiscovery
 	// deadlocked live. Routing the work here lets each handler return immediately while
-	// keeping cmd execution sequential (commands are applied in arrival order).
-	jobs chan func()
-	done chan struct{}
+	// keeping cmd execution sequential (commands are applied in arrival order). The queue
+	// + worker live in shared/mqtt (Enqueue/RunJobs) so the same fix is shared with every
+	// other stationa consumer.
+	//
+	// ctx governs this client's lifecycle: a child of the ctx passed to New, so a SIGTERM
+	// cancels it and Close cancels it directly to stop the worker before disconnecting.
+	ctx    context.Context
+	cancel context.CancelFunc
+	jobs   chan func()
 }
 
 type publishedState struct {
@@ -87,7 +96,7 @@ type statePayload struct {
 	Error        string `json:"error,omitempty"`
 }
 
-func New(broker, clientID, site, station, slot, discoveryPrefix, location, host, user, password string, publishHADiscovery bool, ctrl *service.Controller) (*Client, error) {
+func New(ctx context.Context, broker, clientID, site, station, slot, discoveryPrefix, location, host, user, password string, publishHADiscovery bool, ctrl *service.Controller) (*Client, error) {
 	if site == "" || station == "" {
 		return nil, fmt.Errorf("mqtt: site and station must be configured for station-model addressing")
 	}
@@ -113,9 +122,9 @@ func New(broker, clientID, site, station, slot, discoveryPrefix, location, host,
 		publishHADiscovery: publishHADiscovery,
 		ctrl:               ctrl,
 		jobs:               make(chan func(), 256),
-		done:               make(chan struct{}),
 	}
-	go c.runJobs()
+	c.ctx, c.cancel = context.WithCancel(ctx)
+	go sharedmqtt.RunJobs(c.ctx, c.jobs)
 
 	opts := paho.NewClientOptions().
 		AddBroker(broker).
@@ -145,8 +154,13 @@ func New(broker, clientID, site, station, slot, discoveryPrefix, location, host,
 
 	c.client = paho.NewClient(opts)
 	log.Printf("[mqtt] connecting to broker=%s client_id=%s slot=%s/%s/%s", broker, clientID, site, station, slot)
-	if token := c.client.Connect(); token.Wait() && token.Error() != nil {
-		return nil, token.Error()
+	// Context-aware connect: paho's Connect().Wait() blocks ignoring ctx, so a SIGTERM while
+	// the broker is unreachable can't interrupt it and systemd must SIGKILL after
+	// TimeoutStopSec. sharedmqtt.Connect bridges the wait through a goroutine + select on
+	// ctx.Done (see the stationa memory on paho connect).
+	if err := sharedmqtt.Connect(c.ctx, c.client); err != nil {
+		c.cancel()
+		return nil, err
 	}
 	return c, nil
 }
@@ -157,37 +171,10 @@ func (c *Client) Close() {
 	}
 	// Stop the worker first so no cmd/HA-birth work (which does serial I/O + publishes)
 	// races with shutdown.
-	close(c.done)
+	c.cancel()
 	if c.client.IsConnectionOpen() {
 		c.publishString(c.statusTopic(), "offline", 1, true)
 		c.client.Disconnect(250)
-	}
-}
-
-// enqueue hands work to the worker without blocking paho's dispatch goroutine. It blocks
-// only if the queue is full AND the service is not shutting down — impossible in practice
-// (cmd traffic is low, drained by the worker as fast as it can do serial I/O + publish);
-// the `done` arm guarantees it never blocks during shutdown.
-func (c *Client) enqueue(job func()) {
-	select {
-	case c.jobs <- job:
-	case <-c.done:
-	}
-}
-
-// runJobs is the single goroutine that owns cmd execution and HA-birth republish. It exits
-// when Close closes `done` (finishing any in-flight job first).
-func (c *Client) runJobs() {
-	for {
-		select {
-		case job, ok := <-c.jobs:
-			if !ok {
-				return
-			}
-			job()
-		case <-c.done:
-			return
-		}
 	}
 }
 
@@ -446,7 +433,7 @@ func (c *Client) onCmd(_ paho.Client, msg paho.Message) {
 		return
 	}
 	log.Printf("[mqtt] rx cmd action=%s value=%q freq_hz=%d", cmd.Action, cmd.Value, cmd.FreqHz)
-	c.enqueue(func() {
+	sharedmqtt.Enqueue(c.jobs,func() {
 		switch cmd.Action {
 		case "frequency":
 			khz := uint16(cmd.FreqHz / 1000)
@@ -484,7 +471,7 @@ func (c *Client) onHAStatus(_ paho.Client, msg paho.Message) {
 	if !strings.EqualFold(strings.TrimSpace(string(msg.Payload())), "online") {
 		return
 	}
-	c.enqueue(func() {
+	sharedmqtt.Enqueue(c.jobs,func() {
 		if c.publishHADiscovery {
 			log.Printf("[mqtt] Home Assistant online -> re-publishing embedded discovery")
 			c.PublishDiscovery()
@@ -519,13 +506,14 @@ func (c *Client) publishString(topic, payload string, qos byte, retained bool) {
 	log.Printf("[mqtt] tx topic=%s qos=%d retained=%t payload=%q", topic, qos, retained, payload)
 }
 
-// Topic helpers
+// Topic helpers. The slot address format lives in shared/schema; these wrap it for the
+// planes this bridge publishes. discoveryTopic is the HA discovery tree (prefix, not a
+// slot), which schema does not model, so it stays local.
 
-func (c *Client) slotBase() string    { return c.site + "/" + c.station + "/" + c.slot }
-func (c *Client) stateTopic() string  { return c.slotBase() + "/state" }
-func (c *Client) metaTopic() string   { return c.slotBase() + "/meta" }
-func (c *Client) statusTopic() string { return c.slotBase() + "/status" }
-func (c *Client) cmdTopic() string    { return c.slotBase() + "/cmd" }
+func (c *Client) stateTopic() string  { return schema.StateTopic(c.site, c.station, c.slot) }
+func (c *Client) metaTopic() string   { return schema.MetaTopic(c.site, c.station, c.slot) }
+func (c *Client) statusTopic() string { return schema.StatusTopic(c.site, c.station, c.slot) }
+func (c *Client) cmdTopic() string    { return schema.CmdTopic(c.site, c.station, c.slot) }
 
 func (c *Client) discoveryTopic(component, nodeID, objectID string) string {
 	return fmt.Sprintf("%s/%s/%s/%s/config", c.discoveryPrefix, component, nodeID, objectID)

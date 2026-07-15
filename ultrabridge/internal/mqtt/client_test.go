@@ -1,11 +1,14 @@
 package mqtt
 
 import (
+	"context"
 	"sync"
 	"testing"
 	"time"
 
 	paho "github.com/eclipse/paho.mqtt.golang"
+
+	sharedmqtt "codeberg.org/kgbvax/stationa/shared/mqtt"
 
 	"ultrabridge/internal/ub/service"
 	"ultrabridge/internal/ub/transport"
@@ -258,6 +261,7 @@ func TestOnHAStatusDefersRepublish(t *testing.T) {
 	}}
 
 	ctrl := service.NewController(transport.NewMock())
+	ctx, cancel := context.WithCancel(context.Background())
 	c := &Client{
 		client: fake,
 		ctrl:   ctrl,
@@ -265,9 +269,10 @@ func TestOnHAStatusDefersRepublish(t *testing.T) {
 		discoveryPrefix:    "homeassistant",
 		publishHADiscovery: true,
 		jobs:               make(chan func(), 256),
-		done:               make(chan struct{}),
+		ctx:                ctx,
+		cancel:             cancel,
 	}
-	go c.runJobs()
+	go sharedmqtt.RunJobs(ctx, c.jobs)
 
 	msg := fakeMessage{topic: "homeassistant/status", payload: []byte("online")}
 
@@ -290,5 +295,5 @@ func TestOnHAStatusDefersRepublish(t *testing.T) {
 		t.Fatal("worker never reached the deferred republish")
 	}
 	close(release) // let every queued publish complete
-	close(c.done)  // tell the worker to exit
+	cancel()       // tell the worker to exit (cancels its ctx)
 }

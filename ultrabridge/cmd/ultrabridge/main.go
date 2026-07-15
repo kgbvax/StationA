@@ -67,6 +67,7 @@ func main() {
 	var mqttClient *mqttbridge.Client
 	if cfg.MQTT.Broker != "" {
 		mqttClient, err = mqttbridge.New(
+			ctx,
 			cfg.MQTT.Broker, cfg.MQTT.ClientID,
 			cfg.MQTT.Site, cfg.MQTT.Station, cfg.MQTT.Slot,
 			cfg.MQTT.DiscoveryPrefix,
