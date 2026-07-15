@@ -98,7 +98,7 @@ FLEXBRIDGE_MQTT_PASSWORD=<password>
 
 The systemd unit contains `EnvironmentFile=/etc/flexbridge/flexbridge.env`.
 
-See `../stationa/docs/conventions/config-and-secrets.md` for the full convention.
+See `../docs/conventions/config-and-secrets.md` for the full convention.
 
 ---
 
@@ -110,7 +110,7 @@ Target: Raspberry Pi (`shari`, `192.168.1.139`, user `io`).
 ./deploy.sh              # cross-compile, ship, install as a hardened systemd service
 ```
 
-See `../stationa/docs/conventions/deployment.md` for the general pattern and systemd
+See `../docs/conventions/deployment.md` for the general pattern and systemd
 hardening requirements.
 
 ---
@@ -125,15 +125,14 @@ broke the live deployment — keep them faithful to actual firmware output.
 
 ## Station model and shared conventions
 
-Shared documentation lives in `../stationa/docs/` (the stationa meta-repo, cloned
-adjacent to this repo).
+Shared documentation lives in `../docs/` (this component is a subdirectory of the stationa monorepo).
 
 | Document | Path |
 |---|---|
-| Station integration model (three-plane MQTT contract) | `../stationa/docs/station-integration-model.md` |
-| Config and secrets convention | `../stationa/docs/conventions/config-and-secrets.md` |
-| Deployment convention | `../stationa/docs/conventions/deployment.md` |
-| Canonical band/mode vocabulary | `../stationa/docs/conventions/band-mode-reference.md` |
+| Station integration model (three-plane MQTT contract) | `../docs/station-integration-model.md` |
+| Config and secrets convention | `../docs/conventions/config-and-secrets.md` |
+| Deployment convention | `../docs/conventions/deployment.md` |
+| Canonical band/mode vocabulary | `../docs/conventions/band-mode-reference.md` |
 
 This project must conform to those conventions. Component-specific schema lives in
 `docs/radio2mqtt-schema.md` in this repo.

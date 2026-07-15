@@ -16,7 +16,7 @@ band_safe ∧ heartbeat`, driving relay 1 so any failure drops the arm open → 
 disabled (model §6, §11.3).
 
 See `CLAUDE.md` for architecture and `docs/m5stamp-hf-ctrl-mqtt-api.md` for the
-on-the-wire contract. Shared conventions live in `../stationa/docs/`.
+on-the-wire contract. Shared conventions live in `../docs/`.
 
 ---
 
@@ -40,4 +40,4 @@ Non-secret config is compile-time in `src/config.h` (slot addresses, relay
 map, band allow-list, heartbeat window). Secrets live in `src/secrets.h`
 (gitignored — see `src/secrets.example.h`). This is the embedded-firmware
 secrets pattern, distinct from the Go services' systemd EnvironmentFile; see
-`../stationa/docs/conventions/config-and-secrets.md`.
+`../docs/conventions/config-and-secrets.md`.

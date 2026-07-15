@@ -5,7 +5,7 @@ the on-the-wire contract: what a subscriber sees, what every field means, and
 what values to expect.
 
 acom1200s-pa-bridge implements the `pa` slot of the station integration model
-(`../stationa/docs/station-integration-model.md` §7.1). It bridges an ACOM
+(`../docs/station-integration-model.md` §7.1). It bridges an ACOM
 600S/1200S linear amplifier to MQTT over a USB-serial adapter (Prolific,
 9600 8N1). The four planes are:
 
@@ -315,7 +315,7 @@ homeassistant/<component>/muehle-hf-pa/<object_id>/config
 ```
 
 The bridge itself contains no HA knowledge in this path. See
-`../stationa/hadiscovery/docs/discovery-mqtt-api.md` for the neutral→HA mapping.
+`../hadiscovery/docs/discovery-mqtt-api.md` for the neutral→HA mapping.
 
 ---
 

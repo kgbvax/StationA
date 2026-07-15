@@ -277,7 +277,7 @@ embedded path's 8:
 | Retract | `button` | `retract` | cmd `{"action":"retract"}` |
 
 Discovery topics: `homeassistant/<component>/muehle-hf-ant-ctrl/<object_id>/config`. See
-`../stationa/hadiscovery/docs/discovery-mqtt-api.md` for the full neutral→HA mapping.
+`../hadiscovery/docs/discovery-mqtt-api.md` for the full neutral→HA mapping.
 
 ### Embedded discovery (legacy, gated, default off)
 

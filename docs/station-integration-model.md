@@ -18,7 +18,12 @@ into an address, violating §2's own rule); the liveness contradiction resolved 
 removed from the §3 state template; optional `device_online`/`error` state fields defined);
 `/meta` fields made normative, including `host`; a resource→controller map added so
 band-follow needs no antenna names in code; adapter conformance checklist added (§8.1);
-the HA-discovery deviation in current bridges recorded against §9.
+the HA-discovery deviation in current bridges recorded against §9. In 0.8: a
+power-distribution layer added — canonical roles `power`, `switch`, `sequencer` (§4); a
+site-level `power` path analogous to `host` (§2, §7.3); the compound-device pattern made
+explicit (§3); PA remote-on moved off the PA slot (`set_power`/RTS removed) onto the power
+layer; `pa-arm` realized by an M5 Stamp PLC (closing §11.3); and a `power-seq` sequencer
+owning the ordered, delay-and-confirmation startup/shutdown.
 
 The guiding idea: the live configuration is the documentation. A component, once
 connected, describes itself — who it is, what it can do, and what is currently true
@@ -92,6 +97,16 @@ Two rules make this enforceable:
   its config file alone; the only names an adapter may hard-code are the canonical
   vocabulary itself (roles, modes, field names) and facts about the device it fronts.
 
+**Site-level infrastructure sits outside the station path.** Not every node belongs to a
+transmitting station. Two non-station paths exist under the site:
+
+- `site/host/<name>` — compute nodes (§7.3).
+- `site/power/<name>` — power-distribution infrastructure that feeds *across* stations
+  (the station master mains, a shared 13.8 V PSU that powers both the HF and UHF radios,
+  the tuner, controllers, relay boards). These are shared upstream resources, so they do
+  not live under `hf/` or `uhf/`; like `host`, they are addressed at site level. A
+  station-scoped consumer (a sequencer, an operator) commands them like any other slot.
+
 ---
 
 ## 3. The slot template
@@ -164,8 +179,17 @@ on a switch port **and** an active control slot that follows band and frequency.
 
 A host is a compute node that runs adapters and services; it publishes its own
 liveness so the deployment topology is documented and its failure is visible. An
-embedded controller (an M5Stack PLC) collapses device, adapter, and host into a single
+embedded controller (an M5 Stamp PLC) collapses device, adapter, and host into a single
 node — custom firmware speaks the canonical schema directly.
+
+**Compound devices.** One physical device may publish **several slots**, each its own
+role and address with its own three planes. The slots are tied as one physical device by
+carrying the **same `device { model, serial }`** in their `/meta` — that shared attribute
+*is* the compound-device relationship; no extra mechanism is needed. The function slots
+carry control + semantics; a generic-surface slot (e.g. a read-only `digital-input`
+mirror) may additionally expose the raw hardware truth for monitoring (§6). Example: a
+single M5 Stamp PLC publishes `pa-arm` (safety arm relay) and `switch` (remote-on relays)
+as two slots with identical M5Stamp-PLC identity.
 
 ---
 
@@ -223,11 +247,19 @@ entirely).
 - **Roles:** `radio`, `pa`, `tuner`, `ant-switch`, `ant-ctrl` (controller that tunes or
   steers a passive antenna resource — the antenna itself remains a passive resource),
   `rotator`, `pol-ctrl`, `preamp` (function; may be a slot or a declared capability),
-  `bias-feed` (likewise), `reconciler`, `host`. Passive: `ant/*`, `mast/*`, `preamp/*`
-  (masthead LNA).
+  `bias-feed` (likewise), `reconciler`, `host`, and the power-control roles:
+  `power` (a supply switch — smart plug / contactor cutting mains or DC to a bank; one
+  on/off, declares `feeds`), `switch` (a generic multi-channel relay switch of
+  non-exclusive booleans; each channel declares its `kind` — `remote_on`, `enable`, or
+  `spare`; distinct from `ant-switch`, the exclusive 1-of-N selector), `pa-arm` (the
+  PA-enable arm relay; safety, heartbeat-driven, fail-safe-open), and `sequencer` (a
+  logic slot that runs an ordered, delay- and confirmation-based startup/shutdown over
+  other slots' `/cmd`). Passive: `ant/*`, `mast/*`, `preamp/*` (masthead LNA).
 - **Capability keys** seen so far: `bands`, `modes`, `receivers`, `diversity`,
   `amp_key`, `tune`, `bias_t`, `band_source`, `rf_sample`, `alc_out`, `hot_switch`,
-  `ports`, `off`, `exclusive`, `axes`, `polarizations`.
+  `ports`, `off`, `exclusive`, `axes`, `polarizations`, `feeds` (a `power` slot's
+  downstream slot addresses), `channels` + `kind` (a `switch` slot's relay channels),
+  `fail_safe` (`open`|`off` — the relay's de-energized/safe state), `heartbeat` (bool).
 - **`band_source`** (PA): how the amplifier's band is determined — `cat` (band data
   fed from the radio over a CAT link), `rf_sense` (the amp auto-switches by sensing
   the RF drive), or `manual` (only via `/cmd set_band`). Distinct from `rf_sample`
@@ -313,6 +345,13 @@ path enforces safe state during transitions and fails safe.
     hardware tune line, route the TUNE action through the automation so disarm leads.
   - *Port change:* a cold-switch-only switch (`hot_switch: false`) must have RF
     inhibited and RX confirmed before the port moves, auto or manual.
+  - *Station power-up/-down:* the supplies and remote-on triggers must come up in an
+    order with delays and liveness confirmations — mains before the network settles
+    (~30 s), the 13.8 V supply before the controllers that boot from it can actuate
+    anything, the radio before the PA, the PA powered before the arm permit. This
+    ordering lives in a `sequencer` logic slot (§7.1), not in the device bridges; the
+    bridges only report state. The sequencer is one writer of the power slots but does
+    not lock them — a channel stays directly toggleable for troubleshooting.
 
 ---
 
@@ -332,6 +371,34 @@ activity: { active | inactive }    # operator-set, never inferred; read by ladde
 Everything else a station might report (band, tx, readiness) already lives on the radio;
 deriving it here would only duplicate. The switch's fail-safe-to-ground default covers
 power loss independently of this flag.
+
+### 7.0 Power infrastructure (site level)
+
+The upstream supplies feed across both stations, so they sit at site level
+(`site/power/<name>`, §2) — not under `hf/` or `uhf/`. Both are Shelly smart plugs,
+formerly operated only through Home Assistant; brought onto the canonical bus by one
+`shelly-power-bridge` on `shari` (one process, two slots — a compound bridge). HA is
+thereafter one writer of these topics, not the control path (§9).
+
+**`muehle/power/master`** — Shelly plug, station master mains
+```
+role: power;  device: { model: "Shelly Plug …", serial };  link: wifi;  host: shari
+capabilities: fail_safe {off}                 # Shelly power-on default set to off
+state:        power {on|off}                  # actual, read from the Shelly
+intent:       set_power {on|off}             # /cmd retained (idempotent steady-state)
+```
+**`muehle/power/psu-13v8`** — Shelly plug, 13.8 V PSU
+```
+role: power;  device: { model: "Shelly Plug …", serial };  link: wifi;  host: shari
+capabilities: fail_safe {off}; feeds [hf/radio, uhf/radio, hf/tuner, hf/ant-ctrl,
+              hf/ant-switch, hf/rotator, hf/switch, hf/pa-arm]   # what this supply powers
+state:        power {on|off}
+intent:       set_power {on|off}             # /cmd retained
+```
+The 13.8 V supply is upstream of the HF radio, the UHF radio, the tuner, the ant-ctrl,
+the ant-switch, the HF rotator, **and the M5 Stamp PLCs** — so it must be on before any
+of them can actuate or report. The sequencer (§7.1) waits on their `/status` before
+proceeding.
 
 ### 7.1 Station `hf`
 
@@ -356,22 +423,21 @@ capabilities: bands [...]; max_power_w <spec>; band_source rf_sense; rf_sample f
               key_input hardware; alc_out true; modes [operate,standby]
 state:        online; mode {operate|standby|bypass}; band; keyed {rx|tx|inhibited};
               fwd_power_w; rfl_power_w; temp_c; fault {none|swr|temp|reflected};
-              power {on|off}
-intent:       set_band; set_mode {operate|standby}; set_power {on|off}; clear_fault
+              power {on|off}              # read-only telemetry now
+intent:       set_band; set_mode {operate|standby}; clear_fault
 ```
-`set_power` / `power` is an acom1200s-pa-bridge extension to the canonical PA
-contract: power-on asserts the host's RTS wake line over the serial cable (the
-amp boots to STB; with the CPU off no data command can wake it), power-off sends
-the graceful `0x0A` Turn-OFF data command then releases the line. `power` state
-is the *actual* power from telemetry (`off` only when the amp reports OFF).
-Recorded as a per-adapter extension (cf. §9 deviation notes); revisit if a
-second PA adapter needs a different mechanism.
+The PA's *own* power-on control line (a soft "remote power-on" input) is operated by a
+relay on `muehle/hf/switch` (§7.1), not by the PA bridge: the ACOM's RTS wake-line path
+was removed (it never worked). The PA slot only **observes** power — `power` is the
+*actual* state from telemetry (`off` only when the amp reports OFF); it is no longer a
+setpoint. Power-on/off of the PA is a power-distribution-layer concern; `pa.power`
+reflects the result. (The `set_power`/RTS extension is retired; see §7.1 `hf/switch`.)
 
-**`muehle/hf/ant-switch`** — wifi 1-to-5 (dumb actuator)
+**`muehle/hf/ant-switch`** — wifi 1-to-6 (dumb actuator)
 ```
-capabilities: ports [1,2,3,4,5]; off true; exclusive true; hot_switch false
-state:        online; selected {off|port1..port5}; settled
-intent:       select {off|port1..port5}
+capabilities: ports [1,2,3,4,5,6]; off true; exclusive true; hot_switch false
+state:        online; selected {off|port1..port6}; settled
+intent:       select {off|port1..port6}
 ```
 
 **`muehle/hf/tuner`** — ATR-1000 (BTR-1000 / N7DDC design), wifi (binary WebSocket)
@@ -399,10 +465,60 @@ and frequency; reports element/tuning state.
 **`muehle/hf/rx-loop-ctrl`** — K9AY controller. Reports loop direction; the loop preamp
 is a sub-state of this slot and is dropped by the hardware TX-low line.
 
-**`muehle/hf/pa-arm`** — the PA-enable relay. Publishes `armed`. Arm decision is soft
-(derived from `radio.tuning` and band safety); the AND with the hardware key line and
-the fail-safe-open default are hardware. Realized as a discrete M5Stack PLC with custom
-firmware — an embedded node that is device, adapter, and host in one.
+**`muehle/hf/switch`** — M5 Stamp PLC #1, remote-on relays (compound with `pa-arm`;
+same M5Stamp-PLC `device`). wifi, embedded.
+```
+capabilities: channels [pa, trx]; exclusive false; kind {pa: remote_on, trx: remote_on};
+              relay_map {pa: 3, trx: 4}
+state:        pa {on|off}; trx {on|off}        # relay positions, read back from relays 3 & 4
+intent:       set_pa {on|off}; set_trx {on|off}   # /cmd retained (idempotent)
+```
+The PA and TRX have pronounced "remote power-on" *control lines* (soft triggers, not
+mains cuts); this slot operates them via relays 3 (PA) and 4 (TRX). Closing a relay
+asserts the device's remote-on; opening it releases the trigger and the device
+soft-shuts. Powering the PA is a power-layer concern, not the PA slot's (see `pa`
+above); `pa.power` telemetry reflects the result. Relay 1 of the same PLC is the arm
+relay (`pa-arm`); relay 2 is spare.
+
+**`muehle/hf/pa-arm`** — M5 Stamp PLC #1, the PA-enable arm relay (relay 1; compound with
+`hf/switch`). Embedded safety node — device, adapter, and host in one (the formerly
+planned M5Stack, §11.3, now realized as the M5 Stamp PLC).
+```
+capabilities: fail_safe open; heartbeat true; relay 1
+state:        enabled bool; armed bool
+              # enabled = software arm-permit (last /cmd); armed = enabled ∧ radio_online
+              #   ∧ ¬radio.tuning ∧ band_safe ∧ heartbeat — the actual relay, fail-safe-open
+intent:       set_enabled {true|false}         # /cmd retained (steady-state permit)
+```
+Arm decision is the embedded firmware's: it subscribes `hf/radio/state` for `tuning`/`band`
+and computes `armed`; `armed` is never commanded directly (§6 software-arm-permit AND
+hardware key). Heartbeat is own liveness plus radio reachability — radio offline ⇒
+`armed` false; loss of 13.8 V ⇒ relay drops open (fail-safe). An operator/sequencer only
+sets the `enabled` permit.
+
+**`muehle/hf/power-seq`** — the station startup/shutdown sequencer (logic slot, `powerseq`
+on `shari`).
+```
+role: sequencer  # logic slot, no device
+subscribes: /status of power/master, power/psu-13v8, hf/switch, hf/pa-arm, hf/ant-switch,
+            hf/radio, hf/pa; and hf/pa/state.power
+state:      phase {idle|starting|running|stopping}; step <string>; fault (omitempty)
+intent:     start | stop                       # operator one-button; /cmd NOT retained
+```
+Startup (confirmations + delays): `power/master` on → ~30 s (network) → `power/psu-13v8`
+on → wait `hf/switch`, `hf/pa-arm`, `hf/ant-switch` `/status` online (they boot on 13.8 V)
+→ `hf/switch` trx on → wait `hf/radio` `/status` online → `hf/switch` pa on → wait
+`hf/pa` `power` on (the slot's `/status` must also be online, so a dead PA cannot pass
+on a stale retained `/state`) → `hf/pa-arm` set_enabled true (arms when safe). Shutdown
+is the reverse, with short staggers for inrush. The sequencer is **one writer** of these
+slots but does not lock them — any channel stays directly toggleable for troubleshooting
+while the sequencer is idle.
+
+This sequence is **config-driven** in `powerseq` (the `[[startup]]` / `[[shutdown]]`
+step lists in its TOML, each step `cmd` / `wait_status` / `wait_state` / `delay`); the
+text above is the default shipped in `config.example.toml`, not hard-coded. The
+subscribed topics and the `/meta` `controls`/`watches` are derived from the configured
+sequence, so a different setup defines a different sequence with no Go change.
 
 **`muehle/hf/antenna-select`** — reconciler/arbiter (logic slot)
 ```
@@ -427,7 +543,8 @@ host:       shari
 `ant/dummy-load` (port 1), `ant/k9ay-loop` (RX, via rx-loop-ctrl), `mast/ta16-hf`.
 
 **Adapters:** the `pa`, `tuner`, HF `rotator`, and `ant-ctrl` bridges run on host
-`shari`; `pa-arm` is a self-hosted M5Stack. See §7.3. The PA bridge talks to the ACOM
+`shari`; `pa-arm` + `switch` are a self-hosted M5 Stamp PLC; the Shelly power bridge and
+the `power-seq` sequencer run on `shari`. See §7.3. The PA bridge talks to the ACOM
 1200S over USB-serial (Prolific, 9600 8N1) for telemetry and manual `/cmd set_band`
 band-walk commands. There is no CAT band-data cable in this adapter; the amp auto-bands
 by sensing the RF drive (`band_source: rf_sense`), so band-follow is hardware RF-sense
@@ -441,14 +558,20 @@ override / pre-position path, not the primary follow mechanism.
 - `ant-ctrl.{band,freq}` ← `radio.{band,freq}` (via the controller map)
 - `ant-switch.select` ← arbiter(band_policy, wiring_map, ladder)
 - `ant-switch.select` → `off` when `station.activity = inactive` (ladder tier 1)
-- `pa-arm.armed` ← false while `radio.tuning`, fail-safe open, heartbeat-driven
+- `pa-arm.armed` ← `enabled ∧ ¬radio.tuning ∧ band_safe` (realized in the M5 Stamp
+  firmware, not the reconciler; fail-safe open, heartbeat-driven)
+- `power-seq.{start,stop}` ← operator one-button; the sequencer then issues the ordered
+  chain `power/master → power/psu-13v8 → hf/switch.trx → hf/switch.pa → hf/pa-arm` on
+  start (reverse on stop), gated on liveness confirmations and delays (§6, §7.1)
 
 **Hardware interlock chain (enforces; software mirrors only):**
 ```
-radio (TX low) → rx-loop-ctrl (preamp off) → ant-ctrl (inhibit if moving) → pa
+13.8 V PSU → M5 Stamp PLCs + ant-switch (boot on supply) → radio (remote-on) → pa (remote-on)
+radio (TX low) → rx-loop-ctrl (preamp off) → ant-ctrl (inhibit if moving) → pa-arm → pa
 ```
-Enforces: RX preamp protected on TX; no high-power TX while the beam moves; PA keys only
-when every link is closed.
+The first line is the power-on dependency: the supply must be up before the controllers
+can actuate or the radios can be triggered. The second is the RF safety chain; `pa-arm`
+sits in it (the arm relay ANDs with the hardware key line), fail-safe-open.
 
 ### 7.2 Station `uhf`
 
@@ -465,7 +588,7 @@ PSTRotator on host `shack-pc`. `capabilities: axes [az, el]`. Same role name as 
 rotator but a completely different control stack; a satellite-tracking consumer reads
 the axes rather than knowing the hardware.
 
-**`muehle/uhf/pol-ctrl`** — M5Stack PLC with custom firmware. `capabilities:
+**`muehle/uhf/pol-ctrl`** — M5 Stamp PLC #2 with custom firmware. `capabilities:
 polarizations [h, v, cl, cr]`. Settable state, operator-driven; no automatic binding.
 
 **Passive resources:** `ant/xquad-2m`, `ant/xquad-70cm`, `mast/ta16-vhf`,
@@ -500,8 +623,10 @@ muehle/host/shack-pc    # shack PC
 | FLEX bridge (flexbridge) | `hf/radio` | `shari` |
 | HF antenna-select reconciler | `hf/antenna-select` | `shari` |
 | Logging | subscriber, no slot | `shari` |
-| pol-ctrl firmware | `uhf/pol-ctrl` | embedded (M5Stack) |
-| pa-arm firmware | `hf/pa-arm` | embedded (M5Stack) |
+| Shelly power bridge (`shelly-power-bridge`) | `power/master`, `power/psu-13v8` | `shari` |
+| M5 Stamp #1 firmware (`m5stamp-hf-ctrl`) | `hf/pa-arm`, `hf/switch` | embedded (M5 Stamp PLC) |
+| M5 Stamp #2 firmware | `uhf/pol-ctrl` | embedded (M5 Stamp PLC) |
+| Power sequencer (`powerseq`) | `hf/power-seq` | `shari` |
 | HA discovery bridge (optional, `hadiscovery`) | consumer of `meta`/`state`/`status` | `shari` |
 
 Embedded controllers collapse device, adapter, and host into one node and are the
@@ -673,16 +798,18 @@ Stated plainly rather than left implied.
 
 All seven v0.1 items are resolved and folded in (hierarchy confirmed as stations; 23 cm
 out of scope; UHF polarization and preamps operator-only; devices identified; `pa-arm`
-an M5Stack; band policy set; tune routing through the automation). Residuals surfaced by
-those answers:
+an embedded M5 Stamp PLC; band policy set; tune routing through the automation). Residuals
+surfaced by those answers:
 
 1. ~~**160 m antenna.**~~ Resolved: no dedicated 160 m antenna. Unmatched bands (incl.
    160 m) fall back to the fan-dipole via the ATU (`band_policy.fallback` in
    `antenna-select`). Revisit if a resonant 160 m antenna is added.
 2. ~~**`shack-pc` roles.**~~ Resolved: shari hosts flexbridge (FLEX bridge), the reconciler,
    and logging. shack-pc hosts PSTRotator only.
-3. **`pa-arm` build.** Recorded as a discrete M5Stack PLC (from "perhaps another
-   M5StackPLC"); confirm once built rather than planned.
+3. ~~**`pa-arm` build.**~~ Resolved: realized as **M5 Stamp PLC #1** (`m5stamp-hf-ctrl`),
+   a compound embedded node publishing both `hf/pa-arm` (arm relay 1) and `hf/switch`
+   (remote-on relays 3 & 4). Formerly planned as a discrete M5Stack; the M5 Stamp PLC
+   supersedes it.
 
 ---
 

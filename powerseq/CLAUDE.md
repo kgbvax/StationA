@@ -24,7 +24,7 @@ It is **one writer** of those slots but does **not** lock them — any channel
 stays directly toggleable for troubleshooting while the sequencer is idle.
 
 Its name follows the stationa bridge-naming convention (logic-slot / service
-name `powerseq`; see `../stationa/docs/conventions/naming.md`).
+name `powerseq`; see `../docs/conventions/naming.md`).
 
 ---
 
@@ -148,7 +148,7 @@ POWERSEQ_MQTT_PASSWORD=<password>
 
 The systemd unit contains `EnvironmentFile=/etc/powerseq/powerseq.env`. Env
 overrides: `POWERSEQ_MQTT_BROKER`/`_CLIENT_ID`/`_USER`/`_PASSWORD`/`_SITE`. See
-`../stationa/docs/conventions/config-and-secrets.md`.
+`../docs/conventions/config-and-secrets.md`.
 
 ---
 
@@ -163,21 +163,20 @@ Target: Raspberry Pi (`shari`, `192.168.1.139`, user `io`).
 The unit is hardened like atr1k-tuner-bridge (network-only):
 `ProtectSystem=strict`, `PrivateDevices=true` (no serial devices),
 `RestrictAddressFamilies=AF_INET AF_INET6`, `MemoryMax=256M`, `TasksMax=64`.
-See `../stationa/docs/conventions/deployment.md`.
+See `../docs/conventions/deployment.md`.
 
 ---
 
 ## Station model and shared conventions
 
-Shared documentation lives in `../stationa/docs/` (the stationa meta-repo,
-cloned adjacent to this repo).
+Shared documentation lives in `../docs/` (this component is a subdirectory of the stationa monorepo).
 
 | Document | Path |
 |---|---|
-| Station integration model (§4 `sequencer` role, §7.1 `hf/power-seq` slot + the startup/shutdown sequence) | `../stationa/docs/station-integration-model.md` |
-| Config and secrets convention | `../stationa/docs/conventions/config-and-secrets.md` |
-| Deployment convention | `../stationa/docs/conventions/deployment.md` |
-| Bridge-naming convention | `../stationa/docs/conventions/naming.md` |
+| Station integration model (§4 `sequencer` role, §7.1 `hf/power-seq` slot + the startup/shutdown sequence) | `../docs/station-integration-model.md` |
+| Config and secrets convention | `../docs/conventions/config-and-secrets.md` |
+| Deployment convention | `../docs/conventions/deployment.md` |
+| Bridge-naming convention | `../docs/conventions/naming.md` |
 
 This project implements the `muehle/hf/power-seq` slot and must conform to those
 conventions. Component-specific schema lives in `docs/powerseq-mqtt-api.md`.

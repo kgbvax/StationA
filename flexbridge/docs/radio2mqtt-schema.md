@@ -273,7 +273,7 @@ homeassistant/<component>/muehle-hf-radio/<object_id>/config
 The entity set is the same six fields (frequency sensor, band sensor, mode sensor, drive
 sensor, transmitting binary_sensor, tuning binary_sensor), but rendered by `hadiscovery`
 from the neutral `expose` — flexbridge itself contains no HA knowledge. See
-`../stationa/hadiscovery/docs/discovery-mqtt-api.md` for the mapping.
+`../hadiscovery/docs/discovery-mqtt-api.md` for the mapping.
 
 ---
 

@@ -24,7 +24,7 @@ This is embedded firmware (Arduino C++ / PlatformIO), not a Go service on
 shari. It therefore uses its **own gitignored secrets file** (`src/secrets.h`,
 copied from `src/secrets.example.h`) — **not** the systemd EnvironmentFile
 convention, which is scoped to the Go services (see
-`../stationa/docs/conventions/config-and-secrets.md`).
+`../docs/conventions/config-and-secrets.md`).
 
 ---
 
@@ -137,20 +137,19 @@ map, band allow-list, heartbeat window). Secrets live in `src/secrets.h`
 
 This is the **embedded-firmware secrets pattern** (like the ant-switch
 ESPHome `secrets.yaml`), distinct from the Go services' EnvironmentFile. See
-`../stationa/docs/conventions/config-and-secrets.md`.
+`../docs/conventions/config-and-secrets.md`.
 
 ---
 
 ## Station model and shared conventions
 
-Shared documentation lives in `../stationa/docs/` (the stationa meta-repo,
-cloned adjacent to this repo).
+Shared documentation lives in `../docs/` (this component is a subdirectory of the stationa monorepo).
 
 | Document | Path |
 |---|---|
-| Station integration model (§3 compound device, §4 `switch`/`pa-arm` roles, §6 arm safety, §7.1 slot blocks) | `../stationa/docs/station-integration-model.md` |
-| Config and secrets convention (embedded-firmware pattern) | `../stationa/docs/conventions/config-and-secrets.md` |
-| Bridge-naming convention | `../stationa/docs/conventions/naming.md` |
+| Station integration model (§3 compound device, §4 `switch`/`pa-arm` roles, §6 arm safety, §7.1 slot blocks) | `../docs/station-integration-model.md` |
+| Config and secrets convention (embedded-firmware pattern) | `../docs/conventions/config-and-secrets.md` |
+| Bridge-naming convention | `../docs/conventions/naming.md` |
 
 This firmware implements the `muehle/hf/switch` + `muehle/hf/pa-arm` slots and
 must conform to those conventions. Component-specific schema lives in

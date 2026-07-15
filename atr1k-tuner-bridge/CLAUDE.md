@@ -12,7 +12,7 @@ non-resonant bands via the `tuner.set_inline` soft binding (integration model
 
 This bridge is the ATR-1000 / N7DDC family member; its name follows the
 stationa bridge-naming convention `<devtag>-<function>-bridge`
-(see `../stationa/docs/conventions/naming.md`).
+(see `../docs/conventions/naming.md`).
 
 ---
 
@@ -119,7 +119,7 @@ Env overrides: `ATR1K_TUNER_BRIDGE_MQTT_BROKER`/`_CLIENT_ID`/`_USER`/`_PASSWORD`
 `_SITE`/`_STATION`/`_SLOT`, `ATR1K_TUNER_BRIDGE_TUNER_URL`. The env prefix is
 the dir name uppercased with hyphens → underscores (naming convention).
 
-See `../stationa/docs/conventions/config-and-secrets.md` for the full convention.
+See `../docs/conventions/config-and-secrets.md` for the full convention.
 
 ---
 
@@ -135,22 +135,21 @@ The unit is hardened like wrcrotorbridge (network-only): `ProtectSystem=strict`,
 `PrivateDevices=true` (no serial devices), `RestrictAddressFamilies=AF_INET
 AF_INET6` (covers the outbound ATU WS + MQTT), `MemoryMax=256M`, `TasksMax=64`.
 There is no udev rule and no `DeviceAllow` — the bridge makes outbound TCP
-connections only. See `../stationa/docs/conventions/deployment.md`.
+connections only. See `../docs/conventions/deployment.md`.
 
 ---
 
 ## Station model and shared conventions
 
-Shared documentation lives in `../stationa/docs/` (the stationa meta-repo,
-cloned adjacent to this repo).
+Shared documentation lives in `../docs/` (this component is a subdirectory of the stationa monorepo).
 
 | Document | Path |
 |---|---|
-| Station integration model (three-plane MQTT contract, §7.1 tuner slot) | `../stationa/docs/station-integration-model.md` |
-| Config and secrets convention | `../stationa/docs/conventions/config-and-secrets.md` |
-| Deployment convention | `../stationa/docs/conventions/deployment.md` |
-| Bridge-naming convention (`<devtag>-<function>-bridge`) | `../stationa/docs/conventions/naming.md` |
-| Canonical band/mode vocabulary (not used by a tuner) | `../stationa/docs/conventions/band-mode-reference.md` |
+| Station integration model (three-plane MQTT contract, §7.1 tuner slot) | `../docs/station-integration-model.md` |
+| Config and secrets convention | `../docs/conventions/config-and-secrets.md` |
+| Deployment convention | `../docs/conventions/deployment.md` |
+| Bridge-naming convention (`<devtag>-<function>-bridge`) | `../docs/conventions/naming.md` |
+| Canonical band/mode vocabulary (not used by a tuner) | `../docs/conventions/band-mode-reference.md` |
 
 This project implements the `muehle/hf/tuner` slot and must conform to those
 conventions. Component-specific schema lives in

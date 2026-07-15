@@ -117,7 +117,7 @@ The systemd unit contains `EnvironmentFile=/etc/acom1200s-pa-bridge/acom1200s-pa
 Env overrides: `ACOM1200S_PA_BRIDGE_MQTT_BROKER`/`_CLIENT_ID`/`_USER`/`_PASSWORD`/
 `_SITE`/`_STATION`/`_SLOT`, `ACOM1200S_PA_BRIDGE_SERIAL_PORT`.
 
-See `../stationa/docs/conventions/config-and-secrets.md` for the full convention.
+See `../docs/conventions/config-and-secrets.md` for the full convention.
 
 ---
 
@@ -141,7 +141,7 @@ old user. Idempotent — safe to re-run. Ordering matters: migration first, then
 The unit is hardened like flexbridge **minus `PrivateDevices`** (the bridge
 must open `/dev/ttyUSB*`). It keeps `SupplementaryGroups=dialout`, the three
 `DeviceAllow=char-tty{USB,ACM} rw`, and the Prolific (`067b`) udev rule that
-pins the adapter's tty to the dialout group. See `../stationa/docs/conventions/deployment.md`
+pins the adapter's tty to the dialout group. See `../docs/conventions/deployment.md`
 (serial addendum) for the serial-specific hardening requirements.
 
 ---
@@ -155,15 +155,14 @@ for frame layout and byte offsets used in `internal/acom/parser.go`.
 
 ## Station model and shared conventions
 
-Shared documentation lives in `../stationa/docs/` (the stationa meta-repo,
-cloned adjacent to this repo).
+Shared documentation lives in `../docs/` (this component is a subdirectory of the stationa monorepo).
 
 | Document | Path |
 |---|---|
-| Station integration model (three-plane MQTT contract, §7.1 PA slot) | `../stationa/docs/station-integration-model.md` |
-| Config and secrets convention | `../stationa/docs/conventions/config-and-secrets.md` |
-| Deployment convention (serial addendum) | `../stationa/docs/conventions/deployment.md` |
-| Canonical band/mode vocabulary | `../stationa/docs/conventions/band-mode-reference.md` |
+| Station integration model (three-plane MQTT contract, §7.1 PA slot) | `../docs/station-integration-model.md` |
+| Config and secrets convention | `../docs/conventions/config-and-secrets.md` |
+| Deployment convention (serial addendum) | `../docs/conventions/deployment.md` |
+| Canonical band/mode vocabulary | `../docs/conventions/band-mode-reference.md` |
 
 This project implements the `muehle/hf/pa` slot and must conform to those
 conventions. Component-specific schema lives in `docs/pa-mqtt-api.md`.

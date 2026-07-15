@@ -8,7 +8,7 @@
 # The MQTT password is NOT kept here — it is loaded from the ACOM1200S_PA_BRIDGE_MQTT_PASSWORD
 # environment variable (systemd EnvironmentFile /etc/acom1200s-pa-bridge/acom1200s-pa-bridge.env, 0600),
 # so it never appears in the TOML, the unit file, or the process command line.
-# See ../stationa/docs/conventions/config-and-secrets.md.
+# See ../docs/conventions/config-and-secrets.md.
 
 # host is the compute node this adapter runs on (published in /meta, model §8.1).
 host = "shari"

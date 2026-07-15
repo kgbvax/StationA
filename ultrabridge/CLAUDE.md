@@ -126,8 +126,7 @@ See `../docs/conventions/deployment.md` for the general pattern.
 
 ## Station model and shared conventions
 
-Shared documentation lives in `../docs/` (this repo is a subdirectory of the stationa
-meta-repo).
+Shared documentation lives in `../docs/` (this component is a subdirectory of the stationa monorepo).
 
 | Document | Path |
 |---|---|

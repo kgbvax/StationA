@@ -18,7 +18,7 @@ onto the canonical bus so the sequencer (`powerseq`) and operators drive them
 directly.
 
 See `CLAUDE.md` for architecture and `docs/shelly-power-bridge-mqtt-api.md` for
-the on-the-wire contract. Shared conventions live in `../stationa/docs/`.
+the on-the-wire contract. Shared conventions live in `../docs/`.
 
 ---
 
@@ -46,4 +46,4 @@ Config is a 0600 TOML file (`/etc/shelly-power-bridge/config.toml`) with one
 `[[slot]]` per Shelly. See `config.example.toml`. The MQTT password is **not**
 in the TOML — it is loaded from an `EnvironmentFile`
 (`/etc/shelly-power-bridge/shelly-power-bridge.env`) per the
-[config-and-secrets convention](../stationa/docs/conventions/config-and-secrets.md).
+[config-and-secrets convention](../docs/conventions/config-and-secrets.md).

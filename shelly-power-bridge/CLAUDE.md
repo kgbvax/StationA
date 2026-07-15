@@ -19,7 +19,7 @@ directly and HA becomes one writer among many.
 The bridge is **read-write**: it observes the Shelly native relay state and
 commands the relay over the Gen2+ RPC-over-MQTT topic. Its name follows the
 stationa bridge-naming convention `<devtag>-<function>-bridge`
-(see `../stationa/docs/conventions/naming.md`).
+(see `../docs/conventions/naming.md`).
 
 ---
 
@@ -135,7 +135,7 @@ Env overrides: `SHELLY_POWER_BRIDGE_MQTT_BROKER`/`_CLIENT_ID`/`_USER`/`_PASSWORD
 `_SITE`. Per-slot values come from the TOML only. The env prefix is the dir name
 uppercased with hyphens → underscores (naming convention).
 
-See `../stationa/docs/conventions/config-and-secrets.md` for the full convention.
+See `../docs/conventions/config-and-secrets.md` for the full convention.
 
 ---
 
@@ -153,21 +153,20 @@ The unit is hardened like atr1k-tuner-bridge (network-only):
 `ProtectSystem=strict`, `PrivateDevices=true` (no serial devices),
 `RestrictAddressFamilies=AF_INET AF_INET6` (covers the outbound MQTT),
 `MemoryMax=256M`, `TasksMax=64`. There is no udev rule and no `DeviceAllow` —
-the bridge is a broker client only. See `../stationa/docs/conventions/deployment.md`.
+the bridge is a broker client only. See `../docs/conventions/deployment.md`.
 
 ---
 
 ## Station model and shared conventions
 
-Shared documentation lives in `../stationa/docs/` (the stationa meta-repo,
-cloned adjacent to this repo).
+Shared documentation lives in `../docs/` (this component is a subdirectory of the stationa monorepo).
 
 | Document | Path |
 |---|---|
-| Station integration model (three-plane MQTT contract, §4 `power` role, §7.0 power slots) | `../stationa/docs/station-integration-model.md` |
-| Config and secrets convention | `../stationa/docs/conventions/config-and-secrets.md` |
-| Deployment convention | `../stationa/docs/conventions/deployment.md` |
-| Bridge-naming convention (`<devtag>-<function>-bridge`) | `../stationa/docs/conventions/naming.md` |
+| Station integration model (three-plane MQTT contract, §4 `power` role, §7.0 power slots) | `../docs/station-integration-model.md` |
+| Config and secrets convention | `../docs/conventions/config-and-secrets.md` |
+| Deployment convention | `../docs/conventions/deployment.md` |
+| Bridge-naming convention (`<devtag>-<function>-bridge`) | `../docs/conventions/naming.md` |
 
 This project implements the `muehle/power/*` slots and must conform to those
 conventions. Component-specific schema lives in

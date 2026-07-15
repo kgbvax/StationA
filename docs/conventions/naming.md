@@ -1,6 +1,10 @@
 # Bridge-naming convention
 
-How the stationa component repos / binaries / systemd services are named.
+How the stationa components / binaries / systemd services are named.
+
+> All components live in one git repo (a Go workspace, `go.work`, with a shared
+> `codeberg.org/kgbvax/stationa/shared` module); "component repo" below is a
+> historical term for what is now a subdirectory. See the stationa `CLAUDE.md`.
 
 The station integration model addresses every slot by a **canonical role**
 (`radio`, `pa`, `tuner`, `rotator`, `ant-ctrl`…) — never a product name. The device is an
@@ -40,6 +44,15 @@ A bridge that fronts one specific piece of hardware is named
 | AF6SA WRC controller | `wrc` | `wrc-rotator-bridge` |
 | Pelco-D protocol | `pelcod` | `pelcod-rotator-bridge` |
 | WaveShare relay-board family (ESPHome-managed relay expanders, e.g. PCA9554) | `waveshare_relay` | `waveshare_relay-antswitch-bridge` |
+| Shelly smart-plug family (HTTP/MQTT API) | `shelly` | `shelly-power-bridge` |
+| M5Stamp PLC family (embedded relay/DI controller, custom firmware) | `m5stamp` | `m5stamp-hf-ctrl` (firmware) |
+
+> **Embedded firmware is not a Go bridge.** The M5Stamp PLC row names the *firmware*
+> project, not a `-bridge` binary — like the ant-switch, the M5 Stamp's custom firmware
+> speaks the canonical schema directly over MQTT (device, adapter, and host collapsed
+> into one embedded node). The firmware repo name follows `<devtag>-<role-or-site>-…`;
+> `m5stamp-hf-ctrl` fronts the HF station's `pa-arm` + `switch` slots (a compound device,
+> integration-model §3). The same family fronts `uhf/pol-ctrl` on a second M5 Stamp.
 
 > **Deviation — `waveshare_relay`:** the `<devtag>` for this row uses an underscore
 > rather than a hyphen (`waveshare_relay` vs. `waveshare-relay`). This is a deliberate
@@ -89,3 +102,6 @@ number) per the rule above.
 | `hadiscovery` | — | logic slot (exception) |
 | _(new)_ `atr1k-tuner-bridge` | `atr1k-tuner-bridge` | device (convention; ATR-1000 / N7DDC family) |
 | _(renamed)_ `antswitchbridge` | `waveshare_relay-antswitch-bridge` | device (formerly contract-first exception; **renamed 2026-07** to follow the family-tag pattern; `_` in `waveshare_relay` is a recorded deviation, see §1) |
+| _(new)_ `shelly-power-bridge` | `shelly-power-bridge` | device (convention; Shelly family; fronts `power/master` + `power/psu-13v8`) |
+| _(new)_ `m5stamp-hf-ctrl` | `m5stamp-hf-ctrl` | embedded firmware (M5Stamp family; fronts `hf/pa-arm` + `hf/switch`) |
+| _(new)_ `powerseq` | — | logic slot (exception; the `hf/power-seq` sequencer) |

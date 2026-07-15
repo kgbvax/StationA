@@ -49,16 +49,15 @@ pelcots drives a Pelco-D PTZ/rotator. The central design choice is a **headless 
 
 ## Station model and shared conventions
 
-Shared documentation lives in `../stationa/docs/` (the stationa meta-repo, cloned
-adjacent to this repo).
+Shared documentation lives in `../docs/` (this component is a subdirectory of the stationa monorepo).
 
 | Document | Path |
 |---|---|
-| Station integration model (three-plane MQTT contract) | `../stationa/docs/station-integration-model.md` |
-| Config and secrets convention | `../stationa/docs/conventions/config-and-secrets.md` |
-| Deployment convention | `../stationa/docs/conventions/deployment.md` |
-| Canonical band/mode vocabulary | `../stationa/docs/conventions/band-mode-reference.md` |
+| Station integration model (three-plane MQTT contract) | `../docs/station-integration-model.md` |
+| Config and secrets convention | `../docs/conventions/config-and-secrets.md` |
+| Deployment convention | `../docs/conventions/deployment.md` |
+| Canonical band/mode vocabulary | `../docs/conventions/band-mode-reference.md` |
 
 This project implements the `muehle/hf/rotator` slot. When aligning this bridge with
 the station model, the component-specific MQTT schema should be documented in `docs/`
-in this repo following the template at `../stationa/docs/templates/mqtt-schema.md`.
+in this repo following the template at `../docs/templates/mqtt-schema.md`.

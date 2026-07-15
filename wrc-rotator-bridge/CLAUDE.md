@@ -115,7 +115,7 @@ The systemd unit contains `EnvironmentFile=/etc/wrc-rotator-bridge/wrc-rotator-b
 Env overrides: `WRC_ROTATOR_BRIDGE_MQTT_BROKER`/`_CLIENT_ID`/`_USER`/`_PASSWORD`/
 `_SITE`/`_STATION`/`_SLOT`, `WRC_ROTATOR_BRIDGE_ROTOR_URL`.
 
-See `../stationa/docs/conventions/config-and-secrets.md` for the full convention.
+See `../docs/conventions/config-and-secrets.md` for the full convention.
 
 ---
 
@@ -154,21 +154,20 @@ The unit is hardened like flexbridge (network-only): `ProtectSystem=strict`,
 AF_INET6` (covers the outbound WRC+MQTT and the inbound GS-232 listen),
 `MemoryMax=256M`, `TasksMax=64`. There is no udev rule and no `DeviceAllow` —
 the bridge makes outbound TCP connections only (plus the GS-232 listen). See
-`../stationa/docs/conventions/deployment.md`.
+`../docs/conventions/deployment.md`.
 
 ---
 
 ## Station model and shared conventions
 
-Shared documentation lives in `../stationa/docs/` (the stationa meta-repo,
-cloned adjacent to this repo).
+Shared documentation lives in `../docs/` (this component is a subdirectory of the stationa monorepo).
 
 | Document | Path |
 |---|---|
-| Station integration model (three-plane MQTT contract, §7.1 rotator slot) | `../stationa/docs/station-integration-model.md` |
-| Config and secrets convention | `../stationa/docs/conventions/config-and-secrets.md` |
-| Deployment convention | `../stationa/docs/conventions/deployment.md` |
-| Canonical band/mode vocabulary (not used by a rotator) | `../stationa/docs/conventions/band-mode-reference.md` |
+| Station integration model (three-plane MQTT contract, §7.1 rotator slot) | `../docs/station-integration-model.md` |
+| Config and secrets convention | `../docs/conventions/config-and-secrets.md` |
+| Deployment convention | `../docs/conventions/deployment.md` |
+| Canonical band/mode vocabulary (not used by a rotator) | `../docs/conventions/band-mode-reference.md` |
 
 This project implements the `muehle/hf/rotator` slot and must conform to those
 conventions. Component-specific schema lives in `docs/wrc-rotator-bridge-mqtt-api.md`.

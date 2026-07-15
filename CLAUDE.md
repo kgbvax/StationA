@@ -1,8 +1,21 @@
-# CLAUDE.md — stationa meta-repo
+# CLAUDE.md — stationa monorepo
 
-This repo contains shared documentation for the Mühle station automation ecosystem.
-No Go code lives here at the top level. Each component project is a separately-tracked
-git repo nested as a subdirectory of this one (and gitignored here).
+This is a single git repository holding the whole Mühle station-automation ecosystem:
+shared documentation **and** all component projects as subdirectories. The Go
+components are a [Go workspace](https://go.dev/ref/mod#workspaces) tied together by a
+root `go.work`; each component keeps its own `go.mod` (per-module, independently
+`go build`/`go test`-able). A shared module, `codeberg.org/kgbvax/stationa/shared`,
+holds cross-cutting plumbing (`shared/mqtt`, `shared/schema`, later `shared/config`);
+every Go component imports it via a `replace … => ../shared` so each stays self-building
+without the workspace. Bridges import `shared/` but never another bridge's `internal/`
+— enforced by Go's `internal/` visibility rule across separate modules, not just
+convention. Non-Go components (`waveshare_relay-antswitch-bridge` = ESPHome YAML,
+`m5stamp-hf-ctrl` = PlatformIO firmware) live alongside as plain subdirectories and are
+not in `go.work`.
+
+The projects below were previously standalone git repos nested here and gitignored;
+they have been folded into this repo with history (`git subtree`). There are no longer
+separate per-component remotes to push to.
 
 ---
 
@@ -17,11 +30,16 @@ git repo nested as a subdirectory of this one (and gitignored here).
 | pelcobridge | `pelcobridge/` | Pelco-D rotator controller (UHF sat rotator) |
 | atr1k-tuner-bridge | `atr1k-tuner-bridge/` | ATR-1000 ATU bridge (in-line/bypass + tune, binary WebSocket) |
 | waveshare_relay-antswitch-bridge | `waveshare_relay-antswitch-bridge/` | 1:6 antenna switch bridge (ESPHome, WaveShare relay-board family) |
+| shelly-power-bridge | `shelly-power-bridge/` | Shelly smart-plug bridge → `power/master` + `power/psu-13v8` (supply layer) |
+| m5stamp-hf-ctrl | `m5stamp-hf-ctrl/` | M5 Stamp PLC #1 firmware → `hf/pa-arm` + `hf/switch` (PA/TRX remote-on + arm) |
+| powerseq | `powerseq/` | Startup/shutdown sequencer → `hf/power-seq` (ordered, delay + liveness confirmations) |
 | antennaselect | `antennaselect/` | Antenna-selection reconciler (core implemented) |
 | hadiscovery | `hadiscovery/` | Home Assistant discovery consumer (reads `/meta` `expose`, renders HA discovery) |
 
-Each project has its own `CLAUDE.md` and is independently buildable. Open a project
-by navigating into its directory.
+Each project has its own `CLAUDE.md` and is independently buildable (`go build`/`go test`
+from its own directory works without the workspace, via the `replace … => ../shared`).
+Open a project by navigating into its directory. From the repo root, `go build ./...`
+and `go work sync` operate over the whole workspace at once.
 
 ---
 
@@ -29,14 +47,20 @@ by navigating into its directory.
 
 | Slot address | Component | Physical device |
 |-------------|-----------|-----------------|
+| `muehle/power/master` | shelly-power-bridge | Shelly plug — station master mains, wifi |
+| `muehle/power/psu-13v8` | shelly-power-bridge | Shelly plug — 13.8 V PSU (site-level; feeds HF+UHF), wifi |
 | `muehle/hf/radio` | flexbridge | FLEX-8400, ethernet |
 | `muehle/hf/ant-ctrl` | ultrabridge | Ultrabeam RCU-06, USB-serial via FTDI |
 | `muehle/hf/ant-switch` | waveshare_relay-antswitch-bridge | 1:6 antenna switch, wifi (ESPHome) |
+| `muehle/hf/switch` | m5stamp-hf-ctrl | M5 Stamp PLC #1 — PA/TRX remote-on relays (relays 3 & 4), wifi |
+| `muehle/hf/pa-arm` | m5stamp-hf-ctrl | M5 Stamp PLC #1 — PA arm relay (relay 1), wifi |
 | `muehle/hf/antenna-select` | antennaselect | logic slot — no device (runs on shari) |
-| `muehle/hf/pa` | acom1200s-pa-bridge | ACOM 1200S, serial |
+| `muehle/hf/pa` | acom1200s-pa-bridge | ACOM 1200S, serial (`set_power`/RTS removed; `power` is telemetry only) |
 | `muehle/hf/rotator` | wrc-rotator-bridge | Yaesu G-450DC via AF6SA WRC, websocket |
 | `muehle/hf/tuner` | atr1k-tuner-bridge | ATR-1000 ATU, wifi (binary WebSocket) |
+| `muehle/hf/power-seq` | powerseq | logic slot — no device (runs on shari); startup/shutdown sequencer |
 | `muehle/uhf/rotator` | pelcobridge | UHF sat rotator, Pelco-D, serial |
+| `muehle/uhf/pol-ctrl` | m5stamp-hf-ctrl (PLC #2) | M5 Stamp PLC #2 — X-Quad polarization, wifi |
 | `muehle/hf/discovery` | hadiscovery | logic slot — no device (runs on shari); passive consumer of `/meta` |
 
 **Antennas are not slots.** `ant-ctrl` is the *controller* that tunes the Ultrabeam
@@ -91,9 +115,11 @@ All shared docs are in `docs/` in this repo:
 | Canonical band/mode reference | `docs/conventions/band-mode-reference.md` |
 | MQTT schema template | `docs/templates/mqtt-schema.md` |
 
-The component repos are nested inside this one, so the shared docs path relative to
-any component is `../docs/` (e.g. `../docs/station-integration-model.md` from
-`flexbridge/`).
+All components live as subdirectories of this one repo, so the shared docs path
+relative to any component is `../docs/` (e.g. `../docs/station-integration-model.md`
+from `flexbridge/`). Cross-cutting Go code, not docs, lives in the `shared/` module
+(see the intro); components reference shared docs as `../docs/…` and shared code as
+`codeberg.org/kgbvax/stationa/shared/…`.
 
 ---
 
@@ -133,3 +159,10 @@ All components follow these shared conventions:
 8. **Bridge naming** — device bridges are `<devtag>-<function>-bridge` where
    `<devtag>` is the device family/control interface (e.g. `atr1k-tuner-bridge`)
    (see `docs/conventions/naming.md`)
+9. **Shared module for cross-cutting plumbing** — the paho connect / background
+   job-queue (`shared/mqtt`) and topic helpers + `/cmd` `value`-key convention
+   (`shared/schema`) live in `codeberg.org/kgbvax/stationa/shared`, not duplicated
+   per bridge. A bridge imports `shared/` but never another bridge's `internal/`
+   (Go's `internal/` rule enforces this). Each module's `go.mod` carries both the
+   `require` and a `replace … => ../shared` so it builds without the workspace;
+   the root `go.work` ties the modules together for whole-repo `go build ./...`.

@@ -3,7 +3,7 @@
 // the power-distribution + HF slots (and hf/pa/state) and, on the operator
 // one-button /cmd (start|stop), runs an ordered startup or shutdown over those
 // slots' retained /cmd with delays and liveness confirmations. See
-// docs/powerseq-mqtt-api.md and ../stationa/docs/station-integration-model.md §7.1.
+// docs/powerseq-mqtt-api.md and ../docs/station-integration-model.md §7.1.
 package main
 
 import (

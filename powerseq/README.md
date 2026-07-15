@@ -25,7 +25,7 @@ The default sequence (model §7.1, shipped in `config.example.toml`):
 enabled. **Shutdown** is the reverse with short staggers for inrush.
 
 See `CLAUDE.md` for architecture and `docs/powerseq-mqtt-api.md` for the
-on-the-wire contract. Shared conventions live in `../stationa/docs/`.
+on-the-wire contract. Shared conventions live in `../docs/`.
 
 ---
 
@@ -56,4 +56,4 @@ shutdown stagger, poll interval, default hold), `[log]`, and the config-driven
 full schema and the model §7.1 default sequence. The MQTT password is **not** in
 the TOML — it is loaded from an `EnvironmentFile` (`/etc/powerseq/powerseq.env`)
 per the
-[config-and-secrets convention](../stationa/docs/conventions/config-and-secrets.md).
+[config-and-secrets convention](../docs/conventions/config-and-secrets.md).

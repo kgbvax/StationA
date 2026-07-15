@@ -11,14 +11,13 @@ The ATU sits in the HF TX path; this slot does not drive TX itself — the
 `antennaselect` reconciler engages the ATU in-line for non-resonant bands via
 the `tuner.set_inline` soft binding (integration model §7.1, §10 residual).
 
-It is part of the Mühle station automation ecosystem; see the meta-repo at
-`../stationa/` for the shared integration model and conventions.
+It is part of the Mühle station automation ecosystem; see `../docs/` for the shared integration model and conventions.
 
 ## Context — stationa and the adapter model
 
 atr1k-tuner-bridge is one of a family of thin **adapters** in the *stationa*
 ecosystem. The ecosystem is organised around a strict, vendor-neutral
-**station integration model** (see `../stationa/docs/station-integration-model.md`):
+**station integration model** (see `../docs/station-integration-model.md`):
 every device is fronted by a disposable adapter that translates the vendor's
 proprietary protocol into a canonical, three-plane MQTT contract at a fixed
 slot address. The contract is *configuration-as-documentation* — each adapter
@@ -176,11 +175,11 @@ file on the device (or delete it and redeploy to re-seed).
 
 | Document | Path |
 |---|---|
-| Station integration model (§7.1 tuner slot) | `../stationa/docs/station-integration-model.md` |
-| Config and secrets convention | `../stationa/docs/conventions/config-and-secrets.md` |
-| Deployment convention | `../stationa/docs/conventions/deployment.md` |
-| Bridge-naming convention (`<devtag>-<function>-bridge`) | `../stationa/docs/conventions/naming.md` |
-| Canonical band/mode vocabulary (not used by a tuner) | `../stationa/docs/conventions/band-mode-reference.md` |
+| Station integration model (§7.1 tuner slot) | `../docs/station-integration-model.md` |
+| Config and secrets convention | `../docs/conventions/config-and-secrets.md` |
+| Deployment convention | `../docs/conventions/deployment.md` |
+| Bridge-naming convention (`<devtag>-<function>-bridge`) | `../docs/conventions/naming.md` |
+| Canonical band/mode vocabulary (not used by a tuner) | `../docs/conventions/band-mode-reference.md` |
 | Tuner slot MQTT schema | `docs/atr1k-tuner-bridge-mqtt-api.md` |
 
 ## License

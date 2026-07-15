@@ -6,8 +6,7 @@ reads the amplifier's proprietary serial protocol over a USB-serial adapter,
 publishes a canonical PA state snapshot, and accepts `/cmd` intent to switch
 operating mode and select the active band.
 
-It is part of the Mühle station automation ecosystem; see the meta-repo at
-`../stationa/` for the shared integration model and conventions.
+It is part of the Mühle station automation ecosystem; see `../docs/` for the shared integration model and conventions.
 
 ## Requirements
 
@@ -149,8 +148,8 @@ for frame layout and byte offsets used in `internal/acom/parser.go`.
 
 | Document | Path |
 |---|---|
-| Station integration model (§7.1 PA slot) | `../stationa/docs/station-integration-model.md` |
-| Config and secrets convention | `../stationa/docs/conventions/config-and-secrets.md` |
-| Deployment convention (serial addendum) | `../stationa/docs/conventions/deployment.md` |
-| Canonical band/mode vocabulary | `../stationa/docs/conventions/band-mode-reference.md` |
+| Station integration model (§7.1 PA slot) | `../docs/station-integration-model.md` |
+| Config and secrets convention | `../docs/conventions/config-and-secrets.md` |
+| Deployment convention (serial addendum) | `../docs/conventions/deployment.md` |
+| Canonical band/mode vocabulary | `../docs/conventions/band-mode-reference.md` |
 | PA slot MQTT schema | `docs/pa-mqtt-api.md` |

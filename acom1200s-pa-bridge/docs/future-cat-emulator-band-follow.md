@@ -23,7 +23,7 @@ keeps emitting `{"action":"set_band","value":"15m"}` exactly as today; only
 acom1200s-pa-bridge's *implementation* of `SetBand` changes.
 
 This is the path the docs already anticipate: `band_source: "cat"` is a defined
-model value (`../stationa/docs/station-integration-model.md:231-234`), and
+model value (`../docs/station-integration-model.md:231-234`), and
 `docs/pa-mqtt-api.md:238` says *"Band follows the radio via CAT in normal operation;
 this command is for manual override."* The code never implemented it; this would.
 
@@ -186,7 +186,7 @@ avoids a fragile runtime write. Mark optional; not on the critical path.
 ### 8. Docs
 - `docs/pa-mqtt-api.md`: `band_source` now `cat` when `[cat]` enabled; reconcile the
   set_band section (lines ~231-239) to describe absolute-via-CAT vs walk-fallback.
-- `../stationa/docs/conventions/deployment.md` serial addendum (after the udev
+- `../docs/conventions/deployment.md` serial addendum (after the udev
   section): two-adapter case — group/`DeviceAllow` already cover a 2nd tty, by-id
   must differ, and the udev-broaden vs second-rule choice from the hardware section.
 
