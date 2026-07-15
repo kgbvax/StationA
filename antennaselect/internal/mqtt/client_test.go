@@ -1,6 +1,7 @@
 package mqtt
 
 import (
+	"context"
 	"encoding/json"
 	"sync"
 	"sync/atomic"
@@ -8,6 +9,8 @@ import (
 	"time"
 
 	paho "github.com/eclipse/paho.mqtt.golang"
+
+	sharedmqtt "codeberg.org/kgbvax/stationa/shared/mqtt"
 
 	"antennaselect/internal/config"
 	"antennaselect/internal/reconcile"
@@ -95,12 +98,14 @@ func TestOnRadioStateDefersReconcile(t *testing.T) {
 	// Minimal reconciler: update() reaches publishJSON on the first call regardless of the
 	// decision (haveDecision is false), so the publish — and thus the block — is hit.
 	rec := reconcile.New(config.Config{})
+	ctx, cancel := context.WithCancel(context.Background())
 	c := &Client{
 		client: fake,
 		rec:    rec,
 		site:   "s", station: "st", slot: "sl",
-		jobs: make(chan func(), 256),
-		done: make(chan struct{}),
+		jobs:   make(chan func(), 256),
+		ctx:    ctx,
+		cancel: cancel,
 	}
 	// The worker is started only after the Phase-1 calls==0 check below, so that
 	// assertion is deterministic — no goroutine is draining the queue while
@@ -130,14 +135,14 @@ func TestOnRadioStateDefersReconcile(t *testing.T) {
 	}
 
 	// Phase 2 — the worker runs the deferred update and reaches the blocking publish.
-	go c.runJobs()
+	go sharedmqtt.RunJobs(ctx, c.jobs)
 	select {
 	case <-reached:
 	case <-time.After(time.Second):
 		t.Fatal("worker never reached the deferred publish")
 	}
 	close(release) // let the publish complete
-	close(c.done)  // tell the worker to exit
+	cancel()       // tell the worker to exit (cancels its ctx)
 }
 
 // TestPABandFollowPublishesSetBandNotRetained drives update() with a SetBand-producing
@@ -177,7 +182,6 @@ func TestPABandFollowPublishesSetBandNotRetained(t *testing.T) {
 		rec:    reconcile.New(cfg),
 		site:   "muehle", station: "hf", slot: "antenna-select",
 		jobs: make(chan func(), 256),
-		done: make(chan struct{}),
 	}
 
 	paCmds := func() []recordedMsg {
@@ -301,7 +305,6 @@ func TestTunerFollowPublishesSetInlineNotRetained(t *testing.T) {
 		rec:    reconcile.New(cfg),
 		site:   "muehle", station: "hf", slot: "antenna-select",
 		jobs: make(chan func(), 256),
-		done: make(chan struct{}),
 	}
 
 	tunerCmds := func() []recordedMsg {
@@ -418,7 +421,6 @@ func TestTunerFollowDisabledEmitsNothing(t *testing.T) {
 		rec:    reconcile.New(cfg),
 		site:   "muehle", station: "hf", slot: "antenna-select",
 		jobs: make(chan func(), 256),
-		done: make(chan struct{}),
 	}
 	c.update(func(in *reconcile.Inputs) {
 		in.RadioOnline = true

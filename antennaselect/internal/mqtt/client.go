@@ -5,14 +5,17 @@
 package mqtt
 
 import (
+	"context"
 	"encoding/json"
-	"fmt"
 	"log"
 	"strings"
 	"sync"
 	"time"
 
 	paho "github.com/eclipse/paho.mqtt.golang"
+
+	sharedmqtt "codeberg.org/kgbvax/stationa/shared/mqtt"
+	schema "codeberg.org/kgbvax/stationa/shared/schema"
 
 	"antennaselect/internal/config"
 	"antennaselect/internal/reconcile"
@@ -56,13 +59,21 @@ type Client struct {
 	// topics, so a retained burst on connect deadlocked it after the first message — the
 	// same live bug hadiscovery had. Routing the work here lets each handler return
 	// immediately, unblocking paho, while keeping the reconciler single-threaded (its
-	// decision/idempotency logic depends on sequential, ordered updates).
-	jobs chan func()
-	done chan struct{}
+	// decision/idempotency logic depends on sequential, ordered updates). The queue +
+	// worker live in shared/mqtt (Enqueue/RunJobs) so the same fix is shared with every
+	// other stationa consumer.
+	//
+	// ctx governs this client's lifecycle: a child of the ctx passed to New, so a SIGTERM
+	// cancels it and Close cancels it directly to stop the worker before disconnecting.
+	ctx    context.Context
+	cancel context.CancelFunc
+	jobs   chan func()
 }
 
-// New connects to the broker, registers the last-will, and subscribes to all inputs.
-func New(cfg config.Config, rec *reconcile.Reconciler) (*Client, error) {
+// New connects to the broker, registers the last-will, and subscribes to all inputs. ctx
+// governs the connect (a SIGTERM while the broker is unreachable interrupts it — paho's
+// Connect().Wait() alone ignores ctx) and the worker lifecycle.
+func New(ctx context.Context, cfg config.Config, rec *reconcile.Reconciler) (*Client, error) {
 	c := &Client{
 		cfg:     cfg,
 		rec:     rec,
@@ -70,9 +81,9 @@ func New(cfg config.Config, rec *reconcile.Reconciler) (*Client, error) {
 		station: cfg.MQTT.Station,
 		slot:    cfg.MQTT.Slot,
 		jobs:    make(chan func(), 256),
-		done:    make(chan struct{}),
 	}
-	go c.runJobs()
+	c.ctx, c.cancel = context.WithCancel(ctx)
+	go sharedmqtt.RunJobs(c.ctx, c.jobs)
 
 	opts := paho.NewClientOptions().
 		AddBroker(cfg.MQTT.Broker).
@@ -109,8 +120,9 @@ func New(cfg config.Config, rec *reconcile.Reconciler) (*Client, error) {
 	})
 
 	c.client = paho.NewClient(opts)
-	if token := c.client.Connect(); token.Wait() && token.Error() != nil {
-		return nil, token.Error()
+	if err := sharedmqtt.Connect(c.ctx, c.client); err != nil {
+		c.cancel()
+		return nil, err
 	}
 	return c, nil
 }
@@ -120,37 +132,10 @@ func (c *Client) Close() {
 		return
 	}
 	// Stop the worker first so no reconcile/publish work races with shutdown.
-	close(c.done)
+	c.cancel()
 	if c.client.IsConnectionOpen() {
 		c.publishString(c.selfTopic("status"), "offline", 1, true)
 		c.client.Disconnect(250)
-	}
-}
-
-// enqueue hands work to the worker without blocking paho's dispatch goroutine. It blocks
-// only if the queue is full AND the service is not shutting down — impossible in practice
-// (input traffic is low, drained by the worker as fast as it can publish); the `done` arm
-// guarantees it never blocks during shutdown.
-func (c *Client) enqueue(job func()) {
-	select {
-	case c.jobs <- job:
-	case <-c.done:
-	}
-}
-
-// runJobs is the single goroutine that owns reconcile+publish. It exits when Close closes
-// `done` (finishing any in-flight job first).
-func (c *Client) runJobs() {
-	for {
-		select {
-		case job, ok := <-c.jobs:
-			if !ok {
-				return
-			}
-			job()
-		case <-c.done:
-			return
-		}
 	}
 }
 
@@ -177,7 +162,7 @@ func (c *Client) onRadioState(_ paho.Client, msg paho.Message) {
 		log.Printf("[mqtt] bad radio/state: %v", err)
 		return
 	}
-	c.enqueue(func() {
+	sharedmqtt.Enqueue(c.jobs, func() {
 		c.update(func(in *reconcile.Inputs) {
 			in.RadioBand = s.Band
 			in.RadioFreqHz = s.FreqHz
@@ -188,7 +173,7 @@ func (c *Client) onRadioState(_ paho.Client, msg paho.Message) {
 
 func (c *Client) onRadioStatus(_ paho.Client, msg paho.Message) {
 	online := strings.EqualFold(strings.TrimSpace(string(msg.Payload())), "online")
-	c.enqueue(func() { c.update(func(in *reconcile.Inputs) { in.RadioOnline = online }) })
+	sharedmqtt.Enqueue(c.jobs, func() { c.update(func(in *reconcile.Inputs) { in.RadioOnline = online }) })
 }
 
 func (c *Client) onAntSwitchState(_ paho.Client, msg paho.Message) {
@@ -200,7 +185,7 @@ func (c *Client) onAntSwitchState(_ paho.Client, msg paho.Message) {
 		log.Printf("[mqtt] bad ant-switch/state: %v", err)
 		return
 	}
-	c.enqueue(func() {
+	sharedmqtt.Enqueue(c.jobs, func() {
 		c.update(func(in *reconcile.Inputs) {
 			in.SwitchSelected = s.Selected
 			in.SwitchSettled = s.Settled
@@ -212,7 +197,7 @@ func (c *Client) onOperatorCmd(_ paho.Client, msg paho.Message) {
 	payload := strings.TrimSpace(string(msg.Payload()))
 	if payload == "" {
 		// Cleared retained hold — treat as release.
-		c.enqueue(func() { c.update(func(in *reconcile.Inputs) { in.OperatorRequest = "" }) })
+		sharedmqtt.Enqueue(c.jobs, func() { c.update(func(in *reconcile.Inputs) { in.OperatorRequest = "" }) })
 		return
 	}
 	var cmd struct {
@@ -222,14 +207,14 @@ func (c *Client) onOperatorCmd(_ paho.Client, msg paho.Message) {
 		log.Printf("[mqtt] bad operator cmd: %v", err)
 		return
 	}
-	c.enqueue(func() { c.update(func(in *reconcile.Inputs) { in.OperatorRequest = strings.TrimSpace(cmd.Request) }) })
+	sharedmqtt.Enqueue(c.jobs, func() { c.update(func(in *reconcile.Inputs) { in.OperatorRequest = strings.TrimSpace(cmd.Request) }) })
 }
 
 func (c *Client) onStationNode(_ paho.Client, msg paho.Message) {
 	// Copy the payload out of the paho message: it is only valid for the duration of the
 	// handler, but update runs later, off this goroutine, on the worker.
 	payload := append([]byte(nil), msg.Payload()...)
-	c.enqueue(func() { c.update(func(in *reconcile.Inputs) { in.StationActivity = parseActivity(payload) }) })
+	sharedmqtt.Enqueue(c.jobs, func() { c.update(func(in *reconcile.Inputs) { in.StationActivity = parseActivity(payload) }) })
 }
 
 // parseActivity reads the station activity flag leniently: it accepts a JSON object with
@@ -415,14 +400,17 @@ func (c *Client) publishString(topic, payload string, qos byte, retained bool) {
 }
 
 // --- topic helpers ----------------------------------------------------------
+// The slot address format lives in shared/schema; these wrap it for the suffix style this
+// consumer uses (own meta/state/status, sibling slots). stationTopic is the station node
+// itself (no slot), which schema does not model, so it stays local.
 
 func (c *Client) stationTopic() string { return c.site + "/" + c.station }
-func (c *Client) selfBase() string     { return c.site + "/" + c.station + "/" + c.slot }
+func (c *Client) selfBase() string     { return schema.SlotBase(c.site, c.station, c.slot) }
 func (c *Client) selfTopic(suffix string) string {
-	return c.selfBase() + "/" + suffix
+	return schema.SiblingTopic(c.site, c.station, c.slot, suffix)
 }
 func (c *Client) siblingTopic(slot, suffix string) string {
-	return fmt.Sprintf("%s/%s/%s/%s", c.site, c.station, slot, suffix)
+	return schema.SiblingTopic(c.site, c.station, slot, suffix)
 }
 
 func orDefault(v, def string) string {
