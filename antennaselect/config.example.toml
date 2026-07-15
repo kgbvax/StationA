@@ -1,0 +1,84 @@
+# antenna-select reconciler — example configuration
+#
+# On the target this lives at /etc/antenna-select/config.toml (0600, owned by the
+# service user); deploy.sh seeds it once. See
+# ../docs/conventions/config-and-secrets.md.
+
+# --- Deployment identity ------------------------------------------------------
+# Facts about this deployment, published in /meta (integration model §3). Required.
+location = "bauwagen"     # building
+host     = "shari"        # compute node this service runs on
+
+# --- MQTT -------------------------------------------------------------------
+[mqtt]
+broker    = "tcp://192.168.1.50:1883"
+# client_id defaults to "<site>-<station>-<slot>" (model §8); set only to override.
+site      = "muehle"
+station   = "hf"
+slot      = "antenna-select"
+user      = "hf"
+password  = ""            # set on the device; never on the command line
+
+# --- Wiring map -------------------------------------------------------------
+# The single editable place antenna arrangement lives (integration model §4).
+# Maps switch ports to named PASSIVE resources. Devices never contain this.
+[wiring_map]
+port1 = "dummy-load"
+port4 = "ultrabeam"     # Ultrabeam — controlled by the ant-ctrl slot (see [band_follow])
+# port2, port3, port5 unused for now
+port6 = "fan-dipole"    # 80/40 fan dipole on the HF mast (passive)
+off   = "grounded"
+
+# --- Band policy ------------------------------------------------------------
+# Auto tier (3): resource -> the band names it serves. The reconciler resolves the
+# resource to a port via [wiring_map]. Resource names must match wiring_map values.
+[band_policy]
+# Unmatched bands (incl. 160m — no resonant antenna assigned) route to the fallback
+# resource. Decision (integration model §11 item #1): fan-dipole via the ATU.
+# 30/60/80/160m on the fan dipole are non-resonant — the ATU is engaged in-line for those
+# bands by [tuner_follow] (integration model §7.1, §10 residual).
+fallback = "fan-dipole"
+
+[band_policy.bands]
+ultrabeam  = ["6m", "10m", "12m", "15m", "17m", "20m"]
+fan-dipole = ["30m", "40m", "60m", "80m"]
+
+# --- Priority ladder --------------------------------------------------------
+# Fixed order (integration model §5); listed here for documentation only — the code
+# enforces it. `mode` is derived (manual iff an operator hold is active).
+#   1 idle     station.activity == inactive  -> off   (safe default; overrides all)
+#   2 operator operator hold via /cmd         -> held selection
+#   3 auto     band_policy(radio.band)         -> resolved port
+[priority]
+order = ["idle", "operator", "auto"]
+
+# --- Soft band-follow (controller map) ---------------------------------------
+# When `resource` is the selected antenna, drive its controller slot to track the radio
+# frequency (integration model §4 controller map, §7.1). Which antenna follows the radio
+# is site configuration, never code. Omit/empty `resource` to disable.
+[band_follow]
+resource = "ultrabeam"    # wiring_map resource to follow
+slot     = "ant-ctrl"     # controller slot that receives {action: frequency} intents
+
+# --- PA band-follow (§7.1 soft binding pa.set_band ← radio.band) ---------------
+# Pre-position the ACOM to the radio's band so the amp (which auto-bands by sensing the
+# RF drive) doesn't trip on the 1st TX on a new band. The PA is always in the RF path,
+# so this is NOT gated on antenna selection — it fires whenever the radio is online and
+# reporting a band. No TX guard: hot-switch protection is hardware. Set enabled=false
+# to disable.
+[pa_follow]
+enabled = true
+slot    = "pa"            # PA slot that receives {action: set_band} intents (not retained)
+
+# --- Tuner in-line follow (§7.1 soft binding tuner.set_inline ← band_policy) --
+# Engage the ATU in-line when the selected antenna is `resource` AND the band is one of
+# `atu_bands` (the non-resonant bands), and bypass it otherwise — so leaving a non-resonant
+# band drops the ATU out of line. Like band_follow, this IS gated on antenna selection: the
+# ATU only matters when its resource is in circuit. The tuner /cmd is NOT retained (the ATU
+# self-heals from this reconciler re-resolving on the retained radio/state replay at
+# reconnect). Set enabled=false to disable.
+[tuner_follow]
+enabled   = true
+slot      = "tuner"            # tuner slot that receives {action: set_inline} intents
+resource  = "fan-dipole"       # engage only when this wiring_map resource is selected
+atu_bands = ["30m", "60m", "80m", "160m"]  # non-resonant bands needing the ATU in-line
