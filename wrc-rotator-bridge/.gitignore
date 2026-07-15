@@ -1,0 +1,4 @@
+# Build artifacts
+/wrc-rotator-bridge
+/dist/
+*.swp
