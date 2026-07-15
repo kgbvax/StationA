@@ -61,15 +61,26 @@ func Enqueue(jobs chan<- func(), f func()) {
 }
 
 // RunJobs drains jobs and runs each closure on the calling goroutine until ctx
-// is done. The caller owns the jobs channel (and should close it after ctx is
-// cancelled). All closures for one slot/client should share one jobs channel +
+// is done or the jobs channel is closed. The caller owns the jobs channel and
+// may close it to stop the worker; closing is optional — cancelling ctx also
+// stops it. All closures for one slot/client should share one jobs channel +
 // one RunJobs worker so state mutation and publishing are serialized.
+//
+// Receiving with comma-ok (not a bare receive) is load-bearing: a closed
+// channel yields nil values forever, and calling a nil closure panics. The
+// ok=false return lets the worker exit cleanly on close instead of panicking
+// — a real failure mode when a caller closes the channel on an early return
+// that is NOT a ctx cancellation (e.g. a Connect failure), so the worker must
+// not assume ctx.Done() is the only exit.
 func RunJobs(ctx context.Context, jobs <-chan func()) {
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case f := <-jobs:
+		case f, ok := <-jobs:
+			if !ok {
+				return // channel closed; the worker is done
+			}
 			f()
 		}
 	}
