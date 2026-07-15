@@ -117,9 +117,17 @@ func runSlot(ctx context.Context, cfg config.Config, sc config.SlotConfig, adapt
 	// the paho message handlers (which run on paho's goroutine) never block on a
 	// publish. See the stationa memory: paho handlers must not call blocking
 	// Publish (hadiscovery deadlocked live).
+	//
+	// The jobs worker's lifetime is tied to runSlot via a child ctx, not the
+	// parent ctx: runSlot can return before the parent ctx is cancelled (e.g. on
+	// a Connect failure), and cancelling slotCtx stops the worker cleanly. The
+	// jobs channel is NOT closed — RunJobs exits on slotCtx.Done, and closing
+	// the channel here would race the worker (a closed channel yields nil
+	// closures; calling one panics).
+	slotCtx, slotCancel := context.WithCancel(ctx)
+	defer slotCancel()
 	jobs := make(chan func(), 64)
-	defer close(jobs)
-	go sharedmqtt.RunJobs(ctx, jobs)
+	go sharedmqtt.RunJobs(slotCtx, jobs)
 
 	// Heartbeat-driven device_online: the Shelly publishes "<id>/online"
 	// "true" periodically and "false" on graceful disconnect. A watcher marks
@@ -131,7 +139,7 @@ func runSlot(ctx context.Context, cfg config.Config, sc config.SlotConfig, adapt
 	go func() {
 		for {
 			select {
-			case <-ctx.Done():
+			case <-slotCtx.Done():
 				return
 			case <-tick.C:
 				if lastHeartbeat.since() > heartbeatTimeout {
