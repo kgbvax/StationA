@@ -14,6 +14,9 @@ import (
 
 	pahomqtt "github.com/eclipse/paho.mqtt.golang"
 
+	sharedmqtt "codeberg.org/kgbvax/stationa/shared/mqtt"
+	schema "codeberg.org/kgbvax/stationa/shared/schema"
+
 	"flexbridge/internal/bridge"
 	"flexbridge/internal/config"
 	"flexbridge/internal/flexradio"
@@ -111,8 +114,13 @@ func connectMQTT(ctx context.Context, cfg config.Config, log *slog.Logger) (paho
 	}
 
 	client := pahomqtt.NewClient(opts)
-	if tok := client.Connect(); tok.Wait() && tok.Error() != nil {
-		return nil, tok.Error()
+	// Context-aware connect: paho's Connect().Wait() blocks ignoring ctx, so a
+	// SIGTERM while the broker is unreachable (or auth is failing) can't
+	// interrupt the connect and systemd must SIGKILL after TimeoutStopSec.
+	// sharedmqtt.Connect bridges the wait through a goroutine + select on
+	// ctx.Done (flexbridge was latent for this; see the stationa memory).
+	if err := sharedmqtt.Connect(ctx, client); err != nil {
+		return nil, err
 	}
 	return client, nil
 }
@@ -124,7 +132,7 @@ func availabilityTopic(cfg config.Config) string {
 	if slot == "" {
 		slot = "radio"
 	}
-	return cfg.MQTT.Site + "/" + cfg.MQTT.Station + "/" + slot + "/status"
+	return schema.StatusTopic(cfg.MQTT.Site, cfg.MQTT.Station, slot)
 }
 
 // radioLoop connects to the radio, runs the bridge, and reconnects on

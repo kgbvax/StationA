@@ -9,6 +9,8 @@ import (
 
 	"flexbridge/internal/flexradio"
 	"flexbridge/internal/ha"
+
+	schema "codeberg.org/kgbvax/stationa/shared/schema"
 )
 
 // Bridge owns the radio state model and translates radio events (TCP
@@ -483,12 +485,12 @@ func (b *Bridge) PublishDiscovery() {
 // Topic helpers
 // ------------------------------------------------------------------
 
-func (b *Bridge) slotBase() string {
-	return b.cfg.Site + "/" + b.cfg.Station + "/" + b.cfg.Slot
+func (b *Bridge) metaTopic() string {
+	return schema.MetaTopic(b.cfg.Site, b.cfg.Station, b.cfg.Slot)
 }
-
-func (b *Bridge) metaTopic() string  { return b.slotBase() + "/meta" }
-func (b *Bridge) stateTopic() string { return b.slotBase() + "/state" }
+func (b *Bridge) stateTopic() string {
+	return schema.StateTopic(b.cfg.Site, b.cfg.Station, b.cfg.Slot)
+}
 
 // ------------------------------------------------------------------
 // Internal helpers (free functions)
