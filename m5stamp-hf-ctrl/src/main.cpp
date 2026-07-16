@@ -55,6 +55,7 @@ unsigned long lastRadioStateMs = 0;  // heartbeat freshness
 // ---------------------------------------------------------------------------
 static void publishSwitchMeta(SlotMqtt& s);
 static void publishSwitchState(SlotMqtt& s);
+static void publishSwitchCmd(const char* action, const char* value);
 static void publishPaArmMeta(SlotMqtt& s);
 static void publishPaArmState(SlotMqtt& s);
 static void handleSwitchCmd(const char* topic, const uint8_t* payload, unsigned int len);
@@ -62,6 +63,9 @@ static void handlePaArmCmd(const char* topic, const uint8_t* payload, unsigned i
 static void handleRadioState(const char* topic, const uint8_t* payload, unsigned int len);
 static bool bandSafe(const String& band);
 static bool recomputeArm(SlotMqtt& paArm);
+static void uiInit();
+static void uiRender();
+static void handleButtons();
 
 // ---------------------------------------------------------------------------
 // JSON helpers
@@ -220,6 +224,16 @@ static void publishSwitchState(SlotMqtt& s) {
     s.publish("state", true, out.c_str());
 }
 
+static void publishSwitchCmd(const char* action, const char* value) {
+    if (!gSwitch || !gSwitch->connected()) return;
+    JsonDocument doc;
+    doc["action"] = action;
+    doc["value"] = value;
+    String out;
+    serializeJson(doc, out);
+    gSwitch->publish("cmd", true, out.c_str());
+}
+
 static void publishPaArmMeta(SlotMqtt& s) {
     JsonDocument doc;
     doc["schema"] = "1.0";
@@ -277,6 +291,124 @@ static void publishPaArmState(SlotMqtt& s) {
 }
 
 // ---------------------------------------------------------------------------
+// local LCD UI — indicator lights + front-panel button toggles
+// ---------------------------------------------------------------------------
+// The M5 Stamp PLC has a 240x135 LCD and three buttons below it: A (left),
+// B (middle), C (right).  We draw four indicator lights for the relay states
+// and use B to toggle PA remote-on and C to toggle TRX remote-on.
+
+static void uiInit() {
+    M5StamPLC.setBacklight(true);
+    auto& d = M5StamPLC.Display;
+    // The LCD is mounted landscape on the PLC front panel. Rotation 1 gives a
+    // normal, left-to-right landscape orientation.
+    d.setRotation(1);
+    d.fillScreen(0x000000);
+    d.setTextSize(1);
+    d.setTextDatum(middle_center);
+}
+
+static void drawSquareButton(int x, int y, int w, int h, bool on, const char* label) {
+    auto& d = M5StamPLC.Display;
+    uint16_t r = 6;
+    uint32_t fillColor = on ? 0x00C000 : 0x404040;
+    uint32_t borderColor = on ? 0x00FF00 : 0x808080;
+
+    d.fillSmoothRoundRect(x, y, w, h, r, fillColor);
+    d.drawRoundRect(x, y, w, h, r, borderColor);
+
+    d.setTextColor(on ? 0xFFFFFF : 0xCCCCCC);
+    d.setTextDatum(middle_center);
+    d.setTextSize(2);
+    d.drawString(label, x + w / 2, y + h / 2);
+    d.setTextSize(1);  // restore default
+}
+
+static void drawStatusText() {
+    auto& d = M5StamPLC.Display;
+
+    // Header line with connection + test label.
+    d.setTextDatum(top_left);
+    d.setTextColor(0xFFFFFF);
+    d.setTextSize(2);
+    d.drawString("TEST", 4, 2);
+    d.setTextSize(1);
+
+    bool wifiUp = (WiFi.status() == WL_CONNECTED);
+    String status = wifiUp ? (gSwitch && gSwitch->connected() ? "MQTT" : "WiFi") : "----";
+    d.setTextDatum(top_right);
+    d.setTextColor(wifiUp ? 0x00FF00 : 0xFF0000);
+    d.setTextSize(2);
+    d.drawString(status.c_str(), d.width() - 4, 2);
+    d.setTextSize(1);
+}
+
+static void drawButtonLegend() {
+    auto& d = M5StamPLC.Display;
+    d.setTextDatum(bottom_center);
+    d.setTextColor(0xAAAAAA);
+    d.setTextSize(1);
+    d.drawString("B:PA", d.width() / 2 - 55, d.height() - 2);
+    d.drawString("C:TRX", d.width() / 2 + 55, d.height() - 2);
+}
+
+static void uiRender() {
+    static unsigned long lastUiRender = 0;
+    static bool firstRender = true;
+    if (millis() - lastUiRender < UI_REFRESH_MS) return;
+    lastUiRender = millis();
+
+    auto& d = M5StamPLC.Display;
+
+    // Full clear only on first draw; after that we repaint only the dynamic
+    // regions to avoid the visible flicker from clearing the whole screen.
+    if (firstRender) {
+        d.fillScreen(0x000000);
+        drawButtonLegend();
+        firstRender = false;
+    }
+
+    // Header/status text is small and cheap; clear its bounding area and redraw.
+    d.fillRect(0, 0, d.width(), 26, 0x000000);
+    drawStatusText();
+
+    // Four large square relay buttons across the middle of the screen.
+    // Landscape 240x135: leave 28 px top for header, 18 px bottom for legend.
+    int btnW = 48;
+    int btnH = 48;
+    int y = 32;
+    int totalW = btnW * 4 + 8 * 3;  // 4 buttons + 8 px gaps
+    int startX = (d.width() - totalW) / 2;
+    int gap = 8;
+    drawSquareButton(startX + 0 * (btnW + gap), y, btnW, btnH, relayGet(RELAY_PA_ARM), "ARM");
+    drawSquareButton(startX + 1 * (btnW + gap), y, btnW, btnH, relayGet(RELAY_PA_REMOTE), "PA");
+    drawSquareButton(startX + 2 * (btnW + gap), y, btnW, btnH, relayGet(RELAY_TRX_REMOTE), "TRX");
+    drawSquareButton(startX + 3 * (btnW + gap), y, btnW, btnH, relayGet(RELAY_SPARE), "SP");
+}
+
+static void handleButtons() {
+    static unsigned long lastBtnMs = 0;
+    if (millis() - lastBtnMs < UI_BTN_DEBOUNCE_MS) return;
+
+    // BtnB (middle) toggles PA remote power.
+    if (M5StamPLC.BtnB.wasPressed()) {
+        lastBtnMs = millis();
+        switchState.pa = !switchState.pa;
+        applySwitchRelays();
+        publishSwitchCmd("set_pa", switchState.pa ? "on" : "off");
+        if (gSwitch && gSwitch->connected()) publishSwitchState(*gSwitch);
+    }
+    // BtnC (rightmost) toggles TRX remote power.
+    if (M5StamPLC.BtnC.wasPressed()) {
+        lastBtnMs = millis();
+        switchState.trx = !switchState.trx;
+        applySwitchRelays();
+        publishSwitchCmd("set_trx", switchState.trx ? "on" : "off");
+        if (gSwitch && gSwitch->connected()) publishSwitchState(*gSwitch);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // slot instances + connect bookkeeping
 // ---------------------------------------------------------------------------
 SlotMqtt* gSwitch = nullptr;
@@ -315,6 +447,7 @@ SlotMqtt paArmSlot(PA_ARM_BASE, "pa-arm", handlePaArmCmd);
 
 void setup() {
     relayInit();
+    uiInit();
     wifiConnect();
     gSwitch = &switchSlot;
     gPaArm = &paArmSlot;
@@ -322,28 +455,36 @@ void setup() {
 }
 
 void loop() {
-    // 1. WiFi — wait/reconnect.
+    // 1. Update M5Unified internals (button debouncing etc.). Do this every
+    //    iteration so the front-panel buttons work even when WiFi/MQTT are down.
+    M5StamPLC.update();
+
+    // 2. Front-panel button toggles: B = PA remote-on, C = TRX remote-on.
+    handleButtons();
+
+    // 3. WiFi — wait/reconnect.
     static unsigned long lastWifiCheck = 0;
     if (WiFi.status() != WL_CONNECTED) {
         if (millis() - lastWifiCheck > 5000) {
             lastWifiCheck = millis();
             WiFi.reconnect();
         }
-        delay(100);
-        return;  // nothing useful until WiFi is up
+        uiRender();
+        delay(LOOP_DELAY_MS);  // slow poll while waiting for WiFi
+        return;
     }
 
-    // 2. Drive both slot MQTT state machines.
+    // 4. Drive both slot MQTT state machines.
     switchSlot.loop();
     paArmSlot.loop();
 
-    // 3. Connect-edge bookkeeping (publish meta + initial state + resub radio).
+    // 5. Connect-edge bookkeeping (publish meta + initial state + resub radio).
     if (switchSlot.connected() && !switchConnectedOnce) onSwitchConnect();
     if (!switchSlot.connected()) switchConnectedOnce = false;
     if (paArmSlot.connected() && !paArmConnectedOnce) onPaArmConnect();
     if (!paArmSlot.connected()) paArmConnectedOnce = false;
 
-    // 4. Arm logic: recompute every loop; publish /state on change or on a
+    // 6. Arm logic: recompute every loop; publish /state on change or on a
     //    slow refresh. (Radio /state arrives on the paArmSlot connection and is
     //    routed to handleRadioState by handlePaArmCmd on the /state topic.)
     static unsigned long lastArmPublish = 0;
@@ -355,5 +496,8 @@ void loop() {
         }
     }
 
-    delay(10);
+    // 7. Local LCD indicator lights.
+    uiRender();
+
+    delay(LOOP_DELAY_MS);  // ~20 Hz poll; keeps CPU cool vs. a tight 10 ms loop
 }

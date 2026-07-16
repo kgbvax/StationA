@@ -70,3 +70,19 @@ static const int SAFE_BANDS_COUNT = sizeof(SAFE_BANDS) / sizeof(SAFE_BANDS[0]);
 // Re-publish cadence for retained /meta (birth cert) on a quiet bus — the
 // broker retains it, so this is only a safety net, not the primary path.
 #define META_REFRESH_MS 300000
+
+// --- local display / buttons -----------------------------------------------
+// The M5 Stamp PLC has a 240x135 LCD and three front-panel buttons (A/B/C).
+// We render indicator lights for the relay states and use B/C as local toggles.
+//
+// UI_REFRESH_MS was lowered to keep the LCD cool: the display redraw is the
+// most expensive operation in the loop, and a 1 Hz refresh is plenty for a
+// relay-state dashboard. Buttons are sampled at the main loop cadence below.
+#define UI_REFRESH_MS      1000  // display redraw cadence, ms
+#define UI_BTN_DEBOUNCE_MS 150   // minimum time between button actions, ms
+
+// --- main loop cadence -------------------------------------------------------
+// The loop polls WiFi/MQTT, buttons, and arm logic at ~20 Hz. This is more than
+// enough for human-scale button toggles and MQTT keepalives, while letting the
+// CPU/SoC idle between iterations (no tight spin).
+#define LOOP_DELAY_MS      50
