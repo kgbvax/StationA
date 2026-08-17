@@ -54,10 +54,11 @@ func TestFromStatusOmitsZeroTarget(t *testing.T) {
 }
 
 func TestRotorCommandMarshal(t *testing.T) {
-	// Numeric command → {"az":180}.
-	b, _ := json.Marshal(RotorCommand{Az: 180})
-	if string(b) != `{"az":180}` {
-		t.Errorf("numeric cmd = %s, want {\"az\":180}", b)
+	// Absolute azimuth command → {"az":"180"}. The WRC firmware requires a
+	// quoted string for set-azimuth commands; a numeric value is ignored.
+	b, _ := json.Marshal(RotorCommand{Az: "180"})
+	if string(b) != `{"az":"180"}` {
+		t.Errorf("absolute cmd = %s, want {\"az\":\"180\"}", b)
 	}
 	// String command → {"az":"stop"}.
 	b, _ = json.Marshal(RotorCommand{Az: "stop"})

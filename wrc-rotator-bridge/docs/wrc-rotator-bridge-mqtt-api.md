@@ -224,7 +224,7 @@ broker immediately delivers retained `/meta`, `/state`, and `/status`.
 
 **Rotate to an azimuth:**
 1. Publish `{"action":"set_az","az":180}` to `muehle/hf/rotator/cmd`.
-2. The bridge writes `{"az":180}` to the WRC WebSocket.
+2. The bridge writes `{"az":"180"}` to the WRC WebSocket.
 3. Observe `/state.az` move toward 180 and `/state.moving` go true, then false
    when it arrives (fire-and-observe — model §1 plane discipline).
 

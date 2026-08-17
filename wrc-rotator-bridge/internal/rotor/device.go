@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 
@@ -112,9 +113,11 @@ func (d *Device) Run(ctx context.Context, onTelemetry func(State)) error {
 	}
 }
 
-// SetAz rotates to the given azimuth (degrees).
+// SetAz rotates to the given azimuth (degrees). The WRC accepts absolute
+// azimuth commands only when the value is sent as a quoted string; numeric
+// values are ignored by the controller firmware.
 func (d *Device) SetAz(az float64) error {
-	return d.send(RotorCommand{Az: az})
+	return d.send(RotorCommand{Az: strconv.FormatFloat(az, 'f', 0, 64)})
 }
 
 // Stop halts motion.
