@@ -4,7 +4,11 @@
 // full; the mqtt package feeds it Inputs and acts on the Actions it returns.
 package reconcile
 
-import "antennaselect/internal/config"
+import (
+	"sort"
+
+	"antennaselect/internal/config"
+)
 
 // TX states as seen on radio/state.
 const (
@@ -90,20 +94,27 @@ type Actions struct {
 // It is stateless with respect to inputs — every decision is a pure function of
 // (config, Inputs) — which keeps it trivially testable.
 type Reconciler struct {
-	cfg            config.Config
-	resourceToPort map[string]string
-	followPort     string // port of band_follow.resource; empty = band-follow disabled
-	tunerPort      string // port of tuner_follow.resource; empty = tuner-follow disabled
+	cfg             config.Config
+	resourceToPort  map[string]string
+	policyResources []string // band_policy resource names in stable sorted order
+	followPort      string   // port of band_follow.resource; empty = band-follow disabled
+	tunerPort       string   // port of tuner_follow.resource; empty = tuner-follow disabled
 }
 
 // New builds a Reconciler from validated config.
 func New(cfg config.Config) *Reconciler {
 	r2p := cfg.ResourceToPort()
+	resources := make([]string, 0, len(cfg.BandPolicy.Bands))
+	for r := range cfg.BandPolicy.Bands {
+		resources = append(resources, r)
+	}
+	sort.Strings(resources)
 	return &Reconciler{
-		cfg:            cfg,
-		resourceToPort: r2p,
-		followPort:     r2p[cfg.BandFollow.Resource],
-		tunerPort:      r2p[cfg.TunerFollow.Resource],
+		cfg:             cfg,
+		resourceToPort:  r2p,
+		policyResources: resources,
+		followPort:      r2p[cfg.BandFollow.Resource],
+		tunerPort:       r2p[cfg.TunerFollow.Resource],
 	}
 }
 
@@ -146,10 +157,15 @@ func (r *Reconciler) Resolve(in Inputs) Decision {
 // portForBand maps a band name to a port via the band policy and wiring map. Unmatched
 // bands (including 160m) use the configured fallback resource. Returns ok=false only if
 // even the fallback cannot be resolved (which Validate() rules out at load time).
+//
+// The scan uses policyResources (sorted at construction) instead of ranging over the
+// band_policy map so the same config always resolves to the same port, even if a band
+// is listed under multiple resources. Validate() rejects overlapping bands that map to
+// different ports; harmless aliases mapping to the same port resolve deterministically.
 func (r *Reconciler) portForBand(band string) (string, bool) {
 	if band != "" {
-		for resource, bands := range r.cfg.BandPolicy.Bands {
-			for _, b := range bands {
+		for _, resource := range r.policyResources {
+			for _, b := range r.cfg.BandPolicy.Bands[resource] {
 				if b == band {
 					if port, ok := r.resourceToPort[resource]; ok {
 						return port, true

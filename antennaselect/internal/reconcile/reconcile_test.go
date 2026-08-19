@@ -132,6 +132,20 @@ func TestNextNoSelectWhenAlreadyOnTarget(t *testing.T) {
 	}
 }
 
+func TestNextNoSelectOnFrequencyChangeWithinBand(t *testing.T) {
+	r := New(testConfig())
+	// Switch already on the resolved target for 20m.
+	act := r.Next(Inputs{RadioOnline: true, RadioBand: "20m", RadioFreqHz: 14_000_000, StationActivity: "active", RadioTX: TXReceive, SwitchSelected: "port3"})
+	if act.SelectPort != "" {
+		t.Fatalf("baseline: already on target, got select %q", act.SelectPort)
+	}
+	// Same band, different frequency: still should not command a port change.
+	act = r.Next(Inputs{RadioOnline: true, RadioBand: "20m", RadioFreqHz: 14_200_000, StationActivity: "active", RadioTX: TXReceive, SwitchSelected: "port3"})
+	if act.SelectPort != "" {
+		t.Errorf("frequency change within same band should not emit select, got %q", act.SelectPort)
+	}
+}
+
 func TestNextBandFollowOnlyWhenFollowedResourceSelected(t *testing.T) {
 	r := New(testConfig())
 	// Followed resource (ultrabeam, 20m -> port3) selected: band-follow pushes the frequency.

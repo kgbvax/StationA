@@ -231,7 +231,8 @@ func (b *Bridge) handleSlice(f flexradio.Frame) {
 	prev := b.slices[idx]
 	b.mu.RUnlock()
 
-	s, err := flexradio.ParseSlice(f.TopicArgs, fieldsString(f), prev)
+	raw := fieldsString(f)
+	s, err := flexradio.ParseSlice(f.TopicArgs, raw, prev)
 	if err != nil {
 		b.log.Warnf("parse slice: %v", err)
 		return
@@ -243,6 +244,8 @@ func (b *Bridge) handleSlice(f flexradio.Frame) {
 	b.mu.Unlock()
 
 	if changed {
+		b.log.Debugf("slice update idx=%d raw=%q -> freq_hz=%d band=%q mode=%q tx=%v",
+			idx, raw, snap.freqHz, snap.band, snap.mode, snap.txing)
 		b.publishStateSnapshot(snap)
 	}
 }
@@ -259,6 +262,13 @@ func (b *Bridge) updateActiveSliceState() bool {
 	newMode := flexradio.NormalizeMode(active.Mode)
 	if b.state.freqHz == newFreq && b.state.mode == newMode {
 		return false
+	}
+	// A nonzero frequency that falls outside the canonical ham allocations is a strong
+	// signal that the radio sent a transient/invalid value. Warn so bad raw data is
+	// visible; downstream consumers (antenna-select, PA follow) treat "unknown"/"gen"
+	// as a real band change and may switch hardware.
+	if newFreq > 0 && (newBand == "unknown" || newBand == "gen") {
+		b.log.Warnf("out-of-band frequency from radio: freq_hz=%d band=%q", newFreq, newBand)
 	}
 	b.state.freqHz = newFreq
 	b.state.band = newBand

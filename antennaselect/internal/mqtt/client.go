@@ -260,9 +260,22 @@ func (c *Client) update(mutate func(*reconcile.Inputs)) {
 			Source: act.Decision.Source,
 		}
 	}
-	if act.SelectPort != "" && act.SelectPort != c.lastSelect {
-		c.lastSelect = act.SelectPort
-		pubSelect = act.SelectPort
+	if act.SelectPort != "" {
+		// If the switch reports a known position and it already matches the target,
+		// nothing to do. If it reports a different position, re-command it (the switch
+		// firmware is idempotent, so a duplicate command for the current port only
+		// republishes /state). While the switch position is still unknown (empty), use
+		// lastSelect to command once and then wait for the first ant-switch/state.
+		switchSelected := c.in.SwitchSelected
+		if switchSelected == "" {
+			if act.SelectPort != c.lastSelect {
+				c.lastSelect = act.SelectPort
+				pubSelect = act.SelectPort
+			}
+		} else if act.SelectPort != switchSelected {
+			c.lastSelect = act.SelectPort
+			pubSelect = act.SelectPort
+		}
 	}
 	if act.FollowFreqHz != 0 && act.FollowFreqHz != c.lastFollowFreq {
 		c.lastFollowFreq = act.FollowFreqHz

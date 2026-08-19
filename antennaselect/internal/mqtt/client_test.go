@@ -437,3 +437,145 @@ func TestTunerFollowDisabledEmitsNothing(t *testing.T) {
 		}
 	}
 }
+
+// TestNoAntSwitchCmdOnFrequencyChangeWithinSameBand is a regression guard for the
+// reported symptom: changing VFO within the same band must not command the 1:6 relay
+// switch. The reconciler resolves the target from band only; the switch is already on
+// that target; no ant-switch/cmd should be emitted.
+func TestNoAntSwitchCmdOnFrequencyChangeWithinSameBand(t *testing.T) {
+	var (
+		mu     sync.Mutex
+		record []recordedMsg
+	)
+	cfg := config.Config{
+		Location: "bauwagen", Host: "shari",
+		MQTT: config.MQTT{Site: "muehle", Station: "hf", Slot: "antenna-select"},
+		WiringMap: map[string]string{
+			"port1": "dummy-load", "port3": "ultrabeam", "port6": "fan-dipole", "off": "grounded",
+		},
+		BandPolicy: config.BandPolicy{
+			Bands:    map[string][]string{"ultrabeam": {"20m"}, "fan-dipole": {"40m"}},
+			Fallback: "fan-dipole",
+		},
+	}
+	fake := fakePaho{pub: func(topic string, qos byte, retained bool, payload any) paho.Token {
+		b, _ := payload.([]byte)
+		mu.Lock()
+		record = append(record, recordedMsg{topic, qos, retained, b})
+		mu.Unlock()
+		return okToken{}
+	}}
+	c := &Client{
+		client: fake, cfg: cfg, rec: reconcile.New(cfg),
+		site: "muehle", station: "hf", slot: "antenna-select",
+		jobs: make(chan func(), 256),
+	}
+
+	// Radio on 20m and switch already reports port3 (ultrabeam).
+	c.update(func(in *reconcile.Inputs) {
+		in.RadioOnline = true
+		in.RadioBand = "20m"
+		in.RadioFreqHz = 14_000_000
+		in.RadioTX = reconcile.TXReceive
+		in.StationActivity = "active"
+		in.SwitchSelected = "port3"
+	})
+	mu.Lock()
+	baseline := len(record)
+	mu.Unlock()
+
+	// New radio/state: different frequency, still 20m.
+	c.update(func(in *reconcile.Inputs) {
+		in.RadioFreqHz = 14_200_000
+	})
+
+	mu.Lock()
+	defer mu.Unlock()
+	for _, m := range record[baseline:] {
+		if m.topic == "muehle/hf/ant-switch/cmd" {
+			t.Errorf("expected no ant-switch/cmd on frequency-only change, got %s", m.payload)
+		}
+	}
+}
+
+// TestReassertionAfterManualOverride verifies that if the switch is manually moved away
+// from the reconciler's target, a new radio change re-issues the select. Previously
+// lastSelect dedup suppressed this, leaving the station on the wrong antenna.
+func TestReassertionAfterManualOverride(t *testing.T) {
+	var (
+		mu     sync.Mutex
+		record []recordedMsg
+	)
+	cfg := config.Config{
+		Location: "bauwagen", Host: "shari",
+		MQTT: config.MQTT{Site: "muehle", Station: "hf", Slot: "antenna-select"},
+		WiringMap: map[string]string{
+			"port1": "dummy-load", "port3": "ultrabeam", "port6": "fan-dipole", "off": "grounded",
+		},
+		BandPolicy: config.BandPolicy{
+			Bands:    map[string][]string{"ultrabeam": {"20m"}, "fan-dipole": {"40m"}},
+			Fallback: "fan-dipole",
+		},
+	}
+	fake := fakePaho{pub: func(topic string, qos byte, retained bool, payload any) paho.Token {
+		b, _ := payload.([]byte)
+		mu.Lock()
+		record = append(record, recordedMsg{topic, qos, retained, b})
+		mu.Unlock()
+		return okToken{}
+	}}
+	c := &Client{
+		client: fake, cfg: cfg, rec: reconcile.New(cfg),
+		site: "muehle", station: "hf", slot: "antenna-select",
+		jobs: make(chan func(), 256),
+	}
+
+	antSwitchCmds := func() []recordedMsg {
+		mu.Lock()
+		defer mu.Unlock()
+		var out []recordedMsg
+		for _, m := range record {
+			if m.topic == "muehle/hf/ant-switch/cmd" {
+				out = append(out, m)
+			}
+		}
+		return out
+	}
+
+	// 1. Startup: target port3, switch reports port1 -> emit select port3.
+	c.update(func(in *reconcile.Inputs) {
+		in.RadioOnline = true
+		in.RadioBand = "20m"
+		in.RadioFreqHz = 14_000_000
+		in.RadioTX = reconcile.TXReceive
+		in.StationActivity = "active"
+		in.SwitchSelected = "port1"
+	})
+	if got := antSwitchCmds(); len(got) != 1 {
+		t.Fatalf("expected initial select, got %d cmds", len(got))
+	}
+
+	// 2. Switch now reports port3 (command took effect).
+	c.update(func(in *reconcile.Inputs) {
+		in.SwitchSelected = "port3"
+	})
+	if got := antSwitchCmds(); len(got) != 1 {
+		t.Fatalf("expected no new cmd when switch reaches target, got %d", len(got))
+	}
+
+	// 3. Manual override: switch moved back to port1 while target is still port3.
+	c.update(func(in *reconcile.Inputs) {
+		in.SwitchSelected = "port1"
+	})
+	if got := antSwitchCmds(); len(got) != 2 {
+		t.Fatalf("expected reassertion select after manual override, got %d cmds", len(got))
+	}
+
+	// 4. A frequency change within the same band should also reassert.
+	c.update(func(in *reconcile.Inputs) {
+		in.RadioFreqHz = 14_200_000
+	})
+	if got := antSwitchCmds(); len(got) != 3 {
+		t.Fatalf("expected reassertion on frequency change after manual override, got %d cmds", len(got))
+	}
+}
