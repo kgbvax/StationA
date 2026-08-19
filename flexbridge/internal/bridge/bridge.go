@@ -258,15 +258,14 @@ func (b *Bridge) updateActiveSliceState() bool {
 		return false
 	}
 	newFreq := active.FreqHz
-	newBand := flexradio.BandForFreq(newFreq)
+	newBand := flexradio.BandForFreqWithPrev(newFreq, b.state.band)
 	newMode := flexradio.NormalizeMode(active.Mode)
 	if b.state.freqHz == newFreq && b.state.mode == newMode {
 		return false
 	}
-	// A nonzero frequency that falls outside the canonical ham allocations is a strong
-	// signal that the radio sent a transient/invalid value. Warn so bad raw data is
-	// visible; downstream consumers (antenna-select, PA follow) treat "unknown"/"gen"
-	// as a real band change and may switch hardware.
+	// A nonzero frequency that is reported as "gen" or "unknown" after hysteresis
+	// means the radio is genuinely outside ham allocations (or sent a transient
+	// invalid value). Warn so bad raw data is visible.
 	if newFreq > 0 && (newBand == "unknown" || newBand == "gen") {
 		b.log.Warnf("out-of-band frequency from radio: freq_hz=%d band=%q", newFreq, newBand)
 	}

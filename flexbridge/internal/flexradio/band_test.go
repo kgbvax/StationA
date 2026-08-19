@@ -51,6 +51,38 @@ func TestBandForFreq_OutsideAllocations(t *testing.T) {
 	}
 }
 
+func TestBandForFreqWithPrev_Hysteresis(t *testing.T) {
+	// 17m band is 18_068_000 – 18_168_000. VFO dither at 18_166–18_168 must stay 17m.
+	cases := []struct {
+		prev string
+		hz   int64
+		want string
+	}{
+		{"", 18_166_000, "17m"},        // inside 17m, no prev
+		{"", 18_169_000, "gen"},        // just above 17m, no prev → gen
+		{"17m", 18_169_000, "17m"},      // just above 17m, prev 17m, within hysteresis
+		{"17m", 18_171_000, "gen"},      // above hysteresis window
+		{"17m", 18_167_000, "17m"},      // still inside 17m
+		{"20m", 18_169_000, "gen"},      // just above 17m, prev 20m → gen (not sticky to a different band)
+		{"20m", 14_001_000, "20m"},      // just below 20m low edge, prev 20m → sticky
+		{"20m", 13_997_000, "gen"},      // below hysteresis window
+		{"gen", 18_169_000, "gen"},      // prev gen, just above 17m → gen
+		{"gen", 18_167_000, "17m"},      // prev gen, inside 17m → 17m
+	}
+	for _, c := range cases {
+		if got := BandForFreqWithPrev(c.hz, c.prev); got != c.want {
+			t.Errorf("BandForFreqWithPrev(%d, %q) = %q, want %q", c.hz, c.prev, got, c.want)
+		}
+	}
+}
+
+func TestBandForFreqWithPrev_InvalidPrev(t *testing.T) {
+	// Unknown previous band is treated as no previous band.
+	if got := BandForFreqWithPrev(18_169_000, "notaband"); got != "gen" {
+		t.Errorf("BandForFreqWithPrev(18_169_000, notaband) = %q, want gen", got)
+	}
+}
+
 func TestBandIsValid(t *testing.T) {
 	valid := []string{"20m", "80m", "70cm", "gen", "GEN", "  20m  "}
 	for _, b := range valid {
