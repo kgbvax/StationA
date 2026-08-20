@@ -10,7 +10,7 @@ class CardContainer extends StatelessWidget {
     super.key,
     required this.child,
     this.power = false,
-    this.padding = const EdgeInsets.all(10),
+    this.padding = const EdgeInsets.all(12),
   });
 
   @override
@@ -34,7 +34,7 @@ class CardHeader extends StatelessWidget {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
-        Text(title.toUpperCase(), style: AppTheme.mono(12, weight: FontWeight.w700, letterSpacing: 0.12)),
+        Text(title.toUpperCase(), style: AppTheme.mono(12, weight: FontWeight.w700, letterSpacing: 0.14, color: AppTheme.txtMute)),
         if (trailing != null) trailing!,
       ],
     );

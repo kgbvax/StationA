@@ -4,7 +4,6 @@ import '../../mqtt/mqtt_service.dart';
 import '../../store/bus_store.dart';
 import '../../store/wiring.dart';
 import '../theme.dart';
-import 'card_container.dart';
 
 class DvkPanel extends StatelessWidget {
   static const String slot = 'hf/radio';
@@ -14,13 +13,18 @@ class DvkPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return CardContainer(
+    return Container(
+      decoration: BoxDecoration(
+        color: AppTheme.card,
+        border: Border(top: BorderSide(color: AppTheme.cardLine), bottom: BorderSide(color: AppTheme.cardLine)),
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           _buildHeader(context),
           const SizedBox(height: 8),
-          _buildButtonGrid(context),
+          _buildButtonRow(context),
         ],
       ),
     );
@@ -39,18 +43,18 @@ class DvkPanel extends StatelessWidget {
         return Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Text('DVK · FLEX-8400'.toUpperCase(),
-                style: AppTheme.mono(12, weight: FontWeight.w700, letterSpacing: 0.12)),
+            Text('TRX · FLEX-8400'.toUpperCase(),
+                style: AppTheme.mono(12, weight: FontWeight.w700, letterSpacing: 0.14, color: AppTheme.txtMute)),
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
               decoration: BoxDecoration(
                 color: bg,
-                borderRadius: BorderRadius.circular(3),
-                border: Border.all(color: color.withValues(alpha: 0.35)),
+                borderRadius: BorderRadius.circular(4),
+                border: Border.all(color: AppTheme.blend(color, 0.45)),
               ),
               child: Text(
                 label,
-                style: AppTheme.mono(9, color: color, weight: FontWeight.w600),
+                style: AppTheme.mono(11, color: color, weight: FontWeight.w700),
               ),
             ),
           ],
@@ -61,25 +65,25 @@ class DvkPanel extends StatelessWidget {
 
   (String, Color, Color) _statusStyle(String status, bool online, int id) {
     if (!online) {
-      return ('OFFLINE', AppTheme.txtMute, const Color(0x08FFFFFF));
+      return ('OFFLINE', AppTheme.txtMute, AppTheme.blend(AppTheme.txt, 0.06));
     }
     switch (status) {
       case 'playback':
         final label = id > 0 ? 'PLAYBACK · M$id' : 'PLAYBACK';
-        return (label, AppTheme.cyan, const Color(0x1427D7D8));
+        return (label, AppTheme.accent, AppTheme.blend(AppTheme.accent, 0.10));
       case 'recording':
-        return ('RECORDING', AppTheme.amber, const Color(0x14E0A23C));
+        return ('RECORDING', AppTheme.amber, AppTheme.blend(AppTheme.amber, 0.10));
       case 'preview':
-        return ('PREVIEW', AppTheme.amber, const Color(0x14E0A23C));
+        return ('PREVIEW', AppTheme.amber, AppTheme.blend(AppTheme.amber, 0.10));
       case 'disabled':
-        return ('DISABLED', AppTheme.red, const Color(0x14D9533A));
+        return ('DISABLED', AppTheme.red, AppTheme.blend(AppTheme.red, 0.10));
       case 'idle':
       default:
-        return ('IDLE', AppTheme.txtMute, const Color(0x08FFFFFF));
+        return ('IDLE', AppTheme.txtMute, AppTheme.blend(AppTheme.txt, 0.06));
     }
   }
 
-  Widget _buildButtonGrid(BuildContext context) {
+  Widget _buildButtonRow(BuildContext context) {
     return Consumer<BusStore>(
       builder: (context, store, _) {
         final slotState = store.slots['muehle/$slot'];
@@ -90,70 +94,34 @@ class DvkPanel extends StatelessWidget {
 
         final mqtt = context.read<MqttService>();
 
-        return Wrap(
-          spacing: 4,
-          runSpacing: 4,
+        return Row(
           children: [
-            for (var i = 1; i <= 12; i++)
-              _MemoryButton(
-                id: i,
-                active: online && isPlaying && activeId == i,
-                enabled: online,
-                onTap: () => mqtt.publish(topic, dvkPlayPayload(i), retain: false),
+            for (var i = 1; i <= 4; i++)
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.only(right: 4),
+                  child: ElevatedButton(
+                    onPressed: online ? () => mqtt.publish(topic, dvkPlayPayload(i), retain: false) : null,
+                    style: AppTheme.actionButton(active: online && isPlaying && activeId == i).copyWith(
+                      minimumSize: const WidgetStatePropertyAll(Size(0, 44)),
+                      padding: const WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: 8, vertical: 6)),
+                      textStyle: WidgetStatePropertyAll(AppTheme.mono(12, weight: FontWeight.w600)),
+                    ),
+                    child: Text('M$i'),
+                  ),
+                ),
               ),
-            _StopButton(
-              enabled: online,
-              onTap: () => mqtt.publish(topic, dvkStopPayload(), retain: false),
+            ElevatedButton(
+              onPressed: online ? () => mqtt.publish(topic, dvkStopPayload(), retain: false) : null,
+              style: AppTheme.actionButton(danger: true).copyWith(
+                minimumSize: const WidgetStatePropertyAll(Size(64, 44)),
+                padding: const WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: 12, vertical: 6)),
+              ),
+              child: const Text('STOP'),
             ),
           ],
         );
       },
-    );
-  }
-}
-
-class _MemoryButton extends StatelessWidget {
-  final int id;
-  final bool active;
-  final bool enabled;
-  final VoidCallback onTap;
-
-  const _MemoryButton({
-    required this.id,
-    required this.active,
-    required this.enabled,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return ElevatedButton(
-      onPressed: enabled ? onTap : null,
-      style: AppTheme.actionButton(active: active).copyWith(
-        minimumSize: const WidgetStatePropertyAll(Size(48, 44)),
-        padding: const WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: 8, vertical: 6)),
-        textStyle: WidgetStatePropertyAll(AppTheme.mono(12, weight: FontWeight.w600)),
-      ),
-      child: Text('$id'),
-    );
-  }
-}
-
-class _StopButton extends StatelessWidget {
-  final bool enabled;
-  final VoidCallback onTap;
-
-  const _StopButton({required this.enabled, required this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    return ElevatedButton(
-      onPressed: enabled ? onTap : null,
-      style: AppTheme.actionButton(danger: true).copyWith(
-        minimumSize: const WidgetStatePropertyAll(Size(64, 44)),
-        padding: const WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: 12, vertical: 6)),
-      ),
-      child: const Text('STOP'),
     );
   }
 }

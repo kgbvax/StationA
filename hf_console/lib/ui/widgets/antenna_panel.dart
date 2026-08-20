@@ -1,58 +1,150 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import '../../store/bus_store.dart';
+import '../../mqtt/mqtt_service.dart';
+import '../../store/wiring.dart';
 import '../theme.dart';
 import 'card_container.dart';
 
 class AntennaPanel extends StatelessWidget {
   const AntennaPanel({super.key});
 
+  static const _ports = ['off', 'port1', 'port2', 'port3', 'port4', 'port5', 'port6'];
+
   @override
   Widget build(BuildContext context) {
-    const ports = ['OFF', 'DUMMY', 'P2', 'P3', 'ULTRABEAM', 'P5', 'FAN-DIPOLE'];
-    const active = 'ULTRABEAM';
+    final store = context.watch<BusStore>();
+    final mqtt = context.read<MqttService>();
 
-    return CardContainer(
+    final switchSlot = store.slots['muehle/hf/ant-switch'];
+    final switchOnline = switchSlot?.isOnline ?? false;
+    final selected = store.stateValueAs<String>('muehle/hf/ant-switch', 'selected') ?? 'off';
+    final settled = store.stateValueAs<bool>('muehle/hf/ant-switch', 'settled') ?? false;
+
+    final selectSlot = store.slots['muehle/hf/antenna-select'];
+    final selectOnline = selectSlot?.isOnline ?? false;
+    final mode = store.stateValueAs<String>('muehle/hf/antenna-select', 'mode') ?? 'auto';
+
+    final antName = antennaMap[selected] ?? selected;
+
+    void selectPort(String port) {
+      if (!switchOnline) return;
+      if (selectOnline) {
+        mqtt.publish(
+          cmdTopic('hf/antenna-select'),
+          antennaSelectPayload(port),
+          retain: cmdRetain['muehle/hf/antenna-select']!,
+        );
+      } else {
+        mqtt.publish(
+          cmdTopic('hf/ant-switch'),
+          antennaSwitchPayload(port),
+          retain: cmdRetain['muehle/hf/ant-switch']!,
+        );
+      }
+    }
+
+    void setAuto() {
+      if (!selectOnline) return;
+      mqtt.publish(
+        cmdTopic('hf/antenna-select'),
+        antennaSelectPayload('auto'),
+        retain: cmdRetain['muehle/hf/antenna-select']!,
+      );
+    }
+
+    return Container(
+      decoration: BoxDecoration(
+        color: AppTheme.card,
+        border: Border(top: BorderSide(color: AppTheme.cardLine)),
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text('ANTENNA SELECT'.toUpperCase(), style: AppTheme.mono(12, weight: FontWeight.w700, letterSpacing: 0.12)),
-              Row(
-                children: [
-                  Text('selected: ', style: AppTheme.body(12, color: AppTheme.txtMute)),
-                  Text('Ultrabeam (P4)', style: AppTheme.body(12, weight: FontWeight.w700)),
+          CardHeader(
+            title: 'Routing',
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  '${mode.toUpperCase()} · $antName',
+                  style: AppTheme.mono(12, weight: FontWeight.w700, color: settled ? AppTheme.accent : AppTheme.amber),
+                ),
+                if (!settled) ...[
+                  const SizedBox(width: 6),
+                  _PendingDot(),
                 ],
-              ),
-            ],
+              ],
+            ),
           ),
-          const SizedBox(height: 8),
-          Row(
+          const SizedBox(height: 6),
+          Wrap(
+            spacing: 4,
+            runSpacing: 4,
             children: [
-              Wrap(
-                spacing: 4,
-                runSpacing: 4,
-                children: ports.map((p) {
-                  final isActive = p == active;
-                  return ElevatedButton(
-                    onPressed: () {},
-                    style: AppTheme.actionButton(active: isActive),
-                    child: Text(p),
-                  );
-                }).toList(),
+              ..._ports.map((port) {
+                final label = antennaMap[port] ?? port;
+                final isActive = port == selected;
+                return ElevatedButton(
+                  onPressed: switchOnline ? () => selectPort(port) : null,
+                  style: AppTheme.actionButton(active: isActive),
+                  child: Text(label.toUpperCase()),
+                );
+              }),
+              const SizedBox(width: 16),
+              ElevatedButton(
+                onPressed: selectOnline ? setAuto : null,
+                style: AppTheme.actionButton(active: mode == 'auto'),
+                child: const Text('AUTO'),
               ),
-              const SizedBox(width: 28),
-              Row(
-                children: [
-                  ElevatedButton(onPressed: () {}, style: AppTheme.actionButton(active: true), child: const Text('AUTO')),
-                  const SizedBox(width: 5),
-                  ElevatedButton(onPressed: () {}, style: AppTheme.actionButton(), child: const Text('MANUAL')),
-                ],
+              ElevatedButton(
+                onPressed: null,
+                style: AppTheme.actionButton(),
+                child: const Text('MANUAL'),
               ),
             ],
           ),
         ],
       ),
+    );
+  }
+}
+
+class _PendingDot extends StatefulWidget {
+  @override
+  State<_PendingDot> createState() => _PendingDotState();
+}
+
+class _PendingDotState extends State<_PendingDot> with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(vsync: this, duration: const Duration(milliseconds: 700))..repeat(reverse: true);
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _ctrl,
+      builder: (context, child) {
+        return Container(
+          width: 8,
+          height: 8,
+          decoration: BoxDecoration(
+            color: AppTheme.blend(AppTheme.amber, 0.4 + _ctrl.value * 0.4),
+            shape: BoxShape.circle,
+          ),
+        );
+      },
     );
   }
 }

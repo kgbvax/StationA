@@ -1,4 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import '../../store/bus_store.dart';
+import '../../mqtt/mqtt_service.dart';
+import '../../store/wiring.dart';
 import '../theme.dart';
 import 'card_container.dart';
 
@@ -7,141 +11,198 @@ class PaPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final store = context.watch<BusStore>();
+    final mqtt = context.read<MqttService>();
+
+    final slot = store.slots['muehle/hf/pa'];
+    final online = slot?.isOnline ?? false;
+    final mode = store.stateValueAs<String>('muehle/hf/pa', 'mode') ?? 'standby';
+    final keyed = store.stateValueAs<String>('muehle/hf/pa', 'keyed') ?? 'rx';
+    final fault = store.stateValueAs<String>('muehle/hf/pa', 'fault') ?? 'none';
+    final temp = store.stateValueAs<num>('muehle/hf/pa', 'temp_c')?.toDouble() ?? 0.0;
+    final fwd = store.stateValueAs<num>('muehle/hf/pa', 'fwd_power_w')?.toDouble() ?? 0.0;
+    final rfl = store.stateValueAs<num>('muehle/hf/pa', 'rfl_power_w')?.toDouble() ?? 0.0;
+    final swr = store.stateValueAs<num>('muehle/hf/pa', 'swr')?.toDouble() ?? 1.0;
+
+    final (tagLabel, tagColor) = _paTag(mode, keyed, fault, temp, online);
+
+    void setMode(String value) {
+      if (!online) return;
+      mqtt.publish(
+        cmdTopic('hf/pa'),
+        paSetModePayload(value),
+        retain: cmdRetain['muehle/hf/pa']!,
+      );
+    }
+
     return CardContainer(
-      padding: const EdgeInsets.all(8),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final isWide = constraints.maxWidth > 220;
-          final labelSize = isWide ? 9.0 : 7.5;
-          final valueSize = isWide ? 14.0 : 11.0;
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            mainAxisSize: MainAxisSize.min,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          CardHeader(
+            title: 'PA · ACOM 1200S',
+            trailing: _Tag(tagLabel, tagColor),
+          ),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              CardHeader(
-                title: 'PA · ACOM 1200S',
-                trailing: _tag('● TX', const Color(0x10D9533A), AppTheme.red),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _Meter(
+                      value: fwd,
+                      max: 1200,
+                      unit: 'W FWD',
+                      labels: const ['0', '500', '1000', '1200'],
+                      fillColor: AppTheme.green,
+                      compact: true,
+                    ),
+                    const SizedBox(height: 6),
+                    _Meter(
+                      value: swr,
+                      max: 4.0,
+                      unit: 'SWR',
+                      labels: const ['1.0', '1.5', '3.0', '4.0'],
+                      fillColor: AppTheme.amber,
+                      compact: true,
+                    ),
+                    if (rfl > 0)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 4),
+                        child: Text('REFL ${rfl.toStringAsFixed(0)} W', style: AppTheme.mono(11, color: AppTheme.txtFaint)),
+                      ),
+                  ],
+                ),
               ),
-              SizedBox(height: isWide ? 8 : 4),
-              _datablock([
-                _Field('FWD W', '820', AppTheme.green),
-                _Field('REFL W', '18', AppTheme.amber),
-                _Field('SWR', '1.9', AppTheme.amber),
-                _Field('TEMP °C', '54', AppTheme.txt),
-              ], labelSize, valueSize, isWide),
-              SizedBox(height: isWide ? 8 : 4),
-              _meter(820 / 1200, isWide),
-              SizedBox(height: isWide ? 12 : 8),
-              Row(
+              const SizedBox(width: 10),
+              Column(
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  Expanded(child: ElevatedButton(onPressed: () {}, style: AppTheme.actionButton(active: true), child: const Text('OPERATE'))),
-                  const SizedBox(width: 5),
-                  Expanded(child: ElevatedButton(onPressed: () {}, style: AppTheme.actionButton(amber: true), child: const Text('STANDBY'))),
+                  SizedBox(
+                    width: 92,
+                    child: ElevatedButton(
+                      onPressed: online ? () => setMode('operate') : null,
+                      style: AppTheme.actionButton(active: mode == 'operate').copyWith(
+                        padding: const WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: 8, vertical: 10)),
+                      ),
+                      child: const Text('OPERATE'),
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  SizedBox(
+                    width: 92,
+                    child: ElevatedButton(
+                      onPressed: online ? () => setMode('standby') : null,
+                      style: AppTheme.actionButton(amber: true, active: mode == 'standby').copyWith(
+                        padding: const WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: 8, vertical: 10)),
+                      ),
+                      child: const Text('STANDBY'),
+                    ),
+                  ),
                 ],
               ),
             ],
-          );
-        },
+          ),
+        ],
       ),
     );
   }
 
-  Widget _datablock(List<_Field> fields, double labelSize, double valueSize, bool isWide) {
-    return Container(
-      decoration: BoxDecoration(
-        color: AppTheme.card,
-        border: Border.all(color: AppTheme.cardLine),
-        borderRadius: BorderRadius.circular(3),
-      ),
-      child: GridView.count(
-        crossAxisCount: 2,
-        shrinkWrap: true,
-        childAspectRatio: isWide ? 2.6 : 2.2,
-        physics: const NeverScrollableScrollPhysics(),
-        children: fields.map((f) {
-          return Container(
-            padding: EdgeInsets.symmetric(horizontal: isWide ? 10 : 6, vertical: isWide ? 4 : 2),
-            decoration: BoxDecoration(border: Border(right: BorderSide(color: AppTheme.cardLine), bottom: BorderSide(color: AppTheme.cardLine))),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Text(f.label, style: AppTheme.mono(labelSize, color: AppTheme.txtMute, weight: FontWeight.w500)),
-                Text(f.value, style: AppTheme.mono(valueSize, color: f.color, weight: FontWeight.w600)),
-              ],
-            ),
-          );
-        }).toList(),
-      ),
-    );
+  (String, Color) _paTag(String mode, String keyed, String fault, double temp, bool online) {
+    if (!online) return ('OFFLINE', AppTheme.txtMute);
+    if (fault.isNotEmpty && fault != 'none') {
+      return (fault.toUpperCase(), AppTheme.red);
+    }
+    if (keyed == 'tx') return ('● TX', AppTheme.red);
+    if (keyed == 'inhibited') return ('INHIBITED', AppTheme.amber);
+    final tempLabel = temp > 0 ? ' · ${temp.round()} °C' : '';
+    if (mode == 'operate') return ('OPERATE$tempLabel', AppTheme.green);
+    return ('STANDBY$tempLabel', AppTheme.amber);
   }
+}
 
-  Widget _meter(double fraction, bool isWide) {
+class _Meter extends StatelessWidget {
+  final double value;
+  final double max;
+  final String unit;
+  final List<String> labels;
+  final Color fillColor;
+  final bool compact;
+
+  const _Meter({
+    required this.value,
+    required this.max,
+    required this.unit,
+    required this.labels,
+    required this.fillColor,
+    this.compact = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final fraction = (value / max).clamp(0.0, 1.0);
+    final valueStyle = AppTheme.mono(compact ? 18 : 24, weight: FontWeight.w700);
+    final unitStyle = AppTheme.mono(compact ? 11 : 13, color: AppTheme.txtFaint);
+    final labelStyle = AppTheme.mono(compact ? 9 : 11, color: AppTheme.txtFaint);
+    final barHeight = compact ? 8.0 : 12.0;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        Text.rich(
+          TextSpan(
+            children: [
+              TextSpan(text: value.toStringAsFixed(value < 10 ? 1 : 0), style: valueStyle),
+              TextSpan(text: ' $unit', style: unitStyle),
+            ],
+          ),
+        ),
+        SizedBox(height: compact ? 2 : 3),
         SizedBox(
-          height: isWide ? 16 : 10,
+          height: barHeight,
           child: Stack(
             children: [
-              Container(decoration: BoxDecoration(color: AppTheme.cardLine, borderRadius: BorderRadius.circular(2))),
+              Container(decoration: BoxDecoration(color: AppTheme.pane, borderRadius: BorderRadius.circular(4), border: Border.all(color: AppTheme.cardLine))),
               FractionallySizedBox(
                 alignment: Alignment.centerLeft,
                 widthFactor: fraction,
                 child: Container(
                   decoration: BoxDecoration(
-                    gradient: const LinearGradient(colors: [AppTheme.green, Color(0xFF8BD445), AppTheme.amber]),
-                    borderRadius: BorderRadius.circular(2),
+                    gradient: LinearGradient(colors: [fillColor, fillColor, AppTheme.orange]),
+                    borderRadius: BorderRadius.circular(4),
                   ),
                 ),
               ),
-              CustomPaint(size: const Size(double.infinity, double.infinity), painter: const _TickPainter()),
             ],
           ),
         ),
-        SizedBox(height: isWide ? 4 : 2),
+        SizedBox(height: compact ? 2 : 3),
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Text('0', style: AppTheme.mono(isWide ? 10 : 8, color: AppTheme.txtMute)),
-            Text('500', style: AppTheme.mono(isWide ? 10 : 8, color: AppTheme.txtMute)),
-            Text('1000', style: AppTheme.mono(isWide ? 10 : 8, color: AppTheme.txtMute)),
-            Text('1200', style: AppTheme.mono(isWide ? 10 : 8, color: AppTheme.txtMute)),
-          ],
+          children: labels.map((l) => Text(l, style: labelStyle)).toList(),
         ),
       ],
     );
   }
+}
 
-  Widget _tag(String text, Color bg, Color fg) {
+class _Tag extends StatelessWidget {
+  final String label;
+  final Color color;
+
+  const _Tag(this.label, this.color);
+
+  @override
+  Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-      decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(3)),
-      child: Text(text, style: AppTheme.mono(9, color: fg, weight: FontWeight.w600)),
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+      decoration: BoxDecoration(
+        color: AppTheme.blend(color, 0.12),
+        border: Border.all(color: color),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Text(label, style: AppTheme.mono(11, color: color, weight: FontWeight.w700)),
     );
   }
-}
-
-class _Field {
-  final String label;
-  final String value;
-  final Color color;
-  _Field(this.label, this.value, this.color);
-}
-
-class _TickPainter extends CustomPainter {
-  const _TickPainter();
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = const Color(0x20FFFFFF)
-      ..strokeWidth = 1;
-    for (final x in [size.width * 0.4166, size.width * 0.8333]) {
-      canvas.drawLine(Offset(x, 0), Offset(x, size.height), paint);
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }

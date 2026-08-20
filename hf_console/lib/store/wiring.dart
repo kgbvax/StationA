@@ -1,7 +1,7 @@
 import 'dart:convert';
 
 // Port→name map. Source of truth is antennaselect/config.example.toml [wiring_map].
-const ANTENNA_MAP = {
+const antennaMap = {
   'off': 'Grounded',
   'port1': 'Dummy load',
   'port2': 'Port 2',
@@ -12,7 +12,7 @@ const ANTENNA_MAP = {
 };
 
 // Which /cmd topics are retained per the real bus policy.
-const CMD_RETAIN = {
+const cmdRetain = {
   'muehle/power/master': true,
   'muehle/power/psu-13v8': true,
   'muehle/hf/switch': true,
@@ -33,24 +33,63 @@ String cmdTopic(String slot) => 'muehle/$slot/cmd';
 String cmdPayload(String action, dynamic value) =>
     jsonEncode({'action': action, 'value': value});
 
-// Value-key deviations per verified bus contracts.
+// --- Power & station ---------------------------------------------------------
+
+String powerSetPayload(String onOff) => cmdPayload('set_power', onOff);
+
+String powerSeqStartPayload() => jsonEncode({'action': 'start'});
+String powerSeqStopPayload() => jsonEncode({'action': 'stop'});
+
+// --- HF switch / PA arm ------------------------------------------------------
+
+String switchSetPaPayload(String onOff) => cmdPayload('set_pa', onOff);
+String switchSetTrxPayload(String onOff) => cmdPayload('set_trx', onOff);
+
+// pa-arm.set_enabled value is a **string** "true" / "false".
 String paArmPayload(bool enabled) =>
-    jsonEncode({'action': 'set_enabled', 'value': enabled ? 'true' : 'false'});
+    cmdPayload('set_enabled', enabled ? 'true' : 'false');
 
-String tunerInlinePayload(bool inline) =>
-    jsonEncode({'action': 'set_inline', 'value': inline});
-
-String tunerTunePayload(String mode) =>
-    jsonEncode({'action': 'tune', 'value': mode});
-
-String antennaSelectPayload(String port) =>
-    jsonEncode({'request': port});
-
-String antennaSwitchPayload(String port) =>
-    jsonEncode({'select': port});
+// --- Rotator -----------------------------------------------------------------
 
 String rotatorAzPayload(double az) =>
     jsonEncode({'action': 'set_az', 'az': az});
+
+String rotatorStopPayload() => jsonEncode({'action': 'stop'});
+String rotatorFwdPayload() => jsonEncode({'action': 'fwd'});
+String rotatorRevPayload() => jsonEncode({'action': 'rev'});
+
+// --- Ultrabeam controller ----------------------------------------------------
+
+String antCtrlFrequencyPayload(int freqHz) =>
+    jsonEncode({'action': 'frequency', 'freq_hz': freqHz});
+
+String antCtrlDirectionPayload(String direction) =>
+    cmdPayload('direction', direction);
+
+String antCtrlBandPayload(String band) => cmdPayload('band', band);
+
+String antCtrlRetractPayload() => jsonEncode({'action': 'retract'});
+
+// --- PA ----------------------------------------------------------------------
+
+String paSetModePayload(String mode) => cmdPayload('set_mode', mode);
+String paSetBandPayload(String band) => cmdPayload('set_band', band);
+
+// --- Tuner -------------------------------------------------------------------
+
+// tuner.set_inline value is a real JSON bool.
+String tunerInlinePayload(bool inline) => cmdPayload('set_inline', inline);
+
+// tuner.tune value is a **string** "mem" / "full".
+String tunerTunePayload(String mode) => cmdPayload('tune', mode);
+
+// --- Antenna select / switch -------------------------------------------------
+
+String antennaSelectPayload(String request) => jsonEncode({'request': request});
+
+String antennaSwitchPayload(String port) => jsonEncode({'select': port});
+
+// --- Radio DVK ---------------------------------------------------------------
 
 String dvkPlayPayload(int id) =>
     jsonEncode({'action': 'dvk_play_${id.clamp(1, 12)}'});

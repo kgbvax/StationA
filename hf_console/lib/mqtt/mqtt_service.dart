@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:mqtt_client/mqtt_client.dart';
 import 'package:mqtt_client/mqtt_server_client.dart';
 import 'package:typed_data/typed_data.dart';
@@ -7,6 +8,7 @@ import '../store/bus_store.dart';
 
 class MqttService {
   final BusStore store;
+  final ValueNotifier<bool> connected = ValueNotifier(false);
   MqttServerClient? _client;
   StreamSubscription? _updates;
 
@@ -25,11 +27,18 @@ class MqttService {
     client.autoReconnect = true;
     client.resubscribeOnAutoReconnect = true;
     client.onConnected = () {
+      connected.value = true;
       client.subscribe('muehle/#', MqttQos.atMostOnce);
     };
-    client.onDisconnected = () {};
-    client.onAutoReconnect = () {};
-    client.onAutoReconnected = () {};
+    client.onDisconnected = () {
+      connected.value = false;
+    };
+    client.onAutoReconnect = () {
+      connected.value = false;
+    };
+    client.onAutoReconnected = () {
+      connected.value = true;
+    };
 
     final conn = MqttConnectMessage()
         .withClientIdentifier(clientId)
@@ -81,5 +90,6 @@ class MqttService {
   void dispose() {
     _updates?.cancel();
     _client?.disconnect();
+    connected.dispose();
   }
 }

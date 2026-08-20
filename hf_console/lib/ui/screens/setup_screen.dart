@@ -54,35 +54,39 @@ class _SetupScreenState extends State<SetupScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppTheme.page,
+      resizeToAvoidBottomInset: true,
       body: Center(
-        child: Container(
-          width: 420,
-          decoration: AppTheme.cardDecoration(),
+        child: SingleChildScrollView(
           padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text('MÜHLE · HF', style: AppTheme.display(22, weight: FontWeight.w700)),
-              const SizedBox(height: 8),
-              Text('Broker credentials', style: AppTheme.body(12, color: AppTheme.txtMute)),
-              const SizedBox(height: 20),
-              _field('Host', _host, false),
-              const SizedBox(height: 12),
-              _field('Port', _port, false),
-              const SizedBox(height: 12),
-              _field('Username', _user, false),
-              const SizedBox(height: 12),
-              _field('Password', _pass, true),
-              const SizedBox(height: 24),
-              ElevatedButton(
-                onPressed: _save,
-                style: AppTheme.actionButton(active: true).copyWith(
-                  minimumSize: const WidgetStatePropertyAll(Size(double.infinity, 48)),
+          child: Container(
+            width: 420,
+            decoration: AppTheme.cardDecoration(),
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text('MÜHLE · HF', style: AppTheme.display(22, weight: FontWeight.w700)),
+                const SizedBox(height: 8),
+                Text('Broker credentials', style: AppTheme.body(12, color: AppTheme.txtMute)),
+                const SizedBox(height: 20),
+                _field('Host', _host, false),
+                const SizedBox(height: 12),
+                _field('Port', _port, false),
+                const SizedBox(height: 12),
+                _field('Username', _user, false),
+                const SizedBox(height: 12),
+                _field('Password', _pass, true),
+                const SizedBox(height: 24),
+                ElevatedButton(
+                  onPressed: _save,
+                  style: AppTheme.actionButton(active: true).copyWith(
+                    minimumSize: const WidgetStatePropertyAll(Size(double.infinity, 48)),
+                  ),
+                  child: const Text('CONNECT'),
                 ),
-                child: const Text('CONNECT'),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
@@ -98,10 +102,10 @@ class _SetupScreenState extends State<SetupScreen> {
         labelText: label,
         labelStyle: AppTheme.mono(11, color: AppTheme.txtMute),
         filled: true,
-        fillColor: AppTheme.bg,
-        border: OutlineInputBorder(borderSide: const BorderSide(color: AppTheme.cardLine), borderRadius: BorderRadius.circular(4)),
-        enabledBorder: OutlineInputBorder(borderSide: const BorderSide(color: AppTheme.cardLine), borderRadius: BorderRadius.circular(4)),
-        focusedBorder: OutlineInputBorder(borderSide: const BorderSide(color: AppTheme.cyan), borderRadius: BorderRadius.circular(4)),
+        fillColor: AppTheme.pane,
+        border: OutlineInputBorder(borderSide: BorderSide(color: AppTheme.cardLine), borderRadius: BorderRadius.circular(4)),
+        enabledBorder: OutlineInputBorder(borderSide: BorderSide(color: AppTheme.cardLine), borderRadius: BorderRadius.circular(4)),
+        focusedBorder: OutlineInputBorder(borderSide: BorderSide(color: AppTheme.accent), borderRadius: BorderRadius.circular(4)),
         suffixIcon: obscure
             ? IconButton(
                 icon: Icon(_obscure ? Icons.visibility_off : Icons.visibility, size: 18, color: AppTheme.txtMute),

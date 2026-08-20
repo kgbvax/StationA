@@ -9,8 +9,6 @@ class TopBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     context.watch<BusStore>();
-    const bands = ['160', '80', '40', '20', '17', '15', '12', '10', '6'];
-    const activeBand = '20';
     final width = MediaQuery.of(context).size.width;
     final isWide = width > 1200;
     final brandSize = isWide ? 20.0 : 16.0;
@@ -24,8 +22,8 @@ class TopBar extends StatelessWidget {
         Container(
           padding: EdgeInsets.symmetric(horizontal: isWide ? 12 : 8, vertical: isWide ? 5 : 3),
           decoration: BoxDecoration(
-            color: const Color(0x1E36B37E),
-            border: Border.all(color: const Color(0x4D36B37E)),
+            color: AppTheme.blend(AppTheme.green, 0.12),
+            border: Border.all(color: AppTheme.blend(AppTheme.green, 0.45)),
             borderRadius: BorderRadius.circular(4),
           ),
           child: Text('● all online', style: AppTheme.mono(isWide ? 12 : 10, color: AppTheme.green)),
@@ -35,20 +33,7 @@ class TopBar extends StatelessWidget {
           child: SingleChildScrollView(
             scrollDirection: Axis.horizontal,
             child: Row(
-              children: bands.map((b) {
-                final active = b == activeBand;
-                return Padding(
-                  padding: const EdgeInsets.only(right: 3),
-                  child: ElevatedButton(
-                    onPressed: () {},
-                    style: AppTheme.actionButton(active: active).copyWith(
-                      minimumSize: const WidgetStatePropertyAll(Size(34, 28)),
-                      padding: const WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: 8, vertical: 4)),
-                    ),
-                    child: Text(b),
-                  ),
-                );
-              }).toList(),
+              children: const [],
             ),
           ),
         ),
@@ -61,7 +46,7 @@ class TopBar extends StatelessWidget {
             SizedBox(width: isWide ? 14 : 10),
             _driveBar(0.40, isWide),
             SizedBox(width: isWide ? 14 : 10),
-            _tag('● TX', const Color(0x10D9533A), AppTheme.red, isWide),
+            _tag('● TX', AppTheme.red, isWide),
           ],
         ),
       ],
@@ -74,11 +59,15 @@ class TopBar extends StatelessWidget {
         Container(
           width: isWide ? 72 : 48,
           height: isWide ? 6 : 4,
-          decoration: BoxDecoration(color: AppTheme.cardLine, borderRadius: BorderRadius.circular(2)),
+          decoration: BoxDecoration(
+            color: AppTheme.pane,
+            borderRadius: BorderRadius.circular(2),
+            border: Border.all(color: AppTheme.cardLine),
+          ),
           child: FractionallySizedBox(
             alignment: Alignment.centerLeft,
             widthFactor: value,
-            child: Container(decoration: BoxDecoration(color: AppTheme.blue, borderRadius: BorderRadius.circular(2))),
+            child: Container(decoration: BoxDecoration(color: AppTheme.accent, borderRadius: BorderRadius.circular(2))),
           ),
         ),
         const SizedBox(width: 4),
@@ -87,11 +76,15 @@ class TopBar extends StatelessWidget {
     );
   }
 
-  Widget _tag(String text, Color bg, Color fg, bool isWide) {
+  Widget _tag(String text, Color fg, bool isWide) {
     return Container(
       padding: EdgeInsets.symmetric(horizontal: isWide ? 8 : 6, vertical: isWide ? 3 : 2),
-      decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(3)),
-      child: Text(text, style: AppTheme.mono(isWide ? 11 : 9, color: fg, weight: FontWeight.w600)),
+      decoration: BoxDecoration(
+        color: AppTheme.blend(fg, 0.12),
+        border: Border.all(color: fg),
+        borderRadius: BorderRadius.circular(3),
+      ),
+      child: Text(text, style: AppTheme.mono(isWide ? 11 : 9, color: fg, weight: FontWeight.w700)),
     );
   }
 }
