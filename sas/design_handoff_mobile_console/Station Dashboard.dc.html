@@ -1,0 +1,1512 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="_ds/exact-design-system-3363f491-6d84-496b-af9d-eb24daefca24/fig-tokens.css">
+  <link rel="stylesheet" href="_ds/exact-design-system-3363f491-6d84-496b-af9d-eb24daefca24/tokens/theme.css">
+  <link rel="stylesheet" href="_ds/exact-design-system-3363f491-6d84-496b-af9d-eb24daefca24/tokens/fonts.css">
+  <link rel="stylesheet" href="_ds/exact-design-system-3363f491-6d84-496b-af9d-eb24daefca24/tokens/typography.css">
+  <link rel="stylesheet" href="_ds/exact-design-system-3363f491-6d84-496b-af9d-eb24daefca24/tokens/spacing.css">
+  <link rel="stylesheet" href="_ds/exact-design-system-3363f491-6d84-496b-af9d-eb24daefca24/fig-typography.css">
+  <link rel="stylesheet" href="_ds/exact-design-system-3363f491-6d84-496b-af9d-eb24daefca24/styles.css">
+  <script src="_ds/exact-design-system-3363f491-6d84-496b-af9d-eb24daefca24/_ds_bundle.js"></script>
+  <meta name="design_doc_mode" content="canvas">
+  <script>document.documentElement.setAttribute('data-theme','dark');</script>
+  <style>
+    :root, :root[data-theme="dark"]{
+      --surface-page: rgb(11,11,11);
+      --surface-card: rgb(26,27,43);
+      --text-primary: rgb(226,222,255);
+      --text-secondary: rgb(198,195,216);
+      --border-light: rgb(83,81,105);
+      --btn-states-disabled-primary: rgb(46,45,61);
+      --brand-color-grey-4: rgb(150,147,168);
+    }
+    body{margin:0;background:#050506;}
+    a{color:var(--text-link);}
+    a:hover{color:var(--brand-color-purple-3);}
+    code{background:rgba(255,255,255,.08);padding:1px 5px;border-radius:4px;font-size:12px;}
+    .ex-btn.attn-btn{background:var(--highlight-warning)!important;color:#1A1B2B!important;border-color:transparent!important;}
+    .ex-btn.attn-btn:hover{background:var(--highlight-warning)!important;filter:brightness(.95);}
+    .attn-on .ex-btn{background:var(--highlight-warning)!important;color:#1A1B2B!important;border-color:transparent!important;}
+    .attn-on .ex-btn:hover{filter:brightness(.95);}
+  </style>
+</helmet>
+
+<div style="background:#050506;min-height:100vh;padding:32px 40px 90px;font-family:var(--font-sans);color:var(--text-primary);box-sizing:border-box;">
+
+  <div style="max-width:1200px;margin:0 0 26px;">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
+      <x-import component-from-global-scope="ExactDesignSystem_3363f4.Logo" product="Station" size="26" hint-size="auto,26px"></x-import>
+    </div>
+    <h1 style="margin:0 0 8px;font-size:28px;font-weight:700;color:var(--text-primary);">Mühle station — live state</h1>
+    <p style="margin:0;font-size:14px;color:var(--highlight-info);max-width:700px;line-height:1.55;">Three layout directions over the same live data — each slot's <code>state</code> plane from the station's MQTT bus, mirrored here. Buttons publish mocked <code>cmd</code> intents. Switch station, then try "Simulate host outage" and "Simulate ant-ctrl fault" — every layout below reacts to the same model.</p>
+  </div>
+
+  <div style="max-width:1200px;display:flex;flex-wrap:wrap;align-items:center;gap:22px;background:var(--surface-card);border:1px solid var(--border-light);border-radius:12px;padding:16px 20px;margin-bottom:40px;">
+    <x-import component-from-global-scope="ExactDesignSystem_3363f4.SegmentedControl" options="{{ stationOptions }}" value="{{ station }}" onChange="{{ setStation }}" hint-size="200px,36px"></x-import>
+    <div style="display:flex;align-items:center;gap:10px;">
+      <x-import component-from-global-scope="ExactDesignSystem_3363f4.Toggle" checked="{{ outage }}" onChange="{{ toggleOutage }}" hint-size="40px,22px"></x-import>
+      <span style="font-size:13px;color:var(--text-secondary);">Simulate host outage (<b>{{ host.name }}</b>)</span>
+    </div>
+    <sc-if value="{{ canFault }}" hint-placeholder-val="{{ true }}">
+      <div style="display:flex;align-items:center;gap:10px;">
+        <x-import component-from-global-scope="ExactDesignSystem_3363f4.Toggle" checked="{{ fault }}" onChange="{{ toggleFault }}" hint-size="40px,22px"></x-import>
+        <span style="font-size:13px;color:var(--text-secondary);">Simulate ant-ctrl fault</span>
+      </div>
+    </sc-if>
+    <div style="flex:1;"></div>
+    <div style="display:flex;align-items:center;gap:10px;padding:8px 14px;border-radius:999px;background:rgba(124,92,255,.16);">
+      <span style="font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--highlight-info);">Host</span>
+      <span style="font-size:13px;font-weight:600;color:var(--text-primary);">{{ host.name }}</span>
+      <x-import component-from-global-scope="ExactDesignSystem_3363f4.StatusPill" status="{{ host.pillStatus }}" dot="{{ true }}" hint-size="auto,22px">{{ host.pillLabel }}</x-import>
+    </div>
+  </div>
+
+  <section id="t3" style="max-width:none;margin-bottom:48px;">
+    <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:20px;">
+      <a href="#t3" style="font:600 10px ui-monospace,Menlo,monospace;padding:3px 7px;background:#fff;color:#111;border-radius:4px;text-decoration:none;">3</a>
+      <span style="font:600 13px system-ui,sans-serif;color:var(--text-primary);">Mobile console — power-first, one-thumb reach</span>
+    </div>
+    <div id="3a" style="display:flex;flex-direction:column;gap:10px;">
+      <div style="display:flex;align-items:baseline;gap:8px;">
+        <a href="#3a" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:rgba(255,255,255,.14);color:#fff;border-radius:5px;text-decoration:none;">3a</a>
+        <span style="font-size:11px;color:rgba(255,255,255,.55);">Option 2 restacked for a phone — adds startup/shutdown sequence + TRX &amp; PA power</span>
+      </div>
+
+      <div style="width:394px;height:812px;background:#0a0a0c;border:11px solid #17171c;border-radius:46px;box-shadow:0 30px 80px rgba(0,0,0,.6);box-sizing:border-box;overflow:hidden;position:relative;">
+        <div style="height:44px;display:flex;align-items:center;justify-content:space-between;padding:0 24px;flex:none;position:relative;">
+          <span style="font-size:13px;font-weight:700;color:#fff;">9:41</span>
+          <div style="width:118px;height:24px;background:#000;border-radius:0 0 16px 16px;position:absolute;left:50%;top:0;transform:translateX(-50%);"></div>
+          <div style="display:flex;align-items:center;gap:6px;">
+            <div style="display:flex;align-items:flex-end;gap:2px;height:11px;"><span style="width:3px;height:5px;background:#fff;border-radius:1px;"></span><span style="width:3px;height:7px;background:#fff;border-radius:1px;"></span><span style="width:3px;height:9px;background:#fff;border-radius:1px;"></span><span style="width:3px;height:11px;background:#fff;border-radius:1px;"></span></div>
+            <div style="width:22px;height:11px;border:1px solid rgba(255,255,255,.6);border-radius:3px;padding:1px;box-sizing:border-box;"><div style="width:100%;height:100%;background:#fff;border-radius:1px;"></div></div>
+          </div>
+        </div>
+
+        <div style="height:calc(100% - 44px);overflow-y:auto;padding:4px 14px 32px;display:flex;flex-direction:column;gap:12px;box-sizing:border-box;">
+
+          <div style="display:flex;flex-direction:column;gap:10px;">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+              <div style="display:flex;align-items:center;gap:8px;">
+                <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:{{ overallHealth.color }};"></span>
+                <span style="font-size:16px;font-weight:800;color:#fff;">Mühle · {{ overallHealth.label }}</span>
+              </div>
+              <x-import component-from-global-scope="ExactDesignSystem_3363f4.StatusPill" status="{{ host.pillStatus }}" dot="{{ true }}" hint-size="auto,22px">{{ host.name }}</x-import>
+            </div>
+            <x-import component-from-global-scope="ExactDesignSystem_3363f4.SegmentedControl" options="{{ stationOptions }}" value="{{ station }}" onChange="{{ setStation }}" hint-size="100%,36px"></x-import>
+            <div style="display:flex;flex-wrap:wrap;gap:8px 14px;padding:2px;">
+              <sc-for list="{{ healthDots }}" as="d" hint-placeholder-count="6">
+                <div style="display:flex;align-items:center;gap:5px;">
+                  <span style="{{ d.dotStyle }}"></span>
+                  <span style="font-size:10.5px;color:rgba(255,255,255,.6);">{{ d.label }}</span>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+
+          <!-- Radio -->
+          <div style="background:rgba(255,255,255,.05);border-radius:16px;padding:14px 15px;display:flex;flex-direction:column;gap:11px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+              <span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:rgba(255,255,255,.5);">Radio</span>
+              <sc-if value="{{ radioBig.txOn }}" hint-placeholder-val="{{ false }}"><span style="font-size:12px;font-weight:800;padding:5px 14px;border-radius:999px;background:var(--bug-open);color:#fff;letter-spacing:.05em;">● TX</span></sc-if>
+              <sc-if value="{{ radioBig.rxShow }}" hint-placeholder-val="{{ true }}"><span style="font-size:12px;font-weight:700;padding:5px 14px;border-radius:999px;background:rgba(255,255,255,.08);color:rgba(255,255,255,.7);letter-spacing:.05em;">RX</span></sc-if>
+            </div>
+            <div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;">
+              <span style="font-size:30px;font-weight:800;color:#fff;line-height:1;">{{ radioBig.band }}</span>
+              <span style="font-size:15px;font-weight:700;color:var(--brand-color-lavender-1);">{{ radioBig.mode }}</span>
+              <span style="font-size:12px;color:rgba(255,255,255,.4);font-family:ui-monospace,Menlo,monospace;">{{ radioBig.freq }}</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;font-size:11px;color:rgba(255,255,255,.5);"><span>Drive</span><span style="color:#fff;font-weight:700;">{{ radioBig.drivePct }}%</span></div>
+            <div style="height:8px;border-radius:999px;background:rgba(255,255,255,.08);overflow:hidden;"><div style="{{ radioBig.driveBarStyle }}"></div></div>
+          </div>
+
+          <!-- PA -->
+          <sc-if value="{{ isHF }}" hint-placeholder-val="{{ true }}">
+            <div style="background:rgba(255,255,255,.05);border-radius:16px;padding:14px 15px;display:flex;flex-direction:column;gap:12px;">
+              <div style="display:flex;justify-content:space-between;align-items:center;">
+                <span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:rgba(255,255,255,.5);">PA · ACOM 1200S</span>
+                <span style="font-size:11px;color:rgba(255,255,255,.5);">SWR <b style="color:#fff;">{{ paBig.swr }}</b></span>
+              </div>
+              <div style="display:flex;gap:8px;">
+                <x-import component-from-global-scope="ExactDesignSystem_3363f4.Button" variant="{{ paBig.operateActive_variant }}" size="md" disabled="{{ paBig.disabled }}" onClick="{{ paBig.onOperate }}" hint-size="auto,40px">Operate</x-import>
+                <span class="{{ paBig.standbyWrapClass }}" style="display:inline-flex;"><x-import component-from-global-scope="ExactDesignSystem_3363f4.Button" variant="{{ paBig.standbyActive_variant }}" size="md" disabled="{{ paBig.disabled }}" onClick="{{ paBig.onStandby }}" hint-size="auto,40px">Standby</x-import></span>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:4px;">
+                <div style="display:flex;justify-content:space-between;font-size:11px;color:rgba(255,255,255,.5);"><span>Forward power</span><span style="color:#fff;font-weight:700;">{{ paBig.fwdW }} W</span></div>
+                <div style="height:9px;border-radius:999px;background:rgba(255,255,255,.08);overflow:hidden;"><div style="{{ paBig.fwdBarStyle }}"></div></div>
+              </div>
+              <sc-if value="{{ paBig.error }}" hint-placeholder-val="{{ false }}">
+                <div style="font-size:11.5px;font-weight:600;color:var(--highlight-warning);background:rgba(255,194,75,.12);border:1px solid var(--highlight-warning);border-radius:8px;padding:8px 10px;">⚠ {{ paBig.error }}</div>
+              </sc-if>
+            </div>
+          </sc-if>
+
+          <!-- Tuner -->
+          <sc-if value="{{ isHF }}" hint-placeholder-val="{{ true }}">
+            <div style="background:rgba(255,255,255,.05);border-radius:16px;padding:14px 15px;display:flex;flex-direction:column;gap:11px;">
+              <span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:rgba(255,255,255,.5);">Tuner · ATR-1000</span>
+              <div style="display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;">
+                <div style="display:flex;align-items:baseline;gap:6px;"><span style="font-size:11px;color:rgba(255,255,255,.5);">SWR</span><span style="font-size:28px;font-weight:700;font-family:ui-monospace,Menlo,monospace;line-height:1;color:{{ tunerBig.swrColor }};">{{ tunerBig.swr }}</span></div>
+                <span style="font-size:12px;font-weight:700;padding:4px 12px;border-radius:999px;{{ tunerBig.opStateChip }}">{{ tunerBig.inlineLabel }}</span>
+              </div>
+              <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                <x-import component-from-global-scope="ExactDesignSystem_3363f4.Button" variant="secondary" size="sm" disabled="{{ tunerBig.tuneDisabled }}" onClick="{{ tunerBig.onMem }}" hint-size="auto,32px">Tune mem</x-import>
+                <x-import component-from-global-scope="ExactDesignSystem_3363f4.Button" variant="secondary" size="sm" disabled="{{ tunerBig.tuneDisabled }}" onClick="{{ tunerBig.onFull }}" hint-size="auto,32px">Tune full</x-import>
+                <x-import component-from-global-scope="ExactDesignSystem_3363f4.Button" variant="secondary" size="sm" disabled="{{ tunerBig.disabled }}" onClick="{{ tunerBig.onToggleInline }}" hint-size="auto,32px">{{ tunerBig.toggleLabel }}</x-import>
+              </div>
+              <sc-if value="{{ tunerBig.fault }}" hint-placeholder-val="{{ false }}">
+                <div style="font-size:11.5px;font-weight:600;color:var(--highlight-warning);background:rgba(255,194,75,.12);border:1px solid var(--highlight-warning);border-radius:8px;padding:8px 10px;">⚠ {{ tunerBig.fault }}</div>
+              </sc-if>
+            </div>
+          </sc-if>
+
+          <!-- Ultrabeam -->
+          <sc-if value="{{ isHF }}" hint-placeholder-val="{{ true }}">
+            <div style="background:rgba(255,255,255,.05);border-radius:16px;padding:14px 15px;display:flex;flex-direction:column;gap:11px;">
+              <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;">
+                <span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:rgba(255,255,255,.5);">Ultrabeam</span>
+                <span style="font-size:11px;color:rgba(255,255,255,.5);">{{ antBig.band }} · {{ antBig.freq }}</span>
+              </div>
+              <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                <sc-for list="{{ antBig.directionOptions }}" as="o" hint-placeholder-count="3">
+                  <span class="{{ o.attnWrapClass }}" style="display:inline-flex;"><x-import component-from-global-scope="ExactDesignSystem_3363f4.Button" variant="{{ o.variant }}" size="sm" disabled="{{ o.disabled }}" onClick="{{ o.onClick }}" hint-size="auto,32px">{{ o.label }}</x-import></span>
+                </sc-for>
+                <x-import component-from-global-scope="ExactDesignSystem_3363f4.Button" variant="destructive-outlined" size="sm" disabled="{{ antBig.retractDisabled }}" onClick="{{ antBig.onRetract }}" hint-size="auto,32px">Retract</x-import>
+              </div>
+            </div>
+          </sc-if>
+
+          <!-- Antenna select -->
+          <sc-if value="{{ isHF }}" hint-placeholder-val="{{ true }}">
+            <div style="background:rgba(255,255,255,.05);border-radius:16px;padding:14px 15px;display:flex;flex-direction:column;gap:10px;">
+              <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
+                <span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:rgba(255,255,255,.5);">Antenna select</span>
+                <span style="font-size:11px;font-weight:700;padding:3px 10px;border-radius:999px;{{ antSelectBig.sourceChip }}">{{ antSelectBig.sourceLabel }}</span>
+              </div>
+              <div style="font-size:12px;color:rgba(255,255,255,.6);">Selected: <b style="color:#fff;">{{ antSelectBig.selectedLabel }}</b></div>
+              <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+                <sc-for list="{{ antSelectBig.ports }}" as="p" hint-placeholder-count="7">
+                  <x-import component-from-global-scope="ExactDesignSystem_3363f4.Button" variant="{{ p.variant }}" size="sm" disabled="{{ p.disabled }}" onClick="{{ p.onClick }}" hint-size="auto,32px">{{ p.label }}</x-import>
+                </sc-for>
+                <x-import component-from-global-scope="ExactDesignSystem_3363f4.Button" variant="secondary" size="sm" disabled="{{ antSelectBig.returnDisabled }}" onClick="{{ antSelectBig.onReturnAuto }}" hint-size="auto,32px">Auto</x-import>
+              </div>
+            </div>
+          </sc-if>
+
+          <!-- Rotator -->
+          <div style="background:rgba(255,255,255,.05);border-radius:16px;padding:15px;display:flex;flex-direction:column;gap:12px;align-items:center;">
+            <div style="display:flex;align-items:center;gap:10px;align-self:flex-start;">
+              <span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:rgba(255,255,255,.5);">Rotator</span>
+              <sc-if value="{{ rotatorBig.moving }}" hint-placeholder-val="{{ false }}"><span style="font-size:11px;font-weight:700;color:var(--bug-process);">Slewing → {{ rotatorBig.targetDeg }}°</span></sc-if>
+            </div>
+            <div ref="{{ rotatorBig.compassRefM }}" onPointerDown="{{ rotatorBig.onCompassDownM }}" style="position:relative;width:168px;height:168px;flex:none;border-radius:50%;background:radial-gradient(circle at 50% 50%, rgba(255,255,255,.05), rgba(255,255,255,.015));border:1px solid rgba(255,255,255,.14);cursor:grab;touch-action:none;user-select:none;">
+              <sc-for list="{{ rotatorBig.cones }}" as="c" hint-placeholder-count="1"><div style="{{ c }}"></div></sc-for>
+              <div style="position:absolute;inset:10px;border-radius:50%;border:1px dashed rgba(255,255,255,.12);pointer-events:none;"></div>
+              <sc-if value="{{ rotatorBig.showTarget }}" hint-placeholder-val="{{ false }}"><div style="{{ rotatorBig.targetLineStyle }}"></div></sc-if>
+              <span style="position:absolute;top:5px;left:50%;transform:translateX(-50%);font-size:11px;font-weight:800;color:rgba(255,255,255,.8);pointer-events:none;">N</span>
+              <span style="position:absolute;bottom:5px;left:50%;transform:translateX(-50%);font-size:10px;font-weight:700;color:rgba(255,255,255,.45);pointer-events:none;">S</span>
+              <span style="position:absolute;left:7px;top:50%;transform:translateY(-50%);font-size:10px;font-weight:700;color:rgba(255,255,255,.45);pointer-events:none;">W</span>
+              <span style="position:absolute;right:7px;top:50%;transform:translateY(-50%);font-size:10px;font-weight:700;color:rgba(255,255,255,.45);pointer-events:none;">E</span>
+              <div style="{{ rotatorBig.needleStyle }}"></div>
+              <div style="position:absolute;left:50%;top:50%;width:10px;height:10px;border-radius:50%;background:var(--brand-color-purple-3);transform:translate(-50%,-50%);pointer-events:none;"></div>
+              <div style="position:absolute;left:0;right:0;bottom:22px;text-align:center;pointer-events:none;"><span style="font-size:22px;font-weight:700;font-family:ui-monospace,Menlo,monospace;color:#fff;">{{ rotatorBig.azDeg }}°</span></div>
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center;">
+              <sc-for list="{{ rotatorBig.presets }}" as="p" hint-placeholder-count="8">
+                <x-import component-from-global-scope="ExactDesignSystem_3363f4.Button" variant="{{ p.variant }}" size="sm" disabled="{{ p.disabled }}" onClick="{{ p.onClick }}" hint-size="auto,32px">{{ p.label }}</x-import>
+              </sc-for>
+            </div>
+          </div>
+
+          <!-- POWER — startup/shutdown + relays -->
+          <div style="background:rgba(124,92,255,.10);border:1px solid rgba(124,92,255,.35);border-radius:16px;padding:15px;display:flex;flex-direction:column;gap:12px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+              <span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:rgba(255,255,255,.5);">Station power</span>
+              <span style="{{ powerBig.seq.phaseChip }}">{{ powerBig.seq.phaseLabel }}</span>
+            </div>
+            <x-import component-from-global-scope="ExactDesignSystem_3363f4.Button" variant="{{ powerBig.seq.primaryVariant }}" size="lg" block="{{ true }}" disabled="{{ powerBig.seq.primaryDisabled }}" onClick="{{ powerBig.seq.onPrimary }}" hint-size="100%,48px">{{ powerBig.seq.primaryLabel }}</x-import>
+            <sc-if value="{{ powerBig.seq.showStep }}" hint-placeholder-val="{{ false }}">
+              <div style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--bug-process);font-weight:600;">
+                <span style="width:9px;height:9px;border-radius:50%;background:var(--bug-process);"></span>
+                <span>{{ powerBig.seq.stepLabel }}…</span>
+              </div>
+            </sc-if>
+            <div style="height:1px;background:rgba(255,255,255,.08);margin:2px 0;"></div>
+            <sc-for list="{{ powerBig.relays }}" as="r" hint-placeholder-count="4">
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;min-height:44px;">
+                <div style="display:flex;flex-direction:column;gap:2px;">
+                  <span style="font-size:14px;font-weight:700;color:#fff;">{{ r.label }}</span>
+                  <span style="font-size:10.5px;color:rgba(255,255,255,.4);font-family:ui-monospace,Menlo,monospace;">{{ r.sub }}</span>
+                </div>
+                <div style="display:flex;align-items:center;gap:10px;">
+                  <span style="{{ r.stateStyle }}">{{ r.stateLabel }}</span>
+                  <x-import component-from-global-scope="ExactDesignSystem_3363f4.Toggle" checked="{{ r.on }}" disabled="{{ r.disabled }}" onChange="{{ r.onToggle }}" hint-size="40px,24px"></x-import>
+                </div>
+              </div>
+            </sc-for>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="t2" style="max-width:none;margin-bottom:48px;">
+    <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:20px;">
+      <a href="#t2" style="font:600 10px ui-monospace,Menlo,monospace;padding:3px 7px;background:#fff;color:#111;border-radius:4px;text-decoration:none;">2</a>
+      <span style="font:600 13px system-ui,sans-serif;color:var(--text-primary);">At-a-glance — no clicks needed to see state</span>
+    </div>
+    <div style="display:flex;flex-wrap:wrap;gap:32px;align-items:flex-start;">
+
+      <!-- OPTION 2a — Console grid -->
+      <div id="2a" style="display:flex;flex-direction:column;gap:10px;">
+        <div style="display:flex;align-items:baseline;gap:8px;">
+          <a href="#2a" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:rgba(255,255,255,.14);color:#fff;border-radius:5px;text-decoration:none;">2a</a>
+          <span style="font-size:11px;color:rgba(255,255,255,.55);">Console grid — every reading + control visible, no drawers</span>
+        </div>
+        <div style="width:860px;background:#000;border:1px solid var(--border-light);border-radius:14px;padding:22px;box-sizing:border-box;display:flex;flex-direction:column;gap:14px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;padding:10px 14px;background:rgba(255,255,255,.05);border-radius:10px;">
+            <div style="display:flex;align-items:center;gap:8px;">
+              <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:{{ overallHealth.color }};"></span>
+              <span style="font-size:13px;font-weight:700;color:#fff;">{{ overallHealth.label }}</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+              <sc-for list="{{ healthDots }}" as="d" hint-placeholder-count="6">
+                <div style="display:flex;align-items:center;gap:5px;">
+                  <span style="{{ d.dotStyle }}"></span>
+                  <span style="font-size:10.5px;color:rgba(255,255,255,.6);">{{ d.label }}</span>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+            <!-- Radio -->
+            <div style="grid-column:1 / -1;background:rgba(255,255,255,.05);border-radius:12px;padding:16px 18px;display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+              <div style="display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;">
+                <span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:rgba(255,255,255,.5);">Radio</span>
+                <span style="font-size:26px;font-weight:700;color:#fff;line-height:1;">{{ radioBig.band }}</span>
+                <span style="font-size:15px;font-weight:700;color:var(--brand-color-lavender-1);">{{ radioBig.mode }}</span>
+                <span style="font-size:12px;color:rgba(255,255,255,.4);font-family:ui-monospace,Menlo,monospace;">{{ radioBig.freq }}</span>
+              </div>
+              <div style="display:flex;align-items:center;gap:16px;">
+                <span style="font-size:12px;color:rgba(255,255,255,.5);">Drive <b style="color:#fff;font-size:15px;">{{ radioBig.drivePct }}%</b></span>
+                <sc-if value="{{ radioBig.txOn }}" hint-placeholder-val="{{ false }}">
+                  <span style="font-size:13px;font-weight:800;padding:5px 14px;border-radius:999px;background:var(--bug-open);color:#fff;letter-spacing:.05em;">● TX</span>
+                </sc-if>
+                <sc-if value="{{ radioBig.rxShow }}" hint-placeholder-val="{{ true }}">
+                  <span style="font-size:13px;font-weight:700;padding:5px 14px;border-radius:999px;background:rgba(255,255,255,.08);color:rgba(255,255,255,.7);letter-spacing:.05em;">RX</span>
+                </sc-if>
+              </div>
+            </div>
+
+            <!-- PA -->
+            <sc-if value="{{ isHF }}" hint-placeholder-val="{{ true }}">
+              <div style="background:rgba(255,255,255,.05);border-radius:12px;padding:16px 18px;display:flex;flex-direction:column;gap:12px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;">
+                  <span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:rgba(255,255,255,.5);">PA · ACOM 1200S</span>
+                  <span style="font-size:11px;color:rgba(255,255,255,.5);">SWR <b style="color:#fff;">{{ paBig.swr }}</b></span>
+                </div>
+                <div style="display:flex;gap:6px;">
+                  <x-import component-from-global-scope="ExactDesignSystem_3363f4.Button" variant="{{ paBig.operateActive_variant }}" size="sm" disabled="{{ paBig.disabled }}" onClick="{{ paBig.onOperate }}" hint-size="auto,32px">Operate</x-import>
+                  <span class="{{ paBig.standbyWrapClass }}" style="display:inline-flex;"><x-import component-from-global-scope="ExactDesignSystem_3363f4.Button" variant="{{ paBig.standbyActive_variant }}" size="sm" disabled="{{ paBig.disabled }}" onClick="{{ paBig.onStandby }}" hint-size="auto,32px">Standby</x-import></span>
+                </div>
+                <div style="display:flex;flex-direction:column;gap:4px;">
+                  <div style="display:flex;justify-content:space-between;font-size:11px;color:rgba(255,255,255,.5);"><span>Forward power</span><span style="color:#fff;font-weight:700;">{{ paBig.fwdW }} W</span></div>
+                  <div style="height:10px;border-radius:999px;background:rgba(255,255,255,.08);overflow:hidden;"><div style="{{ paBig.fwdBarStyle }}"></div></div>
+                </div>
+                <sc-if value="{{ paBig.error }}" hint-placeholder-val="{{ false }}">
+                  <div style="font-size:11.5px;font-weight:600;color:var(--highlight-warning);background:rgba(255,194,75,.12);border:1px solid var(--highlight-warning);border-radius:8px;padding:8px 10px;">⚠ {{ paBig.error }}</div>
+                </sc-if>
+              </div>
+            </sc-if>
+
+            <!-- Tuner -->
+            <sc-if value="{{ isHF }}" hint-placeholder-val="{{ true }}">
+              <div style="background:rgba(255,255,255,.05);border-radius:12px;padding:16px 18px;display:flex;flex-direction:column;gap:12px;">
+                <span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:rgba(255,255,255,.5);">Tuner · ATR-1000</span>
+                <div style="display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;">
+                  <div style="display:flex;align-items:baseline;gap:6px;">
+                    <span style="font-size:11px;color:rgba(255,255,255,.5);">SWR</span>
+                    <span style="font-size:30px;font-weight:700;font-family:ui-monospace,Menlo,monospace;line-height:1;color:{{ tunerBig.swrColor }};">{{ tunerBig.swr }}</span>
+                  </div>
+                  <span style="font-size:12px;font-weight:700;padding:4px 12px;border-radius:999px;{{ tunerBig.opStateChip }}">{{ tunerBig.inlineLabel }}</span>
+                </div>
+                <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                  <x-import component-from-global-scope="ExactDesignSystem_3363f4.Button" variant="secondary" size="sm" disabled="{{ tunerBig.tuneDisabled }}" onClick="{{ tunerBig.onMem }}" hint-size="auto,32px">Tune mem</x-import>
+                  <x-import component-from-global-scope="ExactDesignSystem_3363f4.Button" variant="secondary" size="sm" disabled="{{ tunerBig.tuneDisabled }}" onClick="{{ tunerBig.onFull }}" hint-size="auto,32px">Tune full</x-import>
+                  <x-import component-from-global-scope="ExactDesignSystem_3363f4.Button" variant="secondary" size="sm" disabled="{{ tunerBig.disabled }}" onClick="{{ tunerBig.onToggleInline }}" hint-size="auto,32px">{{ tunerBig.toggleLabel }}</x-import>
+                </div>
+                <div style="font-size:11px;color:rgba(255,255,255,.5);">Fwd power <b style="color:rgba(255,255,255,.85);">{{ tunerBig.fwdW }} W</b></div>
+                <sc-if value="{{ tunerBig.settling }}" hint-placeholder-val="{{ false }}">
+                  <div style="font-size:11.5px;font-weight:600;color:var(--bug-process);">Tuning…</div>
+                </sc-if>
+                <sc-if value="{{ tunerBig.fault }}" hint-placeholder-val="{{ false }}">
+                  <div style="font-size:11.5px;font-weight:600;color:var(--highlight-warning);background:rgba(255,194,75,.12);border:1px solid var(--highlight-warning);border-radius:8px;padding:8px 10px;">⚠ {{ tunerBig.fault }}</div>
+                </sc-if>
+              </div>
+            </sc-if>
+
+            <!-- Ultrabeam / antenna -->
+            <sc-if value="{{ isHF }}" hint-placeholder-val="{{ true }}">
+              <div style="background:rgba(255,255,255,.05);border-radius:12px;padding:16px 18px;display:flex;flex-direction:column;gap:10px;">
+                <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;">
+                  <span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:rgba(255,255,255,.5);">Ultrabeam</span>
+                  <span style="font-size:11px;color:rgba(255,255,255,.5);">{{ antBig.band }} · {{ antBig.freq }}</span>
+                </div>
+                <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                  <sc-for list="{{ antBig.directionOptions }}" as="o" hint-placeholder-count="3">
+                    <span class="{{ o.attnWrapClass }}" style="display:inline-flex;"><x-import component-from-global-scope="ExactDesignSystem_3363f4.Button" variant="{{ o.variant }}" size="sm" disabled="{{ o.disabled }}" onClick="{{ o.onClick }}" hint-size="auto,32px">{{ o.label }}</x-import></span>
+                  </sc-for>
+                  <x-import component-from-global-scope="ExactDesignSystem_3363f4.Button" variant="destructive-outlined" size="sm" disabled="{{ antBig.retractDisabled }}" onClick="{{ antBig.onRetract }}" hint-size="auto,32px">Retract</x-import>
+                </div>
+              </div>
+            </sc-if>
+
+            <!-- Antenna select (manual override) -->
+            <sc-if value="{{ isHF }}" hint-placeholder-val="{{ true }}">
+              <div style="background:rgba(255,255,255,.05);border-radius:12px;padding:16px 18px;display:flex;flex-direction:column;gap:10px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
+                  <span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:rgba(255,255,255,.5);">Antenna select</span>
+                  <span style="font-size:11px;font-weight:700;padding:3px 10px;border-radius:999px;{{ antSelectBig.sourceChip }}">{{ antSelectBig.sourceLabel }}</span>
+                </div>
+                <div style="font-size:12px;color:rgba(255,255,255,.6);">Selected: <b style="color:#fff;">{{ antSelectBig.selectedLabel }}</b></div>
+                <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+                  <sc-for list="{{ antSelectBig.ports }}" as="p" hint-placeholder-count="7">
+                    <x-import component-from-global-scope="ExactDesignSystem_3363f4.Button" variant="{{ p.variant }}" size="sm" disabled="{{ p.disabled }}" onClick="{{ p.onClick }}" hint-size="auto,32px">{{ p.label }}</x-import>
+                  </sc-for>
+                  <x-import component-from-global-scope="ExactDesignSystem_3363f4.Button" variant="secondary" size="sm" disabled="{{ antSelectBig.returnDisabled }}" onClick="{{ antSelectBig.onReturnAuto }}" hint-size="auto,32px">Auto</x-import>
+                  <sc-if value="{{ antSelectBig.settling }}" hint-placeholder-val="{{ false }}">
+                    <span style="font-size:11px;font-weight:600;color:var(--bug-process);">Settling…</span>
+                  </sc-if>
+                </div>
+              </div>
+            </sc-if>
+
+            <!-- Rotator -->
+            <div style="grid-column:1 / -1;background:rgba(255,255,255,.05);border-radius:12px;padding:18px;display:flex;align-items:center;gap:26px;flex-wrap:wrap;">
+              <div ref="{{ rotatorBig.compassRef }}" onPointerDown="{{ rotatorBig.onCompassDown }}" style="position:relative;width:190px;height:190px;flex:none;border-radius:50%;background:radial-gradient(circle at 50% 50%, rgba(255,255,255,.05), rgba(255,255,255,.015));border:1px solid rgba(255,255,255,.14);cursor:grab;touch-action:none;user-select:none;">
+                <sc-for list="{{ rotatorBig.cones }}" as="c" hint-placeholder-count="1"><div style="{{ c }}"></div></sc-for>
+                <div style="position:absolute;inset:10px;border-radius:50%;border:1px dashed rgba(255,255,255,.12);pointer-events:none;"></div>
+                <sc-if value="{{ rotatorBig.showTarget }}" hint-placeholder-val="{{ false }}"><div style="{{ rotatorBig.targetLineStyle }}"></div></sc-if>
+                <span style="position:absolute;top:5px;left:50%;transform:translateX(-50%);font-size:12px;font-weight:800;color:rgba(255,255,255,.8);pointer-events:none;">N</span>
+                <span style="position:absolute;bottom:5px;left:50%;transform:translateX(-50%);font-size:11px;font-weight:700;color:rgba(255,255,255,.45);pointer-events:none;">S</span>
+                <span style="position:absolute;left:8px;top:50%;transform:translateY(-50%);font-size:11px;font-weight:700;color:rgba(255,255,255,.45);pointer-events:none;">W</span>
+                <span style="position:absolute;right:8px;top:50%;transform:translateY(-50%);font-size:11px;font-weight:700;color:rgba(255,255,255,.45);pointer-events:none;">E</span>
+                <div style="{{ rotatorBig.needleStyle }}"></div>
+                <div style="position:absolute;left:50%;top:50%;width:10px;height:10px;border-radius:50%;background:var(--brand-color-purple-3);transform:translate(-50%,-50%);pointer-events:none;"></div>
+                <div style="position:absolute;left:0;right:0;bottom:26px;text-align:center;pointer-events:none;"><span style="font-size:24px;font-weight:700;font-family:ui-monospace,Menlo,monospace;color:#fff;">{{ rotatorBig.azDeg }}°</span></div>
+              </div>
+              <div style="flex:1;min-width:200px;display:flex;flex-direction:column;gap:10px;">
+                <div style="display:flex;align-items:center;gap:10px;">
+                  <span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:rgba(255,255,255,.5);">Rotator</span>
+                  <sc-if value="{{ rotatorBig.moving }}" hint-placeholder-val="{{ false }}">
+                    <span style="font-size:11px;font-weight:700;color:var(--bug-process);">Slewing → {{ rotatorBig.targetDeg }}°</span>
+                  </sc-if>
+                </div>
+                <span style="font-size:12px;color:rgba(255,255,255,.5);">Drag the dial to steer, or pick a heading:</span>
+                <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                  <sc-for list="{{ rotatorBig.presets }}" as="p" hint-placeholder-count="8">
+                    <x-import component-from-global-scope="ExactDesignSystem_3363f4.Button" variant="{{ p.variant }}" size="sm" disabled="{{ p.disabled }}" onClick="{{ p.onClick }}" hint-size="auto,32px">{{ p.label }}</x-import>
+                  </sc-for>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- OPTION 2b — Ops board -->
+      <div id="2b" style="display:flex;flex-direction:column;gap:10px;">
+        <div style="display:flex;align-items:baseline;gap:8px;">
+          <a href="#2b" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:rgba(255,255,255,.14);color:#fff;border-radius:5px;text-decoration:none;">2b</a>
+          <span style="font-size:11px;color:rgba(255,255,255,.55);">Ops board — big numbers, mission-control scale</span>
+        </div>
+        <div style="width:860px;background:#000;border:1px solid var(--border-light);border-radius:14px;padding:26px;box-sizing:border-box;display:flex;flex-direction:column;gap:18px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid rgba(255,255,255,.12);padding-bottom:14px;">
+            <span style="font-size:14px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:#fff;">Mühle {{ station }}</span>
+            <div style="display:flex;gap:14px;">
+              <sc-for list="{{ healthDots }}" as="d" hint-placeholder-count="6">
+                <div style="display:flex;align-items:center;gap:5px;">
+                  <span style="{{ d.dotStyle }}"></span>
+                  <span style="font-size:10px;color:rgba(255,255,255,.55);text-transform:uppercase;">{{ d.label }}</span>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+
+          <div style="display:flex;align-items:baseline;gap:24px;flex-wrap:wrap;">
+            <span style="font-size:58px;font-weight:800;font-family:ui-monospace,Menlo,monospace;color:#fff;line-height:1;">{{ radioBig.freq }}</span>
+            <span style="font-size:16px;font-weight:700;color:rgba(255,255,255,.6);">{{ radioBig.band }} · {{ radioBig.mode }}</span>
+            <sc-if value="{{ radioBig.txOn }}" hint-placeholder-val="{{ false }}">
+              <span style="font-size:14px;font-weight:800;padding:5px 14px;border-radius:999px;background:var(--bug-open);color:#fff;letter-spacing:.06em;">● TRANSMITTING</span>
+            </sc-if>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:4px;max-width:420px;">
+            <div style="display:flex;justify-content:space-between;font-size:11px;color:rgba(255,255,255,.5);text-transform:uppercase;letter-spacing:.05em;"><span>TRX drive power</span><span>{{ radioBig.drivePct }}%</span></div>
+            <div style="height:10px;border-radius:999px;background:rgba(255,255,255,.1);overflow:hidden;"><div style="{{ radioBig.driveBarStyle }}"></div></div>
+          </div>
+
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-top:6px;">
+            <sc-if value="{{ isHF }}" hint-placeholder-val="{{ true }}">
+              <div style="background:rgba(255,255,255,.05);border-radius:10px;padding:14px;display:flex;flex-direction:column;gap:8px;">
+                <span style="font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:rgba(255,255,255,.5);">PA</span>
+                <div style="display:flex;gap:6px;">
+                  <x-import component-from-global-scope="ExactDesignSystem_3363f4.Button" variant="{{ paBig.operateActive_variant }}" size="sm" disabled="{{ paBig.disabled }}" onClick="{{ paBig.onOperate }}" hint-size="auto,32px">Operate</x-import>
+                  <x-import component-from-global-scope="ExactDesignSystem_3363f4.Button" variant="{{ paBig.standbyActive_variant }}" size="sm" disabled="{{ paBig.disabled }}" onClick="{{ paBig.onStandby }}" hint-size="auto,32px">Standby</x-import>
+                </div>
+                <span style="font-size:20px;font-weight:700;color:#fff;">{{ paBig.fwdW }} W</span>
+                <sc-if value="{{ paBig.error }}" hint-placeholder-val="{{ false }}">
+                  <div style="font-size:11px;font-weight:600;color:var(--highlight-warning);">⚠ {{ paBig.error }}</div>
+                </sc-if>
+              </div>
+            </sc-if>
+            <sc-if value="{{ isHF }}" hint-placeholder-val="{{ true }}">
+              <div style="background:rgba(255,255,255,.05);border-radius:10px;padding:14px;display:flex;flex-direction:column;gap:8px;">
+                <span style="font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:rgba(255,255,255,.5);">Ultrabeam</span>
+                <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                  <sc-for list="{{ antBig.directionOptions }}" as="o" hint-placeholder-count="3">
+                    <x-import component-from-global-scope="ExactDesignSystem_3363f4.Button" variant="{{ o.variant }}" size="sm" disabled="{{ o.disabled }}" onClick="{{ o.onClick }}" hint-size="auto,32px">{{ o.label }}</x-import>
+                  </sc-for>
+                </div>
+                <x-import component-from-global-scope="ExactDesignSystem_3363f4.Button" variant="destructive-outlined" size="sm" disabled="{{ antBig.retractDisabled }}" onClick="{{ antBig.onRetract }}" hint-size="auto,32px">Retract</x-import>
+              </div>
+            </sc-if>
+            <div style="background:rgba(255,255,255,.05);border-radius:10px;padding:14px;display:flex;flex-direction:column;gap:8px;">
+              <span style="font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:rgba(255,255,255,.5);">Rotator</span>
+              <span style="font-size:20px;font-weight:700;color:#fff;">{{ rotatorBig.azDeg }}°</span>
+              <div style="display:flex;gap:4px;flex-wrap:wrap;">
+                <sc-for list="{{ rotatorBig.presets }}" as="p" hint-placeholder-count="8">
+                  <x-import component-from-global-scope="ExactDesignSystem_3363f4.Button" variant="{{ p.variant }}" size="sm" disabled="{{ p.disabled }}" onClick="{{ p.onClick }}" hint-size="auto,28px">{{ p.label }}</x-import>
+                </sc-for>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- OPTION 2c — Minimal list -->
+      <div id="2c" style="display:flex;flex-direction:column;gap:10px;">
+        <div style="display:flex;align-items:baseline;gap:8px;">
+          <a href="#2c" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:rgba(255,255,255,.14);color:#fff;border-radius:5px;text-decoration:none;">2c</a>
+          <span style="font-size:11px;color:rgba(255,255,255,.55);">Minimal list — important info only, no controls</span>
+        </div>
+        <div style="width:480px;background:var(--surface-page);border:1px solid var(--border-light);border-radius:14px;padding:8px;box-sizing:border-box;">
+          <div style="display:flex;align-items:center;gap:8px;padding:12px 14px;">
+            <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:{{ overallHealth.color }};"></span>
+            <span style="font-size:13px;font-weight:700;">{{ overallHealth.label }}</span>
+          </div>
+          <sc-for list="{{ listRows }}" as="r" hint-placeholder-count="7">
+            <div style="display:flex;align-items:center;gap:12px;padding:10px 14px;border-top:1px solid var(--border-light);">
+              <span style="{{ r.dotStyle }}"></span>
+              <span style="flex:1;min-width:0;font-size:13px;font-weight:600;">{{ r.label }}</span>
+              <span style="font-size:13px;font-weight:600;color:var(--text-secondary);text-align:right;">{{ r.value }}</span>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <section id="t1" style="max-width:none;">
+    <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:20px;">
+      <a href="#t1" style="font:600 10px ui-monospace,Menlo,monospace;padding:3px 7px;background:#fff;color:#111;border-radius:4px;text-decoration:none;">1</a>
+      <span style="font:600 13px system-ui,sans-serif;color:var(--text-primary);">Three layout directions</span>
+    </div>
+    <div style="display:flex;flex-wrap:wrap;gap:32px;align-items:flex-start;">
+
+      <!-- OPTION 1a — Slot grid -->
+      <div id="1a" style="display:flex;flex-direction:column;gap:10px;">
+        <div style="display:flex;align-items:baseline;gap:8px;">
+          <a href="#1a" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:rgba(255,255,255,.14);color:#fff;border-radius:5px;text-decoration:none;">1a</a>
+          <span style="font-size:11px;color:rgba(255,255,255,.55);">Slot grid — breadth, everything visible</span>
+        </div>
+        <div style="width:900px;background:var(--surface-page);border:1px solid var(--border-light);border-radius:14px;padding:24px;box-sizing:border-box;">
+          <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(255px,1fr));gap:16px;">
+            <sc-for list="{{ slots }}" as="slot" hint-placeholder-count="6">
+              <x-import component-from-global-scope="ExactDesignSystem_3363f4.Card" title="{{ slot.name }}" subtitle="{{ slot.role }}" hint-size="255px,230px">
+                <div style="display:flex;flex-direction:column;gap:10px;">
+                  <div style="display:flex;justify-content:flex-end;margin-top:-6px;">
+                    <x-import component-from-global-scope="ExactDesignSystem_3363f4.StatusPill" status="{{ slot.pill.status }}" hint-size="auto,22px">{{ slot.pill.label }}</x-import>
+                  </div>
+                  <sc-for list="{{ slot.fields }}" as="f" hint-placeholder-count="3">
+                    <div style="display:flex;justify-content:space-between;gap:10px;font-size:13px;">
+                      <span style="color:var(--highlight-info);">{{ f.label }}</span>
+                      <span style="color:var(--text-primary);font-weight:600;text-align:right;">{{ f.value }}</span>
+                    </div>
+                  </sc-for>
+                  <sc-if value="{{ slot.stale }}" hint-placeholder-val="{{ false }}">
+                    <div style="font-size:11px;color:var(--highlight-warning);font-weight:600;">Stale — connection lost</div>
+                  </sc-if>
+                  <sc-if value="{{ slot.controlsLabel }}" hint-placeholder-val="{{ false }}">
+                    <div style="border-top:1px solid var(--border-light);margin-top:4px;padding-top:10px;display:flex;flex-direction:column;gap:8px;">
+                      <span style="font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--highlight-info);">{{ slot.controlsLabel }}</span>
+                      <div style="display:flex;flex-wrap:wrap;gap:6px;">
+                        <sc-for list="{{ slot.controls }}" as="c" hint-placeholder-count="3">
+                          <x-import component-from-global-scope="ExactDesignSystem_3363f4.Button" variant="{{ c.variant }}" size="sm" disabled="{{ c.disabled }}" onClick="{{ c.onClick }}" hint-size="auto,32px">{{ c.label }}</x-import>
+                        </sc-for>
+                      </div>
+                    </div>
+                  </sc-if>
+                </div>
+              </x-import>
+            </sc-for>
+          </div>
+        </div>
+      </div>
+
+      <!-- OPTION 1b — Signal chain -->
+      <div id="1b" style="display:flex;flex-direction:column;gap:10px;">
+        <div style="display:flex;align-items:baseline;gap:8px;">
+          <a href="#1b" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:rgba(255,255,255,.14);color:#fff;border-radius:5px;text-decoration:none;">1b</a>
+          <span style="font-size:11px;color:rgba(255,255,255,.55);">Signal chain — how slots relate</span>
+        </div>
+        <div style="width:900px;background:var(--surface-page);border:1px solid var(--border-light);border-radius:14px;padding:28px 24px 24px;box-sizing:border-box;display:flex;flex-direction:column;gap:20px;">
+
+          <sc-if value="{{ isHF }}" hint-placeholder-val="{{ true }}">
+            <div style="display:flex;flex-direction:column;gap:14px;">
+              <div style="display:flex;justify-content:center;">
+                <div onClick="{{ bySlot.reconciler.onSelect }}" style="cursor:pointer;background:var(--surface-card);border:1px dashed var(--brand-color-purple-3);border-radius:10px;padding:10px 18px;display:flex;flex-direction:column;gap:8px;align-items:center;min-width:230px;">
+                  <div style="display:flex;align-items:center;gap:8px;">
+                    <span style="font-weight:700;font-size:13px;">{{ bySlot.reconciler.name }}</span>
+                    <x-import component-from-global-scope="ExactDesignSystem_3363f4.StatusPill" status="{{ bySlot.reconciler.pill.status }}" hint-size="auto,20px">{{ bySlot.reconciler.pill.label }}</x-import>
+                  </div>
+                  <div style="display:flex;gap:6px;">
+                    <sc-for list="{{ ladderTiers }}" as="t" hint-placeholder-count="3">
+                      <span style="{{ t.chipStyle }}">{{ t.label }}</span>
+                    </sc-for>
+                  </div>
+                </div>
+              </div>
+              <div style="text-align:center;font-size:18px;color:var(--brand-color-lavender-2);">↓ drives ant-switch &amp; ant-ctrl</div>
+
+              <div style="display:flex;align-items:center;justify-content:center;gap:10px;flex-wrap:wrap;">
+                <div onClick="{{ bySlot.radio.onSelect }}" style="cursor:pointer;background:var(--surface-card);border:1px solid var(--border-light);border-radius:10px;padding:10px 16px;min-width:140px;text-align:center;">
+                  <div style="font-size:13px;font-weight:700;margin-bottom:6px;">{{ bySlot.radio.name }}</div>
+                  <x-import component-from-global-scope="ExactDesignSystem_3363f4.StatusPill" status="{{ bySlot.radio.pill.status }}" hint-size="auto,20px">{{ bySlot.radio.pill.label }}</x-import>
+                </div>
+                <div style="font-size:20px;color:var(--brand-color-lavender-2);">→</div>
+                <div onClick="{{ bySlot.pa.onSelect }}" style="cursor:pointer;background:var(--surface-card);border:1px solid var(--border-light);border-radius:10px;padding:10px 16px;min-width:140px;text-align:center;">
+                  <div style="font-size:13px;font-weight:700;margin-bottom:6px;">{{ bySlot.pa.name }}</div>
+                  <x-import component-from-global-scope="ExactDesignSystem_3363f4.StatusPill" status="{{ bySlot.pa.pill.status }}" hint-size="auto,20px">{{ bySlot.pa.pill.label }}</x-import>
+                </div>
+                <div style="font-size:20px;color:var(--brand-color-lavender-2);">→</div>
+                <div onClick="{{ bySlot.antswitch.onSelect }}" style="cursor:pointer;background:var(--surface-card);border:1px solid var(--border-light);border-radius:10px;padding:10px 16px;min-width:140px;text-align:center;">
+                  <div style="font-size:13px;font-weight:700;margin-bottom:6px;">{{ bySlot.antswitch.name }}</div>
+                  <x-import component-from-global-scope="ExactDesignSystem_3363f4.StatusPill" status="{{ bySlot.antswitch.pill.status }}" hint-size="auto,20px">{{ bySlot.antswitch.pill.label }}</x-import>
+                </div>
+                <div style="font-size:20px;color:var(--brand-color-lavender-2);">→</div>
+                <div style="display:flex;flex-direction:column;gap:6px;">
+                  <sc-for list="{{ antennaChips }}" as="chip" hint-placeholder-count="3">
+                    <div style="{{ chip.style }}">{{ chip.label }}</div>
+                  </sc-for>
+                </div>
+              </div>
+
+              <div style="display:flex;justify-content:center;">
+                <div style="font-size:16px;color:var(--brand-color-lavender-2);">↓ tunes / steers</div>
+              </div>
+              <div style="display:flex;align-items:center;justify-content:center;gap:14px;flex-wrap:wrap;">
+                <div onClick="{{ bySlot.antctrl.onSelect }}" style="cursor:pointer;background:var(--surface-card);border:1px solid var(--border-light);border-radius:10px;padding:10px 16px;min-width:150px;text-align:center;">
+                  <div style="font-size:13px;font-weight:700;margin-bottom:6px;">{{ bySlot.antctrl.name }}</div>
+                  <x-import component-from-global-scope="ExactDesignSystem_3363f4.StatusPill" status="{{ bySlot.antctrl.pill.status }}" hint-size="auto,20px">{{ bySlot.antctrl.pill.label }}</x-import>
+                </div>
+                <div onClick="{{ bySlot.rotator.onSelect }}" style="cursor:pointer;background:var(--surface-card);border:1px solid var(--border-light);border-radius:10px;padding:10px 16px;min-width:150px;text-align:center;">
+                  <div style="font-size:13px;font-weight:700;margin-bottom:6px;">{{ bySlot.rotator.name }}</div>
+                  <x-import component-from-global-scope="ExactDesignSystem_3363f4.StatusPill" status="{{ bySlot.rotator.pill.status }}" hint-size="auto,20px">{{ bySlot.rotator.pill.label }}</x-import>
+                </div>
+                <div onClick="{{ bySlot.paarm.onSelect }}" style="cursor:pointer;background:var(--surface-card);border:1px solid var(--border-light);border-radius:10px;padding:10px 16px;min-width:150px;text-align:center;">
+                  <div style="font-size:13px;font-weight:700;margin-bottom:6px;">{{ bySlot.paarm.name }}</div>
+                  <x-import component-from-global-scope="ExactDesignSystem_3363f4.StatusPill" status="{{ bySlot.paarm.pill.status }}" hint-size="auto,20px">{{ bySlot.paarm.pill.label }}</x-import>
+                </div>
+              </div>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{ isUHF }}" hint-placeholder-val="{{ false }}">
+            <div style="display:flex;flex-direction:column;gap:14px;">
+              <div style="display:flex;align-items:center;justify-content:center;gap:14px;flex-wrap:wrap;">
+                <div onClick="{{ bySlot.radio.onSelect }}" style="cursor:pointer;background:var(--surface-card);border:1px solid var(--border-light);border-radius:10px;padding:10px 16px;min-width:150px;text-align:center;">
+                  <div style="font-size:13px;font-weight:700;margin-bottom:6px;">{{ bySlot.radio.name }}</div>
+                  <x-import component-from-global-scope="ExactDesignSystem_3363f4.StatusPill" status="{{ bySlot.radio.pill.status }}" hint-size="auto,20px">{{ bySlot.radio.pill.label }}</x-import>
+                </div>
+                <div style="font-size:20px;color:var(--brand-color-lavender-2);">→</div>
+                <div style="background:transparent;border:1px dashed var(--brand-color-lavender-2);border-radius:10px;padding:10px 16px;min-width:170px;text-align:center;color:var(--highlight-info);font-size:12px;">Antenna<br/>(fixed, band-routed —<br/>no switch)</div>
+              </div>
+              <div style="display:flex;justify-content:center;font-size:16px;color:var(--brand-color-lavender-2);">↑ steers / polarizes</div>
+              <div style="display:flex;align-items:center;justify-content:center;gap:14px;flex-wrap:wrap;">
+                <div onClick="{{ bySlot.rotator.onSelect }}" style="cursor:pointer;background:var(--surface-card);border:1px solid var(--border-light);border-radius:10px;padding:10px 16px;min-width:150px;text-align:center;">
+                  <div style="font-size:13px;font-weight:700;margin-bottom:6px;">{{ bySlot.rotator.name }}</div>
+                  <x-import component-from-global-scope="ExactDesignSystem_3363f4.StatusPill" status="{{ bySlot.rotator.pill.status }}" hint-size="auto,20px">{{ bySlot.rotator.pill.label }}</x-import>
+                </div>
+                <div onClick="{{ bySlot.polctrl.onSelect }}" style="cursor:pointer;background:var(--surface-card);border:1px solid var(--border-light);border-radius:10px;padding:10px 16px;min-width:150px;text-align:center;">
+                  <div style="font-size:13px;font-weight:700;margin-bottom:6px;">{{ bySlot.polctrl.name }}</div>
+                  <x-import component-from-global-scope="ExactDesignSystem_3363f4.StatusPill" status="{{ bySlot.polctrl.pill.status }}" hint-size="auto,20px">{{ bySlot.polctrl.pill.label }}</x-import>
+                </div>
+              </div>
+            </div>
+          </sc-if>
+
+          <div style="border-top:1px solid var(--border-light);padding-top:16px;display:flex;flex-direction:column;gap:12px;">
+            <div style="display:flex;align-items:center;gap:10px;">
+              <span style="font-size:16px;font-weight:700;">{{ selectedSlot.name }}</span>
+              <span style="font-size:12px;color:var(--highlight-info);">{{ selectedSlot.role }}</span>
+              <x-import component-from-global-scope="ExactDesignSystem_3363f4.StatusPill" status="{{ selectedSlot.pill.status }}" hint-size="auto,22px">{{ selectedSlot.pill.label }}</x-import>
+            </div>
+            <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px;">
+              <sc-for list="{{ selectedSlot.fields }}" as="f" hint-placeholder-count="4">
+                <div style="display:flex;flex-direction:column;gap:2px;">
+                  <span style="font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--highlight-info);">{{ f.label }}</span>
+                  <span style="font-size:14px;font-weight:600;">{{ f.value }}</span>
+                </div>
+              </sc-for>
+            </div>
+            <sc-if value="{{ selectedSlot.controlsLabel }}" hint-placeholder-val="{{ false }}">
+              <div style="display:flex;flex-direction:column;gap:8px;">
+                <span style="font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--highlight-info);">{{ selectedSlot.controlsLabel }}</span>
+                <div style="display:flex;flex-wrap:wrap;gap:6px;">
+                  <sc-for list="{{ selectedSlot.controls }}" as="c" hint-placeholder-count="3">
+                    <x-import component-from-global-scope="ExactDesignSystem_3363f4.Button" variant="{{ c.variant }}" size="sm" disabled="{{ c.disabled }}" onClick="{{ c.onClick }}" hint-size="auto,32px">{{ c.label }}</x-import>
+                  </sc-for>
+                </div>
+              </div>
+            </sc-if>
+          </div>
+        </div>
+      </div>
+
+      <!-- OPTION 1c — List + drawer -->
+      <div id="1c" style="display:flex;flex-direction:column;gap:10px;">
+        <div style="display:flex;align-items:baseline;gap:8px;">
+          <a href="#1c" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:rgba(255,255,255,.14);color:#fff;border-radius:5px;text-decoration:none;">1c</a>
+          <span style="font-size:11px;color:rgba(255,255,255,.55);">List + drawer — dense, focused</span>
+        </div>
+        <div style="width:900px;background:var(--surface-page);border:1px solid var(--border-light);border-radius:14px;padding:20px;box-sizing:border-box;display:flex;gap:16px;">
+          <div style="flex:1;min-width:0;background:var(--surface-card);border:1px solid var(--border-light);border-radius:10px;overflow:hidden;">
+            <sc-for list="{{ slots }}" as="slot" hint-placeholder-count="6">
+              <div onClick="{{ slot.onSelect }}" style="{{ slot.rowStyle }}">
+                <div style="flex:1;min-width:0;">
+                  <div style="font-size:13px;font-weight:700;">{{ slot.name }}</div>
+                  <div style="font-size:11.5px;color:var(--highlight-info);">{{ slot.role }}</div>
+                </div>
+                <x-import component-from-global-scope="ExactDesignSystem_3363f4.StatusPill" status="{{ slot.pill.status }}" hint-size="auto,22px">{{ slot.pill.label }}</x-import>
+                <div style="font-size:13px;font-weight:600;min-width:110px;text-align:right;">{{ slot.fields.0.value }}</div>
+              </div>
+            </sc-for>
+          </div>
+          <div style="width:290px;flex:none;background:var(--surface-card);border:1px solid var(--border-light);border-radius:10px;padding:18px;display:flex;flex-direction:column;gap:14px;">
+            <div style="display:flex;flex-direction:column;gap:6px;">
+              <span style="font-size:15px;font-weight:700;">{{ selectedSlot.name }}</span>
+              <span style="font-size:12px;color:var(--highlight-info);">{{ selectedSlot.role }}</span>
+              <x-import component-from-global-scope="ExactDesignSystem_3363f4.StatusPill" status="{{ selectedSlot.pill.status }}" hint-size="auto,22px">{{ selectedSlot.pill.label }}</x-import>
+            </div>
+            <sc-if value="{{ selectedSlot.stale }}" hint-placeholder-val="{{ false }}">
+              <div style="font-size:11px;color:var(--highlight-warning);font-weight:600;">Stale — connection lost</div>
+            </sc-if>
+            <div style="display:flex;flex-direction:column;gap:8px;border-top:1px solid var(--border-light);padding-top:12px;">
+              <sc-for list="{{ selectedSlot.fields }}" as="f" hint-placeholder-count="4">
+                <div style="display:flex;justify-content:space-between;gap:10px;font-size:12.5px;">
+                  <span style="color:var(--highlight-info);">{{ f.label }}</span>
+                  <span style="font-weight:600;text-align:right;">{{ f.value }}</span>
+                </div>
+              </sc-for>
+            </div>
+            <sc-if value="{{ selectedSlot.controlsLabel }}" hint-placeholder-val="{{ false }}">
+              <div style="display:flex;flex-direction:column;gap:8px;border-top:1px solid var(--border-light);padding-top:12px;">
+                <span style="font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--highlight-info);">{{ selectedSlot.controlsLabel }}</span>
+                <div style="display:flex;flex-wrap:wrap;gap:6px;">
+                  <sc-for list="{{ selectedSlot.controls }}" as="c" hint-placeholder-count="3">
+                    <x-import component-from-global-scope="ExactDesignSystem_3363f4.Button" variant="{{ c.variant }}" size="sm" disabled="{{ c.disabled }}" onClick="{{ c.onClick }}" hint-size="auto,32px">{{ c.label }}</x-import>
+                  </sc-for>
+                </div>
+              </div>
+            </sc-if>
+          </div>
+        </div>
+      </div>
+
+    </div>
+    <p style="margin:22px 0 0;font-size:12px;line-height:1.5;color:rgba(255,255,255,.45);max-width:900px;">Try next: "combine <a href="#1b" style="color:rgba(255,255,255,.7);">1b</a>'s chain diagram with <a href="#1c" style="color:rgba(255,255,255,.7);">1c</a>'s drawer" · "add a fault state to the rotator too" · "show the hardware interlock chain on 1b"</p>
+  </section>
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+const BAND_TABLE_HF = [
+  [1800000,1999999,'160m'],[3500000,3999999,'80m'],[7000000,7299999,'40m'],
+  [10100000,10149999,'30m'],[14000000,14349999,'20m'],[18068000,18167999,'17m'],
+  [21000000,21449999,'15m'],[24890000,24989999,'12m'],[28000000,29699999,'10m'],
+  [50000000,53999999,'6m'],
+];
+const ANTCTRL_BAND_CENTERS = {'20m':14175000,'17m':18118000,'15m':21225000,'12m':24940000,'10m':28850000,'6m':51000000};
+const PORT_LABELS = {off:'Off (grounded)', p1:'P1 · Dummy load', p2:'P2 · Fan dipole', p3:'P3 · Ultrabeam', p4:'P4 · Spare', p5:'P5 · Spare', p6:'P6 · Spare'};
+const PORT_SHORT = {off:'OFF', p1:'P1', p2:'P2', p3:'P3', p4:'P4', p5:'P5', p6:'P6'};
+const PORT_NAME = {off:'Off', p1:'Dummy load', p2:'Fan dipole', p3:'Ultrabeam', p4:'Spare 4', p5:'Spare 5', p6:'Spare 6'};
+const POL_LABELS = {h:'Horizontal', v:'Vertical', cl:'Circular L', cr:'Circular R'};
+const ROTATOR_PRESETS = [
+  {label:'N', deg:0}, {label:'NE', deg:45}, {label:'E', deg:90}, {label:'SE', deg:135},
+  {label:'S', deg:180}, {label:'SW', deg:225}, {label:'W', deg:270}, {label:'NW', deg:315},
+];
+function statusColorVar(status){
+  return {passed:'var(--highlight-success)', error:'var(--bug-open)', blocked:'var(--highlight-warning)', progress:'var(--bug-process)'}[status] || 'var(--highlight-info)';
+}
+
+function bandFromFreqHF(hz){
+  for (const [lo,hi,name] of BAND_TABLE_HF) { if (hz>=lo && hz<=hi) return name; }
+  return 'band-?';
+}
+function fmtMHz(hz){ return (hz/1e6).toFixed(3)+' MHz'; }
+function cap(s){ return s ? s.charAt(0).toUpperCase()+s.slice(1) : s; }
+function clamp(v,lo,hi){ return Math.max(lo, Math.min(hi, v)); }
+
+class Component extends DCLogic {
+  state = {
+    station: 'hf',
+    outage: false,
+    fault: false,
+    selectedSlotKey: 'radio',
+    power: { master: { power: 'on' }, psu: { power: 'on' } },
+    seq: { phase: 'running', step: '' },
+    hf: {
+      sw: { trx: 'on', pa: 'on' },
+      radio: { freq_hz: 14025000, mode: 'cw', tx: 'rx', drive: 40 },
+      pa: { mode: 'operate', keyed: 'rx', fwd_power_w: 0, rfl_power_w: 0, temp_c: 38, error: null },
+      antswitch: { selected: 'p2', settled: true },
+      tuner: { inline: true, swr: 1.3, fwd: 0, settling: false, fault: '', device_online: true, mode: 'mem' },
+      antctrl: { freq_hz: 14175000, direction: 'forward', moving: false, device_online: true, error: null },
+      rotator: { az_deg: 180, target_deg: 180, moving: false },
+      reconciler: { mode: 'auto', target: 'p2', source: 'auto' },
+      paarm: { armed: true },
+    },
+    uhf: {
+      radio: { freq_hz: 435500000, mode: 'fm', tx: 'rx', bias_t: true },
+      rotator: { az_deg: 90, target_deg: 90, el_deg: 35, moving: false },
+      polctrl: { polarization: 'v' },
+    },
+  };
+
+  compassRef = React.createRef();
+  compassRefM = React.createRef();
+
+  componentDidMount() {
+    this._t = setInterval(() => this.tick(), 2500);
+    this._rot = setInterval(() => this.stepRotator(), 45);
+  }
+  componentWillUnmount() {
+    clearInterval(this._t);
+    clearInterval(this._rot);
+    clearTimeout(this._seqT);
+    window.removeEventListener('pointermove', this.onCompassMove);
+    window.removeEventListener('pointerup', this.onCompassUp);
+  }
+
+  azFromEvent(e, ref) {
+    const el = (ref || this.compassRef).current;
+    if (!el) return null;
+    const r = el.getBoundingClientRect();
+    const dx = e.clientX - (r.left + r.width / 2);
+    const dy = e.clientY - (r.top + r.height / 2);
+    return Math.round((Math.atan2(dx, -dy) * 180 / Math.PI + 360) % 360);
+  }
+  setAzExact = (deg) => {
+    if (this.state.outage) return;
+    this.setState(s => { const key = s.station; const cur = { ...s[key] }; cur.rotator = { ...cur.rotator, target_deg: deg, moving: true }; return { [key]: cur }; });
+  };
+  stepRotator = () => {
+    this.setState(s => {
+      const key = s.station; const cur = s[key]; const r = cur.rotator;
+      if (r.target_deg == null || r.target_deg === r.az_deg) {
+        if (r.moving) return { [key]: { ...cur, rotator: { ...r, moving: false } } };
+        return null;
+      }
+      const diff = ((r.target_deg - r.az_deg + 540) % 360) - 180;
+      let az, moving;
+      if (Math.abs(diff) <= 3) { az = r.target_deg; moving = false; }
+      else { az = ((r.az_deg + Math.sign(diff) * 3) % 360 + 360) % 360; moving = true; }
+      return { [key]: { ...cur, rotator: { ...r, az_deg: az, moving } } };
+    });
+  };
+  onCompassDown = (e) => this._startDrag(e, this.compassRef);
+  onCompassDownM = (e) => this._startDrag(e, this.compassRefM);
+  _startDrag = (e, ref) => {
+    if (this.state.outage) return;
+    this._dragging = true;
+    this._activeRef = ref;
+    const deg = this.azFromEvent(e, ref);
+    if (deg != null) this.setAzExact(deg);
+    window.addEventListener('pointermove', this.onCompassMove);
+    window.addEventListener('pointerup', this.onCompassUp);
+  };
+  onCompassMove = (e) => {
+    if (!this._dragging) return;
+    const deg = this.azFromEvent(e, this._activeRef);
+    if (deg != null) this.setAzExact(deg);
+  };
+  onCompassUp = () => {
+    this._dragging = false;
+    window.removeEventListener('pointermove', this.onCompassMove);
+    window.removeEventListener('pointerup', this.onCompassUp);
+  };
+
+  tick() {
+    if (this.state.outage) return;
+    this.setState(s => {
+      const key = s.station;
+      const cur = { ...s[key] };
+      if (key === 'hf') {
+        const powered = s.power.master.power === 'on' && s.power.psu.power === 'on' && cur.sw.trx === 'on';
+        const radio = { ...cur.radio };
+        const pa = { ...cur.pa };
+        const antctrl = { ...cur.antctrl };
+        const rotator = { ...cur.rotator };
+        if (!powered) { radio.tx = 'rx'; }
+        else if (Math.random() < 0.35) radio.tx = radio.tx === 'tx' ? 'rx' : 'tx';
+        radio.drive = clamp(radio.drive + Math.round((Math.random() - 0.5) * 6), 30, 55);
+        if (!s.fault) {
+          pa.keyed = radio.tx;
+          if (radio.tx === 'tx') { pa.fwd_power_w = Math.round(380 + Math.random() * 40); pa.rfl_power_w = Math.round(5 + Math.random() * 10); }
+          else { pa.fwd_power_w = 0; pa.rfl_power_w = 0; }
+          const tuner = { ...cur.tuner };
+          if (radio.tx === 'tx' && tuner.inline) { tuner.fwd = Math.round(380 + Math.random() * 40); tuner.swr = +(1.1 + Math.random() * 0.4).toFixed(2); }
+          else { tuner.fwd = 0; }
+          cur.tuner = tuner;
+          if (!antctrl.moving && Math.random() < 0.12) antctrl.moving = true;
+          else if (antctrl.moving) antctrl.moving = false;
+        }
+        if (!rotator.moving && Math.random() < 0.18) rotator.target_deg = Math.floor(Math.random() * 36) * 10;
+        cur.radio = radio; cur.pa = pa; cur.antctrl = antctrl; cur.rotator = rotator;
+      } else {
+        const radio = { ...cur.radio };
+        const rotator = { ...cur.rotator };
+        if (Math.random() < 0.2) radio.tx = radio.tx === 'tx' ? 'rx' : 'tx';
+        if (!rotator.moving && Math.random() < 0.18) rotator.target_deg = Math.floor(Math.random() * 36) * 10;
+        if (!rotator.moving && Math.random() < 0.2) rotator.el_deg = clamp(rotator.el_deg + (Math.random() < 0.5 ? 5 : -5), 0, 90);
+        cur.radio = radio; cur.rotator = rotator;
+      }
+      return { [key]: cur };
+    });
+  }
+
+  setStation = (v) => { this.setState({ station: v, selectedSlotKey: 'radio' }); };
+  toggleOutage = () => { this.setState(s => ({ outage: !s.outage })); };
+  toggleFault = () => {
+    this.setState(s => {
+      const fault = !s.fault;
+      const hf = { ...s.hf };
+      if (fault) {
+        hf.antctrl = { ...hf.antctrl, moving: false, device_online: false, error: 'Serial timeout — RCU-06 unresponsive' };
+        hf.pa = { ...hf.pa, temp_c: 74, error: 'Reflected power fault (SWR) — check antenna match' };
+        hf.antswitch = { ...hf.antswitch, settled: false };
+        hf.tuner = { ...hf.tuner, fault: 'tune timeout', swr: 3.4 };
+      } else {
+        hf.antctrl = { ...hf.antctrl, device_online: true, error: null };
+        hf.pa = { ...hf.pa, temp_c: 38, error: null };
+        hf.antswitch = { ...hf.antswitch, settled: true };
+        hf.tuner = { ...hf.tuner, fault: '', swr: 1.3 };
+      }
+      return { fault, hf };
+    });
+  };
+  selectSlot = (key) => { this.setState({ selectedSlotKey: key }); };
+
+  selectAntSwitchPort = (port) => {
+    if (this.state.outage) return;
+    this.setState(s => {
+      const hf = { ...s.hf };
+      hf.reconciler = { ...hf.reconciler, source: 'operator', mode: 'manual', target: port };
+      hf.antswitch = { ...hf.antswitch, settled: false };
+      return { hf };
+    });
+    setTimeout(() => {
+      this.setState(s => {
+        if (s.outage) return {};
+        const hf = { ...s.hf };
+        hf.antswitch = { ...hf.antswitch, selected: port, settled: !s.fault };
+        return { hf };
+      });
+    }, 800);
+  };
+
+  returnAntToAuto = () => {
+    if (this.state.outage) return;
+    this.setState(s => {
+      const hf = { ...s.hf };
+      hf.reconciler = { ...hf.reconciler, source: 'auto', mode: 'auto', target: 'p2' };
+      hf.antswitch = { ...hf.antswitch, settled: false };
+      return { hf };
+    });
+    setTimeout(() => {
+      this.setState(s => { if (s.outage) return {}; const hf = { ...s.hf }; hf.antswitch = { ...hf.antswitch, selected: 'p2', settled: !s.fault }; return { hf }; });
+    }, 800);
+  };
+
+  setAntCtrlBand = (band) => {
+    if (this.state.outage || this.state.fault) return;
+    this.setState(s => { const hf = { ...s.hf }; hf.antctrl = { ...hf.antctrl, moving: true }; return { hf }; });
+    setTimeout(() => {
+      this.setState(s => {
+        if (s.outage || s.fault) return {};
+        const hf = { ...s.hf }; hf.antctrl = { ...hf.antctrl, moving: false, freq_hz: ANTCTRL_BAND_CENTERS[band] }; return { hf };
+      });
+    }, 900);
+  };
+
+  setAntCtrlDirection = (dir) => {
+    if (this.state.outage || this.state.fault) return;
+    this.setState(s => { const hf = { ...s.hf }; hf.antctrl = { ...hf.antctrl, moving: true }; return { hf }; });
+    setTimeout(() => {
+      this.setState(s => { if (s.outage || s.fault) return {}; const hf = { ...s.hf }; hf.antctrl = { ...hf.antctrl, moving: false, direction: dir }; return { hf }; });
+    }, 700);
+  };
+
+  retractAntCtrl = () => {
+    if (this.state.outage || this.state.fault) return;
+    this.setState(s => { const hf = { ...s.hf }; hf.antctrl = { ...hf.antctrl, moving: true }; return { hf }; });
+    setTimeout(() => {
+      this.setState(s => { if (s.outage || s.fault) return {}; const hf = { ...s.hf }; hf.antctrl = { ...hf.antctrl, moving: false }; return { hf }; });
+    }, 1000);
+  };
+
+  setPaMode = (mode) => {
+    if (this.state.outage) return;
+    this.setState(s => { const hf = { ...s.hf }; hf.pa = { ...hf.pa, mode }; return { hf }; });
+  };
+
+  setTunerInline = (inline) => {
+    if (this.state.outage) return;
+    this.setState(s => { const hf = { ...s.hf }; hf.tuner = { ...hf.tuner, inline }; return { hf }; });
+  };
+
+  tuneAtu = (mode) => {
+    if (this.state.outage || this.state.fault) return;
+    this.setState(s => { const hf = { ...s.hf }; hf.tuner = { ...hf.tuner, mode, settling: true, fault: '' }; return { hf }; });
+    setTimeout(() => {
+      this.setState(s => {
+        if (s.outage || s.fault) return {};
+        const hf = { ...s.hf }; hf.tuner = { ...hf.tuner, settling: false, swr: +(1.05 + Math.random() * 0.25).toFixed(2) }; return { hf };
+      });
+    }, 1100);
+  };
+
+  setRadioMode = (mode) => {
+    if (this.state.outage) return;
+    this.setState(s => { const key = s.station; const cur = { ...s[key] }; cur.radio = { ...cur.radio, mode }; return { [key]: cur }; });
+  };
+
+  adjustRotatorAz = (delta) => {
+    if (this.state.outage) return;
+    this.setState(s => { const key = s.station; const cur = { ...s[key] }; const base = cur.rotator.target_deg != null ? cur.rotator.target_deg : cur.rotator.az_deg; const t = (base + delta + 360) % 360; cur.rotator = { ...cur.rotator, target_deg: t, moving: true }; return { [key]: cur }; });
+  };
+
+  adjustRotatorEl = (delta) => {
+    if (this.state.outage) return;
+    this.setState(s => { const cur = { ...s.uhf }; const el = clamp(cur.rotator.el_deg + delta, 0, 90); cur.rotator = { ...cur.rotator, el_deg: el, moving: true }; return { uhf: cur }; });
+    setTimeout(() => { this.setState(s => { const cur = { ...s.uhf }; cur.rotator = { ...cur.rotator, moving: false }; return { uhf: cur }; }); }, 600);
+  };
+
+  setRotatorPreset = (deg) => {
+    if (this.state.outage) return;
+    this.setState(s => { const key = s.station; const cur = { ...s[key] }; cur.rotator = { ...cur.rotator, target_deg: deg, moving: true }; return { [key]: cur }; });
+  };
+
+  setPolarization = (pol) => {
+    if (this.state.outage) return;
+    this.setState(s => { const cur = { ...s.uhf }; cur.polctrl = { ...cur.polctrl, polarization: pol }; return { uhf: cur }; });
+  };
+
+  _pwr = (fn) => {
+    this.setState(s => {
+      const draft = {
+        power: { master: { ...s.power.master }, psu: { ...s.power.psu } },
+        hf: { ...s.hf, sw: { ...s.hf.sw }, paarm: { ...s.hf.paarm } },
+      };
+      fn(draft);
+      return draft;
+    });
+  };
+
+  setPower = (which, on) => {
+    if (this.state.outage) return;
+    if (this.state.seq.phase === 'starting' || this.state.seq.phase === 'stopping') return;
+    this._pwr(d => {
+      const v = on ? 'on' : 'off';
+      if (which === 'master') {
+        d.power.master.power = v;
+        if (!on) { d.power.psu.power = 'off'; d.hf.sw.trx = 'off'; d.hf.sw.pa = 'off'; d.hf.paarm.armed = false; }
+      } else if (which === 'psu') {
+        d.power.psu.power = v;
+        if (!on) { d.hf.sw.trx = 'off'; d.hf.sw.pa = 'off'; d.hf.paarm.armed = false; }
+      } else if (which === 'trx') {
+        d.hf.sw.trx = v;
+      } else if (which === 'pa') {
+        d.hf.sw.pa = v;
+        if (!on) d.hf.paarm.armed = false;
+      }
+    });
+  };
+
+  runSeq = (action) => {
+    if (this.state.outage) return;
+    const phase = this.state.seq.phase;
+    if (action === 'start' && phase !== 'idle') return;
+    if (action === 'stop' && phase !== 'running') return;
+    const startup = [
+      { step: 'master-on', apply: d => { d.power.master.power = 'on'; } },
+      { step: 'psu-on', apply: d => { d.power.psu.power = 'on'; } },
+      { step: 'trx-on', apply: d => { d.hf.sw.trx = 'on'; } },
+      { step: 'pa-on', apply: d => { d.hf.sw.pa = 'on'; } },
+      { step: 'pa-arm-enable', apply: d => { d.hf.paarm.armed = true; } },
+    ];
+    const shutdown = [
+      { step: 'pa-arm-disable', apply: d => { d.hf.paarm.armed = false; } },
+      { step: 'pa-off', apply: d => { d.hf.sw.pa = 'off'; } },
+      { step: 'trx-off', apply: d => { d.hf.sw.trx = 'off'; } },
+      { step: 'psu-off', apply: d => { d.power.psu.power = 'off'; } },
+      { step: 'master-off', apply: d => { d.power.master.power = 'off'; } },
+    ];
+    const steps = action === 'start' ? startup : shutdown;
+    const runPhase = action === 'start' ? 'starting' : 'stopping';
+    const endPhase = action === 'start' ? 'running' : 'idle';
+    let i = 0;
+    const run = () => {
+      this._pwr(steps[i].apply);
+      this.setState({ seq: { phase: runPhase, step: steps[i].step } });
+      i++;
+      if (i < steps.length) this._seqT = setTimeout(run, 850);
+      else this._seqT = setTimeout(() => this.setState({ seq: { phase: endPhase, step: '' } }), 850);
+    };
+    this.setState({ seq: { phase: runPhase, step: steps[0].step } });
+    this._seqT = setTimeout(run, 250);
+  };
+
+  mkPill(kind) {
+    if (kind === 'offline') return { status: 'error', label: 'Offline' };
+    if (kind === 'fault') return { status: 'blocked', label: 'Fault' };
+    if (kind === 'busy') return { status: 'progress', label: 'Busy' };
+    return { status: 'passed', label: 'Online' };
+  }
+
+  renderVals() {
+    const s = this.state;
+    const isHF = s.station === 'hf';
+    const outage = s.outage, fault = s.fault;
+    const hostName = isHF ? 'shari' : 'shack-pc';
+    const hostRole = isHF ? 'Raspberry Pi · host' : 'Shack PC · host';
+    const host = {
+      name: hostName, role: hostRole,
+      pillStatus: !outage ? 'passed' : 'error',
+      pillLabel: !outage ? 'Online' : 'Offline',
+      temp: isHF ? (!outage ? '47°C' : '—') : null,
+      load: isHF ? (!outage ? '0.31' : '—') : null,
+    };
+
+    let bySlot = {};
+
+    if (isHF) {
+      const hf = s.hf;
+      const hostedOffline = outage;
+
+      bySlot.radio = {
+        key: 'radio', name: 'Radio', role: 'FLEX-8400 · HF transceiver', device: 'FLEX-8400', link: 'Ethernet · SmartSDR', hostLabel: 'shari',
+        pill: this.mkPill(hostedOffline ? 'offline' : (hf.radio.tx === 'tx' ? 'busy' : 'online')), stale: hostedOffline,
+        fields: [
+          { label: 'Frequency', value: fmtMHz(hf.radio.freq_hz) },
+          { label: 'Band', value: bandFromFreqHF(hf.radio.freq_hz) },
+          { label: 'Mode', value: hf.radio.mode.toUpperCase() },
+          { label: 'TX/RX', value: hf.radio.tx === 'tx' ? 'Transmitting' : 'Receiving' },
+          { label: 'Drive', value: hf.radio.drive + '%' },
+        ],
+        controlsLabel: 'Mode',
+        controls: ['cw', 'usb', 'lsb', 'am', 'fm', 'data'].map(m => ({
+          label: m.toUpperCase(), variant: hf.radio.mode === m ? 'primary' : 'secondary',
+          disabled: outage, onClick: () => this.setRadioMode(m),
+        })),
+      };
+
+      bySlot.pa = {
+        key: 'pa', name: 'PA', role: 'ACOM 1200S · power amplifier', device: 'ACOM 1200S', link: 'Serial · USB', hostLabel: 'shari',
+        pill: this.mkPill(hostedOffline ? 'offline' : (fault ? 'fault' : (hf.pa.keyed === 'tx' ? 'busy' : 'online'))), stale: hostedOffline,
+        fields: [
+          { label: 'Mode', value: hf.pa.mode === 'operate' ? 'Operate' : 'Standby' },
+          { label: 'Keyed', value: hf.pa.keyed === 'tx' ? 'TX' : 'RX' },
+          { label: 'Fwd power', value: hf.pa.fwd_power_w + ' W' },
+          { label: 'Refl power', value: hf.pa.rfl_power_w + ' W' },
+          { label: 'Temp', value: hf.pa.temp_c + ' °C' },
+        ],
+        controlsLabel: 'Mode',
+        controls: [
+          { label: 'Operate', variant: hf.pa.mode === 'operate' ? 'primary' : 'secondary', disabled: outage, onClick: () => this.setPaMode('operate') },
+          { label: 'Standby', variant: hf.pa.mode === 'standby' ? 'primary' : 'secondary', disabled: outage, onClick: () => this.setPaMode('standby') },
+        ],
+      };
+
+      bySlot.antswitch = {
+        key: 'antswitch', name: 'Antenna switch', role: '1:6 relay switch · dumb actuator', device: 'WaveShare ESP32-S3', link: 'Wi-Fi', hostLabel: 'standalone (ESPHome)',
+        pill: this.mkPill(!hf.antswitch.settled ? 'busy' : 'online'), stale: false,
+        fields: [
+          { label: 'Selected', value: PORT_LABELS[hf.antswitch.selected] || hf.antswitch.selected },
+          { label: 'Settled', value: hf.antswitch.settled ? 'Yes' : 'Settling…' },
+        ],
+        controlsLabel: 'Select port',
+        controls: ['off', 'p1', 'p2', 'p3', 'p4', 'p5', 'p6'].map(p => ({
+          label: PORT_SHORT[p], variant: hf.antswitch.selected === p ? 'primary' : 'secondary',
+          disabled: false, onClick: () => this.selectAntSwitchPort(p),
+        })),
+      };
+
+      const antctrlFields = [
+        { label: 'Frequency', value: fmtMHz(hf.antctrl.freq_hz) },
+        { label: 'Band', value: bandFromFreqHF(hf.antctrl.freq_hz) },
+        { label: 'Direction', value: cap(hf.antctrl.direction) },
+        { label: 'Moving', value: hf.antctrl.moving ? 'Yes' : 'No' },
+        { label: 'Device', value: hf.antctrl.device_online ? 'Reachable' : 'Unreachable' },
+      ];
+      if (hf.antctrl.error) antctrlFields.push({ label: 'Error', value: hf.antctrl.error });
+      bySlot.antctrl = {
+        key: 'antctrl', name: 'Antenna controller', role: 'Ultrabeam RCU-06 · ant-ctrl', device: 'Ultrabeam RCU-06', link: 'Serial', hostLabel: 'shari',
+        pill: this.mkPill(hostedOffline ? 'offline' : (fault ? 'fault' : (hf.antctrl.moving ? 'busy' : 'online'))), stale: hostedOffline,
+        fields: antctrlFields,
+        controlsLabel: 'Band',
+        controls: ['20m', '17m', '15m', '12m', '10m', '6m'].map(b => ({
+          label: b, variant: bandFromFreqHF(hf.antctrl.freq_hz) === b ? 'primary' : 'secondary',
+          disabled: outage || fault, onClick: () => this.setAntCtrlBand(b),
+        })).concat([{ label: 'Retract', variant: 'destructive-outlined', disabled: outage || fault, onClick: () => this.retractAntCtrl() }]),
+      };
+
+      bySlot.rotator = {
+        key: 'rotator', name: 'Rotator', role: 'Yaesu G-450DC · AF6SA WRC bridge', device: 'Yaesu G-450DC', link: 'Serial', hostLabel: 'shari',
+        pill: this.mkPill(hostedOffline ? 'offline' : (hf.rotator.moving ? 'busy' : 'online')), stale: hostedOffline,
+        fields: [
+          { label: 'Azimuth', value: hf.rotator.az_deg + '°' },
+          { label: 'Moving', value: hf.rotator.moving ? 'Yes' : 'No' },
+        ],
+        controlsLabel: 'Nudge azimuth',
+        controls: [
+          { label: '−10°', variant: 'secondary', disabled: outage, onClick: () => this.adjustRotatorAz(-10) },
+          { label: '+10°', variant: 'secondary', disabled: outage, onClick: () => this.adjustRotatorAz(10) },
+        ],
+      };
+
+      const tunerFields = [
+        { label: 'In line', value: hf.tuner.inline ? 'Yes' : 'Bypassed' },
+        { label: 'SWR', value: hf.tuner.swr.toFixed(2) },
+        { label: 'Fwd power', value: hf.tuner.fwd + ' W' },
+        { label: 'Tuning', value: hf.tuner.settling ? 'Yes' : 'No' },
+      ];
+      if (hf.tuner.fault) tunerFields.push({ label: 'Fault', value: hf.tuner.fault });
+      bySlot.tuner = {
+        key: 'tuner', name: 'Tuner', role: 'ATR-1000 ATU · tuner', device: 'ATR-1000', link: 'Wi-Fi · WebSocket', hostLabel: 'shari',
+        pill: this.mkPill(hostedOffline ? 'offline' : (hf.tuner.fault ? 'fault' : (hf.tuner.settling ? 'busy' : 'online'))), stale: hostedOffline,
+        fields: tunerFields,
+        controlsLabel: 'Tune',
+        controls: [
+          { label: 'Mem', variant: 'secondary', disabled: outage || fault, onClick: () => this.tuneAtu('mem') },
+          { label: 'Full', variant: 'secondary', disabled: outage || fault, onClick: () => this.tuneAtu('full') },
+          { label: hf.tuner.inline ? 'Bypass' : 'In line', variant: 'secondary', disabled: outage, onClick: () => this.setTunerInline(!hf.tuner.inline) },
+        ],
+      };
+
+      bySlot.reconciler = {
+        key: 'reconciler', name: 'Antenna-select', role: 'Reconciler · arbitration ladder', device: null, link: 'logic slot', hostLabel: 'shari',
+        pill: this.mkPill(hostedOffline ? 'offline' : 'online'), stale: hostedOffline,
+        fields: [
+          { label: 'Mode', value: cap(hf.reconciler.mode) },
+          { label: 'Target', value: PORT_LABELS[hf.reconciler.target] || hf.reconciler.target },
+          { label: 'Source', value: cap(hf.reconciler.source) },
+        ],
+        controlsLabel: null, controls: [],
+      };
+
+      bySlot.paarm = {
+        key: 'paarm', name: 'PA-arm', role: 'M5Stack PLC · enable relay', device: 'M5Stack', link: 'embedded', hostLabel: 'embedded',
+        pill: this.mkPill(hf.paarm.armed ? 'online' : 'busy'), stale: false,
+        fields: [{ label: 'Armed', value: hf.paarm.armed ? 'Yes' : 'No' }],
+        controlsLabel: null, controls: [],
+      };
+    } else {
+      const uhf = s.uhf;
+      const hostedOffline = outage;
+
+      bySlot.radio = {
+        key: 'radio', name: 'Radio', role: 'IC-9700 · VHF/UHF transceiver', device: 'IC-9700', link: 'direct', hostLabel: 'shack-pc',
+        pill: this.mkPill(hostedOffline ? 'offline' : (uhf.radio.tx === 'tx' ? 'busy' : 'online')), stale: hostedOffline,
+        fields: [
+          { label: 'Frequency', value: fmtMHz(uhf.radio.freq_hz) },
+          { label: 'Band', value: '70cm' },
+          { label: 'Mode', value: uhf.radio.mode.toUpperCase() },
+          { label: 'TX/RX', value: uhf.radio.tx === 'tx' ? 'Transmitting' : 'Receiving' },
+          { label: 'Bias-T', value: uhf.radio.bias_t ? 'On' : 'Off' },
+        ],
+        controlsLabel: 'Mode',
+        controls: ['fm', 'usb', 'data'].map(m => ({ label: m.toUpperCase(), variant: uhf.radio.mode === m ? 'primary' : 'secondary', disabled: outage, onClick: () => this.setRadioMode(m) })),
+      };
+
+      bySlot.rotator = {
+        key: 'rotator', name: 'Rotator', role: 'SPID · PSTRotator bridge', device: 'SPID', link: 'Serial', hostLabel: 'shack-pc',
+        pill: this.mkPill(hostedOffline ? 'offline' : (uhf.rotator.moving ? 'busy' : 'online')), stale: hostedOffline,
+        fields: [
+          { label: 'Azimuth', value: uhf.rotator.az_deg + '°' },
+          { label: 'Elevation', value: uhf.rotator.el_deg + '°' },
+          { label: 'Moving', value: uhf.rotator.moving ? 'Yes' : 'No' },
+        ],
+        controlsLabel: 'Nudge',
+        controls: [
+          { label: 'Az −10°', variant: 'secondary', disabled: outage, onClick: () => this.adjustRotatorAz(-10) },
+          { label: 'Az +10°', variant: 'secondary', disabled: outage, onClick: () => this.adjustRotatorAz(10) },
+          { label: 'El −10°', variant: 'secondary', disabled: outage, onClick: () => this.adjustRotatorEl(-10) },
+          { label: 'El +10°', variant: 'secondary', disabled: outage, onClick: () => this.adjustRotatorEl(10) },
+        ],
+      };
+
+      bySlot.polctrl = {
+        key: 'polctrl', name: 'Pol-ctrl', role: 'M5Stack PLC · polarization', device: 'M5Stack', link: 'embedded', hostLabel: 'embedded',
+        pill: this.mkPill('online'), stale: false,
+        fields: [{ label: 'Polarization', value: POL_LABELS[uhf.polctrl.polarization] }],
+        controlsLabel: 'Polarization',
+        controls: ['h', 'v', 'cl', 'cr'].map(p => ({ label: POL_LABELS[p], variant: uhf.polctrl.polarization === p ? 'primary' : 'secondary', disabled: outage, onClick: () => this.setPolarization(p) })),
+      };
+    }
+
+    for (const k in bySlot) { bySlot[k].onSelect = () => this.selectSlot(k); }
+
+    const slots = Object.values(bySlot);
+    const selectedKeyFinal = bySlot[s.selectedSlotKey] ? s.selectedSlotKey : 'radio';
+    for (const slot of slots) {
+      slot.selected = slot.key === selectedKeyFinal;
+      slot.rowStyle = {
+        display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px', cursor: 'pointer',
+        borderBottom: '1px solid var(--border-light)',
+        background: slot.selected ? 'rgba(124,92,255,.16)' : 'transparent',
+        borderLeft: slot.selected ? '3px solid var(--brand-color-purple-3)' : '3px solid transparent',
+      };
+    }
+    const selectedSlot = bySlot[selectedKeyFinal];
+
+    const ladderTiers = isHF ? [
+      { key: 'idle', label: '1 · Idle', active: false },
+      { key: 'operator', label: '2 · Operator', active: s.hf.reconciler.source === 'operator' },
+      { key: 'auto', label: '3 · Auto', active: s.hf.reconciler.source === 'auto' },
+    ].map(t => ({
+      ...t,
+      chipStyle: `font-size:10px;font-weight:600;padding:3px 8px;border-radius:999px;background:${t.active ? 'var(--brand-color-purple-3)' : 'rgba(124,92,255,.16)'};color:${t.active ? '#fff' : 'var(--text-secondary)'};`,
+    })) : [];
+
+    const antennaChips = isHF ? [
+      { key: 'dummy-load', label: 'Dummy load', on: s.hf.antswitch.selected === 'p1' },
+      { key: 'fan-dipole', label: 'Fan dipole', on: s.hf.antswitch.selected === 'p2' },
+      { key: 'ultrabeam', label: 'Ultrabeam', on: s.hf.antswitch.selected === 'p3' },
+    ].map(c => ({
+      ...c,
+      style: `font-size:11px;font-weight:600;padding:6px 10px;border-radius:8px;text-align:center;background:${c.on ? 'rgba(124,92,255,.16)' : 'transparent'};color:${c.on ? 'var(--brand-color-lavender-1)' : 'var(--text-secondary)'};border:1px solid ${c.on ? 'var(--brand-color-purple-3)' : 'var(--border-light)'};`,
+    })) : [];
+
+    // ---- curated "at a glance" view-model (turn 2) ----
+    const healthDots = [
+      { label: host.name + ' (host)', status: host.pillStatus === 'passed' ? 'passed' : 'error' },
+      ...slots.map(sl => ({ label: sl.name, status: sl.pill.status })),
+    ].map(d => ({ ...d, dotStyle: `display:inline-block;width:8px;height:8px;border-radius:50%;background:${statusColorVar(d.status)};` }));
+    const anyError = healthDots.some(d => d.status === 'error');
+    const anyFault = healthDots.some(d => d.status === 'blocked');
+    const anyBusy = healthDots.some(d => d.status === 'progress');
+    const overallHealth = anyError ? { label: 'Degraded', color: statusColorVar('error') }
+      : anyFault ? { label: 'Fault', color: statusColorVar('blocked') }
+      : anyBusy ? { label: 'Active', color: statusColorVar('progress') }
+      : { label: 'Nominal', color: statusColorVar('passed') };
+
+    const curStation = isHF ? s.hf : s.uhf;
+    const radioBig = {
+      freq: fmtMHz(curStation.radio.freq_hz),
+      band: isHF ? bandFromFreqHF(curStation.radio.freq_hz) : '70cm',
+      mode: curStation.radio.mode.toUpperCase(),
+      txOn: curStation.radio.tx === 'tx',
+      rxShow: curStation.radio.tx !== 'tx',
+      txLabel: curStation.radio.tx === 'tx' ? 'TX' : 'RX',
+      drivePct: curStation.radio.drive != null ? curStation.radio.drive : null,
+      driveBarStyle: `height:100%;border-radius:999px;background:${curStation.radio.tx === 'tx' ? 'var(--bug-open)' : 'var(--brand-color-purple-3)'};width:${curStation.radio.drive || 0}%;transition:width .4s ease;`,
+      driveDash: `${((curStation.radio.drive || 0) / 100) * 251.2} 251.2`,
+    };
+
+    const ATTN_STYLE = { background: 'var(--highlight-warning)', color: '#1A1B2B', borderColor: 'transparent' };
+    const PA_MAX_W = 500;
+    const paBig = isHF ? {
+      operateActive: s.hf.pa.mode === 'operate',
+      standbyActive: s.hf.pa.mode === 'standby',
+      operateActive_variant: s.hf.pa.mode === 'operate' ? 'primary' : 'secondary',
+      standbyActive_variant: 'secondary',
+      standbyWrapClass: s.hf.pa.mode === 'standby' ? 'attn-on' : '',
+      keyedTx: s.hf.pa.keyed === 'tx',
+      fwdW: s.hf.pa.fwd_power_w, reflW: s.hf.pa.rfl_power_w, tempC: s.hf.pa.temp_c,
+      swr: s.hf.pa.fwd_power_w > 0 ? (1 + s.hf.pa.rfl_power_w / Math.max(1, s.hf.pa.fwd_power_w) * 6).toFixed(2) : '—',
+      error: s.hf.pa.error,
+      fwdBarStyle: `height:100%;border-radius:999px;background:var(--highlight-success);width:${clamp(s.hf.pa.fwd_power_w / PA_MAX_W * 100, 0, 100)}%;transition:width .4s ease;`,
+      onOperate: () => this.setPaMode('operate'),
+      onStandby: () => this.setPaMode('standby'),
+      disabled: outage,
+    } : null;
+
+    const tunerSwr = s.hf ? s.hf.tuner.swr : 1;
+    const tunerBig = isHF ? {
+      inline: s.hf.tuner.inline,
+      inlineLabel: s.hf.tuner.inline ? 'In line' : 'Bypassed',
+      swr: s.hf.tuner.swr.toFixed(2),
+      swrColor: tunerSwr >= 3 ? 'var(--bug-open)' : (tunerSwr >= 2 ? 'var(--highlight-warning)' : '#fff'),
+      opStateChip: s.hf.tuner.inline
+        ? 'background:rgba(46,204,113,.16);color:var(--highlight-success);'
+        : 'background:var(--highlight-warning);color:#1A1B2B;',
+      fwdW: s.hf.tuner.fwd,
+      settling: s.hf.tuner.settling,
+      fault: s.hf.tuner.fault,
+      fwdBarStyle: `height:100%;border-radius:999px;background:var(--highlight-success);width:${clamp(s.hf.tuner.fwd / PA_MAX_W * 100, 0, 100)}%;transition:width .4s ease;`,
+      onMem: () => this.tuneAtu('mem'),
+      onFull: () => this.tuneAtu('full'),
+      onToggleInline: () => this.setTunerInline(!s.hf.tuner.inline),
+      toggleLabel: s.hf.tuner.inline ? 'Bypass' : 'In line',
+      disabled: outage,
+      tuneDisabled: outage || fault,
+    } : null;
+
+    const antBig = isHF ? {
+      portLabel: PORT_LABELS[s.hf.antswitch.selected] || s.hf.antswitch.selected,
+      band: bandFromFreqHF(s.hf.antctrl.freq_hz),
+      freq: fmtMHz(s.hf.antctrl.freq_hz),
+      moving: s.hf.antctrl.moving,
+      deviceOnline: s.hf.antctrl.device_online,
+      errorMsg: s.hf.antctrl.error,
+      directionOptions: [
+        { label: 'Forward', value: 'forward' },
+        { label: '180°', value: 'reverse' },
+        { label: 'Bidirectional', value: 'bidirectional' },
+      ].map(o => ({ ...o, active: s.hf.antctrl.direction === o.value, variant: (o.value === 'reverse') ? 'secondary' : (s.hf.antctrl.direction === o.value ? 'primary' : 'secondary'), attnWrapClass: (o.value === 'reverse' && s.hf.antctrl.direction === 'reverse') ? 'attn-on' : '', disabled: outage || fault, onClick: () => this.setAntCtrlDirection(o.value) })),
+      retractDisabled: outage || fault,
+      onRetract: () => this.retractAntCtrl(),
+    } : null;
+
+    const antSelectBig = isHF ? {
+      selectedLabel: PORT_LABELS[s.hf.antswitch.selected] || s.hf.antswitch.selected,
+      settled: s.hf.antswitch.settled,
+      manual: s.hf.reconciler.source === 'operator',
+      sourceLabel: s.hf.reconciler.source === 'operator' ? 'Manual override' : 'Auto (reconciler)',
+      sourceChip: s.hf.reconciler.source === 'operator'
+        ? 'background:var(--highlight-warning);color:#1A1B2B;'
+        : 'background:rgba(46,204,113,.16);color:var(--highlight-success);',
+      ports: ['off', 'p1', 'p2', 'p3', 'p4', 'p5', 'p6'].map(p => ({
+        label: PORT_NAME[p], full: PORT_LABELS[p],
+        active: s.hf.antswitch.selected === p,
+        variant: s.hf.antswitch.selected === p ? 'primary' : 'secondary',
+        disabled: outage, onClick: () => this.selectAntSwitchPort(p),
+      })),
+      returnDisabled: outage || s.hf.reconciler.source !== 'operator',
+      onReturnAuto: () => this.returnAntToAuto(),
+    } : null;
+
+    const rAz = curStation.rotator.az_deg;
+    const rTarget = curStation.rotator.target_deg != null ? curStation.rotator.target_deg : rAz;
+    const rDir = isHF ? s.hf.antctrl.direction : 'forward';
+    const CONE_PURPLE = 'rgba(124,92,255,.5)';
+    const CONE_ORANGE = 'rgba(255,159,10,.55)';
+    const wedge = (center, width, color, glow) => {
+      const start = ((center - width / 2) % 360 + 360) % 360;
+      return `position:absolute;inset:10px;border-radius:50%;background:conic-gradient(from ${start}deg, ${color} 0deg ${width}deg, transparent ${width}deg 360deg);pointer-events:none;` + (glow ? `filter:drop-shadow(0 0 8px ${glow});` : '');
+    };
+    let rCones;
+    if (rDir === 'reverse') rCones = [wedge(rAz + 180, 60, CONE_ORANGE, 'rgba(255,159,10,.8)')];
+    else if (rDir === 'bidirectional') rCones = [wedge(rAz, 90, CONE_PURPLE), wedge(rAz + 180, 90, CONE_PURPLE)];
+    else rCones = [wedge(rAz, 60, CONE_PURPLE)];
+    const rTargetDelta = Math.abs(((rTarget - rAz + 540) % 360) - 180);
+    const rotatorBig = {
+      azDeg: rAz,
+      targetDeg: rTarget,
+      moving: curStation.rotator.moving,
+      presets: ROTATOR_PRESETS.map(p => ({
+        ...p, active: rTarget === p.deg, variant: rTarget === p.deg ? 'primary' : 'secondary', disabled: outage,
+        onClick: () => this.setRotatorPreset(p.deg),
+      })),
+      compassRef: this.compassRef,
+      compassRefM: this.compassRefM,
+      onCompassDown: this.onCompassDown,
+      onCompassDownM: this.onCompassDownM,
+      cones: rCones,
+      showTarget: curStation.rotator.moving && rTargetDelta > 5,
+      targetLineStyle: `position:absolute;left:calc(50% - 1px);top:12px;width:2px;height:calc(50% - 12px);border-left:2px dashed rgba(255,255,255,.55);transform-origin:50% 100%;transform:rotate(${rTarget}deg);pointer-events:none;`,
+      needleStyle: `position:absolute;left:calc(50% - 1.5px);top:12px;width:3px;height:calc(50% - 12px);background:var(--brand-color-purple-3);transform-origin:50% 100%;transform:rotate(${rAz}deg);border-radius:3px;pointer-events:none;box-shadow:0 0 8px rgba(124,92,255,.6);`,
+    };
+
+    const pwr = s.power;
+    const masterOn = pwr.master.power === 'on';
+    const psuOn = pwr.psu.power === 'on';
+    const powered = masterOn && psuOn;
+    const seq = s.seq;
+    const seqBusy = seq.phase === 'starting' || seq.phase === 'stopping';
+    const PHASE = { idle: 'Idle', starting: 'Starting', running: 'Running', stopping: 'Stopping' };
+    const STEP_LABELS = {
+      'master-on': 'Mains on', 'psu-on': 'PSU 13.8 V on', 'trx-on': 'Transceiver on', 'pa-on': 'PA on', 'pa-arm-enable': 'Arming PA',
+      'pa-arm-disable': 'Disarming PA', 'pa-off': 'PA off', 'trx-off': 'Transceiver off', 'psu-off': 'PSU 13.8 V off', 'master-off': 'Mains off',
+    };
+    const phaseColor = seq.phase === 'running' ? 'var(--highlight-success)' : (seqBusy ? 'var(--bug-process)' : 'var(--brand-color-grey-4)');
+    const seqBig = {
+      phase: seq.phase,
+      phaseLabel: PHASE[seq.phase],
+      stepLabel: STEP_LABELS[seq.step] || seq.step,
+      busy: seqBusy,
+      idle: seq.phase === 'idle',
+      running: seq.phase === 'running',
+      showStep: seqBusy && !!seq.step,
+      phaseChip: `font-size:11px;font-weight:700;padding:4px 12px;border-radius:999px;background:${seq.phase === 'running' ? 'rgba(46,204,113,.16)' : (seqBusy ? 'rgba(90,160,255,.16)' : 'rgba(255,255,255,.08)')};color:${phaseColor};`,
+      primaryLabel: seq.phase === 'idle' ? 'Start station' : seq.phase === 'running' ? 'Stop station' : (seq.phase === 'starting' ? 'Starting…' : 'Stopping…'),
+      primaryVariant: seq.phase === 'running' ? 'destructive-outlined' : 'primary',
+      primaryDisabled: outage || seqBusy,
+      onPrimary: () => this.runSeq(seq.phase === 'running' ? 'stop' : 'start'),
+    };
+    const relay = (label, sub, on, disabled, onToggle, hot) => ({
+      label, sub, on, disabled, onToggle,
+      stateLabel: on ? 'On' : 'Off',
+      stateStyle: `font-size:11px;font-weight:700;padding:3px 10px;border-radius:999px;background:${on ? (hot ? 'rgba(255,159,10,.18)' : 'rgba(46,204,113,.16)') : 'rgba(255,255,255,.06)'};color:${on ? (hot ? 'var(--highlight-warning)' : 'var(--highlight-success)') : 'var(--brand-color-grey-4)'};`,
+    });
+    const powerBig = {
+      seq: seqBig,
+      relays: [
+        relay('Mains', 'power/master', masterOn, outage || seqBusy, () => this.setPower('master', !masterOn), false),
+        relay('PSU 13.8 V', 'power/psu-13v8', psuOn, outage || seqBusy || !masterOn, () => this.setPower('psu', !psuOn), false),
+      ].concat(isHF ? [
+        relay('Transceiver', 'hf/switch · TRX', s.hf.sw.trx === 'on', outage || seqBusy || !powered, () => this.setPower('trx', !(s.hf.sw.trx === 'on')), true),
+        relay('Amplifier', 'hf/switch · PA', s.hf.sw.pa === 'on', outage || seqBusy || !powered, () => this.setPower('pa', !(s.hf.sw.pa === 'on')), true),
+      ] : []),
+    };
+
+    const listRows = [
+      { label: host.name, sub: 'Host', status: host.pillStatus, value: host.pillLabel },
+      ...slots.map(sl => ({ label: sl.name, sub: sl.role, status: sl.pill.status, value: sl.fields[0] ? sl.fields[0].value : '' })),
+    ].map(r => ({ ...r, dotStyle: `display:inline-block;width:9px;height:9px;border-radius:50%;background:${statusColorVar(r.status)};flex:none;` }));
+
+    return {
+      isHF, isUHF: !isHF,
+      overallHealth, healthDots, radioBig, paBig, tunerBig, antBig, antSelectBig, rotatorBig, listRows,
+      powerBig,
+      station: s.station, setStation: this.setStation,
+      stationOptions: [{ value: 'hf', label: 'HF station' }, { value: 'uhf', label: 'UHF station' }],
+      outage, toggleOutage: this.toggleOutage,
+      fault, toggleFault: this.toggleFault,
+      canFault: isHF,
+      host,
+      slots,
+      bySlot,
+      selectedSlotKey: selectedKeyFinal,
+      selectedSlot,
+      selectSlot: this.selectSlot,
+      ladderTiers,
+      antennaChips,
+    };
+  }
+}
+
+</script>
+</body>
+</html>
