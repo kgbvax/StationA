@@ -12,7 +12,7 @@ flexbridge implements the `radio` slot of the station integration model
 | `/meta` | yes | bridge → bus | birth certificate: identity + capabilities |
 | `/state` | yes | bridge → bus | live radio state (JSON snapshot) |
 | `/status` | yes | broker LWT | liveness: `online` / `offline` |
-| `/cmd` | no | bus → bridge | intent (not yet implemented) |
+| `/cmd` | no | bus → bridge | intent: DVK playback trigger (one-shot, not retained) |
 
 ---
 
@@ -93,7 +93,15 @@ subscriber or a late-joiner gets this immediately without polling.
       { "key": "mode",    "name": "Mode",      "type": "enum", "options_ref": "modes" },
       { "key": "drive",   "name": "Drive",     "type": "number", "unit": "%" },
       { "key": "tx",      "name": "Transmitting", "type": "boolean", "on": "tx", "off": "rx" },
-      { "key": "tuning",  "name": "Tuning",    "type": "boolean" }
+      { "key": "tuning",  "name": "Tuning",    "type": "boolean" },
+      { "key": "dvk_status", "name": "DVK Status", "type": "string" },
+      { "key": "dvk_id",     "name": "DVK Memory", "type": "number" }
+    ],
+    "actions": [
+      { "key": "dvk_play_1",  "name": "DVK Play 1",  "command": { "action": "dvk_play_1" } },
+      { "key": "dvk_play_2",  "name": "DVK Play 2",  "command": { "action": "dvk_play_2" } },
+      { "...": "dvk_play_3 .. dvk_play_12 (one action per memory, ids 1–12)" },
+      { "key": "dvk_stop",    "name": "DVK Stop",    "command": { "action": "dvk_stop" } }
     ]
   }
 }
@@ -107,12 +115,14 @@ this slot's observable field surface. It carries **no consumer vocabulary** — 
 `hadiscovery` service for Home Assistant, and any future historian/dashboard/Prometheus
 consumer) render their own representation from these neutral primitives.
 
-flexbridge is **read-only**, so none of its fields are `writable` and it exposes no
-`actions` — every field renders as a sensor or binary_sensor. The `band`/`mode` enum
-options are not inlined; they resolve via `options_ref` against `capabilities.bands` /
-`capabilities.modes` above (single source of truth). The `tx` boolean carries `on`/`off`
-because `/state` holds the strings `"tx"`/`"rx"`, not a bool; `tuning` omits them because
-`/state` holds a real bool.
+flexbridge is **read-only for radio tuning state**: none of its fields are `writable`. The
+one read-write surface is the **Digital Voice Keyer (DVK)**, exposed as one-shot `actions`
+(buttons), not writable setpoint fields — each play action publishes `{"action":"dvk_play_N"}`
+with no value, so a consumer (hadiscovery → HA button) needs no value injection. The
+`band`/`mode` enum options are not inlined; they resolve via `options_ref` against
+`capabilities.bands` / `capabilities.modes` above (single source of truth). The `tx` boolean
+carries `on`/`off` because `/state` holds the strings `"tx"`/`"rx"`, not a bool; `tuning`
+omits them because `/state` holds a real bool.
 
 The HA-specific rendering (component choice, `value_template`, unit→`device_class` map,
 availability, device block) lives in `hadiscovery`, not in this bridge.
@@ -159,7 +169,10 @@ regardless of how many internal receivers the radio has.
   "mode":   "cw",
   "tx":     "rx",
   "tuning": false,
-  "drive":  40
+  "drive":  40,
+  "device_online": true,
+  "dvk_status": "idle",
+  "dvk_id": 0
 }
 ```
 
@@ -174,6 +187,9 @@ regardless of how many internal receivers the radio has.
 | `tx` | string | — | `"tx"` while transmitting, `"rx"` otherwise |
 | `tuning` | bool | — | `true` while the ATU or radio is actively tuning |
 | `drive` | integer | % | Transmit drive level, 0–100 |
+| `device_online` | bool | — | `true` while the radio TCP link is up; `false` on disconnect. `/status` is the MQTT/LWT bridge liveness, not the radio link |
+| `dvk_status` | string | — | DVK operation: `idle` \| `recording` \| `preview` \| `playback` \| `disabled`. SmartSDR v4+; omitted when no DVK status has been reported. `disabled` means no SmartSDR+ license |
+| `dvk_id` | integer | — | Active DVK memory id (1–12) while playing/recording/previewing; `0`/omitted when idle |
 
 ### Mode values
 
@@ -217,6 +233,49 @@ Derived from `freq_hz` at publish time (IARU Region 1 / DL allocations).
 | `23cm` | 1,240,000,000 | 1,300,000,000 |
 | `gen` | 1,800,000 | 30,000,000 (general HF, outside ham allocations) |
 | `unknown` | — | anything else, or frequency zero |
+
+---
+
+## `/cmd` — DVK playback intent
+
+`/cmd` is **not retained** (QoS 1): DVK playback is a one-shot trigger, and a stale
+command must not re-fire on a bridge or broker restart (same rationale as the tuner
+slot's `tune`). Payloads are JSON with the shared value-key convention — the argument
+rides under `value`, never under a key named after the action.
+
+Accepted actions:
+
+| Action | `value` | Effect |
+|---|---|---|
+| `dvk_play_<N>` | — | Play DVK memory N (1–12) and key the transmitter (SmartSDR keys TX automatically on `playback_start`; no separate `xmit` needed). The per-memory form is what the HA buttons use — no `value` to inject |
+| `dvk_play` | `"N"` | Same, value form (for scripts / Node-RED) |
+| `dvk_stop` | `"N"` | Stop memory N and unkey |
+| `dvk_stop` | omitted | Stop the currently-active memory, resolved by the bridge from `/state.dvk_id` |
+
+Examples:
+
+```json
+{"action":"dvk_play_3"}
+{"action":"dvk_play","value":"3"}
+{"action":"dvk_stop"}
+{"action":"dvk_stop","value":"3"}
+```
+
+**No command-ack is published.** Consumers observe the result on `/state` (`dvk_status`,
+`dvk_id`) — the stationa fire-and-observe plane discipline: send intent, watch state.
+
+### DVK prerequisites and caveats
+
+- **SmartSDR v4+ and a SmartSDR+ license** are required. Without the license the radio
+  emits `dvk status=disabled`; `dvk_play` is refused.
+- **Voice modes only** (`usb`, `lsb`, `am`, `fm`). The radio refuses DVK in `cw`/`data`.
+  The bridge does not block the command in a non-voice mode (it stays dumb; the radio is
+  authoritative) — it only debug-logs that the radio may refuse. Consumers should gate the
+  UI on `/state.mode` if they want to prevent the attempt.
+- **12 memories**, ids 1–12. Out-of-range ids are rejected by the bridge (logged, dropped).
+- The `dvk` wire strings were originally third-party-confirmed (AetherSDR impl vs
+  FLEX-8600 fw 4.2.18) and are now confirmed against the live FLEX-8400 on shari. The
+  official SmartSDR API wiki does not document the `dvk` command family.
 
 ---
 
@@ -270,10 +329,11 @@ block in `/meta`. The `hadiscovery` service subscribes to `muehle/+/+/meta`, rea
 homeassistant/<component>/muehle-hf-radio/<object_id>/config
 ```
 
-The entity set is the same six fields (frequency sensor, band sensor, mode sensor, drive
-sensor, transmitting binary_sensor, tuning binary_sensor), but rendered by `hadiscovery`
-from the neutral `expose` — flexbridge itself contains no HA knowledge. See
-`../hadiscovery/docs/discovery-mqtt-api.md` for the mapping.
+The entity set is the fields above (frequency sensor, band sensor, mode sensor, drive
+sensor, transmitting binary_sensor, tuning binary_sensor, plus the DVK status/memory
+sensors) **and the DVK action buttons** — 12 `dvk_play_N` buttons + a `dvk_stop` button,
+rendered by `hadiscovery` from the neutral `expose.actions`. flexbridge itself contains no
+HA knowledge. See `../hadiscovery/docs/discovery-mqtt-api.md` for the mapping.
 
 ---
 
@@ -307,6 +367,8 @@ only `/state`. If multiple slices are configured in SmartSDR, the TX slice
 | ATU transitions into or out of Tuning | `/state` |
 | Radio drive level changes | `/state` |
 | Radio `tuning` flag changes | `/state` |
+| DVK status changes (idle ↔ playback ↔ …) | `/state` (`dvk_status`, `dvk_id`) |
+| `/cmd` DVK play/stop received | radio command sent; confirm on `/state` |
 | Disconnect / crash | `/status` → `offline` (broker LWT) |
 
 State is published only when a field actually changes value; unchanged state

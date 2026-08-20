@@ -23,13 +23,26 @@ type Bridge struct {
 
 	mu        sync.RWMutex
 	device    ha.Device
+	commander Commander // current radio command surface (nil while radio offline)
 	interlock flexradio.InterlockStatus
 	slices    map[int]flexradio.SliceStatus
+	sliceBand map[int]string // per-slice last-derived band, used as the hysteresis prev for that slice
 	tuStatus  flexradio.ATUStatus
 	state     radioState
 
 	discoDone bool
 }
+
+// Commander is the radio control surface the bridge drives from /cmd. The
+// *flexradio.Client implements it; tests use a fake. Aliased here so the
+// bridge package owns the /cmd dispatch without re-declaring the interface
+// (same pattern as acom1200s-pa-bridge's `type Commander = acom.Commander`).
+type Commander = flexradio.Commander
+
+// cmdPayload is the /cmd JSON the bridge accepts, aliased to the shared
+// convention (the argument rides under the `value` key, never under a key
+// named after the action). Same pattern as acom1200s-pa-bridge.
+type cmdPayload = schema.CmdPayload
 
 // radioState is the mutable radio state held under Bridge.mu.
 type radioState struct {
@@ -40,6 +53,8 @@ type radioState struct {
 	tuning       bool   // true while ATU or radio is in tuning state
 	drive        int    // 0-100 transmit drive level
 	deviceOnline bool   // true while the radio TCP link is up (handshake done)
+	dvkStatus    string // DVK: idle|recording|preview|playback|disabled (omitempty via statePayload)
+	dvkID        int    // DVK: active memory id (cleared on idle/disabled)
 }
 
 // statePayload is the JSON shape published to <slot>/state (retained).
@@ -55,8 +70,10 @@ type statePayload struct {
 	Mode         string `json:"mode,omitempty"`
 	TX           string `json:"tx"` // "rx" | "tx"
 	Tuning       bool   `json:"tuning"`
-	Drive        int    `json:"drive"`        // 0-100
-	DeviceOnline bool   `json:"device_online"` // radio link liveness
+	Drive        int    `json:"drive"`                // 0-100
+	DeviceOnline bool   `json:"device_online"`        // radio link liveness
+	DVKStatus    string `json:"dvk_status,omitempty"` // DVK operation (SmartSDR v4+)
+	DVKID        int    `json:"dvk_id,omitempty"`     // active DVK memory id
 }
 
 // metaPayload is the JSON shape published to <slot>/meta (retained birth cert).
@@ -79,11 +96,29 @@ type metaDevice struct {
 // metaExpose is the consumer-neutral field surface (integration model §3.1, Appendix C).
 // It carries NO consumer vocabulary (no device_class strings, no Jinja, no payload_on/off);
 // consumers such as hadiscovery render their own representation from these neutral
-// primitives. flexbridge is read-only, so none of its fields are writable and it exposes no
-// actions — every field is a sensor/binary_sensor.
+// primitives. flexbridge is read-only for radio tuning state (no writable fields), but it
+// exposes DVK one-shot actions (playback trigger) — rendered as buttons by consumers.
 type metaExpose struct {
-	Device metaExposeDevice  `json:"device"`
-	Fields []metaExposeField `json:"fields"`
+	Device  metaExposeDevice   `json:"device"`
+	Fields  []metaExposeField  `json:"fields"`
+	Actions []metaExposeAction `json:"actions,omitempty"`
+}
+
+// metaExposeAction describes a one-shot button (integration model Appendix C).
+// Its command is action-only: pressing the button publishes {"action":"<Action>"}.
+type metaExposeAction struct {
+	Key     string       `json:"key"`
+	Name    string       `json:"name"`
+	Command *metaCommand `json:"command"`
+}
+
+// metaCommand describes how a write is encoded on /cmd (Appendix C). For DVK
+// actions the command is action-only (no value_key): the memory index is
+// encoded in the action name itself (dvk_play_1 .. dvk_play_12).
+type metaCommand struct {
+	Action    string `json:"action,omitempty"`
+	ValueKey  string `json:"value_key,omitempty"`
+	ValueType string `json:"value_type,omitempty"`
 }
 
 type metaExposeDevice struct {
@@ -142,11 +177,22 @@ type Logger interface {
 // New constructs a Bridge.
 func New(cfg Config, pub Publisher, log Logger) *Bridge {
 	return &Bridge{
-		cfg:    cfg,
-		pub:    pub,
-		log:    log,
-		slices: make(map[int]flexradio.SliceStatus),
+		cfg:       cfg,
+		pub:       pub,
+		log:       log,
+		slices:    make(map[int]flexradio.SliceStatus),
+		sliceBand: make(map[int]string),
 	}
+}
+
+// SetCommander installs the radio command surface used to dispatch /cmd
+// intent. Called from runOnce after a successful handshake (the *Client is
+// per-connect-cycle, so the Commander is injected rather than passed in
+// Config). Pass nil when the radio link is down so HandleCommand no-ops.
+func (b *Bridge) SetCommander(c Commander) {
+	b.mu.Lock()
+	b.commander = c
+	b.mu.Unlock()
 }
 
 // SetDevice records the radio identity (called after a successful handshake).
@@ -175,9 +221,11 @@ func (b *Bridge) SetDevice(d ha.Device) {
 func (b *Bridge) Reset() {
 	b.mu.Lock()
 	b.slices = make(map[int]flexradio.SliceStatus)
+	b.sliceBand = make(map[int]string)
 	b.interlock = flexradio.InterlockStatus{}
 	b.tuStatus = flexradio.ATUStatus{}
 	b.state = radioState{} // deviceOnline defaults false
+	b.commander = nil      // radio link down: /cmd must no-op
 	b.discoDone = false
 	snap := b.state
 	b.mu.Unlock()
@@ -199,6 +247,36 @@ func (b *Bridge) HandleStatus(f flexradio.Frame) {
 		b.handleATU(f)
 	case "radio":
 		b.handleRadio(f)
+	case "dvk":
+		b.handleDVK(f)
+	}
+}
+
+// handleDVK updates the DVK state from a "dvk" status frame (SmartSDR v4+,
+// subscribed via `sub dvk all`). Only status= frames carry state; added/deleted
+// memory-library frames are ignored. idle/disabled clears the active id.
+func (b *Bridge) handleDVK(f flexradio.Frame) {
+	ds := flexradio.ParseDVK(joinArgsFields(f))
+	if !ds.HasStatus {
+		b.log.Debugf("dvk non-status frame: %s", joinArgsFields(f))
+		return
+	}
+	b.mu.Lock()
+	// idle/disabled ⇒ no active memory; clear the id even if the frame carries one.
+	newID := ds.ID
+	if ds.Status == "idle" || ds.Status == "disabled" {
+		newID = 0
+	}
+	changed := b.state.dvkStatus != ds.Status || b.state.dvkID != newID
+	if changed {
+		b.state.dvkStatus = ds.Status
+		b.state.dvkID = newID
+	}
+	snap := b.state
+	b.mu.Unlock()
+
+	if changed {
+		b.publishStateSnapshot(snap)
 	}
 }
 
@@ -237,8 +315,28 @@ func (b *Bridge) handleSlice(f flexradio.Frame) {
 		b.log.Warnf("parse slice: %v", err)
 		return
 	}
+
 	b.mu.Lock()
-	b.slices[s.Index] = s
+	if isSliceRemoval(f) {
+		// SmartSDR signals slice removal either as a bare "removed" topic-arg
+		// (S|slice <n> <r> removed) or via in_use=0 / removed=1. The bridge must
+		// delete the entry; otherwise a stale slice with TX=true or Active=true
+		// lingers forever (the map is only cleared on Reset), and
+		// resolveActiveSlice would keep selecting a phantom slice — publishing
+		// its frozen frequency and jumping the bus between the phantom and the
+		// real slice on every frame (Go map iteration order is randomized).
+		delete(b.slices, idx)
+		delete(b.sliceBand, idx)
+	} else {
+		b.slices[s.Index] = s
+		// Track each slice's band with its OWN previous band as hysteresis prev,
+		// updated on every frame for that slice (active or not). Using the
+		// single global b.state.band as the hysteresis prev meant switching the
+		// active slice between two slices clobbered the held band of an
+		// edge-dwelling slice — re-exposing the band-edge chatter that
+		// BandEdgeHysteresisHz exists to prevent.
+		b.sliceBand[s.Index] = flexradio.BandForFreqWithPrev(s.FreqHz, b.sliceBand[s.Index])
+	}
 	changed := b.updateActiveSliceState()
 	snap := b.state
 	b.mu.Unlock()
@@ -250,6 +348,27 @@ func (b *Bridge) handleSlice(f flexradio.Frame) {
 	}
 }
 
+// isSliceRemoval reports whether a slice status frame signals that the slice
+// has been removed/torn down. SmartSDR encodings handled (confirm the live
+// format with a capture; both are covered):
+//   - a bare "removed" trailing topic-arg:  S|slice <n> <r> removed
+//   - in_use=0 (slice no longer in use):   S|slice <n> <r> in_use=0 ...
+//   - removed=1 (explicit flag):           S|slice <n> <r> removed=1
+func isSliceRemoval(f flexradio.Frame) bool {
+	for _, a := range strings.Fields(f.TopicArgs) {
+		if a == "removed" {
+			return true
+		}
+	}
+	if v, ok := f.Fields["in_use"]; ok && v == "0" {
+		return true
+	}
+	if v, ok := f.Fields["removed"]; ok && v == "1" {
+		return true
+	}
+	return false
+}
+
 // updateActiveSliceState updates b.state from the current TX/active slice.
 // Must be called with b.mu held. Returns true if state changed.
 func (b *Bridge) updateActiveSliceState() bool {
@@ -258,9 +377,11 @@ func (b *Bridge) updateActiveSliceState() bool {
 		return false
 	}
 	newFreq := active.FreqHz
-	newBand := flexradio.BandForFreqWithPrev(newFreq, b.state.band)
+	// The hysteresis prev is this active slice's own tracked band, not the
+	// global published band — see handleSlice for why.
+	newBand := b.sliceBand[active.Index]
 	newMode := flexradio.NormalizeMode(active.Mode)
-	if b.state.freqHz == newFreq && b.state.mode == newMode {
+	if b.state.freqHz == newFreq && b.state.mode == newMode && b.state.band == newBand {
 		return false
 	}
 	// A nonzero frequency that is reported as "gen" or "unknown" after hysteresis
@@ -277,16 +398,34 @@ func (b *Bridge) updateActiveSliceState() bool {
 
 // resolveActiveSlice returns the slice that drives the radio state.
 // Prefers the TX slice; falls back to the Active slice.
+//
+// Selection is DETERMINISTIC: among TX slices the lowest Index wins, and if
+// none, among Active slices the lowest Index wins. Go map iteration order is
+// randomized, so returning the "first" match found while ranging the map
+// would make freq_hz/band/mode a coin flip per frame whenever two slices match
+// the predicate — e.g. two RX panadapters both active=1 with no TX slice, or a
+// stale TX slice left in the map (see isSliceRemoval). The lowest-index
+// tiebreaker keeps the published state stable across reads.
 func resolveActiveSlice(slices map[int]flexradio.SliceStatus) (flexradio.SliceStatus, bool) {
+	var best flexradio.SliceStatus
+	found := false
 	for _, s := range slices {
-		if s.TX {
-			return s, true
+		if s.TX && (!found || s.Index < best.Index) {
+			best = s
+			found = true
 		}
 	}
+	if found {
+		return best, true
+	}
 	for _, s := range slices {
-		if s.Active {
-			return s, true
+		if s.Active && (!found || s.Index < best.Index) {
+			best = s
+			found = true
 		}
+	}
+	if found {
+		return best, true
 	}
 	return flexradio.SliceStatus{}, false
 }
@@ -332,6 +471,111 @@ func (b *Bridge) handleRadio(f flexradio.Frame) {
 }
 
 // ------------------------------------------------------------------
+// Command handling (/cmd → radio)
+// ------------------------------------------------------------------
+
+// HandleCommand parses a /cmd JSON payload and dispatches it to the radio
+// via the Commander. Unknown/invalid actions are logged and dropped. No ack
+// is published — consumers observe the result on /state (dvk_status/dvk_id),
+// per the stationa fire-and-observe plane discipline.
+//
+// Accepted actions (muehle/hf/radio/cmd, NOT retained — DVK is one-shot):
+//
+//	{"action":"dvk_play_<N>"}   play DVK memory N (1-12); keys TX
+//	{"action":"dvk_play","value":"N"}  same, value form (scripts/Node-RED)
+//	{"action":"dvk_stop","value":"N"}   stop memory N
+//	{"action":"dvk_stop"}              stop the currently-active memory (from /state)
+func (b *Bridge) HandleCommand(payload []byte) {
+	var c cmdPayload
+	if err := json.Unmarshal(payload, &c); err != nil {
+		b.log.Warnf("cmd: parse: %v", err)
+		return
+	}
+	b.mu.RLock()
+	cmd := b.commander
+	mode := b.state.mode
+	activeID := b.state.dvkID
+	b.mu.RUnlock()
+	if cmd == nil {
+		b.log.Warnf("cmd: radio offline (no commander)")
+		return
+	}
+
+	switch {
+	case c.Action == "dvk_play":
+		id := parseDVKID(c.Value, 1, 12)
+		if id == 0 {
+			b.log.Warnf("cmd dvk_play: bad memory %q", c.Value)
+			return
+		}
+		if !isVoiceMode(mode) {
+			b.log.Debugf("cmd dvk_play: TX mode %q is not a voice mode; radio may refuse", mode)
+		}
+		if err := cmd.DVKPlay(id); err != nil {
+			b.log.Warnf("cmd dvk_play: %v", err)
+		}
+
+	case strings.HasPrefix(c.Action, "dvk_play_"):
+		id := parseDVKID(strings.TrimPrefix(c.Action, "dvk_play_"), 1, 12)
+		if id == 0 {
+			b.log.Warnf("cmd %s: bad memory", c.Action)
+			return
+		}
+		if err := cmd.DVKPlay(id); err != nil {
+			b.log.Warnf("cmd %s: %v", c.Action, err)
+		}
+
+	case c.Action == "dvk_stop":
+		id := 0
+		if c.Value != "" {
+			id = parseDVKID(c.Value, 1, 12)
+			if id == 0 {
+				b.log.Warnf("cmd dvk_stop: bad memory %q", c.Value)
+				return
+			}
+		} else {
+			id = activeID // stop whatever is currently playing/recording
+		}
+		if id == 0 {
+			b.log.Warnf("cmd dvk_stop: no memory given and none active")
+			return
+		}
+		if err := cmd.DVKStop(id); err != nil {
+			b.log.Warnf("cmd dvk_stop: %v", err)
+		}
+
+	default:
+		b.log.Warnf("cmd: unknown action %q", c.Action)
+	}
+}
+
+// parseDVKID parses a DVK memory id string, returning 0 if it is empty or out
+// of [min,max]. Used for both the value form ("3") and the per-memory action
+// suffix form (dvk_play_3).
+func parseDVKID(s string, min, max int) int {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil || n < min || n > max {
+		return 0
+	}
+	return n
+}
+
+// isVoiceMode reports whether a canonical mode can carry voice (DVK is live
+// only in voice modes; CW and data are refused by the radio). The bridge
+// stays dumb — this is advisory only; the radio is authoritative.
+func isVoiceMode(canonical string) bool {
+	switch canonical {
+	case "usb", "lsb", "am", "fm":
+		return true
+	}
+	return false
+}
+
+// ------------------------------------------------------------------
 // Publishing helpers
 // ------------------------------------------------------------------
 
@@ -351,6 +595,8 @@ func (b *Bridge) publishStateSnapshot(st radioState) {
 		Tuning:       st.tuning,
 		Drive:        st.drive,
 		DeviceOnline: st.deviceOnline,
+		DVKStatus:    st.dvkStatus,
+		DVKID:        st.dvkID,
 	}
 	data, err := json.Marshal(p)
 	if err != nil {
@@ -415,7 +661,10 @@ func (b *Bridge) publishMeta() {
 				{Key: "drive", Name: "Drive", Type: "number", Unit: "%"},
 				{Key: "tx", Name: "Transmitting", Type: "boolean", On: "tx", Off: "rx"},
 				{Key: "tuning", Name: "Tuning", Type: "boolean"},
+				{Key: "dvk_status", Name: "DVK Status", Type: "string"},
+				{Key: "dvk_id", Name: "DVK Memory", Type: "number"},
 			},
+			Actions: dvkExposeActions(),
 		},
 	}
 	data, err := json.Marshal(p)
@@ -500,6 +749,12 @@ func (b *Bridge) metaTopic() string {
 func (b *Bridge) stateTopic() string {
 	return schema.StateTopic(b.cfg.Site, b.cfg.Station, b.cfg.Slot)
 }
+func (b *Bridge) cmdTopic() string {
+	return schema.CmdTopic(b.cfg.Site, b.cfg.Station, b.cfg.Slot)
+}
+
+// CmdTopic returns the /cmd topic (exported for main to subscribe).
+func (b *Bridge) CmdTopic() string { return b.cmdTopic() }
 
 // ------------------------------------------------------------------
 // Internal helpers (free functions)
@@ -518,4 +773,28 @@ func fieldsString(f flexradio.Frame) string {
 		out += k + "=" + v
 	}
 	return out
+}
+
+// dvkExposeActions builds the expose action surface for the DVK trigger: one
+// action per memory (dvk_play_1 .. dvk_play_12) plus dvk_stop. Each play action
+// is action-only — pressing it publishes {"action":"dvk_play_<N>"} — so a
+// consumer (hadiscovery → HA button) needs no value injection. dvk_stop with
+// no value stops the currently-active memory (resolved by the bridge from
+// /state at dispatch time).
+func dvkExposeActions() []metaExposeAction {
+	acts := make([]metaExposeAction, 0, 13)
+	for n := 1; n <= 12; n++ {
+		key := "dvk_play_" + strconv.Itoa(n)
+		acts = append(acts, metaExposeAction{
+			Key:     key,
+			Name:    "DVK Play " + strconv.Itoa(n),
+			Command: &metaCommand{Action: key},
+		})
+	}
+	acts = append(acts, metaExposeAction{
+		Key:     "dvk_stop",
+		Name:    "DVK Stop",
+		Command: &metaCommand{Action: "dvk_stop"},
+	})
+	return acts
 }

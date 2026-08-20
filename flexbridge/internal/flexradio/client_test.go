@@ -79,6 +79,7 @@ func TestHandshake_SendsExpectedCommands(t *testing.T) {
 		"sub interlock all",
 		"sub atu all",
 		"|info",
+		"sub dvk all", // SmartSDR v4+ DVK status stream (best-effort, fire-and-forget)
 	}
 	for _, w := range wantCmds {
 		if !strings.Contains(joined, w) {
@@ -132,6 +133,48 @@ func TestRun_DispatchesStatusFrames(t *testing.T) {
 		if !seen[want] {
 			t.Errorf("did not see topic %q (got %v)", want, got)
 		}
+	}
+}
+
+// TestSend_DVK asserts DVKPlay/DVKStop emit the expected fire-and-forget
+// SmartSDR wire strings. The radio end of the pipe is drained by a reader
+// goroutine so the synchronous net.Pipe writes do not deadlock.
+func TestSend_DVK(t *testing.T) {
+	clientConn, radioConn := net.Pipe()
+	client := newClientFromConn(clientConn)
+	defer client.Close()
+
+	cmds := make(chan string, 4)
+	go func() {
+		defer radioConn.Close()
+		sc := bufio.NewScanner(radioConn)
+		for sc.Scan() {
+			cmds <- sc.Text()
+		}
+	}()
+
+	if err := client.DVKPlay(3); err != nil {
+		t.Fatalf("DVKPlay: %v", err)
+	}
+	select {
+	case got := <-cmds:
+		if got != "C1|dvk playback_start id=3" {
+			t.Errorf("DVKPlay sent %q, want C1|dvk playback_start id=3", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("DVKPlay: no command sent")
+	}
+
+	if err := client.DVKStop(3); err != nil {
+		t.Fatalf("DVKStop: %v", err)
+	}
+	select {
+	case got := <-cmds:
+		if got != "C1|dvk playback_stop id=3" {
+			t.Errorf("DVKStop sent %q, want C1|dvk playback_stop id=3", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("DVKStop: no command sent")
 	}
 }
 

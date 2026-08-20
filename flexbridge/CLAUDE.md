@@ -1,8 +1,10 @@
 # CLAUDE.md — flexbridge
 
-flexbridge is a **read-only** bridge: it observes a FlexRadio 6000-series radio over the
-SmartSDR TCP/IP API and UDP meter stream, and publishes state to MQTT. It never sends
-commands to the radio.
+flexbridge is a **read-only** bridge for radio tuning state: it observes a FlexRadio
+6000-series radio over the SmartSDR TCP/IP API and UDP meter stream, and publishes state to
+MQTT. The one exception is the **Digital Voice Keyer (DVK)**, a SmartSDR v4+ feature: the
+bridge drives DVK playback (play/stop) from the `/cmd` plane and observes DVK status on
+`/state`. Apart from DVK it never sends commands to the radio.
 
 ---
 
@@ -34,8 +36,9 @@ go test ./internal/bridge/... -run TestGate
    receives the radio's IP, serial, and model.
 2. **TCP connection** (`flexradio.Client`) — port 4992 (SmartSDR TCP/IP API). On connect
    runs a handshake: sends `version`, sets local UDP port for meter streaming, subscribes
-   to `slice/radio/interlock/atu/meter all`. After that, `Client.Run` blocks reading
-   async status lines.
+   to `slice/radio/interlock/atu/meter all`, and best-effort `sub dvk all` (SmartSDR v4+;
+   fire-and-forget so a v3/unlicensed radio rejecting it cannot break the handshake). After
+   that, `Client.Run` blocks reading async status lines.
 3. **UDP meter stream** (VITA-49) — the radio sends real-time meter datagrams at 10–20 fps
    to the port registered during handshake. Decoded in `flexradio.ParseVITA49` /
    `VITAPacket.MeterReadings`.
@@ -43,6 +46,14 @@ go test ./internal/bridge/... -run TestGate
 Two concurrent goroutines feed the bridge:
 - TCP goroutine calls `Bridge.HandleStatus` (and `Bridge.HandleReply` for the one-shot meter list)
 - UDP goroutine calls `Bridge.HandleMeterPacket`
+
+A third path drives the radio: the paho `/cmd` subscription. Its handler must not call the
+bridge inline (a DVK command is a blocking TCP write), so it funnels payloads through a
+bounded channel to a single `sharedmqtt.RunJobs` worker that calls `Bridge.HandleCommand`
+serially. `HandleCommand` dispatches DVK intent to the radio through the `Commander`
+interface (`*flexradio.Client` implements it, injected per connect cycle via
+`SetCommander`; `Reset()` clears it on disconnect). No ack is published — consumers confirm
+on `/state` (`dvk_status`/`dvk_id`), the fire-and-observe plane discipline.
 
 `Bridge` (`internal/bridge/bridge.go`) owns all shared state under `sync.RWMutex`.
 
@@ -57,18 +68,22 @@ state and force republish on reconnect.
 flexbridge publishes to the station integration model topics:
 
 ```
-muehle/hf/radio/meta      retained  birth certificate (capabilities JSON)
+muehle/hf/radio/meta      retained  birth certificate (capabilities + expose JSON)
 muehle/hf/radio/state     retained  live state JSON snapshot
 muehle/hf/radio/status    retained  online | offline (LWT)
+muehle/hf/radio/cmd       not retained  DVK playback intent (bus → bridge)
 ```
 
 The `site`, `station`, and `slot` values are configurable via `config.toml`.
 
 **State is a single retained JSON document** (not per-field topics). Fields:
 `ts`, `freq_hz` (Hz integer), `band` (derived), `mode` (canonical: `cw`/`usb`/`lsb`/`am`/`fm`/`data`),
-`tx` (`rx`/`tx`), `tuning` (bool), `drive` (0–100).
+`tx` (`rx`/`tx`), `tuning` (bool), `drive` (0–100), `device_online` (radio link liveness),
+`dvk_status` (`idle`/`recording`/`preview`/`playback`/`disabled`), `dvk_id` (active DVK memory 1–12).
 
-**flexbridge is read-only** — it publishes no `/cmd` topic and does not subscribe to commands.
+**flexbridge is read-only except for DVK.** `/cmd` carries one-shot DVK intent only (not
+retained — a stale DVK command must not re-fire on restart): `dvk_play_<N>` / `dvk_play`+`value`
+/ `dvk_stop`. It is not a general radio-control channel.
 
 See `docs/radio2mqtt-schema.md` for the full on-the-wire contract.
 
@@ -79,7 +94,7 @@ See `docs/radio2mqtt-schema.md` for the full on-the-wire contract.
 | Package | Role |
 |---|---|
 | `internal/flexradio` | Protocol: discovery, TCP client, frame parser, VITA-49 decoder, meter registry, status parsers, band lookup |
-| `internal/bridge` | Radio events → MQTT: state tracking, discovery payloads |
+| `internal/bridge` | Radio events → MQTT: state tracking, expose/actions surface, `/cmd` DVK dispatch via the `Commander` interface, discovery payloads |
 | `internal/ha` | Home Assistant discovery payload builders and topic helpers |
 | `internal/config` | TOML config, flags, `FLEXBRIDGE_*` env overrides |
 

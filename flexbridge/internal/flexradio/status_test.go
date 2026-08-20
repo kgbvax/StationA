@@ -95,6 +95,44 @@ func TestParseATU(t *testing.T) {
 	}
 }
 
+func TestParseDVK(t *testing.T) {
+	// A status= frame carries DVK state for the /state plane.
+	d := ParseDVK("status=playback id=3 enabled=1")
+	if !d.HasStatus {
+		t.Fatal("HasStatus=false for status= frame, want true")
+	}
+	if d.Status != "playback" {
+		t.Errorf("Status = %q, want playback", d.Status)
+	}
+	if d.ID != 3 {
+		t.Errorf("ID = %d, want 3", d.ID)
+	}
+
+	// idle is still a status= frame (HasStatus true); no active memory id.
+	d = ParseDVK("status=idle")
+	if !d.HasStatus {
+		t.Error("idle: HasStatus=false, want true")
+	}
+	if d.Status != "idle" {
+		t.Errorf("Status = %q, want idle", d.Status)
+	}
+	if d.ID != 0 {
+		t.Errorf("ID = %d, want 0 (idle has no active memory)", d.ID)
+	}
+
+	// Memory-library frames (added/deleted) carry no status= key → not state.
+	if d := ParseDVK(`added id=1 name="CQ" duration=5000`); d.HasStatus {
+		t.Error(`added id=1 name="CQ" ...: HasStatus=true, want false`)
+	}
+	if d := ParseDVK("deleted id=1"); d.HasStatus {
+		t.Error("deleted id=1: HasStatus=true, want false")
+	}
+	// "id=1 deleted" word-ordering variant (still no status= key) → not state.
+	if d := ParseDVK("id=1 deleted"); d.HasStatus {
+		t.Error("id=1 deleted: HasStatus=true, want false")
+	}
+}
+
 func TestParseSlice(t *testing.T) {
 	s, err := ParseSlice("0 0", "freq=14.100.000 mode=USB active=1 tx=0 agc=FAST filter_lo=200 filter_hi=2900")
 	if err != nil {

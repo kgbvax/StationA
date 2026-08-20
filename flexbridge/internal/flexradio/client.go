@@ -37,9 +37,10 @@ type Client struct {
 	rd      *bufio.Reader
 	handler Handler
 
-	mu     sync.Mutex
-	closed bool
-	handle int // command handle counter (we always use 1)
+	mu      sync.Mutex
+	closed  bool
+	handle  int        // command handle counter (we always use 1)
+	writeMu sync.Mutex // serializes command writes (send) against concurrent Senders
 }
 
 // Dial connects to the radio at host:4992.
@@ -116,6 +117,14 @@ func (c *Client) Handshake(ctx context.Context) (RadioInfo, error) {
 	if reply, err := c.sendAwaitReply(ctx, "info"); err == nil {
 		info = parseInfoReply(reply)
 	}
+
+	// DVK (SmartSDR v4+, SmartSDR+ license). Subscribe best-effort: a v3 radio
+	// or an unlicensed radio may reject `sub dvk all`, and that must not break
+	// the handshake — DVK is an optional capability. Sent fire-and-forget
+	// *after* the awaited commands so its reply is consumed by Run (as a dropped
+	// FrameReply) rather than misattributed to a following sendAwaitReply. On a
+	// v4 radio the DVK status stream then flows through HandleStatus("dvk").
+	_ = c.send(ctx, "sub dvk all")
 	return info, nil
 }
 
@@ -164,7 +173,12 @@ func (c *Client) sendAwaitReply(ctx context.Context, cmd string) (string, error)
 
 // send writes a C1|... command. It does NOT wait for the R1 reply; replies
 // are surfaced through Run as FrameReply (or consumed by sendAwaitReply).
+// writeMu serializes writes so concurrent Senders (e.g. the /cmd worker) do
+// not interleave on the wire; reads in Run use a separate bufio.Reader and are
+// independent of this lock.
 func (c *Client) send(ctx context.Context, cmd string) error {
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
 	deadline, ok := ctx.Deadline()
 	if !ok {
 		deadline = time.Now().Add(5 * time.Second)
@@ -173,6 +187,40 @@ func (c *Client) send(ctx context.Context, cmd string) error {
 	defer c.conn.SetWriteDeadline(time.Time{})
 	_, err := fmt.Fprintf(c.conn, "C%d|%s\n", c.handle, cmd)
 	return err
+}
+
+// Send writes a SmartSDR command to the radio without waiting for the reply
+// (fire-and-forget). The reply, if any, is delivered through Run as a
+// FrameReply (the bridge handler drops FrameReply); callers that need
+// confirmation observe the radio's async status stream instead — the stationa
+// fire-and-observe plane discipline. Safe to call concurrently with Run.
+func (c *Client) Send(ctx context.Context, cmd string) error {
+	return c.send(ctx, cmd)
+}
+
+// Commander is the radio control surface the bridge drives from /cmd. *Client
+// implements it; tests use a fake. Methods send fire-and-forget SmartSDR
+// commands and rely on the status stream for confirmation.
+//
+// DVK (Digital Voice Keyer) is a SmartSDR v4+ / SmartSDR+ feature: 12 voice
+// memories (ids 1-12). playback_start plays a memory AND keys the transmitter
+// (no separate xmit needed); playback_stop stops and unkeys. The wire strings
+// were originally third-party-confirmed (AetherSDR vs FLEX-8600 fw 4.2.18) and
+// are now confirmed against the live FLEX-8400 on shari; the official SmartSDR
+// API wiki does not document the `dvk` command family.
+type Commander interface {
+	DVKPlay(id int) error // dvk playback_start id=<id>
+	DVKStop(id int) error // dvk playback_stop  id=<id>
+}
+
+// DVKPlay triggers playback of DVK memory id (1-12) and keys the transmitter.
+func (c *Client) DVKPlay(id int) error {
+	return c.Send(context.Background(), fmt.Sprintf("dvk playback_start id=%d", id))
+}
+
+// DVKStop stops playback of DVK memory id and unkeys the transmitter.
+func (c *Client) DVKStop(id int) error {
+	return c.Send(context.Background(), fmt.Sprintf("dvk playback_stop id=%d", id))
 }
 
 // Run blocks reading status lines and dispatching them to the handler.

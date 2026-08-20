@@ -156,6 +156,70 @@ func TestParseSlice_PartialUpdatePreservesActive(t *testing.T) {
 	}
 }
 
+func TestParseSlice_RFFrequencyRounding(t *testing.T) {
+	// int64(mhz*1e6) truncates toward zero and gives 1 Hz low for ~1.2% of
+	// 10-Hz-step values, because the double product lands just below the
+	// integer (e.g. RF_frequency=2.000040 -> 2.0000399999999998 * 1e6). The
+	// conversion must use math.Round. These cases all truncate wrong without it.
+	cases := map[string]int64{
+		"2.000040":  2_000_040,
+		"2.000050":  2_000_050,
+		"2.000110":  2_000_110,
+		"14.100000": 14_100_000, // baseline, already exact
+		"3.800000":  3_800_000,
+		"7.074000":  7_074_000,
+	}
+	for mhz, want := range cases {
+		s, err := ParseSlice("0", "RF_frequency="+mhz+" mode=USB")
+		if err != nil {
+			t.Fatalf("RF_frequency=%s: %v", mhz, err)
+		}
+		if s.FreqHz != want {
+			t.Errorf("RF_frequency=%s -> %d, want %d", mhz, s.FreqHz, want)
+		}
+	}
+}
+
+func TestParseSlice_MalformedFreqKeepsOtherFields(t *testing.T) {
+	// A malformed RF_frequency must be skipped (prev freq retained) and the
+	// rest of the incremental frame still applied. The parser must NOT return an
+	// error that would make the bridge drop the whole frame.
+	prev, err := ParseSlice("0", "RF_frequency=14.100000 mode=CW active=1 tx=0")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Empty RF_frequency value, plus mode/tx/active changes.
+	cur, err := ParseSlice("0", "RF_frequency= mode=USB tx=1 active=1", prev)
+	if err != nil {
+		t.Fatalf("malformed RF_frequency must not be fatal: %v", err)
+	}
+	if cur.FreqHz != 14_100_000 {
+		t.Errorf("FreqHz = %d, want retained 14100000", cur.FreqHz)
+	}
+	if cur.Mode != "USB" {
+		t.Errorf("Mode = %q, want USB (applied despite bad freq)", cur.Mode)
+	}
+	if !cur.TX {
+		t.Error("TX = false, want true (applied despite bad freq)")
+	}
+	if !cur.Active {
+		t.Error("Active = false, want true (applied despite bad freq)")
+	}
+
+	// A non-numeric RF_frequency is handled the same way.
+	cur2, err := ParseSlice("0", "RF_frequency=garbage mode=FM", prev)
+	if err != nil {
+		t.Fatalf("garbage RF_frequency must not be fatal: %v", err)
+	}
+	if cur2.FreqHz != 14_100_000 {
+		t.Errorf("FreqHz = %d, want retained 14100000", cur2.FreqHz)
+	}
+	if cur2.Mode != "FM" {
+		t.Errorf("Mode = %q, want FM (applied despite bad freq)", cur2.Mode)
+	}
+}
+
 func TestParseSlice_RealInterlock(t *testing.T) {
 	// Confirm the interlock parser copes with the real READY state.
 	is := ParseInterlock("state=READY reason= source= tx_allowed=1 amplifier=")

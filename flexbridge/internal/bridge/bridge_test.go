@@ -2,7 +2,9 @@ package bridge
 
 import (
 	"encoding/json"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"flexbridge/internal/flexradio"
@@ -408,29 +410,35 @@ func TestBridge_MetaTopic(t *testing.T) {
 	if meta["schema"] != "1.0" {
 		t.Errorf("meta schema = %v, want \"1.0\"", meta["schema"])
 	}
-	// The consumer-neutral expose block (model §3.1) must be present and describe
-	// the read-only radio field surface. flexbridge is read-only: no writable
-	// fields, no actions.
+	// The consumer-neutral expose block (model §3.1) must be present. Radio
+	// tuning state is read-only (no writable fields); DVK playback is the one
+	// read-write surface, exposed as one-shot actions (buttons), not fields.
 	expose, ok := meta["expose"].(map[string]any)
 	if !ok {
 		t.Fatalf("meta missing expose block; got %v", meta["expose"])
 	}
 	fields, _ := expose["fields"].([]any)
-	if len(fields) != 7 {
-		t.Errorf("expose.fields len = %d, want 7 (device_online,freq_hz,band,mode,drive,tx,tuning)", len(fields))
+	if len(fields) != 9 {
+		t.Errorf("expose.fields len = %d, want 9 (device_online,freq_hz,band,mode,drive,tx,tuning,dvk_status,dvk_id)", len(fields))
 	}
-	// No field should declare itself writable (read-only bridge).
+	// No field should declare itself writable (radio tuning state is read-only;
+	// DVK is driven via one-shot actions, not writable setpoint fields).
 	for i, f := range fields {
 		fm, _ := f.(map[string]any)
 		if fm["key"] == nil {
 			t.Errorf("expose.fields[%d] missing key", i)
 		}
 		if _, w := fm["writable"]; w {
-			t.Errorf("expose field %v must not be writable (read-only bridge)", fm["key"])
+			t.Errorf("expose field %v must not be writable", fm["key"])
 		}
 	}
-	if _, hasActions := expose["actions"]; hasActions {
-		t.Error("read-only bridge must expose no actions")
+	// DVK is the one read-write surface: expose.actions carries 12 play buttons + stop.
+	actions, hasActions := expose["actions"].([]any)
+	if !hasActions {
+		t.Fatal("expose.actions missing; DVK actions must be advertised")
+	}
+	if len(actions) != 13 {
+		t.Errorf("expose.actions len = %d, want 13 (dvk_play_1..12 + dvk_stop)", len(actions))
 	}
 	// enum options resolve via options_ref into capabilities, not inline options.
 	if dev, _ := expose["device"].(map[string]any); dev == nil || dev["manufacturer"] != "FlexRadio Systems" {
@@ -459,4 +467,265 @@ func topicList(msgs []MemoMsg) []string {
 		out = append(out, m.Topic)
 	}
 	return out
+}
+
+// ------------------------------------------------------------------
+// DVK (Digital Voice Keyer, SmartSDR v4+)
+// ------------------------------------------------------------------
+
+// fakeCommander records the DVK calls the bridge makes.
+type fakeCommander struct {
+	mu       sync.Mutex
+	playCall []int
+	stopCall []int
+}
+
+func (f *fakeCommander) DVKPlay(id int) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.playCall = append(f.playCall, id)
+	return nil
+}
+
+func (f *fakeCommander) DVKStop(id int) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.stopCall = append(f.stopCall, id)
+	return nil
+}
+
+func (f *fakeCommander) plays() []int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]int(nil), f.playCall...)
+}
+
+func (f *fakeCommander) stops() []int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]int(nil), f.stopCall...)
+}
+
+// cmdJSON builds a /cmd payload the way the shared value-key convention does:
+// the argument rides under "value", not under a key named after the action.
+func cmdJSON(action, value string) []byte {
+	if value == "" {
+		return []byte(`{"action":"` + action + `"}`)
+	}
+	return []byte(`{"action":"` + action + `","value":"` + value + `"}`)
+}
+
+// TestHandleCommand_DVK exercises the /cmd dispatch surface: the per-memory
+// action form, the value form, bad-value rejection, dvk_stop (explicit and
+// active-id), unknown actions, and the nil-commander no-op.
+func TestHandleCommand_DVK(t *testing.T) {
+	t.Run("dvk_play_3 per-memory action", func(t *testing.T) {
+		b, _ := newTestBridge(t)
+		fc := &fakeCommander{}
+		b.SetCommander(fc)
+		b.HandleCommand(cmdJSON("dvk_play_3", ""))
+		if got := fc.plays(); len(got) != 1 || got[0] != 3 {
+			t.Errorf("plays = %v, want [3]", got)
+		}
+		if got := fc.stops(); len(got) != 0 {
+			t.Errorf("stops = %v, want none", got)
+		}
+	})
+
+	t.Run("dvk_play value form", func(t *testing.T) {
+		b, _ := newTestBridge(t)
+		fc := &fakeCommander{}
+		b.SetCommander(fc)
+		b.HandleCommand(cmdJSON("dvk_play", "3"))
+		if got := fc.plays(); len(got) != 1 || got[0] != 3 {
+			t.Errorf("plays = %v, want [3]", got)
+		}
+	})
+
+	t.Run("dvk_play bad value rejected", func(t *testing.T) {
+		b, _ := newTestBridge(t)
+		fc := &fakeCommander{}
+		b.SetCommander(fc)
+		b.HandleCommand(cmdJSON("dvk_play", "99")) // out of range 1-12
+		b.HandleCommand(cmdJSON("dvk_play", "foo"))
+		b.HandleCommand(cmdJSON("dvk_play", ""))
+		if got := fc.plays(); len(got) != 0 {
+			t.Errorf("plays = %v, want none (all bad values rejected)", got)
+		}
+	})
+
+	t.Run("dvk_play_13 out of range rejected", func(t *testing.T) {
+		b, _ := newTestBridge(t)
+		fc := &fakeCommander{}
+		b.SetCommander(fc)
+		b.HandleCommand(cmdJSON("dvk_play_13", ""))
+		if got := fc.plays(); len(got) != 0 {
+			t.Errorf("plays = %v, want none (13 is out of range)", got)
+		}
+	})
+
+	t.Run("dvk_stop explicit value", func(t *testing.T) {
+		b, _ := newTestBridge(t)
+		fc := &fakeCommander{}
+		b.SetCommander(fc)
+		b.HandleCommand(cmdJSON("dvk_stop", "3"))
+		if got := fc.stops(); len(got) != 1 || got[0] != 3 {
+			t.Errorf("stops = %v, want [3]", got)
+		}
+	})
+
+	t.Run("dvk_stop no value uses active id from state", func(t *testing.T) {
+		b, _ := newTestBridge(t)
+		fc := &fakeCommander{}
+		b.SetCommander(fc)
+		// Seed an active DVK memory via the status stream (dvk status=playback id=5).
+		f, _ := flexradio.ParseFrame("S0|dvk status=playback id=5")
+		b.HandleStatus(f)
+		b.HandleCommand(cmdJSON("dvk_stop", ""))
+		if got := fc.stops(); len(got) != 1 || got[0] != 5 {
+			t.Errorf("stops = %v, want [5] (active id from state)", got)
+		}
+	})
+
+	t.Run("dvk_stop no value and none active is a no-op", func(t *testing.T) {
+		b, _ := newTestBridge(t)
+		fc := &fakeCommander{}
+		b.SetCommander(fc)
+		b.HandleCommand(cmdJSON("dvk_stop", ""))
+		if got := fc.stops(); len(got) != 0 {
+			t.Errorf("stops = %v, want none (no active memory)", got)
+		}
+	})
+
+	t.Run("unknown action is a no-op", func(t *testing.T) {
+		b, _ := newTestBridge(t)
+		fc := &fakeCommander{}
+		b.SetCommander(fc)
+		b.HandleCommand(cmdJSON("set_frequency", "14.025"))
+		if got := fc.plays(); len(got) != 0 {
+			t.Errorf("plays = %v, want none", got)
+		}
+	})
+
+	t.Run("nil commander no-ops (radio offline)", func(t *testing.T) {
+		// A fresh bridge has no commander installed until runOnce calls SetCommander.
+		b, _ := newTestBridge(t)
+		b.HandleCommand(cmdJSON("dvk_play_3", "")) // must not panic
+		b.HandleCommand(cmdJSON("dvk_stop", ""))
+	})
+}
+
+// TestHandleDVK_State asserts the dvk status stream flows to the retained
+// /state snapshot: playback sets dvk_status + dvk_id; idle clears the id.
+func TestHandleDVK_State(t *testing.T) {
+	b, pub := newTestBridge(t)
+	pub.Reset()
+
+	// Playback of memory 3 starts.
+	f, _ := flexradio.ParseFrame("S0|dvk status=playback id=3")
+	b.HandleStatus(f)
+	snap, ok := lastState(pub.Messages(), testStateTopic)
+	if !ok {
+		t.Fatal("no /state published after dvk status=playback")
+	}
+	if snap.DVKStatus != "playback" {
+		t.Errorf("dvk_status = %q, want playback", snap.DVKStatus)
+	}
+	if snap.DVKID != 3 {
+		t.Errorf("dvk_id = %d, want 3", snap.DVKID)
+	}
+
+	// Idle clears the active memory id; the status itself becomes "idle".
+	pub.Reset()
+	f2, _ := flexradio.ParseFrame("S0|dvk status=idle id=3")
+	b.HandleStatus(f2)
+	snap, ok = lastState(pub.Messages(), testStateTopic)
+	if !ok {
+		t.Fatal("no /state published after dvk status=idle")
+	}
+	if snap.DVKStatus != "idle" {
+		t.Errorf("dvk_status = %q, want idle", snap.DVKStatus)
+	}
+	if snap.DVKID != 0 {
+		t.Errorf("dvk_id = %d, want 0 (cleared on idle)", snap.DVKID)
+	}
+}
+
+// TestHandleDVK_NonStatusFrameNoState asserts added/deleted memory-library
+// frames do not perturb the /state plane (only status= frames carry state).
+func TestHandleDVK_NonStatusFrameNoState(t *testing.T) {
+	b, pub := newTestBridge(t)
+	pub.Reset()
+
+	// A "dvk added" memory-library frame must not publish state.
+	f, _ := flexradio.ParseFrame(`S0|dvk added id=1 name="CQ" duration=5000`)
+	b.HandleStatus(f)
+	if _, ok := lastState(pub.Messages(), testStateTopic); ok {
+		t.Error("dvk added frame published /state; only status= frames should")
+	}
+}
+
+// TestBridge_MetaExposesDVK asserts the expose actions are exactly the 12
+// per-memory play buttons plus dvk_stop, and that the dvk_status/dvk_id
+// state fields are advertised.
+func TestBridge_MetaExposesDVK(t *testing.T) {
+	_, pub := newTestBridge(t)
+	var metaMsg *MemoMsg
+	for i := range pub.Messages() {
+		m := pub.Messages()[i]
+		if m.Topic == "test/hf/radio/meta" {
+			metaMsg = &m
+		}
+	}
+	if metaMsg == nil {
+		t.Fatal("meta topic not published")
+	}
+	var meta map[string]any
+	_ = json.Unmarshal(metaMsg.Payload, &meta)
+	expose, _ := meta["expose"].(map[string]any)
+
+	// Fields: dvk_status and dvk_id must be present.
+	fields, _ := expose["fields"].([]any)
+	haveField := map[string]bool{}
+	for _, f := range fields {
+		fm, _ := f.(map[string]any)
+		haveField[fm["key"].(string)] = true
+	}
+	for _, k := range []string{"dvk_status", "dvk_id"} {
+		if !haveField[k] {
+			t.Errorf("expose.fields missing %q", k)
+		}
+	}
+
+	// Actions: 12 dvk_play_<N> + dvk_stop, each with an action-only command.
+	actions, _ := expose["actions"].([]any)
+	seen := map[string]bool{}
+	for _, a := range actions {
+		am, _ := a.(map[string]any)
+		key, _ := am["key"].(string)
+		seen[key] = true
+		cmd, _ := am["command"].(map[string]any)
+		if cmd == nil {
+			t.Errorf("action %q missing command", key)
+			continue
+		}
+		if cmd["action"] != key {
+			t.Errorf("action %q command.action = %v, want %q", key, cmd["action"], key)
+		}
+		// Action-only commands carry no value_key (the memory index is in the action name).
+		if _, hasVK := cmd["value_key"]; hasVK {
+			t.Errorf("action %q should be action-only (no value_key)", key)
+		}
+	}
+	for n := 1; n <= 12; n++ {
+		if !seen["dvk_play_"+strconv.Itoa(n)] {
+			t.Errorf("missing action dvk_play_%d", n)
+		}
+	}
+	if !seen["dvk_stop"] {
+		t.Error("missing action dvk_stop")
+	}
+	if len(seen) != 13 {
+		t.Errorf("action count = %d, want 13", len(seen))
+	}
 }
