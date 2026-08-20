@@ -81,6 +81,12 @@ static const int SAFE_BANDS_COUNT = sizeof(SAFE_BANDS) / sizeof(SAFE_BANDS[0]);
 #define UI_REFRESH_MS      1000  // display redraw cadence, ms
 #define UI_BTN_DEBOUNCE_MS 150   // minimum time between button actions, ms
 
+// --- pa-arm state publish cadence -------------------------------------------
+// The arm slot publishes immediately when enabled/armed/error changes, and on a
+// slow heartbeat when idle. 10 s matches the radio heartbeat window and keeps the
+// retained /state fresh without flooding the bus.
+#define PA_ARM_HEARTBEAT_MS 10000
+
 // --- main loop cadence -------------------------------------------------------
 // The loop polls WiFi/MQTT, buttons, and arm logic at ~20 Hz. This is more than
 // enough for human-scale button toggles and MQTT keepalives, while letting the

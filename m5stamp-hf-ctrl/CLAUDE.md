@@ -32,24 +32,28 @@ convention, which is scoped to the Go services (see
 
 ```bash
 pio run                       # build firmware (resolves lib_deps via PlatformIO)
-pio run -t upload             # build + flash over USB
+pio run -t upload             # build + flash over USB (default env)
+pio run -t upload -e m5stamp-plc1-ota            # build + flash over-the-air
 pio device monitor            # serial monitor (115200)
-pio run -t upload --upload-port /dev/ttyACM0   # explicit port
+./deploy.sh usb [port]        # build + flash over USB, auto-detects port
+./deploy.sh ota [host]        # build + flash over-the-air (default host: m5stamp-plc-1.local)
 ```
 
 First-time: copy the secrets template and fill it in:
 
 ```bash
 cp src/secrets.example.h src/secrets.h
-$EDITOR src/secrets.h     # WIFI_SSID, WIFI_PASSWORD, MQTT_*, DEVICE_*
+$EDITOR src/secrets.h     # WIFI_SSID, WIFI_PASSWORD, MQTT_*, OTA_PASSWORD, DEVICE_*
 ```
 
 `src/secrets.h` is gitignored; the build includes it via `#include "secrets.h"`
 in `main.cpp`.
 
-> **No Go toolchain here.** This project has no `go.mod`, no tests, no
-> `deploy.sh`. It is flashed to the PLC over USB from a workstation with
-> PlatformIO installed; the PLC then runs standalone on the station WiFi.
+> **No Go toolchain here.** This project has no `go.mod` and no tests. It is
+> flashed to the PLC over USB/OTA from a workstation with PlatformIO installed;
+> the PLC then runs standalone on the station WiFi. The first flash after adding
+> OTA support must be USB, because the previously running firmware has no OTA
+> listener.
 
 ---
 

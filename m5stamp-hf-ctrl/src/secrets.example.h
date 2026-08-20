@@ -18,6 +18,9 @@
 #define MQTT_USER "hf"
 #define MQTT_PASSWORD "CHANGE_ME"
 
+// OTA update password. Required for network firmware uploads via espota.
+#define OTA_PASSWORD "CHANGE_ME"
+
 // Device identity published in BOTH slots' /meta (compound device — the shared
 // device{model,serial} is the compound-device relationship, model §3). Use the
 // PLC's stable id (e.g. its MAC-derived name or a sticker).
