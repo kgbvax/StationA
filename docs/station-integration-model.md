@@ -408,10 +408,17 @@ capabilities: bands [160m..6m, by name]; modes [cw,usb,lsb,am,fm,data];
               receivers 1; diversity false; amp_key true; tune true; bias_t false;
               rx_inputs [ant1,ant2,rx_a]; tx_outputs [ant1,ant2]
 state:        online; freq_hz (Hz int); band(derived); mode (canonical); tx {rx|tx};
-              tuning (bool); drive (0-100); rx_input (omitempty, adapter work pending)
+              tuning (bool); drive (0-100); device_online (radio link liveness);
+              dvk_status {idle|recording|preview|playback|disabled}; dvk_id (1-12, active memory);
+              rx_input (omitempty, adapter work pending)
               — always the active/TX receiver
-intent:       set_freq_hz; set_mode; set_drive; select_rx; tune {start|stop}
+intent:       set_freq_hz; set_mode; set_drive; select_rx; tune {start|stop};
+              dvk_play {1..12}; dvk_stop {id|active}   # /cmd NOT retained (one-shot)
 ```
+DVK (Digital Voice Keyer) is a SmartSDR v4+ / SmartSDR+ feature: 12 voice memories keyed
+to TX on playback. flexbridge is otherwise read-only; DVK is its sole `/cmd` surface,
+exposed as one-shot actions (`dvk_play_N` buttons + `dvk_stop`) and observed on `/state`
+(`dvk_status`/`dvk_id`). Voice modes only; the radio refuses DVK in cw/data.
 The FLEX-8400 supports up to 4 simultaneous receive slices (a SmartSDR concept). These
 map generically to receivers. With `receivers 1` declared, only `radio/state` is
 published. If a multi-slice configuration is added later, promote the declaration to
