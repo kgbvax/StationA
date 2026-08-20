@@ -3,6 +3,7 @@ package engine
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
@@ -264,8 +265,8 @@ func TestOnMetaNoExposeIdempotent(t *testing.T) {
 	}
 }
 
-// TestOnMetaParseErrorSkipped asserts a malformed meta is logged+skipped, not stored, and
-// clears nothing.
+// TestOnMetaParseErrorSkipped asserts a malformed meta is logged+skipped and not stored.
+// When there is no previous discovery for the slot, no clears are issued.
 func TestOnMetaParseErrorSkipped(t *testing.T) {
 	eng := NewEngine("homeassistant", "")
 	pub := &fakePub{}
@@ -276,6 +277,103 @@ func TestOnMetaParseErrorSkipped(t *testing.T) {
 	}
 	if len(eng.KnownAddrs()) != 0 {
 		t.Errorf("known = %v, want empty", eng.KnownAddrs())
+	}
+}
+
+// errPub is a fake publisher that fails every Publish call.
+type errPub struct{ fakePub }
+
+func (errPub) Publish(string, byte, bool, []byte) error { return ErrPublish }
+
+// ErrPublish is a sentinel error returned by errPub.
+var ErrPublish = errors.New("publish failed")
+
+// TestOnMetaPublishFailureKeepsPrev asserts that if any publish in OnMeta fails, the
+// engine keeps the previous known state so the next /meta delivery retries.
+func TestOnMetaPublishFailureKeepsPrev(t *testing.T) {
+	eng := NewEngine("homeassistant", "")
+	okPub := &fakePub{}
+	eng.SetPub(okPub)
+
+	first := []byte(`{"schema":"1.0","role":"radio","capabilities":{},"expose":{"device":{"name":"D"},"fields":[{"key":"freq_hz","name":"Frequency","type":"number","unit":"Hz"}]}}`)
+	topic := "muehle/hf/radio/meta"
+	eng.OnMeta(topic, first)
+	if len(eng.KnownAddrs()) != 1 {
+		t.Fatalf("known = %v, want 1 slot", eng.KnownAddrs())
+	}
+
+	// Switch to a failing publisher and change the field set. The new config publish fails,
+	// so known must remain the first entity set.
+	eng.SetPub(errPub{})
+	second := []byte(`{"schema":"1.0","role":"radio","capabilities":{},"expose":{"device":{"name":"D"},"fields":[{"key":"freq_hz","name":"Frequency","type":"number","unit":"Hz"},{"key":"tx","name":"TX","type":"boolean"}]}}`)
+	eng.OnMeta(topic, second)
+	if len(eng.KnownAddrs()) != 1 {
+		t.Fatalf("known = %v, want still 1 slot", eng.KnownAddrs())
+	}
+
+	// Re-deliver the second meta with a working publisher: because known still holds the
+	// first (smaller) set, the idempotency guard must not short-circuit and the new config
+	// should be published.
+	eng.SetPub(okPub)
+	before := len(okPub.calls)
+	eng.OnMeta(topic, second)
+	if len(okPub.calls) == before {
+		t.Errorf("expected retry publishes after failure, got none")
+	}
+	if len(eng.KnownAddrs()) != 1 {
+		t.Fatalf("known = %v", eng.KnownAddrs())
+	}
+}
+
+// TestOnMetaClearedPublishFailureKeepsKnown asserts that if clearing a slot's discovery
+// topics fails, the engine keeps the slot in known so a later clear can retry.
+func TestOnMetaClearedPublishFailureKeepsKnown(t *testing.T) {
+	eng := NewEngine("homeassistant", "")
+	okPub := &fakePub{}
+	eng.SetPub(okPub)
+
+	payload, topic := metaFor("radio", []expose.Field{{Key: "freq_hz", Type: "number"}})
+	eng.OnMeta(topic, payload)
+	if len(eng.KnownAddrs()) != 1 {
+		t.Fatalf("known = %v, want 1 slot", eng.KnownAddrs())
+	}
+
+	eng.SetPub(errPub{})
+	eng.OnMeta(topic, []byte(""))
+	if len(eng.KnownAddrs()) != 1 {
+		t.Errorf("known = %v, want still 1 slot after failed clear", eng.KnownAddrs())
+	}
+
+	// Retry with a working publisher: the clear should now succeed and remove the slot.
+	eng.SetPub(okPub)
+	eng.OnMeta(topic, []byte(""))
+	if len(eng.KnownAddrs()) != 0 {
+		t.Errorf("known = %v, want empty after successful clear", eng.KnownAddrs())
+	}
+}
+
+// TestOnMetaMalformedClearsPrevious asserts that a malformed /meta for a previously known
+// slot clears that slot's stale discovery topics.
+func TestOnMetaMalformedClearsPrevious(t *testing.T) {
+	eng := NewEngine("homeassistant", "")
+	pub := &fakePub{}
+	eng.SetPub(pub)
+
+	valid := []byte(`{"schema":"1.0","role":"radio","capabilities":{},"expose":{"device":{"name":"D"},"fields":[{"key":"freq_hz","name":"Frequency","type":"number","unit":"Hz"}]}}`)
+	topic := "muehle/hf/radio/meta"
+	eng.OnMeta(topic, valid)
+	pub.calls = nil
+
+	eng.OnMeta(topic, []byte("{not json"))
+	cfgs := pub.callsTo("/config")
+	if len(cfgs) != 1 {
+		t.Fatalf("clear publishes = %d, want 1", len(cfgs))
+	}
+	if len(cfgs[0].payload) != 0 {
+		t.Errorf("clear payload must be empty, got %q", cfgs[0].payload)
+	}
+	if len(eng.KnownAddrs()) != 0 {
+		t.Errorf("known = %v, want empty after malformed meta", eng.KnownAddrs())
 	}
 }
 

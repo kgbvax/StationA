@@ -501,3 +501,78 @@ func TestStringField(t *testing.T) {
 		t.Errorf("value_template = %q", p.ValueTemplate)
 	}
 }
+
+// TestWritableNumberNoStateClass asserts that a writable number (HA number component) does
+// not carry state_class, which HA's MQTT number discovery schema rejects.
+func TestWritableNumberNoStateClass(t *testing.T) {
+	ents := Render("homeassistant", "", metaFixture([]expose.Field{{
+		Key: "freq_hz", Name: "Frequency", Type: "number", Unit: "Hz", Class: "frequency",
+		Writable: true, Min: 1800000, Max: 54000000, Step: 1000,
+		Command: &expose.Command{Action: "frequency", ValueKey: "freq_hz", ValueType: "int"},
+	}}, nil, nil))
+	if len(ents) != 1 || ents[0].Component != "number" {
+		t.Fatalf("got %+v, want one number", ents)
+	}
+	p := decode(t, ents[0])
+	if p.StateClass != "" {
+		t.Errorf("writable number must not emit state_class, got %q", p.StateClass)
+	}
+}
+
+// TestWritableNumberMissingCommand asserts that a writable number without a valid command
+// descriptor is skipped rather than emitting a broken number entity.
+func TestWritableNumberMissingCommand(t *testing.T) {
+	cases := []struct {
+		name string
+		cmd  *expose.Command
+	}{
+		{"nil command", nil},
+		{"action-only command", &expose.Command{Action: "frequency"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			ents := Render("homeassistant", "", metaFixture([]expose.Field{{
+				Key: "freq_hz", Name: "Frequency", Type: "number", Unit: "Hz",
+				Writable: true, Min: 0, Max: 100, Step: 1,
+				Command: c.cmd,
+			}}, nil, nil))
+			if len(ents) != 0 {
+				t.Errorf("got %+v, want no entities for invalid writable number command", ents)
+			}
+		})
+	}
+}
+
+// TestWritableEnumActionOnlyCommand asserts that a writable enum whose command lacks a
+// value_key is skipped, because action-only commands are valid only for buttons.
+func TestWritableEnumActionOnlyCommand(t *testing.T) {
+	ents := Render("homeassistant", "", metaFixture([]expose.Field{{
+		Key: "mode", Name: "Mode", Type: "enum", OptionsRef: "modes", Writable: true,
+		Command: &expose.Command{Action: "mode"}, // missing value_key
+	}}, nil, map[string]any{"modes": []string{"cw", "usb"}}))
+	if len(ents) != 0 {
+		t.Errorf("got %+v, want no entities for action-only enum command", ents)
+	}
+}
+
+// TestActionMissingCommand asserts that an action without a valid action-only command is
+// skipped rather than rendering a broken button.
+func TestActionMissingCommand(t *testing.T) {
+	cases := []struct {
+		name string
+		cmd  *expose.Command
+	}{
+		{"nil command", nil},
+		{"empty action", &expose.Command{ValueKey: "x"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			ents := Render("homeassistant", "", metaFixture(nil, []expose.Action{{
+				Key: "retract", Name: "Retract", Command: c.cmd,
+			}}, nil))
+			if len(ents) != 0 {
+				t.Errorf("got %+v, want no entities for invalid action command", ents)
+			}
+		})
+	}
+}

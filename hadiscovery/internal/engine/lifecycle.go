@@ -64,10 +64,11 @@ func (e *Engine) pubSnap() Pub {
 }
 
 // OnMeta is called for every /meta message. A zero-length payload is treated as a clear
-// (slot decommissioned). A parse failure is logged and skipped. A slot with no `expose`
-// block gets a single diagnostic sensor. Otherwise its discovery entities are published
-// retained; a byte-identical re-delivery is a no-op. When the rendered set shrinks, the
-// dropped entities' discovery topics are cleared (empty retained payload) so HA removes them.
+// (slot decommissioned). A parse failure is logged and any previously rendered discovery for
+// that slot is cleared so stale HA entities do not persist. A slot with no `expose` block
+// gets a single diagnostic sensor. Otherwise its discovery entities are published retained;
+// a byte-identical re-delivery is a no-op. When the rendered set shrinks, the dropped
+// entities' discovery topics are cleared (empty retained payload) so HA removes them.
 func (e *Engine) OnMeta(metaTopic string, payload []byte) {
 	if len(payload) == 0 {
 		e.OnMetaCleared(metaTopic)
@@ -76,6 +77,9 @@ func (e *Engine) OnMeta(metaTopic string, payload []byte) {
 	m, err := expose.Parse(metaTopic, payload)
 	if err != nil {
 		log.Printf("[hadiscovery] skip meta %s: %v", metaTopic, err)
+		if addr, addrErr := expose.AddrFromMetaTopic(metaTopic); addrErr == nil {
+			e.clearAddr(addr, "meta parse error")
+		}
 		return
 	}
 	ents := ha.Render(e.prefix, e.area, m)
@@ -100,26 +104,34 @@ func (e *Engine) OnMeta(metaTopic string, payload []byte) {
 	}
 	pub := e.pubSnap()
 
-	// Clear discovery topics for entities that no longer exist (field/action removed).
+	// Clear discovery topics for entities that no longer exist (field/action removed),
+	// then publish the current entity set. Only update known when every publish succeeds,
+	// so a broker/ACK failure leaves the previous state in place and the next /meta
+	// delivery retries.
 	prevTopics := topicSet(prev)
 	for _, ent := range ents {
 		delete(prevTopics, ent.Topic)
 	}
+	allOK := true
 	for topic := range prevTopics {
 		if err := pub.Publish(topic, 1, true, []byte("")); err != nil {
 			log.Printf("[hadiscovery] clear %s: %v", topic, err)
+			allOK = false
 		}
 	}
 
 	for _, ent := range ents {
 		if err := pub.Publish(ent.Topic, 1, true, ent.Payload); err != nil {
 			log.Printf("[hadiscovery] publish %s: %v", ent.Topic, err)
+			allOK = false
 		}
 	}
 
-	e.mu.Lock()
-	e.known[m.Addr] = ents
-	e.mu.Unlock()
+	if allOK {
+		e.mu.Lock()
+		e.known[m.Addr] = ents
+		e.mu.Unlock()
+	}
 }
 
 // OnHAStatus is called for homeassistant/status messages. On payload "online" (HA just
@@ -159,20 +171,38 @@ func (e *Engine) OnMetaCleared(metaTopic string) {
 		log.Printf("[hadiscovery] skip meta-clear %s: %v", metaTopic, err)
 		return
 	}
+	e.clearAddr(addr, "meta cleared")
+}
+
+// clearAddr publishes empty retained payloads to every discovery topic for addr and deletes
+// the slot from known only if all publishes succeed. reason is used only in log messages.
+func (e *Engine) clearAddr(addr, reason string) {
 	e.mu.Lock()
 	prev := e.known[addr]
-	delete(e.known, addr)
 	e.mu.Unlock()
 	if len(prev) == 0 {
 		return
 	}
-	log.Printf("[hadiscovery] meta cleared for %s; removing %d discovery entity(ies)", addr, len(prev))
+	log.Printf("[hadiscovery] %s for %s; removing %d discovery entity(ies)", reason, addr, len(prev))
 	pub := e.pubSnap()
-	for _, ent := range prev {
+	if e.clearEntities(pub, prev, "clear") {
+		e.mu.Lock()
+		delete(e.known, addr)
+		e.mu.Unlock()
+	}
+}
+
+// clearEntities publishes an empty retained payload to each entity's discovery topic.
+// It returns true only if every publish succeeds.
+func (e *Engine) clearEntities(pub Pub, ents []ha.Entity, logPrefix string) bool {
+	allOK := true
+	for _, ent := range ents {
 		if err := pub.Publish(ent.Topic, 1, true, []byte("")); err != nil {
-			log.Printf("[hadiscovery] clear %s: %v", ent.Topic, err)
+			log.Printf("[hadiscovery] %s %s: %v", logPrefix, ent.Topic, err)
+			allOK = false
 		}
 	}
+	return allOK
 }
 
 // KnownAddrs returns the addresses of the slots the engine currently has discovery for

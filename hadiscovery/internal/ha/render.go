@@ -113,6 +113,9 @@ func Render(prefix, area string, m expose.SlotMeta) []Entity {
 	}
 	for _, a := range m.Expose.Actions {
 		p := actionEntity(a, cmdTopic, nodeID, dev, avail)
+		if p == nil {
+			continue
+		}
 		ents = append(ents, Entity{
 			Component: "button",
 			ObjectID:  sanitize(a.Key),
@@ -143,8 +146,10 @@ func fieldEntity(f expose.Field, stateTopic, cmdTopic, nodeID string, caps map[s
 	case "number":
 		base.UnitOfMeasurement = f.Unit
 		base.DeviceClass = deviceClassFor(f)
-		base.StateClass = f.StateClass
 		if f.Writable {
+			if !writableCommandValid(f.Command) {
+				return "", nil
+			}
 			base.CommandTopic = cmdTopic
 			base.CommandTemplate = commandTemplate(f.Command)
 			base.Min = f.Min
@@ -155,6 +160,7 @@ func fieldEntity(f expose.Field, stateTopic, cmdTopic, nodeID string, caps map[s
 			// A writable number reads its current value from the same state field.
 			return "number", marshal(base)
 		}
+		base.StateClass = f.StateClass
 		return "sensor", marshal(base)
 
 	case "enum":
@@ -170,7 +176,7 @@ func fieldEntity(f expose.Field, stateTopic, cmdTopic, nodeID string, caps map[s
 			// `options` key (the omitempty tag drops nil), which HA rejects. Skip it
 			// instead, matching this function's "enum without options → unrenderable"
 			// contract (see docstring above).
-			if f.Command == nil || len(opts) == 0 {
+			if !writableCommandValid(f.Command) || len(opts) == 0 {
 				return "", nil
 			}
 			base.CommandTopic = cmdTopic
@@ -206,8 +212,12 @@ func fieldEntity(f expose.Field, stateTopic, cmdTopic, nodeID string, caps map[s
 	return "", nil
 }
 
-// actionEntity renders a one-shot button.
+// actionEntity renders a one-shot button. Actions require a command with a non-empty
+// action name (buttons are action-only).
 func actionEntity(a expose.Action, cmdTopic, nodeID string, dev devicePayload, avail []availability) []byte {
+	if a.Command == nil || a.Command.Action == "" {
+		return nil
+	}
 	oid := sanitize(a.Key)
 	p := discoveryPayload{
 		UniqueID:         nodeID + "_" + oid,
@@ -257,6 +267,13 @@ func deviceBlock(m expose.SlotMeta, nodeID, area string) devicePayload {
 	d.Model = model
 	d.SWVersion = sw
 	return d
+}
+
+// writableCommandValid reports whether c is a valid command descriptor for a writable
+// field. It requires a non-nil command with a non-empty value_key. Action-only commands
+// (action with no value_key) are valid only for buttons.
+func writableCommandValid(c *expose.Command) bool {
+	return c != nil && c.ValueKey != ""
 }
 
 // commandTemplate renders a writable field's command descriptor into the HA command_template
