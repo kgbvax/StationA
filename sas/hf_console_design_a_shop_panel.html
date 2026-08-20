@@ -1,0 +1,637 @@
+<title>hf_console — Design A · Shop Panel</title>
+<style>
+  :root {
+    /* light theme (default) */
+    --page: #F2F0EA;
+    --card: #FFFFFF;
+    --card-line: #D6D2C6;
+    --card-line-hi: #B8B3A4;
+    --txt: #1A1A1A;
+    --txt-mute: #6B6659;
+    --txt-faint: #9A9589;
+    --accent: #2C5F7C;
+    --accent-dim: #D4E3EA;
+    --green: #2D7A4A;
+    --amber: #B87A1A;
+    --red: #B3402E;
+    --orange: #C96A1E;
+    --shadow: rgba(0,0,0,0.08);
+    --radius: 2px;
+    --pad: 14px;
+    --gap: 12px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --page: #15171A;
+      --card: #1E2126;
+      --card-line: #343A42;
+      --card-line-hi: #4A515C;
+      --txt: #E7EBF0;
+      --txt-mute: #8F97A3;
+      --txt-faint: #5A6270;
+      --accent: #4A90C2;
+      --accent-dim: #1E3A4D;
+      --green: #36B37E;
+      --amber: #E0A23C;
+      --red: #D9533A;
+      --orange: #F08A38;
+      --shadow: rgba(0,0,0,0.25);
+    }
+  }
+  :root[data-theme="dark"] {
+    --page: #15171A;
+    --card: #1E2126;
+    --card-line: #343A42;
+    --card-line-hi: #4A515C;
+    --txt: #E7EBF0;
+    --txt-mute: #8F97A3;
+    --txt-faint: #5A6270;
+    --accent: #4A90C2;
+    --accent-dim: #1E3A4D;
+    --green: #36B37E;
+    --amber: #E0A23C;
+    --red: #D9533A;
+    --orange: #F08A38;
+    --shadow: rgba(0,0,0,0.25);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    background: var(--page);
+    color: var(--txt);
+    font-family: "IBM Plex Sans", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-size: 14px;
+    line-height: 1.3;
+    overflow: hidden;
+  }
+  .mono { font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  .wrap {
+    height: 100vh;
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+    padding: var(--pad);
+    gap: var(--gap);
+  }
+
+  /* tabs */
+  .top {
+    display: flex;
+    align-items: center;
+    gap: var(--gap);
+  }
+  .tabs {
+    display: flex;
+    gap: 4px;
+    flex: 1;
+  }
+  .tab {
+    font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-weight: 700;
+    font-size: 13px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding: 10px 22px;
+    border: 1px solid var(--card-line);
+    background: var(--card);
+    color: var(--txt-mute);
+    cursor: pointer;
+    border-radius: var(--radius);
+    box-shadow: 0 1px 1px var(--shadow);
+  }
+  .tab:hover { background: var(--accent-dim); color: var(--txt); }
+  .tab.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .theme-btn {
+    font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 11px;
+    padding: 8px 12px;
+    border: 1px solid var(--card-line);
+    background: var(--card);
+    color: var(--txt-mute);
+    cursor: pointer;
+    border-radius: var(--radius);
+  }
+
+  /* pages */
+  .pages { position: relative; min-height: 0; }
+  .page {
+    position: absolute;
+    inset: 0;
+    display: none;
+    gap: var(--gap);
+  }
+  .page.active { display: grid; }
+
+  /* HF page grid */
+  .hf-grid {
+    display: grid;
+    grid-template-columns: 1.3fr 1fr;
+    grid-template-rows: 1.6fr 1fr auto;
+    gap: var(--gap);
+  }
+  .module {
+    background: var(--card);
+    border: 1px solid var(--card-line);
+    border-radius: var(--radius);
+    box-shadow: 0 1px 2px var(--shadow);
+    padding: var(--pad);
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+  }
+  .module-h {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 10px;
+    min-height: 22px;
+  }
+  .module-title {
+    font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-weight: 700;
+    font-size: 12px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--txt);
+  }
+  .module-sub {
+    font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 10px;
+    color: var(--txt-faint);
+  }
+  .module-body { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 8px; }
+  .actions {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-top: auto;
+    padding-top: 10px;
+  }
+
+  .btn {
+    font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-weight: 600;
+    font-size: 11px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    padding: 10px 14px;
+    min-height: 42px;
+    min-width: 56px;
+    border: 1px solid var(--card-line-hi);
+    background: var(--page);
+    color: var(--txt);
+    cursor: pointer;
+    border-radius: var(--radius);
+    flex: 1;
+  }
+  .btn:hover { background: var(--accent-dim); }
+  .btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn.amber { background: rgba(224,162,60,0.12); border-color: var(--amber); color: var(--amber); }
+  .btn.amber.active { background: var(--amber); color: #1A1A1A; }
+  .btn.danger { background: rgba(217,83,58,0.10); border-color: var(--red); color: var(--red); }
+  .btn.danger.active { background: var(--red); color: #fff; }
+
+  /* compass */
+  .compass-wrap {
+    flex: 1;
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 160px;
+  }
+  .compass-wrap svg { max-width: 100%; max-height: 100%; }
+  .az-readout {
+    position: absolute;
+    right: 6px;
+    top: 4px;
+    text-align: right;
+  }
+  .az-readout .deg { font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-weight: 700; font-size: 26px; color: var(--accent); line-height: 1; }
+  .az-readout .lbl { font-size: 10px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: var(--txt-mute); }
+  .slew { text-align: center; font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; color: var(--accent); font-weight: 600; }
+  .presets { display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; }
+
+  /* meters */
+  .meter-row { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
+  .meter-labels { display: flex; justify-content: space-between; font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 10px; color: var(--txt-faint); }
+  .meter-track {
+    height: 14px;
+    background: var(--page);
+    border: 1px solid var(--card-line);
+    border-radius: var(--radius);
+    position: relative;
+    overflow: hidden;
+  }
+  .meter-fill {
+    position: absolute;
+    top: 0; left: 0; bottom: 0;
+    background: linear-gradient(90deg, var(--green), var(--green) 70%, var(--orange) 100%);
+  }
+  .meter-fill.red { background: var(--red); }
+  .meter-value {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  .meter-value .num { font-weight: 700; font-size: 22px; }
+  .meter-value .unit { font-size: 10px; color: var(--txt-faint); margin-left: 4px; }
+
+  .datablock {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1px;
+    background: var(--card-line);
+    border: 1px solid var(--card-line);
+    border-radius: var(--radius);
+    overflow: hidden;
+  }
+  .datablock > div { background: var(--card); padding: 8px 10px; display: flex; flex-direction: column; gap: 2px; }
+  .datablock .k { font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 9px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--txt-faint); }
+  .datablock .v { font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-weight: 700; font-size: 16px; }
+  .datablock .v.good { color: var(--green); }
+  .datablock .v.warn { color: var(--amber); }
+  .datablock .v.bad { color: var(--red); }
+
+  .tag {
+    font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 10px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase;
+    padding: 3px 8px; border-radius: var(--radius); border: 1px solid transparent;
+  }
+  .tag.on { background: rgba(54,179,126,0.12); color: var(--green); border-color: rgba(54,179,126,0.3); }
+  .tag.off { background: rgba(0,0,0,0.04); color: var(--txt-faint); }
+  .tag.warn { background: rgba(224,162,60,0.12); color: var(--amber); border-color: rgba(224,162,60,0.3); }
+  .tag.red { background: rgba(217,83,58,0.12); color: var(--red); border-color: rgba(217,83,58,0.3); }
+
+  /* station page */
+  .station-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: 1fr auto;
+    gap: var(--gap);
+  }
+  .wide { grid-column: 1 / -1; }
+  .relay-row { display: flex; gap: 10px; flex-wrap: wrap; }
+  .relay {
+    display: flex; align-items: center; gap: 10px;
+    background: var(--page); border: 1px solid var(--card-line); border-radius: var(--radius);
+    padding: 10px 14px; min-width: 150px; flex: 1;
+  }
+  .relay .name { font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
+  .relay .st { font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-weight: 700; font-size: 12px; margin-left: auto; }
+  .relay.on .st { color: var(--green); }
+  .relay.off .st { color: var(--txt-faint); }
+  .toggle { width: 34px; height: 18px; border-radius: 9px; background: var(--card-line); position: relative; flex: none; }
+  .toggle i { position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: var(--txt-mute); transition: left 0.12s; }
+  .relay.on .toggle { background: rgba(54,179,126,0.25); }
+  .relay.on .toggle i { left: 18px; background: var(--green); }
+
+  /* fault strip */
+  .faults {
+    display: flex;
+    gap: var(--gap);
+    background: var(--card);
+    border: 1px solid var(--card-line);
+    border-radius: var(--radius);
+    padding: var(--pad);
+    box-shadow: 0 1px 2px var(--shadow);
+  }
+  .faults-h {
+    font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-weight: 700; font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase;
+    color: var(--txt-mute); padding-right: 12px; border-right: 1px solid var(--card-line);
+    display: flex; align-items: center;
+  }
+  .fault-list { display: flex; gap: 10px; flex-wrap: wrap; flex: 1; align-items: center; }
+  .fault {
+    font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 11px; padding: 6px 10px; border-radius: var(--radius);
+    border: 1px solid transparent;
+  }
+  .fault.active { background: rgba(217,83,58,0.10); color: var(--red); border-color: var(--red); font-weight: 600; }
+  .fault.past { background: var(--page); color: var(--txt-faint); border-color: var(--card-line); text-decoration: line-through; }
+  .fault.empty { color: var(--txt-faint); font-style: italic; }
+
+  /* uhf placeholder */
+  .placeholder {
+    display: flex; align-items: center; justify-content: center;
+    height: 100%; color: var(--txt-faint); font-style: italic;
+  }
+
+  /* compact responsive */
+  @media (max-width: 1024px) {
+    .hf-grid { grid-template-columns: 1fr 1fr; grid-template-rows: auto auto auto auto; }
+    .hf-grid .module:first-child { grid-column: 1 / -1; }
+    .hf-grid .module:nth-child(4) { grid-column: 1 / -1; }
+    .station-grid { grid-template-columns: 1fr; }
+    .station-grid .wide { grid-column: 1; }
+    .actions { flex-wrap: wrap; }
+    .btn { padding: 8px 10px; min-height: 38px; }
+    .az-readout .deg { font-size: 20px; }
+  }
+  @media (max-width: 760px) {
+    .hf-grid { grid-template-columns: 1fr; }
+    .hf-grid .module { grid-column: 1 !important; }
+    .tabs { flex-wrap: wrap; }
+    .tab { flex: 1; min-width: 80px; text-align: center; }
+    .wrap { padding: 8px; --gap: 8px; --pad: 10px; }
+  }
+</style>
+
+<div class="wrap">
+  <div class="top">
+    <div class="tabs">
+      <button class="tab" data-page="station">Station</button>
+      <button class="tab active" data-page="hf">HF</button>
+      <button class="tab" data-page="uhf">UHF</button>
+    </div>
+    <button class="theme-btn" id="themeBtn">toggle theme</button>
+  </div>
+
+  <div class="pages">
+    <!-- HF page -->
+    <div class="page active hf-grid" id="page-hf">
+      <div class="module" style="grid-row: span 2;">
+        <div class="module-h">
+          <span class="module-title">Rotator</span>
+          <span class="module-sub">Yaesu G-450DC</span>
+        </div>
+        <div class="module-body">
+          <div class="compass-wrap">
+            <svg id="compassA" width="320" height="260" viewBox="0 0 320 260"></svg>
+            <div class="az-readout">
+              <div class="deg">247°</div>
+              <div class="lbl">current</div>
+            </div>
+          </div>
+          <div class="slew">SLEWING → 067°</div>
+          <div class="presets">
+            <button class="btn">NA · 330</button>
+            <button class="btn">SA · 210</button>
+            <button class="btn">VK · 60</button>
+            <button class="btn">JA · 35</button>
+            <button class="btn danger">STOP</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="module">
+        <div class="module-h">
+          <span class="module-title">PA · ACOM 1200S</span>
+          <span class="tag red">● TX</span>
+        </div>
+        <div class="module-body">
+          <div class="datablock">
+            <div><span class="k">FWD W</span><span class="v good">820</span></div>
+            <div><span class="k">REFL W</span><span class="v warn">18</span></div>
+            <div><span class="k">SWR</span><span class="v warn">1.9</span></div>
+            <div><span class="k">TEMP °C</span><span class="v">54</span></div>
+          </div>
+          <div class="meter-row">
+            <div class="meter-value"><span class="num">820<span class="unit">W FWD</span></span></div>
+            <div class="meter-track"><div class="meter-fill" style="width: 68%;"></div></div>
+            <div class="meter-labels"><span>0</span><span>500</span><span>1000</span><span>1200</span></div>
+          </div>
+          <div class="meter-row">
+            <div class="meter-value"><span class="num">1.9<span class="unit">SWR</span></span></div>
+            <div class="meter-track"><div class="meter-fill" style="width: 48%;"></div></div>
+            <div class="meter-labels"><span>1.0</span><span>1.5</span><span>3.0</span><span>4.0</span></div>
+          </div>
+          <div class="actions">
+            <button class="btn active">OPERATE</button>
+            <button class="btn amber">STANDBY</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="module">
+        <div class="module-h">
+          <span class="module-title">Antenna Select</span>
+          <span class="tag on">AUTO</span>
+        </div>
+        <div class="module-body">
+          <div class="datablock" style="grid-template-columns: 1fr;">
+            <div><span class="k">SELECTED</span><span class="v good">Ultrabeam (P4)</span></div>
+          </div>
+          <div class="actions">
+            <button class="btn">ISOL</button>
+            <button class="btn">DUMMY</button>
+            <button class="btn active">ULTRABEAM</button>
+            <button class="btn">FAN-DIPOLE</button>
+            <button class="btn">NN1</button>
+            <button class="btn">NN2</button>
+          </div>
+          <div class="actions" style="padding-top: 0;">
+            <button class="btn active">AUTO</button>
+            <button class="btn">MANUAL</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="module">
+        <div class="module-h">
+          <span class="module-title">Ultrabeam</span>
+          <span class="module-sub">20M · 14.074.000 Hz</span>
+        </div>
+        <div class="module-body">
+          <div class="datablock" style="grid-template-columns: 1fr 1fr;">
+            <div><span class="k">BAND</span><span class="v">20M</span></div>
+            <div><span class="k">LOBES</span><span class="v">180°</span></div>
+          </div>
+          <div class="actions">
+            <button class="btn active">FORWARD</button>
+            <button class="btn amber active">180°</button>
+            <button class="btn">BI-DIR</button>
+            <button class="btn danger">RETRACT</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="module">
+        <div class="module-h">
+          <span class="module-title">Tuner · ATR-1000</span>
+          <span class="tag on">IN LINE</span>
+        </div>
+        <div class="module-body">
+          <div class="datablock">
+            <div><span class="k">FWD W</span><span class="v good">90</span></div>
+            <div><span class="k">SWR</span><span class="v good">1.3</span></div>
+            <div><span class="k">L µH</span><span class="v">0.42</span></div>
+            <div><span class="k">C pF</span><span class="v">128</span></div>
+          </div>
+          <div class="actions">
+            <button class="btn active">IN LINE</button>
+            <button class="btn">BYPASS</button>
+            <button class="btn">TUNE MEM</button>
+            <button class="btn">TUNE FULL</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Station page -->
+    <div class="page station-grid" id="page-station">
+      <div class="module wide">
+        <div class="module-h">
+          <span class="module-title">Station Power</span>
+          <span class="tag on">ALL ON</span>
+        </div>
+        <div class="module-body">
+          <div class="relay-row">
+            <div class="relay on"><span class="name">MAINS</span><span class="toggle"><i></i></span><span class="st">ON</span></div>
+            <div class="relay on"><span class="name">PSU 13.8V</span><span class="toggle"><i></i></span><span class="st">ON</span></div>
+            <div class="relay on"><span class="name">TRX</span><span class="toggle"><i></i></span><span class="st">ON</span></div>
+            <div class="relay on"><span class="name">PA</span><span class="toggle"><i></i></span><span class="st">ON</span></div>
+          </div>
+          <div class="actions" style="padding-top: 8px;">
+            <button class="btn">SEQUENCE ON</button>
+            <button class="btn danger">SEQUENCE OFF</button>
+          </div>
+        </div>
+      </div>
+      <div class="module">
+        <div class="module-h"><span class="module-title">Environment</span></div>
+        <div class="module-body" style="justify-content: center;">
+          <div class="datablock">
+            <div><span class="k">TEMP</span><span class="v">21.4 °C</span></div>
+            <div><span class="k">CO₂</span><span class="v">612 ppm</span></div>
+            <div><span class="k">HEAT</span><span class="v good">ON</span></div>
+            <div><span class="k">COOL</span><span class="v">OFF</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="module">
+        <div class="module-h"><span class="module-title">Shack Status</span></div>
+        <div class="module-body" style="justify-content: center; color: var(--txt-faint); font-style: italic;">
+          HVAC controls will be added here.
+        </div>
+      </div>
+    </div>
+
+    <!-- UHF page -->
+    <div class="page" id="page-uhf">
+      <div class="module wide">
+        <div class="module-h"><span class="module-title">UHF</span></div>
+        <div class="placeholder">UHF controls are not yet wired.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="faults">
+    <div class="faults-h">FAULTS</div>
+    <div class="fault-list">
+      <span class="fault active">PA: REFL POWER HIGH — 42 W</span>
+      <span class="fault past">TUNER: TUNE TIMEOUT</span>
+      <span class="fault past">ROTATOR: ELTAKA UNREACHABLE</span>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  const root = document.documentElement;
+  const tabs = document.querySelectorAll('.tab');
+  const pages = document.querySelectorAll('.page');
+  const themeBtn = document.getElementById('themeBtn');
+
+  tabs.forEach(t => t.addEventListener('click', () => {
+    tabs.forEach(x => x.classList.remove('active'));
+    pages.forEach(x => x.classList.remove('active'));
+    t.classList.add('active');
+    document.getElementById('page-' + t.dataset.page).classList.add('active');
+  }));
+
+  themeBtn.addEventListener('click', () => {
+    const current = root.getAttribute('data-theme');
+    if (current === 'dark') root.setAttribute('data-theme', 'light');
+    else if (current === 'light') root.removeAttribute('data-theme');
+    else {
+      const dark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+      root.setAttribute('data-theme', dark ? 'light' : 'dark');
+    }
+  });
+
+  // draw compass
+  const svg = document.getElementById('compassA');
+  const cx = 160, cy = 130, R = 110;
+  const az = 247, target = 67, direction = 'reverse';
+  const half = {forward: 30, reverse: 30, bidirectional: 45};
+  const ACCENT = getComputedStyle(svg).getPropertyValue('--accent').trim() || '#4A90C2';
+  const AMBER = getComputedStyle(svg).getPropertyValue('--amber').trim() || '#E0A23C';
+  const MUTE = getComputedStyle(svg).getPropertyValue('--txt-faint').trim() || '#5A6270';
+  const INK = getComputedStyle(svg).getPropertyValue('--txt').trim() || '#E7EBF0';
+
+  function pt(a, r) { const ang = (a - 90) * Math.PI / 180; return [cx + r * Math.cos(ang), cy + r * Math.sin(ang)]; }
+  function wedge(c, h, r, fill) {
+    const a0 = c - h, a1 = c + h;
+    const [x0, y0] = pt(a0, r), [x1, y1] = pt(a1, r);
+    const lg = (2 * h) > 180 ? 1 : 0;
+    const d = `M ${cx} ${cy} L ${x0} ${y0} A ${r} ${r} 0 ${lg} 1 ${x1} ${y1} Z`;
+    const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    p.setAttribute('d', d); p.setAttribute('fill', fill); p.setAttribute('opacity', '0.55');
+    return p;
+  }
+  function line(a0, a1, r0, r1, c, w, dash) {
+    const [x0, y0] = pt(a0, r0), [x1, y1] = pt(a1, r1);
+    const l = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    l.setAttribute('x1', x0); l.setAttribute('y1', y0); l.setAttribute('x2', x1); l.setAttribute('y2', y1);
+    l.setAttribute('stroke', c); l.setAttribute('stroke-width', w); l.setAttribute('stroke-linecap', 'round');
+    if (dash) l.setAttribute('stroke-dasharray', dash);
+    return l;
+  }
+  function arrowhead(a, r, c) {
+    const [hx, hy] = pt(a, r);
+    const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    g.setAttribute('transform', `translate(${hx} ${hy}) rotate(${a})`);
+    const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    p.setAttribute('d', 'M 0 0 L -11 -5 L -11 5 Z'); p.setAttribute('fill', c);
+    g.appendChild(p); return g;
+  }
+  function text(s, x, y, size, c, bold) {
+    const t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    t.setAttribute('x', x); t.setAttribute('y', y); t.setAttribute('fill', c);
+    t.setAttribute('font-family', 'IBM Plex Mono, monospace'); t.setAttribute('font-size', size);
+    t.setAttribute('font-weight', bold ? '700' : '500');
+    t.setAttribute('text-anchor', 'middle'); t.setAttribute('dominant-baseline', 'central');
+    t.textContent = s; return t;
+  }
+
+  const face = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+  face.setAttribute('cx', cx); face.setAttribute('cy', cy); face.setAttribute('r', R);
+  face.setAttribute('fill', 'var(--page)'); svg.appendChild(face);
+  const ring = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+  ring.setAttribute('cx', cx); ring.setAttribute('cy', cy); ring.setAttribute('r', R);
+  ring.setAttribute('fill', 'none'); ring.setAttribute('stroke', 'var(--card-line-hi)'); ring.setAttribute('stroke-width', '1');
+  svg.appendChild(ring);
+
+  for (let a = 0; a < 360; a += 30) {
+    const major = a % 90 === 0;
+    const [x1, y1] = pt(a, R), [x2, y2] = pt(a, major ? R - 10 : R - 5);
+    const l = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    l.setAttribute('x1', x1); l.setAttribute('y1', y1); l.setAttribute('x2', x2); l.setAttribute('y2', y2);
+    l.setAttribute('stroke', 'var(--txt-faint)'); l.setAttribute('stroke-width', major ? 1.5 : 1);
+    svg.appendChild(l);
+  }
+  svg.appendChild(text('N', ...pt(0, R - 16), 12, 'var(--accent)', true));
+  svg.appendChild(text('E', ...pt(90, R - 16), 11, 'var(--txt-faint)', false));
+  svg.appendChild(text('S', ...pt(180, R - 16), 11, 'var(--txt-faint)', false));
+  svg.appendChild(text('W', ...pt(270, R - 16), 11, 'var(--txt-faint)', false));
+
+  const beams = direction === 'forward' ? [{ang: az, half: half.forward, color: ACCENT}]
+              : direction === 'reverse' ? [{ang: (az + 180) % 360, half: half.reverse, color: AMBER}]
+              : [{ang: az, half: half.bidirectional, color: ACCENT}, {ang: (az + 180) % 360, half: half.bidirectional, color: AMBER}];
+  beams.forEach(b => svg.appendChild(wedge(b.ang, b.half, R - 4, b.color)));
+  beams.forEach(b => {
+    const solid = b.color;
+    svg.appendChild(line(b.ang, b.ang, 22, R - 12, solid, 3));
+    svg.appendChild(arrowhead(b.ang, R - 8, solid));
+  });
+  svg.appendChild(line(az, az, 14, R - 2, INK, 2));
+  const hub = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+  hub.setAttribute('cx', cx); hub.setAttribute('cy', cy); hub.setAttribute('r', 5);
+  hub.setAttribute('fill', 'var(--accent)'); svg.appendChild(hub);
+  svg.appendChild(line(target, target, 14, R - 6, 'var(--accent)', 1.5, '4 4'));
+})();
+</script>

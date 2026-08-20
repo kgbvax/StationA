@@ -1,0 +1,712 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>hf_console — color scheme variations</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    font-family: "IBM Plex Sans", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-size: 18px;
+    line-height: 1.3;
+    overflow: hidden;
+  }
+  .mono { font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+
+  /* ========================================================================
+     VARIATION 1: DC — very dark, muted blue-grey, visible structure
+     Background is nearly black; lines/labels stay legible.
+     ======================================================================== */
+  :root[data-scheme="dc"] {
+    --page: #0A0C10;
+    --pane: #0F1218;
+    --card: #151923;
+    --line: #2A3142;
+    --line-hi: #3D4558;
+    --txt: #DEE3EC;
+    --txt-mute: #8C97AB;
+    --txt-faint: #5B6579;
+    --accent: #5FB2C9;
+    --accent-dim: rgba(95,178,201,0.13);
+    --green: #5CCB8A;
+    --amber: #D7B04A;
+    --red: #D9685C;
+    --orange: #D99A5F;
+    --shadow: rgba(0,0,0,0.38);
+    --scheme-name: "DC";
+  }
+
+  /* ========================================================================
+     VARIATION 2: AETHER — AetherSDR inspired
+     Very dark blue-grey, cyan-blue accent, scope green, red TX.
+     ======================================================================== */
+  :root[data-scheme="aether"] {
+    --page: #05070A;
+    --pane: #090C12;
+    --card: #0D1119;
+    --line: #1A2030;
+    --line-hi: #283040;
+    --txt: #D7DFEA;
+    --txt-mute: #7E8CA3;
+    --txt-faint: #4C566B;
+    --accent: #00C6E0;
+    --accent-dim: rgba(0,198,224,0.12);
+    --green: #38F580;
+    --amber: #F0C040;
+    --red: #FF4D4D;
+    --orange: #FF9A3C;
+    --shadow: rgba(0,0,0,0.45);
+    --scheme-name: "AETHER";
+  }
+
+  /* ========================================================================
+     VARIATION 3: PAPER — light, high-contrast, ink on off-white
+     ======================================================================== */
+  :root[data-scheme="paper"] {
+    --page: #E5E3DD;
+    --pane: #EFEDE7;
+    --card: #F9F8F5;
+    --line: #D4D1CA;
+    --line-hi: #B8B4AB;
+    --txt: #1A1A1A;
+    --txt-mute: #5E5A53;
+    --txt-faint: #8C887E;
+    --accent: #005F99;
+    --accent-dim: rgba(0,95,153,0.10);
+    --green: #1E6B48;
+    --amber: #A36A00;
+    --red: #B52E1D;
+    --orange: #C45F18;
+    --shadow: rgba(0,0,0,0.08);
+    --scheme-name: "PAPER";
+  }
+
+  /* ========================================================================
+     VARIATION 3: FOREST — dark desaturated green-grey, amber accent
+     ======================================================================== */
+  :root[data-scheme="forest"] {
+    --page: #151A17;
+    --pane: #1C231E;
+    --card: #242C26;
+    --line: #3D4740;
+    --line-hi: #515C54;
+    --txt: #DDE4DD;
+    --txt-mute: #8D9A8D;
+    --txt-faint: #5E6B5E;
+    --accent: #C8A45C;
+    --accent-dim: rgba(200,164,92,0.13);
+    --green: #6DB88B;
+    --amber: #E0B35A;
+    --red: #D2786C;
+    --orange: #CF9A68;
+    --shadow: rgba(0,0,0,0.32);
+    --scheme-name: "FOREST";
+  }
+
+  body {
+    background: var(--page);
+    color: var(--txt);
+  }
+
+  .chooser {
+    position: fixed;
+    top: 10px;
+    right: 12px;
+    display: flex;
+    gap: 6px;
+    z-index: 100;
+  }
+  .chooser button {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 13px;
+    font-weight: 700;
+    padding: 6px 12px;
+    border: 1px solid var(--line-hi);
+    background: var(--card);
+    color: var(--txt-mute);
+    cursor: pointer;
+    border-radius: 4px;
+  }
+  .chooser button.active {
+    background: var(--accent);
+    color: #000;
+    border-color: var(--accent);
+  }
+
+  .wrap {
+    height: 100vh;
+    display: grid;
+    grid-template-rows: 1fr auto;
+    gap: 0;
+    padding: 0;
+  }
+  .deck {
+    position: relative;
+    min-height: 0;
+    overflow: hidden;
+  }
+  .page {
+    display: none;
+    position: absolute;
+    inset: 0;
+    min-height: 0;
+    overflow: hidden;
+  }
+  .page.active { display: flex; }
+
+  .hf-split {
+    display: grid;
+    grid-template-columns: 1fr 0.8fr;
+    gap: 0;
+    width: 100%;
+    height: 100%;
+  }
+  .hf-antenna {
+    background: var(--pane);
+    border-right: 1px solid var(--line);
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+  }
+  .hf-right {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+    background: var(--pane);
+  }
+  .hf-commands {
+    background: var(--pane);
+    min-height: 0;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+  }
+
+  .full-page {
+    display: none;
+    background: var(--pane);
+    min-height: 0;
+    overflow: hidden;
+  }
+  .page.active.full-page {
+    display: flex;
+    flex-direction: column;
+  }
+  .page-content {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+  }
+
+  .top {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background: var(--card);
+    border-bottom: 1px solid var(--line);
+    padding: 12px 14px;
+  }
+  .tabs { display: flex; gap: 4px; flex: 1; justify-content: flex-start; }
+  .tab {
+    font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-weight: 700;
+    font-size: 16px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 9px 18px;
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--txt-mute);
+    cursor: pointer;
+    border-radius: 4px;
+  }
+  .tab:hover { background: var(--accent-dim); color: var(--txt); }
+  .tab.active { background: var(--accent); color: #000; border-color: var(--accent); }
+  [data-scheme="paper"] .tab.active { color: #fff; }
+
+  .world-body {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+  }
+  .compass-wrap {
+    position: relative;
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 120px;
+    padding: 0;
+    overflow: hidden;
+  }
+  .compass-wrap svg {
+    display: block;
+    width: 100%;
+    height: 100%;
+    max-width: 100%;
+    max-height: 100%;
+  }
+  .status-pill {
+    position: absolute;
+    right: 14px;
+    top: 10px;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 15px;
+    font-weight: 600;
+    padding: 5px 10px;
+    border-radius: 4px;
+    background: var(--accent-dim);
+    color: var(--accent);
+    border: 1px solid var(--accent);
+  }
+
+  .world-controls {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0;
+  }
+  .control-block {
+    background: var(--card);
+    border-top: 1px solid var(--line);
+    padding: 6px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .control-block.full { grid-column: 1 / -1; }
+  .actions { display: flex; gap: 4px; flex-wrap: wrap; }
+  .actions .btn { flex: 1; min-width: 0; }
+
+  .btn {
+    font-family: "IBM Plex Mono", monospace;
+    font-weight: 600;
+    font-size: 14px;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    padding: 6px 6px;
+    min-height: 42px;
+    border: 1px solid var(--line-hi);
+    background: var(--pane);
+    color: var(--txt);
+    cursor: pointer;
+    border-radius: 4px;
+    flex: 1;
+  }
+  .btn:hover { background: var(--accent-dim); border-color: var(--accent); }
+  .btn.active { background: var(--accent); border-color: var(--accent); color: #000; }
+  [data-scheme="paper"] .btn.active { color: #fff; }
+  .btn.amber { background: color-mix(in srgb, var(--amber) 12%, var(--pane)); border-color: var(--amber); color: var(--amber); }
+  .btn.amber.active { background: var(--amber); color: #000; }
+  [data-scheme="amber"] .btn.amber.active { color: #1A1205; }
+  .btn.danger { background: color-mix(in srgb, var(--red) 10%, var(--pane)); border-color: var(--red); color: var(--red); }
+  .btn.danger.active { background: var(--red); color: #fff; }
+
+  .card {
+    background: var(--card);
+    border-bottom: 1px solid var(--line);
+    padding: 16px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .card-h {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .card-title {
+    font-family: "IBM Plex Mono", monospace;
+    font-weight: 700;
+    font-size: 12px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--txt-mute);
+  }
+  .card-sub { font-family: "IBM Plex Mono", monospace; font-size: 13px; color: var(--txt-faint); }
+  .card-body { display: flex; flex-direction: column; gap: 8px; }
+
+  .tag {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 13px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase;
+    padding: 3px 8px; border-radius: 4px; border: 1px solid transparent;
+  }
+  .tag.on { background: color-mix(in srgb, var(--green) 15%, var(--pane)); color: var(--green); border-color: var(--green); }
+  .tag.warn { background: color-mix(in srgb, var(--amber) 15%, var(--pane)); color: var(--amber); border-color: var(--amber); }
+  .tag.red { background: color-mix(in srgb, var(--red) 15%, var(--pane)); color: var(--red); border-color: var(--red); }
+
+  .datablock {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1px;
+    background: var(--line);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+  .datablock > div { background: var(--card); padding: 7px 10px; display: flex; flex-direction: column; gap: 2px; }
+  .datablock .k { font-family: "IBM Plex Mono", monospace; font-size: 13px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--txt-faint); }
+  .datablock .v { font-family: "IBM Plex Mono", monospace; font-weight: 700; font-size: 19px; }
+  .datablock .v.good { color: var(--green); }
+  .datablock .v.warn { color: var(--amber); }
+  .datablock .v.bad { color: var(--red); }
+
+  .meter-row { display: flex; flex-direction: column; gap: 3px; margin-bottom: 6px; }
+  .meter-labels { display: flex; justify-content: space-between; font-family: "IBM Plex Mono", monospace; font-size: 13px; color: var(--txt-faint); }
+  .meter-track {
+    height: 12px;
+    background: var(--pane);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    position: relative;
+    overflow: hidden;
+  }
+  .meter-fill {
+    position: absolute; top: 0; left: 0; bottom: 0;
+    background: linear-gradient(90deg, var(--green), var(--green) 70%, var(--orange));
+  }
+  .meter-value {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    font-family: "IBM Plex Mono", monospace;
+  }
+  .meter-value .num { font-weight: 700; font-size: 24px; }
+  .meter-value .unit { font-size: 14px; color: var(--txt-faint); margin-left: 4px; }
+
+  .relay-row { display: flex; gap: 10px; flex-wrap: wrap; }
+  .relay {
+    display: flex; align-items: center; gap: 8px;
+    background: var(--pane); border: 1px solid var(--line); border-radius: 4px;
+    padding: 8px 12px; flex: 1; min-width: 120px;
+  }
+  .relay .name { font-family: "IBM Plex Mono", monospace; font-size: 14px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
+  .relay .st { font-family: "IBM Plex Mono", monospace; font-weight: 700; font-size: 15px; margin-left: auto; }
+  .relay.on .st { color: var(--green); }
+  .relay.off .st { color: var(--txt-faint); }
+  .toggle { width: 34px; height: 18px; border-radius: 9px; background: var(--line); position: relative; flex: none; }
+  .toggle i { position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: var(--txt-mute); transition: left 0.12s; }
+  .relay.on .toggle { background: color-mix(in srgb, var(--green) 25%, var(--pane)); }
+  .relay.on .toggle i { left: 18px; background: var(--green); }
+
+  .placeholder {
+    display: flex; align-items: center; justify-content: center;
+    height: 100%; color: var(--txt-faint); font-style: italic;
+    min-height: 200px;
+  }
+
+  .faults-card {
+    background: var(--card);
+    border-top: 1px solid var(--line);
+    padding: 12px 14px;
+    flex: none;
+  }
+  .faults-card .card-h { margin-bottom: 8px; }
+  .fault-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 15px;
+  }
+  .fault { display: flex; gap: 10px; line-height: 1.4; }
+  .fault .ts { color: var(--txt-faint); font-variant-numeric: tabular-nums; min-width: 66px; }
+  .fault.active { color: var(--red); font-weight: 700; }
+  .fault.past { color: var(--txt-mute); }
+
+  .global-faults { display: none; }
+  .wrap.show-global-faults .global-faults { display: block; }
+
+  .scheme-label {
+    position: fixed;
+    bottom: 10px;
+    left: 12px;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 12px;
+    color: var(--txt-faint);
+    text-transform: uppercase;
+    z-index: 100;
+  }
+
+  @media (max-width: 1100px) {
+    .hf-split { grid-template-columns: 1fr; grid-template-rows: 1.2fr 1fr; }
+    .hf-antenna { border-right: none; border-bottom: 1px solid var(--line); }
+    .compass-wrap { min-height: 200px; }
+    .world-controls { grid-template-columns: 1fr 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<div class="chooser">
+  <button data-scheme="dc" class="active">DC</button>
+  <button data-scheme="aether">AETHER</button>
+  <button data-scheme="paper">PAPER</button>
+  <button data-scheme="forest">FOREST</button>
+</div>
+<div class="scheme-label" id="schemeLabel">DC</div>
+
+<div class="wrap" id="wrap">
+  <div class="deck">
+    <div class="page active" id="page-hf">
+      <div class="hf-split">
+        <div class="hf-antenna">
+          <div class="world-body">
+            <div class="compass-wrap">
+              <svg id="compassC" width="520" height="460" viewBox="0 0 520 460"></svg>
+              <div class="status-pill">247° · TARGET 067° · MOVING</div>
+            </div>
+            <div class="world-controls">
+              <div class="control-block full"><div class="actions">
+                <button class="btn">NA 330</button>
+                <button class="btn">SA 210</button>
+                <button class="btn">VK 60</button>
+                <button class="btn">JA 35</button>
+                <button class="btn danger">STOP</button>
+              </div></div>
+              <div class="control-block full">
+                <div class="actions">
+                  <button class="btn">ISOL</button>
+                  <button class="btn">DUMMY</button>
+                  <button class="btn active">ULTRABEAM</button>
+                  <button class="btn">FAN-DIPOLE</button>
+                </div>
+                <div class="actions">
+                  <button class="btn">NN1</button>
+                  <button class="btn">NN2</button>
+                  <button class="btn active">AUTO</button>
+                  <button class="btn">MANUAL</button>
+                </div>
+              </div>
+              <div class="control-block full"><div class="actions">
+                <button class="btn">FORWARD</button>
+                <button class="btn amber active">180°</button>
+                <button class="btn">BI-DIR</button>
+                <button class="btn danger">RETRACT</button>
+              </div></div>
+            </div>
+          </div>
+        </div>
+        <div class="hf-right">
+          <div class="top">
+            <div class="tabs">
+              <button class="tab" data-page="station">Station</button>
+              <button class="tab active" data-page="hf">HF</button>
+              <button class="tab" data-page="uhf">UHF</button>
+            </div>
+          </div>
+          <div class="hf-commands">
+            <div class="card">
+              <div class="card-h"><span class="card-title">PA · ACOM 1200S</span><span class="tag red">● TX · 54 °C</span></div>
+              <div class="card-body">
+                <div class="meter-row">
+                  <div class="meter-value"><span class="num">820<span class="unit">W FWD</span></span></div>
+                  <div class="meter-track"><div class="meter-fill" style="width: 68%;"></div></div>
+                  <div class="meter-labels"><span>0</span><span>500</span><span>1000</span><span>1200</span></div>
+                </div>
+                <div class="meter-row">
+                  <div class="meter-value"><span class="num">1.9<span class="unit">SWR</span></span></div>
+                  <div class="meter-track"><div class="meter-fill" style="width: 48%; background: var(--amber);"></div></div>
+                  <div class="meter-labels"><span>1.0</span><span>1.5</span><span>3.0</span><span>4.0</span></div>
+                </div>
+                <div class="actions"><button class="btn active">OPERATE</button><button class="btn amber">STANDBY</button></div>
+              </div>
+            </div>
+            <div class="card">
+              <div class="card-h"><span class="card-title">Tuner · ATR-1000</span><span class="tag on">IN LINE · SWR 1.3</span></div>
+              <div class="card-body"><div class="actions">
+                <button class="btn">BYPASS</button>
+                <button class="btn">TUNE MEM</button>
+                <button class="btn">TUNE FULL</button>
+              </div></div>
+            </div>
+            <div class="card">
+              <div class="card-h"><span class="card-title">TRX · FLEX-8400</span><span class="tag on">ONLINE</span></div>
+              <div class="card-body"><div class="actions">
+                <button class="btn">M1</button><button class="btn">M2</button><button class="btn">M3</button><button class="btn">M4</button><button class="btn danger">STOP</button>
+              </div></div>
+            </div>
+          </div>
+          <div class="faults-card hf-faults">
+            <div class="card-h"><span class="card-title">Faults</span><span class="tag red">1 ACTIVE</span></div>
+            <div class="fault-list">
+              <div class="fault active"><span class="ts">14:32:07</span>PA: REFL POWER HIGH — 42 W</div>
+              <div class="fault past"><span class="ts">14:28:55</span>TUNER: TUNE TIMEOUT</div>
+              <div class="fault past"><span class="ts">14:15:22</span>ROTATOR: ELTAKA UNREACHABLE</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="page full-page" id="page-station">
+      <div class="top">
+        <div class="tabs">
+          <button class="tab active" data-page="station">Station</button>
+          <button class="tab" data-page="hf">HF</button>
+          <button class="tab" data-page="uhf">UHF</button>
+        </div>
+      </div>
+      <div class="page-content">
+        <div class="card">
+          <div class="card-h"><span class="card-title">Station power</span><span class="tag on">ALL ON</span></div>
+          <div class="relay-row">
+            <div class="relay on"><span class="name">MAINS</span><span class="toggle"><i></i></span><span class="st">ON</span></div>
+            <div class="relay on"><span class="name">PSU 13.8V</span><span class="toggle"><i></i></span><span class="st">ON</span></div>
+            <div class="relay on"><span class="name">TRX</span><span class="toggle"><i></i></span><span class="st">ON</span></div>
+            <div class="relay on"><span class="name">PA</span><span class="toggle"><i></i></span><span class="st">ON</span></div>
+          </div>
+          <div class="actions" style="margin-top: 8px;"><button class="btn">SEQUENCE ON</button><button class="btn danger">SEQUENCE OFF</button></div>
+        </div>
+        <div class="card">
+          <div class="card-h"><span class="card-title">Environment</span></div>
+          <div class="datablock">
+            <div><span class="k">TEMP</span><span class="v">21.4 °C</span></div>
+            <div><span class="k">CO₂</span><span class="v">612 ppm</span></div>
+            <div><span class="k">HEAT</span><span class="v good">ON</span></div>
+            <div><span class="k">COOL</span><span class="v">OFF</span></div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-h"><span class="card-title">HVAC controls</span></div>
+          <div class="placeholder" style="min-height: 100px;">HVAC controls will be added here.</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="page full-page" id="page-uhf">
+      <div class="top">
+        <div class="tabs">
+          <button class="tab" data-page="station">Station</button>
+          <button class="tab" data-page="hf">HF</button>
+          <button class="tab active" data-page="uhf">UHF</button>
+        </div>
+      </div>
+      <div class="page-content">
+        <div class="card">
+          <div class="card-h"><span class="card-title">UHF</span></div>
+          <div class="placeholder" style="min-height: 200px;">UHF controls are not yet wired.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="faults-card global-faults">
+    <div class="card-h"><span class="card-title">Faults</span><span class="tag red">1 ACTIVE</span></div>
+    <div class="fault-list">
+      <div class="fault active"><span class="ts">14:32:07</span>PA: REFL POWER HIGH — 42 W</div>
+      <div class="fault past"><span class="ts">14:28:55</span>TUNER: TUNE TIMEOUT</div>
+      <div class="fault past"><span class="ts">14:15:22</span>ROTATOR: ELTAKA UNREACHABLE</div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  const root = document.documentElement;
+  const tabs = document.querySelectorAll('.tab');
+  const pages = document.querySelectorAll('.page');
+  const wrap = document.getElementById('wrap');
+  const schemeLabel = document.getElementById('schemeLabel');
+
+  function updateTab(page) {
+    tabs.forEach(x => x.classList.remove('active'));
+    pages.forEach(x => x.classList.remove('active'));
+    const activeTab = document.querySelector('.tab[data-page="' + page + '"]');
+    if (activeTab) activeTab.classList.add('active');
+    const activePage = document.getElementById('page-' + page);
+    if (activePage) activePage.classList.add('active');
+    wrap.classList.toggle('show-global-faults', page !== 'hf');
+  }
+  tabs.forEach(t => t.addEventListener('click', () => updateTab(t.dataset.page)));
+
+  document.querySelectorAll('.chooser button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.chooser button').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      root.setAttribute('data-scheme', btn.dataset.scheme);
+      schemeLabel.textContent = btn.dataset.scheme;
+    });
+  });
+
+  const svg = document.getElementById('compassC');
+  const cx = 260, cy = 230, R = 210;
+  const az = 247, target = 67, direction = 'reverse';
+  const half = {forward: 30, reverse: 30, bidirectional: 45};
+  function pt(a, r) { const ang = (a - 90) * Math.PI / 180; return [cx + r * Math.cos(ang), cy + r * Math.sin(ang)]; }
+  function wedge(c, h, r, fill) {
+    const a0 = c - h, a1 = c + h;
+    const [x0, y0] = pt(a0, r), [x1, y1] = pt(a1, r);
+    const lg = (2 * h) > 180 ? 1 : 0;
+    const d = `M ${cx} ${cy} L ${x0} ${y0} A ${r} ${r} 0 ${lg} 1 ${x1} ${y1} Z`;
+    const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    p.setAttribute('d', d); p.setAttribute('fill', fill); p.setAttribute('opacity', '0.55');
+    return p;
+  }
+  function line(a0, a1, r0, r1, c, w, dash) {
+    const [x0, y0] = pt(a0, r0), [x1, y1] = pt(a1, r1);
+    const l = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    l.setAttribute('x1', x0); l.setAttribute('y1', y0); l.setAttribute('x2', x1); l.setAttribute('y2', y1);
+    l.setAttribute('stroke', c); l.setAttribute('stroke-width', w); l.setAttribute('stroke-linecap', 'round');
+    if (dash) l.setAttribute('stroke-dasharray', dash);
+    return l;
+  }
+  function arrowhead(a, r, c) {
+    const [hx, hy] = pt(a, r);
+    const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    g.setAttribute('transform', `translate(${hx} ${hy}) rotate(${a})`);
+    const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    p.setAttribute('d', 'M 0 0 L -11 -5 L -11 5 Z'); p.setAttribute('fill', c);
+    g.appendChild(p); return g;
+  }
+  function text(s, x, y, size, c, bold) {
+    const t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    t.setAttribute('x', x); t.setAttribute('y', y); t.setAttribute('fill', c);
+    t.setAttribute('font-family', 'IBM Plex Mono, monospace'); t.setAttribute('font-size', size);
+    t.setAttribute('font-weight', bold ? '700' : '500');
+    t.setAttribute('text-anchor', 'middle'); t.setAttribute('dominant-baseline', 'central');
+    t.textContent = s; return t;
+  }
+
+  const face = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+  face.setAttribute('cx', cx); face.setAttribute('cy', cy); face.setAttribute('r', R);
+  face.setAttribute('fill', 'var(--card)'); svg.appendChild(face);
+  const ring = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+  ring.setAttribute('cx', cx); ring.setAttribute('cy', cy); ring.setAttribute('r', R);
+  ring.setAttribute('fill', 'none'); ring.setAttribute('stroke', 'var(--line-hi)'); ring.setAttribute('stroke-width', '1');
+  svg.appendChild(ring);
+  for (let a = 0; a < 360; a += 30) {
+    const major = a % 90 === 0;
+    const [x1, y1] = pt(a, R), [x2, y2] = pt(a, major ? R - 16 : R - 8);
+    const l = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    l.setAttribute('x1', x1); l.setAttribute('y1', y1); l.setAttribute('x2', x2); l.setAttribute('y2', y2);
+    l.setAttribute('stroke', 'var(--txt-faint)'); l.setAttribute('stroke-width', major ? 2 : 1);
+    svg.appendChild(l);
+  }
+  svg.appendChild(text('N', ...pt(0, R - 22), 16, 'var(--accent)', true));
+  svg.appendChild(text('E', ...pt(90, R - 22), 14, 'var(--txt-faint)', false));
+  svg.appendChild(text('S', ...pt(180, R - 22), 14, 'var(--txt-faint)', false));
+  svg.appendChild(text('W', ...pt(270, R - 22), 14, 'var(--txt-faint)', false));
+
+  const beams = direction === 'forward' ? [{ang: az, half: half.forward, color: '#5A9BC9'}]
+              : direction === 'reverse' ? [{ang: (az + 180) % 360, half: half.reverse, color: '#E0A23C'}]
+              : [{ang: az, half: half.bidirectional, color: '#5A9BC9'}, {ang: (az + 180) % 360, half: half.bidirectional, color: '#E0A23C'}];
+  beams.forEach(b => svg.appendChild(wedge(b.ang, b.half, R - 4, b.color)));
+  beams.forEach(b => {
+    svg.appendChild(line(b.ang, b.ang, 32, R - 18, b.color, 4));
+    svg.appendChild(arrowhead(b.ang, R - 14, b.color));
+  });
+  svg.appendChild(line(az, az, 24, R - 2, 'var(--txt)', 2.5));
+  const hub = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+  hub.setAttribute('cx', cx); hub.setAttribute('cy', cy); hub.setAttribute('r', 6);
+  hub.setAttribute('fill', 'var(--accent)'); svg.appendChild(hub);
+  svg.appendChild(line(target, target, 24, R - 8, 'var(--accent)', 2, '5 5'));
+})();
+</script>
+
+</body>
+</html>
