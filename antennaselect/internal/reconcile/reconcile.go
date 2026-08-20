@@ -37,7 +37,9 @@ const (
 )
 
 // Inputs is the latest known state the reconciler resolves over. Zero values mean
-// "unknown"; RadioOnline gates whether radio-derived fields may be trusted (§10).
+// "unknown"; RadioOnline gates whether radio-derived fields may be trusted (§10). It is
+// the AND of bridge liveness (radio/status LWT) and radio-link liveness
+// (radio/state.device_online) — see the mqtt layer, which computes it.
 type Inputs struct {
 	RadioOnline     bool
 	RadioBand       string // canonical band name, e.g. "20m"
@@ -145,7 +147,12 @@ func (r *Reconciler) Resolve(in Inputs) Decision {
 	}
 
 	// Tier 3 — auto: band policy. Never trust radio state unless the radio is online (§10).
-	if in.RadioOnline {
+	// An empty band is a transient "no slice reported yet" / reconnect-Reset state from
+	// flexbridge, not a tuning intent: resolving it to the fallback would chatter the
+	// antenna to the fallback resource and back on every reconnect cycle. Hold the last
+	// selection instead — only a known-but-unmatched band (160m, gen, …) reaches the
+	// fallback via portForBand.
+	if in.RadioOnline && in.RadioBand != "" {
 		if port, ok := r.portForBand(in.RadioBand); ok {
 			return Decision{Mode: mode, Target: port, Source: SourceAuto}
 		}
@@ -155,8 +162,13 @@ func (r *Reconciler) Resolve(in Inputs) Decision {
 }
 
 // portForBand maps a band name to a port via the band policy and wiring map. Unmatched
-// bands (including 160m) use the configured fallback resource. Returns ok=false only if
-// even the fallback cannot be resolved (which Validate() rules out at load time).
+// bands (including 160m and the out-of-band "gen" marker) use the configured fallback
+// resource. Returns ok=false only if even the fallback cannot be resolved (which
+// Validate() rules out at load time).
+//
+// An empty band never reaches here from Resolve, which holds the last selection for that
+// transient state instead of falling through to the fallback; the `band != ""` guard below
+// is defense-in-depth should portForBand be called from elsewhere.
 //
 // The scan uses policyResources (sorted at construction) instead of ranging over the
 // band_policy map so the same config always resolves to the same port, even if a band

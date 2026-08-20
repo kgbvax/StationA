@@ -137,7 +137,12 @@ Highest asserting tier wins. Re-evaluated on every relevant input change:
 - **Tier 1 (idle)** is the safe default and overrides everything, including an operator
   hold. The switch's fail-safe-to-ground default covers power loss independently.
 - **Tier 3 (auto)** maps the radio's current band to a port via `[band_policy]`; unmatched
-  bands (incl. 160m) use the configured `fallback` (see config).
+  bands (incl. 160m, and the out-of-band `gen` marker) use the configured `fallback` (see
+  config). An **empty band** (`""` — flexbridge's transient "no slice reported yet" /
+  reconnect-Reset state) is *not* treated as unmatched: the reconciler **holds the last
+  selection** rather than chattering to the fallback. Only a known-but-unmatched band
+  reaches the fallback; the empty/transient case holds. Auto is skipped entirely (target
+  empty → hold) when the radio is not online (see §6 / §10).
 
 ---
 
@@ -158,7 +163,12 @@ compliance review backlog). `radio.state.tuning` is likewise not yet an input.
 Enforcement remains **hardware** — the series interlock
 `radio → rx-loop-ctrl → ant-ctrl → pa` (model §6). The reconciler owns the *ordering*
 only, and never sits in the enforcement path. **Never trust retained state for this** —
-check `radio/status` liveness before acting on `radio/state` (model §10).
+act on `radio/state` only when the radio is online (model §10): `radio/status` (broker
+LWT) must be `online` *and* `radio/state.device_online` must be `true`. `/status` alone is
+the bridge-process liveness, not the radio-link liveness — it stays `online` while
+flexbridge is up but the radio link is down, so it cannot gate on its own.
+`device_online` (which flexbridge always publishes) is the radio-link signal; the
+reconciler trusts radio-derived fields only when both are up.
 
 ---
 
@@ -231,8 +241,8 @@ defaults). The `set_inline` vocabulary matches atr1k-tuner-bridge's `/cmd` contr
 
 | Topic | Fields used |
 |-------|-------------|
-| `muehle/hf/radio/state` | `band`, `freq_hz`, `tx` (`tuning`: future input, not yet used) |
-| `muehle/hf/radio/status` | liveness gate before acting |
+| `muehle/hf/radio/state` | `band`, `freq_hz`, `tx`, `device_online` (radio-link liveness) (`tuning`: future input, not yet used) |
+| `muehle/hf/radio/status` | bridge liveness (LWT) — one half of the radio-online gate |
 | `muehle/hf` (station node) | `activity` (`active`\|`inactive`) — tier 1 |
 | `muehle/hf/antenna-select/cmd` | operator `request` — tier 2 |
 | `muehle/hf/ant-switch/state` | `selected` — confirm (`settled`: received, gating is backlog) |

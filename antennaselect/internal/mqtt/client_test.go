@@ -579,3 +579,192 @@ func TestReassertionAfterManualOverride(t *testing.T) {
 		t.Fatalf("expected reassertion on frequency change after manual override, got %d cmds", len(got))
 	}
 }
+
+// radioOnlineClient builds a Client backed by a recording fake and a running worker, plus a
+// drain helper that waits for all queued handler jobs to complete (FIFO over c.jobs). Used
+// by the RadioOnline gate tests below, which drive the real onRadioState/onRadioStatus
+// handlers (the AND of /status bridge liveness and /state.device_online radio-link liveness)
+// rather than setting in.RadioOnline directly.
+func radioOnlineClient(t *testing.T) (c *Client, antSwitchCmds func() []recordedMsg, drain func(), cancel context.CancelFunc) {
+	t.Helper()
+	var (
+		mu     sync.Mutex
+		record []recordedMsg
+	)
+	cfg := config.Config{
+		Location: "bauwagen", Host: "shari",
+		MQTT: config.MQTT{Site: "muehle", Station: "hf", Slot: "antenna-select"},
+		WiringMap: map[string]string{
+			"port1": "dummy-load", "port3": "ultrabeam", "port6": "fan-dipole", "off": "grounded",
+		},
+		BandPolicy: config.BandPolicy{
+			Bands:    map[string][]string{"ultrabeam": {"20m"}, "fan-dipole": {"40m"}},
+			Fallback: "fan-dipole",
+		},
+	}
+	fake := fakePaho{pub: func(topic string, qos byte, retained bool, payload any) paho.Token {
+		b, _ := payload.([]byte)
+		mu.Lock()
+		record = append(record, recordedMsg{topic, qos, retained, b})
+		mu.Unlock()
+		return okToken{}
+	}}
+	ctx, cancel := context.WithCancel(context.Background())
+	c = &Client{
+		client: fake, cfg: cfg, rec: reconcile.New(cfg),
+		site: "muehle", station: "hf", slot: "antenna-select",
+		jobs: make(chan func(), 256), ctx: ctx, cancel: cancel,
+	}
+	go sharedmqtt.RunJobs(ctx, c.jobs)
+	antSwitchCmds = func() []recordedMsg {
+		mu.Lock()
+		defer mu.Unlock()
+		var out []recordedMsg
+		for _, m := range record {
+			if m.topic == "muehle/hf/ant-switch/cmd" {
+				out = append(out, m)
+			}
+		}
+		return out
+	}
+	drain = func() {
+		done := make(chan struct{})
+		sharedmqtt.Enqueue(c.jobs, func() { close(done) })
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			t.Fatal("worker did not drain queued handler jobs in time")
+		}
+	}
+	return c, antSwitchCmds, drain, cancel
+}
+
+func radioStateMsg(deviceOnline bool, band string) fakeMessage {
+	return fakeMessage{
+		topic:   "muehle/hf/radio/state",
+		payload: []byte(`{"band":"` + band + `","freq_hz":14000000,"tx":"rx","device_online":` + boolStr(deviceOnline) + `}`),
+	}
+}
+
+func radioStatusMsg(online bool) fakeMessage {
+	v := "offline"
+	if online {
+		v = "online"
+	}
+	return fakeMessage{topic: "muehle/hf/radio/status", payload: []byte(v)}
+}
+
+func boolStr(b bool) string {
+	if b {
+		return "true"
+	}
+	return "false"
+}
+
+// TestRadioOnlineRequiresDeviceOnline is the regression guard for the antennaselect half of
+// the flexbridge frequency-chatter audit. /status is the broker LWT (bridge process
+// liveness); it stays online while the radio link is down. The old code keyed RadioOnline
+// on /status alone, so a bridge-up-but-radio-down state (flexbridge reconnecting, publishing
+// /state with device_online=false and band="") trusted the stale/empty radio state and
+// chattered the antenna to the fallback. RadioOnline must be the AND of bridge liveness and
+// device_online (radio-link liveness): only when both are up may radio-derived fields be
+// trusted (§10).
+func TestRadioOnlineRequiresDeviceOnline(t *testing.T) {
+	t.Run("bridge_up_radio_down_holds", func(t *testing.T) {
+		c, antSwitchCmds, drain, cancel := radioOnlineClient(t)
+		defer cancel()
+		// Bridge online, but the radio link is down (device_online=false), band=20m.
+		// Must NOT select: hold the last selection.
+		c.onRadioStatus(nil, radioStatusMsg(true))
+		c.onRadioState(nil, radioStateMsg(false, "20m"))
+		drain()
+		if got := antSwitchCmds(); len(got) != 0 {
+			t.Errorf("bridge up + radio down: expected no ant-switch select (hold), got %d: %v", len(got), got)
+		}
+	})
+
+	t.Run("bridge_up_radio_up_selects", func(t *testing.T) {
+		c, antSwitchCmds, drain, cancel := radioOnlineClient(t)
+		defer cancel()
+		c.onRadioStatus(nil, radioStatusMsg(true))
+		c.onRadioState(nil, radioStateMsg(true, "20m"))
+		drain()
+		got := antSwitchCmds()
+		if len(got) != 1 {
+			t.Fatalf("bridge up + radio up: expected 1 ant-switch select (20m->port3), got %d", len(got))
+		}
+		var p struct {
+			Select string `json:"select"`
+		}
+		if err := json.Unmarshal(got[0].payload, &p); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		if p.Select != "port3" {
+			t.Errorf("select=%q, want port3", p.Select)
+		}
+	})
+
+	t.Run("bridge_down_radio_up_holds", func(t *testing.T) {
+		c, antSwitchCmds, drain, cancel := radioOnlineClient(t)
+		defer cancel()
+		// Radio link is up but the bridge LWT says offline (frozen retained snapshot).
+		// Must hold — /status is the freshness gate (§10).
+		c.onRadioStatus(nil, radioStatusMsg(false))
+		c.onRadioState(nil, radioStateMsg(true, "20m"))
+		drain()
+		if got := antSwitchCmds(); len(got) != 0 {
+			t.Errorf("bridge down + radio up: expected no select (hold), got %d", len(got))
+		}
+	})
+
+	t.Run("empty_band_holds_even_when_online", func(t *testing.T) {
+		c, antSwitchCmds, drain, cancel := radioOnlineClient(t)
+		defer cancel()
+		// Both live, but band is empty (flexbridge reconnect Reset, no slice yet).
+		// Must hold — empty band is transient, not a fallback intent.
+		c.onRadioStatus(nil, radioStatusMsg(true))
+		c.onRadioState(nil, radioStateMsg(true, ""))
+		drain()
+		if got := antSwitchCmds(); len(got) != 0 {
+			t.Errorf("empty band while online: expected no select (hold), got %d", len(got))
+		}
+	})
+
+	t.Run("state_before_status_settles", func(t *testing.T) {
+		// Retained delivery order is not guaranteed: /state may arrive before /status.
+		// The intermediate (device online, bridge unknown) must hold, and the final
+		// state after /status=online must select exactly once.
+		c, antSwitchCmds, drain, cancel := radioOnlineClient(t)
+		defer cancel()
+		c.onRadioState(nil, radioStateMsg(true, "20m"))
+		drain()
+		if got := antSwitchCmds(); len(got) != 0 {
+			t.Fatalf("after /state alone: expected hold (bridge liveness unknown), got %d", len(got))
+		}
+		c.onRadioStatus(nil, radioStatusMsg(true))
+		drain()
+		if got := antSwitchCmds(); len(got) != 1 {
+			t.Errorf("after /status=online: expected 1 select total, got %d", len(got))
+		}
+	})
+
+	t.Run("radio_drop_after_up_releases_to_hold", func(t *testing.T) {
+		// Online and selected; then the radio link drops (device_online=false) while the
+		// bridge stays up. RadioOnline must go false → no new select, and a subsequent
+		// band change must NOT chatter while the radio is down.
+		c, antSwitchCmds, drain, cancel := radioOnlineClient(t)
+		defer cancel()
+		c.onRadioStatus(nil, radioStatusMsg(true))
+		c.onRadioState(nil, radioStateMsg(true, "20m"))
+		drain()
+		if got := antSwitchCmds(); len(got) != 1 {
+			t.Fatalf("setup: expected 1 select, got %d", len(got))
+		}
+		// Radio link drops; switch still on port3 (matches last target), band unchanged.
+		c.onRadioState(nil, radioStateMsg(false, "20m"))
+		drain()
+		if got := antSwitchCmds(); len(got) != 1 {
+			t.Errorf("after radio drop: expected no new select, got %d", len(got))
+		}
+	})
+}
