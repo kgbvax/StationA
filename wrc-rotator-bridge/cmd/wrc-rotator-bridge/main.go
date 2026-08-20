@@ -26,6 +26,7 @@ import (
 	"wrc-rotator-bridge/internal/bridge"
 	"wrc-rotator-bridge/internal/config"
 	"wrc-rotator-bridge/internal/gs232"
+	"wrc-rotator-bridge/internal/pstrotator"
 	"wrc-rotator-bridge/internal/rotor"
 )
 
@@ -136,7 +137,19 @@ func run(ctx context.Context, cfg config.Config, debug bool, log *slog.Logger) e
 		}()
 	}
 
-	// 3. Run the WRC WebSocket connection loop until ctx is cancelled.
+	// 3. Start the PSTRotator UDP listener (optional legacy control path). It
+	// drives the same device the bridge does; resulting motion surfaces in
+	// /state. Runs in its own goroutine; ctx closes the socket on shutdown.
+	if cfg.PSTRotator.Enabled {
+		srv := pstrotator.New(cfg.PSTRotator.Bind, cfg.PSTRotator.Port, dev, log)
+		go func() {
+			if err := srv.Run(ctx); err != nil {
+				log.Error("PSTRotator UDP server ended", "err", err)
+			}
+		}()
+	}
+
+	// 4. Run the WRC WebSocket connection loop until ctx is cancelled.
 	return wsLoop(ctx, cfg, b, dev, log)
 }
 

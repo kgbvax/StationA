@@ -21,6 +21,9 @@ func TestDefaults(t *testing.T) {
 	if !cfg.GS232.Enabled || cfg.GS232.Port != 7373 {
 		t.Errorf("default gs232 = %+v, want enabled port 7373", cfg.GS232)
 	}
+	if !cfg.PSTRotator.Enabled || cfg.PSTRotator.Port != 12040 {
+		t.Errorf("default pstrotator = %+v, want enabled port 12040", cfg.PSTRotator)
+	}
 	if cfg.Host != "shari" {
 		t.Errorf("default host = %q, want shari", cfg.Host)
 	}
@@ -63,6 +66,10 @@ host = "shack-pc"
 url = "ws://10.0.0.5/wsrotor"
 [gs232]
 enabled = false
+[pstrotator]
+enabled = true
+bind = "127.0.0.1"
+port = 12041
 [mqtt]
 broker = "tcp://1.2.3.4:1883"
 site = "other"
@@ -87,6 +94,9 @@ slot = "rotator-2"
 	}
 	if cfg.GS232.Enabled {
 		t.Error("gs232 should be disabled by TOML")
+	}
+	if !cfg.PSTRotator.Enabled || cfg.PSTRotator.Bind != "127.0.0.1" || cfg.PSTRotator.Port != 12041 {
+		t.Errorf("pstrotator = %+v, want enabled 127.0.0.1:12041", cfg.PSTRotator)
 	}
 	if cfg.MQTT.Broker != "tcp://1.2.3.4:1883" {
 		t.Errorf("broker = %q", cfg.MQTT.Broker)
@@ -142,6 +152,13 @@ func TestValidate(t *testing.T) {
 	cfg4.GS232.Port = 0
 	if err := cfg4.Validate(); err == nil {
 		t.Error("enabled gs232 with port 0 should fail validation")
+	}
+
+	cfg5 := Defaults()
+	cfg5.PSTRotator.Enabled = true
+	cfg5.PSTRotator.Port = 0
+	if err := cfg5.Validate(); err == nil {
+		t.Error("enabled pstrotator with port 0 should fail validation")
 	}
 }
 

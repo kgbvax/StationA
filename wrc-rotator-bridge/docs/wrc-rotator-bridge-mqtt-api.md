@@ -203,9 +203,27 @@ coherent.
 
 Commands are `\r`- or `\n`-terminated.
 
+## 8. PSTRotator UDP listener (optional)
+
+When `[pstrotator] enabled = true` (default), wrc-rotator-bridge also listens
+for PSTRotator XML datagrams on `bind:port` (default `0.0.0.0:12040`). This is
+another parallel control path orthogonal to the MQTT contract: it drives the
+same rotator the bridge does, and the resulting motion surfaces in `/state`.
+
+| Datagram | Meaning | Response |
+|----------|---------|----------|
+| `<PST><AZIMUTH>180</AZIMUTH></PST>` | rotate to 180° | none |
+| `<PST><AZIMUTH>180</AZIMUTH><ELEVATION>45</ELEVATION></PST>` | rotate to 180° (elevation ignored) | none |
+| `<PST><STOP>1</STOP></PST>` | halt motion | none |
+| `<PST><PARK>1</PARK></PST>` | park | none (no park support; logged) |
+| `<PST>AZ?</PST>` | query position | `<PST><AZIMUTH>aaa</AZIMUTH></PST>` on source IP, port+1 |
+
+Configure PSTRotator to send its UDP control output to the bridge host on port
+`12040` (or the configured `pstrotator.port`).
+
 ---
 
-## 8. Home Assistant discovery
+## 9. Home Assistant discovery
 
 The standalone `hadiscovery` consumer is the only path wrc-rotator-bridge uses.
 It reads the consumer-neutral `expose` block from `/meta` (§4) and renders HA
@@ -217,7 +235,7 @@ to `false` and is not wired in this component. See `../../docs/station-integrati
 
 ---
 
-## 9. Typical interaction flows
+## 10. Typical interaction flows
 
 **Read current state on startup:** subscribe to `muehle/hf/rotator/#`. The
 broker immediately delivers retained `/meta`, `/state`, and `/status`.
