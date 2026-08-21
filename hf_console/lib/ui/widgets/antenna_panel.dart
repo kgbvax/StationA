@@ -9,7 +9,7 @@ import 'card_container.dart';
 class AntennaPanel extends StatelessWidget {
   const AntennaPanel({super.key});
 
-  static const _ports = ['off', 'port1', 'port2', 'port3', 'port4', 'port5', 'port6'];
+  static const _ports = ['off', 'port1', 'port4', 'port5', 'port6'];
 
   @override
   Widget build(BuildContext context) {
@@ -27,9 +27,20 @@ class AntennaPanel extends StatelessWidget {
 
     final antName = antennaMap[selected] ?? selected;
 
+    final isManual = mode == 'manual';
+
     void selectPort(String port) {
       if (!switchOnline) return;
-      if (selectOnline) {
+      // In manual mode the operator drives the switch directly. In auto mode,
+      // send a request to antenna-select if it is online; otherwise fall back
+      // to driving the switch directly.
+      if (isManual) {
+        mqtt.publish(
+          cmdTopic('hf/ant-switch'),
+          antennaSwitchPayload(port),
+          retain: cmdRetain['muehle/hf/ant-switch']!,
+        );
+      } else if (selectOnline) {
         mqtt.publish(
           cmdTopic('hf/antenna-select'),
           antennaSelectPayload(port),
@@ -44,11 +55,11 @@ class AntennaPanel extends StatelessWidget {
       }
     }
 
-    void setAuto() {
+    void setMode(String newMode) {
       if (!selectOnline) return;
       mqtt.publish(
         cmdTopic('hf/antenna-select'),
-        antennaSelectPayload('auto'),
+        antennaSelectPayload(newMode),
         retain: cmdRetain['muehle/hf/antenna-select']!,
       );
     }
@@ -94,13 +105,13 @@ class AntennaPanel extends StatelessWidget {
               }),
               const SizedBox(width: 16),
               ElevatedButton(
-                onPressed: selectOnline ? setAuto : null,
+                onPressed: selectOnline ? () => setMode('auto') : null,
                 style: AppTheme.actionButton(active: mode == 'auto'),
                 child: const Text('AUTO'),
               ),
               ElevatedButton(
-                onPressed: null,
-                style: AppTheme.actionButton(),
+                onPressed: selectOnline ? () => setMode('manual') : null,
+                style: AppTheme.actionButton(active: mode == 'manual'),
                 child: const Text('MANUAL'),
               ),
             ],

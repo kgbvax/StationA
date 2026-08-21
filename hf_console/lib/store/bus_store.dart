@@ -1,4 +1,5 @@
 import 'dart:collection';
+import 'dart:convert';
 import 'package:flutter/foundation.dart';
 
 class Slot {
@@ -11,7 +12,16 @@ class Slot {
   Slot(this.address);
 
   bool get bridgeOnline => status == 'online';
-  bool get deviceOnline => (state?['device_online'] ?? false) == true;
+  bool get deviceOnline {
+    // Physical-device bridges publish /state.device_online explicitly. Logic
+    // slots (antenna-select, power-seq, hadiscovery) have no physical device
+    // link and therefore omit the key; treat them as online once their state
+    // snapshot has arrived.
+    if (state == null) return false;
+    if (!state!.containsKey('device_online')) return true;
+    return state!['device_online'] == true;
+  }
+
   bool get isOnline => bridgeOnline && deviceOnline;
 }
 
@@ -19,7 +29,7 @@ class Slot {
 class FaultRecord {
   final String address;
   final String text;
-  final String ts;
+  String ts;
   bool active;
 
   FaultRecord({required this.address, required this.text, required this.ts, this.active = true});
@@ -63,20 +73,36 @@ class BusStore extends ChangeNotifier {
           slot.cmd = null;
       }
     } else {
+      final value = _decodePayload(payload);
       switch (plane) {
         case 'meta':
-          slot.meta = payload as Map<String, dynamic>?;
+          slot.meta = value as Map<String, dynamic>?;
         case 'state':
-          slot.state = payload as Map<String, dynamic>?;
-          _updateHotValues(addr, slot.state!);
-          _updateFaultHistory(addr, slot.state);
+          slot.state = value as Map<String, dynamic>?;
+          if (slot.state != null) {
+            _updateHotValues(addr, slot.state!);
+            _updateFaultHistory(addr, slot.state);
+          }
         case 'status':
-          slot.status = payload as String?;
+          slot.status = value as String?;
         case 'cmd':
-          slot.cmd = payload as Map<String, dynamic>?;
+          slot.cmd = value as Map<String, dynamic>?;
       }
     }
     notifyListeners();
+  }
+
+  /// Accept either a decoded object or a JSON string. The real broker path
+  /// decodes before calling apply, but tests and direct callers may pass JSON.
+  dynamic _decodePayload(dynamic payload) {
+    if (payload is String) {
+      try {
+        return jsonDecode(payload);
+      } catch (_) {
+        return payload;
+      }
+    }
+    return payload;
   }
 
   void _updateFaultHistory(String addr, Map<String, dynamic>? state) {
@@ -99,6 +125,9 @@ class BusStore extends ChangeNotifier {
     final existing = _faultHistory.where((r) => r.key == key).lastOrNull;
     if (existing != null) {
       existing.active = true;
+      // Refresh the timestamp so a repeated fault stays at the top of the
+      // sorted list and signals the problem is still present.
+      existing.ts = ts;
       return;
     }
 
@@ -117,7 +146,8 @@ class BusStore extends ChangeNotifier {
 
   String _activeFaultText(String? fault, String? error) {
     final hasFault = fault != null && fault.isNotEmpty && fault != 'none';
-    if (error != null && error.isNotEmpty) {
+    final hasError = error != null && error.isNotEmpty && error.toUpperCase() != 'NONE';
+    if (hasError) {
       return error.toUpperCase();
     }
     if (hasFault) {

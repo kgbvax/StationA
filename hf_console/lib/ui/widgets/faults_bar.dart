@@ -16,17 +16,36 @@ class FaultsBar extends StatelessWidget {
     for (final record in store.faultHistory) {
       history.add(_Fault(
         _ts(record.ts, time),
+        _parseTime(record.ts, now),
         '${record.address}: ${record.text}',
         active: record.active,
       ));
     }
 
+    // If an address has an active fault, the fault text is more useful than the
+    // generic offline line, so suppress the offline line for that address.
+    final activeFaultAddresses = store.faultHistory
+        .where((r) => r.active)
+        .map((r) => r.address)
+        .toSet();
+
     final List<_Fault> offline = [];
     for (final entry in store.offlineList) {
-      offline.add(_Fault(time, entry, active: true));
+      final address = entry.split(':').first;
+      if (activeFaultAddresses.contains(address)) continue;
+      offline.add(_Fault(time, now, entry, active: true));
     }
 
-    final faults = [...offline, ...history.reversed];
+    final faults = [...history, ...offline];
+    // Active problems first, then by time (newest first).
+    faults.sort((a, b) {
+      final priA = a.active ? 0 : 1;
+      final priB = b.active ? 0 : 1;
+      final pri = priA.compareTo(priB);
+      if (pri != 0) return pri;
+      return b.at.compareTo(a.at);
+    });
+    final visible = faults.take(5).toList();
     final activeCount = faults.where((f) => f.active).length;
 
     return Container(
@@ -44,10 +63,10 @@ class FaultsBar extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 6),
-          if (faults.isEmpty)
-            _FaultRow(fault: _Fault(time, 'No faults or offline devices', active: false))
+          if (visible.isEmpty)
+            _FaultRow(fault: _Fault(time, now, 'No faults or offline devices', active: false))
           else
-            ...faults.take(8).map((f) => _FaultRow(fault: f)),
+            ...visible.map((f) => _FaultRow(fault: f)),
         ],
       ),
     );
@@ -60,6 +79,12 @@ class FaultsBar extends StatelessWidget {
       return ts.substring(11, 19);
     }
     return fallback;
+  }
+
+  DateTime _parseTime(String? ts, DateTime fallback) {
+    if (ts == null || ts.isEmpty) return fallback;
+    final parsed = DateTime.tryParse(ts);
+    return parsed ?? fallback;
   }
 }
 
@@ -116,8 +141,9 @@ class _Tag extends StatelessWidget {
 
 class _Fault {
   final String ts;
+  final DateTime at;
   final String text;
   final bool active;
 
-  const _Fault(this.ts, this.text, {this.active = false});
+  const _Fault(this.ts, this.at, this.text, {this.active = false});
 }

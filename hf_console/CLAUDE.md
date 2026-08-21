@@ -41,9 +41,11 @@ Non-retained (one-shot): `hf/pa`, `hf/rotator`, `hf/tuner`, `hf/power-seq`.
 
 ## Build
 
+Run the prebuild gate before every release APK:
+
 ```bash
 cd hf_console
-flutter analyze
+tool/prebuild.sh      # flutter analyze + flutter test
 flutter build apk --release
 ```
 
@@ -51,7 +53,7 @@ Sideload the resulting APK onto the tablet. No deploy to shari — the app runs 
 
 ## Verification
 
-- Build clean via `flutter analyze`
+- `tool/prebuild.sh` passes (`flutter analyze` + `flutter test`)
 - `flutter build apk --release` succeeds
 - On the LAN tablet: enter `console` broker creds, confirm subscription traffic via `mosquitto_sub -t 'muehle/#' -v`
 - Offline fonts render correctly (no `google_fonts` runtime fetch)

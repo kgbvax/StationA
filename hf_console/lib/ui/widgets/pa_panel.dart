@@ -45,67 +45,67 @@ class PaPanel extends StatelessWidget {
             title: 'PA · ACOM 1200S',
             trailing: _Tag(tagLabel, tagColor),
           ),
-          IntrinsicHeight(
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      _Meter(
-                        value: fwd,
-                        max: 1200,
-                        unit: 'W FWD',
-                        labels: const ['0', '500', '1000', '1200'],
-                        fillColor: AppTheme.green,
-                        compact: true,
-                      ),
-                      _Meter(
-                        value: swr,
-                        max: 4.0,
-                        unit: 'SWR',
-                        labels: const ['1.0', '1.5', '3.0', '4.0'],
-                        fillColor: AppTheme.amber,
-                        compact: true,
-                      ),
-                      if (rfl > 0)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 2),
-                          child: Text('REFL ${rfl.toStringAsFixed(0)} W', style: AppTheme.mono(11, color: AppTheme.txtFaint)),
-                        ),
-                    ],
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Expanded(
+                    child: _Meter(
+                      value: fwd,
+                      max: 1200,
+                      unit: 'W FWD',
+                      labels: const ['0', '500', '1000', '1200'],
+                      fillColor: AppTheme.green,
+                      compact: true,
+                    ),
                   ),
-                ),
-                const SizedBox(width: 10),
-                SizedBox(
-                  width: 96,
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      SizedBox(
-                        height: 34,
-                        child: ElevatedButton(
-                          onPressed: online ? () => setMode('operate') : null,
-                          style: AppTheme.actionButton(active: mode == 'operate'),
-                          child: const Text('OPERATE'),
-                        ),
-                      ),
-                      SizedBox(
-                        height: 34,
-                        child: ElevatedButton(
-                          onPressed: online ? () => setMode('standby') : null,
-                          style: AppTheme.actionButton(amber: true, active: mode == 'standby'),
-                          child: const Text('STANDBY'),
-                        ),
-                      ),
-                    ],
+                  const SizedBox(width: 10),
+                  SizedBox(
+                    width: 96,
+                    height: 34,
+                    child: ElevatedButton(
+                      onPressed: online ? () => setMode('operate') : null,
+                      style: AppTheme.actionButton(active: mode == 'operate'),
+                      child: const Text('OPERATE'),
+                    ),
                   ),
+                ],
+              ),
+              if (rfl > 0)
+                Padding(
+                  padding: const EdgeInsets.only(top: 2),
+                  child: Text('REFL ${rfl.toStringAsFixed(0)} W', style: AppTheme.mono(11, color: AppTheme.txtFaint)),
                 ),
-              ],
-            ),
+              const SizedBox(height: 10),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Expanded(
+                    child: _Meter(
+                      value: swr,
+                      max: 4.0,
+                      unit: 'SWR',
+                      labels: const ['1.0', '1.5', '3.0', '4.0'],
+                      fillColor: AppTheme.amber,
+                      compact: true,
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  SizedBox(
+                    width: 96,
+                    height: 34,
+                    child: ElevatedButton(
+                      onPressed: online ? () => setMode('standby') : null,
+                      style: AppTheme.actionButton(amber: true, active: mode == 'standby'),
+                      child: const Text('STANDBY'),
+                    ),
+                  ),
+                ],
+              ),
+            ],
           ),
         ],
       ),
