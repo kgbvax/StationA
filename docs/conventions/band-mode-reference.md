@@ -49,6 +49,46 @@ label, not a synthesized one:
 
 ---
 
+## Band color codes (horstreporter convention)
+
+All stationa components that render DX spots with a band color MUST use the
+same hex values as the horstreporter web frontend (`static/utils.js:577-592`,
+`bandColors`). The visual correspondence between the Android console and the
+horstreporter web frontend on the same QTH is a deliberate cross-component
+invariant — the same spot dot should be the same color in both views, so a
+spot a user noticed on the web stays recognizable when it appears on the
+tablet.
+
+The palette:
+
+| Band   | Hex       | RGB             | Note        |
+|--------|-----------|-----------------|-------------|
+| `160m` | `#8B0000` | (139, 0, 0)     | dark red    |
+| `80m`  | `#800080` | (128, 0, 128)   | purple      |
+| `60m`  | `#4B0082` | (75, 0, 130)    | indigo      |
+| `40m`  | `#0000FF` | (0, 0, 255)     | blue        |
+| `30m`  | `#03B1B1` | (3, 177, 177)   | teal        |
+| `20m`  | `#008000` | (0, 128, 0)     | green       |
+| `17m`  | `#808000` | (128, 128, 0)   | olive       |
+| `15m`  | `#FFA500` | (255, 165, 0)   | orange      |
+| `12m`  | `#00FFFF` | (0, 255, 255)   | cyan        |
+| `10m`  | `#FF0000` | (255, 0, 0)     | red         |
+| `6m`   | `#FF00FF` | (255, 0, 255)   | magenta     |
+| `4m`   | `#FF1493` | (255, 20, 147)  | deep pink   |
+| `2m`   | `#008080` | (0, 128, 128)   | dark teal   |
+| (unknown) | `#555555` | (85, 85, 85) | grey fallback |
+
+These are **fixed hex values**, not theme tokens. A consumer that maps bands
+to colors should expose a `bandColor(String band)` function with a grey
+fallback (`#555555`, matching horstreporter's `bandColors.all`) for unbanded
+or unknown labels — never fail-closed to the component's general "txtMute"
+because that drifts the visual from the web tool. The fallback is also used
+when the spot has no `band` field at all (e.g. older feed payloads); in that
+case `sourceType` may be used as a *secondary* visual cue (FT8/FT4 green,
+dxcluster cyan, RBN amber, WSPR orange) but band color wins when present.
+
+---
+
 ## HF band centre frequencies (IARU R1)
 
 Used by the antenna controller (ultrabridge) when jumping to a band by name.

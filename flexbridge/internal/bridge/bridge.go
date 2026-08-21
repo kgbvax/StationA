@@ -14,6 +14,21 @@ import (
 	schema "codeberg.org/kgbvax/stationa/shared/schema"
 )
 
+// bandTransitionHold is the window after a set_band command during which
+// slice-derived band changes are suppressed unless they match the target band.
+// SmartSDR changes the panadapter band immediately, but the slice retunes
+// asynchronously and emits intermediate status frames carrying the old
+// frequency (now outside the target band). Without the hold, flexbridge
+// derives a transient wrong band (e.g. 40m) and publishes it, causing
+// antenna-select to chatter to the fallback antenna for a few milliseconds.
+var bandTransitionHold = 750 * time.Millisecond
+
+type bandTransition struct {
+	target    string    // canonical band label we are waiting for, e.g. "15m"
+	deadline  time.Time // hold expires here even if the pan never confirms
+	confirmed bool      // true once a tracked pan reports band==target
+}
+
 // Bridge owns the radio state model and translates radio events (TCP
 // status frames) into MQTT publishes following the station integration model.
 // All shared state is guarded by mu.
@@ -32,6 +47,7 @@ type Bridge struct {
 	micProfiles map[string]struct{}            // mic profile names from `profile mic info` → `profile mic list=` status frames
 	tuStatus    flexradio.ATUStatus
 	state       radioState
+	bandTx      *bandTransition // nil when no band transition is in progress
 
 	discoDone bool
 }
@@ -246,6 +262,7 @@ func (b *Bridge) Reset() {
 	b.tuStatus = flexradio.ATUStatus{}
 	b.state = radioState{} // deviceOnline defaults false
 	b.commander = nil      // radio link down: /cmd must no-op
+	b.bandTx = nil         // any pending band transition is abandoned
 	b.discoDone = false
 	snap := b.state
 	b.mu.Unlock()
@@ -509,13 +526,21 @@ func (b *Bridge) handlePan(f flexradio.Frame) {
 	b.mu.Lock()
 	_, existed := b.pans[p.Handle]
 	b.pans[p.Handle] = p
+	// A tracked panadapter reporting the target band confirms a commanded band
+	// change and releases the transition hold early. This prevents the hold from
+	// suppressing legitimate retunes once the new band is reached.
+	if b.bandTx != nil && p.Band != 0 {
+		if bandLabel, ok := flexradio.BandLabelForNumber(p.Band); ok && bandLabel == b.bandTx.target {
+			b.bandTx.confirmed = true
+		}
+	}
 	b.mu.Unlock()
 	if !existed {
 		// Info-level so a default (info) log confirms the pan subscription is
 		// delivering without bumping log.level to debug.
 		b.log.Infof("panadapter tracked handle=%s center_hz=%d", p.Handle, p.CenterHz)
 	} else {
-		b.log.Debugf("pan update handle=%s center_hz=%d", p.Handle, p.CenterHz)
+		b.log.Debugf("pan update handle=%s center_hz=%d band=%d", p.Handle, p.CenterHz, p.Band)
 	}
 }
 
@@ -561,6 +586,26 @@ func (b *Bridge) updateActiveSliceState() bool {
 	// global published band — see handleSlice for why.
 	newBand := b.sliceBand[active.Index]
 	newMode := flexradio.NormalizeMode(active.Mode)
+
+	// Band-transition hold: after a set_band command, suppress slice-derived
+	// band changes that don't match the target until the panadapter confirms the
+	// new band or the hold times out. We still publish frequency/mode updates
+	// that are inside the target band, and we always publish once the hold ends.
+	if tx := b.bandTx; tx != nil {
+		now := time.Now()
+		if !tx.confirmed && now.Before(tx.deadline) {
+			if newBand != tx.target {
+				// Keep the previous band so downstream consumers do not act on the
+				// transient old frequency. Frequency and mode are still allowed to
+				// update if they belong to the target band.
+				newBand = b.state.band
+			}
+		} else {
+			// Hold expired or confirmed: clear it and accept the derived band.
+			b.bandTx = nil
+		}
+	}
+
 	if b.state.freqHz == newFreq && b.state.mode == newMode && b.state.band == newBand {
 		return false
 	}
@@ -732,7 +777,8 @@ func (b *Bridge) HandleCommand(payload []byte) {
 		// Native SmartSDR band-stacking: change the band on a panadapter and the
 		// radio restores the last-used frequency/mode for that band. The result
 		// is observed on the slice/pan status stream (/state stays freq-derived).
-		bandNum, ok := flexradio.BandNumberFor(c.Value)
+		bandLabel := strings.ToLower(strings.TrimSpace(c.Value))
+		bandNum, ok := flexradio.BandNumberFor(bandLabel)
 		if !ok {
 			b.log.Warnf("cmd set_band: unknown/unsupported band %q", c.Value)
 			return
@@ -744,10 +790,19 @@ func (b *Bridge) HandleCommand(payload []byte) {
 			b.log.Warnf("cmd set_band: no panadapter tracked (open a panadapter first)")
 			return
 		}
-		b.log.Infof("cmd set_band: band=%s (n=%d) pan=%s", strings.TrimSpace(c.Value), bandNum, handle)
+		b.log.Infof("cmd set_band: band=%s (n=%d) pan=%s", bandLabel, bandNum, handle)
 		if err := cmd.SetBand(handle, bandNum); err != nil {
 			b.log.Warnf("cmd set_band: %v", err)
+			return
 		}
+		// Arm the band-transition hold. While active, slice-derived band changes
+		// that do not match the target are suppressed so antennaselect does not
+		// see the transient old frequency as a tuning intent. The hold is released
+		// when a tracked panadapter reports the requested band, or when the
+		// deadline expires (whichever comes first).
+		b.mu.Lock()
+		b.bandTx = &bandTransition{target: bandLabel, deadline: time.Now().Add(bandTransitionHold)}
+		b.mu.Unlock()
 
 	case c.Action == "set_mic_profile":
 		// Native SmartSDR mic-profile load. The name is double-quoted on the

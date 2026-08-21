@@ -138,6 +138,18 @@ func BandNumberFor(label string) (int, bool) {
 	return n, ok
 }
 
+// BandLabelForNumber is the inverse of BandNumberFor: it maps a SmartSDR band
+// number back to the canonical band label (e.g. 20 → "20m"). ok is false for
+// numbers that do not correspond to a supported band.
+func BandLabelForNumber(n int) (string, bool) {
+	for label, num := range bandStackingBands {
+		if num == n {
+			return label, true
+		}
+	}
+	return "", false
+}
+
 // BandIsValid reports whether a band label is one we recognize (case- and
 // dash-insensitive), including the "gen" general-coverage label. Used mainly
 // for sanity-checking external inputs.

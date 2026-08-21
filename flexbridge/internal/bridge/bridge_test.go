@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"flexbridge/internal/flexradio"
 	"flexbridge/internal/ha"
@@ -728,6 +729,78 @@ func TestHandleCommand_SetBand(t *testing.T) {
 		seedPan(t, b, "0x40000000", 20)
 		b.HandleCommand(cmdJSON("set_band", "20m")) // must not panic
 	})
+}
+
+// TestHandleCommand_SetBand_SuppressesTransientBand verifies that after a
+// set_band command, intermediate slice status frames carrying the old frequency
+// do not publish a transient wrong band to the bus. The band is held at the
+// previous value until the panadapter reports the target band.
+func TestHandleCommand_SetBand_SuppressesTransientBand(t *testing.T) {
+	b, pub := newTestBridge(t)
+	fc := &fakeCommander{}
+	b.SetCommander(fc)
+
+	// Start on 10m.
+	seedPan(t, b, "0x40000000", 10)
+	f10, _ := flexradio.ParseFrame("S0|slice 0 0 RF_frequency=28.300000 mode=USB active=1")
+	b.HandleStatus(f10)
+	snap, ok := lastState(pub.Messages(), testStateTopic)
+	if !ok || snap.Band != "10m" {
+		t.Fatalf("baseline band = %q, want 10m", snap.Band)
+	}
+
+	// Command a change to 15m.
+	pub.Reset()
+	b.HandleCommand(cmdJSON("set_band", "15m"))
+
+	// SmartSDR sends a slice update with the old 10m frequency before the slice
+	// has retuned to 15m. Without the transition hold this would derive 10m (or
+	// gen) and republish, which antennaselect would interpret as a routing intent.
+	fTransient, _ := flexradio.ParseFrame("S0|slice 0 0 RF_frequency=28.300000 mode=USB active=1")
+	b.HandleStatus(fTransient)
+	if _, ok := lastState(pub.Messages(), testStateTopic); ok {
+		t.Fatalf("transient slice should not publish /state during band transition")
+	}
+
+	// The panadapter confirms 15m; subsequent slice updates are accepted.
+	pub.Reset()
+	fPan15, _ := flexradio.ParseFrame("S0|display pan 0x40000000 band=15 center=21.225 in_use=1")
+	b.HandleStatus(fPan15)
+	f15, _ := flexradio.ParseFrame("S0|slice 0 0 RF_frequency=21.225000 mode=USB active=1")
+	b.HandleStatus(f15)
+	snap, ok = lastState(pub.Messages(), testStateTopic)
+	if !ok || snap.Band != "15m" || snap.FreqHz != 21_225_000 {
+		t.Fatalf("after pan confirm: got band=%q freq_hz=%d, want 15m/21225000", snap.Band, snap.FreqHz)
+	}
+}
+
+// TestHandleCommand_SetBand_HoldExpires verifies that the band-transition hold
+// releases after its deadline even if the panadapter never reports the target
+// band, so a stuck transition cannot suppress real band changes forever.
+func TestHandleCommand_SetBand_HoldExpires(t *testing.T) {
+	// Use a very short hold so the test does not sleep for long.
+	origHold := bandTransitionHold
+	bandTransitionHold = 5 * time.Millisecond
+	defer func() { bandTransitionHold = origHold }()
+
+	b, pub := newTestBridge(t)
+	fc := &fakeCommander{}
+	b.SetCommander(fc)
+
+	seedPan(t, b, "0x40000000", 10)
+	f10, _ := flexradio.ParseFrame("S0|slice 0 0 RF_frequency=28.300000 mode=USB active=1")
+	b.HandleStatus(f10)
+
+	b.HandleCommand(cmdJSON("set_band", "40m"))
+	time.Sleep(10 * time.Millisecond) // wait for hold to expire
+
+	pub.Reset()
+	f40, _ := flexradio.ParseFrame("S0|slice 0 0 RF_frequency=7.100000 mode=LSB active=1")
+	b.HandleStatus(f40)
+	snap, ok := lastState(pub.Messages(), testStateTopic)
+	if !ok || snap.Band != "40m" {
+		t.Fatalf("after hold expiry: got band=%q, want 40m", snap.Band)
+	}
 }
 
 // TestHandleDVK_State asserts the dvk status stream flows to the retained
