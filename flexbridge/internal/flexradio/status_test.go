@@ -230,6 +230,69 @@ func TestNormalizeMode(t *testing.T) {
 	}
 }
 
+func TestParsePan(t *testing.T) {
+	// A "display pan" status line: the frame's TopicArgs is "pan <stream_id>";
+	// the handle is the topic arg after the literal "pan" word. center= is MHz;
+	// pan status carries no band= field in practice (best-effort here).
+	p := ParsePan("pan 0x40000000", "center=14.175 x_pixels=1000")
+	if p.Handle != "0x40000000" {
+		t.Errorf("Handle = %q, want 0x40000000", p.Handle)
+	}
+	if p.CenterHz != 14_175_000 {
+		t.Errorf("CenterHz = %d, want 14175000", p.CenterHz)
+	}
+
+	// band= is parsed when present (best-effort; real pan status uses center).
+	p = ParsePan("pan 0x40000000", "band=20 center=14.175")
+	if p.Band != 20 {
+		t.Errorf("Band = %d, want 20", p.Band)
+	}
+
+	// Missing center leaves CenterHz at zero.
+	p = ParsePan("pan 0x40000001", "x_pixels=1000")
+	if p.Handle != "0x40000001" {
+		t.Errorf("Handle = %q, want 0x40000001", p.Handle)
+	}
+	if p.CenterHz != 0 {
+		t.Errorf("CenterHz = %d, want 0 when absent", p.CenterHz)
+	}
+
+	// Non-numeric band is ignored.
+	p = ParsePan("pan 0x40000002", "band=x0 center=50.0")
+	if p.Band != 0 {
+		t.Errorf("Band = %d, want 0 for non-integer band", p.Band)
+	}
+	if p.CenterHz != 50_000_000 {
+		t.Errorf("CenterHz = %d, want 50000000", p.CenterHz)
+	}
+
+	// No handle after "pan" → empty (caller drops it).
+	if p := ParsePan("pan", "center=14.0"); p.Handle != "" {
+		t.Errorf("Handle = %q, want empty", p.Handle)
+	}
+	// Defensive: a caller passing just the handle (no "pan" prefix) still works.
+	if p := ParsePan("0x40000003", "center=14.0"); p.Handle != "0x40000003" {
+		t.Errorf("Handle = %q, want 0x40000003 (no-prefix fallback)", p.Handle)
+	}
+}
+
+func TestParseSlice_PanHandle(t *testing.T) {
+	// When the slice status carries a pan=<handle> field, it is captured so the
+	// bridge can correlate a band change to the slice's panadapter.
+	s, err := ParseSlice("0 0", "RF_frequency=14.100000 mode=USB active=1 pan=0x40000000")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.PanHandle != "0x40000000" {
+		t.Errorf("PanHandle = %q, want 0x40000000", s.PanHandle)
+	}
+	// Absent pan= leaves PanHandle empty (bridge falls back to single/lowest pan).
+	s, _ = ParseSlice("0 0", "RF_frequency=14.100000 mode=USB active=1")
+	if s.PanHandle != "" {
+		t.Errorf("PanHandle = %q, want empty when absent", s.PanHandle)
+	}
+}
+
 func TestParseStatusFields_NoEquals(t *testing.T) {
 	f := ParseStatusFields("foo bar baz")
 	if len(f) != 0 {

@@ -136,6 +136,7 @@ func ParseStatusFields(s string) map[string]string {
 type SliceStatus struct {
 	Index      int    // first topic arg (slice list index)
 	RcvrIndex  int    // second topic arg (receiver/panadapter index, may be absent)
+	PanHandle  string // pan=<handle> the slice is on (hex pan stream id, e.g. "0x40000000"); "" if absent
 	FreqHz     int64  // frequency in Hz (parsed from RF_frequency in MHz or freq)
 	Mode       string // USB, LSB, CW, ...
 	Active     bool   // active=1
@@ -177,6 +178,13 @@ func ParseSlice(topicArgs, fieldsStr string, prev ...SliceStatus) (SliceStatus, 
 	}
 	if len(args) > 1 {
 		s.RcvrIndex, _ = strconv.Atoi(args[1])
+	}
+	// Panadapter the slice is on. SmartSDR carries this as a `pan=<handle>`
+	// field (the hex pan stream id, e.g. "0x40000000"). The exact field name is
+	// confirmed live; until then this is best-effort and the bridge falls back to
+	// the single/lowest tracked pan when PanHandle is empty (single-pan station).
+	if v, ok := f["pan"]; ok {
+		s.PanHandle = v
 	}
 	// Frequency: prefer RF_frequency (MHz float); fall back to legacy freq.
 	// SmartSDR sends incremental slice updates — only changed fields appear —
@@ -222,6 +230,45 @@ func ParseSlice(topicArgs, fieldsStr string, prev ...SliceStatus) (SliceStatus, 
 		s.FilterHigh = v
 	}
 	return s, nil
+}
+
+// PanStatus holds the per-panadapter fields flexbridge needs to drive band
+// changes. Populated from "display pan" status lines (subscribed via
+// `sub pan all`); the SmartSDR panadapter status topic is the two-word
+// "display pan", so the frame arrives as Topic="display", TopicArgs="pan <stream_id>".
+type PanStatus struct {
+	Handle   string // pan stream id (hex, e.g. "0x40000000"); the topic arg after "pan"
+	Band     int    // band=<wavelength-in-meters>; 0 if absent (pan status carries center, not band)
+	CenterHz int64  // center=<MHz> → Hz; 0 if absent
+}
+
+// ParsePan parses a "display pan" status line body into a PanStatus. The pan
+// stream id (handle) is the topic arg following the literal "pan" word and is
+// kept as a raw hex string — `display pan s <handle> band=N` takes it verbatim.
+// Panadapter status carries `center` (MHz), not `band`; band is best-effort
+// (0 when absent). topicArgs is the frame's TopicArgs ("pan <stream_id> ...").
+func ParsePan(topicArgs, fieldsStr string) PanStatus {
+	f := ParseStatusFields(fieldsStr)
+	args := strings.Fields(topicArgs)
+	var p PanStatus
+	// TopicArgs = "pan <stream_id> [removed]"; the handle follows "pan".
+	// A bare "pan" with no stream id (a malformed/empty pan frame) yields no handle.
+	if len(args) >= 2 && args[0] == "pan" {
+		p.Handle = args[1]
+	} else if len(args) > 0 && args[0] != "pan" {
+		p.Handle = args[0] // defensive: caller passed just the handle
+	}
+	if v, ok := f["band"]; ok {
+		if n, err := strconv.Atoi(v); err == nil {
+			p.Band = n
+		}
+	}
+	if v, ok := f["center"]; ok {
+		if mhz, err := strconv.ParseFloat(v, 64); err == nil {
+			p.CenterHz = int64(math.Round(mhz * 1e6))
+		}
+	}
+	return p
 }
 
 // parseFlexFreq parses a SmartSDR frequency string like "14.100.000" or

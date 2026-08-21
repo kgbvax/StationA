@@ -58,16 +58,16 @@ func TestBandForFreqWithPrev_Hysteresis(t *testing.T) {
 		hz   int64
 		want string
 	}{
-		{"", 18_166_000, "17m"},        // inside 17m, no prev
-		{"", 18_169_000, "gen"},        // just above 17m, no prev → gen
-		{"17m", 18_169_000, "17m"},      // just above 17m, prev 17m, within hysteresis
-		{"17m", 18_171_000, "gen"},      // above hysteresis window
-		{"17m", 18_167_000, "17m"},      // still inside 17m
-		{"20m", 18_169_000, "gen"},      // just above 17m, prev 20m → gen (not sticky to a different band)
-		{"20m", 14_001_000, "20m"},      // just below 20m low edge, prev 20m → sticky
-		{"20m", 13_997_000, "gen"},      // below hysteresis window
-		{"gen", 18_169_000, "gen"},      // prev gen, just above 17m → gen
-		{"gen", 18_167_000, "17m"},      // prev gen, inside 17m → 17m
+		{"", 18_166_000, "17m"},    // inside 17m, no prev
+		{"", 18_169_000, "gen"},    // just above 17m, no prev → gen
+		{"17m", 18_169_000, "17m"}, // just above 17m, prev 17m, within hysteresis
+		{"17m", 18_171_000, "gen"}, // above hysteresis window
+		{"17m", 18_167_000, "17m"}, // still inside 17m
+		{"20m", 18_169_000, "gen"}, // just above 17m, prev 20m → gen (not sticky to a different band)
+		{"20m", 14_001_000, "20m"}, // just below 20m low edge, prev 20m → sticky
+		{"20m", 13_997_000, "gen"}, // below hysteresis window
+		{"gen", 18_169_000, "gen"}, // prev gen, just above 17m → gen
+		{"gen", 18_167_000, "17m"}, // prev gen, inside 17m → 17m
 	}
 	for _, c := range cases {
 		if got := BandForFreqWithPrev(c.hz, c.prev); got != c.want {
@@ -92,5 +92,36 @@ func TestBandIsValid(t *testing.T) {
 	}
 	if BandIsValid("99m") {
 		t.Error("BandIsValid(\"99m\") = true, want false")
+	}
+}
+
+func TestBandNumberFor(t *testing.T) {
+	cases := []struct {
+		label string
+		want  int
+		ok    bool
+	}{
+		{"20m", 20, true},
+		{"160m", 160, true},
+		{"6m", 6, true},
+		{"60m", 60, true},
+		{"17m", 17, true},
+		{"10m", 10, true},
+		{"  40m ", 40, true}, // trimmed
+		{"80M", 80, true},    // case-insensitive
+		// Out of scope: synthetic labels and XVTR (VHF/UHF) bands.
+		{"gen", 0, false},
+		{"unknown", 0, false},
+		{"2m", 0, false},
+		{"70cm", 0, false},
+		{"23cm", 0, false},
+		{"99m", 0, false},
+		{"", 0, false},
+	}
+	for _, c := range cases {
+		got, ok := BandNumberFor(c.label)
+		if got != c.want || ok != c.ok {
+			t.Errorf("BandNumberFor(%q) = (%d, %v), want (%d, %v)", c.label, got, ok, c.want, c.ok)
+		}
 	}
 }

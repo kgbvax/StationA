@@ -2,9 +2,18 @@
 
 flexbridge is a **read-only** bridge for radio tuning state: it observes a FlexRadio
 6000-series radio over the SmartSDR TCP/IP API and UDP meter stream, and publishes state to
-MQTT. The one exception is the **Digital Voice Keyer (DVK)**, a SmartSDR v4+ feature: the
-bridge drives DVK playback (play/stop) from the `/cmd` plane and observes DVK status on
-`/state`. Apart from DVK it never sends commands to the radio.
+MQTT. The two exceptions are **band changes** and the **Digital Voice Keyer (DVK)**:
+
+- **Band changes** (`set_band`): the bridge drives SmartSDR's native band-stacking from
+  the `/cmd` plane — `display pan s <pan_handle> band=<wavelength>` changes the band on a
+  panadapter and the radio restores the last-used frequency/mode for that band. `/state`
+  stays frequency-derived: after a band change the bridge republishes the radio's tuned
+  `freq_hz` and `band` is still derived from it (the model's band/freq-can't-disagree
+  invariant holds).
+- **DVK** (SmartSDR v4+): the bridge drives DVK playback (play/stop) from `/cmd` and
+  observes DVK status on `/state`.
+
+Apart from band changes and DVK it never sends commands to the radio.
 
 ---
 
@@ -48,12 +57,14 @@ Two concurrent goroutines feed the bridge:
 - UDP goroutine calls `Bridge.HandleMeterPacket`
 
 A third path drives the radio: the paho `/cmd` subscription. Its handler must not call the
-bridge inline (a DVK command is a blocking TCP write), so it funnels payloads through a
-bounded channel to a single `sharedmqtt.RunJobs` worker that calls `Bridge.HandleCommand`
-serially. `HandleCommand` dispatches DVK intent to the radio through the `Commander`
-interface (`*flexradio.Client` implements it, injected per connect cycle via
-`SetCommander`; `Reset()` clears it on disconnect). No ack is published — consumers confirm
-on `/state` (`dvk_status`/`dvk_id`), the fire-and-observe plane discipline.
+bridge inline (a band-change or DVK command is a blocking TCP write), so it funnels payloads
+through a bounded channel to a single `sharedmqtt.RunJobs` worker that calls
+`Bridge.HandleCommand` serially. `HandleCommand` dispatches band-change (`set_band`)
+and DVK intent to the radio through the `Commander` interface (`*flexradio.Client` implements
+it, injected per connect cycle via `SetCommander`; `Reset()` clears it on disconnect). No
+ack is published — consumers confirm on `/state` (`freq_hz`/`band`/`mode` for band changes,
+`dvk_status`/`dvk_id` for DVK), the fire-and-observe plane discipline. Panadapters are
+tracked from `sub pan all` status so `set_band` can target a pan handle.
 
 `Bridge` (`internal/bridge/bridge.go`) owns all shared state under `sync.RWMutex`.
 
@@ -71,7 +82,7 @@ flexbridge publishes to the station integration model topics:
 muehle/hf/radio/meta      retained  birth certificate (capabilities + expose JSON)
 muehle/hf/radio/state     retained  live state JSON snapshot
 muehle/hf/radio/status    retained  online | offline (LWT)
-muehle/hf/radio/cmd       not retained  DVK playback intent (bus → bridge)
+muehle/hf/radio/cmd       not retained  band-change + DVK intent (bus → bridge)
 ```
 
 The `site`, `station`, and `slot` values are configurable via `config.toml`.
@@ -81,9 +92,17 @@ The `site`, `station`, and `slot` values are configurable via `config.toml`.
 `tx` (`rx`/`tx`), `tuning` (bool), `drive` (0–100), `device_online` (radio link liveness),
 `dvk_status` (`idle`/`recording`/`preview`/`playback`/`disabled`), `dvk_id` (active DVK memory 1–12).
 
-**flexbridge is read-only except for DVK.** `/cmd` carries one-shot DVK intent only (not
-retained — a stale DVK command must not re-fire on restart): `dvk_play_<N>` / `dvk_play`+`value`
-/ `dvk_stop`. It is not a general radio-control channel.
+**flexbridge is read-only except for band changes and DVK.** `/cmd` carries
+one-shot intent only (not retained — a stale command must not re-fire on restart):
+
+- `set_band` + `value` (band label, e.g. `"20m"`) — native band-stacking; the radio restores
+  the last-used frequency/mode for that band. `/state.band` stays derived from `freq_hz`.
+- `dvk_play_<N>` / `dvk_play`+`value` / `dvk_stop` — DVK playback.
+
+It is not a general radio-control channel (no `set_freq_hz`/`set_mode`/`set_drive`).
+Panadapters are tracked via `sub pan all`; `set_band` targets the active slice's panadapter,
+falling back to the single/lowest tracked pan. If no panadapter is open, `set_band` is a
+logged no-op.
 
 See `docs/radio2mqtt-schema.md` for the full on-the-wire contract.
 
@@ -94,7 +113,7 @@ See `docs/radio2mqtt-schema.md` for the full on-the-wire contract.
 | Package | Role |
 |---|---|
 | `internal/flexradio` | Protocol: discovery, TCP client, frame parser, VITA-49 decoder, meter registry, status parsers, band lookup |
-| `internal/bridge` | Radio events → MQTT: state tracking, expose/actions surface, `/cmd` DVK dispatch via the `Commander` interface, discovery payloads |
+| `internal/bridge` | Radio events → MQTT: state tracking, expose/actions surface, `/cmd` band-change + DVK dispatch via the `Commander` interface, discovery payloads |
 | `internal/ha` | Home Assistant discovery payload builders and topic helpers |
 | `internal/config` | TOML config, flags, `FLEXBRIDGE_*` env overrides |
 

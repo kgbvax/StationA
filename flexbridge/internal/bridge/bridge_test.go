@@ -411,8 +411,8 @@ func TestBridge_MetaTopic(t *testing.T) {
 		t.Errorf("meta schema = %v, want \"1.0\"", meta["schema"])
 	}
 	// The consumer-neutral expose block (model §3.1) must be present. Radio
-	// tuning state is read-only (no writable fields); DVK playback is the one
-	// read-write surface, exposed as one-shot actions (buttons), not fields.
+	// tuning state is read-only except band (writable set_band setpoint); DVK
+	// playback is exposed as one-shot actions (buttons), not fields.
 	expose, ok := meta["expose"].(map[string]any)
 	if !ok {
 		t.Fatalf("meta missing expose block; got %v", meta["expose"])
@@ -421,16 +421,37 @@ func TestBridge_MetaTopic(t *testing.T) {
 	if len(fields) != 9 {
 		t.Errorf("expose.fields len = %d, want 9 (device_online,freq_hz,band,mode,drive,tx,tuning,dvk_status,dvk_id)", len(fields))
 	}
-	// No field should declare itself writable (radio tuning state is read-only;
-	// DVK is driven via one-shot actions, not writable setpoint fields).
+	// Radio tuning state is read-only except band, which is a writable
+	// setpoint (set_band → native band-stacking). Every other field must not
+	// be writable; DVK is driven via one-shot actions, not setpoint fields.
 	for i, f := range fields {
 		fm, _ := f.(map[string]any)
 		if fm["key"] == nil {
 			t.Errorf("expose.fields[%d] missing key", i)
+			continue
 		}
-		if _, w := fm["writable"]; w {
-			t.Errorf("expose field %v must not be writable", fm["key"])
+		key, _ := fm["key"].(string)
+		if _, w := fm["writable"]; w && key != "band" {
+			t.Errorf("expose field %v must not be writable", key)
 		}
+	}
+	// band is the writable setpoint with a set_band command descriptor.
+	var bandField map[string]any
+	for _, f := range fields {
+		fm, _ := f.(map[string]any)
+		if k, _ := fm["key"].(string); k == "band" {
+			bandField = fm
+		}
+	}
+	if bandField == nil {
+		t.Fatal("expose.fields missing band field")
+	}
+	if _, w := bandField["writable"]; !w {
+		t.Error("band field must be writable (set_band)")
+	}
+	cmd, _ := bandField["command"].(map[string]any)
+	if cmd == nil || cmd["action"] != "set_band" || cmd["value_key"] != "value" {
+		t.Errorf("band command = %v, want {action:set_band value_key:value}", cmd)
 	}
 	// DVK is the one read-write surface: expose.actions carries 12 play buttons + stop.
 	actions, hasActions := expose["actions"].([]any)
@@ -473,11 +494,17 @@ func topicList(msgs []MemoMsg) []string {
 // DVK (Digital Voice Keyer, SmartSDR v4+)
 // ------------------------------------------------------------------
 
-// fakeCommander records the DVK calls the bridge makes.
+// fakeCommander records the DVK and band-change calls the bridge makes.
 type fakeCommander struct {
 	mu       sync.Mutex
 	playCall []int
 	stopCall []int
+	bandCall []bandCall
+}
+
+type bandCall struct {
+	Handle string
+	Band   int
 }
 
 func (f *fakeCommander) DVKPlay(id int) error {
@@ -494,6 +521,13 @@ func (f *fakeCommander) DVKStop(id int) error {
 	return nil
 }
 
+func (f *fakeCommander) SetBand(handle string, band int) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.bandCall = append(f.bandCall, bandCall{handle, band})
+	return nil
+}
+
 func (f *fakeCommander) plays() []int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -504,6 +538,12 @@ func (f *fakeCommander) stops() []int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]int(nil), f.stopCall...)
+}
+
+func (f *fakeCommander) bands() []bandCall {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]bandCall(nil), f.bandCall...)
 }
 
 // cmdJSON builds a /cmd payload the way the shared value-key convention does:
@@ -612,6 +652,65 @@ func TestHandleCommand_DVK(t *testing.T) {
 		b, _ := newTestBridge(t)
 		b.HandleCommand(cmdJSON("dvk_play_3", "")) // must not panic
 		b.HandleCommand(cmdJSON("dvk_stop", ""))
+	})
+}
+
+// seedPan sends a "display pan" status frame so the bridge tracks a panadapter
+// handle, which set_band needs to target. SmartSDR's panadapter status topic is
+// the two-word "display pan" — the frame arrives as Topic="display",
+// TopicArgs="pan <stream_id> ...".
+func seedPan(t *testing.T, b *Bridge, handle string, band int) {
+	t.Helper()
+	f, _ := flexradio.ParseFrame("S0|display pan " + handle + " band=" + strconv.Itoa(band) + " center=14.175 in_use=1")
+	b.HandleStatus(f)
+}
+
+// TestHandleCommand_SetBand exercises the native band-stacking /cmd dispatch:
+// a valid band resolves to a wavelength number and targets a tracked pan;
+// unknown bands and a missing panadapter are rejected without panicking.
+func TestHandleCommand_SetBand(t *testing.T) {
+	t.Run("valid band targets the tracked pan", func(t *testing.T) {
+		b, _ := newTestBridge(t)
+		fc := &fakeCommander{}
+		b.SetCommander(fc)
+		seedPan(t, b, "0x40000000", 20)
+
+		b.HandleCommand(cmdJSON("set_band", "40m"))
+		got := fc.bands()
+		if len(got) != 1 || got[0].Handle != "0x40000000" || got[0].Band != 40 {
+			t.Errorf("set_band calls = %v, want [{0x40000000 40}]", got)
+		}
+	})
+
+	t.Run("unknown band is a no-op", func(t *testing.T) {
+		b, _ := newTestBridge(t)
+		fc := &fakeCommander{}
+		b.SetCommander(fc)
+		seedPan(t, b, "0x40000000", 20)
+
+		b.HandleCommand(cmdJSON("set_band", "2m")) // XVTR, out of scope
+		b.HandleCommand(cmdJSON("set_band", "gen"))
+		b.HandleCommand(cmdJSON("set_band", "99m"))
+		if got := fc.bands(); len(got) != 0 {
+			t.Errorf("set_band calls = %v, want none (all unsupported)", got)
+		}
+	})
+
+	t.Run("no panadapter tracked is a no-op", func(t *testing.T) {
+		b, _ := newTestBridge(t)
+		fc := &fakeCommander{}
+		b.SetCommander(fc)
+		// No pan status seeded → no pan tracked.
+		b.HandleCommand(cmdJSON("set_band", "20m"))
+		if got := fc.bands(); len(got) != 0 {
+			t.Errorf("set_band calls = %v, want none (no panadapter)", got)
+		}
+	})
+
+	t.Run("nil commander no-ops (radio offline)", func(t *testing.T) {
+		b, _ := newTestBridge(t)
+		seedPan(t, b, "0x40000000", 20)
+		b.HandleCommand(cmdJSON("set_band", "20m")) // must not panic
 	})
 }
 

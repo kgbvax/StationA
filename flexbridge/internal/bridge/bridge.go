@@ -26,7 +26,8 @@ type Bridge struct {
 	commander Commander // current radio command surface (nil while radio offline)
 	interlock flexradio.InterlockStatus
 	slices    map[int]flexradio.SliceStatus
-	sliceBand map[int]string // per-slice last-derived band, used as the hysteresis prev for that slice
+	sliceBand map[int]string                 // per-slice last-derived band, used as the hysteresis prev for that slice
+	pans      map[string]flexradio.PanStatus // panadapters tracked via `sub pan all`, keyed by stream-id handle
 	tuStatus  flexradio.ATUStatus
 	state     radioState
 
@@ -96,8 +97,9 @@ type metaDevice struct {
 // metaExpose is the consumer-neutral field surface (integration model §3.1, Appendix C).
 // It carries NO consumer vocabulary (no device_class strings, no Jinja, no payload_on/off);
 // consumers such as hadiscovery render their own representation from these neutral
-// primitives. flexbridge is read-only for radio tuning state (no writable fields), but it
-// exposes DVK one-shot actions (playback trigger) — rendered as buttons by consumers.
+// primitives. Radio tuning state is read-only except for band, which is a writable
+// setpoint (set_band drives SmartSDR native band-stacking; /state.band stays derived
+// from freq_hz). DVK playback is exposed as one-shot actions (buttons).
 type metaExpose struct {
 	Device  metaExposeDevice   `json:"device"`
 	Fields  []metaExposeField  `json:"fields"`
@@ -132,16 +134,22 @@ type metaExposeDevice struct {
 // metaExposeField describes one /state field. type is number|enum|boolean|string.
 // options_ref names a key in capabilities (e.g. "bands") that holds the enum options.
 // on/off carry the boolean's state payload strings when the state holds strings, not a bool.
+// writable + command mark a field as a setpoint: a consumer renders a control (e.g. a
+// select for an enum) that publishes command on /cmd. The field's /state value may
+// still be derived — e.g. band is writable (set_band triggers native band-stacking)
+// yet /state.band remains derived from freq_hz (model §4 invariant).
 type metaExposeField struct {
-	Key        string `json:"key"`
-	Name       string `json:"name"`
-	Type       string `json:"type"`
-	Unit       string `json:"unit,omitempty"`
-	Class      string `json:"class,omitempty"`
-	StateClass string `json:"state_class,omitempty"`
-	OptionsRef string `json:"options_ref,omitempty"`
-	On         string `json:"on,omitempty"`
-	Off        string `json:"off,omitempty"`
+	Key        string       `json:"key"`
+	Name       string       `json:"name"`
+	Type       string       `json:"type"`
+	Unit       string       `json:"unit,omitempty"`
+	Class      string       `json:"class,omitempty"`
+	StateClass string       `json:"state_class,omitempty"`
+	OptionsRef string       `json:"options_ref,omitempty"`
+	On         string       `json:"on,omitempty"`
+	Off        string       `json:"off,omitempty"`
+	Writable   bool         `json:"writable,omitempty"`
+	Command    *metaCommand `json:"command,omitempty"`
 }
 
 type metaCapabilities struct {
@@ -182,6 +190,7 @@ func New(cfg Config, pub Publisher, log Logger) *Bridge {
 		log:       log,
 		slices:    make(map[int]flexradio.SliceStatus),
 		sliceBand: make(map[int]string),
+		pans:      make(map[string]flexradio.PanStatus),
 	}
 }
 
@@ -222,6 +231,7 @@ func (b *Bridge) Reset() {
 	b.mu.Lock()
 	b.slices = make(map[int]flexradio.SliceStatus)
 	b.sliceBand = make(map[int]string)
+	b.pans = make(map[string]flexradio.PanStatus)
 	b.interlock = flexradio.InterlockStatus{}
 	b.tuStatus = flexradio.ATUStatus{}
 	b.state = radioState{} // deviceOnline defaults false
@@ -243,6 +253,8 @@ func (b *Bridge) HandleStatus(f flexradio.Frame) {
 		b.handleInterlock(f)
 	case "slice":
 		b.handleSlice(f)
+	case "display": // SmartSDR panadapter status topic is the two-word "display pan"
+		b.handlePan(f)
 	case "atu":
 		b.handleATU(f)
 	case "radio":
@@ -369,6 +381,80 @@ func isSliceRemoval(f flexradio.Frame) bool {
 	return false
 }
 
+// handlePan tracks panadapters from "pan" status frames (subscribed via
+// `sub pan all`). The pan stream-id handle is the leading topic arg and is
+// kept as a raw hex string — `display pan s <handle> band=N` takes it verbatim.
+// The bridge needs the handle to drive band changes; band/center are tracked
+// for observability and to confirm a band change took effect. Pan removal is
+// signalled the same way as slice removal (bare "removed" arg or in_use=0).
+func (b *Bridge) handlePan(f flexradio.Frame) {
+	// The "display" topic covers pan/panafall/panf; only "pan" carries the
+	// panadapter handle we need for band changes.
+	args := strings.Fields(f.TopicArgs)
+	if len(args) == 0 || args[0] != "pan" {
+		return
+	}
+	if isPanRemoval(f) {
+		handle := panHandleArg(f)
+		if handle == "" {
+			return
+		}
+		b.mu.Lock()
+		_, existed := b.pans[handle]
+		delete(b.pans, handle)
+		b.mu.Unlock()
+		if existed {
+			b.log.Infof("panadapter removed handle=%s", handle)
+		}
+		return
+	}
+	p := flexradio.ParsePan(f.TopicArgs, fieldsString(f))
+	if p.Handle == "" {
+		return
+	}
+	b.mu.Lock()
+	_, existed := b.pans[p.Handle]
+	b.pans[p.Handle] = p
+	b.mu.Unlock()
+	if !existed {
+		// Info-level so a default (info) log confirms the pan subscription is
+		// delivering without bumping log.level to debug.
+		b.log.Infof("panadapter tracked handle=%s center_hz=%d", p.Handle, p.CenterHz)
+	} else {
+		b.log.Debugf("pan update handle=%s center_hz=%d", p.Handle, p.CenterHz)
+	}
+}
+
+// panHandleArg returns the pan stream-id handle from a "display pan" frame's
+// topic args ("pan <stream_id> ..."), or "" if absent.
+func panHandleArg(f flexradio.Frame) string {
+	args := strings.Fields(f.TopicArgs)
+	if len(args) >= 2 && args[0] == "pan" {
+		return args[1]
+	}
+	if len(args) > 0 {
+		return args[0]
+	}
+	return ""
+}
+
+// isPanRemoval reports whether a pan status frame signals the panadapter has
+// been torn down. Same encodings as slice removal (isSliceRemoval).
+func isPanRemoval(f flexradio.Frame) bool {
+	for _, a := range strings.Fields(f.TopicArgs) {
+		if a == "removed" {
+			return true
+		}
+	}
+	if v, ok := f.Fields["in_use"]; ok && v == "0" {
+		return true
+	}
+	if v, ok := f.Fields["removed"]; ok && v == "1" {
+		return true
+	}
+	return false
+}
+
 // updateActiveSliceState updates b.state from the current TX/active slice.
 // Must be called with b.mu held. Returns true if state changed.
 func (b *Bridge) updateActiveSliceState() bool {
@@ -476,15 +562,17 @@ func (b *Bridge) handleRadio(f flexradio.Frame) {
 
 // HandleCommand parses a /cmd JSON payload and dispatches it to the radio
 // via the Commander. Unknown/invalid actions are logged and dropped. No ack
-// is published — consumers observe the result on /state (dvk_status/dvk_id),
-// per the stationa fire-and-observe plane discipline.
+// is published — consumers observe the result on /state (dvk_status/dvk_id,
+// freq_hz/band/mode), per the stationa fire-and-observe plane discipline.
 //
-// Accepted actions (muehle/hf/radio/cmd, NOT retained — DVK is one-shot):
+// Accepted actions (muehle/hf/radio/cmd, NOT retained — one-shot intents):
 //
 //	{"action":"dvk_play_<N>"}   play DVK memory N (1-12); keys TX
 //	{"action":"dvk_play","value":"N"}  same, value form (scripts/Node-RED)
 //	{"action":"dvk_stop","value":"N"}   stop memory N
 //	{"action":"dvk_stop"}              stop the currently-active memory (from /state)
+//	{"action":"set_band","value":"20m"} native band-stacking: radio restores the
+//	                                   last-used freq/mode for that band
 func (b *Bridge) HandleCommand(payload []byte) {
 	var c cmdPayload
 	if err := json.Unmarshal(payload, &c); err != nil {
@@ -544,9 +632,51 @@ func (b *Bridge) HandleCommand(payload []byte) {
 			b.log.Warnf("cmd dvk_stop: %v", err)
 		}
 
+	case c.Action == "set_band":
+		// Native SmartSDR band-stacking: change the band on a panadapter and the
+		// radio restores the last-used frequency/mode for that band. The result
+		// is observed on the slice/pan status stream (/state stays freq-derived).
+		bandNum, ok := flexradio.BandNumberFor(c.Value)
+		if !ok {
+			b.log.Warnf("cmd set_band: unknown/unsupported band %q", c.Value)
+			return
+		}
+		b.mu.RLock()
+		handle, hasPan := b.targetPanHandle()
+		b.mu.RUnlock()
+		if !hasPan {
+			b.log.Warnf("cmd set_band: no panadapter tracked (open a panadapter first)")
+			return
+		}
+		b.log.Infof("cmd set_band: band=%s (n=%d) pan=%s", strings.TrimSpace(c.Value), bandNum, handle)
+		if err := cmd.SetBand(handle, bandNum); err != nil {
+			b.log.Warnf("cmd set_band: %v", err)
+		}
+
 	default:
 		b.log.Warnf("cmd: unknown action %q", c.Action)
 	}
+}
+
+// targetPanHandle resolves which panadapter a band change should target. It
+// prefers the panadapter the active slice is on (when the slice status carried
+// a pan handle), then the single tracked pan, then the lowest handle for
+// determinism (Go map iteration is randomized). Returns ok=false when no
+// panadapter is tracked (none open — the operator must open one via the GUI).
+// Must be called with b.mu (at least RLock) held.
+func (b *Bridge) targetPanHandle() (string, bool) {
+	if active, ok := resolveActiveSlice(b.slices); ok && active.PanHandle != "" {
+		if _, tracked := b.pans[active.PanHandle]; tracked {
+			return active.PanHandle, true
+		}
+	}
+	var lowest string
+	for h := range b.pans {
+		if lowest == "" || h < lowest {
+			lowest = h
+		}
+	}
+	return lowest, lowest != ""
 }
 
 // parseDVKID parses a DVK memory id string, returning 0 if it is empty or out
@@ -640,11 +770,11 @@ func (b *Bridge) publishMeta() {
 			RxInputs:  []string{"ant1", "ant2", "rx_a"},
 			TxOutputs: []string{"ant1", "ant2"},
 		},
-		// Consumer-neutral field surface (model §3.1). flexbridge is read-only:
-		// no field is writable and there are no actions — every field renders as a
-		// sensor/binary_sensor. The enum options resolve via options_ref against
-		// the capabilities above (bands/modes). HA-specific rendering lives in
-		// hadiscovery, not here.
+		// Consumer-neutral field surface (model §3.1). Radio tuning state is
+		// read-only except band, which is a writable setpoint (set_band → native
+		// band-stacking); every other field renders as a sensor/binary_sensor.
+		// The enum options resolve via options_ref against the capabilities above
+		// (bands/modes). HA-specific rendering lives in hadiscovery, not here.
 		Expose: &metaExpose{
 			Device: metaExposeDevice{
 				Name:         d.Name,
@@ -656,7 +786,8 @@ func (b *Bridge) publishMeta() {
 			Fields: []metaExposeField{
 				{Key: "device_online", Name: "Device online", Type: "boolean"},
 				{Key: "freq_hz", Name: "Frequency", Type: "number", Unit: "Hz", Class: "frequency", StateClass: "measurement"},
-				{Key: "band", Name: "Band", Type: "enum", OptionsRef: "bands"},
+				{Key: "band", Name: "Band", Type: "enum", OptionsRef: "bands", Writable: true,
+					Command: &metaCommand{Action: "set_band", ValueKey: "value", ValueType: "string"}},
 				{Key: "mode", Name: "Mode", Type: "enum", OptionsRef: "modes"},
 				{Key: "drive", Name: "Drive", Type: "number", Unit: "%"},
 				{Key: "tx", Name: "Transmitting", Type: "boolean", On: "tx", Off: "rx"},

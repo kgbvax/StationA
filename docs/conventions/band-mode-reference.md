@@ -102,5 +102,10 @@ Components that use kHz internally (e.g. the RCU-06 controller in ultrabridge) m
 by 1000 before publishing. Components that use Hz natively (e.g. SmartSDR in
 flexbridge) publish directly.
 
-`band` is always a derived label from the canonical table above, never a primary value.
-There is no `set_band` intent for radios — commanders set `freq_hz` and band falls out.
+`band` is always a derived label from the canonical table above, never a primary value
+on `/state`. The canonical tuning intent is `set_freq_hz` — commanders set a frequency
+and band falls out — which removes the class of bug where band and frequency disagree.
+A radio *may* additionally accept a `set_band` `/cmd` input for native band-stacking: the
+radio restores its own persisted per-band frequency, the bridge republishes that
+`freq_hz`, and `band` is still derived from it (no band setpoint is stored). See the
+radio slot in `station-integration-model.md`.

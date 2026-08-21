@@ -106,6 +106,7 @@ func (c *Client) Handshake(ctx context.Context) (RadioInfo, error) {
 		"sub radio all",
 		"sub interlock all",
 		"sub atu all",
+		"sub pan all", // panadapter status: pan stream ids (handles) + band, for band changes
 	}
 	for _, s := range subs {
 		if _, err := c.sendAwaitReply(ctx, s); err != nil {
@@ -208,9 +209,16 @@ func (c *Client) Send(ctx context.Context, cmd string) error {
 // were originally third-party-confirmed (AetherSDR vs FLEX-8600 fw 4.2.18) and
 // are now confirmed against the live FLEX-8400 on shari; the official SmartSDR
 // API wiki does not document the `dvk` command family.
+//
+// SetBand drives SmartSDR's native band-stacking: `display pan s <handle>
+// band=<wavelength>` changes the panadapter's band and the radio restores the
+// last-used frequency/mode for that band. The wire command and band-number
+// (wavelength-in-meters) form are from the SmartSDR TCPIP display-pan wiki,
+// confirmed live on shari the same way the DVK commands were.
 type Commander interface {
-	DVKPlay(id int) error // dvk playback_start id=<id>
-	DVKStop(id int) error // dvk playback_stop  id=<id>
+	DVKPlay(id int) error                           // dvk playback_start id=<id>
+	DVKStop(id int) error                           // dvk playback_stop  id=<id>
+	SetBand(panHandle string, bandNumber int) error // display pan s <handle> band=<n>
 }
 
 // DVKPlay triggers playback of DVK memory id (1-12) and keys the transmitter.
@@ -221,6 +229,14 @@ func (c *Client) DVKPlay(id int) error {
 // DVKStop stops playback of DVK memory id and unkeys the transmitter.
 func (c *Client) DVKStop(id int) error {
 	return c.Send(context.Background(), fmt.Sprintf("dvk playback_stop id=%d", id))
+}
+
+// SetBand changes the band on panadapter panHandle to bandNumber using SmartSDR
+// native band-stacking: the radio restores the last-used frequency/mode for
+// that band. bandNumber is the wavelength-in-meters (e.g. 20 for 20m). The
+// result is observed on the slice/pan status stream, not via the reply.
+func (c *Client) SetBand(panHandle string, bandNumber int) error {
+	return c.Send(context.Background(), fmt.Sprintf("display pan s %s band=%d", panHandle, bandNumber))
 }
 
 // Run blocks reading status lines and dispatching them to the handler.

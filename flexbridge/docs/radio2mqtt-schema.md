@@ -12,7 +12,7 @@ flexbridge implements the `radio` slot of the station integration model
 | `/meta` | yes | bridge → bus | birth certificate: identity + capabilities |
 | `/state` | yes | bridge → bus | live radio state (JSON snapshot) |
 | `/status` | yes | broker LWT | liveness: `online` / `offline` |
-| `/cmd` | no | bus → bridge | intent: DVK playback trigger (one-shot, not retained) |
+| `/cmd` | no | bus → bridge | intent: band changes (`set_band`) + DVK playback trigger (one-shot, not retained) |
 
 ---
 
@@ -115,14 +115,21 @@ this slot's observable field surface. It carries **no consumer vocabulary** — 
 `hadiscovery` service for Home Assistant, and any future historian/dashboard/Prometheus
 consumer) render their own representation from these neutral primitives.
 
-flexbridge is **read-only for radio tuning state**: none of its fields are `writable`. The
-one read-write surface is the **Digital Voice Keyer (DVK)**, exposed as one-shot `actions`
-(buttons), not writable setpoint fields — each play action publishes `{"action":"dvk_play_N"}`
-with no value, so a consumer (hadiscovery → HA button) needs no value injection. The
-`band`/`mode` enum options are not inlined; they resolve via `options_ref` against
-`capabilities.bands` / `capabilities.modes` above (single source of truth). The `tx` boolean
-carries `on`/`off` because `/state` holds the strings `"tx"`/`"rx"`, not a bool; `tuning`
-omits them because `/state` holds a real bool.
+flexbridge is **read-only for radio tuning state except `band`**, which is a writable
+setpoint: `expose.fields[].band` carries `writable: true` with a `command` of
+`{action:"set_band", value_key:"value", value_type:"string"}`. A consumer renders it as a
+select (enum) over `capabilities.bands`; selecting a band publishes
+`{"action":"set_band","value":"<band>"}`. `/state.band` stays **derived from `freq_hz`** —
+the `set_band` command triggers SmartSDR native band-stacking, the radio tunes to its own
+persisted per-band frequency, and the bridge republishes that `freq_hz` with `band` derived
+from it (the model's band/freq-can't-disagree invariant holds; the field is writable as an
+input, not as a stored setpoint). The other read-write surfaces are one-shot `actions`
+(buttons), not writable setpoint fields: the **Digital Voice Keyer (DVK)** (each play
+action publishes `{"action":"dvk_play_N"}` with no value, so a consumer (hadiscovery → HA
+button) needs no value injection). The `band`/`mode` enum options are not inlined; they
+resolve via `options_ref` against `capabilities.bands` / `capabilities.modes` above (single
+source of truth). The `tx` boolean carries `on`/`off` because `/state` holds the strings
+`"tx"`/`"rx"`, not a bool; `tuning` omits them because `/state` holds a real bool.
 
 The HA-specific rendering (component choice, `value_template`, unit→`device_class` map,
 availability, device block) lives in `hadiscovery`, not in this bridge.
@@ -236,9 +243,9 @@ Derived from `freq_hz` at publish time (IARU Region 1 / DL allocations).
 
 ---
 
-## `/cmd` — DVK playback intent
+## `/cmd` — band-change & DVK intent
 
-`/cmd` is **not retained** (QoS 1): DVK playback is a one-shot trigger, and a stale
+`/cmd` is **not retained** (QoS 1): both intents are one-shot triggers, and a stale
 command must not re-fire on a bridge or broker restart (same rationale as the tuner
 slot's `tune`). Payloads are JSON with the shared value-key convention — the argument
 rides under `value`, never under a key named after the action.
@@ -247,6 +254,7 @@ Accepted actions:
 
 | Action | `value` | Effect |
 |---|---|---|
+| `set_band` | `"<band>"` (e.g. `"20m"`) | **Native band-stacking.** Changes the band on the active slice's panadapter (`display pan s <handle> band=<wavelength>`, where the wavelength is the band number — `20m`→`20`, `160m`→`160`, `6m`→`6`) and the radio restores the last-used frequency/mode for that band. Only the FLEX-8400's regular bands (`160m`–`6m`) are supported; VHF/UHF XVTR bands and `gen`/`unknown` are rejected. Requires a panadapter to be open; if none is tracked the command is a logged no-op |
 | `dvk_play_<N>` | — | Play DVK memory N (1–12) and key the transmitter (SmartSDR keys TX automatically on `playback_start`; no separate `xmit` needed). The per-memory form is what the HA buttons use — no `value` to inject |
 | `dvk_play` | `"N"` | Same, value form (for scripts / Node-RED) |
 | `dvk_stop` | `"N"` | Stop memory N and unkey |
@@ -255,14 +263,29 @@ Accepted actions:
 Examples:
 
 ```json
+{"action":"set_band","value":"20m"}
 {"action":"dvk_play_3"}
 {"action":"dvk_play","value":"3"}
 {"action":"dvk_stop"}
 {"action":"dvk_stop","value":"3"}
 ```
 
-**No command-ack is published.** Consumers observe the result on `/state` (`dvk_status`,
-`dvk_id`) — the stationa fire-and-observe plane discipline: send intent, watch state.
+**No command-ack is published.** Consumers observe the result on `/state` —
+`freq_hz`/`band`/`mode` for `set_band`, `dvk_status`/`dvk_id` for DVK — the stationa
+fire-and-observe plane discipline: send intent, watch state.
+
+### Band-stacking notes
+
+- The band command goes to the **panadapter handle**, not the slice. Panadapters are
+  tracked from `sub pan all` status; `set_band` targets the active slice's panadapter,
+  falling back to the single tracked pan (the common one-panadapter case), then the
+  lowest handle for determinism. The pan-handle field in slice status (slice→pan
+  correlation) is confirmed live; until then a single-pan station works via the
+  single-pan fallback.
+- The wire command (`display pan s <handle> band=<wavelength>`) and the
+  wavelength-in-meters band-number form are from the SmartSDR TCPIP display-pan wiki
+  and the FlexRadio community, confirmed live on shari the same way the DVK commands
+  were.
 
 ### DVK prerequisites and caveats
 
@@ -331,9 +354,10 @@ homeassistant/<component>/muehle-hf-radio/<object_id>/config
 
 The entity set is the fields above (frequency sensor, band sensor, mode sensor, drive
 sensor, transmitting binary_sensor, tuning binary_sensor, plus the DVK status/memory
-sensors) **and the DVK action buttons** — 12 `dvk_play_N` buttons + a `dvk_stop` button,
-rendered by `hadiscovery` from the neutral `expose.actions`. flexbridge itself contains no
-HA knowledge. See `../hadiscovery/docs/discovery-mqtt-api.md` for the mapping.
+sensors) **and the one-shot action buttons** — 12 `dvk_play_N` buttons + a `dvk_stop`
+button, rendered by `hadiscovery` from the neutral `expose.actions`.
+flexbridge itself contains no HA knowledge. See `../hadiscovery/docs/discovery-mqtt-api.md`
+for the mapping.
 
 ---
 
@@ -368,7 +392,8 @@ only `/state`. If multiple slices are configured in SmartSDR, the TX slice
 | Radio drive level changes | `/state` |
 | Radio `tuning` flag changes | `/state` |
 | DVK status changes (idle ↔ playback ↔ …) | `/state` (`dvk_status`, `dvk_id`) |
-| `/cmd` DVK play/stop received | radio command sent; confirm on `/state` |
+| `/cmd` `set_band` received | radio band command sent; radio band-stacks → confirm on `/state` (`freq_hz`, `band`, `mode`) |
+| `/cmd` DVK play/stop received | radio command sent; confirm on `/state` (`dvk_status`, `dvk_id`) |
 | Disconnect / crash | `/status` → `offline` (broker LWT) |
 
 State is published only when a field actually changes value; unchanged state

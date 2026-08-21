@@ -115,6 +115,29 @@ func bandEdges(label string) (lo, hi int64, ok bool) {
 	return 0, 0, false
 }
 
+// bandStackingBands maps each regular (non-XVTR) band label to the
+// wavelength-in-meters number the SmartSDR `display pan s <handle> band=N`
+// command expects (band-mode-reference.md; SmartSDR TCPIP display-pan wiki).
+// The number is the band's own designation: 20m→20, 160m→160, 6m→6. This set
+// matches the FLEX-8400 capabilities advertised in /meta (caps at 6m). VHF/UHF
+// bands (2m, 70cm, 23cm) use the XVTR `band=x<num>` form and are out of scope.
+var bandStackingBands = map[string]int{
+	"160m": 160, "80m": 80, "60m": 60, "40m": 40, "30m": 30,
+	"20m": 20, "17m": 17, "15m": 15, "12m": 12, "10m": 10, "6m": 6,
+}
+
+// BandNumberFor returns the SmartSDR band-stacking band number for a canonical
+// band label — the wavelength-in-meters that `display pan s <handle> band=N`
+// takes. For example "20m" → 20, "160m" → 160, "6m" → 6.
+//
+// Only the FLEX-8400's regular (non-XVTR) bands are supported. VHF/UHF bands
+// (2m, 70cm, 23cm) use the XVTR `band=x<num>` form and are out of scope, as are
+// the synthetic "gen"/"unknown" labels. ok is false for those.
+func BandNumberFor(label string) (int, bool) {
+	n, ok := bandStackingBands[strings.ToLower(strings.TrimSpace(label))]
+	return n, ok
+}
+
 // BandIsValid reports whether a band label is one we recognize (case- and
 // dash-insensitive), including the "gen" general-coverage label. Used mainly
 // for sanity-checking external inputs.

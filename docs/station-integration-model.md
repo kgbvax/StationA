@@ -232,9 +232,13 @@ entirely).
 ## 4. Canonical vocabulary
 
 - **Frequency in Hz is the single source of truth.** `band` is derived from `freq_hz`
-  and published for convenience. There is no `set_band` intent; commanders set a
-  frequency and band falls out. This removes the class of bug where band and frequency
-  disagree because two things set them independently.
+  and published for convenience. There is no band *setpoint* on `/state`: `band` is never
+  a stored value, always derived. A radio *may* accept a `set_band` `/cmd` input for
+  native band-stacking (the radio restores its own persisted per-band frequency and the
+  bridge republishes that `freq_hz` with `band` derived from it), but the canonical tuning
+  intent is still `set_freq_hz` — commanders set a frequency and band falls out. This
+  removes the class of bug where band and frequency disagree because two things set them
+  independently.
 - **Bands.** The canonical vocabulary owns the band name→frequency-range table (edges are
   region- and license-dependent; these are DL / IARU R1). A device declares the band
   *names* it supports and references this table rather than re-stating edges. In state,
@@ -413,12 +417,21 @@ state:        online; freq_hz (Hz int); band(derived); mode (canonical); tx {rx|
               rx_input (omitempty, adapter work pending)
               — always the active/TX receiver
 intent:       set_freq_hz; set_mode; set_drive; select_rx; tune {start|stop};
-              dvk_play {1..12}; dvk_stop {id|active}   # /cmd NOT retained (one-shot)
+              set_band {label}; dvk_play {1..12}; dvk_stop {id|active}   # /cmd NOT retained (one-shot)
 ```
+`set_band` drives SmartSDR **native band-stacking**: the bridge sends
+`display pan s <pan_handle> band=<wavelength>` (the wavelength is the band number —
+`20m`→`20`), and the radio restores the last-used frequency/mode for that band. `band`
+remains a derived `/state` field (§4): after a `set_band` the bridge republishes the
+radio's tuned `freq_hz` with `band` derived from it, so band and frequency can never
+disagree. Only the FLEX-8400's regular bands (`160m`–`6m`) are supported; XVTR bands
+are out of scope.
 DVK (Digital Voice Keyer) is a SmartSDR v4+ / SmartSDR+ feature: 12 voice memories keyed
-to TX on playback. flexbridge is otherwise read-only; DVK is its sole `/cmd` surface,
-exposed as one-shot actions (`dvk_play_N` buttons + `dvk_stop`) and observed on `/state`
-(`dvk_status`/`dvk_id`). Voice modes only; the radio refuses DVK in cw/data.
+to TX on playback. flexbridge is otherwise read-only; `set_band` and DVK are its only
+`/cmd` surfaces — DVK exposed as one-shot actions (`dvk_play_N` buttons + `dvk_stop`),
+`set_band` as a writable `band` setpoint (a select) — both observed on `/state`
+(`freq_hz`/`band`/`mode` and `dvk_status`/`dvk_id` respectively). Voice modes only; the
+radio refuses DVK in cw/data.
 The FLEX-8400 supports up to 4 simultaneous receive slices (a SmartSDR concept). These
 map generically to receivers. With `receivers 1` declared, only `radio/state` is
 published. If a multi-slice configuration is added later, promote the declaration to
@@ -890,8 +903,11 @@ online
 
 `muehle/hf/radio/cmd` — not retained
 ```json
-{ "set_freq_hz": 14074000 }
+{ "action": "set_band", "value": "20m" }
 ```
+(Band-stacking: the radio restores the last-used frequency/mode for `20m`; `band` stays
+derived from `freq_hz` on `/state`. A direct `set_freq_hz` is the model's canonical tuning
+intent; flexbridge exposes `set_band` as the operator-facing convenience.)
 
 Encoding decisions worth copying:
 
@@ -912,7 +928,9 @@ Encoding decisions worth copying:
 - `tune` is absent from operator `cmd` traffic. It reaches `/cmd` only from the sequencer
   after `pa-arm` is disarmed and confirmed (§6); operators publish a tune request to the
   sequencer, never directly here. Everything else (`set_freq_hz`, `set_mode`, `set_drive`,
-  `select_rx`) is a direct intent.
+  `select_rx`, `set_band`) is a direct intent. `set_band` is the band-stacking convenience
+  (§radio slot): it changes the band and lets the radio pick the frequency, so `/state`
+  stays frequency-derived rather than carrying a band setpoint.
 
 ---
 
