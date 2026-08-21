@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import 'store/bus_store.dart';
 import 'store/credential_store.dart';
 import 'mqtt/mqtt_service.dart';
+import 'dxspot/dxspot_service.dart';
 import 'ui/theme.dart';
 import 'ui/screens/console_screen.dart';
 import 'ui/screens/setup_screen.dart';
@@ -41,6 +42,7 @@ class _AppRootState extends State<_AppRoot> {
   final _storage = CredentialStore();
   final _store = BusStore();
   late final MqttService _mqtt;
+  final _dxSpot = DxSpotService();
   bool _ready = false;
   bool _showConsole = false;
 
@@ -64,6 +66,14 @@ class _AppRootState extends State<_AppRoot> {
     final port = int.tryParse(values['mqtt_port'] ?? '');
     final user = values['mqtt_user'];
     final pass = values['mqtt_password'];
+    // DX-spot overlay is independent of the broker; start it whenever a station
+    // locator is configured (DxSpotService.start() no-ops without one).
+    _dxSpot.configure(
+      baseUrl: values['horstreporter_base_url'],
+      locator: values['station_locator'],
+      callsign: values['station_callsign'],
+    );
+    _dxSpot.start();
     if (host != null && port != null && user != null && pass != null && pass.isNotEmpty) {
       try {
         await _connect(host, port, user, pass);
@@ -91,6 +101,7 @@ class _AppRootState extends State<_AppRoot> {
 
   @override
   void dispose() {
+    _dxSpot.dispose();
     _mqtt.dispose();
     super.dispose();
   }
@@ -100,6 +111,7 @@ class _AppRootState extends State<_AppRoot> {
     return MultiProvider(
       providers: [
         ChangeNotifierProvider<BusStore>.value(value: _store),
+        ChangeNotifierProvider<DxSpotService>.value(value: _dxSpot),
         Provider<MqttService>.value(value: _mqtt),
       ],
       child: ValueListenableBuilder<AppColorScheme>(
@@ -123,18 +135,22 @@ class _AppRootState extends State<_AppRoot> {
                         body: Builder(
                           builder: (context) {
                             return SetupScreen(
-                              onSave: (host, port, user, pass) async {
+                              onSave: (host, port, user, pass, locator, baseUrl) async {
                                 await _storage.writeAll({
                                   'mqtt_host': host,
                                   'mqtt_port': port.toString(),
                                   'mqtt_user': user,
                                   'mqtt_password': pass,
+                                  'station_locator': locator,
+                                  'horstreporter_base_url': baseUrl,
                                 });
                                 try {
                                   await _connect(host, port, user, pass);
                                 } catch (_) {
                                   // keep going; console will show the offline indicator
                                 }
+                                _dxSpot.configure(baseUrl: baseUrl, locator: locator);
+                                _dxSpot.restart();
                                 if (mounted) {
                                   setState(() => _showConsole = true);
                                 }

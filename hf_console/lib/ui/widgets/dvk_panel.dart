@@ -4,6 +4,7 @@ import '../../mqtt/mqtt_service.dart';
 import '../../store/bus_store.dart';
 import '../../store/wiring.dart';
 import '../theme.dart';
+import 'mic_profile_row.dart';
 
 class DvkPanel extends StatelessWidget {
   static const String slot = 'hf/radio';
@@ -25,6 +26,8 @@ class DvkPanel extends StatelessWidget {
           _buildHeader(context),
           const SizedBox(height: 8),
           _buildBandRow(context),
+          const SizedBox(height: 8),
+          const MicProfileRow(),
           const SizedBox(height: 8),
           _buildButtonRow(context),
         ],

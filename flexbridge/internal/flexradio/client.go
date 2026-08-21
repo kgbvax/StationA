@@ -126,6 +126,13 @@ func (c *Client) Handshake(ctx context.Context) (RadioInfo, error) {
 	// FrameReply) rather than misattributed to a following sendAwaitReply. On a
 	// v4 radio the DVK status stream then flows through HandleStatus("dvk").
 	_ = c.send(ctx, "sub dvk all")
+	// Mic-profile list: SmartSDR does not broadcast profiles via `sub radio all`;
+	// the list is obtained by sending the one-shot `profile mic info` command
+	// (undocumented, from FlexLib). Fire-and-forget like `sub dvk all`; the radio
+	// replies with a `profile mic list=…` status frame handled in
+	// HandleStatus("profile"). Best-effort — an older radio that rejects it just
+	// leaves mic_profiles empty (the feature degrades gracefully).
+	_ = c.send(ctx, "profile mic info")
 	return info, nil
 }
 
@@ -215,10 +222,23 @@ func (c *Client) Send(ctx context.Context, cmd string) error {
 // last-used frequency/mode for that band. The wire command and band-number
 // (wavelength-in-meters) form are from the SmartSDR TCPIP display-pan wiki,
 // confirmed live on shari the same way the DVK commands were.
+//
+// SetMicProfile drives SmartSDR's native mic profiles: `profile mic load
+// "<name>"` selects a profile. This is from the SmartSDR TCPIP profile wiki.
+// The available profile LIST is obtained by sending the one-shot `profile mic
+// info` command (undocumented but used by FlexLib/AetherSDR; confirmed live on
+// shari) — sent directly in the handshake (see Client.Handshake), the radio
+// replies with `profile mic list=<name>^<name>^…` status frames parsed by
+// ParseProfile. SmartSDR does NOT report an active mic profile, so the bridge
+// tracks the active name client-side as "last loaded via SetMicProfile".
+// (`profile mic save "<name>"` is obsolete on SmartSDR v4+ — the radio returns
+// malformed — so there is no SaveMicProfile here; profile creation/editing now
+// uses a file-transfer mechanism, out of scope.)
 type Commander interface {
 	DVKPlay(id int) error                           // dvk playback_start id=<id>
 	DVKStop(id int) error                           // dvk playback_stop  id=<id>
 	SetBand(panHandle string, bandNumber int) error // display pan s <handle> band=<n>
+	SetMicProfile(name string) error                // profile mic load "<name>"
 }
 
 // DVKPlay triggers playback of DVK memory id (1-12) and keys the transmitter.
@@ -237,6 +257,14 @@ func (c *Client) DVKStop(id int) error {
 // result is observed on the slice/pan status stream, not via the reply.
 func (c *Client) SetBand(panHandle string, bandNumber int) error {
 	return c.Send(context.Background(), fmt.Sprintf("display pan s %s band=%d", panHandle, bandNumber))
+}
+
+// SetMicProfile makes name the current mic profile (SmartSDR `profile mic load
+// "<name>"`). The result is observed on the profile status stream, not via the
+// reply. name is wrapped in double quotes on the wire; the bridge validates it
+// (no embedded quotes/control chars) before calling.
+func (c *Client) SetMicProfile(name string) error {
+	return c.Send(context.Background(), fmt.Sprintf("profile mic load \"%s\"", name))
 }
 
 // Run blocks reading status lines and dispatching them to the handler.

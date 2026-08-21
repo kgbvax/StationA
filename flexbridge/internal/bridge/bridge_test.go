@@ -411,19 +411,20 @@ func TestBridge_MetaTopic(t *testing.T) {
 		t.Errorf("meta schema = %v, want \"1.0\"", meta["schema"])
 	}
 	// The consumer-neutral expose block (model §3.1) must be present. Radio
-	// tuning state is read-only except band (writable set_band setpoint); DVK
-	// playback is exposed as one-shot actions (buttons), not fields.
+	// tuning state is read-only except band and mic_profile (writable setpoints);
+	// DVK playback is exposed as one-shot actions.
 	expose, ok := meta["expose"].(map[string]any)
 	if !ok {
 		t.Fatalf("meta missing expose block; got %v", meta["expose"])
 	}
 	fields, _ := expose["fields"].([]any)
-	if len(fields) != 9 {
-		t.Errorf("expose.fields len = %d, want 9 (device_online,freq_hz,band,mode,drive,tx,tuning,dvk_status,dvk_id)", len(fields))
+	if len(fields) != 10 {
+		t.Errorf("expose.fields len = %d, want 10 (device_online,freq_hz,band,mode,drive,tx,tuning,dvk_status,dvk_id,mic_profile)", len(fields))
 	}
-	// Radio tuning state is read-only except band, which is a writable
-	// setpoint (set_band → native band-stacking). Every other field must not
-	// be writable; DVK is driven via one-shot actions, not setpoint fields.
+	// Radio tuning state is read-only except band and mic_profile, which are
+	// writable setpoints (set_band → native band-stacking; set_mic_profile →
+	// native profile mic load). Every other field must not be writable; DVK is
+	// driven via one-shot actions, not setpoint fields.
 	for i, f := range fields {
 		fm, _ := f.(map[string]any)
 		if fm["key"] == nil {
@@ -431,7 +432,7 @@ func TestBridge_MetaTopic(t *testing.T) {
 			continue
 		}
 		key, _ := fm["key"].(string)
-		if _, w := fm["writable"]; w && key != "band" {
+		if _, w := fm["writable"]; w && key != "band" && key != "mic_profile" {
 			t.Errorf("expose field %v must not be writable", key)
 		}
 	}
@@ -453,7 +454,8 @@ func TestBridge_MetaTopic(t *testing.T) {
 	if cmd == nil || cmd["action"] != "set_band" || cmd["value_key"] != "value" {
 		t.Errorf("band command = %v, want {action:set_band value_key:value}", cmd)
 	}
-	// DVK is the one read-write surface: expose.actions carries 12 play buttons + stop.
+	// DVK is the one read-write surface: expose.actions carries 12 play buttons +
+	// stop (action-only one-shot actions).
 	actions, hasActions := expose["actions"].([]any)
 	if !hasActions {
 		t.Fatal("expose.actions missing; DVK actions must be advertised")
@@ -494,12 +496,13 @@ func topicList(msgs []MemoMsg) []string {
 // DVK (Digital Voice Keyer, SmartSDR v4+)
 // ------------------------------------------------------------------
 
-// fakeCommander records the DVK and band-change calls the bridge makes.
+// fakeCommander records the DVK, band-change, and mic-profile calls the bridge makes.
 type fakeCommander struct {
-	mu       sync.Mutex
-	playCall []int
-	stopCall []int
-	bandCall []bandCall
+	mu             sync.Mutex
+	playCall       []int
+	stopCall       []int
+	bandCall       []bandCall
+	micProfileCall []string
 }
 
 type bandCall struct {
@@ -528,6 +531,13 @@ func (f *fakeCommander) SetBand(handle string, band int) error {
 	return nil
 }
 
+func (f *fakeCommander) SetMicProfile(name string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.micProfileCall = append(f.micProfileCall, name)
+	return nil
+}
+
 func (f *fakeCommander) plays() []int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -544,6 +554,12 @@ func (f *fakeCommander) bands() []bandCall {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]bandCall(nil), f.bandCall...)
+}
+
+func (f *fakeCommander) micProfiles() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.micProfileCall...)
 }
 
 // cmdJSON builds a /cmd payload the way the shared value-key convention does:
@@ -796,7 +812,8 @@ func TestBridge_MetaExposesDVK(t *testing.T) {
 		}
 	}
 
-	// Actions: 12 dvk_play_<N> + dvk_stop, each with an action-only command.
+	// Actions: 12 dvk_play_<N> + dvk_stop (action-only; the memory index is in
+	// the action name, so none of these carry a value_key).
 	actions, _ := expose["actions"].([]any)
 	seen := map[string]bool{}
 	for _, a := range actions {
@@ -811,7 +828,7 @@ func TestBridge_MetaExposesDVK(t *testing.T) {
 		if cmd["action"] != key {
 			t.Errorf("action %q command.action = %v, want %q", key, cmd["action"], key)
 		}
-		// Action-only commands carry no value_key (the memory index is in the action name).
+		// All DVK actions are action-only — no value_key.
 		if _, hasVK := cmd["value_key"]; hasVK {
 			t.Errorf("action %q should be action-only (no value_key)", key)
 		}
@@ -827,4 +844,164 @@ func TestBridge_MetaExposesDVK(t *testing.T) {
 	if len(seen) != 13 {
 		t.Errorf("action count = %d, want 13", len(seen))
 	}
+}
+
+// ------------------------------------------------------------------
+// Mic profiles (SmartSDR native profile mic load)
+// ------------------------------------------------------------------
+
+// seedMicProfileList sends a "profile mic list=…" status frame (the reply to
+// the one-shot `profile mic info` command) so the bridge tracks a set of mic
+// profiles. The frame is an authoritative full snapshot; names may contain
+// spaces and are caret-delimited with a trailing caret, exactly as the radio
+// emits them.
+func seedMicProfileList(t *testing.T, b *Bridge, names ...string) {
+	t.Helper()
+	f, _ := flexradio.ParseFrame("S0|profile mic list=" + strings.Join(names, "^") + "^")
+	b.HandleStatus(f)
+}
+
+// seedMicProfileCurrent sends a "profile mic current=<name>" status frame
+// (defensive: SmartSDR does not emit this for mic profiles, but the bridge
+// honors it should a firmware revision do so).
+func seedMicProfileCurrent(t *testing.T, b *Bridge, name string) {
+	t.Helper()
+	f, _ := flexradio.ParseFrame("S0|profile mic current=" + name)
+	b.HandleStatus(f)
+}
+
+// TestHandleProfile_State asserts the mic-profile status stream flows to the
+// retained /state snapshot: a list= frame populates mic_profiles (sorted, full
+// snapshot replacement); a non-mic profile type is ignored; a current= frame
+// sets mic_profile; and a list snapshot that no longer contains the active
+// name clears mic_profile.
+func TestHandleProfile_State(t *testing.T) {
+	b, pub := newTestBridge(t)
+	pub.Reset()
+
+	// A list frame with two profiles (names contain spaces). Sorted on /state.
+	seedMicProfileList(t, b, "Ragchew", "Default ProSet HC6")
+
+	snap, ok := lastState(pub.Messages(), testStateTopic)
+	if !ok {
+		t.Fatal("no /state published after mic profile list frame")
+	}
+	if snap.MicProfile != "" {
+		t.Errorf("mic_profile = %q, want empty (list frame carries no active)", snap.MicProfile)
+	}
+	if len(snap.MicProfiles) != 2 {
+		t.Fatalf("mic_profiles = %v, want 2 entries", snap.MicProfiles)
+	}
+	// Sorted: "Default ProSet HC6" < "Ragchew".
+	if snap.MicProfiles[0] != "Default ProSet HC6" || snap.MicProfiles[1] != "Ragchew" {
+		t.Errorf("mic_profiles = %v, want [Default ProSet HC6 Ragchew] (sorted)", snap.MicProfiles)
+	}
+
+	// A non-mic profile type (global) must not perturb the mic-profile state.
+	pub.Reset()
+	f, _ := flexradio.ParseFrame("S0|profile global list=Global^SO2RDefault^")
+	b.HandleStatus(f)
+	if _, ok := lastState(pub.Messages(), testStateTopic); ok {
+		t.Error("non-mic profile frame published /state; only mic profiles should")
+	}
+
+	// A current= frame sets the active mic profile (defensive path).
+	pub.Reset()
+	seedMicProfileCurrent(t, b, "Default ProSet HC6")
+	snap, ok = lastState(pub.Messages(), testStateTopic)
+	if !ok {
+		t.Fatal("no /state published on current= frame")
+	}
+	if snap.MicProfile != "Default ProSet HC6" {
+		t.Errorf("mic_profile = %q, want Default ProSet HC6", snap.MicProfile)
+	}
+
+	// A later list snapshot that omits the active name clears mic_profile and
+	// replaces the set (full-snapshot semantics, not incremental).
+	pub.Reset()
+	seedMicProfileList(t, b, "Ragchew")
+	snap, ok = lastState(pub.Messages(), testStateTopic)
+	if !ok {
+		t.Fatal("no /state published on replacement list frame")
+	}
+	if snap.MicProfile != "" {
+		t.Errorf("mic_profile = %q, want empty (active name dropped from list)", snap.MicProfile)
+	}
+	if len(snap.MicProfiles) != 1 || snap.MicProfiles[0] != "Ragchew" {
+		t.Errorf("mic_profiles = %v, want [Ragchew] (full-snapshot replacement)", snap.MicProfiles)
+	}
+
+	// An identical list frame (no change) must not republish /state.
+	pub.Reset()
+	seedMicProfileList(t, b, "Ragchew")
+	if _, ok := lastState(pub.Messages(), testStateTopic); ok {
+		t.Error("unchanged list frame republished /state; should be a no-op")
+	}
+}
+
+// TestHandleCommand_SetMicProfile exercises the /cmd dispatch for loading a
+// mic profile: a valid name fires SetMicProfile AND tracks the active name
+// client-side on /state.mic_profile (SmartSDR reports no active mic profile);
+// an unknown name is dropped only when the tracked list is populated (an empty
+// list — before the first profile mic info response — does not block);
+// invalid names and a missing commander are no-ops.
+func TestHandleCommand_SetMicProfile(t *testing.T) {
+	t.Run("valid name fires SetMicProfile + sets active (list empty, not blocked)", func(t *testing.T) {
+		b, pub := newTestBridge(t)
+		pub.Reset()
+		fc := &fakeCommander{}
+		b.SetCommander(fc)
+		b.HandleCommand(cmdJSON("set_mic_profile", "Default ProSet HC6"))
+		if got := fc.micProfiles(); len(got) != 1 || got[0] != "Default ProSet HC6" {
+			t.Errorf("SetMicProfile calls = %v, want [Default ProSet HC6]", got)
+		}
+		snap, ok := lastState(pub.Messages(), testStateTopic)
+		if !ok {
+			t.Fatal("no /state published after set_mic_profile")
+		}
+		if snap.MicProfile != "Default ProSet HC6" {
+			t.Errorf("mic_profile = %q, want Default ProSet HC6 (client-side active)", snap.MicProfile)
+		}
+	})
+
+	t.Run("known name when list populated fires SetMicProfile", func(t *testing.T) {
+		b, _ := newTestBridge(t)
+		fc := &fakeCommander{}
+		b.SetCommander(fc)
+		seedMicProfileList(t, b, "Default ProSet HC6", "Ragchew")
+		b.HandleCommand(cmdJSON("set_mic_profile", "Default ProSet HC6"))
+		if got := fc.micProfiles(); len(got) != 1 || got[0] != "Default ProSet HC6" {
+			t.Errorf("SetMicProfile calls = %v, want [Default ProSet HC6]", got)
+		}
+	})
+
+	t.Run("unknown name when list populated is dropped", func(t *testing.T) {
+		b, pub := newTestBridge(t)
+		fc := &fakeCommander{}
+		b.SetCommander(fc)
+		seedMicProfileList(t, b, "Default ProSet HC6", "Ragchew")
+		pub.Reset() // consume the seed's own /state publish before the dropped command
+		b.HandleCommand(cmdJSON("set_mic_profile", "Nope"))
+		if got := fc.micProfiles(); len(got) != 0 {
+			t.Errorf("SetMicProfile calls = %v, want none (unknown name)", got)
+		}
+		if _, ok := lastState(pub.Messages(), testStateTopic); ok {
+			t.Error("unknown-name load published /state; should be a no-op")
+		}
+	})
+
+	t.Run("invalid name (embedded quote) is dropped", func(t *testing.T) {
+		b, _ := newTestBridge(t)
+		fc := &fakeCommander{}
+		b.SetCommander(fc)
+		b.HandleCommand(cmdJSON("set_mic_profile", `evil"name`))
+		if got := fc.micProfiles(); len(got) != 0 {
+			t.Errorf("SetMicProfile calls = %v, want none (invalid name)", got)
+		}
+	})
+
+	t.Run("nil commander no-ops (radio offline)", func(t *testing.T) {
+		b, _ := newTestBridge(t)
+		b.HandleCommand(cmdJSON("set_mic_profile", "Default ProSet HC6")) // must not panic
+	})
 }

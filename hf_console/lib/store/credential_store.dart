@@ -18,6 +18,11 @@ class CredentialStore {
       'mqtt_port': prefs.getString('mqtt_port'),
       'mqtt_user': prefs.getString('mqtt_user'),
       'mqtt_password': prefs.getString('mqtt_password'),
+      // DX-spot overlay settings (the Android path returns these via _secure.readAll()
+      // automatically; the non-secure SharedPreferences fallback lists them explicitly).
+      'station_locator': prefs.getString('station_locator'),
+      'horstreporter_base_url': prefs.getString('horstreporter_base_url'),
+      'station_callsign': prefs.getString('station_callsign'),
     };
   }
 

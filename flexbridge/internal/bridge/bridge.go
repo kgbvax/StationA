@@ -2,6 +2,7 @@ package bridge
 
 import (
 	"encoding/json"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -21,15 +22,16 @@ type Bridge struct {
 	pub Publisher
 	log Logger
 
-	mu        sync.RWMutex
-	device    ha.Device
-	commander Commander // current radio command surface (nil while radio offline)
-	interlock flexradio.InterlockStatus
-	slices    map[int]flexradio.SliceStatus
-	sliceBand map[int]string                 // per-slice last-derived band, used as the hysteresis prev for that slice
-	pans      map[string]flexradio.PanStatus // panadapters tracked via `sub pan all`, keyed by stream-id handle
-	tuStatus  flexradio.ATUStatus
-	state     radioState
+	mu          sync.RWMutex
+	device      ha.Device
+	commander   Commander // current radio command surface (nil while radio offline)
+	interlock   flexradio.InterlockStatus
+	slices      map[int]flexradio.SliceStatus
+	sliceBand   map[int]string                 // per-slice last-derived band, used as the hysteresis prev for that slice
+	pans        map[string]flexradio.PanStatus // panadapters tracked via `sub pan all`, keyed by stream-id handle
+	micProfiles map[string]struct{}            // mic profile names from `profile mic info` → `profile mic list=` status frames
+	tuStatus    flexradio.ATUStatus
+	state       radioState
 
 	discoDone bool
 }
@@ -47,15 +49,17 @@ type cmdPayload = schema.CmdPayload
 
 // radioState is the mutable radio state held under Bridge.mu.
 type radioState struct {
-	freqHz       int64
-	band         string
-	mode         string // canonical (NormalizeMode applied)
-	txing        bool   // true while interlock.Transmitting
-	tuning       bool   // true while ATU or radio is in tuning state
-	drive        int    // 0-100 transmit drive level
-	deviceOnline bool   // true while the radio TCP link is up (handshake done)
-	dvkStatus    string // DVK: idle|recording|preview|playback|disabled (omitempty via statePayload)
-	dvkID        int    // DVK: active memory id (cleared on idle/disabled)
+	freqHz         int64
+	band           string
+	mode           string   // canonical (NormalizeMode applied)
+	txing          bool     // true while interlock.Transmitting
+	tuning         bool     // true while ATU or radio is in tuning state
+	drive          int      // 0-100 transmit drive level
+	deviceOnline   bool     // true while the radio TCP link is up (handshake done)
+	dvkStatus      string   // DVK: idle|recording|preview|playback|disabled (omitempty via statePayload)
+	dvkID          int      // DVK: active memory id (cleared on idle/disabled)
+	micProfile     string   // mic profile currently loaded (active name; omitempty)
+	micProfileList []string // sorted available mic profile names (omitempty)
 }
 
 // statePayload is the JSON shape published to <slot>/state (retained).
@@ -65,16 +69,18 @@ type radioState struct {
 // live radio from a frozen snapshot left over from a disconnect — /status is
 // the MQTT/LWT bridge liveness, not the radio link.
 type statePayload struct {
-	TS           string `json:"ts"`
-	FreqHz       int64  `json:"freq_hz"`
-	Band         string `json:"band,omitempty"`
-	Mode         string `json:"mode,omitempty"`
-	TX           string `json:"tx"` // "rx" | "tx"
-	Tuning       bool   `json:"tuning"`
-	Drive        int    `json:"drive"`                // 0-100
-	DeviceOnline bool   `json:"device_online"`        // radio link liveness
-	DVKStatus    string `json:"dvk_status,omitempty"` // DVK operation (SmartSDR v4+)
-	DVKID        int    `json:"dvk_id,omitempty"`     // active DVK memory id
+	TS           string   `json:"ts"`
+	FreqHz       int64    `json:"freq_hz"`
+	Band         string   `json:"band,omitempty"`
+	Mode         string   `json:"mode,omitempty"`
+	TX           string   `json:"tx"` // "rx" | "tx"
+	Tuning       bool     `json:"tuning"`
+	Drive        int      `json:"drive"`                  // 0-100
+	DeviceOnline bool     `json:"device_online"`          // radio link liveness
+	DVKStatus    string   `json:"dvk_status,omitempty"`   // DVK operation (SmartSDR v4+)
+	DVKID        int      `json:"dvk_id,omitempty"`       // active DVK memory id
+	MicProfile   string   `json:"mic_profile,omitempty"`  // active mic profile name (SmartSDR native profile)
+	MicProfiles  []string `json:"mic_profiles,omitempty"` // available mic profile names (dynamic; /state only)
 }
 
 // metaPayload is the JSON shape published to <slot>/meta (retained birth cert).
@@ -107,7 +113,9 @@ type metaExpose struct {
 }
 
 // metaExposeAction describes a one-shot button (integration model Appendix C).
-// Its command is action-only: pressing the button publishes {"action":"<Action>"}.
+// Most actions are action-only: pressing the button publishes
+// {"action":"<Action>"}. A value-carrying action adds a value_key so the
+// consumer sends {"action":"<Action>","value":"<value>"}.
 type metaExposeAction struct {
 	Key     string       `json:"key"`
 	Name    string       `json:"name"`
@@ -185,12 +193,13 @@ type Logger interface {
 // New constructs a Bridge.
 func New(cfg Config, pub Publisher, log Logger) *Bridge {
 	return &Bridge{
-		cfg:       cfg,
-		pub:       pub,
-		log:       log,
-		slices:    make(map[int]flexradio.SliceStatus),
-		sliceBand: make(map[int]string),
-		pans:      make(map[string]flexradio.PanStatus),
+		cfg:         cfg,
+		pub:         pub,
+		log:         log,
+		slices:      make(map[int]flexradio.SliceStatus),
+		sliceBand:   make(map[int]string),
+		pans:        make(map[string]flexradio.PanStatus),
+		micProfiles: make(map[string]struct{}),
 	}
 }
 
@@ -232,6 +241,7 @@ func (b *Bridge) Reset() {
 	b.slices = make(map[int]flexradio.SliceStatus)
 	b.sliceBand = make(map[int]string)
 	b.pans = make(map[string]flexradio.PanStatus)
+	b.micProfiles = make(map[string]struct{})
 	b.interlock = flexradio.InterlockStatus{}
 	b.tuStatus = flexradio.ATUStatus{}
 	b.state = radioState{} // deviceOnline defaults false
@@ -261,7 +271,91 @@ func (b *Bridge) HandleStatus(f flexradio.Frame) {
 		b.handleRadio(f)
 	case "dvk":
 		b.handleDVK(f)
+	case "profile": // SmartSDR mic profile list/active (reply to `profile mic info`)
+		b.handleProfile(f)
 	}
+}
+
+// handleProfile tracks mic profiles from "profile" status frames. SmartSDR does
+// not broadcast profiles via subscriptions; the bridge queries the list by
+// sending `profile mic info` (in the handshake and after a save), and the radio
+// replies with a `profile mic list=Name^Other Name^…` status frame — an
+// authoritative full snapshot of the available mic profiles (caret-delimited;
+// names may contain spaces). A `profile mic current=<name>` frame would carry
+// the active profile, but SmartSDR does not emit one for mic profiles (mic
+// profiles are load-only presets with no "current" pointer, unlike global
+// profiles), so the active mic name is tracked client-side as "last loaded via
+// set_mic_profile" (see HandleCommand). Non-mic profile types (global/transmit)
+// and the importing=/exporting= transfer flags are ignored.
+func (b *Bridge) handleProfile(f flexradio.Frame) {
+	ps := flexradio.ParseProfile(f.RawBody)
+	if ps.Type != "mic" {
+		return // only mic profiles are tracked
+	}
+	if ps.IsList {
+		// Full-snapshot replacement: rebuild the known set from the list.
+		newSet := make(map[string]struct{}, len(ps.Names))
+		for _, n := range ps.Names {
+			newSet[n] = struct{}{}
+		}
+		newList := sortedKeys(newSet)
+		b.mu.Lock()
+		listChanged := !stringSliceEqual(b.state.micProfileList, newList)
+		// If the client-tracked active name is no longer in the list, drop it.
+		activeChanged := false
+		if b.state.micProfile != "" {
+			if _, ok := newSet[b.state.micProfile]; !ok {
+				b.state.micProfile = ""
+				activeChanged = true
+			}
+		}
+		b.micProfiles = newSet
+		b.state.micProfileList = newList
+		snap := b.state
+		b.mu.Unlock()
+		if listChanged || activeChanged {
+			b.publishStateSnapshot(snap)
+		}
+		return
+	}
+	if ps.IsCurrent {
+		// Defensive: mic does not emit current= on current firmware, but honor
+		// it if a revision does, so the active name follows the radio.
+		b.mu.Lock()
+		changed := b.state.micProfile != ps.Current
+		if changed {
+			b.state.micProfile = ps.Current
+		}
+		snap := b.state
+		b.mu.Unlock()
+		if changed {
+			b.publishStateSnapshot(snap)
+		}
+	}
+}
+
+func sortedKeys(m map[string]struct{}) []string {
+	if len(m) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func stringSliceEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // handleDVK updates the DVK state from a "dvk" status frame (SmartSDR v4+,
@@ -573,6 +667,8 @@ func (b *Bridge) handleRadio(f flexradio.Frame) {
 //	{"action":"dvk_stop"}              stop the currently-active memory (from /state)
 //	{"action":"set_band","value":"20m"} native band-stacking: radio restores the
 //	                                   last-used freq/mode for that band
+//	{"action":"set_mic_profile","value":"<name>"} load mic profile <name> (SmartSDR
+//	                                   native profile mic load)
 func (b *Bridge) HandleCommand(payload []byte) {
 	var c cmdPayload
 	if err := json.Unmarshal(payload, &c); err != nil {
@@ -653,6 +749,45 @@ func (b *Bridge) HandleCommand(payload []byte) {
 			b.log.Warnf("cmd set_band: %v", err)
 		}
 
+	case c.Action == "set_mic_profile":
+		// Native SmartSDR mic-profile load. The name is double-quoted on the
+		// wire, so reject names containing quotes/control chars. If the tracked
+		// mic-profile list is populated and the name isn't in it, drop as a
+		// likely typo (an empty list — before the first `profile mic info`
+		// response — does NOT block, since the list may simply not have arrived
+		// yet).
+		name := strings.TrimSpace(c.Value)
+		if !validProfileName(name) {
+			b.log.Warnf("cmd set_mic_profile: invalid name %q", c.Value)
+			return
+		}
+		b.mu.RLock()
+		_, known := b.micProfiles[name]
+		listPopulated := len(b.micProfiles) > 0
+		b.mu.RUnlock()
+		if listPopulated && !known {
+			b.log.Warnf("cmd set_mic_profile: %q is not a known mic profile", name)
+			return
+		}
+		b.log.Infof("cmd set_mic_profile: %s", name)
+		if err := cmd.SetMicProfile(name); err != nil {
+			b.log.Warnf("cmd set_mic_profile: %v", err)
+			return
+		}
+		// SmartSDR does not report the active mic profile, so track it
+		// client-side as the name we just loaded (best-effort: assumes the load
+		// succeeded; the known-name guard above makes a wrong load unlikely).
+		b.mu.Lock()
+		changed := b.state.micProfile != name
+		if changed {
+			b.state.micProfile = name
+		}
+		snap := b.state
+		b.mu.Unlock()
+		if changed {
+			b.publishStateSnapshot(snap)
+		}
+
 	default:
 		b.log.Warnf("cmd: unknown action %q", c.Action)
 	}
@@ -705,6 +840,23 @@ func isVoiceMode(canonical string) bool {
 	return false
 }
 
+// validProfileName reports whether s is an acceptable mic-profile name to send
+// on the wire. The bridge wraps the name in double quotes (`profile mic load
+// "<name>"`), so embedded quotes/backslashes and control characters are
+// rejected to keep the wire command well-formed and avoid injection. Empty and
+// over-long names are rejected too.
+func validProfileName(s string) bool {
+	if s == "" || len(s) > 64 {
+		return false
+	}
+	for _, r := range s {
+		if r == '"' || r == '\\' || r < 0x20 {
+			return false
+		}
+	}
+	return true
+}
+
 // ------------------------------------------------------------------
 // Publishing helpers
 // ------------------------------------------------------------------
@@ -727,6 +879,8 @@ func (b *Bridge) publishStateSnapshot(st radioState) {
 		DeviceOnline: st.deviceOnline,
 		DVKStatus:    st.dvkStatus,
 		DVKID:        st.dvkID,
+		MicProfile:   st.micProfile,
+		MicProfiles:  st.micProfileList,
 	}
 	data, err := json.Marshal(p)
 	if err != nil {
@@ -771,10 +925,13 @@ func (b *Bridge) publishMeta() {
 			TxOutputs: []string{"ant1", "ant2"},
 		},
 		// Consumer-neutral field surface (model §3.1). Radio tuning state is
-		// read-only except band, which is a writable setpoint (set_band → native
-		// band-stacking); every other field renders as a sensor/binary_sensor.
-		// The enum options resolve via options_ref against the capabilities above
-		// (bands/modes). HA-specific rendering lives in hadiscovery, not here.
+		// read-only except band and mic_profile, which are writable setpoints
+		// (set_band → native band-stacking; set_mic_profile → native profile mic
+		// load); every other field renders as a sensor/binary_sensor. The enum
+		// options resolve via options_ref against the capabilities above
+		// (bands/modes). The dynamic mic-profile list lives on /state
+		// (mic_profiles) only — expose.fields has no array type, so it is not
+		// declared here. HA-specific rendering lives in hadiscovery, not here.
 		Expose: &metaExpose{
 			Device: metaExposeDevice{
 				Name:         d.Name,
@@ -794,6 +951,8 @@ func (b *Bridge) publishMeta() {
 				{Key: "tuning", Name: "Tuning", Type: "boolean"},
 				{Key: "dvk_status", Name: "DVK Status", Type: "string"},
 				{Key: "dvk_id", Name: "DVK Memory", Type: "number"},
+				{Key: "mic_profile", Name: "Mic Profile", Type: "string", Writable: true,
+					Command: &metaCommand{Action: "set_mic_profile", ValueKey: "value", ValueType: "string"}},
 			},
 			Actions: dvkExposeActions(),
 		},

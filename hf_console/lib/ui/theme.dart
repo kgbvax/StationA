@@ -112,6 +112,23 @@ class AppTheme extends ChangeNotifier {
 
   static Color get activeButtonText => isLight ? const Color(0xFFFFFFFF) : const Color(0xFF000000);
 
+  /// Colour for a DX-spot dot by its horstreporter `sourceType`
+  /// (`mqtt`→FT8/FT4 green, `dxcluster`→cyan, `rbn`→amber, `wspr`→orange).
+  static Color spotColor(String sourceType) {
+    switch (sourceType) {
+      case 'mqtt':
+        return green;
+      case 'dxcluster':
+        return accent;
+      case 'rbn':
+        return amber;
+      case 'wspr':
+        return orange;
+      default:
+        return txtMute;
+    }
+  }
+
   static Color get purpleBorder => const Color(0x597C5CFF);
 
   static TextStyle display(double size, {Color? color, FontWeight weight = FontWeight.w600, double letterSpacing = 0.04}) =>

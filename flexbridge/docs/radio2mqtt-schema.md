@@ -12,7 +12,7 @@ flexbridge implements the `radio` slot of the station integration model
 | `/meta` | yes | bridge → bus | birth certificate: identity + capabilities |
 | `/state` | yes | bridge → bus | live radio state (JSON snapshot) |
 | `/status` | yes | broker LWT | liveness: `online` / `offline` |
-| `/cmd` | no | bus → bridge | intent: band changes (`set_band`) + DVK playback trigger (one-shot, not retained) |
+| `/cmd` | no | bus → bridge | intent: band changes (`set_band`) + DVK playback + mic-profile load (`set_mic_profile`) (one-shot, not retained) |
 
 ---
 
@@ -95,7 +95,9 @@ subscriber or a late-joiner gets this immediately without polling.
       { "key": "tx",      "name": "Transmitting", "type": "boolean", "on": "tx", "off": "rx" },
       { "key": "tuning",  "name": "Tuning",    "type": "boolean" },
       { "key": "dvk_status", "name": "DVK Status", "type": "string" },
-      { "key": "dvk_id",     "name": "DVK Memory", "type": "number" }
+      { "key": "dvk_id",     "name": "DVK Memory", "type": "number" },
+      { "key": "mic_profile", "name": "Mic Profile", "type": "string", "writable": true,
+        "command": { "action": "set_mic_profile", "value_key": "value", "value_type": "string" } }
     ],
     "actions": [
       { "key": "dvk_play_1",  "name": "DVK Play 1",  "command": { "action": "dvk_play_1" } },
@@ -115,18 +117,26 @@ this slot's observable field surface. It carries **no consumer vocabulary** — 
 `hadiscovery` service for Home Assistant, and any future historian/dashboard/Prometheus
 consumer) render their own representation from these neutral primitives.
 
-flexbridge is **read-only for radio tuning state except `band`**, which is a writable
-setpoint: `expose.fields[].band` carries `writable: true` with a `command` of
-`{action:"set_band", value_key:"value", value_type:"string"}`. A consumer renders it as a
-select (enum) over `capabilities.bands`; selecting a band publishes
+flexbridge is **read-only for radio tuning state except `band` and `mic_profile`**, both
+writable setpoints: `expose.fields[].band` carries `writable: true` with a `command` of
+`{action:"set_band", value_key:"value", value_type:"string"}`, and `expose.fields[].mic_profile`
+carries `writable: true` with a `command` of
+`{action:"set_mic_profile", value_key:"value", value_type:"string"}`. A consumer renders
+`band` as a select (enum) over `capabilities.bands`; selecting a band publishes
 `{"action":"set_band","value":"<band>"}`. `/state.band` stays **derived from `freq_hz`** —
 the `set_band` command triggers SmartSDR native band-stacking, the radio tunes to its own
 persisted per-band frequency, and the bridge republishes that `freq_hz` with `band` derived
 from it (the model's band/freq-can't-disagree invariant holds; the field is writable as an
-input, not as a stored setpoint). The other read-write surfaces are one-shot `actions`
-(buttons), not writable setpoint fields: the **Digital Voice Keyer (DVK)** (each play
-action publishes `{"action":"dvk_play_N"}` with no value, so a consumer (hadiscovery → HA
-button) needs no value injection). The `band`/`mode` enum options are not inlined; they
+input, not as a stored setpoint). `mic_profile` is a writable string setpoint: publishing
+`{"action":"set_mic_profile","value":"<name>"}` loads that mic profile (SmartSDR native
+`profile mic load`); the active profile is observed back on `/state.mic_profile`. The
+**available** mic-profile list is dynamic, so it lives on `/state.mic_profiles` only — the
+expose `fields` schema has no array type, so it is not declared in `expose.fields` (a
+consumer reads it from `/state`; hadiscovery rendering of the dynamic list is future work).
+The other read-write surface is one-shot `actions` (buttons), not writable setpoint
+fields: the **Digital Voice Keyer (DVK)** (each play action publishes `{"action":"dvk_play_N"}`
+with no value, so a consumer (hadiscovery → HA button) needs no value injection).
+The `band`/`mode` enum options are not inlined; they
 resolve via `options_ref` against `capabilities.bands` / `capabilities.modes` above (single
 source of truth). The `tx` boolean carries `on`/`off` because `/state` holds the strings
 `"tx"`/`"rx"`, not a bool; `tuning` omits them because `/state` holds a real bool.
@@ -179,7 +189,9 @@ regardless of how many internal receivers the radio has.
   "drive":  40,
   "device_online": true,
   "dvk_status": "idle",
-  "dvk_id": 0
+  "dvk_id": 0,
+  "mic_profile": "Default ProSet HC6",
+  "mic_profiles": ["Contest", "Default ProSet HC6", "Ragchew"]
 }
 ```
 
@@ -197,6 +209,8 @@ regardless of how many internal receivers the radio has.
 | `device_online` | bool | — | `true` while the radio TCP link is up; `false` on disconnect. `/status` is the MQTT/LWT bridge liveness, not the radio link |
 | `dvk_status` | string | — | DVK operation: `idle` \| `recording` \| `preview` \| `playback` \| `disabled`. SmartSDR v4+; omitted when no DVK status has been reported. `disabled` means no SmartSDR+ license |
 | `dvk_id` | integer | — | Active DVK memory id (1–12) while playing/recording/previewing; `0`/omitted when idle |
+| `mic_profile` | string | — | Currently-loaded mic profile name (SmartSDR native mic profile). Best-effort: SmartSDR does not report an active mic profile, so the bridge tracks this client-side as the name most recently loaded via `set_mic_profile`; empty until the first load via the bus. Omitted when empty |
+| `mic_profiles` | string[] | — | Available mic-profile names (sorted). Populated from the radio's reply to the one-shot `profile mic info` command (`profile mic list=A^B C^…` status frames; queried once in the handshake on connect). `/state`-only (not in `expose.fields`) |
 
 ### Mode values
 
@@ -243,9 +257,9 @@ Derived from `freq_hz` at publish time (IARU Region 1 / DL allocations).
 
 ---
 
-## `/cmd` — band-change & DVK intent
+## `/cmd` — band-change, DVK & mic-profile intent
 
-`/cmd` is **not retained** (QoS 1): both intents are one-shot triggers, and a stale
+`/cmd` is **not retained** (QoS 1): all intents are one-shot triggers, and a stale
 command must not re-fire on a bridge or broker restart (same rationale as the tuner
 slot's `tune`). Payloads are JSON with the shared value-key convention — the argument
 rides under `value`, never under a key named after the action.
@@ -259,6 +273,7 @@ Accepted actions:
 | `dvk_play` | `"N"` | Same, value form (for scripts / Node-RED) |
 | `dvk_stop` | `"N"` | Stop memory N and unkey |
 | `dvk_stop` | omitted | Stop the currently-active memory, resolved by the bridge from `/state.dvk_id` |
+| `set_mic_profile` | `"<name>"` | **Native mic-profile load.** Sends `profile mic load "<name>"` (SmartSDR's own mic profiles). The name is double-quoted on the wire, so it must not contain `"`/`\`/control characters (rejected as invalid). If `/state.mic_profiles` is populated and `name` is not in it, the command is dropped as a likely typo; an empty list does not block (the list is empty only before the first `profile mic info` response). The bridge then tracks the loaded name on `/state.mic_profile` client-side (SmartSDR reports no active mic profile) |
 
 Examples:
 
@@ -268,10 +283,12 @@ Examples:
 {"action":"dvk_play","value":"3"}
 {"action":"dvk_stop"}
 {"action":"dvk_stop","value":"3"}
+{"action":"set_mic_profile","value":"Default ProSet HC6"}
 ```
 
 **No command-ack is published.** Consumers observe the result on `/state` —
-`freq_hz`/`band`/`mode` for `set_band`, `dvk_status`/`dvk_id` for DVK — the stationa
+`freq_hz`/`band`/`mode` for `set_band`, `dvk_status`/`dvk_id` for DVK,
+`mic_profile` for mic-profile load — the stationa
 fire-and-observe plane discipline: send intent, watch state.
 
 ### Band-stacking notes
@@ -299,6 +316,35 @@ fire-and-observe plane discipline: send intent, watch state.
 - The `dvk` wire strings were originally third-party-confirmed (AetherSDR impl vs
   FLEX-8600 fw 4.2.18) and are now confirmed against the live FLEX-8400 on shari. The
   official SmartSDR API wiki does not document the `dvk` command family.
+
+### Mic-profile prerequisites and caveats
+
+- flexbridge drives SmartSDR's **native** mic profiles (`profile mic load`), so the radio
+  remains the single source of truth — it does not define its own preset/equalizer layer.
+  Only `mic` profiles are tracked; `global`/`transmit` profiles are ignored. The load command
+  (`profile mic load "<name>"`) is documented in the SmartSDR TCPIP profile wiki; the name is
+  double-quoted and may contain spaces (e.g. `"Default ProSet HC6"`).
+- **No save.** `profile mic save "<name>"` is obsolete on SmartSDR v4+ (the radio returns a
+  malformed-reply error); profile creation/editing now uses a file-transfer mechanism that is
+  out of scope for this bridge. So there is no `save_mic_profile` action — load only.
+- **Profile list enumeration** is via the one-shot `profile mic info` command (undocumented
+  in the SmartSDR wiki, but used by FlexLib and AetherSDR; confirmed live on a FLEX-8400,
+  SmartSDR v4.2.20). The radio replies asynchronously with a `profile mic
+  list=Default^Default FHM-1^…^RTTYDefault^` status frame — an authoritative full snapshot
+  of the available mic profiles (caret-delimited; names may contain spaces; trailing
+  caret). The bridge sends `profile mic info` in the handshake (best-effort, fire-and-
+  forget like `sub dvk all`), so `/state.mic_profiles` populates on connect. There is no
+  `sub profile` and no `profile list`; profiles do NOT arrive via `sub radio all`. The list is
+  NOT re-queried after a load (the available set does not change on load); reconnect re-runs
+  the handshake and re-populates it.
+- **Active mic profile is not reported by the radio.** SmartSDR emits `profile <type>
+  current=<name>` for `global` profiles but NOT for `mic` profiles (mic profiles are
+  load-only presets with no "current" pointer, unlike global profiles). The bridge therefore
+  tracks `/state.mic_profile` client-side as the name most recently loaded via
+  `set_mic_profile` (best-effort: it assumes the load succeeded; the known-name typo guard
+  makes a wrong load unlikely). A profile switched directly in the SmartSDR GUI will not be
+  reflected. The `current=` frame is still honored defensively should a firmware revision
+  emit it.
 
 ---
 
@@ -392,8 +438,10 @@ only `/state`. If multiple slices are configured in SmartSDR, the TX slice
 | Radio drive level changes | `/state` |
 | Radio `tuning` flag changes | `/state` |
 | DVK status changes (idle ↔ playback ↔ …) | `/state` (`dvk_status`, `dvk_id`) |
+| Mic profile list (`profile mic list=` reply to `profile mic info`; queried on connect) | `/state` (`mic_profiles` list) |
 | `/cmd` `set_band` received | radio band command sent; radio band-stacks → confirm on `/state` (`freq_hz`, `band`, `mode`) |
 | `/cmd` DVK play/stop received | radio command sent; confirm on `/state` (`dvk_status`, `dvk_id`) |
+| `/cmd` `set_mic_profile` received | radio `profile mic load` sent; bridge tracks `/state.mic_profile` client-side (radio reports no active mic profile) |
 | Disconnect / crash | `/status` → `offline` (broker LWT) |
 
 State is published only when a field actually changes value; unchanged state

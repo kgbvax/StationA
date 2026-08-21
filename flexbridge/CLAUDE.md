@@ -2,7 +2,8 @@
 
 flexbridge is a **read-only** bridge for radio tuning state: it observes a FlexRadio
 6000-series radio over the SmartSDR TCP/IP API and UDP meter stream, and publishes state to
-MQTT. The two exceptions are **band changes** and the **Digital Voice Keyer (DVK)**:
+MQTT. The three exceptions are **band changes**, the **Digital Voice Keyer (DVK)**, and
+**mic profiles**:
 
 - **Band changes** (`set_band`): the bridge drives SmartSDR's native band-stacking from
   the `/cmd` plane — `display pan s <pan_handle> band=<wavelength>` changes the band on a
@@ -12,8 +13,15 @@ MQTT. The two exceptions are **band changes** and the **Digital Voice Keyer (DVK
   invariant holds).
 - **DVK** (SmartSDR v4+): the bridge drives DVK playback (play/stop) from `/cmd` and
   observes DVK status on `/state`.
+- **Mic profiles** (`set_mic_profile`): the bridge drives SmartSDR's **native** mic profiles
+  (`profile mic load`) from `/cmd`. The available list is queried once via the one-shot
+  `profile mic info` command (in the handshake) and published on `/state.mic_profiles`; the
+  active name (`/state.mic_profile`) is tracked client-side as "last loaded" (SmartSDR
+  reports no active mic profile). This is deliberately the radio's own profile mechanism, not
+  a custom preset layer. There is **no save** — `profile mic save` is obsolete on SmartSDR
+  v4+ (malformed reply); profile creation uses a file-transfer mechanism out of scope here.
 
-Apart from band changes and DVK it never sends commands to the radio.
+Apart from band changes, DVK, and mic profiles it never sends commands to the radio.
 
 ---
 
@@ -90,14 +98,28 @@ The `site`, `station`, and `slot` values are configurable via `config.toml`.
 **State is a single retained JSON document** (not per-field topics). Fields:
 `ts`, `freq_hz` (Hz integer), `band` (derived), `mode` (canonical: `cw`/`usb`/`lsb`/`am`/`fm`/`data`),
 `tx` (`rx`/`tx`), `tuning` (bool), `drive` (0–100), `device_online` (radio link liveness),
-`dvk_status` (`idle`/`recording`/`preview`/`playback`/`disabled`), `dvk_id` (active DVK memory 1–12).
+`dvk_status` (`idle`/`recording`/`preview`/`playback`/`disabled`), `dvk_id` (active DVK memory 1–12),
+`mic_profile` (active mic profile name), `mic_profiles` (available mic profile names, sorted).
 
-**flexbridge is read-only except for band changes and DVK.** `/cmd` carries
+**flexbridge is read-only except for band changes, DVK, and mic profiles.** `/cmd` carries
 one-shot intent only (not retained — a stale command must not re-fire on restart):
 
 - `set_band` + `value` (band label, e.g. `"20m"`) — native band-stacking; the radio restores
   the last-used frequency/mode for that band. `/state.band` stays derived from `freq_hz`.
 - `dvk_play_<N>` / `dvk_play`+`value` / `dvk_stop` — DVK playback.
+- `set_mic_profile` + `value` (profile name) — native `profile mic load`; confirm on
+  `/state.mic_profile`.
+
+The mic-profile **list** (`mic_profiles`) is a `/state`-only dynamic field — it is not in
+`expose.fields` (the expose schema has no array type). It is populated from the radio's
+reply to the one-shot `profile mic info` command (`profile mic list=A^B C^…` status frames;
+queried once in the handshake) — not via `sub radio all` (profiles are not broadcast).
+SmartSDR does **not** report an active mic profile (mic profiles are load-only presets with
+no "current" pointer, unlike global profiles), so `mic_profile` is tracked client-side as
+the name most recently loaded via `set_mic_profile` (best-effort); it is empty until the
+first load via the bus. The `set_mic_profile` known-name guard drops unknown names only once
+the list is populated (an empty list — before
+the first `profile mic info` response — does not block).
 
 It is not a general radio-control channel (no `set_freq_hz`/`set_mode`/`set_drive`).
 Panadapters are tracked via `sub pan all`; `set_band` targets the active slice's panadapter,

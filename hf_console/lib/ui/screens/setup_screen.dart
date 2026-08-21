@@ -3,7 +3,7 @@ import '../../store/credential_store.dart';
 import '../../ui/theme.dart';
 
 class SetupScreen extends StatefulWidget {
-  final void Function(String host, int port, String username, String password) onSave;
+  final void Function(String host, int port, String username, String password, String locator, String baseUrl) onSave;
 
   const SetupScreen({super.key, required this.onSave});
 
@@ -17,6 +17,8 @@ class _SetupScreenState extends State<SetupScreen> {
   final _port = TextEditingController(text: '1883');
   final _user = TextEditingController(text: 'console');
   final _pass = TextEditingController();
+  final _locator = TextEditingController(); // station Maidenhead grid → DX overlay
+  final _url = TextEditingController(text: 'https://horstreporter.kgbvax.net');
   bool _obscure = true;
 
   @override
@@ -32,6 +34,8 @@ class _SetupScreenState extends State<SetupScreen> {
       _port.text = values['mqtt_port'] ?? '1883';
       _user.text = values['mqtt_user'] ?? 'console';
       _pass.text = values['mqtt_password'] ?? '';
+      _locator.text = values['station_locator'] ?? '';
+      _url.text = values['horstreporter_base_url'] ?? 'https://horstreporter.kgbvax.net';
     });
   }
 
@@ -41,13 +45,17 @@ class _SetupScreenState extends State<SetupScreen> {
     final user = _user.text.trim();
     final pass = _pass.text;
     if (host.isEmpty || user.isEmpty || pass.isEmpty) return;
+    final locator = _locator.text.trim().toUpperCase();
+    final baseUrl = _url.text.trim();
     await _storage.writeAll({
       'mqtt_host': host,
       'mqtt_port': port.toString(),
       'mqtt_user': user,
       'mqtt_password': pass,
+      'station_locator': locator,
+      'horstreporter_base_url': baseUrl,
     });
-    widget.onSave(host, port, user, pass);
+    widget.onSave(host, port, user, pass, locator, baseUrl);
   }
 
   @override
@@ -77,6 +85,13 @@ class _SetupScreenState extends State<SetupScreen> {
                 _field('Username', _user, false),
                 const SizedBox(height: 12),
                 _field('Password', _pass, true),
+                const SizedBox(height: 20),
+                Text('DX overlay (optional)',
+                    style: AppTheme.body(12, color: AppTheme.txtMute)),
+                const SizedBox(height: 12),
+                _field('Station locator', _locator, false),
+                const SizedBox(height: 12),
+                _field('Horstreporter URL', _url, false),
                 const SizedBox(height: 24),
                 ElevatedButton(
                   onPressed: _save,

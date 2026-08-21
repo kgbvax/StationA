@@ -97,3 +97,5 @@ String dvkStopPayload([int? id]) =>
     jsonEncode({'action': 'dvk_stop', 'value': id?.toString() ?? ''});
 
 String radioSetBandPayload(String band) => cmdPayload('set_band', band);
+
+String radioSetMicProfilePayload(String name) => cmdPayload('set_mic_profile', name);

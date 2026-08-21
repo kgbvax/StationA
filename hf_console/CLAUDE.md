@@ -10,6 +10,8 @@ See `../sas/tablet_console_hybrid_preview.html` for the approved high-fidelity r
 
 - `lib/main.dart` — app entry, landscape lock, theme, root provider
 - `lib/mqtt/mqtt_service.dart` — `mqtt_client` wrapper: connect, subscribe `muehle/#`, publish, retained semantics, reconnect
+- `lib/mqtt/client_factory*.dart` — platform-appropriate MQTT client (`MqttServerClient` on Android, `MqttBrowserClient` over WebSocket on web)
+- `webbridge/` — Go HTTP server + WebSocket-to-MQTT bridge for the web deployment
 - `lib/store/bus_store.dart` — `ChangeNotifier` holding all slot state; computed offline list
 - `lib/store/wiring.dart` — `ANTENNA_MAP`, `CMD_RETAIN`, cmd payload builders, value-key deviations
 - `lib/ui/theme.dart` — color/type tokens
@@ -41,6 +43,8 @@ Non-retained (one-shot): `hf/pa`, `hf/rotator`, `hf/tuner`, `hf/power-seq`.
 
 ## Build
 
+### Android tablet (APK)
+
 Run the prebuild gate before every release APK:
 
 ```bash
@@ -49,7 +53,28 @@ tool/prebuild.sh      # flutter analyze + flutter test
 flutter build apk --release
 ```
 
-Sideload the resulting APK onto the tablet. No deploy to shari — the app runs on the tablet and connects to the broker over the LAN.
+Sideload `build/app/outputs/flutter-apk/app-release.apk` onto the tablet.
+
+### Web channel on shari
+
+There is also a web deployment on shari for browser access from the LAN:
+
+```bash
+cd hf_console
+./deploy.sh           # flutter prebuild + flutter build web + Go bridge + deploy
+```
+
+This builds the Flutter web app and a small Go HTTP/WebSocket bridge, then
+installs them on shari as the `hf-console-web` systemd service on port `8091`:
+
+```
+http://shari:8091/
+```
+
+The browser cannot open raw TCP sockets, so the web build uses WebSocket. The
+Go bridge (`webbridge/`) serves the static Flutter build at `/` and forwards
+the `/mqtt` WebSocket stream byte-for-byte to the MQTT broker at
+`192.168.1.50:1883`. The Android APK continues to connect directly over TCP.
 
 ## Verification
 

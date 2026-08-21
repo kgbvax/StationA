@@ -2,14 +2,14 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:mqtt_client/mqtt_client.dart';
-import 'package:mqtt_client/mqtt_server_client.dart';
 import 'package:typed_data/typed_data.dart';
 import '../store/bus_store.dart';
+import 'client_factory.dart';
 
 class MqttService {
   final BusStore store;
   final ValueNotifier<bool> connected = ValueNotifier(false);
-  MqttServerClient? _client;
+  MqttClient? _client;
   StreamSubscription? _updates;
 
   MqttService(this.store);
@@ -21,8 +21,7 @@ class MqttService {
     required String password,
     required String clientId,
   }) async {
-    final client = MqttServerClient(host, clientId);
-    client.port = port;
+    final client = createMqttClient(host, port, clientId);
     client.keepAlivePeriod = 20;
     client.autoReconnect = true;
     client.resubscribeOnAutoReconnect = true;

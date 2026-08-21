@@ -149,4 +149,3 @@ func TestValidateOverlappingBandsToDifferentPorts(t *testing.T) {
 		t.Errorf("expected error to contain %q, got %q", want, err.Error())
 	}
 }
-

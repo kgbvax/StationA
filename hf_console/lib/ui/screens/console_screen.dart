@@ -12,6 +12,7 @@ import '../widgets/antenna_panel.dart';
 import '../widgets/power_panel.dart';
 import '../widgets/climate_panel.dart';
 import '../widgets/faults_bar.dart';
+import '../widgets/dx_config_sheet.dart';
 
 class ConsoleScreen extends StatefulWidget {
   const ConsoleScreen({super.key});
@@ -250,6 +251,7 @@ class _PageTopBar extends StatelessWidget {
           _Tab('UHF', 'uhf', page == 'uhf', onSelect),
           if (showRadioReadout) const _RadioReadout(),
           _SchemePicker(onScheme: onScheme),
+          const _DxSettingsButton(),
           _ConnectionIndicator(mqtt: mqtt),
           const _OnlineTag(),
         ],
@@ -406,6 +408,26 @@ class _OnlineTag extends StatelessWidget {
       child: Text(
         allOk ? '● all online' : '● $offline offline',
         style: AppTheme.mono(12, color: color, weight: FontWeight.w600),
+      ),
+    );
+  }
+}
+
+class _DxSettingsButton extends StatelessWidget {
+  const _DxSettingsButton();
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(4),
+      onTap: () => showDxConfigSheet(context),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+        decoration: BoxDecoration(
+          border: Border.all(color: AppTheme.cardLineHi),
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: Icon(Icons.tune, size: 16, color: AppTheme.txtMute),
       ),
     );
   }

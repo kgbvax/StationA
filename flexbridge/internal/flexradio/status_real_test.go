@@ -230,3 +230,47 @@ func TestParseSlice_RealInterlock(t *testing.T) {
 		t.Error("READY should not be Transmitting")
 	}
 }
+
+func TestParseProfile_RealMicList(t *testing.T) {
+	// Captured live on a FLEX-8400 (SmartSDR v4.2.20) as the reply to the
+	// one-shot `profile mic info` command. The radio emits an authoritative
+	// full-snapshot list frame: caret-delimited names (which contain spaces),
+	// terminated by a trailing caret. This guards the raw-body parser against
+	// any future drift back to space-splitting (which would mangle names like
+	// "Default FHM-1" and "Default PR781 ESSB 3_2k").
+	const raw = "mic list=Default^Default FHM-1^Default FHM-1 DX^Default FHM-2^" +
+		"Default FHM-2 DX^Default FHM-2 ESSB^Default FHM-3^Default FHM-3 DX^" +
+		"Default FHM-3 ESSB^Default HDST Condenser^Default HDST Dynamic^" +
+		"Default HM-Pro^Default PR781^Default PR781 ESSB 3_2k^Default ProSet HC6^" +
+		"Inrad M629^Inrad M650^iOS_default_Profile^macOS_default_Profile^" +
+		"radiosport DX M20^radiosport DX M207^radiosport DX M208^radiosport DX M350-ADJ^" +
+		"radiosport WIDE M20^radiosport WIDE M207^radiosport WIDE M208^radiosport WIDE M350-ADJ^" +
+		"RTTYDefault^"
+	p := ParseProfile(raw)
+	if p.Type != "mic" || !p.IsList {
+		t.Fatalf("Type=%q IsList=%v, want mic/true", p.Type, p.IsList)
+	}
+	// Spot-check names that contain spaces and a trailing-caret survivor.
+	wantContains := []string{
+		"Default", "Default FHM-1", "Default PR781 ESSB 3_2k",
+		"Default ProSet HC6", "RTTYDefault",
+	}
+	have := map[string]bool{}
+	for _, n := range p.Names {
+		have[n] = true
+	}
+	for _, w := range wantContains {
+		if !have[w] {
+			t.Errorf("missing name %q in parsed list (%d names)", w, len(p.Names))
+		}
+	}
+	// The trailing caret must NOT produce an empty trailing entry.
+	for _, n := range p.Names {
+		if n == "" {
+			t.Error("parsed an empty name from the trailing caret")
+		}
+	}
+	if p.IsCurrent {
+		t.Error("IsCurrent = true for a list frame, want false")
+	}
+}

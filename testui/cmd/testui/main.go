@@ -113,12 +113,12 @@ type rawMsg struct {
 }
 
 type Bus struct {
-	cfg      *Config
+	cfg        *Config
 	sitePrefix string
 
-	mu     sync.RWMutex
-	slots  map[string]*Slot
-	order  []string
+	mu    sync.RWMutex
+	slots map[string]*Slot
+	order []string
 
 	incoming chan *rawMsg
 
@@ -349,10 +349,10 @@ func (b *Bus) handleStream(w http.ResponseWriter, r *http.Request) {
 }
 
 type publishRequest struct {
-	Topic    string      `json:"topic"`
-	Payload  interface{} `json:"payload"`
-	Retain   bool        `json:"retain"`
-	QOS      byte        `json:"qos"`
+	Topic   string      `json:"topic"`
+	Payload interface{} `json:"payload"`
+	Retain  bool        `json:"retain"`
+	QOS     byte        `json:"qos"`
 }
 
 func (b *Bus) handlePublish(w http.ResponseWriter, r *http.Request) {

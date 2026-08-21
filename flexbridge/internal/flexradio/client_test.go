@@ -80,6 +80,10 @@ func TestHandshake_SendsExpectedCommands(t *testing.T) {
 		"sub atu all",
 		"|info",
 		"sub dvk all", // SmartSDR v4+ DVK status stream (best-effort, fire-and-forget)
+		// `profile mic info` is also sent here (fire-and-forget) but is not
+		// asserted in this net.Pipe test: the goroutine blocks on the
+		// fire-and-forget reply after `sub dvk all` and never reads the next
+		// command. It is covered deterministically by TestSend_MicProfile.
 	}
 	for _, w := range wantCmds {
 		if !strings.Contains(joined, w) {
@@ -176,6 +180,38 @@ func TestSend_DVK(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("DVKStop: no command sent")
 	}
+}
+
+// TestSend_MicProfile asserts SetMicProfile emits the expected SmartSDR wire
+// string, including a double-quoted name with spaces. The radio end of the pipe
+// is drained by a reader goroutine so the synchronous net.Pipe write does not
+// deadlock.
+func TestSend_MicProfile(t *testing.T) {
+	clientConn, radioConn := net.Pipe()
+	client := newClientFromConn(clientConn)
+	defer client.Close()
+
+	cmds := make(chan string, 1)
+	go func() {
+		defer radioConn.Close()
+		sc := bufio.NewScanner(radioConn)
+		for sc.Scan() {
+			cmds <- sc.Text()
+		}
+	}()
+
+	if err := client.SetMicProfile("Default ProSet HC6"); err != nil {
+		t.Fatalf("SetMicProfile: %v", err)
+	}
+	select {
+	case got := <-cmds:
+		if got != `C1|profile mic load "Default ProSet HC6"` {
+			t.Errorf("SetMicProfile sent %q, want %q", got, `C1|profile mic load "Default ProSet HC6"`)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("SetMicProfile: no command sent")
+	}
+
 }
 
 func TestRun_CtxCancel(t *testing.T) {

@@ -300,6 +300,96 @@ func TestParseStatusFields_NoEquals(t *testing.T) {
 	}
 }
 
+func TestParseStatusFields_QuotedValueWithSpaces(t *testing.T) {
+	// A quoted value with internal spaces must stay a single token, and the
+	// surrounding quotes are retained so the bridge's fieldsString round-trips
+	// it. This is the mic-profile-name shape (name="Default ProSet HC6").
+	f := ParseStatusFields(`type=mic name="Default ProSet HC6" active=1`)
+	if f["type"] != "mic" {
+		t.Errorf("type = %q, want mic", f["type"])
+	}
+	if f["name"] != `"Default ProSet HC6"` {
+		t.Errorf("name = %q, want %q (quotes retained)", f["name"], `"Default ProSet HC6"`)
+	}
+	if f["active"] != "1" {
+		t.Errorf("active = %q, want 1", f["active"])
+	}
+	// A quoted value without spaces behaves the same as before (quotes retained).
+	if f := ParseStatusFields(`name="CQ"`); f["name"] != `"CQ"` {
+		t.Errorf(`name = %q, want "CQ"`, f["name"])
+	}
+}
+
+func TestParseProfile(t *testing.T) {
+	// Real mic profile LIST frame (captured live on a FLEX-8400, SmartSDR
+	// v4.2.20): caret-delimited names that may contain spaces, with a trailing
+	// caret. ParseProfile takes the raw body (text after the "profile" topic
+	// word) and must NOT space-split the list value.
+	p := ParseProfile("mic list=Default^Default FHM-1^Default PR781^RTTYDefault^")
+	if p.Type != "mic" {
+		t.Errorf("Type = %q, want mic", p.Type)
+	}
+	if !p.IsList {
+		t.Fatal("IsList = false, want true")
+	}
+	wantNames := []string{"Default", "Default FHM-1", "Default PR781", "RTTYDefault"}
+	if len(p.Names) != len(wantNames) {
+		t.Fatalf("Names = %v, want %v", p.Names, wantNames)
+	}
+	for i, w := range wantNames {
+		if p.Names[i] != w {
+			t.Errorf("Names[%d] = %q, want %q", i, p.Names[i], w)
+		}
+	}
+	if p.IsCurrent {
+		t.Error("IsCurrent = true, want false for a list frame")
+	}
+
+	// A current= frame carries the active name (a value, not a flag); may be
+	// empty. Mic does not emit this on current firmware, but it is honored.
+	p = ParseProfile("global current=My Global")
+	if p.Type != "global" {
+		t.Errorf("Type = %q, want global", p.Type)
+	}
+	if !p.IsCurrent {
+		t.Fatal("IsCurrent = false, want true")
+	}
+	if p.Current != "My Global" {
+		t.Errorf("Current = %q, want %q", p.Current, "My Global")
+	}
+	if p.IsList {
+		t.Error("IsList = true, want false for a current frame")
+	}
+
+	// An empty current= (no global profile loaded) parses to IsCurrent + "".
+	p = ParseProfile("global current=")
+	if !p.IsCurrent || p.Current != "" {
+		t.Errorf("empty current= → %+v, want IsCurrent=true Current=\"\"", p)
+	}
+
+	// The importing=/exporting= transfer flags ride the same line; flexbridge
+	// ignores them (neither IsList nor IsCurrent set), but the type still parses.
+	p = ParseProfile("mic importing=1")
+	if p.Type != "mic" {
+		t.Errorf("Type = %q, want mic", p.Type)
+	}
+	if p.IsList || p.IsCurrent {
+		t.Errorf("importing= should not set IsList/IsCurrent; got %+v", p)
+	}
+
+	// A non-profile-type first word yields a zero ProfileStatus (Type="").
+	p = ParseProfile("foo bar=1")
+	if p.Type != "" || p.IsList || p.IsCurrent {
+		t.Errorf("non-profile-type → %+v, want zero", p)
+	}
+
+	// No '=' after the type word → nothing to apply, type still parsed.
+	p = ParseProfile("mic")
+	if p.Type != "mic" || p.IsList || p.IsCurrent {
+		t.Errorf("bare type → %+v, want Type=mic only", p)
+	}
+}
+
 func TestParseDiscoveryReply(t *testing.T) {
 	raw := "version=3.4.1 serial=1234-5678-8400.12345 model=FLEX-8400 ip=192.168.1.50 port=4992 status=Available nickname=Shack"
 	r := parseDiscoveryReply(raw)
