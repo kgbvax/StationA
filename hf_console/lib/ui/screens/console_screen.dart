@@ -107,7 +107,7 @@ class _HfPage extends StatelessWidget {
                           color: AppTheme.pane,
                           border: Border(bottom: BorderSide(color: AppTheme.cardLine)),
                         ),
-                        child: const CompassPanel(showHeader: false),
+                        child: const CompassPanel(),
                       ),
                     ),
                     const UltrabeamPanel(),

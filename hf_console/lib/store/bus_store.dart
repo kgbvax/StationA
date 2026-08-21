@@ -15,11 +15,25 @@ class Slot {
   bool get isOnline => bridgeOnline && deviceOnline;
 }
 
+/// One recorded fault or error seen on the bus.
+class FaultRecord {
+  final String address;
+  final String text;
+  final String ts;
+  bool active;
+
+  FaultRecord({required this.address, required this.text, required this.ts, this.active = true});
+
+  String get key => '$address|$text';
+}
+
 class BusStore extends ChangeNotifier {
   final Map<String, Slot> _slots = {};
   final _highFreq = <String, ValueNotifier<dynamic>>{};
+  final List<FaultRecord> _faultHistory = [];
 
   UnmodifiableMapView<String, Slot> get slots => UnmodifiableMapView(_slots);
+  UnmodifiableListView<FaultRecord> get faultHistory => UnmodifiableListView(_faultHistory);
 
   ValueNotifier<T> hot<T>(String path, T initial) {
     return (_highFreq[path] ??= ValueNotifier<T>(initial)) as ValueNotifier<T>;
@@ -55,6 +69,7 @@ class BusStore extends ChangeNotifier {
         case 'state':
           slot.state = payload as Map<String, dynamic>?;
           _updateHotValues(addr, slot.state!);
+          _updateFaultHistory(addr, slot.state);
         case 'status':
           slot.status = payload as String?;
         case 'cmd':
@@ -62,6 +77,53 @@ class BusStore extends ChangeNotifier {
       }
     }
     notifyListeners();
+  }
+
+  void _updateFaultHistory(String addr, Map<String, dynamic>? state) {
+    final fault = _stringFrom(state?['fault']);
+    final error = _stringFrom(state?['error']);
+    final ts = _stringFrom(state?['ts']) ?? DateTime.now().toIso8601String();
+    final activeText = _activeFaultText(fault, error);
+
+    // Mark any previously active record for this address as cleared if it no
+    // longer matches the current active fault text.
+    for (final r in _faultHistory) {
+      if (r.address == addr && r.active && r.text != activeText) {
+        r.active = false;
+      }
+    }
+
+    if (activeText.isEmpty) return;
+
+    final key = '$addr|$activeText';
+    final existing = _faultHistory.where((r) => r.key == key).lastOrNull;
+    if (existing != null) {
+      existing.active = true;
+      return;
+    }
+
+    _faultHistory.add(FaultRecord(address: addr, text: activeText, ts: ts));
+    if (_faultHistory.length > 30) {
+      _faultHistory.removeAt(0);
+    }
+  }
+
+  String? _stringFrom(dynamic v) {
+    if (v == null) return null;
+    if (v is String) return v.trim();
+    if (v is num || v is bool) return v.toString();
+    return v.toString().trim();
+  }
+
+  String _activeFaultText(String? fault, String? error) {
+    final hasFault = fault != null && fault.isNotEmpty && fault != 'none';
+    if (error != null && error.isNotEmpty) {
+      return error.toUpperCase();
+    }
+    if (hasFault) {
+      return fault.toUpperCase();
+    }
+    return '';
   }
 
   void _updateHotValues(String addr, Map<String, dynamic> state) {

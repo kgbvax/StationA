@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -10,11 +11,13 @@ import 'ui/screens/setup_screen.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  SystemChrome.setPreferredOrientations([
-    DeviceOrientation.landscapeLeft,
-    DeviceOrientation.landscapeRight,
-  ]);
-  SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+  if (!kIsWeb) {
+    SystemChrome.setPreferredOrientations([
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
+    ]);
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+  }
   runApp(const HfConsoleApp());
 }
 
@@ -50,7 +53,9 @@ class _AppRootState extends State<_AppRoot> {
   }
 
   void _enforceFullScreen() {
-    SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+    if (!kIsWeb) {
+      SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+    }
   }
 
   Future<void> _tryAutoConnect() async {

@@ -8,27 +8,11 @@ import '../theme.dart';
 import 'card_container.dart';
 
 class CompassPanel extends StatelessWidget {
-  final bool showHeader;
-
-  const CompassPanel({super.key, this.showHeader = true});
+  const CompassPanel({super.key});
 
   @override
   Widget build(BuildContext context) {
-    return showHeader
-        ? CardContainer(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                CardHeader(
-                  title: 'Beam',
-                  trailing: Text('rotator + ultrabeam', style: AppTheme.mono(10, color: AppTheme.txtFaint)),
-                ),
-                const SizedBox(height: 8),
-                const Expanded(child: _CompassBody()),
-              ],
-            ),
-          )
-        : const _CompassBody();
+    return const _CompassBody();
   }
 }
 
@@ -46,19 +30,22 @@ class _CompassBody extends StatelessWidget {
     final targetAz = store.stateValueAs<num>('muehle/hf/rotator', 'target_az')?.toDouble() ?? az;
     final moving = store.stateValueAs<bool>('muehle/hf/rotator', 'moving') ?? false;
 
-    final antCtrl = store.slots['muehle/hf/ant-ctrl'];
-    final antCtrlOnline = antCtrl?.isOnline ?? false;
     final direction = store.stateValueAs<String>('muehle/hf/ant-ctrl', 'direction') ?? 'forward';
 
     final targetDiff = (targetAz - az).abs();
     final targetVisible = targetDiff > 5.0;
-    final statusParts = <String>[
+
+    final azimuthParts = <String>[
       '${az.round()}°',
-      if (rotatorOnline && targetVisible) 'TARGET ${targetAz.round()}°',
+      if (rotatorOnline && targetVisible) '→ ${targetAz.round()}°',
       if (moving) 'MOVING',
-      if (!rotatorOnline) 'ROTATOR OFFLINE',
-      if (!antCtrlOnline) 'ANT-CTRL OFFLINE',
+      if (!rotatorOnline) 'OFFLINE',
     ];
+    final azimuthColor = moving
+        ? AppTheme.red
+        : !rotatorOnline
+            ? AppTheme.txtMute
+            : AppTheme.accent;
 
     void sendAz(double value) {
       mqtt.publish(cmdTopic('hf/rotator'), rotatorAzPayload(value), retain: cmdRetain['muehle/hf/rotator']!);
@@ -68,9 +55,27 @@ class _CompassBody extends StatelessWidget {
       mqtt.publish(cmdTopic('hf/rotator'), rotatorStopPayload(), retain: false);
     }
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          CardHeader(
+            title: '',
+            trailing: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              decoration: BoxDecoration(
+                color: AppTheme.blend(azimuthColor, 0.12),
+                border: Border.all(color: azimuthColor),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: Text(
+                azimuthParts.join(' · '),
+                style: AppTheme.mono(12, weight: FontWeight.w700, color: azimuthColor),
+              ),
+            ),
+          ),
+        const SizedBox(height: 8),
         Expanded(
           child: LayoutBuilder(
             builder: (context, constraints) {
@@ -79,27 +84,27 @@ class _CompassBody extends StatelessWidget {
                 child: SizedBox(
                   width: size,
                   height: size,
-                  child: CustomPaint(
-                    painter: _CompassPainter(az: az, direction: direction, targetAz: targetAz),
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTapUp: rotatorOnline
+                        ? (details) {
+                            final local = details.localPosition;
+                            final cx = size / 2;
+                            final cy = size / 2;
+                            final dx = local.dx - cx;
+                            final dy = local.dy - cy;
+                            final deg = math.atan2(dy, dx) * 180 / math.pi;
+                            final tappedAz = ((deg + 90) % 360 + 360) % 360;
+                            sendAz(tappedAz);
+                          }
+                        : null,
+                    child: CustomPaint(
+                      painter: _CompassPainter(az: az, direction: direction, targetAz: targetAz),
+                    ),
                   ),
                 ),
               );
             },
-          ),
-        ),
-        Center(
-          child: Container(
-            margin: const EdgeInsets.only(top: 6, bottom: 6),
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-            decoration: BoxDecoration(
-              color: AppTheme.accentDim,
-              border: Border.all(color: AppTheme.accent),
-              borderRadius: BorderRadius.circular(4),
-            ),
-            child: Text(
-              statusParts.join(' · '),
-              style: AppTheme.mono(13, color: AppTheme.accent, weight: FontWeight.w600),
-            ),
           ),
         ),
         Padding(
@@ -118,7 +123,8 @@ class _CompassBody extends StatelessWidget {
           ),
         ),
       ],
-    );
+    ),
+  );
   }
 }
 

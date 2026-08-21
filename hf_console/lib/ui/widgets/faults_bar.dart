@@ -12,23 +12,21 @@ class FaultsBar extends StatelessWidget {
     final now = DateTime.now();
     final time = '${_twoDigits(now.hour)}:${_twoDigits(now.minute)}:${_twoDigits(now.second)}';
 
-    final List<_Fault> faults = [];
+    final List<_Fault> history = [];
+    for (final record in store.faultHistory) {
+      history.add(_Fault(
+        _ts(record.ts, time),
+        '${record.address}: ${record.text}',
+        active: record.active,
+      ));
+    }
 
+    final List<_Fault> offline = [];
     for (final entry in store.offlineList) {
-      faults.add(_Fault(time, entry, active: true));
+      offline.add(_Fault(time, entry, active: true));
     }
 
-    for (final slot in store.slots.values) {
-      final fault = slot.state?['fault'] as String?;
-      if (fault != null && fault.isNotEmpty && fault != 'none') {
-        faults.add(_Fault(_ts(slot.state?['ts'], time), '${slot.address}: ${fault.toUpperCase()}', active: true));
-      }
-      final error = slot.state?['error'] as String?;
-      if (error != null && error.isNotEmpty) {
-        faults.add(_Fault(_ts(slot.state?['ts'], time), '${slot.address}: ${error.toUpperCase()}', active: true));
-      }
-    }
-
+    final faults = [...offline, ...history.reversed];
     final activeCount = faults.where((f) => f.active).length;
 
     return Container(
@@ -41,7 +39,7 @@ class FaultsBar extends StatelessWidget {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text('FAULTS', style: AppTheme.mono(12, weight: FontWeight.w700, letterSpacing: 0.14, color: AppTheme.txtMute)),
+              Text('FAULTS_AUTO', style: AppTheme.mono(12, weight: FontWeight.w700, letterSpacing: 0.14, color: AppTheme.txtMute)),
               _Tag(activeCount > 0 ? '$activeCount ACTIVE' : 'ALL OK', activeCount > 0 ? AppTheme.red : AppTheme.green),
             ],
           ),
@@ -49,7 +47,7 @@ class FaultsBar extends StatelessWidget {
           if (faults.isEmpty)
             _FaultRow(fault: _Fault(time, 'No faults or offline devices', active: false))
           else
-            ...faults.take(3).map((f) => _FaultRow(fault: f)),
+            ...faults.take(8).map((f) => _FaultRow(fault: f)),
         ],
       ),
     );
@@ -57,8 +55,8 @@ class FaultsBar extends StatelessWidget {
 
   String _twoDigits(int n) => n.toString().padLeft(2, '0');
 
-  String _ts(dynamic ts, String fallback) {
-    if (ts is String && ts.length >= 8) {
+  String _ts(String? ts, String fallback) {
+    if (ts != null && ts.length >= 19) {
       return ts.substring(11, 19);
     }
     return fallback;

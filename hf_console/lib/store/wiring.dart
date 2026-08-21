@@ -89,10 +89,12 @@ String antennaSelectPayload(String request) => jsonEncode({'request': request});
 
 String antennaSwitchPayload(String port) => jsonEncode({'select': port});
 
-// --- Radio DVK ---------------------------------------------------------------
+// --- Radio DVK + band ---------------------------------------------------------
 
 String dvkPlayPayload(int id) =>
     jsonEncode({'action': 'dvk_play_${id.clamp(1, 12)}'});
 
 String dvkStopPayload([int? id]) =>
     jsonEncode({'action': 'dvk_stop', 'value': id?.toString() ?? ''});
+
+String radioSetBandPayload(String band) => cmdPayload('set_band', band);

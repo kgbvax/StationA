@@ -158,7 +158,7 @@ class AppTheme extends ChangeNotifier {
         elevation: 0,
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
         minimumSize: const Size(44, 40),
-        textStyle: mono(12, weight: FontWeight.w600),
+        textStyle: mono(13, weight: FontWeight.w600),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
       );
 

@@ -25,9 +25,10 @@ class CardContainer extends StatelessWidget {
 
 class CardHeader extends StatelessWidget {
   final String title;
+  final Widget? leading;
   final Widget? trailing;
 
-  const CardHeader({super.key, required this.title, this.trailing});
+  const CardHeader({super.key, required this.title, this.leading, this.trailing});
 
   @override
   Widget build(BuildContext context) {

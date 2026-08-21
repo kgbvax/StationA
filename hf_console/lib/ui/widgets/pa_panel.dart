@@ -19,12 +19,13 @@ class PaPanel extends StatelessWidget {
     final mode = store.stateValueAs<String>('muehle/hf/pa', 'mode') ?? 'standby';
     final keyed = store.stateValueAs<String>('muehle/hf/pa', 'keyed') ?? 'rx';
     final fault = store.stateValueAs<String>('muehle/hf/pa', 'fault') ?? 'none';
+    final error = store.stateValueAs<String>('muehle/hf/pa', 'error') ?? '';
     final temp = store.stateValueAs<num>('muehle/hf/pa', 'temp_c')?.toDouble() ?? 0.0;
     final fwd = store.stateValueAs<num>('muehle/hf/pa', 'fwd_power_w')?.toDouble() ?? 0.0;
     final rfl = store.stateValueAs<num>('muehle/hf/pa', 'rfl_power_w')?.toDouble() ?? 0.0;
     final swr = store.stateValueAs<num>('muehle/hf/pa', 'swr')?.toDouble() ?? 1.0;
 
-    final (tagLabel, tagColor) = _paTag(mode, keyed, fault, temp, online);
+    final (tagLabel, tagColor) = _paTag(mode, keyed, fault, error, temp, online);
 
     void setMode(String value) {
       if (!online) return;
@@ -44,76 +45,78 @@ class PaPanel extends StatelessWidget {
             title: 'PA · ACOM 1200S',
             trailing: _Tag(tagLabel, tagColor),
           ),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    _Meter(
-                      value: fwd,
-                      max: 1200,
-                      unit: 'W FWD',
-                      labels: const ['0', '500', '1000', '1200'],
-                      fillColor: AppTheme.green,
-                      compact: true,
-                    ),
-                    const SizedBox(height: 6),
-                    _Meter(
-                      value: swr,
-                      max: 4.0,
-                      unit: 'SWR',
-                      labels: const ['1.0', '1.5', '3.0', '4.0'],
-                      fillColor: AppTheme.amber,
-                      compact: true,
-                    ),
-                    if (rfl > 0)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 4),
-                        child: Text('REFL ${rfl.toStringAsFixed(0)} W', style: AppTheme.mono(11, color: AppTheme.txtFaint)),
+          IntrinsicHeight(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      _Meter(
+                        value: fwd,
+                        max: 1200,
+                        unit: 'W FWD',
+                        labels: const ['0', '500', '1000', '1200'],
+                        fillColor: AppTheme.green,
+                        compact: true,
                       ),
-                  ],
+                      _Meter(
+                        value: swr,
+                        max: 4.0,
+                        unit: 'SWR',
+                        labels: const ['1.0', '1.5', '3.0', '4.0'],
+                        fillColor: AppTheme.amber,
+                        compact: true,
+                      ),
+                      if (rfl > 0)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 2),
+                          child: Text('REFL ${rfl.toStringAsFixed(0)} W', style: AppTheme.mono(11, color: AppTheme.txtFaint)),
+                        ),
+                    ],
+                  ),
                 ),
-              ),
-              const SizedBox(width: 10),
-              Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  SizedBox(
-                    width: 92,
-                    child: ElevatedButton(
-                      onPressed: online ? () => setMode('operate') : null,
-                      style: AppTheme.actionButton(active: mode == 'operate').copyWith(
-                        padding: const WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: 8, vertical: 10)),
+                const SizedBox(width: 10),
+                SizedBox(
+                  width: 96,
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      SizedBox(
+                        height: 34,
+                        child: ElevatedButton(
+                          onPressed: online ? () => setMode('operate') : null,
+                          style: AppTheme.actionButton(active: mode == 'operate'),
+                          child: const Text('OPERATE'),
+                        ),
                       ),
-                      child: const Text('OPERATE'),
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  SizedBox(
-                    width: 92,
-                    child: ElevatedButton(
-                      onPressed: online ? () => setMode('standby') : null,
-                      style: AppTheme.actionButton(amber: true, active: mode == 'standby').copyWith(
-                        padding: const WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: 8, vertical: 10)),
+                      SizedBox(
+                        height: 34,
+                        child: ElevatedButton(
+                          onPressed: online ? () => setMode('standby') : null,
+                          style: AppTheme.actionButton(amber: true, active: mode == 'standby'),
+                          child: const Text('STANDBY'),
+                        ),
                       ),
-                      child: const Text('STANDBY'),
-                    ),
+                    ],
                   ),
-                ],
-              ),
-            ],
+                ),
+              ],
+            ),
           ),
         ],
       ),
     );
   }
 
-  (String, Color) _paTag(String mode, String keyed, String fault, double temp, bool online) {
+  (String, Color) _paTag(String mode, String keyed, String fault, String error, double temp, bool online) {
     if (!online) return ('OFFLINE', AppTheme.txtMute);
     if (fault.isNotEmpty && fault != 'none') {
-      return (fault.toUpperCase(), AppTheme.red);
+      final label = error.isNotEmpty ? error.toUpperCase() : fault.toUpperCase();
+      return (label, AppTheme.red);
     }
     if (keyed == 'tx') return ('● TX', AppTheme.red);
     if (keyed == 'inhibited') return ('INHIBITED', AppTheme.amber);

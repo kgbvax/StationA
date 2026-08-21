@@ -17,11 +17,16 @@ class UltrabeamPanel extends StatelessWidget {
     final slot = store.slots['muehle/hf/ant-ctrl'];
     final online = slot?.isOnline ?? false;
     final direction = store.stateValueAs<String>('muehle/hf/ant-ctrl', 'direction') ?? 'forward';
+    final moving = store.stateValueAs<bool>('muehle/hf/ant-ctrl', 'moving') ?? false;
 
     void send(String cmd) {
       if (!online) return;
       mqtt.publish(cmdTopic('hf/ant-ctrl'), cmd, retain: cmdRetain['muehle/hf/ant-ctrl']!);
     }
+
+    final (pillLabel, pillColor) = online
+        ? (moving ? 'MOVING' : direction.toUpperCase(), moving ? AppTheme.red : AppTheme.accent)
+        : ('OFFLINE', AppTheme.red);
 
     return Container(
       decoration: BoxDecoration(
@@ -34,9 +39,17 @@ class UltrabeamPanel extends StatelessWidget {
         children: [
           CardHeader(
             title: 'Ultrabeam',
-            trailing: Text(
-              online ? direction.toUpperCase() : 'OFFLINE',
-              style: AppTheme.mono(12, weight: FontWeight.w700, color: online ? AppTheme.accent : AppTheme.red),
+            trailing: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+              decoration: BoxDecoration(
+                color: AppTheme.blend(pillColor, 0.12),
+                border: Border.all(color: pillColor),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: Text(
+                pillLabel,
+                style: AppTheme.mono(12, weight: FontWeight.w700, color: pillColor),
+              ),
             ),
           ),
           const SizedBox(height: 6),
