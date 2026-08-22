@@ -36,6 +36,8 @@ type SerialConfig struct {
 	// it is stable across replugs.
 	Port string `toml:"port"`
 	// AvgTimeMs is the forward-power moving-average window in milliseconds.
+	// 1 (the minimum) effectively disables averaging, publishing the raw
+	// per-frame forward power.
 	AvgTimeMs int `toml:"avg_time_ms"`
 }
 
@@ -77,7 +79,7 @@ func Defaults() Config {
 		Host: "shari",
 		Serial: SerialConfig{
 			Port:      "/dev/serial/by-id/usb-Prolific_Technology_Inc._USB-Serial_Controller_D-if00-port0",
-			AvgTimeMs: 300,
+			AvgTimeMs: 1,
 		},
 		MQTT: MQTTConfig{
 			Broker:          "tcp://192.168.1.50:1883",

@@ -67,7 +67,7 @@ sudo cp config.example.toml /etc/acom1200s-pa-bridge/config.toml
 | `mqtt.discovery_prefix` | `homeassistant` | Legacy embedded HA discovery prefix |
 | `mqtt.publish_ha_discovery` | `false` | Gate legacy embedded HA discovery (model §9) |
 | `serial.port` | `/dev/serial/by-id/…Prolific…` | Serial port device path |
-| `serial.avg_time_ms` | `300` | Forward-power moving-average window in ms |
+| `serial.avg_time_ms` | `1` | Forward-power moving-average window in ms (`1` = no averaging) |
 | `device.model` / `serial` / `link` | `ACOM 1200S` / `""` / `serial` | Identity published in `/meta` |
 | `host` | `shari` | Compute node (in `/meta`) |
 | `log.level` | `info` | Log level |

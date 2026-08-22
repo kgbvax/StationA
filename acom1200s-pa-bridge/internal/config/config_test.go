@@ -17,8 +17,8 @@ func TestDefaults(t *testing.T) {
 	if c.MQTT.PublishHADiscovery {
 		t.Error("publish_ha_discovery must default to false (model §9 gate)")
 	}
-	if c.Serial.Port == "" || c.Serial.AvgTimeMs != 300 {
-		t.Errorf("default serial = %+v, want non-empty port + avg 300", c.Serial)
+	if c.Serial.Port == "" || c.Serial.AvgTimeMs != 1 {
+		t.Errorf("default serial = %+v, want non-empty port + avg 1", c.Serial)
 	}
 	if c.Device.Model != "ACOM 1200S" || c.Device.Link != "serial" {
 		t.Errorf("default device = %+v", c.Device)
