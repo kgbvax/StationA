@@ -6,8 +6,41 @@ import '../../store/wiring.dart';
 import '../theme.dart';
 import 'card_container.dart';
 
-class PaPanel extends StatelessWidget {
+class PaPanel extends StatefulWidget {
   const PaPanel({super.key});
+
+  @override
+  State<PaPanel> createState() => _PaPanelState();
+}
+
+class _PaPanelState extends State<PaPanel> {
+  // Rolling 1-second window of forward-power samples, used to draw the peak
+  // (max) and 95th-percentile markers on the FWD meter.
+  final List<_FwdSample> _fwdSamples = [];
+
+  void _recordFwd(double fwd) {
+    final now = DateTime.now();
+    if (_fwdSamples.isNotEmpty && _fwdSamples.last.v == fwd) {
+      // Constant value: refresh the timestamp so it stays "present" in the
+      // window even when the amp holds a steady power level.
+      _fwdSamples.last.t = now;
+    } else {
+      _fwdSamples.add(_FwdSample(now, fwd));
+    }
+    final cutoff = now.subtract(const Duration(seconds: 1));
+    _fwdSamples.removeWhere((s) => s.t.isBefore(cutoff));
+  }
+
+  double _maxOverWindow() {
+    if (_fwdSamples.isEmpty) return 0;
+    return _fwdSamples.map((s) => s.v).reduce((a, b) => a > b ? a : b);
+  }
+
+  double _p95OverWindow() {
+    if (_fwdSamples.isEmpty) return 0;
+    final vals = _fwdSamples.map((s) => s.v).toList()..sort();
+    return _percentile(vals, 0.95);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -22,8 +55,11 @@ class PaPanel extends StatelessWidget {
     final error = store.stateValueAs<String>('muehle/hf/pa', 'error') ?? '';
     final temp = store.stateValueAs<num>('muehle/hf/pa', 'temp_c')?.toDouble() ?? 0.0;
     final fwd = store.stateValueAs<num>('muehle/hf/pa', 'fwd_power_w')?.toDouble() ?? 0.0;
-    final rfl = store.stateValueAs<num>('muehle/hf/pa', 'rfl_power_w')?.toDouble() ?? 0.0;
     final swr = store.stateValueAs<num>('muehle/hf/pa', 'swr')?.toDouble() ?? 1.0;
+
+    _recordFwd(fwd);
+    final maxFwd = _maxOverWindow();
+    final p95Fwd = _p95OverWindow();
 
     final (tagLabel, tagColor) = _paTag(mode, keyed, fault, error, temp, online);
 
@@ -60,6 +96,10 @@ class PaPanel extends StatelessWidget {
                       labels: const ['0', '500', '1000', '1200'],
                       fillColor: AppTheme.green,
                       compact: true,
+                      markerTop: maxFwd > 0 ? maxFwd / 1200 : null,
+                      markerBottom: p95Fwd > 0 ? p95Fwd / 1200 : null,
+                      markerTopColor: AppTheme.txt,
+                      markerBottomColor: AppTheme.accent,
                     ),
                   ),
                   const SizedBox(width: 10),
@@ -74,11 +114,6 @@ class PaPanel extends StatelessWidget {
                   ),
                 ],
               ),
-              if (rfl > 0)
-                Padding(
-                  padding: const EdgeInsets.only(top: 2),
-                  child: Text('REFL ${rfl.toStringAsFixed(0)} W', style: AppTheme.mono(11, color: AppTheme.txtFaint)),
-                ),
               const SizedBox(height: 10),
               Row(
                 crossAxisAlignment: CrossAxisAlignment.end,
@@ -126,6 +161,25 @@ class PaPanel extends StatelessWidget {
   }
 }
 
+/// One forward-power sample with its arrival time.
+class _FwdSample {
+  DateTime t;
+  final double v;
+  _FwdSample(this.t, this.v);
+}
+
+/// Linear-interpolation percentile (numpy default) over an already-sorted list.
+double _percentile(List<double> sorted, double p) {
+  if (sorted.isEmpty) return 0;
+  if (sorted.length == 1) return sorted.first;
+  final idx = p * (sorted.length - 1);
+  final lower = idx.floor();
+  final upper = idx.ceil();
+  if (lower == upper) return sorted[lower];
+  final frac = idx - lower;
+  return sorted[lower] + frac * (sorted[upper] - sorted[lower]);
+}
+
 class _Meter extends StatelessWidget {
   final double value;
   final double max;
@@ -134,6 +188,14 @@ class _Meter extends StatelessWidget {
   final Color fillColor;
   final bool compact;
 
+  /// Optional peak/percentile markers, as fractions of [max] (0..1). A non-null
+  /// [markerTop] draws a downward triangle above the bar; [markerBottom] draws
+  /// an upward triangle below it.
+  final double? markerTop;
+  final double? markerBottom;
+  final Color? markerTopColor;
+  final Color? markerBottomColor;
+
   const _Meter({
     required this.value,
     required this.max,
@@ -141,7 +203,14 @@ class _Meter extends StatelessWidget {
     required this.labels,
     required this.fillColor,
     this.compact = false,
+    this.markerTop,
+    this.markerBottom,
+    this.markerTopColor,
+    this.markerBottomColor,
   });
+
+  static const double _markerSize = 7;
+  static const double _markerGap = 1;
 
   @override
   Widget build(BuildContext context) {
@@ -150,6 +219,11 @@ class _Meter extends StatelessWidget {
     final unitStyle = AppTheme.mono(compact ? 11 : 13, color: AppTheme.txtFaint);
     final labelStyle = AppTheme.mono(compact ? 9 : 11, color: AppTheme.txtFaint);
     final barHeight = compact ? 8.0 : 12.0;
+
+    final hasMarkers = markerTop != null || markerBottom != null;
+    final markerSpace = hasMarkers ? _markerSize + _markerGap : 0.0;
+    final stackHeight = barHeight + 2 * markerSpace;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -163,21 +237,47 @@ class _Meter extends StatelessWidget {
         ),
         SizedBox(height: compact ? 2 : 3),
         SizedBox(
-          height: barHeight,
-          child: Stack(
-            children: [
-              Container(decoration: BoxDecoration(color: AppTheme.pane, borderRadius: BorderRadius.circular(4), border: Border.all(color: AppTheme.cardLine))),
-              FractionallySizedBox(
-                alignment: Alignment.centerLeft,
-                widthFactor: fraction,
-                child: Container(
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(colors: [fillColor, fillColor, AppTheme.orange]),
-                    borderRadius: BorderRadius.circular(4),
+          height: stackHeight,
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final w = constraints.maxWidth;
+              return Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  Positioned(
+                    top: markerSpace,
+                    left: 0,
+                    right: 0,
+                    height: barHeight,
+                    child: Container(decoration: BoxDecoration(color: AppTheme.pane, borderRadius: BorderRadius.circular(4), border: Border.all(color: AppTheme.cardLine))),
                   ),
-                ),
-              ),
-            ],
+                  Positioned(
+                    top: markerSpace,
+                    left: 0,
+                    width: fraction * w,
+                    height: barHeight,
+                    child: Container(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(colors: [fillColor, fillColor, AppTheme.orange]),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                    ),
+                  ),
+                  if (markerTop != null)
+                    Positioned(
+                      top: 0,
+                      left: _markerLeft(markerTop!, w),
+                      child: _TriangleMarker(key: const ValueKey('pa-fwd-peak'), color: markerTopColor ?? AppTheme.txt, pointDown: true, size: _markerSize),
+                    ),
+                  if (markerBottom != null)
+                    Positioned(
+                      bottom: 0,
+                      left: _markerLeft(markerBottom!, w),
+                      child: _TriangleMarker(key: const ValueKey('pa-fwd-p95'), color: markerBottomColor ?? AppTheme.accent, pointDown: false, size: _markerSize),
+                    ),
+                ],
+              );
+            },
           ),
         ),
         SizedBox(height: compact ? 2 : 3),
@@ -188,6 +288,61 @@ class _Meter extends StatelessWidget {
       ],
     );
   }
+
+  double _markerLeft(double fraction, double width) {
+    if (width <= _markerSize) return 0;
+    return (fraction * width - _markerSize / 2).clamp(0.0, width - _markerSize);
+  }
+}
+
+class _TriangleMarker extends StatelessWidget {
+  final Color color;
+  final bool pointDown;
+  final double size;
+
+  const _TriangleMarker({super.key, required this.color, required this.pointDown, this.size = 7});
+
+  @override
+  Widget build(BuildContext context) {
+    return CustomPaint(
+      size: Size(size, size),
+      painter: _TrianglePainter(color: color, pointDown: pointDown),
+    );
+  }
+}
+
+class _TrianglePainter extends CustomPainter {
+  final Color color;
+  final bool pointDown;
+
+  _TrianglePainter({required this.color, required this.pointDown});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = color
+      ..style = PaintingStyle.fill;
+    final path = Path();
+    if (pointDown) {
+      // Apex at the bottom centre, pointing down toward the bar.
+      path
+        ..moveTo(0, 0)
+        ..lineTo(size.width, 0)
+        ..lineTo(size.width / 2, size.height);
+    } else {
+      // Apex at the top centre, pointing up toward the bar.
+      path
+        ..moveTo(0, size.height)
+        ..lineTo(size.width, size.height)
+        ..lineTo(size.width / 2, 0);
+    }
+    path.close();
+    canvas.drawPath(path, paint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _TrianglePainter oldDelegate) =>
+      oldDelegate.color != color || oldDelegate.pointDown != pointDown;
 }
 
 class _Tag extends StatelessWidget {

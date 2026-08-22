@@ -57,6 +57,25 @@ extension BusStoreFixtures on BusStore {
     });
   }
 
+  /// Populate the PA slot as transmitting (keyed=tx) with forward/reflected power.
+  void setPaTransmitting({double fwd = 800, double rfl = 20, double swr = 1.5}) {
+    setOnline('muehle/hf/pa');
+    applyState('muehle/hf/pa', {
+      'mode': 'operate',
+      'keyed': 'tx',
+      'fault': 'none',
+      'error': '',
+      'temp_c': 42.0,
+      'fwd_power_w': fwd,
+      'rfl_power_w': rfl,
+      'swr': swr,
+      'pa_state': 'OPR/TX',
+      'power': 'on',
+      'device_online': true,
+      'ts': '2026-08-20T14:30:00.000000',
+    });
+  }
+
   /// Populate the PA slot as healthy operate.
   void setPaHealthy() {
     setOnline('muehle/hf/pa');
