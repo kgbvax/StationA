@@ -232,9 +232,13 @@ entirely).
 ## 4. Canonical vocabulary
 
 - **Frequency in Hz is the single source of truth.** `band` is derived from `freq_hz`
-  and published for convenience. There is no `set_band` intent; commanders set a
-  frequency and band falls out. This removes the class of bug where band and frequency
-  disagree because two things set them independently.
+  and published for convenience. There is no band *setpoint* on `/state`: `band` is never
+  a stored value, always derived. A radio *may* accept a `set_band` `/cmd` input for
+  native band-stacking (the radio restores its own persisted per-band frequency and the
+  bridge republishes that `freq_hz` with `band` derived from it), but the canonical tuning
+  intent is still `set_freq_hz` — commanders set a frequency and band falls out. This
+  removes the class of bug where band and frequency disagree because two things set them
+  independently.
 - **Bands.** The canonical vocabulary owns the band name→frequency-range table (edges are
   region- and license-dependent; these are DL / IARU R1). A device declares the band
   *names* it supports and references this table rather than re-stating edges. In state,
@@ -408,10 +412,39 @@ capabilities: bands [160m..6m, by name]; modes [cw,usb,lsb,am,fm,data];
               receivers 1; diversity false; amp_key true; tune true; bias_t false;
               rx_inputs [ant1,ant2,rx_a]; tx_outputs [ant1,ant2]
 state:        online; freq_hz (Hz int); band(derived); mode (canonical); tx {rx|tx};
-              tuning (bool); drive (0-100); rx_input (omitempty, adapter work pending)
+              tuning (bool); drive (0-100); device_online (radio link liveness);
+              dvk_status {idle|recording|preview|playback|disabled}; dvk_id (1-12, active memory);
+              mic_profile (active name, client-side tracked; empty until first load);
+              mic_profiles (available names, sorted; /state-only, from `profile mic info`);
+              rx_input (omitempty, adapter work pending)
               — always the active/TX receiver
-intent:       set_freq_hz; set_mode; set_drive; select_rx; tune {start|stop}
+intent:       set_freq_hz; set_mode; set_drive; select_rx; tune {start|stop};
+              set_band {label}; dvk_play {1..12}; dvk_stop {id|active};
+              set_mic_profile {name}   # /cmd NOT retained (one-shot)
 ```
+`set_band` drives SmartSDR **native band-stacking**: the bridge sends
+`display pan s <pan_handle> band=<wavelength>` (the wavelength is the band number —
+`20m`→`20`), and the radio restores the last-used frequency/mode for that band. `band`
+remains a derived `/state` field (§4): after a `set_band` the bridge republishes the
+radio's tuned `freq_hz` with `band` derived from it, so band and frequency can never
+disagree. Only the FLEX-8400's regular bands (`160m`–`6m`) are supported; XVTR bands
+are out of scope.
+DVK (Digital Voice Keyer) is a SmartSDR v4+ / SmartSDR+ feature: 12 voice memories keyed
+to TX on playback. flexbridge is otherwise read-only; `set_band`, DVK, and mic profiles
+are its only `/cmd` surfaces — DVK exposed as one-shot actions (`dvk_play_N` buttons +
+`dvk_stop`), `set_band` as a writable `band` setpoint (a select), `set_mic_profile` as a
+writable `mic_profile` setpoint — all observed on `/state` (`freq_hz`/`band`/`mode`,
+`dvk_status`/`dvk_id`, and `mic_profile`/`mic_profiles` respectively). Voice modes only; the
+radio refuses DVK in cw/data.
+Mic profiles use SmartSDR's **native** `profile mic load "<name>"` — the radio is the
+single source of truth, not a bridge-side preset layer. `set_mic_profile` loads a profile.
+There is **no save** (`profile mic save` is obsolete on SmartSDR v4+, returning malformed;
+profile creation uses a file-transfer mechanism out of scope). The available profile list is
+queried via the one-shot `profile mic info` command (sent once in the handshake) and
+published on `/state.mic_profiles` (a `/state`-only dynamic field, not in `expose.fields`);
+SmartSDR does not report an active mic profile, so `/state.mic_profile` is tracked
+client-side as the name most recently loaded via `set_mic_profile` (best-effort, empty until
+the first load via the bus).
 The FLEX-8400 supports up to 4 simultaneous receive slices (a SmartSDR concept). These
 map generically to receivers. With `receivers 1` declared, only `radio/state` is
 published. If a multi-slice configuration is added later, promote the declaration to
@@ -883,8 +916,16 @@ online
 
 `muehle/hf/radio/cmd` — not retained
 ```json
-{ "set_freq_hz": 14074000 }
+{ "action": "set_band", "value": "20m" }
+{ "action": "set_mic_profile", "value": "Default ProSet HC6" }
 ```
+(Band-stacking: the radio restores the last-used frequency/mode for `20m`; `band` stays
+derived from `freq_hz` on `/state`. A direct `set_freq_hz` is the model's canonical tuning
+intent; flexbridge exposes `set_band` as the operator-facing convenience. `set_mic_profile`
+drives SmartSDR's native mic profile load; the available list is queried via
+`profile mic info` and observed on `/state.mic_profiles`, and the active name is tracked
+client-side on `/state.mic_profile` since SmartSDR reports no active mic profile. There is no
+save — `profile mic save` is obsolete on SmartSDR v4+.)
 
 Encoding decisions worth copying:
 
@@ -905,7 +946,9 @@ Encoding decisions worth copying:
 - `tune` is absent from operator `cmd` traffic. It reaches `/cmd` only from the sequencer
   after `pa-arm` is disarmed and confirmed (§6); operators publish a tune request to the
   sequencer, never directly here. Everything else (`set_freq_hz`, `set_mode`, `set_drive`,
-  `select_rx`) is a direct intent.
+  `select_rx`, `set_band`) is a direct intent. `set_band` is the band-stacking convenience
+  (§radio slot): it changes the band and lets the radio pick the frequency, so `/state`
+  stays frequency-derived rather than carrying a band setpoint.
 
 ---
 

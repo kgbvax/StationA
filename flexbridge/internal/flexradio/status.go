@@ -3,6 +3,7 @@ package flexradio
 import (
 	"errors"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 )
@@ -47,6 +48,12 @@ type Frame struct {
 	Topic     string
 	TopicArgs string // text between the topic and the first key=value
 	Fields    map[string]string
+	// RawBody is the full status body after the topic word (topicArgs + fields,
+	// unparsed). Some status lines carry values with embedded spaces that the
+	// space-splitting ParseStatusFields cannot preserve (notably the `profile
+	// mic list=A^B C^D` line, where profile names contain spaces delimited by
+	// carets); callers that need those values parse RawBody by hand.
+	RawBody string
 }
 
 // ParseFrame splits one complete newline-delimited line into a Frame.
@@ -84,6 +91,7 @@ func ParseFrame(line string) (Frame, error) {
 		f.Fields = ParseStatusFields(topicRest)
 		// topicArgs = leading words before the first key=value token
 		f.TopicArgs = extractTopicArgs(topicRest)
+		f.RawBody = topicRest
 	} else {
 		f.Body = rest
 	}
@@ -116,11 +124,14 @@ func extractTopicArgs(s string) string {
 }
 
 // ParseStatusFields parses the trailing key=value tokens of a status line
-// into a map. Tokens without '=' are ignored. Values are not unquoted
-// (SmartSDR rarely quotes values; the rare quoted ones are passed through).
+// into a map. Tokens without '=' are ignored. Quoted substrings that contain
+// spaces are kept as a single token (see tokenizeQuoted); the surrounding
+// double quotes are NOT stripped here, so a value like name="Default Proset HC6"
+// round-trips through bridge.fieldsString and re-parsing intact. Callers that
+// want the bare name trim the quotes themselves (e.g. ParseProfile).
 func ParseStatusFields(s string) map[string]string {
 	out := make(map[string]string)
-	for _, tok := range strings.Fields(s) {
+	for _, tok := range tokenizeQuoted(s) {
 		eq := strings.IndexByte(tok, '=')
 		if eq <= 0 {
 			continue
@@ -130,11 +141,44 @@ func ParseStatusFields(s string) map[string]string {
 	return out
 }
 
+// tokenizeQuoted splits s on whitespace but keeps double-quoted substrings
+// (which may contain spaces) as a single token, retaining the surrounding
+// quotes in the returned token. This is what lets a quoted profile name such
+// as name="Default ProSet HC6" survive ParseStatusFields and the bridge's
+// fieldsString round-trip. Unbalanced quotes are tolerated (the rest of the
+// string becomes one token), which matches the loose parsing the rest of the
+// parser already applies.
+func tokenizeQuoted(s string) []string {
+	var toks []string
+	var cur strings.Builder
+	inQuote := false
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c == '"':
+			inQuote = !inQuote
+			cur.WriteByte(c)
+		case c == ' ' && !inQuote:
+			if cur.Len() > 0 {
+				toks = append(toks, cur.String())
+				cur.Reset()
+			}
+		default:
+			cur.WriteByte(c)
+		}
+	}
+	if cur.Len() > 0 {
+		toks = append(toks, cur.String())
+	}
+	return toks
+}
+
 // SliceStatus holds the per-slice fields flexbridge publishes. Populated
 // from "slice" status lines.
 type SliceStatus struct {
 	Index      int    // first topic arg (slice list index)
 	RcvrIndex  int    // second topic arg (receiver/panadapter index, may be absent)
+	PanHandle  string // pan=<handle> the slice is on (hex pan stream id, e.g. "0x40000000"); "" if absent
 	FreqHz     int64  // frequency in Hz (parsed from RF_frequency in MHz or freq)
 	Mode       string // USB, LSB, CW, ...
 	Active     bool   // active=1
@@ -158,6 +202,12 @@ type SliceStatus struct {
 // fields appear — so callers should pass the currently stored SliceStatus as
 // prev; fields absent from the update are carried over unchanged.
 // When prev is omitted (e.g. in tests for a full update), a zero value is used.
+//
+// A malformed RF_frequency/freq token is non-fatal: the freq field is skipped
+// (prev FreqHz is carried over) and the rest of the frame is still applied.
+// Bailing on one bad field would also drop legitimate mode/tx/filter changes
+// in the same incremental update and leave them stale. The returned error is
+// therefore currently always nil; it is retained for future frame-level errors.
 func ParseSlice(topicArgs, fieldsStr string, prev ...SliceStatus) (SliceStatus, error) {
 	f := ParseStatusFields(fieldsStr)
 	args := strings.Fields(topicArgs)
@@ -171,19 +221,34 @@ func ParseSlice(topicArgs, fieldsStr string, prev ...SliceStatus) (SliceStatus, 
 	if len(args) > 1 {
 		s.RcvrIndex, _ = strconv.Atoi(args[1])
 	}
+	// Panadapter the slice is on. SmartSDR carries this as a `pan=<handle>`
+	// field (the hex pan stream id, e.g. "0x40000000"). The exact field name is
+	// confirmed live; until then this is best-effort and the bridge falls back to
+	// the single/lowest tracked pan when PanHandle is empty (single-pan station).
+	if v, ok := f["pan"]; ok {
+		s.PanHandle = v
+	}
 	// Frequency: prefer RF_frequency (MHz float); fall back to legacy freq.
+	// SmartSDR sends incremental slice updates — only changed fields appear —
+	// so a malformed freq value must NOT drop the whole frame: doing so would
+	// also discard legitimate mode/tx/filter changes carried in the same update
+	// and leave them stale until the next frame that happens to include them.
+	// On a bad freq token we skip the freq update (prev FreqHz is carried over)
+	// and continue processing the rest of the frame. Only frame-level
+	// uninterpretability would warrant bailing; a single bad field does not.
 	if v, ok := f["RF_frequency"]; ok {
 		mhz, err := strconv.ParseFloat(v, 64)
-		if err != nil {
-			return s, fmt.Errorf("slice RF_frequency: %w", err)
+		if err == nil {
+			// math.Round, not truncation: int64(mhz*1e6) truncates toward zero
+			// and publishes ~1.2% of 10-Hz-step frequencies 1 Hz low (e.g.
+			// RF_frequency=2.000040 -> 2000039 instead of 2000040), because the
+			// double product lands just below the integer. Rounding fixes it.
+			s.FreqHz = int64(math.Round(mhz * 1e6))
 		}
-		s.FreqHz = int64(mhz * 1e6)
 	} else if v, ok := f["freq"]; ok {
-		hz, err := parseFlexFreq(v)
-		if err != nil {
-			return s, fmt.Errorf("slice freq: %w", err)
+		if hz, err := parseFlexFreq(v); err == nil {
+			s.FreqHz = hz
 		}
-		s.FreqHz = hz
 	}
 	if v, ok := f["mode"]; ok {
 		s.Mode = v
@@ -207,6 +272,117 @@ func ParseSlice(topicArgs, fieldsStr string, prev ...SliceStatus) (SliceStatus, 
 		s.FilterHigh = v
 	}
 	return s, nil
+}
+
+// PanStatus holds the per-panadapter fields flexbridge needs to drive band
+// changes. Populated from "display pan" status lines (subscribed via
+// `sub pan all`); the SmartSDR panadapter status topic is the two-word
+// "display pan", so the frame arrives as Topic="display", TopicArgs="pan <stream_id>".
+type PanStatus struct {
+	Handle   string // pan stream id (hex, e.g. "0x40000000"); the topic arg after "pan"
+	Band     int    // band=<wavelength-in-meters>; 0 if absent (pan status carries center, not band)
+	CenterHz int64  // center=<MHz> → Hz; 0 if absent
+}
+
+// ParsePan parses a "display pan" status line body into a PanStatus. The pan
+// stream id (handle) is the topic arg following the literal "pan" word and is
+// kept as a raw hex string — `display pan s <handle> band=N` takes it verbatim.
+// Panadapter status carries `center` (MHz), not `band`; band is best-effort
+// (0 when absent). topicArgs is the frame's TopicArgs ("pan <stream_id> ...").
+func ParsePan(topicArgs, fieldsStr string) PanStatus {
+	f := ParseStatusFields(fieldsStr)
+	args := strings.Fields(topicArgs)
+	var p PanStatus
+	// TopicArgs = "pan <stream_id> [removed]"; the handle follows "pan".
+	// A bare "pan" with no stream id (a malformed/empty pan frame) yields no handle.
+	if len(args) >= 2 && args[0] == "pan" {
+		p.Handle = args[1]
+	} else if len(args) > 0 && args[0] != "pan" {
+		p.Handle = args[0] // defensive: caller passed just the handle
+	}
+	if v, ok := f["band"]; ok {
+		if n, err := strconv.Atoi(v); err == nil {
+			p.Band = n
+		}
+	}
+	if v, ok := f["center"]; ok {
+		if mhz, err := strconv.ParseFloat(v, 64); err == nil {
+			p.CenterHz = int64(math.Round(mhz * 1e6))
+		}
+	}
+	return p
+}
+
+// ProfileStatus holds a parsed "profile" status line. SmartSDR does NOT
+// broadcast profiles via `sub radio all`; the list/current are obtained by
+// sending the one-shot `profile <type> info` command (undocumented, from
+// FlexLib; confirmed live on a FLEX-8400, SmartSDR v4.2.20 — see the
+// smartsdr-mic-profile-status-topic memory). The radio then emits status
+// frames of the form:
+//
+//	S<h>|profile mic list=Default^Default FHM-1^…^RTTYDefault^
+//	S<h>|profile global current=<name>          (mic emits NO current=)
+//
+// The `list=` value is caret-delimited and profile names contain spaces, so it
+// cannot be parsed by the space-splitting ParseStatusFields — ParseProfile
+// parses the raw body by hand. The `current=` value is the active profile name
+// (a value, not a flag) and may be empty. `importing=`/`exporting=` transfer
+// flags ride the same line; flexbridge ignores them. Only `mic` profiles are
+// tracked.
+//
+// Note: SmartSDR does not report an active *mic* profile (mic profiles are
+// load-only presets with no "current" pointer, unlike global profiles), so the
+// `current=` line never arrives for mic in practice; the bridge tracks the
+// active mic name client-side as "last loaded via set_mic_profile". ParseProfile
+// still honors `current=` defensively should a firmware revision emit it.
+type ProfileStatus struct {
+	Type      string   // mic | global | transmit (lowercased); "" if the first word is not a profile type
+	IsList    bool     // true when the frame was a list= frame (authoritative full snapshot)
+	Names     []string // caret-delimited names from list= (empty entries skipped); nil if !IsList
+	IsCurrent bool     // true when the frame was a current= frame
+	Current   string   // active profile name from current= (may be "")
+}
+
+// ParseProfile parses a "profile" status line body (the Frame.RawBody, i.e. the
+// text after the "profile" topic word) into a ProfileStatus. rawBody looks like
+// "mic list=Default^Default FHM-1^…" or "global current=". The first word is the
+// profile type; the remainder is a single key=value whose value may contain
+// spaces (so it is taken verbatim up to end-of-line, not space-split).
+func ParseProfile(rawBody string) ProfileStatus {
+	typ, rest := splitFirstWord(rawBody)
+	var p ProfileStatus
+	if isProfileType(typ) {
+		p.Type = strings.ToLower(typ)
+	} else {
+		return p // not a profile-type line we recognize
+	}
+	eq := strings.IndexByte(rest, '=')
+	if eq < 0 {
+		return p
+	}
+	key := strings.TrimSpace(rest[:eq])
+	val := strings.TrimSpace(rest[eq+1:])
+	switch key {
+	case "list":
+		p.IsList = true
+		for _, name := range strings.Split(val, "^") {
+			if name = strings.TrimSpace(name); name != "" {
+				p.Names = append(p.Names, name)
+			}
+		}
+	case "current":
+		p.IsCurrent = true
+		p.Current = val
+	}
+	return p
+}
+
+func isProfileType(s string) bool {
+	switch strings.ToLower(s) {
+	case "mic", "global", "transmit":
+		return true
+	}
+	return false
 }
 
 // parseFlexFreq parses a SmartSDR frequency string like "14.100.000" or
@@ -271,6 +447,38 @@ func ParseATU(fieldsStr string) ATUStatus {
 		Status: st,
 		Active: f["active"] == "1",
 	}
+}
+
+// DVKStatus holds the Digital Voice Keyer state parsed from a "dvk" status
+// line. SmartSDR v4+ emits (after `sub dvk all`):
+//
+//	S<h>|dvk status=idle|recording|preview|playback|disabled [id=<N>] [enabled=1|0]
+//	S<h>|dvk added   id=<N> name="..." duration=<ms>   (memory library; not state)
+//	S<h>|dvk deleted id=<N>                            (memory library; not state)
+//
+// Only the status= frames carry state for the /state plane; added/deleted are
+// reported with HasStatus=false so the bridge can ignore them for state.
+type DVKStatus struct {
+	Status    string // idle|recording|preview|playback|disabled
+	ID        int    // active memory id when present
+	HasStatus bool   // true when a status= key was present
+}
+
+// ParseDVK parses an "S|dvk ..." status body (the joinArgsFields form, i.e.
+// topic-args + key=value fields). Non-status frames (added/deleted) return
+// HasStatus=false. The "dvk id=<N> deleted" word-ordering variant is handled
+// by the absence of a status= key (still HasStatus=false).
+func ParseDVK(fieldsStr string) DVKStatus {
+	f := ParseStatusFields(fieldsStr)
+	st, ok := f["status"]
+	if !ok {
+		return DVKStatus{} // added/deleted/other — no state change
+	}
+	d := DVKStatus{Status: strings.ToLower(st), HasStatus: true}
+	if id, err := strconv.Atoi(f["id"]); err == nil {
+		d.ID = id
+	}
+	return d
 }
 
 // ParseTxPower extracts the configured transmit power from a "radio" status

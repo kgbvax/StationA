@@ -28,6 +28,16 @@ enabled = true
 bind    = "0.0.0.0"
 port    = 7373
 
+[pstrotator]
+# Optional PSTRotator-compatible inbound UDP listener. PSTRotator sends XML
+# datagrams to this port (default 12040) to set azimuth or stop the rotator.
+# Orthogonal to the MQTT three-plane contract; drives the same device the bridge
+# does, and the resulting motion still surfaces in /state. Disable if not
+# needed or if PSTRotator is configured for a different port.
+enabled = true
+bind    = "0.0.0.0"
+port    = 12040
+
 [device]
 # Identity published in /meta. link reflects the transport to the WRC.
 model = "Yaesu G-450DC"

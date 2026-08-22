@@ -1,0 +1,5 @@
+/testui
+/bin/testui
+/dist/testui-linux-arm64
+config.toml
+*.env

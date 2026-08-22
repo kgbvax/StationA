@@ -1,0 +1,589 @@
+<title>hf_console — Design B · Logbook Strips</title>
+<style>
+  :root {
+    /* light theme */
+    --page: #FDFCF8;
+    --strip: #F5F3EB;
+    --line: #D9D4C5;
+    --line-hi: #A8A08D;
+    --txt: #1F1C17;
+    --txt-mute: #6B6558;
+    --txt-faint: #A39D8C;
+    --accent: #3D5A73;
+    --accent-dim: #D9E2EA;
+    --green: #2E6E46;
+    --amber: #9E6B18;
+    --red: #A33A2A;
+    --orange: #B55D1A;
+    --shadow: rgba(31,28,23,0.06);
+    --radius: 0px;
+    --pad: 12px;
+    --gap: 1px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --page: #0D1117;
+      --strip: #141A24;
+      --line: #253040;
+      --line-hi: #4A586E;
+      --txt: #E8E4DA;
+      --txt-mute: #9399A6;
+      --txt-faint: #586172;
+      --accent: #6A9FC4;
+      --accent-dim: #1B2E3E;
+      --green: #5FBF8C;
+      --amber: #E0A23C;
+      --red: #D9533A;
+      --orange: #F08A38;
+      --shadow: rgba(0,0,0,0.25);
+    }
+  }
+  :root[data-theme="dark"] {
+    --page: #0D1117;
+    --strip: #141A24;
+    --line: #253040;
+    --line-hi: #4A586E;
+    --txt: #E8E4DA;
+    --txt-mute: #9399A6;
+    --txt-faint: #586172;
+    --accent: #6A9FC4;
+    --accent-dim: #1B2E3E;
+    --green: #5FBF8C;
+    --amber: #E0A23C;
+    --red: #D9533A;
+    --orange: #F08A38;
+    --shadow: rgba(0,0,0,0.25);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    background: var(--page);
+    color: var(--txt);
+    font-family: "Iowan Old Style", "Georgia", "Times New Roman", serif;
+    font-size: 14px;
+    line-height: 1.35;
+    overflow: hidden;
+  }
+  .mono { font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  .wrap {
+    height: 100vh;
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+    gap: 0;
+  }
+
+  /* top bar with tabs */
+  .top {
+    display: flex;
+    align-items: flex-end;
+    gap: 4px;
+    padding: 10px 16px 0;
+    border-bottom: 1px solid var(--line);
+    background: var(--page);
+  }
+  .tabs { display: flex; gap: 2px; flex: 1; }
+  .tab {
+    font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-weight: 700;
+    font-size: 12px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 10px 22px 10px;
+    border: 1px solid transparent;
+    border-bottom: none;
+    background: transparent;
+    color: var(--txt-mute);
+    cursor: pointer;
+    position: relative;
+  }
+  .tab.active {
+    background: var(--strip);
+    color: var(--txt);
+    border-color: var(--line);
+    border-radius: 4px 4px 0 0;
+  }
+  .tab.active::after {
+    content: '';
+    position: absolute; left: 0; right: 0; bottom: -1px; height: 1px;
+    background: var(--strip);
+  }
+  .theme-btn {
+    font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 10px;
+    padding: 6px 10px;
+    border: 1px solid var(--line);
+    background: var(--page);
+    color: var(--txt-mute);
+    cursor: pointer;
+    margin-bottom: 8px;
+  }
+
+  /* pages */
+  .pages { position: relative; overflow-y: auto; }
+  .page {
+    position: absolute; inset: 0;
+    display: none;
+    flex-direction: column;
+    gap: var(--gap);
+  }
+  .page.active { display: flex; }
+
+  /* strip layout */
+  .strip {
+    background: var(--strip);
+    border-bottom: 1px solid var(--line);
+    padding: var(--pad) 18px;
+    display: grid;
+    grid-template-columns: 150px 1fr auto;
+    align-items: center;
+    gap: 18px;
+    min-height: 76px;
+  }
+  .strip-label {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .strip-label .title {
+    font-family: "Iowan Old Style", "Georgia", "Times New Roman", serif;
+    font-weight: 700;
+    font-size: 17px;
+    letter-spacing: 0.02em;
+    color: var(--txt);
+  }
+  .strip-label .sub {
+    font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 10px;
+    color: var(--txt-faint);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+  .strip-data {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    flex-wrap: wrap;
+  }
+  .strip-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+
+  .btn {
+    font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-weight: 600;
+    font-size: 10px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    padding: 8px 12px;
+    min-height: 36px;
+    border: 1px solid var(--line-hi);
+    background: var(--page);
+    color: var(--txt);
+    cursor: pointer;
+  }
+  .btn:hover { background: var(--accent-dim); }
+  .btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn.amber { background: rgba(224,162,60,0.12); border-color: var(--amber); color: var(--amber); }
+  .btn.amber.active { background: var(--amber); color: #1A1A1A; }
+  .btn.danger { background: rgba(217,83,58,0.10); border-color: var(--red); color: var(--red); }
+  .btn.danger.active { background: var(--red); color: #fff; }
+
+  .readout {
+    font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    display: flex; align-items: baseline; gap: 6px;
+  }
+  .readout .num { font-weight: 700; font-size: 24px; }
+  .readout .unit { font-size: 10px; color: var(--txt-faint); text-transform: uppercase; letter-spacing: 0.08em; }
+  .readout.good .num { color: var(--green); }
+  .readout.warn .num { color: var(--amber); }
+  .readout.bad .num { color: var(--red); }
+
+  .kv-list {
+    display: flex; gap: 18px; flex-wrap: wrap;
+    font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  .kv { display: flex; flex-direction: column; gap: 1px; }
+  .kv .k { font-size: 9px; color: var(--txt-faint); text-transform: uppercase; letter-spacing: 0.12em; }
+  .kv .v { font-size: 14px; font-weight: 700; }
+  .kv .v.good { color: var(--green); }
+  .kv .v.warn { color: var(--amber); }
+  .kv .v.bad { color: var(--red); }
+
+  /* compass mini */
+  .compass-mini {
+    width: 110px; height: 110px;
+    position: relative; flex: none;
+  }
+  .compass-mini svg { width: 100%; height: 100%; }
+
+  .tag {
+    font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 9px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase;
+    padding: 2px 7px; border: 1px solid transparent;
+  }
+  .tag.on { background: rgba(54,179,126,0.12); color: var(--green); border-color: rgba(54,179,126,0.3); }
+  .tag.warn { background: rgba(224,162,60,0.12); color: var(--amber); border-color: rgba(224,162,60,0.3); }
+  .tag.red { background: rgba(217,83,58,0.12); color: var(--red); border-color: rgba(217,83,58,0.3); }
+
+  /* meters */
+  .meter-group { display: flex; flex-direction: column; gap: 10px; min-width: 220px; flex: 1; }
+  .meter { display: flex; flex-direction: column; gap: 2px; }
+  .meter-top { display: flex; justify-content: space-between; font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  .meter-top .name { font-size: 10px; color: var(--txt-faint); text-transform: uppercase; letter-spacing: 0.08em; }
+  .meter-top .val { font-size: 11px; color: var(--txt); }
+  .meter-bar {
+    height: 8px;
+    background: var(--page);
+    border: 1px solid var(--line);
+    position: relative;
+  }
+  .meter-bar::before {
+    content: '';
+    position: absolute; top: 0; bottom: 0;
+    left: 50%; width: 1px; background: var(--line-hi);
+  }
+  .meter-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--green), var(--green) 60%, var(--orange));
+  }
+
+  /* station page */
+  .station-strip .strip-data { flex-direction: column; align-items: flex-start; gap: 10px; }
+  .relay-row { display: flex; gap: 12px; flex-wrap: wrap; }
+  .relay {
+    display: flex; align-items: center; gap: 8px;
+    background: var(--page); border: 1px solid var(--line); padding: 6px 10px;
+  }
+  .relay .name { font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 10px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
+  .relay .st { font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 10px; font-weight: 700; }
+  .relay.on .st { color: var(--green); }
+  .relay.off .st { color: var(--txt-faint); }
+  .toggle { width: 32px; height: 16px; background: var(--line); position: relative; }
+  .toggle i { position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; background: var(--txt-mute); transition: left 0.12s; }
+  .relay.on .toggle { background: rgba(54,179,126,0.25); }
+  .relay.on .toggle i { left: 18px; background: var(--green); }
+
+  .placeholder {
+    display: flex; align-items: center; justify-content: center;
+    height: 100%; color: var(--txt-faint); font-style: italic;
+    min-height: 200px;
+  }
+
+  /* faults */
+  .faults {
+    display: flex;
+    gap: 14px;
+    background: var(--strip);
+    border-top: 1px solid var(--line);
+    padding: var(--pad) 18px;
+    align-items: center;
+  }
+  .faults-h {
+    font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-weight: 700; font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase;
+    color: var(--txt-mute);
+    padding-right: 12px; border-right: 1px solid var(--line);
+  }
+  .fault-list { display: flex; gap: 10px; flex-wrap: wrap; flex: 1; }
+  .fault {
+    font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 11px; padding: 5px 10px; border: 1px solid transparent;
+  }
+  .fault.active { background: rgba(217,83,58,0.10); color: var(--red); border-color: var(--red); font-weight: 600; }
+  .fault.past { background: var(--page); color: var(--txt-faint); border-color: var(--line); text-decoration: line-through; }
+
+  @media (max-width: 1100px) {
+    .strip { grid-template-columns: 120px 1fr; grid-template-rows: auto auto; }
+    .strip-actions { grid-column: 2; justify-content: flex-start; }
+    .strip-data { grid-column: 2; }
+    .strip-label { grid-row: 1 / 3; }
+  }
+  @media (max-width: 760px) {
+    .strip { grid-template-columns: 1fr; grid-template-rows: auto auto auto; }
+    .strip-label { grid-row: 1; }
+    .strip-data { grid-column: 1; grid-row: 2; }
+    .strip-actions { grid-column: 1; grid-row: 3; }
+    .top { flex-wrap: wrap; }
+    .tab { padding: 8px 14px; font-size: 11px; }
+  }
+</style>
+
+<div class="wrap">
+  <div class="top">
+    <div class="tabs">
+      <button class="tab" data-page="station">Station</button>
+      <button class="tab active" data-page="hf">HF</button>
+      <button class="tab" data-page="uhf">UHF</button>
+    </div>
+    <button class="theme-btn" id="themeBtn">toggle theme</button>
+  </div>
+
+  <div class="pages">
+    <!-- HF page -->
+    <div class="page active" id="page-hf">
+      <!-- Rotator strip -->
+      <div class="strip">
+        <div class="strip-label">
+          <span class="title">Rotator</span>
+          <span class="sub">G-450DC · 247° → 067°</span>
+        </div>
+        <div class="strip-data">
+          <div class="compass-mini">
+            <svg id="compassB" viewBox="0 0 110 110"></svg>
+          </div>
+          <div class="kv-list">
+            <div class="kv"><span class="k">Azimuth</span><span class="v">247°</span></div>
+            <div class="kv"><span class="k">Lobe</span><span class="v warn">180°</span></div>
+            <div class="kv"><span class="k">Target</span><span class="v">067°</span></div>
+          </div>
+        </div>
+        <div class="strip-actions">
+          <button class="btn">NA 330</button>
+          <button class="btn">SA 210</button>
+          <button class="btn">VK 60</button>
+          <button class="btn">JA 35</button>
+          <button class="btn danger">STOP</button>
+        </div>
+      </div>
+
+      <!-- Ultrabeam strip -->
+      <div class="strip">
+        <div class="strip-label">
+          <span class="title">Ultrabeam</span>
+          <span class="sub">RCU-06 · 20M · 14.074 MHz</span>
+        </div>
+        <div class="strip-data">
+          <div class="kv-list">
+            <div class="kv"><span class="k">Band</span><span class="v">20M</span></div>
+            <div class="kv"><span class="k">Mode</span><span class="v warn">180°</span></div>
+            <div class="kv"><span class="k">Lobe width</span><span class="v">60°</span></div>
+          </div>
+        </div>
+        <div class="strip-actions">
+          <button class="btn">FORWARD</button>
+          <button class="btn amber active">180°</button>
+          <button class="btn">BI-DIR</button>
+          <button class="btn danger">RETRACT</button>
+        </div>
+      </div>
+
+      <!-- Antenna select strip -->
+      <div class="strip">
+        <div class="strip-label">
+          <span class="title">Antenna</span>
+          <span class="sub">AUTO · Ultrabeam (P4)</span>
+        </div>
+        <div class="strip-data">
+          <div class="readout good">
+            <span class="num">Ultrabeam</span>
+            <span class="unit">P4 selected</span>
+          </div>
+        </div>
+        <div class="strip-actions">
+          <button class="btn">ISOL</button>
+          <button class="btn">DUMMY</button>
+          <button class="btn active">ULTRABEAM</button>
+          <button class="btn">FAN-DIPOLE</button>
+          <button class="btn">NN1</button>
+          <button class="btn">NN2</button>
+          <button class="btn active">AUTO</button>
+          <button class="btn">MANUAL</button>
+        </div>
+      </div>
+
+      <!-- PA strip -->
+      <div class="strip">
+        <div class="strip-label">
+          <span class="title">PA · ACOM 1200S</span>
+          <span class="sub">● TX · temp 54 °C</span>
+        </div>
+        <div class="strip-data">
+          <div class="meter-group">
+            <div class="meter">
+              <div class="meter-top"><span class="name">FWD power</span><span class="val">820 W</span></div>
+              <div class="meter-bar"><div class="meter-fill" style="width: 68%;"></div></div>
+            </div>
+            <div class="meter">
+              <div class="meter-top"><span class="name">SWR</span><span class="val">1.9</span></div>
+              <div class="meter-bar"><div class="meter-fill" style="width: 48%; background: var(--amber);"></div></div>
+            </div>
+          </div>
+          <div class="kv-list">
+            <div class="kv"><span class="k">REFL</span><span class="v warn">18 W</span></div>
+            <div class="kv"><span class="k">TEMP</span><span class="v">54 °C</span></div>
+          </div>
+        </div>
+        <div class="strip-actions">
+          <button class="btn active">OPERATE</button>
+          <button class="btn amber">STANDBY</button>
+        </div>
+      </div>
+
+      <!-- Tuner strip -->
+      <div class="strip">
+        <div class="strip-label">
+          <span class="title">Tuner · ATR-1000</span>
+          <span class="sub">IN LINE</span>
+        </div>
+        <div class="strip-data">
+          <div class="kv-list">
+            <div class="kv"><span class="k">FWD</span><span class="v good">90 W</span></div>
+            <div class="kv"><span class="k">SWR</span><span class="v good">1.3</span></div>
+            <div class="kv"><span class="k">L</span><span class="v">0.42 µH</span></div>
+            <div class="kv"><span class="k">C</span><span class="v">128 pF</span></div>
+          </div>
+        </div>
+        <div class="strip-actions">
+          <button class="btn active">IN LINE</button>
+          <button class="btn">BYPASS</button>
+          <button class="btn">TUNE MEM</button>
+          <button class="btn">TUNE FULL</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Station page -->
+    <div class="page" id="page-station">
+      <div class="strip station-strip">
+        <div class="strip-label">
+          <span class="title">Power</span>
+          <span class="sub">ALL ON · seq: idle</span>
+        </div>
+        <div class="strip-data">
+          <div class="relay-row">
+            <div class="relay on"><span class="name">MAINS</span><span class="toggle"><i></i></span><span class="st">ON</span></div>
+            <div class="relay on"><span class="name">PSU 13.8V</span><span class="toggle"><i></i></span><span class="st">ON</span></div>
+            <div class="relay on"><span class="name">TRX</span><span class="toggle"><i></i></span><span class="st">ON</span></div>
+            <div class="relay on"><span class="name">PA</span><span class="toggle"><i></i></span><span class="st">ON</span></div>
+          </div>
+        </div>
+        <div class="strip-actions">
+          <button class="btn">SEQUENCE ON</button>
+          <button class="btn danger">SEQUENCE OFF</button>
+        </div>
+      </div>
+      <div class="strip">
+        <div class="strip-label">
+          <span class="title">Environment</span>
+          <span class="sub">HVAC placeholder</span>
+        </div>
+        <div class="strip-data">
+          <div class="kv-list">
+            <div class="kv"><span class="k">Temp</span><span class="v">21.4 °C</span></div>
+            <div class="kv"><span class="k">CO₂</span><span class="v">612 ppm</span></div>
+            <div class="kv"><span class="k">Heat</span><span class="v good">ON</span></div>
+            <div class="kv"><span class="k">Cool</span><span class="v">OFF</span></div>
+          </div>
+        </div>
+        <div class="strip-actions">
+          <button class="btn">HEAT</button>
+          <button class="btn">COOL</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- UHF page -->
+    <div class="page" id="page-uhf">
+      <div class="strip">
+        <div class="strip-label"><span class="title">UHF</span></div>
+        <div class="placeholder">UHF controls are not yet wired.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="faults">
+    <div class="faults-h">FAULTS</div>
+    <div class="fault-list">
+      <span class="fault active">PA: REFL POWER HIGH — 42 W</span>
+      <span class="fault past">TUNER: TUNE TIMEOUT</span>
+      <span class="fault past">ROTATOR: ELTAKA UNREACHABLE</span>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  const root = document.documentElement;
+  const tabs = document.querySelectorAll('.tab');
+  const pages = document.querySelectorAll('.page');
+  const themeBtn = document.getElementById('themeBtn');
+
+  tabs.forEach(t => t.addEventListener('click', () => {
+    tabs.forEach(x => x.classList.remove('active'));
+    pages.forEach(x => x.classList.remove('active'));
+    t.classList.add('active');
+    document.getElementById('page-' + t.dataset.page).classList.add('active');
+  }));
+
+  themeBtn.addEventListener('click', () => {
+    const current = root.getAttribute('data-theme');
+    if (current === 'dark') root.setAttribute('data-theme', 'light');
+    else if (current === 'light') root.removeAttribute('data-theme');
+    else {
+      const dark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+      root.setAttribute('data-theme', dark ? 'light' : 'dark');
+    }
+  });
+
+  // draw mini compass
+  const svg = document.getElementById('compassB');
+  const cx = 55, cy = 55, R = 48;
+  const az = 247, target = 67, direction = 'reverse';
+  const half = {forward: 30, reverse: 30, bidirectional: 45};
+  function pt(a, r) { const ang = (a - 90) * Math.PI / 180; return [cx + r * Math.cos(ang), cy + r * Math.sin(ang)]; }
+  function wedge(c, h, r, fill) {
+    const a0 = c - h, a1 = c + h;
+    const [x0, y0] = pt(a0, r), [x1, y1] = pt(a1, r);
+    const lg = (2 * h) > 180 ? 1 : 0;
+    const d = `M ${cx} ${cy} L ${x0} ${y0} A ${r} ${r} 0 ${lg} 1 ${x1} ${y1} Z`;
+    const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    p.setAttribute('d', d); p.setAttribute('fill', fill); p.setAttribute('opacity', '0.55');
+    return p;
+  }
+  function line(a0, a1, r0, r1, c, w, dash) {
+    const [x0, y0] = pt(a0, r0), [x1, y1] = pt(a1, r1);
+    const l = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    l.setAttribute('x1', x0); l.setAttribute('y1', y0); l.setAttribute('x2', x1); l.setAttribute('y2', y1);
+    l.setAttribute('stroke', c); l.setAttribute('stroke-width', w); l.setAttribute('stroke-linecap', 'round');
+    if (dash) l.setAttribute('stroke-dasharray', dash);
+    return l;
+  }
+  function text(s, x, y, size, c, bold) {
+    const t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    t.setAttribute('x', x); t.setAttribute('y', y); t.setAttribute('fill', c);
+    t.setAttribute('font-family', 'IBM Plex Mono, monospace'); t.setAttribute('font-size', size);
+    t.setAttribute('font-weight', bold ? '700' : '500');
+    t.setAttribute('text-anchor', 'middle'); t.setAttribute('dominant-baseline', 'central');
+    t.textContent = s; return t;
+  }
+
+  const face = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+  face.setAttribute('cx', cx); face.setAttribute('cy', cy); face.setAttribute('r', R);
+  face.setAttribute('fill', 'var(--page)'); svg.appendChild(face);
+  const ring = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+  ring.setAttribute('cx', cx); ring.setAttribute('cy', cy); ring.setAttribute('r', R);
+  ring.setAttribute('fill', 'none'); ring.setAttribute('stroke', 'var(--line-hi)'); ring.setAttribute('stroke-width', '1');
+  svg.appendChild(ring);
+  for (let a = 0; a < 360; a += 30) {
+    const major = a % 90 === 0;
+    const [x1, y1] = pt(a, R), [x2, y2] = pt(a, major ? R - 8 : R - 4);
+    const l = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    l.setAttribute('x1', x1); l.setAttribute('y1', y1); l.setAttribute('x2', x2); l.setAttribute('y2', y2);
+    l.setAttribute('stroke', 'var(--txt-faint)'); l.setAttribute('stroke-width', major ? 1.5 : 1);
+    svg.appendChild(l);
+  }
+  svg.appendChild(text('N', ...pt(0, R - 12), 9, 'var(--accent)', true));
+  svg.appendChild(text('E', ...pt(90, R - 12), 8, 'var(--txt-faint)', false));
+  svg.appendChild(text('S', ...pt(180, R - 12), 8, 'var(--txt-faint)', false));
+  svg.appendChild(text('W', ...pt(270, R - 12), 8, 'var(--txt-faint)', false));
+
+  const beams = direction === 'forward' ? [{ang: az, half: half.forward, color: '#6A9FC4'}]
+              : direction === 'reverse' ? [{ang: (az + 180) % 360, half: half.reverse, color: '#E0A23C'}]
+              : [{ang: az, half: half.bidirectional, color: '#6A9FC4'}, {ang: (az + 180) % 360, half: half.bidirectional, color: '#E0A23C'}];
+  beams.forEach(b => svg.appendChild(wedge(b.ang, b.half, R - 3, b.color)));
+  svg.appendChild(line(az, az, 12, R - 2, 'var(--txt)', 1.5));
+  const hub = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+  hub.setAttribute('cx', cx); hub.setAttribute('cy', cy); hub.setAttribute('r', 4);
+  hub.setAttribute('fill', 'var(--accent)'); svg.appendChild(hub);
+  svg.appendChild(line(target, target, 12, R - 4, 'var(--accent)', 1, '3 3'));
+})();
+</script>

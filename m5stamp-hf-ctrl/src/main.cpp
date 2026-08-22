@@ -16,9 +16,11 @@
 //
 // See docs/m5stamp-hf-ctrl-mqtt-api.md and
 // ../stationa/docs/station-integration-model.md §7.1.
+
 #include <Arduino.h>
 #include <ArduinoJson.h>
 #include <WiFi.h>
+#include <ArduinoOTA.h>
 
 #include "secrets.h"   // gitignored — see secrets.example.h
 #include "config.h"
@@ -49,6 +51,13 @@ bool radioOnline = false;
 bool radioTuning = false;
 String radioBand = "";       // canonical band name (e.g. "20m"), "" if unknown
 unsigned long lastRadioStateMs = 0;  // heartbeat freshness
+
+// Deduplication: publish immediately when enabled/armed/error change, otherwise
+// only on heartbeat. lastPublishedEnabled/Armed/Error track the last snapshot we
+// actually sent.
+bool lastPublishedEnabled = false;
+bool lastPublishedArmed = false;
+String lastPublishedError = "";
 
 // ---------------------------------------------------------------------------
 // forward decls
@@ -276,18 +285,31 @@ static void publishPaArmMeta(SlotMqtt& s) {
     s.publish("meta", true, out.c_str());
 }
 
+// currentPaArmError returns the human-readable reason the arm is blocked, or
+// an empty string when there is no error.
+static String currentPaArmError() {
+    if (!radioOnline) return "radio offline";
+    if (radioTuning) return "radio tuning";
+    if (!bandSafe(radioBand)) return "band not safe";
+    return "";
+}
+
 static void publishPaArmState(SlotMqtt& s) {
     JsonDocument doc;
     doc["ts"] = millis();
     doc["enabled"] = enabled;
     doc["armed"] = armed;
     doc["device_online"] = true;
-    if (!radioOnline) doc["error"] = "radio offline";
-    else if (radioTuning) doc["error"] = "radio tuning";
-    else if (!bandSafe(radioBand)) doc["error"] = "band not safe";
+    String err = currentPaArmError();
+    if (err.length() > 0) doc["error"] = err;
     String out;
     serializeJson(doc, out);
     s.publish("state", true, out.c_str());
+
+    // Track what we just published so we can suppress duplicates on the heartbeat.
+    lastPublishedEnabled = enabled;
+    lastPublishedArmed = armed;
+    lastPublishedError = err;
 }
 
 // ---------------------------------------------------------------------------
@@ -440,6 +462,23 @@ static void wifiConnect() {
 }
 
 // ---------------------------------------------------------------------------
+// ArduinoOTA (network firmware updates)
+// ---------------------------------------------------------------------------
+static void otaInit() {
+    ArduinoOTA.setHostname(DEVICE_SERIAL);
+    ArduinoOTA.setPassword(OTA_PASSWORD);
+    ArduinoOTA.onStart([]() {
+        // Best-effort: drop the arm relay before rebooting into the update.
+        relaySet(RELAY_PA_ARM, false);
+    });
+    ArduinoOTA.onError([](ota_error_t err) {
+        // Errors are logged only; the main loop keeps running.
+        (void)err;
+    });
+    ArduinoOTA.begin();
+}
+
+// ---------------------------------------------------------------------------
 // setup / loop
 // ---------------------------------------------------------------------------
 SlotMqtt switchSlot(SWITCH_BASE, "switch", handleSwitchCmd);
@@ -449,6 +488,7 @@ void setup() {
     relayInit();
     uiInit();
     wifiConnect();
+    otaInit();
     gSwitch = &switchSlot;
     gPaArm = &paArmSlot;
     // Publish meta/states are driven from loop()'s connect-edge handler.
@@ -478,19 +518,33 @@ void loop() {
     switchSlot.loop();
     paArmSlot.loop();
 
+    // 4a. Service ArduinoOTA so network firmware updates work.
+    ArduinoOTA.handle();
+
     // 5. Connect-edge bookkeeping (publish meta + initial state + resub radio).
     if (switchSlot.connected() && !switchConnectedOnce) onSwitchConnect();
     if (!switchSlot.connected()) switchConnectedOnce = false;
     if (paArmSlot.connected() && !paArmConnectedOnce) onPaArmConnect();
     if (!paArmSlot.connected()) paArmConnectedOnce = false;
 
-    // 6. Arm logic: recompute every loop; publish /state on change or on a
-    //    slow refresh. (Radio /state arrives on the paArmSlot connection and is
-    //    routed to handleRadioState by handlePaArmCmd on the /state topic.)
+    // 6. Arm logic: recompute every loop; publish /state immediately when
+    //    enabled, armed, or the blocking error changes, otherwise only on the
+    //    slow heartbeat. This prevents flooding the bus with identical
+    //    snapshots while the PA sits idle in RX.
     static unsigned long lastArmPublish = 0;
-    bool changed = recomputeArm(paArmSlot);
-    if (changed || (paArmSlot.connected() && millis() - lastArmPublish > 2000)) {
-        if (paArmSlot.connected()) {
+    bool armedChanged = recomputeArm(paArmSlot);
+    bool shouldPublish = false;
+    if (paArmSlot.connected()) {
+        String err = currentPaArmError();
+        if (armedChanged ||
+            enabled != lastPublishedEnabled ||
+            armed != lastPublishedArmed ||
+            err != lastPublishedError) {
+            shouldPublish = true;
+        } else if (millis() - lastArmPublish >= PA_ARM_HEARTBEAT_MS) {
+            shouldPublish = true;
+        }
+        if (shouldPublish) {
             publishPaArmState(paArmSlot);
             lastArmPublish = millis();
         }

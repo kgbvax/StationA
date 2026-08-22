@@ -4,10 +4,12 @@ wrc-rotator-bridge bridges the **HF antenna rotator** (Yaesu G-450DC steered via
 AF6SA WRC controller) to MQTT using the station integration model (slot
 `muehle/hf/rotator`). It dials the WRC's WebSocket status stream, publishes a
 canonical rotator state snapshot, dispatches `/cmd` intent (`set_az`, `stop`,
-`fwd`, `rev`) back to the rotator, and optionally runs a GS-232B TCP server on
-port 7373 so legacy rotator-control software (PSTRotator, N1MM, rotctld) can
-drive the rotator directly. It is **read-write**. The UHF sat rotator is a
-separate slot (`muehle/uhf/rotator`) served by pelcobridge — no collision.
+`fwd`, `rev`) back to the rotator, and optionally runs two parallel legacy
+control paths: a GS-232B TCP server on port 7373 and a PSTRotator-compatible
+UDP listener on port 12040. Either path lets rotator-control software drive the
+rotator directly; resulting motion still surfaces in `/state`. It is
+**read-write**. The UHF sat rotator is a separate slot (`muehle/uhf/rotator`)
+served by pelcobridge — no collision.
 
 ---
 
@@ -29,6 +31,7 @@ Run a single test package:
 ```bash
 go test ./internal/bridge/... -run TestHandleCommand
 go test ./internal/gs232/...
+go test ./internal/pstrotator/...
 ```
 
 CLI flags:
@@ -44,7 +47,8 @@ CLI flags:
 ## Architecture
 
 **Data flow:** WRC WebSocket → `internal/rotor` → `internal/bridge` → MQTT,
-with `internal/gs232` as a parallel inbound control path.
+with `internal/gs232` and `internal/pstrotator` as parallel inbound control
+paths.
 
 1. `cmd/wrc-rotator-bridge/main.go` — flags, config load, signal ctx, MQTT
    connect+LWT, `/cmd` subscription + bounded worker, WRC WebSocket restart
@@ -59,7 +63,11 @@ with `internal/gs232` as a parallel inbound control path.
 4. `internal/gs232` — optional GS-232B TCP server: `C`/`C2` position query,
    `Mxxx`/`Wxxx` move, `S` stop. Drives the same `rotor.Device` the bridge
    does; the resulting motion surfaces in `/state`.
-5. `internal/config` — TOML config, flags, `WRC_ROTATOR_BRIDGE_*` env overrides.
+5. `internal/pstrotator` — optional PSTRotator-compatible UDP listener on port
+   12040 (configurable). Accepts XML datagrams (`AZIMUTH`, `STOP`, `PARK`,
+   `AZ?` query) and drives the same `rotor.Device`; the resulting motion
+   surfaces in `/state`.
+6. `internal/config` — TOML config, flags, `WRC_ROTATOR_BRIDGE_*` env overrides.
 
 **Restart loop** (`wsLoop`): dials the WRC, publishes meta, runs the read loop
 until the WebSocket errors or ctx cancels, then marks the device offline and
@@ -113,7 +121,9 @@ WRC_ROTATOR_BRIDGE_MQTT_PASSWORD=<password>
 
 The systemd unit contains `EnvironmentFile=/etc/wrc-rotator-bridge/wrc-rotator-bridge.env`.
 Env overrides: `WRC_ROTATOR_BRIDGE_MQTT_BROKER`/`_CLIENT_ID`/`_USER`/`_PASSWORD`/
-`_SITE`/`_STATION`/`_SLOT`, `WRC_ROTATOR_BRIDGE_ROTOR_URL`.
+`_SITE`/`_STATION`/`_SLOT`, `WRC_ROTATOR_BRIDGE_ROTOR_URL`. The GS-232 and
+PSTRotator listeners are configured via `[gs232]` / `[pstrotator]` in TOML
+(`deploy.sh` seeds them on first deploy).
 
 See `../docs/conventions/config-and-secrets.md` for the full convention.
 
@@ -151,10 +161,10 @@ so the migration creates no udev rule and adds no serial group.
 
 The unit is hardened like flexbridge (network-only): `ProtectSystem=strict`,
 `PrivateDevices=true` (no serial devices), `RestrictAddressFamilies=AF_INET
-AF_INET6` (covers the outbound WRC+MQTT and the inbound GS-232 listen),
-`MemoryMax=256M`, `TasksMax=64`. There is no udev rule and no `DeviceAllow` —
-the bridge makes outbound TCP connections only (plus the GS-232 listen). See
-`../docs/conventions/deployment.md`.
+AF_INET6` (covers the outbound WRC+MQTT and the inbound GS-232 TCP plus
+PSTRotator UDP listens), `MemoryMax=256M`, `TasksMax=64`. There is no udev
+rule and no `DeviceAllow` — the bridge makes outbound TCP connections plus two
+inbound listen sockets. See `../docs/conventions/deployment.md`.
 
 ---
 

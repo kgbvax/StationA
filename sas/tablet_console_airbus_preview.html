@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Mühle HF console — Airbus / process-control preview</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0B1120;
+    --panel:#09101D;
+    --card:#0E1625;
+    --card-hi:#142238;
+    --line:#1A2740;
+    --line-hi:#264066;
+    --txt:#E8EDF6;
+    --txt-mute:#5D7499;
+    --txt-faint:#3A516F;
+    --cyan:#60D6FF;
+    --cyan-box:#0D3B55;
+    --green:#36B37E;
+    --green-box:#0D3D2E;
+    --amber:#E0A23C;
+    --amber-box:#4A3412;
+    --red:#D9533A;
+    --red-box:#4A1A13;
+    --white:#F5F8FC;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{background:var(--bg);color:var(--txt);font-family:"IBM Plex Sans",system-ui,sans-serif;font-size:13px;overflow:hidden;-webkit-font-smoothing:antialiased}
+  .mono{font-family:"IBM Plex Mono",monospace}
+  .frame{width:1280px;height:800px;display:grid;grid-template-rows:40px 28px 1fr auto auto auto 20px;gap:6px;padding:10px 12px}
+
+  .topbar{display:flex;align-items:center;gap:16px;padding:0 6px;border-bottom:1px solid var(--line);padding-bottom:8px}
+  .brand{font-family:"IBM Plex Mono",monospace;font-weight:700;font-size:17px;letter-spacing:.04em;color:var(--white)}
+  .brand .hf{color:var(--txt-mute);font-weight:500}
+  .status-pill{font-family:"IBM Plex Mono",monospace;font-size:10px;padding:3px 9px;border-radius:2px;background:var(--green-box);color:var(--green);border:1px solid rgba(54,179,126,.35)}
+  .spacer{flex:1}
+  .radio-ctx{display:flex;align-items:center;gap:16px;font-family:"IBM Plex Mono",monospace;font-size:12px}
+  .radio-ctx .lab{color:var(--txt-mute);font-size:9px;letter-spacing:.12em;text-transform:uppercase}
+  .radio-ctx .val{color:var(--white)}
+  .radio-ctx .band{font-weight:700;color:var(--cyan)}
+
+  .banner{display:flex;align-items:center;padding:0 6px}
+  .banner .pill{
+    background:var(--amber-box);border:1px solid rgba(224,162,60,.55);color:var(--amber);
+    border-radius:2px;padding:4px 12px;font-family:"IBM Plex Mono",monospace;font-size:11px;letter-spacing:.12em;text-transform:uppercase
+  }
+
+  .main{display:grid;grid-template-columns:360px 1fr 1fr;gap:8px;min-height:0}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:2px;padding:10px 12px;display:flex;flex-direction:column;gap:8px;min-height:0}
+  .card-h{display:flex;align-items:center;justify-content:space-between;min-height:22px}
+  .card-h .title{font-family:"IBM Plex Mono",monospace;font-weight:700;font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--white)}
+  .card-h .sub{color:var(--txt-faint);font-size:10px;font-family:"IBM Plex Mono",monospace}
+
+  /* compact boxed rows */
+  .field{
+    display:grid;grid-template-columns:minmax(90px,1fr) 1fr auto;gap:8px;align-items:center;
+    background:var(--panel);border:1px solid var(--line);border-radius:2px;padding:6px 8px;
+  }
+  .field .lab{font-family:"IBM Plex Mono",monospace;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--txt-mute)}
+  .field .val{font-family:"IBM Plex Mono",monospace;font-weight:600;font-size:14px;color:var(--white);text-align:right}
+  .field .u{font-family:"IBM Plex Mono",monospace;font-size:10px;color:var(--txt-mute);text-align:left;padding-left:4px}
+  .field .bar{height:5px;background:var(--line);border-radius:1px;overflow:hidden}
+  .field .bar i{display:block;height:100%;border-radius:1px}
+  .field .bar.fwd i{background:var(--green)}
+  .field .bar.refl i{background:var(--amber)}
+  .field .bar.swr i{background:var(--green)}
+
+  .swr-big{display:flex;align-items:baseline;gap:6px;background:var(--green-box);border:1px solid rgba(54,179,126,.35);border-radius:2px;padding:6px 10px}
+  .swr-big .k{font-family:"IBM Plex Mono",monospace;font-size:10px;letter-spacing:.14em;color:var(--green);text-transform:uppercase}
+  .swr-big .v{font-family:"IBM Plex Mono",monospace;font-weight:700;font-size:24px;color:var(--green);line-height:1}
+
+  .list{display:flex;flex-direction:column;gap:3px}
+
+  /* compass */
+  .compass-wrap{position:relative;width:100%;height:248px;display:flex;align-items:center;justify-content:center}
+  .compass-wrap svg{display:block}
+  .az-readout{position:absolute;left:8px;top:8px;background:var(--cyan-box);border:1px solid rgba(96,214,255,.4);border-radius:2px;padding:5px 10px}
+  .az-readout .deg{font-family:"IBM Plex Mono",monospace;font-weight:700;font-size:24px;color:var(--cyan);line-height:1}
+  .az-readout .lbl{font-family:"IBM Plex Mono",monospace;font-size:10px;letter-spacing:.12em;color:var(--txt-mute);text-transform:uppercase}
+  .compass-foot{display:flex;flex-direction:column;align-items:center;gap:5px;margin-top:auto}
+  .slew{color:var(--cyan);font-size:10.5px;font-family:"IBM Plex Mono",monospace;height:12px}
+  .presets{display:flex;gap:4px;flex-wrap:wrap;justify-content:center}
+
+  .btn{
+    font-family:"IBM Plex Mono",monospace;font-weight:600;letter-spacing:.04em;text-transform:uppercase;font-size:10px;
+    background:var(--card-hi);border:1px solid var(--line-hi);color:var(--white);border-radius:2px;padding:6px 11px;min-height:32px;cursor:pointer
+  }
+  .btn:hover{background:var(--line-hi)}
+  .btn.active{background:var(--cyan-box);border-color:var(--cyan);color:var(--cyan)}
+  .btn.amber{background:var(--amber-box);border-color:var(--amber);color:var(--amber)}
+  .btn.danger{background:var(--red-box);border-color:var(--red);color:var(--red)}
+  .btn.stop{background:var(--red);border-color:var(--red);color:#fff}
+  .btn.lg{font-size:11px;padding:9px 15px;min-height:42px}
+  .seg{display:flex;gap:4px}
+
+  .tag{font-family:"IBM Plex Mono",monospace;font-size:10px;letter-spacing:.08em;text-transform:uppercase;padding:3px 8px;border-radius:2px;border:1px solid var(--line-hi)}
+  .tag.on{border-color:var(--green);color:var(--green);background:var(--green-box)}
+  .tag.off{border-color:var(--txt-faint);color:var(--txt-faint);background:transparent}
+  .tag.amber{border-color:var(--amber);color:var(--amber);background:var(--amber-box)}
+  .tag.red{border-color:var(--red);color:var(--red);background:var(--red-box)}
+
+  .panel-foot{display:flex;gap:5px;flex-wrap:wrap;margin-top:auto}
+  .meta-line{display:flex;align-items:center;gap:10px;font-size:10.5px;color:var(--txt-mute);font-family:"IBM Plex Mono",monospace}
+  .fault{background:var(--red-box);border:1px solid var(--red);color:var(--red);border-radius:2px;padding:4px 10px;font-family:"IBM Plex Mono",monospace;font-weight:600;letter-spacing:.08em;text-transform:uppercase;font-size:10px;display:flex;align-items:center;gap:6px}
+
+  .row-card{display:flex;flex-direction:column;gap:6px}
+  .ant-line{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .ant-line .sel{font-size:12px}
+  .ant-line .sel b{font-weight:700;color:var(--cyan)}
+  .pending{color:var(--amber);font-size:10.5px;font-family:"IBM Plex Mono",monospace}
+  .ant-grid{display:flex;gap:4px;flex-wrap:wrap}
+  .ant-grid .btn{min-width:70px}
+
+  .power-row{display:grid;grid-template-columns:auto 1fr;gap:12px;align-items:center}
+  .relays{display:flex;gap:6px;flex-wrap:wrap}
+  .relay{
+    display:flex;align-items:center;gap:10px;
+    background:var(--panel);border:1px solid var(--line);border-radius:2px;padding:7px 11px;min-width:120px
+  }
+  .relay .name{font-family:"IBM Plex Mono",monospace;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--txt-mute)}
+  .relay .st{font-family:"IBM Plex Mono",monospace;font-weight:700;font-size:12px;margin-left:auto}
+  .relay.on .st{color:var(--green)}
+  .relay.off .st{color:var(--txt-faint)}
+  .toggle{width:34px;height:16px;border-radius:1px;background:var(--line);position:relative;flex:none}
+  .toggle i{position:absolute;top:2px;left:2px;width:12px;height:12px;background:var(--txt-mute);transition:left .12s}
+  .relay.on .toggle{background:var(--green-box)}
+  .relay.on .toggle i{left:20px;background:var(--green)}
+  .seq-meta{display:flex;align-items:center;gap:10px;font-family:"IBM Plex Mono",monospace;font-size:11px;color:var(--txt-mute)}
+  .seq-meta .step{color:var(--cyan)}
+
+  .climate-row{display:flex;align-items:center;gap:18px;flex-wrap:wrap}
+  .climate-row .group{display:flex;align-items:center;gap:8px}
+  .climate-row .name{font-family:"IBM Plex Mono",monospace;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--txt-mute)}
+  .readout{font-family:"IBM Plex Mono",monospace;font-size:13px;color:var(--white)}
+  .readout .u{color:var(--txt-mute);font-size:10px}
+  .wiring-later{color:var(--txt-faint);font-size:10px;font-style:italic}
+
+  .txstrip{display:flex;align-items:center;justify-content:center;gap:8px;border-radius:2px;height:100%;font-family:"IBM Plex Mono",monospace;font-weight:700;letter-spacing:.18em;text-transform:uppercase;font-size:10px}
+  .txstrip.rx{background:var(--green-box);color:var(--green);border:1px solid rgba(54,179,126,.3)}
+  .txstrip.tx{background:var(--red-box);color:var(--red);border:1px solid rgba(217,83,58,.35)}
+  .txstrip.inh{background:var(--amber-box);color:var(--amber);border:1px solid rgba(224,162,60,.3)}
+</style>
+</head>
+<body>
+<div class="frame">
+
+  <div class="topbar">
+    <div class="brand">MÜHLE <span class="hf">· HF</span></div>
+    <span class="status-pill">● all online</span>
+    <div class="spacer"></div>
+    <div class="radio-ctx">
+      <span><span class="lab">BAND</span> <span class="band">20M</span></span>
+      <span><span class="lab">MODE</span> <span class="val">USB</span></span>
+      <span><span class="lab">FREQ</span> <span class="val">14.074.000 HZ</span></span>
+      <span><span class="lab">DRIVE</span> <span class="val">40%</span></span>
+    </div>
+  </div>
+
+  <div class="banner">
+    <span class="pill">⚠ REVERSE — BEAM FIRES ASTERN</span>
+  </div>
+
+  <div class="main">
+
+    <!-- COMPASS -->
+    <div class="card" style="align-items:center;justify-content:flex-start">
+      <div class="card-h" style="width:100%">
+        <span class="title">BEAM COMPASS</span>
+        <span class="sub">ROT + UB</span>
+      </div>
+      <div class="compass-wrap">
+        <svg id="compass" width="330" height="248" viewBox="0 0 330 248"></svg>
+        <div class="az-readout">
+          <div class="deg" id="azDeg">247°</div>
+          <div class="lbl" id="azLbl">REV</div>
+        </div>
+      </div>
+      <div class="compass-foot">
+        <div class="slew">SLEWING → 067°</div>
+        <div class="presets">
+          <button class="btn">045</button>
+          <button class="btn">090</button>
+          <button class="btn">180</button>
+          <button class="btn">270</button>
+          <button class="btn stop">STOP</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- PA -->
+    <div class="card">
+      <div class="card-h">
+        <span class="title">PA · ACOM 1200S</span>
+        <span class="tag red">● TX</span>
+      </div>
+      <div class="list">
+        <div class="field">
+          <span class="lab">FORWARD</span>
+          <span class="bar fwd"><i style="width:62%"></i></span>
+          <span class="val">820</span><span class="u">W</span>
+        </div>
+        <div class="field">
+          <span class="lab">REFLECTED</span>
+          <span class="bar refl"><i style="width:9%"></i></span>
+          <span class="val">18</span><span class="u">W</span>
+        </div>
+        <div style="display:flex;gap:4px">
+          <div class="swr-big" style="flex:1"><span class="k">SWR</span><span class="v">1.9</span></div>
+          <div class="field" style="flex:1">
+            <span class="lab">TEMP</span>
+            <span class="val">54</span><span class="u">°C</span>
+          </div>
+        </div>
+      </div>
+      <div class="panel-foot">
+        <button class="btn active">OPERATE</button>
+        <button class="btn amber">STANDBY</button>
+      </div>
+    </div>
+
+    <!-- TUNER -->
+    <div class="card">
+      <div class="card-h">
+        <span class="title">TUNER · ATR-1000</span>
+        <span class="tag on">IN LINE</span>
+      </div>
+      <div class="list">
+        <div class="field">
+          <span class="lab">FORWARD</span>
+          <span class="bar fwd"><i style="width:22%"></i></span>
+          <span class="val">90</span><span class="u">W</span>
+        </div>
+        <div style="display:flex;gap:4px">
+          <div class="swr-big" style="flex:1"><span class="k">SWR</span><span class="v">1.3</span></div>
+          <div class="field" style="flex:1">
+            <span class="lab">L / C</span>
+            <span class="val">0.42 / 128</span>
+          </div>
+        </div>
+        <div class="field">
+          <span class="lab">STATE</span>
+          <span class="val">SETTLED · NO FAULT</span>
+        </div>
+      </div>
+      <div class="panel-foot">
+        <button class="btn">TUNE MEM</button>
+        <button class="btn">TUNE FULL</button>
+        <button class="btn active">IN LINE</button>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ANTENNA ROW -->
+  <div class="card row-card">
+    <div class="card-h">
+      <span class="title">ANTENNA</span>
+      <div class="ant-line">
+        <span class="sel">SELECTED: <b>ULTRABEAM</b> (P4) · SOURCE <span class="tag on">AUTO</span></span>
+      </div>
+    </div>
+    <div class="ant-grid">
+      <button class="btn">OFF</button>
+      <button class="btn">DUMMY</button>
+      <button class="btn">P2</button>
+      <button class="btn">P3</button>
+      <button class="btn active">ULTRABEAM</button>
+      <button class="btn">P5</button>
+      <button class="btn">FAN-DIPOLE</button>
+      <button class="btn amber">AUTO</button>
+    </div>
+    <div class="ant-line">
+      <span class="sub" style="margin-right:4px">DIRECTION</span>
+      <div class="seg">
+        <button class="btn">FWD</button>
+        <button class="btn amber">180°</button>
+        <button class="btn">BIDIR</button>
+      </div>
+      <button class="btn danger">RETRACT</button>
+      <span class="pending">⚠ PENDING UNTIL RX</span>
+    </div>
+  </div>
+
+  <!-- POWER ROW -->
+  <div class="card row-card">
+    <div class="power-row">
+      <button class="btn lg danger">STOP STATION</button>
+      <div style="display:flex;flex-direction:column;gap:5px">
+        <div class="seq-meta"><span class="tag amber">PHASE RUNNING</span><span>STEP <span class="step">PA-ARM-ENABLE</span></span></div>
+        <div class="relays">
+          <div class="relay on"><span class="name">MAINS</span><span class="st">ON</span><span class="toggle"><i></i></span></div>
+          <div class="relay on"><span class="name">PSU 13.8V</span><span class="st">ON</span><span class="toggle"><i></i></span></div>
+          <div class="relay on"><span class="name">TRX</span><span class="st">ON</span><span class="toggle"><i></i></span></div>
+          <div class="relay on"><span class="name">PA</span><span class="st">ON</span><span class="toggle"><i></i></span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- CLIMATE ROW -->
+  <div class="card row-card">
+    <div class="climate-row">
+      <span class="title">CLIMATE</span>
+      <div class="group"><span class="name">HEATING</span><span class="toggle"><i></i></span></div>
+      <div class="group"><span class="name">COOLING</span><span class="toggle"><i></i></span></div>
+      <span class="readout">21.4<span class="u"> °C</span></span>
+      <span class="readout">612<span class="u"> PPM CO₂</span></span>
+      <span class="wiring-later">(wiring later)</span>
+    </div>
+  </div>
+
+  <div class="txstrip tx">● TRANSMITTING</div>
+
+</div>
+
+<script>
+(function(){
+  const svg = document.getElementById('compass');
+  const cx = 165, cy = 124, R = 110;
+  const az = 247;
+  const direction = 'reverse';
+  const half = {forward:30, reverse:30, bidirectional:45};
+  const ACCENT = '#60D6FF', AMBER = '#E0A23C', INK = '#E8EDF6', MUTE = '#3A516F';
+
+  function pt(a,r){ const ang=(a-90)*Math.PI/180; return [cx+r*Math.cos(ang), cy+r*Math.sin(ang)]; }
+  function wedge(c,h,r,fill,glow){
+    const a0=c-h,a1=c+h;
+    const [x0,y0]=pt(a0,r),[x1,y1]=pt(a1,r);
+    const lg=(2*h)>180?1:0;
+    const d=`M ${cx} ${cy} L ${x0} ${y0} A ${r} ${r} 0 ${lg} 1 ${x1} ${y1} Z`;
+    const p=document.createElementNS('http://www.w3.org/2000/svg','path');
+    p.setAttribute('d',d);p.setAttribute('fill',fill);
+    if(glow){p.setAttribute('filter','url(#glow)');p.setAttribute('opacity','0.95')}
+    return p;
+  }
+  function line(a0,a1,r0,r1,c,w,dash){
+    const [x0,y0]=pt(a0,r0),[x1,y1]=pt(a1,r1);
+    const l=document.createElementNS('http://www.w3.org/2000/svg','line');
+    l.setAttribute('x1',x0);l.setAttribute('y1',y0);l.setAttribute('x2',x1);l.setAttribute('y2',y1);
+    l.setAttribute('stroke',c);l.setAttribute('stroke-width',w);l.setAttribute('stroke-linecap','round');
+    if(dash)l.setAttribute('stroke-dasharray',dash);
+    return l;
+  }
+  function arrowhead(a,r,c){
+    const [hx,hy]=pt(a,r);
+    const g=document.createElementNS('http://www.w3.org/2000/svg','g');
+    g.setAttribute('transform',`translate(${hx} ${hy}) rotate(${a})`);
+    const p=document.createElementNS('http://www.w3.org/2000/svg','path');
+    p.setAttribute('d','M 0 0 L -11 -5 L -11 5 Z');p.setAttribute('fill',c);
+    g.appendChild(p);return g;
+  }
+  function text(s,x,y,size,c,bold){
+    const t=document.createElementNS('http://www.w3.org/2000/svg','text');
+    t.setAttribute('x',x);t.setAttribute('y',y);t.setAttribute('fill',c);
+    t.setAttribute('font-family','IBM Plex Mono, monospace');t.setAttribute('font-size',size);
+    t.setAttribute('font-weight',bold?700:500);
+    t.setAttribute('text-anchor','middle');t.setAttribute('dominant-baseline','central');
+    t.textContent=s;return t;
+  }
+
+  const defs=document.createElementNS('http://www.w3.org/2000/svg','defs');
+  defs.innerHTML='<filter id="glow" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="3" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>';
+  svg.appendChild(defs);
+
+  const face=document.createElementNS('http://www.w3.org/2000/svg','circle');
+  face.setAttribute('cx',cx);face.setAttribute('cy',cy);face.setAttribute('r',R);face.setAttribute('fill','#0E1625');
+  svg.appendChild(face);
+  const ring=document.createElementNS('http://www.w3.org/2000/svg','circle');
+  ring.setAttribute('cx',cx);ring.setAttribute('cy',cy);ring.setAttribute('r',R);ring.setAttribute('fill','none');ring.setAttribute('stroke',MUTE);ring.setAttribute('stroke-width','1.5');
+  svg.appendChild(ring);
+
+  for(let a=0;a<360;a+=30){
+    const major=a%90===0;
+    const [x1,y1]=pt(a,R),[x2,y2]=pt(a,major?R-10:R-5);
+    const l=document.createElementNS('http://www.w3.org/2000/svg','line');
+    l.setAttribute('x1',x1);l.setAttribute('y1',y1);l.setAttribute('x2',x2);l.setAttribute('y2',y2);
+    l.setAttribute('stroke',MUTE);l.setAttribute('stroke-width',major?2:1);
+    svg.appendChild(l);
+  }
+  svg.appendChild(text('N',...pt(0,R-18),12,ACCENT,true));
+  svg.appendChild(text('E',...pt(90,R-18),11,MUTE,false));
+  svg.appendChild(text('S',...pt(180,R-18),11,MUTE,false));
+  svg.appendChild(text('W',...pt(270,R-18),11,MUTE,false));
+
+  const beams = direction==='forward'?[{ang:az,half:half.forward,color:ACCENT,glow:false}]
+            : direction==='reverse'?[{ang:(az+180)%360,half:half.reverse,color:AMBER,glow:true}]
+            : [{ang:az,half:half.bidirectional,color:ACCENT,glow:false},{ang:(az+180)%360,half:half.bidirectional,color:AMBER,glow:true}];
+  beams.forEach(b=>svg.appendChild(wedge(b.ang,b.half,R-4,b.color,b.glow)));
+
+  beams.forEach(b=>{
+    svg.appendChild(line(b.ang,b.ang,22,R-14,b.color,3));
+    svg.appendChild(arrowhead(b.ang,R-8,b.color));
+  });
+  svg.appendChild(line(az,az,12,R-2,INK,2));
+  const hub=document.createElementNS('http://www.w3.org/2000/svg','circle');
+  hub.setAttribute('cx',cx);hub.setAttribute('cy',cy);hub.setAttribute('r',4);hub.setAttribute('fill',ACCENT);
+  svg.appendChild(hub);
+  svg.appendChild(line(67,67,12,R-5,'#264066',1,'3 3'));
+})();
+</script>
+</body>
+</html>

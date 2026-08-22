@@ -433,7 +433,7 @@ func (c *Client) onCmd(_ paho.Client, msg paho.Message) {
 		return
 	}
 	log.Printf("[mqtt] rx cmd action=%s value=%q freq_hz=%d", cmd.Action, cmd.Value, cmd.FreqHz)
-	sharedmqtt.Enqueue(c.jobs,func() {
+	sharedmqtt.Enqueue(c.jobs, func() {
 		switch cmd.Action {
 		case "frequency":
 			khz := uint16(cmd.FreqHz / 1000)
@@ -471,7 +471,7 @@ func (c *Client) onHAStatus(_ paho.Client, msg paho.Message) {
 	if !strings.EqualFold(strings.TrimSpace(string(msg.Payload())), "online") {
 		return
 	}
-	sharedmqtt.Enqueue(c.jobs,func() {
+	sharedmqtt.Enqueue(c.jobs, func() {
 		if c.publishHADiscovery {
 			log.Printf("[mqtt] Home Assistant online -> re-publishing embedded discovery")
 			c.PublishDiscovery()

@@ -6,10 +6,11 @@ use (
 	./atr1k-tuner-bridge
 	./flexbridge
 	./hadiscovery
+	./hf-mqtt-capture
 	./pelcobridge
 	./powerseq
-	./shelly-power-bridge
 	./shared
+	./shelly-power-bridge
 	./ultrabridge
 	./wrc-rotator-bridge
 )

@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -117,5 +118,34 @@ func TestValidateRequiresSiteStation(t *testing.T) {
 	cfg := Default()
 	if err := cfg.Validate(); err == nil {
 		t.Error("expected error when site/station unset")
+	}
+}
+
+func TestValidateOverlappingBandsToDifferentPorts(t *testing.T) {
+	cfg := Config{
+		Location: "bauwagen",
+		Host:     "shari",
+		MQTT:     MQTT{Site: "muehle", Station: "hf"},
+		WiringMap: map[string]string{
+			"port1": "dummy-load",
+			"port3": "ultrabeam",
+			"port6": "fan-dipole",
+			"off":   "grounded",
+		},
+		BandPolicy: BandPolicy{
+			Bands: map[string][]string{
+				"ultrabeam":  {"20m", "15m"},
+				"fan-dipole": {"20m", "40m"}, // 20m overlaps with ultrabeam -> different port
+			},
+			Fallback: "fan-dipole",
+		},
+	}
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected error for overlapping bands mapping to different ports")
+	}
+	want := `band "20m" maps to multiple switch ports`
+	if !strings.Contains(err.Error(), want) {
+		t.Errorf("expected error to contain %q, got %q", want, err.Error())
 	}
 }

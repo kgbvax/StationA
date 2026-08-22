@@ -54,16 +54,11 @@ func main() {
 }
 
 func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
-	// 1. Connect MQTT with LWT.
-	mqttClient, err := connectMQTT(ctx, cfg, log)
-	if err != nil {
-		return fmt.Errorf("mqtt connect: %w", err)
-	}
-	defer mqttClient.Disconnect(500)
-	log.Info("MQTT connected", "broker", cfg.MQTT.Broker)
-
-	pub := &bridge.PahoPublisher{Client: mqttClient}
-
+	// Construct the publisher and bridge BEFORE connecting MQTT so the /cmd
+	// handler is wired before OnConnect fires (OnConnect subscribes to /cmd and
+	// dispatches into the bridge). pub.Client is assigned once the paho client
+	// exists.
+	pub := &bridge.PahoPublisher{}
 	b := bridge.New(bridge.Config{
 		Site:               cfg.MQTT.Site,
 		Station:            cfg.MQTT.Station,
@@ -74,10 +69,39 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 		PublishHADiscovery: cfg.MQTT.PublishHADiscovery,
 	}, pub, &slogAdapter{log})
 
+	// /cmd dispatch: paho runs message handlers on its own goroutine, and a DVK
+	// command writes to the radio TCP socket (a blocking write with a deadline),
+	// so the handler must not call the bridge inline. Funnel commands through a
+	// bounded channel to a single sharedmqtt.RunJobs worker: the handler Enqueues
+	// non-blocking, the worker runs HandleCommand serially. See the stationa
+	// memory on paho handlers: never do blocking work in the message callback.
+	jobs := make(chan func(), 32)
+	go sharedmqtt.RunJobs(ctx, jobs)
+	cmdHandler = func(payload []byte) {
+		// paho reuses the message buffer after the handler returns; copy it.
+		p := append([]byte(nil), payload...)
+		sharedmqtt.Enqueue(jobs, func() { b.HandleCommand(p) })
+	}
+
+	// 1. Connect MQTT with LWT and a /cmd subscription.
+	mqttClient, err := connectMQTT(ctx, cfg, log)
+	if err != nil {
+		return fmt.Errorf("mqtt connect: %w", err)
+	}
+	defer mqttClient.Disconnect(500)
+	pub.Client = mqttClient
+	log.Info("MQTT connected", "broker", cfg.MQTT.Broker)
+
 	// 2. Run the radio-connection loop until ctx is cancelled.
 	_, err = radioLoop(ctx, cfg, b, pub, log)
 	return err
 }
+
+// cmdHandler is set by run() so the paho /cmd subscription callback (wired in
+// connectMQTT's OnConnect, before the bridge reference is otherwise in scope)
+// can dispatch into the bridge. Package var rather than a closure to keep
+// connectMQTT's signature independent of bridge construction order.
+var cmdHandler = func(payload []byte) {}
 
 // connectMQTT establishes the MQTT connection with a Last Will that marks
 // the bridge offline.
@@ -104,10 +128,17 @@ func connectMQTT(ctx context.Context, cfg config.Config, log *slog.Logger) (paho
 	opts.SetConnectRetryInterval(5 * time.Second)
 
 	avail := availabilityTopic(cfg)
+	cmd := cmdTopic(cfg)
 	opts.SetWill(avail, "offline", 1, true)
 	opts.OnConnect = func(c pahomqtt.Client) {
 		c.Publish(avail, 1, true, []byte("online"))
 		log.Info("MQTT (re)connected, published online LWT")
+		// /cmd is not retained (DVK is one-shot); resubscribe on every reconnect.
+		if tok := c.Subscribe(cmd, 1, func(_ pahomqtt.Client, m pahomqtt.Message) {
+			cmdHandler(m.Payload())
+		}); tok.Wait() && tok.Error() != nil {
+			log.Warn("subscribe cmd failed", "err", tok.Error())
+		}
 	}
 	opts.OnConnectionLost = func(c pahomqtt.Client, err error) {
 		log.Warn("MQTT connection lost", "err", err)
@@ -133,6 +164,15 @@ func availabilityTopic(cfg config.Config) string {
 		slot = "radio"
 	}
 	return schema.StatusTopic(cfg.MQTT.Site, cfg.MQTT.Station, slot)
+}
+
+// cmdTopic returns the /cmd topic: <site>/<station>/<slot>/cmd.
+func cmdTopic(cfg config.Config) string {
+	slot := cfg.MQTT.Slot
+	if slot == "" {
+		slot = "radio"
+	}
+	return schema.CmdTopic(cfg.MQTT.Site, cfg.MQTT.Station, slot)
 }
 
 // radioLoop connects to the radio, runs the bridge, and reconnects on
@@ -235,6 +275,9 @@ func runOnce(ctx context.Context, cfg config.Config, host string, b *bridge.Brid
 		})
 		log.Info("radio identified", "model", info.Model, "serial", info.Serial, "firmware", info.Firmware)
 	}
+	// The *Client implements flexradio.Commander (DVKPlay/DVKStop). Install it
+	// so /cmd DVK intent reaches the radio; Reset() clears it on disconnect.
+	b.SetCommander(client)
 	log.Info("handshake complete; observing")
 
 	return client.Run(cctx)

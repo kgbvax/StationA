@@ -65,7 +65,21 @@ type Bridge struct {
 	mu    sync.RWMutex
 	state paState
 	disco bool
+
+	// Deduplication state. The amp sends telemetry frames at a high rate even in
+	// OPR/RX with no meaningful change. We publish every frame while keyed or in
+	// an error condition (so power/SWR meters and fault evolution are live) and
+	// whenever a non-noise field changes, but throttle identical idle RX snapshots
+	// to a heartbeat interval.
+	lastPub      paState
+	lastPubAt    time.Time
+	lastPubTopic string
 }
+
+// idleHeartbeat is the maximum time between retained /state publishes when the
+// PA is idle (keyed=rx, no fault, no error, online). Keeps subscribers confident
+// the slot is alive without flooding the bus.
+const idleHeartbeat = 60 * time.Second
 
 // paState is the canonical PA state (integration model §7.1) plus the raw
 // diagnostic pa_state and the optional device_online/error fields (§3).
@@ -247,12 +261,17 @@ func (b *Bridge) Reset() {
 	b.mu.Lock()
 	b.state = paState{}
 	b.disco = false
+	b.lastPub = paState{}
+	b.lastPubAt = time.Time{}
 	b.mu.Unlock()
 }
 
 // HandleTelemetry canonicalizes a decoded frame, updates state, and publishes
-// the retained /state snapshot. Every frame is published (PA telemetry is
-// continuous; the snapshot is the live state, model §8).
+// the retained /state snapshot only when something meaningful changed or the
+// idle heartbeat elapsed. We keep the high telemetry rate while keyed=tx or in
+// an error condition so power/SWR meters and fault evolution are live; in idle
+// states (rx / inhibited) we dedupe identical snapshots to avoid bus flooding
+// (model §8: retained state, not a firehose).
 func (b *Bridge) HandleTelemetry(obs acom.Observation) {
 	b.mu.Lock()
 	b.state = paState{
@@ -270,8 +289,49 @@ func (b *Bridge) HandleTelemetry(obs acom.Observation) {
 		Error:        errMsgFor(obs.ErrByte, obs.ErrMsg),
 	}
 	snap := b.state
+	shouldPublish := b.shouldPublishLocked(snap)
+	if shouldPublish {
+		b.lastPub = snap
+		b.lastPubAt = time.Now()
+	}
 	b.mu.Unlock()
-	b.publishState(snap)
+	if shouldPublish {
+		b.publishState(snap)
+	}
+}
+
+// shouldPublishLocked decides whether the given snapshot should be published.
+// Caller must hold b.mu.
+func (b *Bridge) shouldPublishLocked(snap paState) bool {
+	// Highest-rate path: active transmission or any error condition (fault, error
+	// message, offline). These are the states where consumers want live updates
+	// for power meters, SWR, or fault evolution. Inhibited (standby) and RX are
+	// idle states and should be throttled.
+	if snap.Keyed == "tx" || b.isErrorCondition(snap) {
+		return true
+	}
+	// Always publish when a non-noise field changes (mode, band, fault, power,
+	// keyed state, device state, error). These are rare and consumers should see
+	// them promptly.
+	if b.lastPub.Mode != snap.Mode ||
+		b.lastPub.Band != snap.Band ||
+		b.lastPub.Keyed != snap.Keyed ||
+		b.lastPub.Fault != snap.Fault ||
+		b.lastPub.PaState != snap.PaState ||
+		b.lastPub.Power != snap.Power ||
+		b.lastPub.DeviceOnline != snap.DeviceOnline ||
+		b.lastPub.Error != snap.Error {
+		return true
+	}
+	// No significant change. Publish only on heartbeat so the broker retains a
+	// fresh timestamp and subscribers know the slot is alive.
+	return time.Since(b.lastPubAt) >= idleHeartbeat
+}
+
+// isErrorCondition reports whether the snapshot represents an error/fault state
+// that should be published at the highest rate, even while keyed=rx.
+func (b *Bridge) isErrorCondition(snap paState) bool {
+	return snap.Fault != "none" || snap.Error != "" || !snap.DeviceOnline
 }
 
 // roundTempC rounds a Celsius temperature to 0.1 °C before publishing. The
@@ -294,6 +354,8 @@ func (b *Bridge) SetDeviceOnline(online bool, errMsg string) {
 		b.state.Power = "off"
 	}
 	snap := b.state
+	b.lastPub = paState{} // force the next publish after a reconnect/disconnect transition
+	b.lastPubAt = time.Time{}
 	b.mu.Unlock()
 	b.publishState(snap)
 }

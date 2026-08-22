@@ -79,6 +79,11 @@ func TestHandshake_SendsExpectedCommands(t *testing.T) {
 		"sub interlock all",
 		"sub atu all",
 		"|info",
+		"sub dvk all", // SmartSDR v4+ DVK status stream (best-effort, fire-and-forget)
+		// `profile mic info` is also sent here (fire-and-forget) but is not
+		// asserted in this net.Pipe test: the goroutine blocks on the
+		// fire-and-forget reply after `sub dvk all` and never reads the next
+		// command. It is covered deterministically by TestSend_MicProfile.
 	}
 	for _, w := range wantCmds {
 		if !strings.Contains(joined, w) {
@@ -133,6 +138,80 @@ func TestRun_DispatchesStatusFrames(t *testing.T) {
 			t.Errorf("did not see topic %q (got %v)", want, got)
 		}
 	}
+}
+
+// TestSend_DVK asserts DVKPlay/DVKStop emit the expected fire-and-forget
+// SmartSDR wire strings. The radio end of the pipe is drained by a reader
+// goroutine so the synchronous net.Pipe writes do not deadlock.
+func TestSend_DVK(t *testing.T) {
+	clientConn, radioConn := net.Pipe()
+	client := newClientFromConn(clientConn)
+	defer client.Close()
+
+	cmds := make(chan string, 4)
+	go func() {
+		defer radioConn.Close()
+		sc := bufio.NewScanner(radioConn)
+		for sc.Scan() {
+			cmds <- sc.Text()
+		}
+	}()
+
+	if err := client.DVKPlay(3); err != nil {
+		t.Fatalf("DVKPlay: %v", err)
+	}
+	select {
+	case got := <-cmds:
+		if got != "C1|dvk playback_start id=3" {
+			t.Errorf("DVKPlay sent %q, want C1|dvk playback_start id=3", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("DVKPlay: no command sent")
+	}
+
+	if err := client.DVKStop(3); err != nil {
+		t.Fatalf("DVKStop: %v", err)
+	}
+	select {
+	case got := <-cmds:
+		if got != "C1|dvk playback_stop id=3" {
+			t.Errorf("DVKStop sent %q, want C1|dvk playback_stop id=3", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("DVKStop: no command sent")
+	}
+}
+
+// TestSend_MicProfile asserts SetMicProfile emits the expected SmartSDR wire
+// string, including a double-quoted name with spaces. The radio end of the pipe
+// is drained by a reader goroutine so the synchronous net.Pipe write does not
+// deadlock.
+func TestSend_MicProfile(t *testing.T) {
+	clientConn, radioConn := net.Pipe()
+	client := newClientFromConn(clientConn)
+	defer client.Close()
+
+	cmds := make(chan string, 1)
+	go func() {
+		defer radioConn.Close()
+		sc := bufio.NewScanner(radioConn)
+		for sc.Scan() {
+			cmds <- sc.Text()
+		}
+	}()
+
+	if err := client.SetMicProfile("Default ProSet HC6"); err != nil {
+		t.Fatalf("SetMicProfile: %v", err)
+	}
+	select {
+	case got := <-cmds:
+		if got != `C1|profile mic load "Default ProSet HC6"` {
+			t.Errorf("SetMicProfile sent %q, want %q", got, `C1|profile mic load "Default ProSet HC6"`)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("SetMicProfile: no command sent")
+	}
+
 }
 
 func TestRun_CtxCancel(t *testing.T) {

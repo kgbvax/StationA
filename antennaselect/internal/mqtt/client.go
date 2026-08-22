@@ -47,6 +47,21 @@ type Client struct {
 	lastPaBand      string
 	lastTunerInline *bool
 
+	// RadioOnline (in.RadioOnline) is the AND of the two radio-liveness signals below;
+	// both are recomputed in onRadioStatus/onRadioState under c.mu.
+	//   radioBridgeOnline — from radio/status (broker LWT): the flexbridge process is up
+	//     and publishing, so radio/state is being maintained rather than a frozen retained
+	//     snapshot. This is the §10 "never trust retained state for safety" freshness gate.
+	//   radioDeviceOnline — from radio/state.device_online: the FLEX radio link itself is
+	//     up (handshake done). /status stays online while the radio link is down, so /status
+	//     alone cannot tell the two apart — device_online can. flexbridge always publishes
+	//     device_online (its statePayload comment says: "so consumers can distinguish a live
+	//     radio from a frozen snapshot … /status is the MQTT/LWT bridge liveness, not the
+	//     radio link").
+	// Trusting radio-derived fields requires BOTH: bridge up (fresh state) AND radio link up.
+	radioBridgeOnline bool
+	radioDeviceOnline bool
+
 	// jobs serializes reconcile+publish work on a single goroutine that is NOT one of
 	// paho's dispatch goroutines. paho delivers message handlers INLINE on its
 	// matchAndDispatch goroutine when OrderMatters is true (the default — see the paho
@@ -154,9 +169,10 @@ func (c *Client) subscribeAll() {
 
 func (c *Client) onRadioState(_ paho.Client, msg paho.Message) {
 	var s struct {
-		Band   string `json:"band"`
-		FreqHz int64  `json:"freq_hz"`
-		TX     string `json:"tx"`
+		Band         string `json:"band"`
+		FreqHz       int64  `json:"freq_hz"`
+		TX           string `json:"tx"`
+		DeviceOnline bool   `json:"device_online"`
 	}
 	if err := json.Unmarshal(msg.Payload(), &s); err != nil {
 		log.Printf("[mqtt] bad radio/state: %v", err)
@@ -164,16 +180,23 @@ func (c *Client) onRadioState(_ paho.Client, msg paho.Message) {
 	}
 	sharedmqtt.Enqueue(c.jobs, func() {
 		c.update(func(in *reconcile.Inputs) {
+			c.radioDeviceOnline = s.DeviceOnline
 			in.RadioBand = s.Band
 			in.RadioFreqHz = s.FreqHz
 			in.RadioTX = s.TX
+			in.RadioOnline = c.radioBridgeOnline && c.radioDeviceOnline
 		})
 	})
 }
 
 func (c *Client) onRadioStatus(_ paho.Client, msg paho.Message) {
 	online := strings.EqualFold(strings.TrimSpace(string(msg.Payload())), "online")
-	sharedmqtt.Enqueue(c.jobs, func() { c.update(func(in *reconcile.Inputs) { in.RadioOnline = online }) })
+	sharedmqtt.Enqueue(c.jobs, func() {
+		c.update(func(in *reconcile.Inputs) {
+			c.radioBridgeOnline = online
+			in.RadioOnline = c.radioBridgeOnline && c.radioDeviceOnline
+		})
+	})
 }
 
 func (c *Client) onAntSwitchState(_ paho.Client, msg paho.Message) {
@@ -260,9 +283,22 @@ func (c *Client) update(mutate func(*reconcile.Inputs)) {
 			Source: act.Decision.Source,
 		}
 	}
-	if act.SelectPort != "" && act.SelectPort != c.lastSelect {
-		c.lastSelect = act.SelectPort
-		pubSelect = act.SelectPort
+	if act.SelectPort != "" {
+		// If the switch reports a known position and it already matches the target,
+		// nothing to do. If it reports a different position, re-command it (the switch
+		// firmware is idempotent, so a duplicate command for the current port only
+		// republishes /state). While the switch position is still unknown (empty), use
+		// lastSelect to command once and then wait for the first ant-switch/state.
+		switchSelected := c.in.SwitchSelected
+		if switchSelected == "" {
+			if act.SelectPort != c.lastSelect {
+				c.lastSelect = act.SelectPort
+				pubSelect = act.SelectPort
+			}
+		} else if act.SelectPort != switchSelected {
+			c.lastSelect = act.SelectPort
+			pubSelect = act.SelectPort
+		}
 	}
 	if act.FollowFreqHz != 0 && act.FollowFreqHz != c.lastFollowFreq {
 		c.lastFollowFreq = act.FollowFreqHz

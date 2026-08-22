@@ -29,6 +29,9 @@
 #   GS232_ENABLED   gs232.enabled          (default: true)
 #   GS232_BIND      gs232.bind             (default: 0.0.0.0)
 #   GS232_PORT      gs232.port             (default: 7373)
+#   PSTROTATOR_ENABLED   pstrotator.enabled (default: true)
+#   PSTROTATOR_BIND      pstrotator.bind    (default: 0.0.0.0)
+#   PSTROTATOR_PORT      pstrotator.port    (default: 12040)
 #   LOCATION        location value         (default: bauwagen)  [published in /meta]
 #   HOST_NAME       host value             (default: shari)     [published in /meta]
 #   DEVICE_MODEL    device.model value     (default: Yaesu G-450DC)
@@ -69,6 +72,9 @@ ROTOR_URL="${ROTOR_URL:-ws://192.168.1.108/wsrotor}"
 GS232_ENABLED="${GS232_ENABLED:-true}"
 GS232_BIND="${GS232_BIND:-0.0.0.0}"
 GS232_PORT="${GS232_PORT:-7373}"
+PSTROTATOR_ENABLED="${PSTROTATOR_ENABLED:-true}"
+PSTROTATOR_BIND="${PSTROTATOR_BIND:-0.0.0.0}"
+PSTROTATOR_PORT="${PSTROTATOR_PORT:-12040}"
 LOCATION="${LOCATION:-bauwagen}"
 HOST_NAME="${HOST_NAME:-shari}"
 DEVICE_MODEL="${DEVICE_MODEL:-Yaesu G-450DC}"
@@ -128,6 +134,15 @@ trap 'rm -f "$SEED_CONFIG" "$SEED_ENV" "${UNIT_FILE:-}"' EXIT
   echo "enabled = ${GS232_ENABLED}"
   echo "bind = \"$(toml_escape "$GS232_BIND")\""
   echo "port = ${GS232_PORT}"
+  echo ""
+  echo "[pstrotator]"
+  echo "# Optional PSTRotator-compatible inbound UDP listener. PSTRotator sends"
+  echo "# XML datagrams to this port (default 12040) to set azimuth or stop the"
+  echo "# rotator. Orthogonal to the MQTT contract; drives the same device the bridge"
+  echo "# does. Disable if not needed or if PSTRotator uses a different port."
+  echo "enabled = ${PSTROTATOR_ENABLED}"
+  echo "bind = \"$(toml_escape "$PSTROTATOR_BIND")\""
+  echo "port = ${PSTROTATOR_PORT}"
   echo ""
   echo "[device]"
   echo "# Identity published in /meta. link reflects the transport to the WRC."
@@ -285,4 +300,5 @@ echo "   Logs:    ssh ${SSH_TARGET} 'journalctl -u ${SERVICE_NAME} -f'"
 echo "   Config:  ${CONFIG_FILE}"
 echo "   Secret:  ${ENV_FILE}  (set WRC_ROTATOR_BRIDGE_MQTT_PASSWORD if not seeded)"
 echo "   Topics:  muehle/hf/rotator/{meta,state,status,cmd}"
-echo "   GS-232:  ${GS232_BIND}:${GS232_PORT} (when enabled)"
+echo "   GS-232:     ${GS232_BIND}:${GS232_PORT} (when enabled)"
+echo "   PSTRotator: ${PSTROTATOR_BIND}:${PSTROTATOR_PORT} (when enabled)"

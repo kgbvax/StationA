@@ -40,7 +40,8 @@ func TestResolveAutoBandPolicy(t *testing.T) {
 		{"40m", "port6"}, // fan-dipole
 		{"80m", "port6"},
 		{"160m", "port6"}, // unmatched -> fallback fan-dipole
-		{"", "port6"},     // unknown band -> fallback
+		{"gen", "port6"},  // out-of-band marker, unmatched -> fallback (wideband resource)
+		{"", ""},          // empty band -> hold last, NOT fallback (transient/reconnect)
 	}
 	for _, tc := range cases {
 		d := r.Resolve(Inputs{RadioOnline: true, RadioBand: tc.band, StationActivity: "active"})
@@ -102,6 +103,31 @@ func TestResolveRadioOfflineHoldsLast(t *testing.T) {
 	}
 }
 
+// TestResolveEmptyBandHoldsNotFallback is the regression guard for the antennaselect
+// half of the flexbridge frequency-chatter audit. flexbridge republishes /state with
+// band="" (and device_online=false) during its reconnect Reset. The old code resolved
+// band="" to the fallback resource via portForBand, so the antenna chattered to the
+// fallback and back on every reconnect. An empty band is a transient "no slice reported
+// yet" state, not a tuning intent: hold the last selection instead. A known-but-unmatched
+// band (160m, gen) still reaches the fallback — only the empty case holds.
+func TestResolveEmptyBandHoldsNotFallback(t *testing.T) {
+	r := New(testConfig())
+	d := r.Resolve(Inputs{RadioOnline: true, RadioBand: "", StationActivity: "active"})
+	if d.Target != "" {
+		t.Errorf("empty band: target=%q, want empty (hold last, not fallback)", d.Target)
+	}
+	if d.Source != SourceAuto {
+		t.Errorf("empty band: source=%q, want auto", d.Source)
+	}
+	// Known-but-unmatched bands still use the fallback — the fix must not regress that.
+	for _, band := range []string{"160m", "gen", "unknown"} {
+		d := r.Resolve(Inputs{RadioOnline: true, RadioBand: band, StationActivity: "active"})
+		if d.Target != "port6" {
+			t.Errorf("band %q: target=%q, want port6 (fallback still applies to non-empty unmatched)", band, d.Target)
+		}
+	}
+}
+
 func TestNextEmitsSelectInRX(t *testing.T) {
 	r := New(testConfig())
 	act := r.Next(Inputs{RadioOnline: true, RadioBand: "20m", StationActivity: "active", RadioTX: TXReceive, SwitchSelected: "port1"})
@@ -129,6 +155,20 @@ func TestNextNoSelectWhenAlreadyOnTarget(t *testing.T) {
 	act := r.Next(Inputs{RadioOnline: true, RadioBand: "20m", StationActivity: "active", RadioTX: TXReceive, SwitchSelected: "port3"})
 	if act.SelectPort != "" {
 		t.Errorf("no select expected when already on target, got %q", act.SelectPort)
+	}
+}
+
+func TestNextNoSelectOnFrequencyChangeWithinBand(t *testing.T) {
+	r := New(testConfig())
+	// Switch already on the resolved target for 20m.
+	act := r.Next(Inputs{RadioOnline: true, RadioBand: "20m", RadioFreqHz: 14_000_000, StationActivity: "active", RadioTX: TXReceive, SwitchSelected: "port3"})
+	if act.SelectPort != "" {
+		t.Fatalf("baseline: already on target, got select %q", act.SelectPort)
+	}
+	// Same band, different frequency: still should not command a port change.
+	act = r.Next(Inputs{RadioOnline: true, RadioBand: "20m", RadioFreqHz: 14_200_000, StationActivity: "active", RadioTX: TXReceive, SwitchSelected: "port3"})
+	if act.SelectPort != "" {
+		t.Errorf("frequency change within same band should not emit select, got %q", act.SelectPort)
 	}
 }
 

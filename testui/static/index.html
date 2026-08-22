@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>stationa test UI</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header id="topbar">
+    <div class="brand">stationa <span class="dim">test&nbsp;UI</span></div>
+    <div id="connstate" class="connstate" title="SSE + MQTT connection state">connecting…</div>
+    <nav class="filters">
+      <input id="filter" type="search" placeholder="filter slots…" />
+      <label class="chk"><input id="offline-only" type="checkbox" /> offline only</label>
+    </nav>
+  </header>
+
+  <main>
+    <aside id="rail">
+      <div id="tree" class="tree"></div>
+    </aside>
+    <section id="bus">
+      <div id="ticker" class="ticker"></div>
+      <div id="cards" class="cards"></div>
+    </section>
+  </main>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

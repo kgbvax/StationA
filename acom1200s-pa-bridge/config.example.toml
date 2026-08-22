@@ -19,7 +19,7 @@ host = "shari"
 # this tty to the dialout group so the service user can always open it.
 # Serial is always 9600 8N1 (protocol constant, not configurable).
 port        = "/dev/serial/by-id/usb-Prolific_Technology_Inc._USB-Serial_Controller_D-if00-port0"
-avg_time_ms = 300   # forward-power moving-average window in ms
+avg_time_ms = 1     # forward-power moving-average window in ms (1 = no averaging)
 
 [device]
 # Identity published in /meta. The ACOM serial protocol reports no serial

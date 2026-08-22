@@ -19,11 +19,12 @@ import (
 
 // Config is the top-level configuration.
 type Config struct {
-	Rotor  RotorConfig  `toml:"rotor"`
-	GS232  GS232Config  `toml:"gs232"`
-	MQTT   MQTTConfig   `toml:"mqtt"`
-	Log    LogConfig    `toml:"log"`
-	Device DeviceConfig `toml:"device"`
+	Rotor      RotorConfig      `toml:"rotor"`
+	GS232      GS232Config      `toml:"gs232"`
+	PSTRotator PSTRotatorConfig `toml:"pstrotator"`
+	MQTT       MQTTConfig       `toml:"mqtt"`
+	Log        LogConfig        `toml:"log"`
+	Device     DeviceConfig     `toml:"device"`
 	// Host is the compute node the adapter runs on (model §3, §8.1 item 5),
 	// published in /meta. Defaults to "shari".
 	Host string `toml:"host"`
@@ -43,6 +44,16 @@ type GS232Config struct {
 	Enabled bool   `toml:"enabled"`
 	Bind    string `toml:"bind"` // bind address, e.g. "0.0.0.0"
 	Port    int    `toml:"port"` // listen port, e.g. 7373
+}
+
+// PSTRotatorConfig controls the PSTRotator-compatible inbound UDP listener
+// (optional control path for PSTRotator). It is orthogonal to the MQTT
+// three-plane contract: it drives the same device the bridge does, and the
+// resulting motion still surfaces in /state.
+type PSTRotatorConfig struct {
+	Enabled bool   `toml:"enabled"`
+	Bind    string `toml:"bind"` // bind address, e.g. "0.0.0.0"
+	Port    int    `toml:"port"` // listen port, e.g. 12040
 }
 
 // MQTTConfig holds broker connection settings and station-model addressing.
@@ -87,6 +98,11 @@ func Defaults() Config {
 			Enabled: true,
 			Bind:    "0.0.0.0",
 			Port:    7373,
+		},
+		PSTRotator: PSTRotatorConfig{
+			Enabled: true,
+			Bind:    "0.0.0.0",
+			Port:    12040,
 		},
 		MQTT: MQTTConfig{
 			Broker:          "tcp://192.168.1.50:1883",
@@ -176,6 +192,9 @@ func (c Config) Validate() error {
 	}
 	if c.GS232.Enabled && c.GS232.Port == 0 {
 		return fmt.Errorf("gs232 port must be configured when gs232 is enabled")
+	}
+	if c.PSTRotator.Enabled && c.PSTRotator.Port == 0 {
+		return fmt.Errorf("pstrotator port must be configured when pstrotator is enabled")
 	}
 	return nil
 }

@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Mühle HF console — Exact design-system tablet preview</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --page:#050506;
+    --panel:#0a0a0c;
+    --card:rgba(255,255,255,.05);
+    --card-border:rgba(255,255,255,.10);
+    --card-hi:rgba(124,92,255,.10);
+    --card-hi-border:rgba(124,92,255,.35);
+    --purple:#402FD8;
+    --purple-2:#7C5CFF;
+    --purple-3:#9B7FFF;
+    --lavender:#C6B8FF;
+    --txt:#fff;
+    --txt-mute:rgba(255,255,255,.55);
+    --txt-faint:rgba(255,255,255,.35);
+    --success:#36B37E;
+    --warning:#FF9F0A;
+    --error:#FF4D4D;
+    --process:#5AC8FA;
+    --open:#FF375F;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{background:var(--page);color:var(--txt);font-family:Inter,system-ui,sans-serif;font-size:13px;overflow:hidden;-webkit-font-smoothing:antialiased}
+  .mono{font-family:"IBM Plex Mono",monospace}
+  .frame{width:1280px;height:800px;display:grid;grid-template-rows:46px 32px 1fr auto auto auto 24px;gap:10px;padding:14px}
+
+  .overline{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--txt-mute)}
+
+  .topbar{display:flex;align-items:center;gap:14px;padding:0 4px}
+  .brand{font-weight:800;font-size:18px;letter-spacing:-.01em}
+  .brand .hf{color:var(--txt-mute);font-weight:600}
+  .dot{width:10px;height:10px;border-radius:50%;flex:none}
+  .dot.green{background:var(--success);box-shadow:0 0 0 3px rgba(54,179,126,.18)}
+  .pill{
+    font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;
+    padding:4px 12px;border-radius:999px;background:rgba(255,255,255,.08);color:var(--txt-mute)
+  }
+  .pill.on{background:var(--success);color:#050506}
+  .pill.off{background:rgba(255,255,255,.06);color:var(--txt-faint)}
+  .pill.warn{background:var(--warning);color:#050506}
+  .pill.red{background:var(--error);color:#fff}
+  .pill.blue{background:var(--process);color:#050506}
+  .pill.purple{background:var(--purple-2);color:#fff}
+  .pill.amber-text{background:rgba(255,159,10,.12);color:var(--warning);border:1px solid rgba(255,159,10,.35)}
+  .spacer{flex:1}
+  .radio-ctx{display:flex;align-items:center;gap:16px;font-family:"IBM Plex Mono",monospace;font-size:12px}
+  .radio-ctx .band{font-family:Inter,sans-serif;font-weight:800;font-size:16px;color:var(--txt)}
+  .radio-ctx .mode{color:var(--lavender);font-weight:700}
+  .radio-ctx .freq{color:var(--txt-mute)}
+  .drive{display:flex;align-items:center;gap:8px}
+  .drive .bar{width:60px;height:8px;background:rgba(255,255,255,.08);border-radius:999px;overflow:hidden}
+  .drive .bar i{display:block;height:100%;width:40%;background:var(--purple-2);border-radius:999px}
+  .drive .lbl{color:var(--txt-mute);font-size:11px;font-weight:600}
+
+  .banner{display:flex;align-items:center;padding:0 4px}
+  .banner .pill{
+    background:rgba(255,159,10,.12);border:1px solid rgba(255,159,10,.45);color:var(--warning);
+    border-radius:999px;padding:5px 14px;font-size:12px;font-weight:800;letter-spacing:.06em;
+    display:flex;align-items:center;gap:8px
+  }
+
+  .main{display:grid;grid-template-columns:360px 1fr 1fr;gap:10px;min-height:0}
+  .card{
+    background:var(--card);border:1px solid var(--card-border);border-radius:16px;
+    padding:14px;display:flex;flex-direction:column;gap:11px;min-height:0
+  }
+  .card.power{background:var(--card-hi);border-color:var(--card-hi-border)}
+  .card-h{display:flex;align-items:center;justify-content:space-between;min-height:24px}
+  .card-h .title{font-weight:700;font-size:13px;letter-spacing:.04em;text-transform:uppercase}
+
+  /* compass */
+  .compass-wrap{position:relative;width:100%;height:190px;display:flex;align-items:center;justify-content:center;flex:none}
+  .compass-wrap svg{display:block;max-width:100%;max-height:100%}
+  .az-readout{position:absolute;right:10px;top:2px;text-align:right}
+  .az-readout .deg{font-family:"IBM Plex Mono",monospace;font-weight:700;font-size:28px;color:var(--txt)}
+  .az-readout .lbl{font-size:10px;font-weight:700;letter-spacing:.12em;color:var(--txt-mute);text-transform:uppercase}
+  .compass-foot{display:flex;flex-direction:column;align-items:center;gap:6px;margin-top:auto}
+  .slew{color:var(--process);font-size:11.5px;font-family:"IBM Plex Mono",monospace;height:14px;font-weight:600}
+  .presets{display:flex;gap:6px;flex-wrap:wrap;justify-content:center}
+
+  .btn{
+    font-family:Inter,sans-serif;font-weight:700;font-size:12px;letter-spacing:.01em;
+    background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.14);color:var(--txt);
+    border-radius:999px;padding:7px 14px;min-height:36px;cursor:pointer;
+  }
+  .btn:hover{background:rgba(255,255,255,.12)}
+  .btn.primary{background:var(--purple-2);border-color:var(--purple-2);color:#fff}
+  .btn.primary:hover{background:var(--purple-3)}
+  .btn.attn{background:var(--warning);border-color:var(--warning);color:#050506}
+  .btn.destructive{background:rgba(255,77,77,.10);border-color:var(--error);color:var(--error)}
+  .btn.destructive:hover{background:rgba(255,77,77,.16)}
+  .btn.stop{background:var(--error);border-color:var(--error);color:#fff}
+  .btn.block{width:100%;min-height:48px;font-size:14px}
+  .seg{display:flex;gap:6px}
+
+  .tag{font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;padding:4px 11px;border-radius:999px;background:rgba(255,255,255,.08);color:var(--txt-mute)}
+  .tag.on{background:var(--success);color:#050506}
+  .tag.off{background:rgba(255,255,255,.06);color:var(--txt-faint)}
+  .tag.warn{background:var(--warning);color:#050506}
+  .tag.red{background:var(--error);color:#fff}
+  .tag.blue{background:var(--process);color:#050506}
+  .tag.purple{background:var(--purple-2);color:#fff}
+
+  /* meters */
+  .meter-row{display:flex;align-items:center;gap:10px}
+  .meter-row .lbl{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--txt-mute);width:40px}
+  .meter-row .val{font-family:"IBM Plex Mono",monospace;font-weight:600;font-size:13px;width:58px;text-align:right;color:var(--txt)}
+  .bar{flex:1;height:9px;background:rgba(255,255,255,.08);border-radius:999px;overflow:hidden;position:relative}
+  .bar i{display:block;height:100%;border-radius:999px}
+  .bar.fwd i{background:var(--success)}
+  .bar.refl i{background:var(--warning)}
+  .swr-line{display:flex;align-items:baseline;justify-content:space-between}
+  .swr-line .k{font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--txt-mute)}
+  .swr-line .v{font-family:"IBM Plex Mono",monospace;font-weight:700;font-size:30px;line-height:1}
+  .swr-line .v.good{color:var(--success)}
+  .swr-line .v.warn{color:var(--warning)}
+  .swr-line .v.bad{color:var(--error)}
+  .meta-line{display:flex;align-items:center;gap:10px;font-size:11.5px;color:var(--txt-mute);font-family:"IBM Plex Mono",monospace}
+  .fault{background:rgba(255,159,10,.10);border:1px solid var(--warning);color:var(--warning);border-radius:12px;padding:8px 12px;font-size:12px;font-weight:700;letter-spacing:.02em;display:flex;align-items:center;gap:6px}
+
+  .panel-foot{display:flex;gap:6px;flex-wrap:wrap;margin-top:auto}
+
+  .row-card{display:flex;flex-direction:column;gap:9px}
+  .ant-line{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .ant-line .sel{font-size:13px;color:var(--txt-mute)}
+  .ant-line .sel b{font-weight:800;color:var(--txt)}
+  .pending{color:var(--warning);font-size:11.5px;font-family:"IBM Plex Mono",monospace;font-weight:600}
+  .ant-grid{display:flex;gap:6px;flex-wrap:wrap}
+
+  .power-row{display:grid;grid-template-columns:auto 1fr;gap:14px;align-items:center}
+  .relays{display:flex;gap:8px;flex-wrap:wrap}
+  .relay{
+    display:flex;align-items:center;gap:10px;background:rgba(0,0,0,.25);border:1px solid rgba(255,255,255,.08);
+    border-radius:14px;padding:8px 12px;min-width:130px;min-height:48px
+  }
+  .relay .col{display:flex;flex-direction:column;gap:1px}
+  .relay .name{font-size:14px;font-weight:700}
+  .relay .sub{font-size:10px;color:var(--txt-faint);font-family:"IBM Plex Mono",monospace}
+  .relay .st{font-family:"IBM Plex Mono",monospace;font-weight:700;font-size:12px;margin-left:auto}
+  .relay.on .st{color:var(--success)}
+  .relay.off .st{color:var(--txt-faint)}
+  .toggle{width:40px;height:24px;border-radius:999px;background:rgba(255,255,255,.12);position:relative;flex:none}
+  .toggle i{position:absolute;top:2px;left:2px;width:20px;height:20px;border-radius:50%;background:#fff;opacity:.7;transition:left .14s}
+  .relay.on .toggle{background:var(--success)}
+  .relay.on .toggle i{left:18px;opacity:1}
+  .seq-meta{display:flex;align-items:center;gap:10px;font-family:"IBM Plex Mono",monospace;font-size:12px;color:var(--txt-mute)}
+  .seq-meta .step{color:var(--process);font-weight:600}
+
+  .climate-row{display:flex;align-items:center;gap:18px;flex-wrap:wrap}
+  .climate-row .group{display:flex;align-items:center;gap:8px}
+  .climate-row .name{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--txt-mute)}
+  .readout{font-family:"IBM Plex Mono",monospace;font-size:14px;color:var(--txt)}
+  .readout .u{font-size:11px;color:var(--txt-mute)}
+  .wiring-later{color:var(--txt-faint);font-size:11px;font-style:italic}
+
+  .txstrip{display:flex;align-items:center;justify-content:center;gap:8px;border-radius:999px;height:100%;font-weight:800;letter-spacing:.14em;text-transform:uppercase;font-size:11px}
+  .txstrip.rx{background:rgba(54,179,126,.12);color:var(--success);border:1px solid rgba(54,179,126,.25)}
+  .txstrip.tx{background:rgba(255,77,77,.12);color:var(--error);border:1px solid rgba(255,77,77,.35)}
+  .txstrip.inh{background:rgba(255,159,10,.10);color:var(--warning);border:1px solid rgba(255,159,10,.3)}
+</style>
+</head>
+<body>
+<div class="frame">
+
+  <div class="topbar">
+    <div class="brand">MÜHLE <span class="hf">· HF</span></div>
+    <span class="dot green"></span>
+    <span class="pill on">● all online</span>
+    <div class="spacer"></div>
+    <div class="radio-ctx">
+      <span class="band">20m</span>
+      <span class="mode">USB</span>
+      <span class="freq">14.074.000 Hz</span>
+      <span class="drive"><span class="bar"><i></i></span><span class="lbl">drive 40%</span></span>
+    </div>
+  </div>
+
+  <div class="banner">
+    <span class="pill"><span>⚠</span> REVERSE — BEAM FIRES ASTERN</span>
+  </div>
+
+  <div class="main">
+
+    <!-- COMPASS -->
+    <div class="card">
+      <div class="card-h">
+        <span class="title">Beam compass</span>
+        <span class="overline">rotator + ultrabeam</span>
+      </div>
+      <div class="compass-wrap">
+        <svg id="compass" width="300" height="190" viewBox="0 0 300 190"></svg>
+        <div class="az-readout">
+          <div class="deg" id="azDeg">247°</div>
+          <div class="lbl" id="azLbl">REV</div>
+        </div>
+      </div>
+      <div class="compass-foot">
+        <div class="slew">Slewing → 067°</div>
+        <div class="presets">
+          <button class="btn">45</button>
+          <button class="btn">90</button>
+          <button class="btn">180</button>
+          <button class="btn">270</button>
+          <button class="btn stop">Stop</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- PA -->
+    <div class="card">
+      <div class="card-h">
+        <span class="title">PA · ACOM 1200S</span>
+        <span class="tag red">● TX</span>
+      </div>
+      <div>
+        <div class="meter-row">
+          <span class="lbl">FWD</span>
+          <span class="bar"><i class="fwd" style="width:62%"></i></span>
+          <span class="val">820 W</span>
+        </div>
+        <div class="meter-row" style="margin-top:8px">
+          <span class="lbl">REFL</span>
+          <span class="bar"><i class="refl" style="width:9%"></i></span>
+          <span class="val">18 W</span>
+        </div>
+        <div class="swr-line" style="margin-top:10px">
+          <span class="k">SWR</span>
+          <span class="v warn">1.9</span>
+        </div>
+        <div class="meta-line" style="margin-top:6px">
+          <span>temp 54 °C</span><span>·</span><span>band 20m</span><span>·</span><span>mode operate</span>
+        </div>
+      </div>
+      <div class="panel-foot">
+        <button class="btn primary">Operate</button>
+        <button class="btn attn">Standby</button>
+      </div>
+    </div>
+
+    <!-- TUNER -->
+    <div class="card">
+      <div class="card-h">
+        <span class="title">Tuner · ATR-1000</span>
+        <span class="tag on">In line</span>
+      </div>
+      <div>
+        <div class="meter-row">
+          <span class="lbl">FWD</span>
+          <span class="bar"><i class="fwd" style="width:22%"></i></span>
+          <span class="val">90 W</span>
+        </div>
+        <div class="swr-line" style="margin-top:10px">
+          <span class="k">SWR</span>
+          <span class="v good">1.3</span>
+        </div>
+        <div class="meta-line" style="margin-top:6px">
+          <span>L 0.42 µH</span><span>·</span><span>C 128 pF</span><span>·</span><span>settled</span>
+        </div>
+      </div>
+      <div class="panel-foot">
+        <button class="btn">Tune mem</button>
+        <button class="btn">Tune full</button>
+        <button class="btn primary">In line</button>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ANTENNA ROW -->
+  <div class="card row-card">
+    <div class="card-h">
+      <span class="title">Antenna</span>
+      <div class="ant-line">
+        <span class="sel">selected: <b>Ultrabeam</b> (port 4) · source <span class="tag on">AUTO</span></span>
+      </div>
+    </div>
+    <div class="ant-grid">
+      <button class="btn">Off</button>
+      <button class="btn">Dummy</button>
+      <button class="btn">P2</button>
+      <button class="btn">P3</button>
+      <button class="btn primary">Ultrabeam</button>
+      <button class="btn">P5</button>
+      <button class="btn">Fan-dipole</button>
+      <button class="btn attn">Auto</button>
+    </div>
+    <div class="ant-line">
+      <span class="overline" style="margin-right:4px">direction</span>
+      <div class="seg">
+        <button class="btn">Forward</button>
+        <button class="btn attn">180°</button>
+        <button class="btn">Bidirectional</button>
+      </div>
+      <button class="btn destructive">Retract</button>
+      <span class="pending">⚠ switch pending until RX</span>
+    </div>
+  </div>
+
+  <!-- POWER ROW -->
+  <div class="card row-card power">
+    <div class="power-row">
+      <button class="btn block destructive">Stop station</button>
+      <div style="display:flex;flex-direction:column;gap:6px">
+        <div class="seq-meta"><span class="tag blue">phase RUNNING</span><span>step <span class="step">pa-arm-enable</span></span></div>
+        <div class="relays">
+          <div class="relay on">
+            <div class="col"><span class="name">Mains</span><span class="sub">power/master</span></div>
+            <span class="st">ON</span>
+            <span class="toggle"><i></i></span>
+          </div>
+          <div class="relay on">
+            <div class="col"><span class="name">PSU 13.8V</span><span class="sub">power/psu-13v8</span></div>
+            <span class="st">ON</span>
+            <span class="toggle"><i></i></span>
+          </div>
+          <div class="relay on">
+            <div class="col"><span class="name">TRX</span><span class="sub">hf/switch</span></div>
+            <span class="st">ON</span>
+            <span class="toggle"><i></i></span>
+          </div>
+          <div class="relay on">
+            <div class="col"><span class="name">PA</span><span class="sub">hf/switch</span></div>
+            <span class="st">ON</span>
+            <span class="toggle"><i></i></span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- CLIMATE ROW -->
+  <div class="card row-card">
+    <div class="climate-row">
+      <span class="title">Climate</span>
+      <div class="group"><span class="name">Heating</span><span class="toggle"><i></i></span></div>
+      <div class="group"><span class="name">Cooling</span><span class="toggle"><i></i></span></div>
+      <span class="readout">21.4<span class="u"> °C</span></span>
+      <span class="readout">612<span class="u"> ppm CO₂</span></span>
+      <span class="wiring-later">(wiring later — placeholder topics)</span>
+    </div>
+  </div>
+
+  <div class="txstrip tx">● transmitting</div>
+
+</div>
+
+<script>
+(function(){
+  const svg = document.getElementById('compass');
+  const cx = 150, cy = 95, R = 88;
+  const az = 247;
+  const direction = 'reverse';
+  const half = {forward:30, reverse:30, bidirectional:45};
+  const PURPLE = 'rgba(124,92,255,.55)', AMBER = 'rgba(255,159,10,.55)', INK = '#fff', MUTE = 'rgba(255,255,255,.35)';
+
+  function pt(a,r){ const ang=(a-90)*Math.PI/180; return [cx+r*Math.cos(ang), cy+r*Math.sin(ang)]; }
+  function wedge(c,h,r,fill,glow){
+    const a0=c-h,a1=c+h;
+    const [x0,y0]=pt(a0,r),[x1,y1]=pt(a1,r);
+    const lg=(2*h)>180?1:0;
+    const d=`M ${cx} ${cy} L ${x0} ${y0} A ${r} ${r} 0 ${lg} 1 ${x1} ${y1} Z`;
+    const p=document.createElementNS('http://www.w3.org/2000/svg','path');
+    p.setAttribute('d',d);p.setAttribute('fill',fill);
+    if(glow){ p.setAttribute('filter','url(#glow)'); p.setAttribute('opacity','0.92'); }
+    return p;
+  }
+  function line(a0,a1,r0,r1,c,w,dash){
+    const [x0,y0]=pt(a0,r0),[x1,y1]=pt(a1,r1);
+    const l=document.createElementNS('http://www.w3.org/2000/svg','line');
+    l.setAttribute('x1',x0);l.setAttribute('y1',y0);l.setAttribute('x2',x1);l.setAttribute('y2',y1);
+    l.setAttribute('stroke',c);l.setAttribute('stroke-width',w);l.setAttribute('stroke-linecap','round');
+    if(dash)l.setAttribute('stroke-dasharray',dash);
+    return l;
+  }
+  function arrowhead(a,r,c){
+    const [hx,hy]=pt(a,r);
+    const g=document.createElementNS('http://www.w3.org/2000/svg','g');
+    g.setAttribute('transform',`translate(${hx} ${hy}) rotate(${a})`);
+    const p=document.createElementNS('http://www.w3.org/2000/svg','path');
+    p.setAttribute('d','M 0 0 L -11 -5 L -11 5 Z');p.setAttribute('fill',c);
+    g.appendChild(p);return g;
+  }
+  function text(s,x,y,size,c,bold){
+    const t=document.createElementNS('http://www.w3.org/2000/svg','text');
+    t.setAttribute('x',x);t.setAttribute('y',y);t.setAttribute('fill',c);
+    t.setAttribute('font-family','IBM Plex Mono, monospace');t.setAttribute('font-size',size);
+    t.setAttribute('font-weight',bold?700:500);
+    t.setAttribute('text-anchor','middle');t.setAttribute('dominant-baseline','central');
+    t.textContent=s;return t;
+  }
+
+  const defs=document.createElementNS('http://www.w3.org/2000/svg','defs');
+  defs.innerHTML='<filter id="glow" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="3" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>';
+  svg.appendChild(defs);
+
+  const face=document.createElementNS('http://www.w3.org/2000/svg','circle');
+  face.setAttribute('cx',cx);face.setAttribute('cy',cy);face.setAttribute('r',R);face.setAttribute('fill','rgba(255,255,255,.03)');
+  svg.appendChild(face);
+  const ring=document.createElementNS('http://www.w3.org/2000/svg','circle');
+  ring.setAttribute('cx',cx);ring.setAttribute('cy',cy);ring.setAttribute('r',R);ring.setAttribute('fill','none');ring.setAttribute('stroke',MUTE);ring.setAttribute('stroke-width','1.5');
+  svg.appendChild(ring);
+
+  for(let a=0;a<360;a+=30){
+    const major=a%90===0;
+    const [x1,y1]=pt(a,R),[x2,y2]=pt(a,major?R-10:R-5);
+    const l=document.createElementNS('http://www.w3.org/2000/svg','line');
+    l.setAttribute('x1',x1);l.setAttribute('y1',y1);l.setAttribute('x2',x2);l.setAttribute('y2',y2);
+    l.setAttribute('stroke',MUTE);l.setAttribute('stroke-width',major?2:1);
+    svg.appendChild(l);
+  }
+  svg.appendChild(text('N',...pt(0,R-18),12,INK,true));
+  svg.appendChild(text('E',...pt(90,R-18),11,MUTE,false));
+  svg.appendChild(text('S',...pt(180,R-18),11,MUTE,false));
+  svg.appendChild(text('W',...pt(270,R-18),11,MUTE,false));
+
+  const beams = direction==='forward'?[{ang:az,half:half.forward,color:PURPLE,glow:false}]
+            : direction==='reverse'?[{ang:(az+180)%360,half:half.reverse,color:AMBER,glow:true}]
+            : [{ang:az,half:half.bidirectional,color:PURPLE,glow:false},{ang:(az+180)%360,half:half.bidirectional,color:AMBER,glow:true}];
+  beams.forEach(b=>svg.appendChild(wedge(b.ang,b.half,R-4,b.color,b.glow)));
+
+  beams.forEach(b=>{
+    svg.appendChild(line(b.ang,b.ang,22,R-14,b.color.replace(')',''),3));
+    const solid = b.color.replace(/,[^,]+\)/,')');
+    svg.appendChild(line(b.ang,b.ang,22,R-14,solid,3));
+    svg.appendChild(arrowhead(b.ang,R-8,solid));
+  });
+  svg.appendChild(line(az,az,12,R-2,INK,2));
+  const hub=document.createElementNS('http://www.w3.org/2000/svg','circle');
+  hub.setAttribute('cx',cx);hub.setAttribute('cy',cy);hub.setAttribute('r',5);hub.setAttribute('fill','#7C5CFF');
+  svg.appendChild(hub);
+  svg.appendChild(line(67,67,12,R-5,'rgba(90,200,250,.5)',1,'3 3'));
+})();
+</script>
+</body>
+</html>

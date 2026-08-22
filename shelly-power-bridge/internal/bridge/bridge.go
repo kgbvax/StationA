@@ -278,8 +278,12 @@ type stateEnvelope struct {
 // Topic helpers
 // ------------------------------------------------------------------
 
-func (b *SlotBridge) metaTopic() string  { return schema.MetaTopic(b.cfg.Site, b.cfg.Station, b.cfg.Slot) }
-func (b *SlotBridge) stateTopic() string { return schema.StateTopic(b.cfg.Site, b.cfg.Station, b.cfg.Slot) }
+func (b *SlotBridge) metaTopic() string {
+	return schema.MetaTopic(b.cfg.Site, b.cfg.Station, b.cfg.Slot)
+}
+func (b *SlotBridge) stateTopic() string {
+	return schema.StateTopic(b.cfg.Site, b.cfg.Station, b.cfg.Slot)
+}
 
 // CmdTopic returns the /cmd topic (exported for main to subscribe).
 func (b *SlotBridge) CmdTopic() string { return schema.CmdTopic(b.cfg.Site, b.cfg.Station, b.cfg.Slot) }

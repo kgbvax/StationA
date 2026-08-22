@@ -75,8 +75,12 @@ The seed config bakes the Mühle wiring map and band policy (matching
   port under TX — wait for RX, emit `select`, confirm via `selected` (`settled`-gating is
   backlog, lands with antswitchbridge). Enforcement is hardware; the reconciler owns
   ordering only, never the enforcement path.
-- **Never trust retained state for safety** (§10): check `radio/status` liveness before
-  acting on `radio/state`.
+- **Never trust retained state for safety** (§10): act on `radio/state` only when the
+  radio is online — `radio/status` (broker LWT, bridge liveness) `online` **and**
+  `radio/state.device_online` (radio-link liveness) `true`. `/status` alone is not enough:
+  it stays `online` while flexbridge is up but the radio link is down, which is exactly when
+  `radio/state` carries a stale/empty `band` (reconnect Reset). An empty `band` holds the
+  last selection; only a known-but-unmatched band (160m, `gen`) reaches the `fallback`.
 - **Idle overrides operator** (§10): station-inactive beats an operator hold (walk-away
   safety). Documented, deliberate.
 - **Unmatched bands** (incl. 160m) → `fallback` (fan-dipole via ATU; §11 item #1).

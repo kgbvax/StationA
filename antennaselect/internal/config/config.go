@@ -132,7 +132,8 @@ func (c Config) ResourceToPort() map[string]string {
 }
 
 // Validate checks that the policy is internally consistent: every resource referenced by
-// the band policy (and the fallback) is wired to a port. Returns all problems joined.
+// the band policy (and the fallback) is wired to a port, and no band maps to more than
+// one switch port. Returns all problems joined.
 func (c Config) Validate() error {
 	if c.MQTT.Site == "" || c.MQTT.Station == "" {
 		return fmt.Errorf("config: mqtt.site and mqtt.station are required")
@@ -163,6 +164,9 @@ func (c Config) Validate() error {
 		sort.Strings(missing)
 		problems = append(problems, fmt.Sprintf("band_policy references resources not in wiring_map: %s", strings.Join(missing, ", ")))
 	}
+	if overlaps := c.bandOverlaps(r2p); len(overlaps) > 0 {
+		problems = append(problems, overlaps...)
+	}
 	if c.BandFollow.Resource != "" {
 		if _, ok := r2p[c.BandFollow.Resource]; !ok {
 			problems = append(problems, fmt.Sprintf("band_follow.resource %q is not in wiring_map", c.BandFollow.Resource))
@@ -191,4 +195,55 @@ func (c Config) Validate() error {
 		return fmt.Errorf("config: %s", strings.Join(problems, "; "))
 	}
 	return nil
+}
+
+// bandOverlaps checks whether any band is assigned to two resources that map to
+// different switch ports. A band may be listed under multiple resources only when
+// they are wired to the same port (harmless alias); conflicting wiring is reported
+// so the config is deterministic and the antenna switch does not chatter.
+func (c Config) bandOverlaps(r2p map[string]string) []string {
+	if len(c.BandPolicy.Bands) == 0 {
+		return nil
+	}
+	// band -> first port seen, plus set of conflicting ports.
+	type conflict struct {
+		firstPort string
+		ports     map[string]bool
+	}
+	byBand := make(map[string]*conflict)
+	var bands []string
+	for resource, bandList := range c.BandPolicy.Bands {
+		port, wired := r2p[resource]
+		if !wired {
+			continue // already reported as missing resource
+		}
+		for _, band := range bandList {
+			if band == "" {
+				continue
+			}
+			cc, ok := byBand[band]
+			if !ok {
+				cc = &conflict{firstPort: port, ports: map[string]bool{port: true}}
+				byBand[band] = cc
+				bands = append(bands, band)
+				continue
+			}
+			cc.ports[port] = true
+		}
+	}
+	sort.Strings(bands)
+	var problems []string
+	for _, band := range bands {
+		cc := byBand[band]
+		if len(cc.ports) <= 1 {
+			continue
+		}
+		portList := make([]string, 0, len(cc.ports))
+		for p := range cc.ports {
+			portList = append(portList, p)
+		}
+		sort.Strings(portList)
+		problems = append(problems, fmt.Sprintf("band %q maps to multiple switch ports: %s", band, strings.Join(portList, ", ")))
+	}
+	return problems
 }
