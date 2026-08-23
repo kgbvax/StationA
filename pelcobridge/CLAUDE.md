@@ -32,7 +32,7 @@ pelcots drives a Pelco-D PTZ/rotator. The central design choice is a **headless 
 
 **Transport (`internal/serialio`).** `Port` wraps an `io.ReadWriteCloser`, so the framing reader (`read`/`extract`, self-healing Pelco-D resync) is identical for serial (`Open`) and TCP serial bridges (`Dial`). Frames are delivered on a channel of `Event` (raw bytes / decoded `Frame` / error).
 
-**Inbound control (`internal/control`).** Two text protocols translate to a common `Command` (`KindStop`/`KindSetPos`/`KindJog`) handed to `engine.Submit`: **rotctld** (newline) and **Yaesu GS-232A** (CR). Queries are answered from the thread-safe `Pos` snapshot the engine publishes. Servers are off by default and bind `127.0.0.1` (least privilege); azimuth↔pan, elevation↔tilt.
+**Inbound control (`internal/control`).** Three protocols translate to a common `Command` (`KindStop`/`KindSetPos`/`KindJog`) handed to `engine.Submit`: **rotctld** (newline) and **Yaesu GS-232A** (CR) over TCP, and **PstRotator** (`<PST>…</PST>` datagrams) over UDP. Queries are answered from the thread-safe `Pos` snapshot the engine publishes; PstRotator replies go to the client on the listen port + 1 (its documented convention). Servers are off by default and bind `127.0.0.1` (least privilege); azimuth↔pan, elevation↔tilt.
 
 **`internal/pelco`.** Pure protocol: fixed 7-byte frames, command builders (`SetPan`/`SetTilt` with pan-wrap + tilt 0–90 clamp, `Jog`, `Stop`, queries), `Direction.Cmd2()`. No I/O — reuse these rather than hand-rolling angle math or frame bytes.
 

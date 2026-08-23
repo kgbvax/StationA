@@ -50,8 +50,11 @@ type Options struct {
 	WrapEnabled bool
 	WrapLimit   float64
 	WrapAccum   float64
+	Sim         config.SimConfig
+	SelfCheck   config.SelfCheckConfig
 	GS232       config.ServerConfig
 	Rotctld     config.ServerConfig
+	PstRotator  config.ServerConfig
 	Logw        io.Writer
 	LogLevel    config.LogLevel
 }
@@ -84,6 +87,8 @@ type State struct {
 	GS232Port             int
 	RotctldOn             bool
 	RotctldPort           int
+	PstRotatorOn          bool
+	PstRotatorPort        int
 	Log                   []string
 }
 
@@ -97,6 +102,8 @@ type Engine struct {
 	baud       int
 	addr       byte
 	bind       string
+	sim        config.SimConfig
+	selfCheck  config.SelfCheckConfig
 
 	// cable-wrap protection
 	wrapEnabled bool
@@ -104,8 +111,9 @@ type Engine struct {
 	wrap        float64
 
 	// desired servers at startup
-	gs232Want   config.ServerConfig
-	rotctldWant config.ServerConfig
+	gs232Want      config.ServerConfig
+	rotctldWant    config.ServerConfig
+	pstrotatorWant config.ServerConfig
 
 	// runtime connection
 	port     *serialio.Port
@@ -139,8 +147,11 @@ type Engine struct {
 
 	// inbound servers
 	gs232Srv, rotctldSrv   *control.Server
+	pstrotatorSrv          *control.UDPServer
 	gs232Port, rotctldPort int
+	pstrotatorPort         int
 	gs232On, rotctldOn     bool
+	pstrotatorOn           bool
 
 	pos *control.Pos // latest position published for the servers
 
@@ -156,25 +167,29 @@ type Engine struct {
 // New builds an Engine from the given options (does not connect yet).
 func New(o Options) *Engine {
 	e := &Engine{
-		transport:   o.Transport,
-		serialPort:  o.SerialPort,
-		tcpAddr:     o.TCPAddr,
-		baud:        o.Baud,
-		addr:        o.Addr,
-		bind:        o.Bind,
-		wrapEnabled: o.WrapEnabled,
-		wrapLimit:   o.WrapLimit,
-		wrap:        o.WrapAccum,
-		gs232Want:   o.GS232,
-		rotctldWant: o.Rotctld,
-		gs232Port:   o.GS232.Port,
-		rotctldPort: o.Rotctld.Port,
-		pos:         &control.Pos{},
-		logw:        o.Logw,
-		logLevel:    o.LogLevel,
-		reqs:        make(chan func(), 64),
-		quit:        make(chan struct{}),
-		status:      "starting",
+		transport:      o.Transport,
+		serialPort:     o.SerialPort,
+		tcpAddr:        o.TCPAddr,
+		baud:           o.Baud,
+		addr:           o.Addr,
+		bind:           o.Bind,
+		sim:            o.Sim,
+		selfCheck:      o.SelfCheck,
+		wrapEnabled:    o.WrapEnabled,
+		wrapLimit:      o.WrapLimit,
+		wrap:           o.WrapAccum,
+		gs232Want:      o.GS232,
+		rotctldWant:    o.Rotctld,
+		pstrotatorWant: o.PstRotator,
+		gs232Port:      o.GS232.Port,
+		rotctldPort:    o.Rotctld.Port,
+		pstrotatorPort: o.PstRotator.Port,
+		pos:            &control.Pos{},
+		logw:           o.Logw,
+		logLevel:       o.LogLevel,
+		reqs:           make(chan func(), 64),
+		quit:           make(chan struct{}),
+		status:         "starting",
 	}
 	if e.wrapLimit <= 0 {
 		e.wrapLimit = 270
@@ -225,6 +240,7 @@ func (e *Engine) run() {
 	e.reconnect(ConnSpec{Transport: e.transport, SerialPort: e.serialPort, Baud: e.baud, TCPAddr: e.tcpAddr})
 	e.setServer(control.GS232, e.gs232Want.Enabled, e.gs232Want.Port)
 	e.setServer(control.Rotctld, e.rotctldWant.Enabled, e.rotctldWant.Port)
+	e.setServer(control.PstRotator, e.pstrotatorWant.Enabled, e.pstrotatorWant.Port)
 	e.publish()
 	for {
 		select {
@@ -450,6 +466,16 @@ func (e *Engine) handleFrame(ev serialio.Event, ok bool) {
 		e.pos.Set(e.curPan, e.curTilt)
 		e.logf(config.LogDebug, "RX  pan=%.2f° (raw %d)", e.curPan, raw)
 		e.stepMove()
+		// Arrival detection for the direct SetPan goto path (wrap disabled /
+		// MoveShort): there is no per-move completion event from the unit, so
+		// clear gotoing once the observed azimuth reaches the target. Without
+		// this, gotoing stays true forever (UI shows "seeking" indefinitely) and
+		// the idempotency guard in startGoto silently drops a same-target retry.
+		if e.gotoing && !e.mvActive && !e.unwrapping &&
+			math.Abs(shortestDelta(e.curPan, e.gotoTargetAz)) < moveTolerance {
+			e.gotoing = false
+			e.status = "at target"
+		}
 	case ev.Frame.IsTiltResponse():
 		raw := ev.Frame.Word()
 		e.curTiltRaw, e.curTilt, e.haveTilt, e.lastTilt = raw, pelco.HundredthsToDeg(raw), true, time.Now()
@@ -494,12 +520,22 @@ func (e *Engine) closePort() {
 
 // linkFailed drops a link that has died mid-session (peer close or write error)
 // and schedules an automatic reconnect. Idempotent: a no-op if already down.
+//
+// It also abandons any in-flight motion. Pelco-D Jog has no auto-stop, so a
+// dropped link leaves the unit physically moving, and an active closed-loop
+// unwrap (mvActive) must not be resumed against the cable-wind accumulator —
+// that accumulator is integrated from observed readback and so misses all
+// travel during the disconnect, which would let a resumed unwrap drive the
+// cable past the wrap limit. stop() clears the motion state here; its Stop
+// send is a no-op now that the port is closed, so a fresh Stop is issued on
+// the new link in connect().
 func (e *Engine) linkFailed(reason string) {
 	if e.port == nil {
 		return
 	}
 	_ = e.port.Close()
 	e.port, e.frames = nil, nil
+	e.stop()
 	e.havePan, e.haveTilt = false, false
 	e.retrying = true
 	e.status = "disconnected — reconnecting"
@@ -515,9 +551,17 @@ func (e *Engine) connect() {
 		p   *serialio.Port
 		err error
 	)
-	if e.transport == config.TransportTCP {
+	switch e.transport {
+	case config.TransportTCP:
 		p, err = serialio.Dial(e.tcpAddr)
-	} else {
+	case config.TransportSim:
+		p = serialio.OpenSim(serialio.SimOptions{
+			Addr:      e.addr,
+			StartPan:  e.sim.StartPan,
+			StartTilt: e.sim.StartTilt,
+			JogStep:   e.sim.JogStep,
+		})
+	default:
 		p, err = serialio.Open(e.serialPort, e.baud)
 	}
 	if err != nil {
@@ -540,6 +584,20 @@ func (e *Engine) connect() {
 		e.logf(config.LogInfo, "connected (%s %s)", e.transport, e.endpoint())
 	}
 	e.status = "connected"
+	// Halt any motion the unit is still executing. Pelco-D Jog has no auto-stop,
+	// so a dropped link leaves it moving; issuing Stop on the fresh link (every
+	// connect, including the first) is defensive and idempotent. This pairs with
+	// linkFailed() clearing in-flight unwrap state so a stale closed-loop is not
+	// resumed against a wrap accumulator that missed the disconnect travel.
+	e.send(pelco.Stop(e.addr))
+	// Disable the PTZ self-check once per successful connect (set preset 105 on
+	// the 303Z/3050DZ). The setting is persistent on the unit, so this keeps it
+	// disabled across power-ups; re-sending on each (re)connect is idempotent.
+	// In sim mode the emulator ignores preset commands (harmless no-op).
+	if e.selfCheck.Disable {
+		e.send(pelco.DisableSelfCheck(e.addr))
+		e.logf(config.LogInfo, "sent disable-self-check (set preset %d)", pelco.SelfCheckPreset)
+	}
 }
 
 // armRetry (re)schedules the reconnect timer. Called only from the actor
@@ -552,10 +610,14 @@ func (e *Engine) armRetry() {
 
 // endpoint returns the active transport's human-readable target.
 func (e *Engine) endpoint() string {
-	if e.transport == config.TransportTCP {
+	switch e.transport {
+	case config.TransportTCP:
 		return e.tcpAddr
+	case config.TransportSim:
+		return "in-memory simulator"
+	default:
+		return e.serialPort
 	}
-	return e.serialPort
 }
 
 func (e *Engine) setServer(proto control.Protocol, enabled bool, port int) {
@@ -598,6 +660,25 @@ func (e *Engine) setServer(proto control.Protocol, enabled bool, port int) {
 		e.rotctldSrv, e.rotctldOn = srv, true
 		e.status = fmt.Sprintf("rotctld listening on %s", srv.Addr())
 		e.logf(config.LogInfo, "rotctld listening on %s", srv.Addr())
+	case control.PstRotator:
+		if e.pstrotatorSrv != nil {
+			_ = e.pstrotatorSrv.Close()
+			e.pstrotatorSrv, e.pstrotatorOn = nil, false
+			e.logf(config.LogInfo, "pstrotator stopped")
+		}
+		e.pstrotatorPort = port
+		if !enabled {
+			return
+		}
+		srv, err := control.StartUDP(e.bind, port, e.pos, e.Submit)
+		if err != nil {
+			e.status = fmt.Sprintf("pstrotator: %v", err)
+			e.logf(config.LogError, "pstrotator start failed: %v", err)
+			return
+		}
+		e.pstrotatorSrv, e.pstrotatorOn = srv, true
+		e.status = fmt.Sprintf("pstrotator listening on %s", srv.Addr())
+		e.logf(config.LogInfo, "pstrotator listening on %s", srv.Addr())
 	}
 }
 
@@ -609,6 +690,10 @@ func (e *Engine) closeServers() {
 	if e.rotctldSrv != nil {
 		_ = e.rotctldSrv.Close()
 		e.rotctldSrv, e.rotctldOn = nil, false
+	}
+	if e.pstrotatorSrv != nil {
+		_ = e.pstrotatorSrv.Close()
+		e.pstrotatorSrv, e.pstrotatorOn = nil, false
 	}
 }
 
@@ -654,47 +739,46 @@ func (e *Engine) logf(level config.LogLevel, format string, args ...any) {
 }
 
 func (e *Engine) publish() {
-	endpoint := e.serialPort
-	if e.transport == config.TransportTCP {
-		endpoint = e.tcpAddr
-	}
+	endpoint := e.endpoint()
 	logCopy := make([]string, len(e.logLines))
 	copy(logCopy, e.logLines)
 
 	e.mu.Lock()
 	e.state = State{
-		Status:       e.status,
-		Connected:    e.port != nil,
-		Reconnecting: e.retrying,
-		Transport:    e.transport,
-		Endpoint:     endpoint,
-		SerialPort:   e.serialPort,
-		TCPAddr:      e.tcpAddr,
-		Baud:         e.baud,
-		Addr:         e.addr,
-		HavePan:      e.havePan,
-		HaveTilt:     e.haveTilt,
-		CurPan:       e.curPan,
-		CurTilt:      e.curTilt,
-		CurPanRaw:    e.curPanRaw,
-		CurTiltRaw:   e.curTiltRaw,
-		LastPan:      e.lastPan,
-		LastTilt:     e.lastTilt,
-		BytesIn:      e.bytesIn,
-		Jogging:      e.jogging,
-		JogPan:       e.jogPan,
-		JogTilt:      e.jogTilt,
-		Gotoing:      e.gotoing,
-		Unwrapping:   e.unwrapping,
-		WrapEnabled:  e.wrapEnabled,
-		WrapLimit:    e.wrapLimit,
-		Wrap:         e.wrap,
-		Bind:         e.bind,
-		GS232On:      e.gs232On,
-		GS232Port:    e.gs232Port,
-		RotctldOn:    e.rotctldOn,
-		RotctldPort:  e.rotctldPort,
-		Log:          logCopy,
+		Status:         e.status,
+		Connected:      e.port != nil,
+		Reconnecting:   e.retrying,
+		Transport:      e.transport,
+		Endpoint:       endpoint,
+		SerialPort:     e.serialPort,
+		TCPAddr:        e.tcpAddr,
+		Baud:           e.baud,
+		Addr:           e.addr,
+		HavePan:        e.havePan,
+		HaveTilt:       e.haveTilt,
+		CurPan:         e.curPan,
+		CurTilt:        e.curTilt,
+		CurPanRaw:      e.curPanRaw,
+		CurTiltRaw:     e.curTiltRaw,
+		LastPan:        e.lastPan,
+		LastTilt:       e.lastTilt,
+		BytesIn:        e.bytesIn,
+		Jogging:        e.jogging,
+		JogPan:         e.jogPan,
+		JogTilt:        e.jogTilt,
+		Gotoing:        e.gotoing,
+		Unwrapping:     e.unwrapping,
+		WrapEnabled:    e.wrapEnabled,
+		WrapLimit:      e.wrapLimit,
+		Wrap:           e.wrap,
+		Bind:           e.bind,
+		GS232On:        e.gs232On,
+		GS232Port:      e.gs232Port,
+		RotctldOn:      e.rotctldOn,
+		RotctldPort:    e.rotctldPort,
+		PstRotatorOn:   e.pstrotatorOn,
+		PstRotatorPort: e.pstrotatorPort,
+		Log:            logCopy,
 	}
 	e.mu.Unlock()
 }

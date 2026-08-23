@@ -41,6 +41,8 @@ func (m Model) View() string {
 			on = s.GS232On
 		case focusRotctldOn:
 			on = s.RotctldOn
+		case focusPstRotatorOn:
+			on = s.PstRotatorOn
 		}
 		v := hintStyle.Render("off")
 		if on {
@@ -60,8 +62,11 @@ func (m Model) View() string {
 		connState = warnStyle.Render("reconnecting…")
 	}
 	transport := "serial"
-	if s.Transport == config.TransportTCP {
+	switch s.Transport {
+	case config.TransportTCP:
 		transport = "tcp"
+	case config.TransportSim:
+		transport = "sim"
 	}
 
 	header := strings.Join([]string{
@@ -86,7 +91,7 @@ func (m Model) View() string {
 	}, "\n")
 
 	footer := hintStyle.Render("tab field · on/off field: space toggles · hold g/enter go · hold h home · hold arrows/kj jog · t turbo · space stop")
-	footer += "\n" + hintStyle.Render("m transport · r reconnect · y gs232 · o rotctld · w wrap · z zero-wrap · q quit")
+	footer += "\n" + hintStyle.Render("m transport · r reconnect · y gs232 · o rotctld · p pstrotator · w wrap · z zero-wrap · q quit")
 	if m.logPath != "" {
 		footer += "\n" + hintStyle.Render("trace → "+m.logPath)
 	}
@@ -148,10 +153,11 @@ func (m Model) wrapLine(field func(int) string) string {
 // tab-able on/off toggles.
 func (m Model) serversLine(field, toggle func(int) string) string {
 	s := m.snap
-	return fmt.Sprintf("%s %s%s%s   %s%s%s   %s %s",
+	return fmt.Sprintf("%s %s%s%s   %s%s%s   %s%s%s   %s %s",
 		labelStyle.Render("Servers "),
 		labelStyle.Render("gs232"), field(focusGS232), toggle(focusGS232On),
 		labelStyle.Render("rotctld"), field(focusRotctld), toggle(focusRotctldOn),
+		labelStyle.Render("pstrotator"), field(focusPstRotator), toggle(focusPstRotatorOn),
 		labelStyle.Render("bind"), valueStyle.Render(s.Bind))
 }
 

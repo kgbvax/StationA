@@ -118,11 +118,96 @@ func TestGS232ContiguousW(t *testing.T) {
 	}
 }
 
+func TestGS232AzWrap(t *testing.T) {
+	// 359.6 rounds to 360, which is outside the GS-232 000-359 range; it must
+	// wrap to 000 rather than report an invalid AZ=360.
+	s, _ := newTestServer(359.6, 45.6, true)
+	if r := s.gs232("C\r"); r != "AZ=000\r" {
+		t.Fatalf("C reply for 359.6 = %q, want AZ=000", r)
+	}
+	if r := s.gs232("C2\r"); r != "AZ=000 EL=046\r" {
+		t.Fatalf("C2 reply = %q, want AZ=000 EL=046", r)
+	}
+}
+
 func last(got *[]Command) Command {
 	if len(*got) == 0 {
 		return Command{Kind: -1}
 	}
 	return (*got)[len(*got)-1]
+}
+
+// newTestUDPServer builds a UDPServer that records submitted commands, with a
+// pre-seeded position for query replies.
+func newTestUDPServer(az, el float64, haverb bool) (*UDPServer, *[]Command) {
+	var got []Command
+	pos := &Pos{}
+	if haverb {
+		pos.Set(az, el)
+	}
+	s := &UDPServer{pos: pos, submit: func(c Command) { got = append(got, c) }}
+	return s, &got
+}
+
+func TestPstRotatorSetPos(t *testing.T) {
+	s, got := newTestUDPServer(0, 0, true)
+	if r := s.pstrotator("<PST><AZIMUTH>200</AZIMUTH><ELEVATION>30</ELEVATION></PST>"); r != "" {
+		t.Fatalf("set reply = %q, want empty", r)
+	}
+	if c := last(got); c.Kind != KindSetPos || c.Az != 200 || c.El != 30 {
+		t.Fatalf("set command = %+v", c)
+	}
+}
+
+func TestPstRotatorAzOnly(t *testing.T) {
+	s, got := newTestUDPServer(0, 10, true)
+	s.pstrotator("<PST><AZIMUTH>90</AZIMUTH></PST>")
+	if c := last(got); c.Kind != KindSetPos || c.Az != 90 || c.El != 10 {
+		t.Fatalf("az-only command = %+v", c)
+	}
+}
+
+func TestPstRotatorElOnly(t *testing.T) {
+	s, got := newTestUDPServer(123, 0, true)
+	s.pstrotator("<PST><ELEVATION>45</ELEVATION></PST>")
+	if c := last(got); c.Kind != KindSetPos || c.Az != 123 || c.El != 45 {
+		t.Fatalf("el-only command = %+v", c)
+	}
+}
+
+func TestPstRotatorStop(t *testing.T) {
+	s, got := newTestUDPServer(0, 0, true)
+	s.pstrotator("<PST><STOP>1</STOP></PST>")
+	if c := last(got); c.Kind != KindStop {
+		t.Fatalf("stop command = %+v", c)
+	}
+}
+
+func TestPstRotatorQueries(t *testing.T) {
+	s, _ := newTestUDPServer(123.4, 45.6, true)
+	if r := s.pstrotator("<PST>AZ?</PST>"); r != "AZ:123.4\r" {
+		t.Fatalf("AZ? reply = %q", r)
+	}
+	if r := s.pstrotator("<PST>EL?</PST>"); r != "EL:45.6\r" {
+		t.Fatalf("EL? reply = %q", r)
+	}
+}
+
+func TestPstRotatorQueriesNoData(t *testing.T) {
+	s, _ := newTestUDPServer(0, 0, false)
+	if r := s.pstrotator("<PST>AZ?</PST>"); r != "" {
+		t.Fatalf("AZ? with no readback = %q, want empty", r)
+	}
+}
+
+func TestPstRotatorMalformed(t *testing.T) {
+	s, got := newTestUDPServer(0, 0, true)
+	if r := s.pstrotator("garbage"); r != "" {
+		t.Fatalf("malformed reply = %q, want empty", r)
+	}
+	if len(*got) != 0 {
+		t.Fatalf("malformed should not submit: %+v", *got)
+	}
 }
 
 func TestPosConcurrency(t *testing.T) {
@@ -140,7 +225,8 @@ func TestPosConcurrency(t *testing.T) {
 }
 
 func TestProtocolName(t *testing.T) {
-	if !strings.Contains(GS232.Name(), "gs232") || !strings.Contains(Rotctld.Name(), "rotctld") {
-		t.Fatalf("names: %s %s", GS232.Name(), Rotctld.Name())
+	if !strings.Contains(GS232.Name(), "gs232") || !strings.Contains(Rotctld.Name(), "rotctld") ||
+		!strings.Contains(PstRotator.Name(), "pstrotator") {
+		t.Fatalf("names: %s %s %s", GS232.Name(), Rotctld.Name(), PstRotator.Name())
 	}
 }

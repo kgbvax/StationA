@@ -1,11 +1,12 @@
 # pelcots
 
 A terminal tool and headless daemon for driving and observing a **Pelco-D**
-PTZ / rotator. It can talk to the unit over a directly attached serial port or a
-TCP serial bridge, and it can act as a **network rotator controller** that
-external tracking software drives over the **Yaesu GS-232** and **Hamlib
-rotctld** protocols. Optional **cable-wrap protection** guards infinite-azimuth
-rotators against over-winding. 
+PTZ / rotator. It can talk to the unit over a directly attached serial port, a
+TCP serial bridge, or a built-in **simulator** (no hardware), and it can act as
+a **network rotator controller** that external tracking software drives over
+the **Yaesu GS-232**, **Hamlib rotctld**, and **PstRotator UDP** protocols.
+Optional **cable-wrap protection** guards infinite-azimuth rotators against
+over-winding.
 
 ## Status
 WIP, mostly untested 
@@ -42,7 +43,7 @@ Keys:
 | `t` | toggle turbo jog speed |
 | `space` | stop all motion |
 | `m` | toggle transport (serial ⇄ tcp) · `r` | (re)connect |
-| `y` / `o` | toggle the GS-232 / rotctld inbound server |
+| `y` / `o` / `p` | toggle the GS-232 / rotctld / PstRotator inbound server |
 | `w` | toggle cable-wrap protection · `z` | re-zero the wind accumulator |
 | `q` / `ctrl+c` | quit (settings are saved) |
 
@@ -67,9 +68,32 @@ control path). At least one control server must be enabled in the config.
 - **TCP bridge**: a serial-to-TCP bridge (ser2net / esp-link / USR-TCP232) that
   exposes the raw Pelco-D byte stream. The bridge owns the real serial
   parameters; `baud` is informational in TCP mode.
+- **Simulator** (`sim`): an in-memory emulator — nothing is opened on the host.
+  Absolute moves snap to the target, jogs step the position by `sim.jog_step`
+  per frame (so the cable-wrap unwrap path still accumulates travel), and
+  position queries are answered from that in-memory state. Use this to drive
+  the inbound control servers (GS-232 / rotctld / PstRotator) and exercise the
+  sat-tracking / PstRotator integrations **without a rotator attached**:
+
+  ```sh
+  ./pelcots -d -transport sim      # headless; enable a control server in pelcots.yaml
+  ```
 
 Switch live in the TUI with `m` (transport) and `r` (reconnect), or set it at
-launch with `-transport` / `-tcp`.
+launch with `-transport` / `-tcp` / `-transport sim`.
+
+### PTZ self-check (disable)
+
+Some PTZs (e.g. the 303Z/3050DZ) run a self-check sweep on power-up (and after a
+factory reset) that rotates the unit through its range. With
+`self_check.disable: true` (the default), pelcots sends **set preset 105**
+(`FF <addr> 00 03 00 69 <chk>`) once per successful connect to turn the
+self-check *function* off, so it does not run on subsequent power-ups. The
+setting is persistent on the unit; re-sending on each (re)connect is idempotent.
+Set `self_check.disable: false` to opt out. In sim mode the command is a
+harmless no-op (the emulator ignores presets).
+
+## Self-healing link
 
 The link is **self-healing**: if the device is unplugged, the bridge drops, or a
 write stalls, the engine tears the connection down and automatically retries
@@ -78,7 +102,10 @@ every 200 ms until it reconnects — in both the TUI (status shows
 applies before the first successful connect, so starting with the device absent
 just waits for it to appear. Repeated failures are logged once (not every
 retry) to keep the trace clean. The `warn`-level interplay with `loglevel` is
-unchanged.
+unchanged. On every (re)connect the engine issues an **all-stop** — Pelco-D jog
+motion has no auto-stop, so a dropped link leaves the unit moving; the stop
+halts any in-flight motion (and abandons a cable-wrap unwrap that was in
+progress, rather than resuming it against a stale wind accumulator).
 
 ## Inbound control protocols
 
@@ -102,6 +129,16 @@ printf 'W123 045\r' | nc 127.0.0.1 4000  # move to az=123 el=45
 printf 'C2\r'       | nc 127.0.0.1 4000  # -> AZ=123 EL=045
 ```
 
+**PstRotator UDP** (default port 12000, datagram): `<PST><AZIMUTH>85</AZIMUTH></PST>`
+and `<PST><ELEVATION>23</ELEVATION></PST>` (move, either or both),
+`<PST><STOP>1</STOP></PST>` (stop), `<PST>AZ?</PST>` / `<PST>EL?</PST>` (query).
+Queries are answered on **port + 1** (PstRotator's convention) as `AZ:xxx.x` /
+`EL:yy.y`.
+
+```sh
+printf '<PST><AZIMUTH>123</AZIMUTH><ELEVATION>45</ELEVATION></PST>' | nc -u 127.0.0.1 12000
+```
+
 ## Cable-wrap protection
 
 For rotators with infinite azimuth rotation, pelcots tracks a signed
@@ -123,12 +160,18 @@ is created/updated automatically (auto-saved on quit; periodically in daemon
 mode). Defaults are used when it is absent.
 
 ```yaml
-transport: serial            # serial | tcp
+transport: serial            # serial | tcp | sim
 serial:
   port: /dev/tty.usbmodemXXXX
   baud: 2400
 tcp:
   address: 192.168.1.50:4001
+sim:                         # in-memory emulator (transport: sim), no hardware
+  start_pan: 0                # initial azimuth, degrees
+  start_tilt: 0               # initial elevation, degrees
+  jog_step: 5                 # degrees of travel per jog frame
+self_check:                  # PTZ self-check (power-up sweep) gating
+  disable: true              # send set-preset-105 on connect so it does not run (303Z/3050DZ)
 addr: 1                      # Pelco-D camera address (1-255)
 log: pelcots.log             # TX/RX trace file ("" disables)
 log_level: info              # error | warn | info | debug | trace
@@ -140,6 +183,9 @@ control:
   rotctld:
     enabled: false
     port: 4533
+  pstrotator:
+    enabled: false
+    port: 12000
 wrap:
   enabled: false
   limit: 270                 # ± degrees of permitted wind
@@ -170,7 +216,7 @@ Flags override the corresponding config values for that run:
 | Flag | Meaning |
 | --- | --- |
 | `-config <path>` | settings file (default `pelcots.yaml`) |
-| `-transport serial\|tcp` | outbound transport |
+| `-transport serial\|tcp\|sim` | outbound transport (`sim` = in-memory emulator, no hardware) |
 | `-port <dev>` | serial device path |
 | `-baud <n>` | serial baud rate |
 | `-tcp <host:port>` | TCP bridge address (implies `-transport tcp`) |

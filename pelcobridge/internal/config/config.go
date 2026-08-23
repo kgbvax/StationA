@@ -14,6 +14,7 @@ import (
 const (
 	TransportSerial = "serial"
 	TransportTCP    = "tcp"
+	TransportSim    = "sim" // in-memory emulator, never touches hardware
 )
 
 // LogLevel selects how much detail is recorded in the trace/log. Ordered from
@@ -75,14 +76,16 @@ func (l *LogLevel) UnmarshalYAML(n *yaml.Node) error {
 
 // Config is the full persisted application state.
 type Config struct {
-	Transport string        `yaml:"transport"` // serial | tcp
-	Serial    SerialConfig  `yaml:"serial"`
-	TCP       TCPConfig     `yaml:"tcp"`
-	Addr      byte          `yaml:"addr"`      // Pelco-D camera address (1-255)
-	Log       string        `yaml:"log"`       // TX/RX trace file ("" disables)
-	LogLevel  LogLevel      `yaml:"log_level"` // error | warn | info | debug | trace
-	Control   ControlConfig `yaml:"control"`
-	Wrap      WrapConfig    `yaml:"wrap"`
+	Transport string          `yaml:"transport"` // serial | tcp | sim
+	Serial    SerialConfig    `yaml:"serial"`
+	TCP       TCPConfig       `yaml:"tcp"`
+	Sim       SimConfig       `yaml:"sim"`
+	SelfCheck SelfCheckConfig `yaml:"self_check"`
+	Addr      byte            `yaml:"addr"`      // Pelco-D camera address (1-255)
+	Log       string          `yaml:"log"`       // TX/RX trace file ("" disables)
+	LogLevel  LogLevel        `yaml:"log_level"` // error | warn | info | debug | trace
+	Control   ControlConfig   `yaml:"control"`
+	Wrap      WrapConfig      `yaml:"wrap"`
 }
 
 // SerialConfig holds the directly attached serial parameters.
@@ -96,11 +99,33 @@ type TCPConfig struct {
 	Address string `yaml:"address"`
 }
 
+// SimConfig holds the in-memory emulator parameters (transport: sim). The
+// emulator never opens a device: it answers position queries and applies
+// commanded moves in memory, so the control servers can be exercised without
+// a rotator attached.
+type SimConfig struct {
+	StartPan  float64 `yaml:"start_pan"`  // initial azimuth, degrees (default 0)
+	StartTilt float64 `yaml:"start_tilt"` // initial elevation, degrees (default 0)
+	JogStep   float64 `yaml:"jog_step"`   // degrees of travel per jog frame (default 5)
+}
+
+// SelfCheckConfig controls whether the bridge disables the PTZ self-check on
+// connect. The 303Z/3050DZ runs a self-check sweep on power-up (and after a
+// factory reset); set Disable true to send the "disable self-check" command
+// (set preset 105) once per successful connect so it does not run. The setting
+// is persistent on the unit, so subsequent power-ups stay disabled after the
+// first. In sim mode the command is a harmless no-op (the emulator ignores
+// presets), so it is sent regardless.
+type SelfCheckConfig struct {
+	Disable bool `yaml:"disable"` // send set-preset-105 on connect to disable the PTZ self-check (default true)
+}
+
 // ControlConfig configures the optional inbound network-control servers.
 type ControlConfig struct {
-	Bind    string       `yaml:"bind"` // listen address for inbound servers
-	GS232   ServerConfig `yaml:"gs232"`
-	Rotctld ServerConfig `yaml:"rotctld"`
+	Bind       string       `yaml:"bind"` // listen address for inbound servers
+	GS232      ServerConfig `yaml:"gs232"`
+	Rotctld    ServerConfig `yaml:"rotctld"`
+	PstRotator ServerConfig `yaml:"pstrotator"`
 }
 
 // ServerConfig is one inbound protocol server's settings.
@@ -123,13 +148,16 @@ func Default() Config {
 		Transport: TransportSerial,
 		Serial:    SerialConfig{Port: "/dev/tty.usbmodem5AF50020681", Baud: 2400},
 		TCP:       TCPConfig{Address: "127.0.0.1:4001"},
+		Sim:       SimConfig{StartPan: 0, StartTilt: 0, JogStep: 5},
+		SelfCheck: SelfCheckConfig{Disable: true},
 		Addr:      1,
 		Log:       "pelcots.log",
 		LogLevel:  LogInfo,
 		Control: ControlConfig{
-			Bind:    "127.0.0.1",
-			GS232:   ServerConfig{Enabled: false, Port: 4000},
-			Rotctld: ServerConfig{Enabled: false, Port: 4533},
+			Bind:       "127.0.0.1",
+			GS232:      ServerConfig{Enabled: false, Port: 4000},
+			Rotctld:    ServerConfig{Enabled: false, Port: 4533},
+			PstRotator: ServerConfig{Enabled: false, Port: 12000},
 		},
 		Wrap: WrapConfig{Enabled: false, Limit: 270, Accumulated: 0},
 	}

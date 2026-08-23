@@ -67,9 +67,14 @@ func planMove(wrap, cur, tgt, limit float64) MovePlan {
 		return MovePlan{Kind: MoveShort, Dir: sign(short), Travel: short, NewWrap: base}
 	}
 	// Shortest path over-wraps; search neighbouring full-turn representations
-	// for the one of least travel that respects the limit.
+	// for the one of least travel that respects the limit. The accumulator can
+	// be far from zero (a stale persisted wind, a limit lowered via SetWrap, or
+	// net wind accumulated while wrap was disabled), so centre the search on the
+	// representation nearest zero rather than a fixed k=-4..4 window that would
+	// miss valid reps and wrongly return MoveBlock for reachable targets.
+	k0 := int(math.Round(-base / 360))
 	best, found := 0.0, false
-	for k := -4; k <= 4; k++ {
+	for k := k0 - 4; k <= k0+4; k++ {
 		w := base + float64(k)*360
 		if math.Abs(w) <= limit && (!found || math.Abs(w-wrap) < math.Abs(best-wrap)) {
 			best, found = w, true

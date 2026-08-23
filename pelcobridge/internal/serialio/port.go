@@ -167,6 +167,6 @@ func (p *Port) extract(buf []byte) []byte {
 func (p *Port) emit(e Event) {
 	select {
 	case p.frames <- e:
-	default: // drop if UI is not draining fast enough
+	default: // drop if the engine actor is not draining fast enough (e.g. blocked in Send)
 	}
 }

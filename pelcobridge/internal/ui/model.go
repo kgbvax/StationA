@@ -36,22 +36,24 @@ const (
 const (
 	focusNone = -1
 
-	focusAddr      = iota - 1 // 0  unit address
-	focusPan                  // 1  target azimuth
-	focusTilt                 // 2  target elevation
-	focusEndpoint             // 3  link endpoint
-	focusGS232                // 4  gs232 port
-	focusGS232On              // 5  gs232 on/off toggle
-	focusRotctld              // 6  rotctld port
-	focusRotctldOn            // 7  rotctld on/off toggle
-	focusWrapLimit            // 8  cable-wrap limit
-	fieldCount     = 9
+	focusAddr         = iota - 1 // 0  unit address
+	focusPan                     // 1  target azimuth
+	focusTilt                    // 2  target elevation
+	focusEndpoint                // 3  link endpoint
+	focusGS232                   // 4  gs232 port
+	focusGS232On                 // 5  gs232 on/off toggle
+	focusRotctld                 // 6  rotctld port
+	focusRotctldOn               // 7  rotctld on/off toggle
+	focusPstRotator              // 8  pstrotator port
+	focusPstRotatorOn            // 9  pstrotator on/off toggle
+	focusWrapLimit               // 10 cable-wrap limit
+	fieldCount        = 11
 )
 
 // isToggle reports whether a focus index is a boolean toggle field (flipped in
 // place) rather than a text-entry field.
 func isToggle(focus int) bool {
-	return focus == focusGS232On || focus == focusRotctldOn
+	return focus == focusGS232On || focus == focusRotctldOn || focus == focusPstRotatorOn
 }
 
 type tickMsg time.Time
@@ -79,6 +81,7 @@ type Model struct {
 
 	width, height int
 	logPath       string
+	logLevel      config.LogLevel // preserved across TUI quit-saves (Config() restores it)
 }
 
 // New builds the model around a started engine and the initial config.
@@ -111,8 +114,10 @@ func New(eng *engine.Engine, cfg config.Config, logPath string) Model {
 	m.inputs[focusEndpoint] = mk(endpoint, 24)
 	m.inputs[focusGS232] = mk(strconv.Itoa(cfg.Control.GS232.Port), 6)
 	m.inputs[focusRotctld] = mk(strconv.Itoa(cfg.Control.Rotctld.Port), 6)
+	m.inputs[focusPstRotator] = mk(strconv.Itoa(cfg.Control.PstRotator.Port), 6)
 	m.inputs[focusWrapLimit] = mk(strconv.FormatFloat(cfg.Wrap.Limit, 'f', -1, 64), 6)
 	m.snap = eng.Snapshot()
+	m.logLevel = cfg.LogLevel
 	return m
 }
 
@@ -195,6 +200,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.eng.SetServer(control.GS232, !m.snap.GS232On, m.portField(focusGS232, m.snap.GS232Port))
 	case "o":
 		m.eng.SetServer(control.Rotctld, !m.snap.RotctldOn, m.portField(focusRotctld, m.snap.RotctldPort))
+	case "p":
+		m.eng.SetServer(control.PstRotator, !m.snap.PstRotatorOn, m.portField(focusPstRotator, m.snap.PstRotatorPort))
 	case "w":
 		m.eng.SetWrap(!m.snap.WrapEnabled, m.limitField())
 	case "z":
@@ -226,11 +233,30 @@ func (m *Model) keyJog(pan, tilt int) tea.Cmd {
 
 func (m *Model) doGoto() tea.Cmd {
 	m.applyAddr()
-	if az, el, ok := m.targetFromFields(); ok {
-		m.eng.Goto(az, el)
-		return m.armRelease()
+	az, el, ok := m.targetFromFields()
+	if !ok {
+		// Invalid pan/tilt text: revert to the current readback (like the addr
+		// and port fields do) instead of silently keeping un-parseable text.
+		m.revertTargets()
+		return nil
 	}
-	return nil
+	m.eng.Goto(az, el)
+	return m.armRelease()
+}
+
+// revertTargets resets the pan/tilt input fields to the latest readback (or 0
+// when no readback has arrived), so a failed goto leaves the fields usable.
+func (m *Model) revertTargets() {
+	s := m.eng.Snapshot()
+	pan, tilt := "0", "0"
+	if s.HavePan {
+		pan = strconv.FormatFloat(s.CurPan, 'f', -1, 64)
+	}
+	if s.HaveTilt {
+		tilt = strconv.FormatFloat(s.CurTilt, 'f', -1, 64)
+	}
+	m.inputs[focusPan].SetValue(pan)
+	m.inputs[focusTilt].SetValue(tilt)
 }
 
 // handleToggleKey flips the focused on/off field. The unit stays put; only the
@@ -243,6 +269,8 @@ func (m *Model) handleToggleKey(msg tea.KeyMsg) {
 			m.eng.SetServer(control.GS232, !m.snap.GS232On, m.portField(focusGS232, m.snap.GS232Port))
 		case focusRotctldOn:
 			m.eng.SetServer(control.Rotctld, !m.snap.RotctldOn, m.portField(focusRotctld, m.snap.RotctldPort))
+		case focusPstRotatorOn:
+			m.eng.SetServer(control.PstRotator, !m.snap.PstRotatorOn, m.portField(focusPstRotator, m.snap.PstRotatorPort))
 		}
 	}
 }
@@ -250,7 +278,11 @@ func (m *Model) handleToggleKey(msg tea.KeyMsg) {
 // commitFocused applies the focused field's value and returns any follow-up cmd.
 func (m *Model) commitFocused() tea.Cmd {
 	switch m.focus {
-	case focusAddr, focusPan, focusTilt:
+	case focusAddr:
+		// Committing the address field only applies the address; it must NOT
+		// issue a goto (the pan/tilt fields are unrelated to the unit address).
+		m.applyAddr()
+	case focusPan, focusTilt:
 		cmd := m.doGoto()
 		m.blur()
 		return cmd
@@ -260,6 +292,8 @@ func (m *Model) commitFocused() tea.Cmd {
 		m.eng.SetServer(control.GS232, m.snap.GS232On, m.portField(focusGS232, m.snap.GS232Port))
 	case focusRotctld:
 		m.eng.SetServer(control.Rotctld, m.snap.RotctldOn, m.portField(focusRotctld, m.snap.RotctldPort))
+	case focusPstRotator:
+		m.eng.SetServer(control.PstRotator, m.snap.PstRotatorOn, m.portField(focusPstRotator, m.snap.PstRotatorPort))
 	case focusWrapLimit:
 		m.eng.SetWrap(m.snap.WrapEnabled, m.limitField())
 	}
@@ -328,7 +362,7 @@ func (m *Model) doReconnect() {
 func (m *Model) cycleFocus(delta int) {
 	next := m.focus + delta
 	switch {
-	case next < 0:
+	case next < focusNone: // only wrap when past focusNone, so -1 stays focusNone
 		next = fieldCount - 1
 	case next >= fieldCount:
 		next = focusNone
@@ -362,9 +396,11 @@ func (m Model) Config() config.Config {
 	c.TCP.Address = m.tcpAddr
 	c.Addr = s.Addr
 	c.Log = m.logPath
+	c.LogLevel = m.logLevel
 	c.Control.Bind = s.Bind
 	c.Control.GS232 = config.ServerConfig{Enabled: s.GS232On, Port: s.GS232Port}
 	c.Control.Rotctld = config.ServerConfig{Enabled: s.RotctldOn, Port: s.RotctldPort}
+	c.Control.PstRotator = config.ServerConfig{Enabled: s.PstRotatorOn, Port: s.PstRotatorPort}
 	c.Wrap = config.WrapConfig{Enabled: s.WrapEnabled, Limit: s.WrapLimit, Accumulated: s.Wrap}
 	return c
 }

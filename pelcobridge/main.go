@@ -32,7 +32,7 @@ func main() {
 	logPath := flag.String("log", "", "append TX/RX trace to this file (overrides config)")
 	logLevel := flag.String("loglevel", "", "log verbosity: error | warn | info | debug | trace (overrides config)")
 	tcp := flag.String("tcp", "", "TCP serial-bridge address host:port (overrides config)")
-	transport := flag.String("transport", "", "outbound transport: serial | tcp (overrides config)")
+	transport := flag.String("transport", "", "outbound transport: serial | tcp | sim (overrides config; sim = in-memory emulator, no hardware)")
 	daemon := flag.Bool("d", false, "run headless as a network controller (no TUI)")
 	flag.Parse()
 
@@ -87,12 +87,15 @@ func main() {
 		TCPAddr:     cfg.TCP.Address,
 		Baud:        cfg.Serial.Baud,
 		Addr:        cfg.Addr,
+		Sim:         cfg.Sim,
+		SelfCheck:   cfg.SelfCheck,
 		Bind:        cfg.Control.Bind,
 		WrapEnabled: cfg.Wrap.Enabled,
 		WrapLimit:   cfg.Wrap.Limit,
 		WrapAccum:   cfg.Wrap.Accumulated,
 		GS232:       cfg.Control.GS232,
 		Rotctld:     cfg.Control.Rotctld,
+		PstRotator:  cfg.Control.PstRotator,
 		Logw:        logw,
 		LogLevel:    cfg.LogLevel,
 	})
@@ -123,8 +126,8 @@ func runTUI(eng *engine.Engine, cfg config.Config, cfgPath string) {
 // runDaemon runs headless until SIGINT/SIGTERM, acting as a network controller.
 // It persists the cable-wind accumulator periodically and on shutdown.
 func runDaemon(eng *engine.Engine, cfg config.Config, cfgPath string) {
-	if !cfg.Control.GS232.Enabled && !cfg.Control.Rotctld.Enabled {
-		fmt.Fprintln(os.Stderr, "daemon: no control server enabled (set control.gs232.enabled or control.rotctld.enabled)")
+	if !cfg.Control.GS232.Enabled && !cfg.Control.Rotctld.Enabled && !cfg.Control.PstRotator.Enabled {
+		fmt.Fprintln(os.Stderr, "daemon: no control server enabled (set control.gs232.enabled, control.rotctld.enabled, or control.pstrotator.enabled)")
 		_ = eng.Close()
 		os.Exit(2)
 	}
@@ -183,6 +186,7 @@ func configFromState(base config.Config, s engine.State) config.Config {
 	base.Control.Bind = s.Bind
 	base.Control.GS232 = config.ServerConfig{Enabled: s.GS232On, Port: s.GS232Port}
 	base.Control.Rotctld = config.ServerConfig{Enabled: s.RotctldOn, Port: s.RotctldPort}
+	base.Control.PstRotator = config.ServerConfig{Enabled: s.PstRotatorOn, Port: s.PstRotatorPort}
 	base.Wrap = config.WrapConfig{Enabled: s.WrapEnabled, Limit: s.WrapLimit, Accumulated: s.Wrap}
 	return base
 }

@@ -69,6 +69,25 @@ func TestPlanMoveNone(t *testing.T) {
 	}
 }
 
+func TestPlanMoveLargeWrap(t *testing.T) {
+	// A wind accumulator far above the limit (stale persisted value, a limit
+	// lowered via SetWrap, or net wind accumulated while wrap was disabled).
+	// The target is still reachable by unwinding the long way; the search must
+	// not give up and return MoveBlock for a reachable target.
+	p := planMove(1800, 0, 180, 270)
+	if p.Kind != MoveUnwrap {
+		t.Fatalf("expected unwrap for reachable target under large wind, got %+v", p)
+	}
+	if math.Abs(p.NewWrap) > 270+1e-9 {
+		t.Fatalf("unwrap result %g exceeds limit", p.NewWrap)
+	}
+	// The resulting wind must be a full-turn image of the shortest-path result.
+	short := 1800 + shortestDelta(0, 180)
+	if d := math.Mod(math.Abs(p.NewWrap-short), 360); d > 1e-6 && math.Abs(d-360) > 1e-6 {
+		t.Fatalf("unwrap target %g not a full-turn image of %g", p.NewWrap, short)
+	}
+}
+
 // TestAccumulatorAcrossZero verifies the readback-integration rule sums
 // shortest deltas correctly across the 0/360 boundary.
 func TestAccumulatorAcrossZero(t *testing.T) {

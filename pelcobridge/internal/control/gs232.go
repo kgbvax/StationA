@@ -2,6 +2,7 @@ package control
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 )
@@ -28,13 +29,13 @@ func (s *Server) gs232(line string) string {
 		if !ok {
 			return ""
 		}
-		return fmt.Sprintf("AZ=%03.0f EL=%03.0f\r", az, el)
+		return fmt.Sprintf("AZ=%03d EL=%03.0f\r", azDegrees(az), el)
 	case up[0] == 'C':
 		az, _, ok := s.pos.Get()
 		if !ok {
 			return ""
 		}
-		return fmt.Sprintf("AZ=%03.0f\r", az)
+		return fmt.Sprintf("AZ=%03d\r", azDegrees(az))
 	case up[0] == 'B':
 		_, el, ok := s.pos.Get()
 		if !ok {
@@ -72,6 +73,20 @@ func (s *Server) gs232(line string) string {
 		return ""
 	}
 	return ""
+}
+
+// azDegrees rounds an azimuth to a whole degree and wraps it into the GS-232
+// legal 000-359 range. A plain %03.0f would round 359.5-359.99 (the pan word
+// max is 35999 hundredths) up to 360, which is outside the protocol range.
+func azDegrees(az float64) int {
+	a := int(math.Round(az))
+	if a >= 360 {
+		a -= 360
+	}
+	if a < 0 {
+		a += 360
+	}
+	return a
 }
 
 // numbers extracts integer runs from s as floats. It also splits a single
