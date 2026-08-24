@@ -82,3 +82,11 @@ enabled   = true
 slot      = "tuner"            # tuner slot that receives {action: set_inline} intents
 resource  = "fan-dipole"       # engage only when this wiring_map resource is selected
 atu_bands = ["30m", "60m", "80m", "160m"]  # non-resonant bands needing the ATU in-line
+
+# --- Idle timeout (walk-away safety, §10) ------------------------------------
+# After this long with no radio activity (a VFO/frequency change or a transmit),
+# the reconciler grounds the antenna (target = off) to protect against lightning.
+# Activity is inferred from radio/state (freq_hz change or tx == "tx"), not
+# operator-set. The switch's "off" position shorts the open ports to ground.
+[idle]
+timeout_minutes = 30

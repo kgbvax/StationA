@@ -36,6 +36,7 @@
 #   TUNER_FOLLOW_SLOT     tuner_follow.slot     (default: tuner)
 #   TUNER_FOLLOW_RESOURCE tuner_follow.resource (default: fan-dipole)
 #   TUNER_FOLLOW_ATU_BANDS tuner_follow.atu_bands (default: 30m,60m,80m,160m; comma-separated)
+#   IDLE_TIMEOUT_MINUTES  idle.timeout_minutes (default: 30)
 #
 # Configuration (including the MQTT password) lives in a single 0600 TOML file
 # on the target, NOT in the systemd unit or process command line. The file is
@@ -79,6 +80,7 @@ TUNER_FOLLOW_ENABLED="${TUNER_FOLLOW_ENABLED:-true}"
 TUNER_FOLLOW_SLOT="${TUNER_FOLLOW_SLOT:-tuner}"
 TUNER_FOLLOW_RESOURCE="${TUNER_FOLLOW_RESOURCE:-fan-dipole}"
 TUNER_FOLLOW_ATU_BANDS="${TUNER_FOLLOW_ATU_BANDS:-30m,60m,80m,160m}"
+IDLE_TIMEOUT_MINUTES="${IDLE_TIMEOUT_MINUTES:-30}"
 
 # Render the comma-separated ATU bands list as a TOML array (["30m", "60m", "160m"]).
 atu_bands_toml() {
@@ -176,6 +178,12 @@ trap 'rm -f "$SEED_CONFIG" "${UNIT_FILE:-}"' EXIT
   echo "slot      = \"$(toml_escape "$TUNER_FOLLOW_SLOT")\""
   echo "resource  = \"$(toml_escape "$TUNER_FOLLOW_RESOURCE")\""
   echo "atu_bands = $(atu_bands_toml)"
+  echo ""
+  echo "[idle]"
+  echo "# Walk-away safety (model §10): after this many minutes with no radio activity"
+  echo "# (a VFO/frequency change or a transmit), the reconciler grounds the antenna"
+  echo "# (target = off). The switch's off position shorts the open ports to ground."
+  echo "timeout_minutes = ${IDLE_TIMEOUT_MINUTES}"
 } > "$SEED_CONFIG"
 
 # --- build for the Pi (Linux arm64) ----------------------------------------
