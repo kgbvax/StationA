@@ -13,7 +13,7 @@ class SetupScreen extends StatefulWidget {
 
 class _SetupScreenState extends State<SetupScreen> {
   final _storage = CredentialStore();
-  final _host = TextEditingController(text: '192.168.1.50');
+  final _host = TextEditingController(text: '192.168.1.139');
   final _port = TextEditingController(text: '1883');
   final _user = TextEditingController(text: 'console');
   final _pass = TextEditingController();
@@ -30,7 +30,7 @@ class _SetupScreenState extends State<SetupScreen> {
   Future<void> _load() async {
     final values = await _storage.readAll();
     setState(() {
-      _host.text = values['mqtt_host'] ?? '192.168.1.50';
+      _host.text = values['mqtt_host'] ?? '192.168.1.139';
       _port.text = values['mqtt_port'] ?? '1883';
       _user.text = values['mqtt_user'] ?? 'console';
       _pass.text = values['mqtt_password'] ?? '';

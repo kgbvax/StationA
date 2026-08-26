@@ -29,7 +29,7 @@
 #   DEVICE_MODEL    device.model value    (default: ATR-1000)
 #   DEVICE_LINK     device.link value     (default: wifi)
 #   LOG_LEVEL       log.level value       (default: info)
-#   MQTT_BROKER     mqtt.broker value     (default: tcp://192.168.1.50:1883)
+#   MQTT_BROKER     mqtt.broker value     (default: tcp://127.0.0.1:1883)
 #   MQTT_SITE       mqtt.site             (default: muehle)
 #   MQTT_STATION    mqtt.station           (default: hf)
 #   MQTT_SLOT       mqtt.slot             (default: tuner)
@@ -65,7 +65,7 @@ HOST_NAME="${HOST_NAME:-shari}"
 DEVICE_MODEL="${DEVICE_MODEL:-ATR-1000}"
 DEVICE_LINK="${DEVICE_LINK:-wifi}"
 LOG_LEVEL="${LOG_LEVEL:-info}"
-MQTT_BROKER="${MQTT_BROKER:-tcp://192.168.1.50:1883}"
+MQTT_BROKER="${MQTT_BROKER:-tcp://127.0.0.1:1883}"
 MQTT_SITE="${MQTT_SITE:-muehle}"
 MQTT_STATION="${MQTT_STATION:-hf}"
 MQTT_SLOT="${MQTT_SLOT:-tuner}"

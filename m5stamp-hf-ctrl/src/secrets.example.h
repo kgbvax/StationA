@@ -12,8 +12,10 @@
 #define WIFI_SSID "CHANGE_ME"
 #define WIFI_PASSWORD "CHANGE_ME"
 
-// MQTT broker — the station broker at 192.168.1.50:1883 (model §2).
-#define MQTT_HOST "192.168.1.50"
+// MQTT broker — the shack broker on shari (192.168.1.139:1883); see
+// ../mqtt-broker/README.md. The M5 is a remote device, so it uses shari's LAN
+// address, not the 127.0.0.1 loopback the on-shari Go services use.
+#define MQTT_HOST "192.168.1.139"
 #define MQTT_PORT 1883
 #define MQTT_USER "hf"
 #define MQTT_PASSWORD "CHANGE_ME"

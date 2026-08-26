@@ -1,0 +1,38 @@
+# Shack-local Mosquitto broker ACL — example.
+# Lives at /etc/mosquitto/acl.conf on shari. Not secret; seeded once by deploy.sh
+# and edited on the device if per-device Shelly prefixes need tightening.
+# See README.md for which user each component connects as.
+
+# hf — the trusted station-internal account.
+# Used by ALL station Go services on shari (flexbridge, ultrabridge, antennaselect,
+# powerseq, hadiscovery, shelly-power-bridge, …) via 127.0.0.1, AND by the Shelly
+# smart plugs, which publish on their own Gen2+ prefix (e.g.
+# shellyplus1pm-<id>/...) — NOT under muehle/. Because that prefix is per-device
+# and varies by Shelly model, hf gets full readwrite here; narrow it to
+# muehle/# + the concrete Shelly prefixes (e.g. `topic readwrite shellyplus1pm-#`)
+# if your Shelly model list is fixed. hadiscovery also runs as hf and needs to
+# read muehle/+/+/meta + homeassistant/status and write homeassistant/# — covered.
+user hf
+topic readwrite #
+
+# bridge — the local side of the bridge connection to the HA broker.
+# out-direction topics are READ locally and published to the remote (HA);
+# in-direction topics are PUBLISHED locally from the remote. Kept narrow so the
+# bridge account can never originate station state or consume HA commands.
+user bridge
+topic read muehle/+/+/state
+topic read muehle/+/+/meta
+topic read muehle/+/+/status
+topic read homeassistant/+/+/+/config
+topic write homeassistant/status
+topic write muehle/+/+/cmd
+topic write local/bridge-to-ha
+
+# console — the hf_console tablet (shack-local). Narrow: read telemetry, write
+# commands only. hf_console/CLAUDE.md already recommends a dedicated console
+# user; configure the tablet with this account, not hf.
+user console
+topic read muehle/+/+/state
+topic read muehle/+/+/meta
+topic read muehle/+/+/status
+topic write muehle/+/+/cmd

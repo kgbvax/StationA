@@ -38,7 +38,7 @@ sudo cat /var/log/hf-mqtt-capture/2026-08-19/10.log
 Edit `/etc/hf-mqtt-capture/config.toml` on shari:
 
 ```toml
-broker   = "tcp://192.168.1.50:1883"
+broker   = "tcp://192.168.1.139:1883"
 user     = "hf"
 password = ""
 site     = "muehle"

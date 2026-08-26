@@ -20,7 +20,7 @@
 #   INSTALL_DIR     remote install dir    (default: /opt/testui)
 #
 #   HTTP_ADDR       http_addr value       (default: 0.0.0.0:8090)
-#   MQTT_BROKER     mqtt.broker value     (default: tcp://192.168.1.50:1883)
+#   MQTT_BROKER     mqtt.broker value     (default: tcp://127.0.0.1:1883)
 #   MQTT_SITE       mqtt.site value       (default: muehle)
 #   MQTT_USER       mqtt.user value       (default: hf)
 #   MQTT_PASSWORD   mqtt.password value   (default: empty -> set on device)
@@ -48,7 +48,7 @@ BINARY="${BINARY:-testui}"
 PKG="./cmd/testui"
 
 HTTP_ADDR="${HTTP_ADDR:-0.0.0.0:8090}"
-MQTT_BROKER="${MQTT_BROKER:-tcp://192.168.1.50:1883}"
+MQTT_BROKER="${MQTT_BROKER:-tcp://127.0.0.1:1883}"
 MQTT_SITE="${MQTT_SITE:-muehle}"
 MQTT_USER="${MQTT_USER:-hf}"
 MQTT_PASSWORD="${MQTT_PASSWORD:-}"

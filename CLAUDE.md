@@ -35,6 +35,7 @@ separate per-component remotes to push to.
 | powerseq | `powerseq/` | Startup/shutdown sequencer → `hf/power-seq` (ordered, delay + liveness confirmations) |
 | antennaselect | `antennaselect/` | Antenna-selection reconciler (core implemented) |
 | hadiscovery | `hadiscovery/` | Home Assistant discovery consumer (reads `/meta` `expose`, renders HA discovery) |
+| mqtt-broker | `mqtt-broker/` | Shack-local Mosquitto broker on shari, bridged to the HA broker (infra — not a slot, not Go) |
 
 Each project has its own `CLAUDE.md` and is independently buildable (`go build`/`go test`
 from its own directory works without the workspace, via the `replace … => ../shared`).
@@ -98,7 +99,10 @@ sudo systemctl restart flexbridge
 sudo systemctl restart ultrabridge
 ```
 
-The MQTT broker runs separately at `192.168.1.50:1883`.
+The MQTT broker is the **shack-local Mosquitto on shari** (`127.0.0.1:1883`
+for shari-local services, `192.168.1.139:1883` from the LAN), bridged to the
+Home Assistant broker at `192.168.1.50:1883`. See `mqtt-broker/` and
+`docs/conventions/mqtt-topology.md`.
 
 ---
 
@@ -113,6 +117,7 @@ All shared docs are in `docs/` in this repo:
 | Deployment convention | `docs/conventions/deployment.md` |
 | Bridge-naming convention | `docs/conventions/naming.md` |
 | Canonical band/mode reference | `docs/conventions/band-mode-reference.md` |
+| MQTT broker topology | `docs/conventions/mqtt-topology.md` |
 | MQTT schema template | `docs/templates/mqtt-schema.md` |
 
 All components live as subdirectories of this one repo, so the shared docs path
@@ -125,19 +130,32 @@ from `flexbridge/`). Cross-cutting Go code, not docs, lives in the `shared/` mod
 
 ## MQTT broker access
 
-The MQTT broker is at `192.168.1.50:1883`. Credentials for the `hf` user are stored
-on shari in the service config files. Do not pass credentials on the command line
-or in shell history.
+The station runs a **shack-local Mosquitto broker on shari** (`mqtt-broker/`),
+authoritative for the `muehle/#` namespace. A mosquitto `bridge` connection
+replicates it to the Home Assistant broker at `192.168.1.50:1883` (HA's own
+Mosquitto add-on), which stays untouched — it still serves HA's other MQTT
+devices. On-shari Go services talk to `127.0.0.1:1883`; remote clients (Shelly
+plugs, M5 PLC, ant-switch ESP, the console tablet, workstations) use
+`192.168.1.139:1883`. See `docs/conventions/mqtt-topology.md` for the full
+topology, topic-direction table, and ACLs.
 
-To inspect the bus from a workstation:
+Credentials: the `hf` (station services), `bridge` (HA bridge connection), and
+`console` (tablet) accounts are seeded once on shari in `/etc/mosquitto/passwd`
+(0600, owned by the mosquitto user). Do not pass credentials on the command
+line or in shell history.
+
+To inspect the bus from a workstation (the shack broker):
 
 ```bash
-# Subscribe to all topics under muehle/
-mosquitto_sub -h 192.168.1.50 -u hf -P "$MQTT_PASSWORD" -t 'muehle/#' -v
+# Subscribe to all topics under muehle/ (shack broker on shari)
+mosquitto_sub -h 192.168.1.139 -u hf -P "$MQTT_PASSWORD" -t 'muehle/#' -v
 
 # Watch a single slot
-mosquitto_sub -h 192.168.1.50 -u hf -P "$MQTT_PASSWORD" -t 'muehle/hf/radio/#' -v
+mosquitto_sub -h 192.168.1.139 -u hf -P "$MQTT_PASSWORD" -t 'muehle/hf/radio/#' -v
 ```
+
+The HA broker at `192.168.1.50:1883` receives the same `muehle/#` traffic via
+the bridge; HA's MQTT integration reads it there.
 
 ---
 

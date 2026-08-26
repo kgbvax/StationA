@@ -11,8 +11,8 @@ func TestDefaults(t *testing.T) {
 	if c.MQTT.Site != "muehle" || c.MQTT.Station != "hf" || c.MQTT.Slot != "pa" {
 		t.Errorf("defaults slot = %s/%s/%s, want muehle/hf/pa", c.MQTT.Site, c.MQTT.Station, c.MQTT.Slot)
 	}
-	if c.MQTT.Broker != "tcp://192.168.1.50:1883" {
-		t.Errorf("default broker = %q, want tcp://192.168.1.50:1883", c.MQTT.Broker)
+	if c.MQTT.Broker != "tcp://127.0.0.1:1883" {
+		t.Errorf("default broker = %q, want tcp://127.0.0.1:1883", c.MQTT.Broker)
 	}
 	if c.MQTT.PublishHADiscovery {
 		t.Error("publish_ha_discovery must default to false (model §9 gate)")

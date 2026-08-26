@@ -26,7 +26,7 @@ type Config struct {
 // Default returns built-in defaults.
 func Default() Config {
 	return Config{
-		Broker:         "tcp://192.168.1.50:1883",
+		Broker:         "tcp://127.0.0.1:1883",
 		User:           "hf",
 		Site:           "muehle",
 		Station:        "hf",

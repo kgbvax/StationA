@@ -23,7 +23,7 @@ go vet ./... && gofmt -l .     # vet + format check
 
 # Run locally against a broker (no hardware needed — it is pure logic over MQTT)
 go run ./cmd/antennaselect -config ./config.example.toml
-go run ./cmd/antennaselect -broker tcp://192.168.1.50:1883   # broker via flag
+go run ./cmd/antennaselect -broker tcp://192.168.1.139:1883   # broker via flag
 ```
 
 ## Layout
@@ -48,7 +48,7 @@ config to `shari`, and installs the `antenna-select` service (seed-once; see
 device, no HTTP server — so the unit carries no `DeviceAllow`/`SupplementaryGroups`.
 
 ```bash
-./deploy.sh                                      # defaults: shari, broker 192.168.1.50:1883
+./deploy.sh                                      # defaults: shari, broker tcp://127.0.0.1:1883 (shack broker, loopback on shari)
 MQTT_PASSWORD=... ./deploy.sh                    # seed the password on first deploy
 ssh io@192.168.1.139 'journalctl -u antenna-select -f'
 ```

@@ -143,7 +143,7 @@ radio_serial = ""          # empty = first radio found
 radio_udp_port = 4991
 
 [mqtt]
-broker = "tcp://homeassistant.local:1883"
+broker = "tcp://192.168.1.139:1883"
 # user / password here, or via EnvironmentFile (see below)
 
 [rates]

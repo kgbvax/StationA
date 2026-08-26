@@ -11,7 +11,7 @@ It is part of the Mühle station automation ecosystem; see `../docs/` for the sh
 ## Requirements
 
 - ACOM 600S or 1200S amplifier connected via a USB-serial adapter (Prolific, vendor `067b`)
-- MQTT broker (e.g. Mosquitto at `192.168.1.50:1883`)
+- MQTT broker (e.g. Mosquitto at `192.168.1.139:1883`)
 - (Optional) Home Assistant — discovery is now rendered by the standalone
   `hadiscovery` consumer from this bridge's `expose` block; the legacy embedded
   discovery is gated off by default (model §9)
@@ -59,7 +59,7 @@ sudo cp config.example.toml /etc/acom1200s-pa-bridge/config.toml
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `mqtt.broker` | `tcp://192.168.1.50:1883` | MQTT broker URL |
+| `mqtt.broker` | `tcp://192.168.1.139:1883` | MQTT broker URL |
 | `mqtt.site` / `station` / `slot` | `muehle` / `hf` / `pa` | Station-model slot addressing |
 | `mqtt.location` | `bauwagen` | Physical location label (in `/meta`) |
 | `mqtt.user` | `hf` | MQTT username |

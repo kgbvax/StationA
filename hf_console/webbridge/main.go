@@ -18,7 +18,7 @@ import (
 
 var (
 	listenAddr = flag.String("listen", "0.0.0.0:8091", "HTTP listen address")
-	brokerAddr = flag.String("mqtt-broker", "192.168.1.50:1883", "MQTT broker TCP address")
+	brokerAddr = flag.String("mqtt-broker", "192.168.1.139:1883", "MQTT broker TCP address (shack broker on shari)")
 	webRoot    = flag.String("web-root", "/opt/hf-console-web/build/web", "directory containing the Flutter web build")
 )
 

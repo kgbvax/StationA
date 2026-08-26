@@ -35,7 +35,7 @@ convention `<devtag>-<function>-bridge`.
 
 - ATR-1000 ATU (BTR-1000 / N7DDC family) reachable on the LAN over its binary
   WebSocket (default `ws://192.168.1.111:60001`)
-- MQTT broker (e.g. Mosquitto at `192.168.1.50:1883`)
+- MQTT broker (e.g. Mosquitto at `192.168.1.139:1883`)
 - (Optional) Home Assistant — discovery is rendered by the standalone
   `hadiscovery` consumer from this bridge's `expose` block in `/meta` (model §9)
 
@@ -84,7 +84,7 @@ sudo cp config.example.toml /etc/atr1k-tuner-bridge/config.toml
 | Key | Default | Description |
 |-----|---------|-------------|
 | `tuner.url` | `ws://192.168.1.20:60001` | ATR-1000 binary WebSocket endpoint |
-| `mqtt.broker` | `tcp://192.168.1.50:1883` | MQTT broker URL |
+| `mqtt.broker` | `tcp://192.168.1.139:1883` | MQTT broker URL |
 | `mqtt.site` / `station` / `slot` | `muehle` / `hf` / `tuner` | Station-model slot addressing — see below |
 | `mqtt.location` | `bauwagen` | Physical location label (in `/meta`) |
 | `mqtt.user` | `hf` | MQTT username |

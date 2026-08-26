@@ -5,11 +5,11 @@
 # Radio connection. Leave radio_host empty to use UDP autodiscovery
 # (recommended — works even if the radio's IP changes via DHCP). Set
 # radio_serial to pick a specific radio if more than one is on the LAN.
-radio_host = ""            # e.g. "192.168.1.50"; empty = discover
+radio_host = ""            # e.g. "192.168.1.40"; empty = discover
 radio_serial = ""          # e.g. "1234-5678-8400.12345"; empty = first found
 
 [mqtt]
-broker = "tcp://homeassistant.local:1883"
+broker = "tcp://127.0.0.1:1883"
 client_id = "flexbridge"
 user = ""                  # set here or via FLEXBRIDGE_MQTT_USER
 password = ""              # set here or via FLEXBRIDGE_MQTT_PASSWORD

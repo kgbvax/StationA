@@ -66,7 +66,7 @@ func Defaults() Config {
 			URL: "ws://192.168.1.20:60001",
 		},
 		MQTT: MQTTConfig{
-			Broker:   "tcp://192.168.1.50:1883",
+			Broker:   "tcp://127.0.0.1:1883",
 			ClientID: "",
 			User:     "hf",
 			Site:     "muehle",

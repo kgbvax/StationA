@@ -23,7 +23,7 @@ change the order, targets, waits, or delays. The subscribed topics (§7) and the
 
 | Property | Value |
 |----------|-------|
-| Protocol | MQTT 3.1.1 (plain TCP, `tcp://192.168.1.50:1883`) |
+| Protocol | MQTT 3.1.1 (plain TCP, `tcp://192.168.1.139:1883`) |
 | Authentication | Username/password (`hf` user) |
 | Clean session | false; own `/cmd` is re-subscribed on every reconnect |
 | Auto-reconnect | yes |
@@ -158,7 +158,7 @@ restores an idle sequencer's `/state` instead of leaving it absent.
 `muehle/hf/power-seq/cmd`. Example:
 
 ```bash
-mosquitto_pub -h 192.168.1.50 -t 'muehle/hf/power-seq/cmd' \
+mosquitto_pub -h 192.168.1.139 -t 'muehle/hf/power-seq/cmd' \
   -m '{"action":"start"}'
 ```
 
