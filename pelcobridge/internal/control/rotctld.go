@@ -18,6 +18,8 @@ func (s *Server) rotctld(line string) (reply string, closeConn bool) {
 		return "", false
 	}
 	cmd := strings.TrimPrefix(fields[0], "\\")
+	raw := strings.TrimRight(line, "\r\n")
+	src := "rotctld"
 
 	switch cmd {
 	case "p", "get_pos":
@@ -36,11 +38,11 @@ func (s *Server) rotctld(line string) (reply string, closeConn bool) {
 		if e1 != nil || e2 != nil {
 			return "RPRT -1\n", false
 		}
-		s.submit(Command{Kind: KindSetPos, Az: az, El: el})
+		s.submit(Command{Kind: KindSetPos, Az: az, El: el, Source: src, Raw: raw})
 		return "RPRT 0\n", false
 
 	case "S", "stop":
-		s.submit(Command{Kind: KindStop})
+		s.submit(Command{Kind: KindStop, Source: src, Raw: raw})
 		return "RPRT 0\n", false
 
 	case "_", "get_info":

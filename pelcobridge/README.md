@@ -1,10 +1,10 @@
 # pelcots
 
-A terminal tool and headless daemon for driving and observing a **Pelco-D**
-PTZ / rotator. It can talk to the unit over a directly attached serial port, a
+A terminal tool and headless daemon for driving and observing a **Pelco-D /
+Pelco-P** PTZ / rotator. It can talk to the unit over a directly attached serial port, a
 TCP serial bridge, or a built-in **simulator** (no hardware), and it can act as
 a **network rotator controller** that external tracking software drives over
-the **Yaesu GS-232**, **Hamlib rotctld**, and **PstRotator UDP** protocols.
+the **Hamlib rotctld** protocol.
 Optional **cable-wrap protection** guards infinite-azimuth rotators against
 over-winding.
 
@@ -43,8 +43,9 @@ Keys:
 | `t` | toggle turbo jog speed |
 | `space` | stop all motion |
 | `m` | toggle transport (serial ⇄ tcp) · `r` | (re)connect |
-| `y` / `o` / `p` | toggle the GS-232 / rotctld / PstRotator inbound server |
+| `o` | toggle the rotctld inbound server |
 | `w` | toggle cable-wrap protection · `z` | re-zero the wind accumulator |
+| `a` | zero azimuth (current direction reads as 0°) |
 | `q` / `ctrl+c` | quit (settings are saved) |
 
 > Note on hold-to-move: terminals don't report key-release events, so a held
@@ -72,8 +73,8 @@ control path). At least one control server must be enabled in the config.
   Absolute moves snap to the target, jogs step the position by `sim.jog_step`
   per frame (so the cable-wrap unwrap path still accumulates travel), and
   position queries are answered from that in-memory state. Use this to drive
-  the inbound control servers (GS-232 / rotctld / PstRotator) and exercise the
-  sat-tracking / PstRotator integrations **without a rotator attached**:
+  the inbound rotctld control server and exercise the sat-tracking
+  integration **without a rotator attached**:
 
   ```sh
   ./pelcots -d -transport sim      # headless; enable a control server in pelcots.yaml
@@ -109,34 +110,15 @@ progress, rather than resuming it against a stale wind accumulator).
 
 ## Inbound control protocols
 
-Both servers are **disabled by default** and **bind to `127.0.0.1`** (set
-`control.bind` to expose them on a LAN). Azimuth maps to pan, elevation to tilt.
+The server is **disabled by default** and **binds to `127.0.0.1`** (set
+`control.bind` to expose it on a LAN). Azimuth maps to pan, elevation to tilt.
 
-**Hamlib rotctld** (default port 4533): `p` (get position), `P <az> <el>` (set
-position), `S` (stop).
+**Hamlib rotctld** (default port 4533, newline-delimited): `p` (get position),
+`P <az> <el>` (set position), `S` (stop), `_` (get info), `q` (quit).
 
 ```sh
 rotctl -m 2 -r 127.0.0.1:4533 P 123 45   # move to az=123 el=45
 rotctl -m 2 -r 127.0.0.1:4533 p          # read position
-```
-
-**Yaesu GS-232A** (default port 4000, CR-terminated): `C` / `B` / `C2`
-(query azimuth / elevation / both), `W aaa eee` and `M aaa` (move), `S`/`A`/`E`
-(stop), `R`/`L`/`U`/`D` (continuous jog).
-
-```sh
-printf 'W123 045\r' | nc 127.0.0.1 4000  # move to az=123 el=45
-printf 'C2\r'       | nc 127.0.0.1 4000  # -> AZ=123 EL=045
-```
-
-**PstRotator UDP** (default port 12000, datagram): `<PST><AZIMUTH>85</AZIMUTH></PST>`
-and `<PST><ELEVATION>23</ELEVATION></PST>` (move, either or both),
-`<PST><STOP>1</STOP></PST>` (stop), `<PST>AZ?</PST>` / `<PST>EL?</PST>` (query).
-Queries are answered on **port + 1** (PstRotator's convention) as `AZ:xxx.x` /
-`EL:yy.y`.
-
-```sh
-printf '<PST><AZIMUTH>123</AZIMUTH><ELEVATION>45</ELEVATION></PST>' | nc -u 127.0.0.1 12000
 ```
 
 ## Cable-wrap protection
@@ -173,19 +155,18 @@ sim:                         # in-memory emulator (transport: sim), no hardware
 self_check:                  # PTZ self-check (power-up sweep) gating
   disable: true              # send set-preset-105 on connect so it does not run (303Z/3050DZ)
 addr: 1                      # Pelco-D camera address (1-255)
+protocol: d                  # wire protocol SENT: d (Pelco-D, default) | p (Pelco-P);
+                             # the same address byte is used in both — do not subtract one.
+                             # Receiving is always adaptive (either protocol accepted).
 log: pelcots.log             # TX/RX trace file ("" disables)
 log_level: info              # error | warn | info | debug | trace
+az_offset: 0                 # azimuth zero offset: physical azimuth that reads as 0° (degrees)
+tilt_invert: false           # invert elevation for an upside-down mount (logical = 90 - physical)
 control:
   bind: 127.0.0.1            # listen address for inbound servers
-  gs232:
-    enabled: false
-    port: 4000
   rotctld:
     enabled: false
     port: 4533
-  pstrotator:
-    enabled: false
-    port: 12000
 wrap:
   enabled: false
   limit: 270                 # ± degrees of permitted wind
@@ -221,6 +202,7 @@ Flags override the corresponding config values for that run:
 | `-baud <n>` | serial baud rate |
 | `-tcp <host:port>` | TCP bridge address (implies `-transport tcp`) |
 | `-addr <1-255>` | Pelco-D camera address |
+| `-protocol d\|p` | wire protocol sent to the unit: Pelco-D (default) or Pelco-P; RX is always adaptive |
 | `-log <path>` | TX/RX trace file |
 | `-loglevel <level>` | log verbosity: `error`\|`warn`\|`info`\|`debug`\|`trace` |
 | `-d` | run headless as a network controller |

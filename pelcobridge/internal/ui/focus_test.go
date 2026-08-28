@@ -18,8 +18,7 @@ func TestCycleFocusForward(t *testing.T) {
 	m := newTestModel()
 	want := []int{
 		focusAddr, focusPan, focusTilt, focusEndpoint,
-		focusGS232, focusGS232On, focusRotctld, focusRotctldOn,
-		focusPstRotator, focusPstRotatorOn, focusWrapLimit,
+		focusRotctld, focusRotctldOn, focusWrapLimit,
 		focusNone, focusAddr,
 	}
 	for i, w := range want {

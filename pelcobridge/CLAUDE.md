@@ -34,7 +34,7 @@ pelcots drives a Pelco-D PTZ/rotator. The central design choice is a **headless 
 
 **Inbound control (`internal/control`).** Three protocols translate to a common `Command` (`KindStop`/`KindSetPos`/`KindJog`) handed to `engine.Submit`: **rotctld** (newline) and **Yaesu GS-232A** (CR) over TCP, and **PstRotator** (`<PST>…</PST>` datagrams) over UDP. Queries are answered from the thread-safe `Pos` snapshot the engine publishes; PstRotator replies go to the client on the listen port + 1 (its documented convention). Servers are off by default and bind `127.0.0.1` (least privilege); azimuth↔pan, elevation↔tilt.
 
-**`internal/pelco`.** Pure protocol: fixed 7-byte frames, command builders (`SetPan`/`SetTilt` with pan-wrap + tilt 0–90 clamp, `Jog`, `Stop`, queries), `Direction.Cmd2()`. No I/O — reuse these rather than hand-rolling angle math or frame bytes.
+**`internal/pelco`.** Pure protocol: Pelco-D (7-byte 0xFF, additive checksum) and Pelco-P (8-byte 0xA0/0xAF, XOR checksum) envelopes carrying the same command set — `Frame.Proto` selects the wire encoding (`Bytes()`/`BytesIn(p)`), builders default to D, `Parse`/`ParseP` tag what they decoded, `ParseAny` dispatches on the lead byte for the framing reader. Command builders (`SetPan`/`SetTilt` with pan-wrap + tilt 0–90 clamp, `Jog`, `Stop`, queries), `Direction.Cmd2()`. No I/O — reuse these rather than hand-rolling angle math or frame bytes. The same address byte is used in both protocols (this unit matches one DIP address regardless of envelope — do not zero-index for P).
 
 **`internal/config`.** YAML load/save. `Load` returns `Default()` for a missing file (first run works). `main.go` layers explicitly-set flags over the loaded config via `flag.Visit`, and auto-saves on quit (TUI) / on signal + periodically (daemon).
 
@@ -42,7 +42,7 @@ pelcots drives a Pelco-D PTZ/rotator. The central design choice is a **headless 
 
 ## Conventions
 
-- Pelco-D angles are azimuth = pan (0–359.99°, wraps), elevation = tilt (0–90°, clamped). The unit reports position in hundredths of a degree.
+- Pelco-D angles are azimuth = pan (0–359.99°, wraps), elevation = tilt (0–90°, clamped). The unit reports position in hundredths of a degree. Only the TX envelope is configurable (`protocol: d|p`); receiving is always adaptive (either envelope accepted) — don't add a receive-side protocol setting.
 - All TX flows through the engine so it is logged once in the unified trace and the port has a single writer; don't write to the port from elsewhere.
 
 ---

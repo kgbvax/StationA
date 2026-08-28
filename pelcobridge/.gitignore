@@ -1,5 +1,6 @@
 # Build artifact
 /pelcots
+/pelcots.exe
 dist/**/*.exe
 
 # Runtime / local state

@@ -1,3 +1,10 @@
+// Package control implements the optional inbound network-control server that
+// lets external tracking software command the rotator over the Hamlib rotctld
+// protocol, translated to a common Command that the engine executes. Position
+// queries are answered from a thread-safe Pos snapshot the engine publishes.
+//
+// This server moves the rotator on remote request: it is the explicit, opt-in
+// counterpart to the TUI's local controls.
 package control
 
 import (
@@ -8,33 +15,52 @@ import (
 	"sync"
 )
 
-// Protocol selects the wire format a Server speaks.
-type Protocol int
+// Command is a decoded, protocol-independent rotator action.
+type Command struct {
+	Kind   Kind
+	Az, El float64 // KindSetPos: target degrees (azimuth/elevation)
+	Source string  // protocol that produced the command ("rotctld")
+	Raw    string  // original request line, for trace logging
+}
+
+// Kind enumerates the rotator actions a network client can request.
+type Kind int
 
 const (
-	// Rotctld is the Hamlib net-rotator protocol (newline-delimited).
-	Rotctld Protocol = iota
-	// GS232 is the Yaesu GS-232A protocol (carriage-return-delimited).
-	GS232
-	// PstRotator is the PstRotator UDP control protocol (datagram, <PST>…</PST>).
-	PstRotator
+	// KindStop halts all motion.
+	KindStop Kind = iota
+	// KindSetPos commands an absolute move to (Az, El) degrees.
+	KindSetPos
 )
 
-// Name returns a short human-readable protocol name.
-func (p Protocol) Name() string {
-	switch p {
-	case GS232:
-		return "gs232"
-	case PstRotator:
-		return "pstrotator"
-	}
-	return "rotctld"
+// Submit hands a decoded Command to the engine for execution.
+type Submit func(Command)
+
+// Pos is a thread-safe holder for the latest known rotator position, written by
+// the engine and read by the server to answer queries.
+type Pos struct {
+	mu     sync.Mutex
+	az, el float64
+	valid  bool
+}
+
+// Set records the latest position (degrees).
+func (p *Pos) Set(az, el float64) {
+	p.mu.Lock()
+	p.az, p.el, p.valid = az, el, true
+	p.mu.Unlock()
+}
+
+// Get returns the latest position and whether any readback has arrived yet.
+func (p *Pos) Get() (az, el float64, ok bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.az, p.el, p.valid
 }
 
 // Server is a running inbound-control listener. Construct with Start; stop with
 // Close.
 type Server struct {
-	proto  Protocol
 	ln     net.Listener
 	pos    *Pos
 	submit Submit
@@ -42,15 +68,15 @@ type Server struct {
 	conns sync.Map // active net.Conn -> struct{}, closed by Close
 }
 
-// Start binds a TCP listener on bind:port and serves the given protocol,
+// Start binds a TCP listener on bind:port and serves the rotctld protocol,
 // translating client requests into Commands via submit and answering position
 // queries from pos. The accept loop runs in the background until Close.
-func Start(proto Protocol, bind string, port int, pos *Pos, submit Submit) (*Server, error) {
+func Start(bind string, port int, pos *Pos, submit Submit) (*Server, error) {
 	ln, err := net.Listen("tcp", net.JoinHostPort(bind, strconv.Itoa(port)))
 	if err != nil {
 		return nil, err
 	}
-	s := &Server{proto: proto, ln: ln, pos: pos, submit: submit}
+	s := &Server{ln: ln, pos: pos, submit: submit}
 	go s.accept()
 	return s, nil
 }
@@ -88,30 +114,17 @@ func (s *Server) accept() {
 // unbounded memory.
 const maxLineLen = 4096
 
-// handle reads one delimited request at a time, dispatches it to the protocol
-// decoder, and writes any reply. The loop ends on EOF, error, a protocol close
-// request, or an over-long line.
+// handle reads one newline-delimited request at a time, dispatches it to the
+// rotctld decoder, and writes any reply. The loop ends on EOF, error, a
+// protocol close request, or an over-long line.
 func (s *Server) handle(conn net.Conn) {
 	defer s.conns.Delete(conn)
 	defer conn.Close()
-	delim := byte('\n')
-	if s.proto == GS232 {
-		delim = '\r'
-	}
 	sc := bufio.NewScanner(conn)
 	sc.Buffer(make([]byte, 0, 256), maxLineLen)
-	sc.Split(splitOn(delim))
+	sc.Split(splitOn('\n'))
 	for sc.Scan() {
-		line := sc.Text()
-		var (
-			reply string
-			stop  bool
-		)
-		if s.proto == GS232 {
-			reply = s.gs232(line)
-		} else {
-			reply, stop = s.rotctld(line)
-		}
+		reply, stop := s.rotctld(sc.Text())
 		if reply != "" {
 			if _, werr := conn.Write([]byte(reply)); werr != nil {
 				return
@@ -125,7 +138,7 @@ func (s *Server) handle(conn net.Conn) {
 }
 
 // splitOn returns a bufio.SplitFunc that splits on the given delimiter byte,
-// including the delimiter in each token (the decoders trim it). A final token
+// including the delimiter in each token (the decoder trims it). A final token
 // without a delimiter is returned at EOF.
 func splitOn(delim byte) bufio.SplitFunc {
 	return func(data []byte, atEOF bool) (advance int, token []byte, err error) {

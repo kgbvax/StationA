@@ -1,9 +1,9 @@
 // Command pelcots drives and observes a Pelco-D PTZ / rotator. It connects over
 // a directly attached serial port or a TCP serial bridge, and runs either as an
-// interactive terminal UI (hold-to-move keys, live position readback) or as a
+// interactive terminal UI (tap-step keys, live position readback) or as a
 // headless daemon that acts purely as a network rotator controller speaking the
-// Yaesu GS-232 and Hamlib rotctld protocols. Optional cable-wrap protection
-// guards infinite-azimuth rotators against over-winding.
+// Hamlib rotctld protocol. Optional cable-wrap protection guards
+// infinite-azimuth rotators against over-winding.
 //
 // SPDX-License-Identifier: GPL-3.0-or-later
 package main
@@ -14,6 +14,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -29,6 +30,7 @@ func main() {
 	port := flag.String("port", "", "serial device path (overrides config)")
 	baud := flag.Int("baud", 0, "serial baud rate (overrides config)")
 	addr := flag.Uint("addr", 0, "Pelco-D camera address 1-255 (overrides config)")
+	protocol := flag.String("protocol", "", "wire protocol: d (Pelco-D) | p (Pelco-P) (overrides config)")
 	logPath := flag.String("log", "", "append TX/RX trace to this file (overrides config)")
 	logLevel := flag.String("loglevel", "", "log verbosity: error | warn | info | debug | trace (overrides config)")
 	tcp := flag.String("tcp", "", "TCP serial-bridge address host:port (overrides config)")
@@ -57,6 +59,17 @@ func main() {
 			os.Exit(2)
 		}
 		cfg.Addr = byte(*addr)
+	}
+	if set["protocol"] {
+		cfg.Protocol = strings.ToLower(strings.TrimSpace(*protocol))
+	}
+	// Validate however the value arrived (flag or pelcots.yaml): a typo like
+	// `protocol: pelco-p` must not silently run as Pelco-D.
+	switch cfg.Protocol {
+	case config.ProtocolD, config.ProtocolP:
+	default:
+		fmt.Fprintf(os.Stderr, "protocol must be %q or %q\n", config.ProtocolD, config.ProtocolP)
+		os.Exit(2)
 	}
 	if set["log"] {
 		cfg.Log = *logPath
@@ -87,15 +100,18 @@ func main() {
 		TCPAddr:     cfg.TCP.Address,
 		Baud:        cfg.Serial.Baud,
 		Addr:        cfg.Addr,
+		Protocol:    cfg.Protocol,
 		Sim:         cfg.Sim,
 		SelfCheck:   cfg.SelfCheck,
 		Bind:        cfg.Control.Bind,
 		WrapEnabled: cfg.Wrap.Enabled,
 		WrapLimit:   cfg.Wrap.Limit,
 		WrapAccum:   cfg.Wrap.Accumulated,
-		GS232:       cfg.Control.GS232,
+		AzOffset:    cfg.AzOffset,
+		TiltInvert:  cfg.TiltInvert,
+		TiltCal:     cfg.TiltCal,
+		Goto:        cfg.Goto,
 		Rotctld:     cfg.Control.Rotctld,
-		PstRotator:  cfg.Control.PstRotator,
 		Logw:        logw,
 		LogLevel:    cfg.LogLevel,
 	})
@@ -126,8 +142,8 @@ func runTUI(eng *engine.Engine, cfg config.Config, cfgPath string) {
 // runDaemon runs headless until SIGINT/SIGTERM, acting as a network controller.
 // It persists the cable-wind accumulator periodically and on shutdown.
 func runDaemon(eng *engine.Engine, cfg config.Config, cfgPath string) {
-	if !cfg.Control.GS232.Enabled && !cfg.Control.Rotctld.Enabled && !cfg.Control.PstRotator.Enabled {
-		fmt.Fprintln(os.Stderr, "daemon: no control server enabled (set control.gs232.enabled, control.rotctld.enabled, or control.pstrotator.enabled)")
+	if !cfg.Control.Rotctld.Enabled {
+		fmt.Fprintln(os.Stderr, "daemon: no control server enabled (set control.rotctld.enabled)")
 		_ = eng.Close()
 		os.Exit(2)
 	}
@@ -141,10 +157,10 @@ func runDaemon(eng *engine.Engine, cfg config.Config, cfgPath string) {
 	for {
 		select {
 		case <-ticker.C:
-			saveConfig(cfgPath, configFromState(cfg, eng.Snapshot())) // crash-resilient wind persistence
+			saveConfig(cfgPath, configFromState(cfgPath, eng.Snapshot())) // crash-resilient wind persistence
 		case <-sig:
 			_ = eng.Close()
-			saveConfig(cfgPath, configFromState(cfg, eng.Snapshot()))
+			saveConfig(cfgPath, configFromState(cfgPath, eng.Snapshot()))
 			return
 		}
 	}
@@ -175,20 +191,27 @@ func openLog(path string, daemon bool) (io.Writer, func()) {
 	}
 }
 
-// configFromState rebuilds a Config from a base config plus live engine state
-// (used to persist the daemon's current wind/server state).
-func configFromState(base config.Config, s engine.State) config.Config {
-	base.Transport = s.Transport
-	base.Serial.Port = s.SerialPort
-	base.Serial.Baud = s.Baud
-	base.TCP.Address = s.TCPAddr
-	base.Addr = s.Addr
-	base.Control.Bind = s.Bind
-	base.Control.GS232 = config.ServerConfig{Enabled: s.GS232On, Port: s.GS232Port}
-	base.Control.Rotctld = config.ServerConfig{Enabled: s.RotctldOn, Port: s.RotctldPort}
-	base.Control.PstRotator = config.ServerConfig{Enabled: s.PstRotatorOn, Port: s.PstRotatorPort}
-	base.Wrap = config.WrapConfig{Enabled: s.WrapEnabled, Limit: s.WrapLimit, Accumulated: s.Wrap}
-	return base
+// configFromState re-reads the config file and refreshes only the engine-owned
+// fields (transport, servers, wind) from the live snapshot. Re-reading — rather
+// than starting from the in-memory config loaded at startup — preserves manual
+// edits to other fields (e.g. log_level) made while the daemon runs, which the
+// periodic save would otherwise clobber.
+func configFromState(path string, s engine.State) config.Config {
+	cfg, err := config.Load(path)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "cannot reload config %s: %v\n", path, err)
+	}
+	cfg.Transport = s.Transport
+	cfg.Serial.Port = s.SerialPort
+	cfg.Serial.Baud = s.Baud
+	cfg.TCP.Address = s.TCPAddr
+	cfg.Addr = s.Addr
+	cfg.Protocol = s.Protocol
+	cfg.AzOffset = s.AzOffset
+	cfg.Control.Bind = s.Bind
+	cfg.Control.Rotctld = config.ServerConfig{Enabled: s.RotctldOn, Port: s.RotctldPort}
+	cfg.Wrap = config.WrapConfig{Enabled: s.WrapEnabled, Limit: s.WrapLimit, Accumulated: s.Wrap}
+	return cfg
 }
 
 func saveConfig(path string, c config.Config) {

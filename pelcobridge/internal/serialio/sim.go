@@ -21,15 +21,21 @@ type SimOptions struct {
 	// engine re-sends jog keepalive every poll (100–400 ms), so this sets the
 	// simulated jog slew rate. Defaults to 5° per frame.
 	JogStep float64
+	// WildTiltWhileMoving, when >0, reproduces the 303Z/3050DZ readback failure
+	// in the simulator: while the tilt motor is running the emulator answers
+	// QueryTilt with tilt+this (a constant valid-checksum garbage stream, far
+	// from the true position) instead of the true position; once the motor
+	// halts, QueryTilt answers the true position. Idle readback is always
+	// clean. 0 (default) = clean readback at all times. Degrees.
+	WildTiltWhileMoving float64
 }
 
 // OpenSim returns a Port backed by an in-memory Pelco-D rotator emulator.
 // Nothing is opened on the host: writes are decoded as Pelco-D commands and
 // answered with position-response frames on the read side, so the engine's
-// polling, arrival detection, and cable-wrap unwrap behave as they would
-// against a real rotator. Used to exercise the inbound control servers
-// (GS-232 / rotctld / PstRotator) and the sat-tracking / PstRotator
-// integrations without any hardware attached.
+// polling, arrival detection, and cable-wrap protection behave as they would
+// against a real rotator. Used to exercise the inbound control server
+// (rotctld) and the sat-tracking integration without any hardware attached.
 //
 // Motion model: an absolute SetPan/SetTilt snaps straight to the target (the
 // unit is "instant"); a Jog moves the position by JogStep in the jog
@@ -41,30 +47,38 @@ func OpenSim(opts SimOptions) *Port {
 		opts.JogStep = 5
 	}
 	s := &simLink{
-		addr:    opts.Addr,
-		pan:     wrap360(opts.StartPan),
-		tilt:    clampTilt(opts.StartTilt),
-		jogStep: opts.JogStep,
-		out:     make(chan []byte, 64),
-		done:    make(chan struct{}),
+		addr:                opts.Addr,
+		pan:                 wrap360(opts.StartPan),
+		tilt:                clampTilt(opts.StartTilt),
+		jogStep:             opts.JogStep,
+		wildTiltWhileMoving: opts.WildTiltWhileMoving,
+		out:                 make(chan []byte, 64),
+		done:                make(chan struct{}),
 	}
 	return newPort(s)
 }
 
-// simLink is an io.ReadWriteCloser that emulates a Pelco-D PTZ in memory. The
-// serialio framing reader (Port.read) consumes response bytes from out; the
-// engine writes command frames via Write. All Pelco-D framing/checksumming is
-// reused through newPort, so this is a drop-in transport just like Open/Dial.
+// simLink is an io.ReadWriteCloser that emulates a Pelco-D / Pelco-P PTZ in
+// memory. The serialio framing reader (Port.read) consumes response bytes from
+// out; the engine writes command frames via Write. Commands are accepted in
+// either protocol (dispatched on the 0xFF / 0xA0 start byte) and each response
+// is framed in the protocol the query arrived in, like the adaptive real head.
+// All framing/checksumming is reused through newPort, so this is a drop-in
+// transport just like Open/Dial.
 type simLink struct {
 	mu      sync.Mutex
 	addr    byte
 	pan     float64 // current azimuth, degrees, 0–<360
 	tilt    float64 // current elevation, degrees, 0–90
 	jogStep float64
-	wbuf    []byte // inbound command accumulation (writes are whole frames)
-	out     chan []byte
-	done    chan struct{}
-	once    sync.Once
+	// wildTiltWhileMoving >0: while tiltMoving, QueryTilt answers tilt+this
+	// (garbage) instead of the true position; reproduces the 303Z/3050DZ.
+	wildTiltWhileMoving float64
+	tiltMoving          bool   // tilt motor is running (last Jog had a tilt component)
+	wbuf                []byte // inbound command accumulation (writes are whole frames)
+	out                 chan []byte
+	done                chan struct{}
+	once                sync.Once
 }
 
 func (s *simLink) Read(p []byte) (int, error) {
@@ -82,12 +96,17 @@ func (s *simLink) Read(p []byte) (int, error) {
 func (s *simLink) Write(p []byte) (int, error) {
 	s.mu.Lock()
 	s.wbuf = append(s.wbuf, p...)
-	for len(s.wbuf) >= pelco.FrameLen {
-		f, err := pelco.Parse(s.wbuf[:pelco.FrameLen])
-		s.wbuf = s.wbuf[pelco.FrameLen:]
-		if err == nil {
-			s.handle(f)
+	for {
+		f, need, err := pelco.ParseAny(s.wbuf)
+		if err == pelco.ErrLength {
+			break // wait for the rest of the frame
 		}
+		if err != nil {
+			s.wbuf = s.wbuf[1:] // false start — resync on the next 0xFF/0xA0
+			continue
+		}
+		s.wbuf = s.wbuf[need:]
+		s.handle(f)
 	}
 	s.mu.Unlock()
 	return len(p), nil
@@ -109,18 +128,39 @@ func (s *simLink) handle(f pelco.Frame) {
 		s.pan = wrap360(pelco.HundredthsToDeg(f.Word()))
 	case f.IsSetTilt():
 		s.tilt = clampTilt(pelco.HundredthsToDeg(f.Word()))
+		s.tiltMoving = false // absolute set snaps; the motor is not running afterward
 	case f.IsSetPreset(), f.IsGoPreset(), f.IsClearPreset():
 		// Presets (including the self-check disable, set preset 105) have no
 		// position effect in the simulator; they are accepted and ignored so
 		// the engine's on-connect disable-self-check frame is a harmless no-op.
 	case f.IsQueryPan():
-		s.enqueue(pelco.PanResponse(s.addrOr(f.Addr), s.pan))
+		r := pelco.PanResponse(s.addrOr(f.Addr), s.pan)
+		r.Proto = f.Proto // answer in the protocol the query arrived in
+		s.enqueue(r)
 	case f.IsQueryTilt():
-		s.enqueue(pelco.TiltResponse(s.addrOr(f.Addr), s.tilt))
+		t := s.tilt
+		// 303Z/3050DZ failure mode: while the tilt motor runs the head answers
+		// with a constant garbage stream (tilt+offset), never the true
+		// position; once halted, readback is clean. tiltMoving is driven by the
+		// motion frames below (a Jog with a tilt component runs the motor; a
+		// Jog with no tilt component, a Stop, or a SetTilt halts it).
+		if s.tiltMoving && s.wildTiltWhileMoving > 0 {
+			t = s.tilt + s.wildTiltWhileMoving
+		}
+		r := pelco.TiltResponse(s.addrOr(f.Addr), t)
+		r.Proto = f.Proto // answer in the protocol the query arrived in
+		s.enqueue(r)
+	case f.Cmd1 == 0 && f.Cmd2 == 0:
+		// Stop (and a zero-direction jog, which is byte-identical: Cmd1=0
+		// Cmd2=0): all motors halt. The tilt motor stops, so the next
+		// QueryTilt answers the true position — this is how the open-loop
+		// goto's halt (the tilt bit dropped) ends the garbage stream.
+		s.tiltMoving = false
 	case f.IsJog():
 		pan, tilt := f.JogDir()
 		s.pan = wrap360(s.pan + float64(pan)*s.jogStep)
 		s.tilt = clampTilt(s.tilt + float64(tilt)*s.jogStep)
+		s.tiltMoving = tilt != 0
 	}
 }
 

@@ -26,11 +26,21 @@ var errClosed = errors.New("serialio: port closed")
 // (net.Conn); direct serial writes are left as-is.
 const writeTimeout = 2 * time.Second
 
+// dialTimeout bounds one connection attempt to a TCP serial bridge. The engine
+// dials from its single actor goroutine, so an unbounded net.Dial to a host that
+// silently drops SYNs — bridge powered off, firewall, wrong subnet — parked the
+// whole engine for the OS connect timeout (75 s or more on macOS/Linux). Nothing
+// polled, no command executed, no all-stop could be sent to a unit that was
+// still slewing, and Close waited it out. Failing fast keeps the reconnect loop
+// responsive instead.
+const dialTimeout = 3 * time.Second
+
 // Event is something observed on the serial link, delivered on the Frames
 // channel. Exactly one of Raw, a decoded Frame, or Err is meaningful:
 //   - Raw set: the exact bytes just read, before any framing (for diagnostics).
 //   - Err set: a read or frame-parse error.
-//   - otherwise: a successfully decoded 7-byte Pelco-D frame.
+//   - otherwise: a successfully decoded frame (Pelco-D or Pelco-P — see
+//     pelco.Frame.Proto for which envelope it arrived in).
 type Event struct {
 	Raw   []byte
 	Frame pelco.Frame
@@ -72,9 +82,10 @@ func Open(name string, baud int) (*Port, error) {
 
 // Dial connects to a serial-to-TCP bridge (e.g. ser2net) at address
 // "host:port" and starts the framing reader goroutine. The bridge owns the real
-// serial parameters; raw Pelco-D bytes flow over the socket unchanged.
+// serial parameters; raw Pelco-D bytes flow over the socket unchanged. The
+// attempt is bounded by dialTimeout — see there for why that matters.
 func Dial(address string) (*Port, error) {
-	conn, err := net.Dial("tcp", address)
+	conn, err := net.DialTimeout("tcp", address, dialTimeout)
 	if err != nil {
 		return nil, err
 	}
@@ -139,28 +150,33 @@ func (p *Port) read() {
 	}
 }
 
-// extract pulls every valid 7-byte frame out of buf and returns the unconsumed
-// tail. It self-heals from stray/extra bytes: leading non-sync bytes are
-// discarded, and a 7-byte window that fails its checksum (a false sync, e.g. a
-// duplicated 0xFF) drops a single byte and re-hunts for the next 0xFF rather
-// than throwing away a frame that is merely misaligned by one byte.
+// extract pulls every valid frame out of buf and returns the unconsumed tail.
+// It accepts both wire protocols (adaptive, like the unit itself): 0xA0 begins
+// an 8-byte Pelco-P frame, 0xFF a 7-byte Pelco-D frame; which one we SEND is
+// the engine's configured protocol, but the read side answers either. It
+// self-heals from stray/extra bytes: leading non-start bytes are discarded,
+// and a window that fails its checksum (a false start — 0xA0/0xAF can appear
+// inside D frames as data, 0xFF inside P frames) drops a single byte and
+// re-hunts rather than throwing away a frame that is merely misaligned by one
+// byte. A candidate shorter than its protocol's frame length is kept in the
+// tail until more bytes arrive.
 func (p *Port) extract(buf []byte) []byte {
 	for {
 		i := 0
-		for i < len(buf) && buf[i] != pelco.Sync {
+		for i < len(buf) && buf[i] != pelco.Sync && buf[i] != pelco.STX {
 			i++
 		}
 		buf = buf[i:]
-		if len(buf) < pelco.FrameLen {
-			return buf
+		f, need, err := pelco.ParseAny(buf)
+		if err == pelco.ErrLength {
+			return buf // wait for the rest of the frame
 		}
-		f, err := pelco.Parse(buf[:pelco.FrameLen])
 		if err != nil {
-			buf = buf[1:] // false sync — resync on the next 0xFF
+			buf = buf[1:] // false start — resync on the next 0xFF/0xA0
 			continue
 		}
 		p.emit(Event{Frame: f})
-		buf = buf[pelco.FrameLen:]
+		buf = buf[need:]
 	}
 }
 

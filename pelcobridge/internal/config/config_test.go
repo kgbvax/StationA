@@ -22,7 +22,6 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 	want.TCP.Address = "10.0.0.5:4001"
 	want.Addr = 7
 	want.Control.Rotctld = ServerConfig{Enabled: true, Port: 4533}
-	want.Control.PstRotator = ServerConfig{Enabled: true, Port: 12000}
 	want.Wrap = WrapConfig{Enabled: true, Limit: 270, Accumulated: -182.5}
 
 	if err := Save(path, want); err != nil {
@@ -34,7 +33,6 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 	}
 	if got.Transport != want.Transport || got.TCP.Address != want.TCP.Address ||
 		got.Addr != want.Addr || got.Control.Rotctld != want.Control.Rotctld ||
-		got.Control.PstRotator != want.Control.PstRotator ||
 		got.Wrap != want.Wrap {
 		t.Fatalf("round-trip mismatch:\n got %+v\nwant %+v", got, want)
 	}

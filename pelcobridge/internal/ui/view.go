@@ -36,13 +36,8 @@ func (m Model) View() string {
 	// toggle renders a boolean on/off field, bracketed when focused.
 	toggle := func(i int) string {
 		on := false
-		switch i {
-		case focusGS232On:
-			on = s.GS232On
-		case focusRotctldOn:
+		if i == focusRotctldOn {
 			on = s.RotctldOn
-		case focusPstRotatorOn:
-			on = s.PstRotatorOn
 		}
 		v := hintStyle.Render("off")
 		if on {
@@ -69,20 +64,26 @@ func (m Model) View() string {
 		transport = "sim"
 	}
 
+	azLine := m.readbackLine("Current  azimuth  ", s.HavePan, s.CurPanRaw, s.LastPan)
+	if s.AzOffset != 0 {
+		azLine += "  " + hintStyle.Render(fmt.Sprintf("zeroed @ %.2f°", s.AzOffset))
+	}
+
 	header := strings.Join([]string{
 		titleStyle.Render("pelcots") + "  " + hintStyle.Render("Pelco-D PTZ diagnostic & rotator network controller"),
-		fmt.Sprintf("%s %s %s   %s %s   %s%s   %s %s   %s",
+		fmt.Sprintf("%s %s %s   %s %s   %s%s   %s %s   %s %s   %s",
 			labelStyle.Render("link"), valueStyle.Render(transport), field(focusEndpoint),
 			labelStyle.Render("baud"), valueStyle.Render(fmt.Sprintf("%d 8N1", s.Baud)),
 			labelStyle.Render("addr"), field(focusAddr),
+			labelStyle.Render("proto"), valueStyle.Render(strings.ToUpper(s.Protocol)),
 			labelStyle.Render("rx"), valueStyle.Render(fmt.Sprintf("%d B", s.BytesIn)),
 			connState),
 		"",
 		fmt.Sprintf("%s  azimuth%s°  elevation%s°  %s",
 			labelStyle.Render("Target "), field(focusPan), field(focusTilt),
-			hintStyle.Render("(type, then hold Enter to go)")),
-		m.readbackLine("Current  azimuth  ", s.HavePan, s.CurPan, s.CurPanRaw, s.LastPan),
-		m.readbackLine("         elevation", s.HaveTilt, s.CurTilt, s.CurTiltRaw, s.LastTilt),
+			hintStyle.Render("(type, then Enter to go)")),
+		azLine,
+		m.readbackLine("         elevation", s.HaveTilt, s.CurTiltRaw, s.LastTilt),
 		m.jogLine(),
 		m.wrapLine(field),
 		m.serversLine(field, toggle),
@@ -90,8 +91,9 @@ func (m Model) View() string {
 		hintStyle.Render(s.Status),
 	}, "\n")
 
-	footer := hintStyle.Render("tab field · on/off field: space toggles · hold g/enter go · hold h home · hold arrows/kj jog · t turbo · space stop")
-	footer += "\n" + hintStyle.Render("m transport · r reconnect · y gs232 · o rotctld · p pstrotator · w wrap · z zero-wrap · q quit")
+	footer := hintStyle.Render("tab field · on/off field: space toggles · g/enter go · h home · arrows/kj tap-step · t turbo · ") +
+		warnStyle.Render("⏹ esc/space STOP")
+	footer += "\n" + hintStyle.Render("m transport · r reconnect · o rotctld · w wrap · z zero-wrap · a zero-az · q quit")
 	if m.logPath != "" {
 		footer += "\n" + hintStyle.Render("trace → "+m.logPath)
 	}
@@ -108,9 +110,9 @@ func (m Model) jogLine() string {
 	}
 	switch {
 	case s.Unwrapping:
-		return labelStyle.Render("Motion  ") + warnStyle.Render("unwinding cable (release/space to stop)") + "   " + turbo
+		return labelStyle.Render("Motion  ") + warnStyle.Render("unwinding cable (esc/space to abort)") + "   " + turbo
 	case s.Gotoing:
-		return labelStyle.Render("Motion  ") + liveStyle.Render("seeking target (release to stop)") + "   " + turbo
+		return labelStyle.Render("Motion  ") + liveStyle.Render("seeking target (esc/space to abort)") + "   " + turbo
 	case s.Jogging:
 		dir := ""
 		switch {
@@ -125,7 +127,7 @@ func (m Model) jogLine() string {
 		case s.JogTilt < 0:
 			dir += "↓"
 		}
-		return labelStyle.Render("Motion  ") + liveStyle.Render(fmt.Sprintf("moving %s (release to stop)", dir)) + "   " + turbo
+		return labelStyle.Render("Motion  ") + liveStyle.Render(fmt.Sprintf("stepping %s (auto-stop / esc·space)", dir)) + "   " + turbo
 	default:
 		return labelStyle.Render("Motion  ") + hintStyle.Render("idle") + "   " + turbo
 	}
@@ -149,19 +151,17 @@ func (m Model) wrapLine(field func(int) string) string {
 	return labelStyle.Render("Wrap    ") + st.Render(fmt.Sprintf("wind %+.0f° / ±%.0f°", s.Wrap, s.WrapLimit)) + "   " + limit
 }
 
-// serversLine shows inbound-control server state with their editable ports and
-// tab-able on/off toggles.
+// serversLine shows the inbound-control server state with its editable port
+// and tab-able on/off toggle.
 func (m Model) serversLine(field, toggle func(int) string) string {
 	s := m.snap
-	return fmt.Sprintf("%s %s%s%s   %s%s%s   %s%s%s   %s %s",
+	return fmt.Sprintf("%s %s%s%s   %s %s",
 		labelStyle.Render("Servers "),
-		labelStyle.Render("gs232"), field(focusGS232), toggle(focusGS232On),
 		labelStyle.Render("rotctld"), field(focusRotctld), toggle(focusRotctldOn),
-		labelStyle.Render("pstrotator"), field(focusPstRotator), toggle(focusPstRotatorOn),
 		labelStyle.Render("bind"), valueStyle.Render(s.Bind))
 }
 
-func (m Model) readbackLine(label string, have bool, deg float64, raw uint16, last time.Time) string {
+func (m Model) readbackLine(label string, have bool, raw uint16, last time.Time) string {
 	l := labelStyle.Render(label)
 	if !have {
 		return fmt.Sprintf("%s  %s", l, staleStyle.Render("— no readback —"))
@@ -170,10 +170,13 @@ func (m Model) readbackLine(label string, have bool, deg float64, raw uint16, la
 	if age := time.Since(last); age > staleAfter {
 		state = staleStyle.Render(fmt.Sprintf("stale %.1fs", age.Seconds()))
 	}
-	return fmt.Sprintf("%s  %s°  %s  %s",
+	// Print the raw readback bytes in hex — do not interpret the data word as
+	// degrees. The tilt decode is calibrated per-device and may be wrong, so the
+	// diagnostic TUI shows the verbatim wire bytes (D1 D2 big-endian) and the
+	// 16-bit word, never a converted angle.
+	return fmt.Sprintf("%s  %s  %s",
 		l,
-		valueStyle.Render(fmt.Sprintf("%7.2f", deg)),
-		labelStyle.Render(fmt.Sprintf("(raw %5d)", raw)),
+		valueStyle.Render(fmt.Sprintf("%02X %02X  (0x%04X)", byte(raw>>8), byte(raw), raw)),
 		state)
 }
 

@@ -274,8 +274,12 @@ func TestUnwrapDroppedLinkNotResumed(t *testing.T) {
 	if !waitFor(2*time.Second, func() bool { return eng.Snapshot().Connected }) {
 		t.Fatal("engine did not connect")
 	}
-	if !waitFor(2*time.Second, func() bool { return eng.Snapshot().HavePan }) {
-		t.Fatal("engine never got pan readback")
+	// The closed-loop goto needs both axes' readback before it can arm.
+	if !waitFor(2*time.Second, func() bool {
+		s := eng.Snapshot()
+		return s.HavePan && s.HaveTilt
+	}) {
+		t.Fatal("engine never got pan/tilt readback")
 	}
 
 	// Goto +20°: shortest path (+20°) would push the wind to +280°, past the

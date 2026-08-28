@@ -150,3 +150,45 @@ func TestSimIgnoresPresets(t *testing.T) {
 		t.Fatalf("preset moved position to %.2f; want 100 (presets must be ignored)", got)
 	}
 }
+
+// TestSimPelcoPAdaptive verifies the emulator speaks Pelco-P like the adaptive
+// real head: a P-framed set + query (8-byte 0xA0/0xAF envelopes) moves the
+// emulated position and the response comes back tagged — and framed — as
+// Pelco-P, while the framing reader decodes it transparently.
+func TestSimPelcoPAdaptive(t *testing.T) {
+	p := OpenSim(SimOptions{Addr: 1})
+	defer p.Close()
+
+	set := pelco.SetPan(1, 180)
+	set.Proto = pelco.ProtocolP
+	query := pelco.QueryPan(1)
+	query.Proto = pelco.ProtocolP
+	if err := p.Send(set); err != nil {
+		t.Fatalf("P SetPan: %v", err)
+	}
+	if err := p.Send(query); err != nil {
+		t.Fatalf("P QueryPan: %v", err)
+	}
+
+	frames := readFrames(t, p, 1, time.Second)
+	if len(frames) != 1 || !frames[0].IsPanResponse() {
+		t.Fatalf("want one pan response: %+v", frames)
+	}
+	if frames[0].Proto != pelco.ProtocolP {
+		t.Fatalf("response proto = %v, want p (sim must echo the query's protocol)", frames[0].Proto)
+	}
+	if got, want := pelco.HundredthsToDeg(frames[0].Word()), 180.0; got != want {
+		t.Fatalf("pan = %.2f, want %.2f", got, want)
+	}
+	if wb := frames[0].Bytes(); len(wb) != pelco.PFrameLen || wb[0] != pelco.STX {
+		t.Fatalf("wire frame % X is not a Pelco-P envelope", wb)
+	}
+
+	// A D-framed query after P traffic still works: the reader resyncs on 0xFF
+	// and the sim answers in D.
+	_ = p.Send(pelco.QueryPan(1))
+	frames = readFrames(t, p, 1, time.Second)
+	if len(frames) != 1 || frames[0].Proto != pelco.ProtocolD || pelco.HundredthsToDeg(frames[0].Word()) != 180.0 {
+		t.Fatalf("D query after P traffic: %+v", frames)
+	}
+}

@@ -1,8 +1,9 @@
 // Package ui implements the Bubble Tea TUI: a thin view/controller over the
 // headless engine. It renders the engine's published snapshot and translates
-// keystrokes into engine commands. Local keyboard motion is hold-to-move —
-// motion lasts only while a key is held (see armRelease) — so the TUI never
-// drives the unit without an active key press.
+// keystrokes into engine commands. Local keyboard motion is tap-step: each
+// arrow tap drives the unit for one short step then auto-stops, so the TUI
+// never leaves the unit moving without an explicit action. Goto/home run to
+// completion. Esc or space is the emergency stop.
 package ui
 
 import (
@@ -14,7 +15,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"pelcots/internal/config"
-	"pelcots/internal/control"
 	"pelcots/internal/engine"
 )
 
@@ -23,44 +23,42 @@ const (
 	staleAfter = 1500 * time.Millisecond // no readback within this → "stale"
 	logHeight  = 14                      // rows reserved for the TX/RX log panel
 
-	// holdRelease is how long a motion lasts after the last key event before it
-	// is auto-stopped. Terminals deliver no key-up events, so a held key is
-	// detected via the OS key-repeat stream: each repeat re-arms the timer;
-	// when repeats stop (key released), the timer fires and stops the motion.
-	holdRelease = 300 * time.Millisecond
+	// stepDuration is how long a single tap-step drives the unit before it
+	// auto-stops. Terminals deliver no key-up event, so the earlier hold-to-move
+	// model (detect release via the OS key-repeat stream) was unreliable.
+	// Tap-step replaces it: each arrow tap = one discrete step; OS key-repeat
+	// events arriving within stepDuration are suppressed, so holding a key
+	// produces one step, not a runaway slew. Tap again for the next step.
+	stepDuration = 500 * time.Millisecond
 )
 
 // focus values for the editable fields; focusNone means jog/hotkey mode.
-// Toggle fields (focusGS232On, focusRotctldOn) hold a boolean rather than text
-// and are flipped with space/enter/left/right — see isToggle / handleToggleKey.
+// The toggle field (focusRotctldOn) holds a boolean rather than text and is
+// flipped with space/enter/left/right — see isToggle / handleToggleKey.
 const (
 	focusNone = -1
 
-	focusAddr         = iota - 1 // 0  unit address
-	focusPan                     // 1  target azimuth
-	focusTilt                    // 2  target elevation
-	focusEndpoint                // 3  link endpoint
-	focusGS232                   // 4  gs232 port
-	focusGS232On                 // 5  gs232 on/off toggle
-	focusRotctld                 // 6  rotctld port
-	focusRotctldOn               // 7  rotctld on/off toggle
-	focusPstRotator              // 8  pstrotator port
-	focusPstRotatorOn            // 9  pstrotator on/off toggle
-	focusWrapLimit               // 10 cable-wrap limit
-	fieldCount        = 11
+	focusAddr      = iota - 1 // 0  unit address
+	focusPan                  // 1  target azimuth
+	focusTilt                 // 2  target elevation
+	focusEndpoint             // 3  link endpoint
+	focusRotctld              // 4  rotctld port
+	focusRotctldOn            // 5  rotctld on/off toggle
+	focusWrapLimit            // 6  cable-wrap limit
+	fieldCount     = 7
 )
 
 // isToggle reports whether a focus index is a boolean toggle field (flipped in
 // place) rather than a text-entry field.
 func isToggle(focus int) bool {
-	return focus == focusGS232On || focus == focusRotctldOn || focus == focusPstRotatorOn
+	return focus == focusRotctldOn
 }
 
 type tickMsg time.Time
 
-// releaseMsg fires holdRelease after a motion key press; if seq still matches
-// the latest press, the key was released → stop the motion.
-type releaseMsg struct{ seq uint64 }
+// stepMsg fires stepDuration after a tap-step begins; the handler stops the
+// motion, ending the step. It is the tap-step replacement for hold-to-move.
+type stepMsg struct{}
 
 // Model is the Bubble Tea application state.
 type Model struct {
@@ -76,12 +74,15 @@ type Model struct {
 	tcpAddr    string
 	baud       int
 
-	turbo   bool
-	heldSeq uint64
+	turbo bool
+	// stepUntil is the time until which a tap-step is in progress; OS key-repeat
+	// events arriving before it are suppressed so a held key yields one step.
+	stepUntil time.Time
 
 	width, height int
 	logPath       string
 	logLevel      config.LogLevel // preserved across TUI quit-saves (Config() restores it)
+	base          config.Config   // loaded config; Config() starts from it so non-editable fields (self_check, sim) survive quit-saves
 }
 
 // New builds the model around a started engine and the initial config.
@@ -107,14 +108,13 @@ func New(eng *engine.Engine, cfg config.Config, logPath string) Model {
 		tcpAddr:    cfg.TCP.Address,
 		baud:       cfg.Serial.Baud,
 		logPath:    logPath,
+		base:       cfg,
 	}
 	m.inputs[focusAddr] = mk(strconv.Itoa(int(cfg.Addr)), 4)
 	m.inputs[focusPan] = mk("0", 7)
 	m.inputs[focusTilt] = mk("0", 7)
 	m.inputs[focusEndpoint] = mk(endpoint, 24)
-	m.inputs[focusGS232] = mk(strconv.Itoa(cfg.Control.GS232.Port), 6)
 	m.inputs[focusRotctld] = mk(strconv.Itoa(cfg.Control.Rotctld.Port), 6)
-	m.inputs[focusPstRotator] = mk(strconv.Itoa(cfg.Control.PstRotator.Port), 6)
 	m.inputs[focusWrapLimit] = mk(strconv.FormatFloat(cfg.Wrap.Limit, 'f', -1, 64), 6)
 	m.snap = eng.Snapshot()
 	m.logLevel = cfg.LogLevel
@@ -137,10 +137,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tickMsg:
 		m.snap = m.eng.Snapshot()
 		return m, tickCmd()
-	case releaseMsg:
-		if msg.seq == m.heldSeq {
-			m.eng.StopMotion()
-		}
+	case stepMsg:
+		// A tap-step's stepDuration has elapsed: halt the unit, ending the step.
+		m.stopAll()
 		return m, nil
 	case tea.KeyMsg:
 		return m.handleKey(msg)
@@ -159,6 +158,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.cycleFocus(-1)
 		return m, nil
 	case "esc":
+		// Esc is the always-available emergency stop: halt all motion and drop
+		// out of any focused field. Stopping is harmless when idle.
+		m.stopAll()
 		m.blur()
 		return m, nil
 	}
@@ -176,59 +178,64 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 
-	// Jog / hotkey mode. Motion keys must be held: each press (re)issues the
-	// move and arms a release timer.
+	// Jog / hotkey mode. Arrow keys are tap-step (one discrete step per tap);
+	// goto/home run to completion. Space or Esc is the emergency stop.
 	var cmd tea.Cmd
 	switch msg.String() {
 	case "q":
 		return m.quit()
 	case " ":
-		m.eng.StopMotion()
+		m.stopAll()
 	case "g", "enter":
 		cmd = m.doGoto()
 	case "h":
 		m.applyAddr()
 		m.eng.Home()
-		cmd = m.armRelease()
 	case "t":
 		m.turbo = !m.turbo
 	case "m":
 		m.toggleTransport()
 	case "r":
 		m.doReconnect()
-	case "y":
-		m.eng.SetServer(control.GS232, !m.snap.GS232On, m.portField(focusGS232, m.snap.GS232Port))
 	case "o":
-		m.eng.SetServer(control.Rotctld, !m.snap.RotctldOn, m.portField(focusRotctld, m.snap.RotctldPort))
-	case "p":
-		m.eng.SetServer(control.PstRotator, !m.snap.PstRotatorOn, m.portField(focusPstRotator, m.snap.PstRotatorPort))
+		m.eng.SetRotctld(!m.snap.RotctldOn, m.portField(focusRotctld, m.snap.RotctldPort))
 	case "w":
 		m.eng.SetWrap(!m.snap.WrapEnabled, m.limitField())
 	case "z":
 		m.eng.ZeroWrap()
+	case "a":
+		m.eng.ZeroAzimuth()
 	case "up", "k":
-		cmd = m.keyJog(0, 1)
+		cmd = m.keyStep(0, 1)
 	case "down", "j":
-		cmd = m.keyJog(0, -1)
+		cmd = m.keyStep(0, -1)
 	case "left":
-		cmd = m.keyJog(-1, 0)
+		cmd = m.keyStep(-1, 0)
 	case "right":
-		cmd = m.keyJog(1, 0)
+		cmd = m.keyStep(1, 0)
 	}
 	return m, cmd
 }
 
-// armRelease bumps the held-key sequence and returns a command that fires a
-// releaseMsg after holdRelease. A later press invalidates earlier timers.
-func (m *Model) armRelease() tea.Cmd {
-	m.heldSeq++
-	seq := m.heldSeq
-	return tea.Tick(holdRelease, func(time.Time) tea.Msg { return releaseMsg{seq} })
+// stopAll is the emergency stop: halt the unit and clear the tap-step window so
+// the next step is responsive. Idempotent and safe to call when idle.
+func (m *Model) stopAll() {
+	m.stepUntil = time.Time{}
+	m.eng.StopMotion()
 }
 
-func (m *Model) keyJog(pan, tilt int) tea.Cmd {
+// keyStep drives the unit for one tap-step in the given pan/tilt direction.
+// OS key-repeat events arriving while a step is in progress (before stepUntil)
+// are suppressed, so holding a key produces a single step, not continuous
+// motion. A stepMsg is armed to auto-stop the unit after stepDuration.
+func (m *Model) keyStep(pan, tilt int) tea.Cmd {
+	now := time.Now()
+	if now.Before(m.stepUntil) {
+		return nil // a step is in progress; ignore the key-repeat
+	}
+	m.stepUntil = now.Add(stepDuration)
 	m.eng.Jog(pan, tilt, m.turbo)
-	return m.armRelease()
+	return tea.Tick(stepDuration, func(time.Time) tea.Msg { return stepMsg{} })
 }
 
 func (m *Model) doGoto() tea.Cmd {
@@ -241,7 +248,7 @@ func (m *Model) doGoto() tea.Cmd {
 		return nil
 	}
 	m.eng.Goto(az, el)
-	return m.armRelease()
+	return nil
 }
 
 // revertTargets resets the pan/tilt input fields to the latest readback (or 0
@@ -264,13 +271,8 @@ func (m *Model) revertTargets() {
 func (m *Model) handleToggleKey(msg tea.KeyMsg) {
 	switch msg.String() {
 	case " ", "enter", "left", "right":
-		switch m.focus {
-		case focusGS232On:
-			m.eng.SetServer(control.GS232, !m.snap.GS232On, m.portField(focusGS232, m.snap.GS232Port))
-		case focusRotctldOn:
-			m.eng.SetServer(control.Rotctld, !m.snap.RotctldOn, m.portField(focusRotctld, m.snap.RotctldPort))
-		case focusPstRotatorOn:
-			m.eng.SetServer(control.PstRotator, !m.snap.PstRotatorOn, m.portField(focusPstRotator, m.snap.PstRotatorPort))
+		if m.focus == focusRotctldOn {
+			m.eng.SetRotctld(!m.snap.RotctldOn, m.portField(focusRotctld, m.snap.RotctldPort))
 		}
 	}
 }
@@ -288,12 +290,8 @@ func (m *Model) commitFocused() tea.Cmd {
 		return cmd
 	case focusEndpoint:
 		m.doReconnect()
-	case focusGS232:
-		m.eng.SetServer(control.GS232, m.snap.GS232On, m.portField(focusGS232, m.snap.GS232Port))
 	case focusRotctld:
-		m.eng.SetServer(control.Rotctld, m.snap.RotctldOn, m.portField(focusRotctld, m.snap.RotctldPort))
-	case focusPstRotator:
-		m.eng.SetServer(control.PstRotator, m.snap.PstRotatorOn, m.portField(focusPstRotator, m.snap.PstRotatorPort))
+		m.eng.SetRotctld(m.snap.RotctldOn, m.portField(focusRotctld, m.snap.RotctldPort))
 	case focusWrapLimit:
 		m.eng.SetWrap(m.snap.WrapEnabled, m.limitField())
 	}
@@ -387,20 +385,21 @@ func (m Model) quit() (tea.Model, tea.Cmd) {
 }
 
 // Config builds the persisted configuration from current engine + UI state.
+// It starts from the loaded config (not Default()) so fields the TUI does not
+// edit — self_check, sim, log_level — survive a quit-save unchanged.
 func (m Model) Config() config.Config {
 	s := m.eng.Snapshot()
-	c := config.Default()
+	c := m.base
 	c.Transport = m.transport
 	c.Serial.Port = m.serialPort
 	c.Serial.Baud = m.baud
 	c.TCP.Address = m.tcpAddr
 	c.Addr = s.Addr
+	c.AzOffset = s.AzOffset
 	c.Log = m.logPath
 	c.LogLevel = m.logLevel
 	c.Control.Bind = s.Bind
-	c.Control.GS232 = config.ServerConfig{Enabled: s.GS232On, Port: s.GS232Port}
 	c.Control.Rotctld = config.ServerConfig{Enabled: s.RotctldOn, Port: s.RotctldPort}
-	c.Control.PstRotator = config.ServerConfig{Enabled: s.PstRotatorOn, Port: s.PstRotatorPort}
 	c.Wrap = config.WrapConfig{Enabled: s.WrapEnabled, Limit: s.WrapLimit, Accumulated: s.Wrap}
 	return c
 }

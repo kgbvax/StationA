@@ -171,3 +171,137 @@ func TestResponseDetection(t *testing.T) {
 		t.Error("tilt response misdetected")
 	}
 }
+
+// Pelco-P vectors. The all-stop one is CommFront's worked checksum example
+// transposed to address 1; the rest are the same logical commands as their
+// Pelco-D twins above, re-wrapped as 8-byte 0xA0/0xAF frames with an XOR
+// checksum over bytes 1..7.
+func TestPelcoPEncoding(t *testing.T) {
+	cases := []struct {
+		name string
+		got  []byte
+		want []byte
+	}{
+		{"stop addr 1", Frame{Addr: 0x01, Proto: ProtocolP}.Bytes(),
+			[]byte{0xA0, 0x01, 0x00, 0x00, 0x00, 0x00, 0xAF, 0x0E}},
+		{"pan-left speed 0x20 (CommFront worked example, addr 0)", Frame{Cmd2: 0x04, Data1: 0x20, Proto: ProtocolP}.Bytes(),
+			[]byte{0xA0, 0x00, 0x00, 0x04, 0x20, 0x00, 0xAF, 0x2B}},
+		{"query pan", QueryPan(0x01).BytesIn(ProtocolP),
+			[]byte{0xA0, 0x01, 0x00, 0x51, 0x00, 0x00, 0xAF, 0x5F}},
+		{"set pan 300°", SetPan(0x01, 300).BytesIn(ProtocolP),
+			[]byte{0xA0, 0x01, 0x00, 0x4B, 0x75, 0x30, 0xAF, 0x00}},
+		{"pan response 299.99° (doc example word 0x752F)", PanResponse(0x01, 299.99).BytesIn(ProtocolP),
+			[]byte{0xA0, 0x01, 0x00, 0x59, 0x75, 0x2F, 0xAF, 0x0D}},
+	}
+	for _, c := range cases {
+		if !bytes.Equal(c.got, c.want) {
+			t.Errorf("%s: got % X want % X", c.name, c.got, c.want)
+		}
+	}
+}
+
+func TestParsePRoundTrip(t *testing.T) {
+	orig := SetTilt(0x01, 45)
+	pb := orig.BytesIn(ProtocolP)
+	f, err := ParseP(pb)
+	if err != nil {
+		t.Fatalf("ParseP: %v", err)
+	}
+	if f.Addr != orig.Addr || f.Cmd1 != orig.Cmd1 || f.Cmd2 != orig.Cmd2 ||
+		f.Data1 != orig.Data1 || f.Data2 != orig.Data2 {
+		t.Fatalf("field mismatch: got %+v want %+v", f, orig)
+	}
+	if f.Proto != ProtocolP {
+		t.Fatalf("proto tag = %v want p", f.Proto)
+	}
+	// Decoded P frame carries the same logical Word as its D twin.
+	if f.Word() != orig.Word() {
+		t.Fatalf("word mismatch: %d != %d", f.Word(), orig.Word())
+	}
+}
+
+func TestParsePErrors(t *testing.T) {
+	good := QueryPan(1).BytesIn(ProtocolP)
+	if _, err := ParseP(good[:7]); err != ErrLength {
+		t.Errorf("short frame: got %v want ErrLength", err)
+	}
+	bad := append([]byte(nil), good...)
+	bad[0] = 0xFF // D sync, not P STX
+	if _, err := ParseP(bad); err != ErrSync {
+		t.Errorf("bad sync: got %v want ErrSync", err)
+	}
+	bad = append([]byte(nil), good...)
+	bad[7] ^= 0xFF
+	if _, err := ParseP(bad); err == nil {
+		t.Errorf("bad checksum: expected error")
+	}
+	// Byte 6 must be ETX: without this check, a stray 0xA0 landing just before
+	// a response whose payload XORs to zero passes the checksum (the two STX
+	// bytes cancel) and swallows the real frame.
+	bad = append([]byte(nil), good...)
+	bad[6] = 0x00
+	if _, err := ParseP(bad); err != ErrSync {
+		t.Errorf("bad ETX: got %v want ErrSync", err)
+	}
+	// The same stream through ParseAny: the bogus window is rejected, one byte
+	// is dropped, and the real frame assembles. The attack needs a frame whose
+	// addr^cmd1^cmd2^data1 == 0 (the stray and real STX cancel in the checksum):
+	// pan response 225.28° → word 0x5800.
+	resp := PanResponse(1, 225.28).BytesIn(ProtocolP)
+	noisy := append([]byte{STX}, resp...)
+	f, _, err := ParseAny(noisy)
+	if err == nil {
+		t.Fatalf("stray 0xA0 before P response: accepted as %+v", f)
+	}
+	f, n, err := ParseAny(noisy[1:])
+	if err != nil || n != PFrameLen || f.Proto != ProtocolP || f.Word() != 22528 {
+		t.Errorf("real response after stray 0xA0: frame=%+v n=%d err=%v", f, n, err)
+	}
+}
+
+// ParseAny dispatches on the lead byte and reports how many bytes to consume.
+func TestParseAny(t *testing.T) {
+	d := QueryPan(1)  // FF 01 00 51 00 00 52
+	p := QueryTilt(1) // A0 01 00 53 00 00 AF <xor>
+	if _, _, err := ParseAny(d.Bytes()); err != nil {
+		t.Fatalf("ParseAny(D): %v", err)
+	}
+	f, _, err := ParseAny(p.BytesIn(ProtocolP))
+	if err != nil {
+		t.Fatalf("ParseAny(P): %v", err)
+	}
+	if f.Proto != ProtocolP || f.Cmd2 != cmdQueryTlt {
+		t.Fatalf("ParseAny(P) decoded %+v", f)
+	}
+
+	// A mixed D+P stream decodes both frames in order.
+	mix := append(append([]byte{}, d.Bytes()...), p.BytesIn(ProtocolP)...)
+	f1, n1, err := ParseAny(mix)
+	if err != nil || n1 != FrameLen {
+		t.Fatalf("mix[0]: frame=%+v n=%d err=%v", f1, n1, err)
+	}
+	f2, n2, err := ParseAny(mix[n1:])
+	if err != nil || n2 != PFrameLen || f2.Proto != ProtocolP {
+		t.Fatalf("mix[1]: frame=%+v n=%d err=%v", f2, n2, err)
+	}
+
+	// Too-short tails ask for more bytes (ErrLength + need), they are not
+	// framing errors.
+	if _, need, err := ParseAny(d.Bytes()[:3]); err != ErrLength || need != FrameLen {
+		t.Errorf("short D tail: need=%d err=%v", need, err)
+	}
+	if _, need, err := ParseAny(p.BytesIn(ProtocolP)[:5]); err != ErrLength || need != PFrameLen {
+		t.Errorf("short P tail: need=%d err=%v", need, err)
+	}
+
+	// A byte that is neither sync nor STX is a false start (ErrSync once
+	// enough bytes are buffered), so a framing loop drops one byte and
+	// rescans. With fewer bytes than a whole frame the verdict is deferred
+	// (ErrLength — wait).
+	if _, _, err := ParseAny([]byte{0x42, 0xFF, 0x01}); err != ErrLength {
+		t.Errorf("undersized false start: err=%v want ErrLength", err)
+	}
+	if _, _, err := ParseAny([]byte{0x42, 0xFF, 0x01, 0x00, 0x51, 0x00, 0x00, 0x52}); err != ErrSync {
+		t.Errorf("false start: err=%v want ErrSync", err)
+	}
+}

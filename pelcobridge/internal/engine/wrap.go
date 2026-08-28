@@ -28,6 +28,15 @@ type MovePlan struct {
 	NewWrap float64 // resulting signed accumulator after the move completes
 }
 
+// norm360 wraps an angle in degrees into [0, 360).
+func norm360(deg float64) float64 {
+	deg = math.Mod(deg, 360)
+	if deg < 0 {
+		deg += 360
+	}
+	return deg
+}
+
 // shortestDelta returns the signed shortest angular travel (in (-180, 180]) to
 // rotate from cur to tgt degrees. Antipodal targets resolve to +180.
 func shortestDelta(cur, tgt float64) float64 {
