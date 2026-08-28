@@ -1,2 +1,5 @@
 #include "../../Flutter/Flutter-Release.xcconfig"
 #include "Warnings.xcconfig"
+// Optional per-developer signing overrides (DEVELOPMENT_TEAM etc.).
+// Copy Developer.xcconfig.example to Developer.xcconfig — it is gitignored.
+#include? "Developer.xcconfig"
