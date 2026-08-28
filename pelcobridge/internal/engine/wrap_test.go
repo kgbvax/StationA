@@ -33,30 +33,23 @@ func TestPlanMoveShort(t *testing.T) {
 	}
 }
 
-func TestPlanMoveUnwrap(t *testing.T) {
+func TestPlanMoveOverWindBlocked(t *testing.T) {
 	// Wind already at +260 (limit 270). A short move to azimuth that adds +30
-	// (cur 250 → tgt 280≡-80... use explicit): cur=250°, tgt=280° short=+30 →
-	// would reach +290 > 270, so unwrap the long way (-330) to +... check.
+	// (cur 250 → tgt 280) would reach +290 > 270. SetPan only ever takes the
+	// shortest physical path and the long way round is never commanded, so the
+	// move is REFUSED — over-winding is relieved manually (jog + zero-wrap).
 	p := planMove(260, 250, 280, 270)
-	if p.Kind != MoveUnwrap {
-		t.Fatalf("expected unwrap, got %+v", p)
+	if p.Kind != MoveBlock {
+		t.Fatalf("expected block, got %+v", p)
 	}
-	if p.Dir != -1 {
-		t.Fatalf("expected to unwind negative (long way), got dir %d (%+v)", p.Dir, p)
-	}
-	if math.Abs(p.NewWrap) > 270+1e-9 {
-		t.Fatalf("unwrap result %g exceeds limit", p.NewWrap)
-	}
-	// New wind must correspond to the same azimuth (mod 360) as the short path.
-	short := 260 + shortestDelta(250, 280)
-	if d := math.Mod(math.Abs(p.NewWrap-short), 360); d > 1e-6 && math.Abs(d-360) > 1e-6 {
-		t.Fatalf("unwrap target %g not a full-turn image of %g", p.NewWrap, short)
+	if p.Dir != 0 || p.NewWrap != 260 {
+		t.Fatalf("blocked move must leave the plan and accumulator untouched: %+v", p)
 	}
 }
 
 func TestPlanMoveBlock(t *testing.T) {
-	// With a tight ±60 limit, azimuth 180 from cur 0 has no representation
-	// within the limit (±180, ±... all exceed 60) → blocked.
+	// With a tight ±60 limit, azimuth 180 from cur 0 has a short path of +180,
+	// which exceeds the limit → blocked.
 	p := planMove(0, 0, 180, 60)
 	if p.Kind != MoveBlock {
 		t.Fatalf("expected block, got %+v", p)
@@ -70,21 +63,13 @@ func TestPlanMoveNone(t *testing.T) {
 }
 
 func TestPlanMoveLargeWrap(t *testing.T) {
-	// A wind accumulator far above the limit (stale persisted value, a limit
-	// lowered via SetWrap, or net wind accumulated while wrap was disabled).
-	// The target is still reachable by unwinding the long way; the search must
-	// not give up and return MoveBlock for a reachable target.
+	// A wind accumulator far above the limit (a stale persisted value, a limit
+	// lowered via SetWrap, or net wind accumulated while wrap was disabled):
+	// with unwrap gone there is no representation to reach for, so every move
+	// is refused until the operator manually unwinds and re-zeros the wind.
 	p := planMove(1800, 0, 180, 270)
-	if p.Kind != MoveUnwrap {
-		t.Fatalf("expected unwrap for reachable target under large wind, got %+v", p)
-	}
-	if math.Abs(p.NewWrap) > 270+1e-9 {
-		t.Fatalf("unwrap result %g exceeds limit", p.NewWrap)
-	}
-	// The resulting wind must be a full-turn image of the shortest-path result.
-	short := 1800 + shortestDelta(0, 180)
-	if d := math.Mod(math.Abs(p.NewWrap-short), 360); d > 1e-6 && math.Abs(d-360) > 1e-6 {
-		t.Fatalf("unwrap target %g not a full-turn image of %g", p.NewWrap, short)
+	if p.Kind != MoveBlock {
+		t.Fatalf("expected block for a move under a large wind, got %+v", p)
 	}
 }
 

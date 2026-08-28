@@ -56,6 +56,11 @@ func (m Model) View() string {
 	case s.Reconnecting:
 		connState = warnStyle.Render("reconnecting…")
 	}
+	// Arm state is always visible: it gates every inbound network move.
+	armState := staleStyle.Render("DISARMED")
+	if s.Armed {
+		armState = liveStyle.Render("ARMED")
+	}
 	transport := "serial"
 	switch s.Transport {
 	case config.TransportTCP:
@@ -68,16 +73,17 @@ func (m Model) View() string {
 	if s.AzOffset != 0 {
 		azLine += "  " + hintStyle.Render(fmt.Sprintf("zeroed @ %.2f°", s.AzOffset))
 	}
+	azLine += "   " + labelStyle.Render("true az") + field(focusTrueAz) + hintStyle.Render(" (enter to set offset)")
 
 	header := strings.Join([]string{
 		titleStyle.Render("pelcots") + "  " + hintStyle.Render("Pelco-D PTZ diagnostic & rotator network controller"),
-		fmt.Sprintf("%s %s %s   %s %s   %s%s   %s %s   %s %s   %s",
+		fmt.Sprintf("%s %s %s   %s %s   %s%s   %s %s   %s %s   %s   %s",
 			labelStyle.Render("link"), valueStyle.Render(transport), field(focusEndpoint),
 			labelStyle.Render("baud"), valueStyle.Render(fmt.Sprintf("%d 8N1", s.Baud)),
 			labelStyle.Render("addr"), field(focusAddr),
 			labelStyle.Render("proto"), valueStyle.Render(strings.ToUpper(s.Protocol)),
 			labelStyle.Render("rx"), valueStyle.Render(fmt.Sprintf("%d B", s.BytesIn)),
-			connState),
+			connState, armState),
 		"",
 		fmt.Sprintf("%s  azimuth%s°  elevation%s°  %s",
 			labelStyle.Render("Target "), field(focusPan), field(focusTilt),
@@ -91,14 +97,29 @@ func (m Model) View() string {
 		hintStyle.Render(s.Status),
 	}, "\n")
 
+	// A pending confirm is the most important thing on screen: render it in the
+	// warning style between the header and the log.
+	confirmLine := ""
+	switch m.confirm {
+	case confirmGoto0:
+		confirmLine = warnStyle.Render("goto 0? this drives the antenna to its mechanical zero — (y)es / any other key cancels")
+	case confirmArm:
+		confirmLine = warnStyle.Render("arm? inbound network motion will be accepted — (y)es / any other key cancels")
+	}
+
 	footer := hintStyle.Render("tab field · on/off field: space toggles · g/enter go · h home · arrows/kj tap-step · t turbo · ") +
 		warnStyle.Render("⏹ esc/space STOP")
-	footer += "\n" + hintStyle.Render("m transport · r reconnect · o rotctld · w wrap · z zero-wrap · a zero-az · q quit")
+	footer += "\n" + hintStyle.Render("m transport · r reconnect · o rotctld · w wrap · z zero-wrap · a zero-az · c goto-0 · A arm · q quit")
 	if m.logPath != "" {
 		footer += "\n" + hintStyle.Render("trace → "+m.logPath)
 	}
 
-	return lipgloss.JoinVertical(lipgloss.Left, header, m.logView(), footer)
+	// The confirm line (when up) goes right above the log panel.
+	rows := []string{header, m.logView(), footer}
+	if confirmLine != "" {
+		rows = []string{header, confirmLine, m.logView(), footer}
+	}
+	return lipgloss.JoinVertical(lipgloss.Left, rows...)
 }
 
 // jogLine shows the current motion state and the turbo toggle.
@@ -109,8 +130,6 @@ func (m Model) jogLine() string {
 		turbo = staleStyle.Render("TURBO on")
 	}
 	switch {
-	case s.Unwrapping:
-		return labelStyle.Render("Motion  ") + warnStyle.Render("unwinding cable (esc/space to abort)") + "   " + turbo
 	case s.Gotoing:
 		return labelStyle.Render("Motion  ") + liveStyle.Render("seeking target (esc/space to abort)") + "   " + turbo
 	case s.Jogging:
@@ -170,10 +189,9 @@ func (m Model) readbackLine(label string, have bool, raw uint16, last time.Time)
 	if age := time.Since(last); age > staleAfter {
 		state = staleStyle.Render(fmt.Sprintf("stale %.1fs", age.Seconds()))
 	}
-	// Print the raw readback bytes in hex — do not interpret the data word as
-	// degrees. The tilt decode is calibrated per-device and may be wrong, so the
-	// diagnostic TUI shows the verbatim wire bytes (D1 D2 big-endian) and the
-	// 16-bit word, never a converted angle.
+	// Print the raw readback word in hex alongside the state — the decode is
+	// textbook Pelco-D hundredths for both axes, but the verbatim wire bytes
+	// (D1 D2 big-endian) stay visible as a diagnostic.
 	return fmt.Sprintf("%s  %s  %s",
 		l,
 		valueStyle.Render(fmt.Sprintf("%02X %02X  (0x%04X)", byte(raw>>8), byte(raw), raw)),

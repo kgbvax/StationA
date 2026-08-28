@@ -102,7 +102,7 @@ type Config struct {
 	LogLevel   LogLevel        `yaml:"log_level"`   // error | warn | info | debug | trace
 	AzOffset   float64         `yaml:"az_offset"`   // azimuth zero offset: physical azimuth that reads as 0° (degrees)
 	TiltInvert bool            `yaml:"tilt_invert"` // invert elevation: unit mounted upside down (logical = 90 - physical)
-	TiltCal    TiltCalConfig   `yaml:"tilt_cal"`    // tilt readback calibration (raw encoder counts vs Pelco-standard hundredths)
+	AutoArm    bool            `yaml:"auto_arm"`    // arm at start (network motion enabled without the TUI workflow; headless/sim use)
 	Control    ControlConfig   `yaml:"control"`
 	Wrap       WrapConfig      `yaml:"wrap"`
 	Goto       GotoConfig      `yaml:"goto"`
@@ -127,15 +127,6 @@ type SimConfig struct {
 	StartPan  float64 `yaml:"start_pan"`  // initial azimuth, degrees (default 0)
 	StartTilt float64 `yaml:"start_tilt"` // initial elevation, degrees (default 0)
 	JogStep   float64 `yaml:"jog_step"`   // degrees of travel per jog frame (default 5)
-	// WildTiltWhileMoving reproduces the 303Z/3050DZ failure mode in the
-	// simulator: while the tilt motor runs, QueryTilt answers with
-	// tilt+this instead of the true position (a constant valid-checksum
-	// garbage stream, never the true position); idle readback is clean.
-	// >0 enables the injector; 0 (default) is a clean readback. Used by the
-	// open-loop-slew goto test to exercise the halt-and-confirm path without
-	// the hardware. The value is an offset in degrees (e.g. 190 lands far
-	// past the 90° physical limit, plainly garbage).
-	WildTiltWhileMoving float64 `yaml:"wild_tilt_while_moving"`
 }
 
 // SelfCheckConfig controls whether the bridge disables the PTZ self-check on
@@ -168,36 +159,11 @@ type WrapConfig struct {
 	Accumulated float64 `yaml:"accumulated"` // signed wind state, persisted across runs
 }
 
-// TiltCalConfig calibrates the tilt (elevation) readback decode for heads whose
-// tilt readback is a raw encoder count rather than the Pelco-standard hundredths
-// of a degree. The 303Z/3050DZ is such a head: its tilt readback is the linear
-// count raw = raw_at_0 + scale*elev, where scale = (raw_at_90 - raw_at_0)/90
-// (~355.878 counts/deg, a ~3.559:1 gear ratio — the gear ratio is a physical
-// constant and does not change when the rotator is re-homed; only the zero
-// offset shifts). Calibrated live: raw_at_0 = 22456, raw_at_90 = 54485 (the
-// head was re-homed after an earlier calibration that read 13408/45437; the
-// offset shifted by +9048 counts, scale unchanged). Pan readback stays
-// Pelco-standard hundredths.
-//
-// Two calibration points define the linear map. When raw_at_90 is zero (unset)
-// the decode falls back to the Pelco standard (hundredths of a degree: offset 0,
-// scale 100), so the in-memory simulator and any standard Pelco head keep
-// working without calibration. The same offset/scale is reused to ENCODE the
-// absolute SetTilt word when goto commands an absolute tilt on a calibrated head.
-type TiltCalConfig struct {
-	RawAt0  float64 `yaml:"raw_at_0"`  // raw readback at 0° elevation (offset)
-	RawAt90 float64 `yaml:"raw_at_90"` // raw readback at 90° elevation (defines scale); 0 = use Pelco-standard hundredths
-}
-
-// GotoConfig tunes the goto. Absolute positioning on the 303Z/3050DZ is
-// achieved by closed-loop jog (the device ignores the Pelco-D absolute
-// SetPan/SetTilt opcodes 0x4B/0x4D), so goto convergence is readback-driven.
-// These knobs are exposed because the device's slew rate is only knowable from
-// a live run; defaults are generous.
+// GotoConfig tunes the goto. Gotos send the absolute SetPan/SetTilt opcodes
+// (0x4B/0x4D, confirmed working on the bench 2026-08-28) and settle on ~1 Hz
+// readback convergence; only the safety timeout is configurable.
 type GotoConfig struct {
-	TimeoutSec      float64 `yaml:"timeout_sec"`       // safety timeout: stop if a goto has not converged (default 60)
-	TiltSlewRate    float64 `yaml:"tilt_slew_rate"`    // tilt open-loop slew rate in deg/s at jog speed; >0 enables the open-loop-slew-then-halt-and-confirm path for the 303Z/3050DZ, whose tilt readback is a constant valid-checksum garbage stream while the motor runs (never the true position) — readback is trustworthy only once the motor halts. 0 = legacy closed-loop (works for the sim and any head with clean motion readback). Calibrate live by timing a sweep: travel_deg / measured_seconds; the correction loop tolerates a mis-calibrated rate, so an approximate value still converges.
-	TiltMaxConfirms int     `yaml:"tilt_max_confirms"` // post-halt correction pulses before the goto timeout gives up (default 8); each correction is one open-loop pulse (~1–2s on real hw), so 8 stays within the 60s timeout and tolerates a roughly-calibrated slew rate
+	TimeoutSec float64 `yaml:"timeout_sec"` // safety timeout: stop if a goto has not converged (default 60)
 }
 
 // Default returns the built-in defaults (mirrors the original flag defaults).

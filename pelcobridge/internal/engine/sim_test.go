@@ -13,28 +13,26 @@ import (
 
 // simPollInterval overrides the engine's 500 ms poll cadence for the in-memory
 // simulator tests: the sim has no baud-rate constraint, so a short tick lets a
-// closed-loop goto converge in well under a second instead of tens of seconds.
+// goto converge in well under a second instead of tens of seconds.
 const simPollInterval = 20 * time.Millisecond
 
-// gotoTol is the closed-loop convergence window the tests assert. The engine
-// stops an axis when readback is within moveTolerance (2°) of the target, so the
-// rest position is within 2° by construction; 2.5° leaves a float slack.
-const gotoTol = 2.5
+// gotoTol is the convergence window the tests assert. The engine ends a goto
+// when readback is within moveTolerance (3°) of the target, so the rest
+// position is within 3° by construction; 3.5° leaves a float slack.
+const gotoTol = 3.5
 
 func closeEnough(got, want float64) bool { return math.Abs(got-want) < gotoTol }
 
 // TestSimModeGoto starts the engine against the in-memory simulator (no
 // hardware), commands an absolute move through the same Submit path the
-// inbound control servers use, and asserts the engine reports the commanded
-// position once its closed-loop jog poll/readback loop converges. This is the
-// loop the GS-232 / rotctld / PstRotator integrations exercise. The 303Z/3050DZ
-// ignores the Pelco-D absolute SetPan/SetTilt opcodes, so goto is driven by
-// closed-loop jog (re-sent each poll) stopped on readback convergence.
+// inbound rotctld server uses, and asserts the engine reports the commanded
+// position once the absolute-set goto converges on readback.
 func TestSimModeGoto(t *testing.T) {
 	eng := New(Options{
 		Transport:    config.TransportSim,
 		Addr:         1,
 		Sim:          config.SimConfig{StartPan: 0, StartTilt: 0, JogStep: 2},
+		AutoArm:      true, // the move arrives over the network (Submit)
 		PollInterval: simPollInterval,
 	})
 	eng.Start()
@@ -75,6 +73,7 @@ func TestSimModeZeroAzimuth(t *testing.T) {
 		Transport:    config.TransportSim,
 		Addr:         1,
 		Sim:          config.SimConfig{StartPan: 90, StartTilt: 0, JogStep: 2},
+		AutoArm:      true, // the move arrives over the network (Submit)
 		PollInterval: simPollInterval,
 	})
 	eng.Start()
@@ -107,8 +106,8 @@ func TestSimModeZeroAzimuth(t *testing.T) {
 		t.Fatalf("Pos not zeroed: az=%.2f ok=%v", az, ok)
 	}
 
-	// A goto in the zeroed frame: logical 30° = physical 120°. The closed loop
-	// jogs the pan axis (tilt already at target) and stops on readback.
+	// A goto in the zeroed frame: logical 30° = physical 120°. Only the pan
+	// axis moves (SetPan); tilt is already at target.
 	eng.Submit(control.Command{Kind: control.KindSetPos, Az: 30, El: 0})
 	if !waitFor(5*time.Second, func() bool {
 		s := eng.Snapshot()
@@ -128,6 +127,7 @@ func TestSimModeTiltInvert(t *testing.T) {
 		Addr:         1,
 		Sim:          config.SimConfig{StartPan: 0, StartTilt: 0, JogStep: 2},
 		TiltInvert:   true,
+		AutoArm:      true, // the move arrives over the network (Submit)
 		PollInterval: simPollInterval,
 	})
 	eng.Start()
@@ -140,8 +140,8 @@ func TestSimModeTiltInvert(t *testing.T) {
 		t.Fatalf("inverted readback not 90°: %+v", eng.Snapshot())
 	}
 
-	// Goto logical elevation 30° = physical tilt 60°. Only the tilt axis moves,
-	// so the closed loop queries tilt every tick and stops on readback.
+	// Goto logical elevation 30° = physical tilt 60°. Only the tilt axis moves
+	// (SetTilt, deferred one tick after the no-op pan decision).
 	eng.Submit(control.Command{Kind: control.KindSetPos, Az: 0, El: 30})
 	if !waitFor(5*time.Second, func() bool {
 		s := eng.Snapshot()
@@ -379,7 +379,7 @@ func TestPollOneQueryPerTick(t *testing.T) {
 // TestSimModePelcoPTx asserts the wire-protocol option end to end: with
 // Protocol "p" every TX frame the engine emits is 8-byte 0xA0/0xAF Pelco-P,
 // readback keeps flowing (the RX side is adaptive), State.Protocol publishes
-// "p", and a closed-loop goto still converges — the sim answers in the
+// "p", and an absolute-set goto still converges — the sim answers in the
 // protocol the query arrived in, exactly like the adaptive head.
 func TestSimModePelcoPTx(t *testing.T) {
 	eng := New(Options{
@@ -387,6 +387,7 @@ func TestSimModePelcoPTx(t *testing.T) {
 		Addr:         1,
 		Protocol:     config.ProtocolP,
 		Sim:          config.SimConfig{StartPan: 0, StartTilt: 0, JogStep: 2},
+		AutoArm:      true, // the move arrives over the network (Submit)
 		PollInterval: simPollInterval,
 		LogLevel:     config.LogDebug, // per-frame TX lines
 	})

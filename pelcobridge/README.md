@@ -46,6 +46,8 @@ Keys:
 | `o` | toggle the rotctld inbound server |
 | `w` | toggle cable-wrap protection · `z` | re-zero the wind accumulator |
 | `a` | zero azimuth (current direction reads as 0°) |
+| `c` | goto physical 0° (confirmed; re-zeros wind on arrival) |
+| `A` | arm network motion (confirmed) — `ARMED`/`DISARMED` shows in header |
 | `q` / `ctrl+c` | quit (settings are saved) |
 
 > Note on hold-to-move: terminals don't report key-release events, so a held
@@ -71,10 +73,9 @@ control path). At least one control server must be enabled in the config.
   parameters; `baud` is informational in TCP mode.
 - **Simulator** (`sim`): an in-memory emulator — nothing is opened on the host.
   Absolute moves snap to the target, jogs step the position by `sim.jog_step`
-  per frame (so the cable-wrap unwrap path still accumulates travel), and
-  position queries are answered from that in-memory state. Use this to drive
-  the inbound rotctld control server and exercise the sat-tracking
-  integration **without a rotator attached**:
+  per frame, and position queries are answered from that in-memory state. Use
+  this to drive the inbound rotctld control server and exercise the
+  sat-tracking integration **without a rotator attached**:
 
   ```sh
   ./pelcots -d -transport sim      # headless; enable a control server in pelcots.yaml
@@ -105,8 +106,8 @@ just waits for it to appear. Repeated failures are logged once (not every
 retry) to keep the trace clean. The `warn`-level interplay with `loglevel` is
 unchanged. On every (re)connect the engine issues an **all-stop** — Pelco-D jog
 motion has no auto-stop, so a dropped link leaves the unit moving; the stop
-halts any in-flight motion (and abandons a cable-wrap unwrap that was in
-progress, rather than resuming it against a stale wind accumulator).
+halts any in-flight motion, and an interrupted goto is **abandoned, not
+resumed** on the fresh link (re-arm it with a new command).
 
 ## Inbound control protocols
 
@@ -121,19 +122,53 @@ rotctl -m 2 -r 127.0.0.1:4533 P 123 45   # move to az=123 el=45
 rotctl -m 2 -r 127.0.0.1:4533 p          # read position
 ```
 
+## Motion
+
+Absolute moves (TUI goto and inbound commands) are sent as **absolute
+SetPan/SetTilt** frames — the unit slews itself to the target; pelcots just
+reads the position back (~1 Hz per axis, alternating pan/tilt queries) and
+declares arrival when readback converges on the target. A stall watchdog
+aborts a goto whose readback stops progressing. Jog motion (TUI hold-to-move)
+sends jog frames while the key is held.
+
 ## Cable-wrap protection
 
 For rotators with infinite azimuth rotation, pelcots tracks a signed
 **wind accumulator** integrated from the position readback (each move assumed to
-take the shortest path). When an absolute move would push the accumulator beyond
-the configured `± limit`, pelcots drives the **long way round** under
-closed-loop control (a full-rotation unwrap) instead of over-winding; if no
-route stays within the limit the move is refused.
+take the shortest path — absolute SetPan moves are shortest-path on the wire).
+When an absolute move would push the accumulator beyond the configured
+`± limit`, the move is **refused** — pelcots never drives the long way round,
+so the cable can only over-wind by manual action. To unwind: jog the long way
+in the TUI (hold-to-move) and press `z` (or zero it in config) once the cable
+is centered.
 
 Example: a `± 270°` limit permits a half-turn plus 90° of over-rotation in each
 direction. The wind state is **persisted** across runs (the cable stays wound
-when the app is closed); press `z` (or zero it in config) after manually
-centering the cable.
+when the app is closed).
+
+## Arming & calibration
+
+pelcots **always starts disarmed**, and the armed state is never persisted.
+While disarmed, **inbound network motion is refused** (rotctld setpos is
+rejected with a logged `DISARMED` status); `Stop` commands still pass (always
+safe) and position queries keep answering. The **local TUI stays fully usable**
+— the person at the keyboard is trusted; the gate protects only the
+unattended interfaces. For headless/sim use, set `auto_arm: true` to arm at
+start.
+
+Calibration before arming (all from the TUI, each behind a confirmation):
+
+1. **`c` — goto 0**: confirm, then the unit moves to its *physical* 0°
+   (bypassing `az_offset` — this is the mechanical reference). On arrival the
+   **wind accumulator re-zeros**: the confirmed 0° is the cable-safe reference.
+   Elevation is untouched.
+2. **true az field**: type the azimuth the antenna *actually* points at and
+   press enter — the engine sets `az_offset` so every incoming logical
+   azimuth maps onto the physical frame. (`a` still zeroes azimuth at the
+   current direction.)
+3. **`A` — arm**: confirm; network motion is accepted from now on.
+
+The header shows `ARMED`/`DISARMED` at all times.
 
 ## Configuration (`pelcots.yaml`)
 
@@ -162,6 +197,10 @@ log: pelcots.log             # TX/RX trace file ("" disables)
 log_level: info              # error | warn | info | debug | trace
 az_offset: 0                 # azimuth zero offset: physical azimuth that reads as 0° (degrees)
 tilt_invert: false           # invert elevation for an upside-down mount (logical = 90 - physical)
+auto_arm: false              # arm at start (network motion enabled) — for headless/sim use;
+                             # default false: pelcots always starts disarmed
+goto:
+  timeout_sec: 60            # safety timeout: stop if a goto has not converged this long
 control:
   bind: 127.0.0.1            # listen address for inbound servers
   rotctld:

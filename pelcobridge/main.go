@@ -109,9 +109,9 @@ func main() {
 		WrapAccum:   cfg.Wrap.Accumulated,
 		AzOffset:    cfg.AzOffset,
 		TiltInvert:  cfg.TiltInvert,
-		TiltCal:     cfg.TiltCal,
 		Goto:        cfg.Goto,
 		Rotctld:     cfg.Control.Rotctld,
+		AutoArm:     cfg.AutoArm,
 		Logw:        logw,
 		LogLevel:    cfg.LogLevel,
 	})

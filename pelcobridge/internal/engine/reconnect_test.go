@@ -147,11 +147,11 @@ func TestReconnectWhileDeviceAbsent(t *testing.T) {
 	}
 }
 
-// pelcoResponder is a minimal Pelco-D TCP "bridge" for the F5 regression test.
+// pelcoResponder is a minimal Pelco-D TCP "bridge" for the reconnect tests.
 // It answers QueryPan/QueryTilt from a fixed position and classifies every
 // received frame per connection (so the test can assert which frames landed on
-// which connection). It deliberately does NOT advance position on Jog, so an
-// in-progress unwrap never completes — the exact "mid-unwrap" state a dropped
+// which connection). It deliberately does NOT advance position on a SetPan, so
+// an in-progress goto never converges — the exact "mid-move" state a dropped
 // link must catch.
 type pelcoResponder struct {
 	mu    sync.Mutex
@@ -163,13 +163,16 @@ type pelcoResponder struct {
 
 type pelcoConnStats struct {
 	mu                sync.Mutex
-	stops, jogs, misc int
+	stops, jogs, sets int // stops, jog keepalives, absolute SetPan/SetTilt
+	misc              int
 }
 
 func (s *pelcoConnStats) record(f pelco.Frame) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	switch {
+	case f.IsSetPan(), f.IsSetTilt():
+		s.sets++
 	case f.IsJog():
 		s.jogs++
 	case f.Cmd1 == 0 && f.Cmd2 == 0 && f.Data1 == 0 && f.Data2 == 0:
@@ -179,10 +182,10 @@ func (s *pelcoConnStats) record(f pelco.Frame) {
 	}
 }
 
-func (s *pelcoConnStats) snapshot() (stops, jogs int) {
+func (s *pelcoConnStats) snapshot() (stops, jogs, sets int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.stops, s.jogs
+	return s.stops, s.jogs, s.sets
 }
 
 func (r *pelcoResponder) close() { _ = r.ln.Close() }
@@ -238,7 +241,7 @@ func (r *pelcoResponder) serve(c net.Conn, st *pelcoConnStats) {
 		}
 		st.record(f)
 		// Answer position queries from a fixed 0°/0° position; never advance on
-		// Jog, so an unwrap stays in progress until the link is dropped.
+		// SetPan, so a goto stays in progress until the link is dropped.
 		if f.IsQueryPan() {
 			_, _ = c.Write(pelco.PanResponse(r.addr, 0).Bytes())
 		} else if f.IsQueryTilt() {
@@ -247,15 +250,13 @@ func (r *pelcoResponder) serve(c net.Conn, st *pelcoConnStats) {
 	}
 }
 
-// TestUnwrapDroppedLinkNotResumed is the regression test for the high-severity
-// cable-over-wrap bug: when the link drops mid-unwrap, linkFailed must clear the
-// in-flight motion state (so the closed-loop unwrap is not resumed) and connect
-// must issue a Stop on the fresh link (so the unit, still physically jogging
-// from before the drop, halts). Before the fix, mvActive stayed set after a
-// drop, poll() resumed the Jog keepalive on reconnect, and the stale wrap
-// accumulator let stepMove stop the jog after only the post-reconnect travel —
-// driving the cable past wrapLimit.
-func TestUnwrapDroppedLinkNotResumed(t *testing.T) {
+// TestSetGotoDroppedLinkNotResumed is the regression test for the dropped-link
+// motion bug: when the link drops mid-goto, linkFailed must clear the in-flight
+// motion state (so the goto is not resumed) and connect must issue a Stop on
+// the fresh link (so the unit, still physically slewing from before the drop,
+// halts). Before the fix, mvActive stayed set after a drop and poll() kept
+// driving the move on reconnect against a position computed pre-disconnect.
+func TestSetGotoDroppedLinkNotResumed(t *testing.T) {
 	r := newPelcoResponder(1)
 	defer r.close()
 
@@ -264,8 +265,9 @@ func TestUnwrapDroppedLinkNotResumed(t *testing.T) {
 		TCPAddr:     r.ln.Addr().String(),
 		Addr:        1,
 		WrapEnabled: true,
-		WrapLimit:   270, // ±270: long-way representations (≥−270) are reachable
-		WrapAccum:   260, // cable wound near the +270 limit
+		WrapLimit:   270,
+		WrapAccum:   260,  // cable wound near the +270 limit
+		AutoArm:     true, // the move arrives over the network (Submit), so arm first
 		LogLevel:    config.LogInfo,
 	})
 	eng.Start()
@@ -274,7 +276,7 @@ func TestUnwrapDroppedLinkNotResumed(t *testing.T) {
 	if !waitFor(2*time.Second, func() bool { return eng.Snapshot().Connected }) {
 		t.Fatal("engine did not connect")
 	}
-	// The closed-loop goto needs both axes' readback before it can arm.
+	// The goto needs both axes' readback before it can arm.
 	if !waitFor(2*time.Second, func() bool {
 		s := eng.Snapshot()
 		return s.HavePan && s.HaveTilt
@@ -282,31 +284,28 @@ func TestUnwrapDroppedLinkNotResumed(t *testing.T) {
 		t.Fatal("engine never got pan/tilt readback")
 	}
 
-	// Goto +20°: shortest path (+20°) would push the wind to +280°, past the
-	// ±270 limit, so planMove forces a long-way unwrap (drive CCW to wind −80°).
-	// The responder never advances on Jog, so the unwrap stays in progress.
-	eng.Submit(control.Command{Kind: control.KindSetPos, Az: 20, El: 0})
-	if !waitFor(2*time.Second, func() bool { return eng.Snapshot().Unwrapping }) {
-		t.Fatalf("engine never entered unwrap: status=%q", eng.Snapshot().Status)
+	// Goto −20°: shortest path (−20°) moves the wind from +260° to +240°, within
+	// the ±270 limit, so the move is accepted and a SetPan goes out. The
+	// responder never advances position, so the goto stays in progress.
+	eng.Submit(control.Command{Kind: control.KindSetPos, Az: -20, El: 0})
+	if !waitFor(2*time.Second, func() bool { return eng.Snapshot().Gotoing }) {
+		t.Fatalf("engine never started the goto: status=%q", eng.Snapshot().Status)
 	}
 	first := r.nth(0)
 	if first == nil {
 		t.Fatal("no first connection recorded")
 	}
-	if _, jogs := first.snapshot(); jogs == 0 {
-		t.Fatal("expected jog frames on the first connection while unwrapping")
+	if _, _, sets := first.snapshot(); sets == 0 {
+		t.Fatal("expected SetPan frames on the first connection while seeking")
 	}
 
-	// Drop the first connection mid-unwrap — the unit is physically still jogging.
+	// Drop the first connection mid-goto — the unit is physically still slewing.
 	r.dropFirst(t)
 
-	// State must be cleared: the unwrap is abandoned, not left to resume.
-	if !waitFor(2*time.Second, func() bool {
+	// State must be cleared: the goto is abandoned, not left to resume.
+	if !waitFor(2*time.Second, func() bool { return !eng.Snapshot().Gotoing }) {
 		s := eng.Snapshot()
-		return !s.Unwrapping && !s.Gotoing
-	}) {
-		s := eng.Snapshot()
-		t.Fatalf("motion state not cleared after drop: unwrapping=%v gotoing=%v", s.Unwrapping, s.Gotoing)
+		t.Fatalf("motion state not cleared after drop: gotoing=%v", s.Gotoing)
 	}
 
 	// The engine auto-reconnects; a second connection is accepted.
@@ -321,18 +320,21 @@ func TestUnwrapDroppedLinkNotResumed(t *testing.T) {
 	if second == nil {
 		t.Fatal("no second connection recorded")
 	}
-	stops, jogs := second.snapshot()
+	stops, jogs, sets := second.snapshot()
 
 	if stops == 0 {
 		t.Error("reconnect did not send Stop on the fresh link — unit may keep moving")
 	}
+	if sets != 0 {
+		t.Errorf("reconnect resumed the goto (set frames on new link): sets=%d — stale goto not abandoned", sets)
+	}
 	if jogs != 0 {
-		t.Errorf("reconnect resumed the unwrap (jog frames on new link): jogs=%d — stale closed-loop not abandoned", jogs)
+		t.Errorf("unexpected jog frames on the new link: jogs=%d", jogs)
 	}
 }
 
 // dropFirst closes the first accepted connection, forcing the engine down the
-// link-failed path mid-unwrap.
+// link-failed path mid-goto.
 func (r *pelcoResponder) dropFirst(t *testing.T) {
 	t.Helper()
 	r.mu.Lock()

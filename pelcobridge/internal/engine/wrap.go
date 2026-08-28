@@ -12,11 +12,10 @@ const (
 	// MoveShort means the shortest path stays within the wrap limit — the unit
 	// may take it directly.
 	MoveShort
-	// MoveUnwrap means the shortest path would exceed the limit, so the move is
-	// driven the long way round (a full-rotation unwrap) to relieve the cable.
-	MoveUnwrap
-	// MoveBlock means no representation of the target lies within the limit:
-	// the move is refused.
+	// MoveBlock means the shortest path would exceed the limit: the move is
+	// refused. The absolute SetPan opcode always takes the shortest physical
+	// path and the unit cannot be told to travel the long way round, so
+	// over-winding can only be relieved manually (jog + zero-wrap).
 	MoveBlock
 )
 
@@ -61,37 +60,19 @@ func sign(x float64) int {
 }
 
 // planMove decides how to reach azimuth tgt from current azimuth cur given the
-// signed cable-wind accumulator wrap and a ± wrap limit. It picks the target
-// representation (tgt + k·360 in accumulator space) of least travel whose
-// absolute wind stays within the limit; if the nearest (shortest-path)
-// representation is within the limit it is Short, otherwise a farther one is
-// forced (Unwrap), and if none is reachable it is Block.
+// signed cable-wind accumulator wrap and a ± wrap limit. Only the shortest-path
+// representation is ever commanded: the absolute SetPan opcode takes the
+// shortest physical path and the unit cannot be told to travel the long way
+// round, so if that path would exceed the limit the move is refused (Block) and
+// over-winding must be relieved manually (TUI jog + zero-wrap).
 func planMove(wrap, cur, tgt, limit float64) MovePlan {
 	short := shortestDelta(cur, tgt)
 	if short == 0 {
 		return MovePlan{Kind: MoveNone, Dir: 0, NewWrap: wrap}
 	}
-	base := wrap + short // shortest-path representation in accumulator space
-	if math.Abs(base) <= limit {
-		return MovePlan{Kind: MoveShort, Dir: sign(short), Travel: short, NewWrap: base}
-	}
-	// Shortest path over-wraps; search neighbouring full-turn representations
-	// for the one of least travel that respects the limit. The accumulator can
-	// be far from zero (a stale persisted wind, a limit lowered via SetWrap, or
-	// net wind accumulated while wrap was disabled), so centre the search on the
-	// representation nearest zero rather than a fixed k=-4..4 window that would
-	// miss valid reps and wrongly return MoveBlock for reachable targets.
-	k0 := int(math.Round(-base / 360))
-	best, found := 0.0, false
-	for k := k0 - 4; k <= k0+4; k++ {
-		w := base + float64(k)*360
-		if math.Abs(w) <= limit && (!found || math.Abs(w-wrap) < math.Abs(best-wrap)) {
-			best, found = w, true
-		}
-	}
-	if !found {
+	newWrap := wrap + short
+	if math.Abs(newWrap) > limit {
 		return MovePlan{Kind: MoveBlock, Dir: 0, NewWrap: wrap}
 	}
-	travel := best - wrap
-	return MovePlan{Kind: MoveUnwrap, Dir: sign(travel), Travel: travel, NewWrap: best}
+	return MovePlan{Kind: MoveShort, Dir: sign(short), Travel: short, NewWrap: newWrap}
 }

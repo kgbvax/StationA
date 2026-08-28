@@ -18,7 +18,7 @@ func TestCycleFocusForward(t *testing.T) {
 	m := newTestModel()
 	want := []int{
 		focusAddr, focusPan, focusTilt, focusEndpoint,
-		focusRotctld, focusRotctldOn, focusWrapLimit,
+		focusRotctld, focusRotctldOn, focusWrapLimit, focusTrueAz,
 		focusNone, focusAddr,
 	}
 	for i, w := range want {
@@ -32,7 +32,7 @@ func TestCycleFocusForward(t *testing.T) {
 func TestCycleFocusBackward(t *testing.T) {
 	m := newTestModel()
 	m.cycleFocus(-1)
-	if m.focus != focusWrapLimit {
-		t.Fatalf("shift+tab from none: focus = %d want %d", m.focus, focusWrapLimit)
+	if m.focus != focusTrueAz {
+		t.Fatalf("shift+tab from none: focus = %d want %d", m.focus, focusTrueAz)
 	}
 }

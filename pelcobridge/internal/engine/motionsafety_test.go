@@ -22,16 +22,16 @@ import (
 
 // waitForStops polls until the connection has recorded at least want Stop
 // frames, so the assertions do not race the actor goroutine's write.
-func waitForStops(st *pelcoConnStats, want int, timeout time.Duration) (stops, jogs int) {
+func waitForStops(st *pelcoConnStats, want int, timeout time.Duration) (stops, jogs, sets int) {
 	waitFor(timeout, func() bool {
-		s, _ := st.snapshot()
+		s, _, _ := st.snapshot()
 		return s >= want
 	})
 	return st.snapshot()
 }
 
 // connectedWithReadback brings an engine up against r and waits until both axes
-// have readback (the closed-loop goto refuses to arm without it).
+// have readback (the goto refuses to arm without it).
 func connectedWithReadback(t *testing.T, eng *Engine) {
 	t.Helper()
 	if !waitFor(2*time.Second, func() bool {
@@ -57,6 +57,7 @@ func TestAtTargetGotoStopsLatchedMotion(t *testing.T) {
 		TCPAddr:      r.ln.Addr().String(),
 		Addr:         1,
 		PollInterval: 40 * time.Millisecond,
+		AutoArm:      true, // the retarget arrives over the network (Submit)
 		LogLevel:     config.LogInfo,
 	})
 	eng.Start()
@@ -72,10 +73,10 @@ func TestAtTargetGotoStopsLatchedMotion(t *testing.T) {
 	if !waitFor(time.Second, func() bool { return eng.Snapshot().Jogging }) {
 		t.Fatal("jog was not latched")
 	}
-	if !waitFor(time.Second, func() bool { _, jogs := st.snapshot(); return jogs > 0 }) {
+	if !waitFor(time.Second, func() bool { _, jogs, _ := st.snapshot(); return jogs > 0 }) {
 		t.Fatal("no jog frames reached the unit")
 	}
-	stopsBefore, _ := st.snapshot()
+	stopsBefore, _, _ := st.snapshot()
 
 	// A target the unit is already at: the responder reads a fixed 0°/0°, so
 	// both axes are inside their deadband and no new move is needed.
@@ -87,7 +88,7 @@ func TestAtTargetGotoStopsLatchedMotion(t *testing.T) {
 	}) {
 		t.Fatalf("motion flags not cleared: %+v", eng.Snapshot())
 	}
-	stopsAfter, _ := waitForStops(st, stopsBefore+1, time.Second)
+	stopsAfter, _, _ := waitForStops(st, stopsBefore+1, time.Second)
 	if stopsAfter <= stopsBefore {
 		t.Errorf("at-target goto cleared the motion flags without sending Stop "+
 			"(stops %d -> %d): the unit is still slewing", stopsBefore, stopsAfter)
@@ -95,10 +96,10 @@ func TestAtTargetGotoStopsLatchedMotion(t *testing.T) {
 }
 
 // TestStreamingTargetsDoNotDefeatGotoTimeout covers the goto stall watchdog.
-// gotoDeadline is the only backstop against a jog that never converges, and it
+// gotoDeadline is the only backstop against a move that never converges, and it
 // used to be re-armed by every beginGoto — so a tracker streaming a new target
 // every second or two (the normal case during a pass) rolled it forward
-// forever. With readback collapsed, as here, the unit jogged for the whole pass.
+// forever. With readback collapsed, as here, the unit slewed for the whole pass.
 // The deadline is now armed at motion start and pushed out only by OBSERVED
 // travel, which this responder never produces.
 func TestStreamingTargetsDoNotDefeatGotoTimeout(t *testing.T) {
@@ -111,6 +112,7 @@ func TestStreamingTargetsDoNotDefeatGotoTimeout(t *testing.T) {
 		Addr:         1,
 		PollInterval: 30 * time.Millisecond,
 		Goto:         config.GotoConfig{TimeoutSec: 0.4},
+		AutoArm:      true, // the targets arrive over the network (Submit)
 		LogLevel:     config.LogInfo,
 	})
 	eng.Start()
@@ -122,8 +124,8 @@ func TestStreamingTargetsDoNotDefeatGotoTimeout(t *testing.T) {
 		t.Fatal("no connection recorded")
 	}
 	// Arm the first move and confirm the unit really is being driven. The
-	// responder never advances on Jog, so nothing ever converges: this stands in
-	// for a jammed axis or the readback collapse the 303Z/3050DZ exhibits.
+	// responder never advances on SetPan, so nothing ever converges: this stands
+	// in for a jammed axis or the readback collapse the 303Z/3050DZ exhibits.
 	var submitted atomic.Int64
 	az := 100.0
 	eng.Submit(control.Command{Kind: control.KindSetPos, Az: az, El: 0, Source: "rotctld"})
@@ -131,14 +133,14 @@ func TestStreamingTargetsDoNotDefeatGotoTimeout(t *testing.T) {
 	if !waitFor(time.Second, func() bool { return eng.Snapshot().Gotoing }) {
 		t.Fatalf("goto never armed: %+v", eng.Snapshot())
 	}
-	if !waitFor(time.Second, func() bool { _, jogs := st.snapshot(); return jogs > 0 }) {
-		t.Fatal("no jog frames reached the unit (test setup broken)")
+	if !waitFor(time.Second, func() bool { _, _, sets := st.snapshot(); return sets > 0 }) {
+		t.Fatal("no set frames reached the unit (test setup broken)")
 	}
 	// Every expiry sends an all-stop, and on this responder expireGoto is the
 	// ONLY source of one (no axis ever converges, no target is ever already
 	// reached), so counting Stop frames counts timeouts. Polling Gotoing instead
 	// would race the immediate re-arm by the next streamed target.
-	stopsBefore, _ := st.snapshot()
+	stopsBefore, _, _ := st.snapshot()
 	deadline := time.Now().Add(1500 * time.Millisecond) // ~3.5x the goto timeout
 	for time.Now().Before(deadline) {
 		az += 0.5 // a drifting target, as a tracker produces
@@ -146,10 +148,10 @@ func TestStreamingTargetsDoNotDefeatGotoTimeout(t *testing.T) {
 		submitted.Add(1)
 		time.Sleep(60 * time.Millisecond)
 	}
-	stopsAfter, _ := st.snapshot()
+	stopsAfter, _, _ := st.snapshot()
 	if stopsAfter-stopsBefore < 2 {
 		t.Errorf("goto expired %d times across %d streamed targets over %v (timeout %v; expected ~3): "+
-			"the safety backstop is defeated and the unit jogs for the whole pass",
+			"the safety backstop is defeated and the unit slews for the whole pass",
 			stopsAfter-stopsBefore, submitted.Load(), 1500*time.Millisecond, 400*time.Millisecond)
 	}
 }
@@ -166,6 +168,7 @@ func TestStalledGotoStillExpires(t *testing.T) {
 		Addr:         1,
 		PollInterval: 30 * time.Millisecond,
 		Goto:         config.GotoConfig{TimeoutSec: 0.3},
+		AutoArm:      true, // the move arrives over the network (Submit)
 	})
 	eng.Start()
 	defer eng.Close()
@@ -184,13 +187,13 @@ func TestStalledGotoStillExpires(t *testing.T) {
 }
 
 // TestGotoArmedWhileDownDoesNotResumeOnReconnect covers the other way a stale
-// closed-loop reached the wire. linkFailed clears motion state when a live link
-// dies (TestUnwrapDroppedLinkNotResumed), but a *failed connect* — an explicit
+// goto reached the wire. linkFailed clears motion state when a live link dies
+// (TestSetGotoDroppedLinkNotResumed), but a *failed connect* — an explicit
 // Reconnect to a target that is down, or a first connect that never succeeded —
 // left havePan/haveTilt set. startGoto's readback gate therefore let an inbound
-// move arm a full closed-loop goto while disconnected, whose frames were
-// dropped by send(); when the link returned, poll() resumed the jog keepalive
-// and drove the unit toward a target derived from a stale position.
+// move arm a goto while disconnected, whose frames were dropped by send(); when
+// the link returned, poll() resumed driving toward a target derived from a
+// stale position.
 func TestGotoArmedWhileDownDoesNotResumeOnReconnect(t *testing.T) {
 	r := newPelcoResponder(1)
 	defer r.close()
@@ -210,6 +213,7 @@ func TestGotoArmedWhileDownDoesNotResumeOnReconnect(t *testing.T) {
 		Addr:         1,
 		PollInterval: 40 * time.Millisecond,
 		Goto:         config.GotoConfig{TimeoutSec: 60},
+		AutoArm:      true, // the moves arrive over the network (Submit)
 		LogLevel:     config.LogInfo,
 	})
 	eng.Start()
@@ -244,15 +248,15 @@ func TestGotoArmedWhileDownDoesNotResumeOnReconnect(t *testing.T) {
 	if st == nil {
 		t.Fatal("no stats for the fresh connection")
 	}
-	stops, _ := waitForStops(st, 1, time.Second)
+	stops, _, _ := waitForStops(st, 1, time.Second)
 	time.Sleep(200 * time.Millisecond) // let a few polls run
-	stops, jogs := st.snapshot()
+	stops, jogs, sets := st.snapshot()
 	if stops == 0 {
 		t.Error("no Stop on the fresh link — a unit still slewing from before is not halted")
 	}
-	if jogs != 0 {
-		t.Errorf("stale goto resumed on the fresh link (jogs=%d): the unit is being driven "+
-			"toward a target computed from a position read before the outage", jogs)
+	if jogs != 0 || sets != 0 {
+		t.Errorf("stale goto resumed on the fresh link (jogs=%d sets=%d): the unit is being driven "+
+			"toward a target computed from a position read before the outage", jogs, sets)
 	}
 }
 
@@ -279,10 +283,10 @@ func TestCloseSendsAllStopBeforeReturning(t *testing.T) {
 		t.Fatal("no connection recorded")
 	}
 	eng.Jog(1, 0, false) // continuous jog (the local path; the unit latches)
-	if !waitFor(time.Second, func() bool { _, jogs := st.snapshot(); return jogs > 0 }) {
+	if !waitFor(time.Second, func() bool { _, jogs, _ := st.snapshot(); return jogs > 0 }) {
 		t.Fatal("no jog frames reached the unit")
 	}
-	stopsBefore, _ := st.snapshot()
+	stopsBefore, _, _ := st.snapshot()
 
 	_ = eng.Close() // must not return until the all-stop is on the wire
 
@@ -294,7 +298,7 @@ func TestCloseSendsAllStopBeforeReturning(t *testing.T) {
 		t.Error("Close returned before the actor tore the link down: on SIGTERM the process " +
 			"would exit with the all-stop unsent and the unit still slewing")
 	}
-	stopsAfter, _ := waitForStops(st, stopsBefore+1, time.Second)
+	stopsAfter, _, _ := waitForStops(st, stopsBefore+1, time.Second)
 	if stopsAfter <= stopsBefore {
 		t.Errorf("no shutdown all-stop reached the port (stops %d -> %d): "+
 			"a process exit here leaves the unit slewing", stopsBefore, stopsAfter)

@@ -24,20 +24,23 @@ import (
 )
 
 const (
-	// pollInterval is the sleep gap between position-query cycles. Polling is
-	// self-paced, not wall-clock ticked: the engine sends ONE position query,
-	// waits for its reply (bounded by this same duration as a response timeout),
-	// then sleeps this long before the next query — so a query is never sent on
-	// top of an in-flight reply on the 2400-baud half-duplex link. Each cycle
-	// sends exactly ONE query (alternating pan/tilt), never the back-to-back
-	// QueryPan+QueryTilt pair that collapsed readback on the 303Z/3050DZ (the pan
-	// reply collided with the outgoing tilt query; observed live ~0-1% response
-	// rate). The rotator is sensitive to excess traffic, so the gap is also the
-	// minimum spacing between any two queries. Overridable via Options.PollInterval
-	// (the in-memory sim uses a short interval to converge gotos fast).
-	pollInterval   = 600 * time.Millisecond // sleep gap between query cycles (and response timeout); overridable via Options.PollInterval (sim)
-	jogKeySpeed    = 0x20                   // fixed speed for keyboard/unwrap jogging
-	moveTolerance  = 3.0                    // degrees: how close to the target ends an unwrap
+	// pollInterval is the sleep gap between poll ticks. Polling is self-paced,
+	// not wall-clock ticked: the engine sends ONE frame (a position query, or
+	// the pending SetTilt of a two-axis goto), waits for any reply (bounded by
+	// this same duration as a response timeout), then sleeps this long before
+	// the next tick — so a query is never sent on top of an in-flight reply on
+	// the 2400-baud half-duplex link. Each tick sends exactly ONE query
+	// (alternating pan/tilt), never the back-to-back QueryPan+QueryTilt pair
+	// that collapsed readback on the 303Z/3050DZ (the pan reply collided with
+	// the outgoing tilt query; observed live ~0-1% response rate). The rotator
+	// is sensitive to excess traffic, so the gap is also the minimum spacing
+	// between any two frames. At 500 ms the alternating queries read each axis
+	// back once a second — the readback cadence the absolute-set gotos settle
+	// on. Overridable via Options.PollInterval (the in-memory sim uses a short
+	// interval to converge gotos fast).
+	pollInterval   = 500 * time.Millisecond // sleep gap between poll ticks (and response timeout); overridable via Options.PollInterval (sim)
+	jogKeySpeed    = 0x20                   // fixed speed for keyboard (hold-to-move) jogging
+	moveTolerance  = 3.0                    // degrees: how close to the target ends a goto
 	logSize        = 200                    // TX/RX ring-buffer depth
 	reconnectDelay = 400 * time.Millisecond // retry cadence while the link is down
 
@@ -50,21 +53,8 @@ const (
 
 	// progressDeadband is how much observed motion (degrees) counts as progress
 	// for the goto stall watchdog: above readback dither, far below the travel
-	// one poll interval of real jogging produces.
+	// one poll interval of a real slew produces.
 	progressDeadband = 0.1
-
-	// tiltSlewSafety biases the open-loop tilt slew deadline slightly short
-	// (halt at ~90% of the planned travel) so a mis-calibrated slew rate
-	// undershoots rather than overshoots into the mechanical stop. The
-	// halt-and-confirm correction loop then closes the small remaining gap;
-	// undershoot is safe, overshoot past a hard stop is not.
-	tiltSlewSafety = 0.9
-	// tiltConfirmSamples is how many consecutive within-deadband tilt readbacks
-	// the open-loop halt-and-confirm path requires before declaring the tilt
-	// axis settled. The motor is HALTED while confirming (no jog bit), so this
-	// cannot overshoot — it only guards a single transient garbage frame that
-	// might slip through right after the halt.
-	tiltConfirmSamples = 2
 )
 
 // ConnSpec describes an outbound connection target.
@@ -89,12 +79,12 @@ type Options struct {
 	WrapAccum    float64
 	AzOffset     float64
 	TiltInvert   bool
-	TiltCal      config.TiltCalConfig
 	Goto         config.GotoConfig
-	PollInterval time.Duration // per-cycle query/jog cadence override (0 → default pollInterval); tests use a short interval
+	PollInterval time.Duration // per-tick frame cadence override (0 → default pollInterval); tests use a short interval
 	Sim          config.SimConfig
 	SelfCheck    config.SelfCheckConfig
 	Rotctld      config.ServerConfig
+	AutoArm      bool // arm at start (headless/sim use; the TUI workflow starts disarmed)
 	Logw         io.Writer
 	LogLevel     config.LogLevel
 }
@@ -119,7 +109,7 @@ type State struct {
 	Jogging               bool
 	JogPan, JogTilt       int
 	Gotoing               bool
-	Unwrapping            bool
+	Armed                 bool
 	WrapEnabled           bool
 	WrapLimit             float64
 	Wrap                  float64
@@ -161,30 +151,32 @@ type Engine struct {
 	// elevation = 90 - physical tilt, and the jog up/down direction is reversed.
 	tiltInvert bool
 
-	// tilt readback calibration: a raw tilt word maps to elevation degrees via
-	// (raw - tiltOffset) / tiltScale. Pelco standard is hundredths of a degree
-	// (offset 0, scale 100); a calibrated raw-encoder head (303Z/3050DZ) carries
-	// an offset and a per-device scale. See config.TiltCalConfig.
-	tiltOffset float64
-	tiltScale  float64
+	// goto tuning. See config.GotoConfig.
+	gotoTimeout time.Duration
 
-	// closed-loop goto tuning. See config.GotoConfig.
-	gotoTimeout     time.Duration
-	tiltSlewRate    float64 // tilt open-loop slew rate (deg/s); >0 enables open-loop-slew-then-halt-and-confirm
-	maxTiltConfirms int     // post-halt correction pulses before the goto timeout gives up
+	// armed gates network-originated motion (the inbound rotctld server). It
+	// starts false on every run and is set by the TUI arm workflow (confirmed
+	// goto-0 + offset entry) or by AutoArm for headless/sim use. Armed state is
+	// never persisted. The local TUI path (Jog/Goto/StopMotion) is deliberately
+	// NOT gated — the person at the keyboard is trusted; the gate protects the
+	// unattended interfaces from moving the unit before a safe azimuth has been
+	// confirmed.
+	armed bool
 
 	// desired rotctld server at startup
 	rotctldWant config.ServerConfig
+	// autoArm arms during Start (before the servers accept traffic), for
+	// headless/sim deployments. The TUI workflow always starts disarmed.
+	autoArm bool
 
 	// runtime connection
 	port         *serialio.Port
 	frames       <-chan serialio.Event
 	pollTimer    *time.Timer   // self-paced poll trigger: response timeout while awaitingResp, sleep gap otherwise
 	awaitingResp bool          // a position query is in flight; the next query waits for its reply (or this timeout)
-	pollInterval time.Duration // sleep gap between query cycles (default pollInterval const; shorter for the in-memory sim)
-	pollFast     bool
-	retry        *time.Timer // fires reconnectDelay after the link drops; stopped while connected
-	retrying     bool        // disconnected and auto-retrying (throttles repeat failure logs)
+	pollInterval time.Duration // sleep gap between poll ticks (default pollInterval const; shorter for the in-memory sim)
+	retry        *time.Timer   // fires reconnectDelay after the link drops; stopped while connected
+	retrying     bool          // disconnected and auto-retrying (throttles repeat failure logs)
 
 	reqs chan func()
 	quit chan struct{}
@@ -207,31 +199,22 @@ type Engine struct {
 	pollPan bool
 
 	// motion state
-	jogDir                     pelco.Direction
-	jogPan, jogTilt            int
-	jogging                    bool
-	gotoing                    bool
+	jogDir          pelco.Direction
+	jogPan, jogTilt int
+	jogging         bool
+	gotoing         bool
+	// gotoTargetAz/El are the PHYSICAL coordinates of the in-flight goto
+	// (already through physAz/physTilt). pendingTiltSet arms the SetTilt send on
+	// the next poll tick: beginGoto sends SetPan immediately and defers SetTilt
+	// by one tick so the two absolute sets never go back-to-back on the
+	// 2400-baud half-duplex link (one frame per tick, same discipline as the
+	// query alternation).
 	gotoTargetAz, gotoTargetEl float64
-	gotoDeadline               time.Time // closed-loop goto safety timeout
-	mvActive                   bool      // closed-loop goto: pan axis still jogging
-	mvDir                      int       // pan jog direction: -1 CCW, +1 CW
-	mvWrapStart, mvTravel      float64   // cable-wind accumulator start + planned travel (pan, unwrap path)
-	unwrapping                 bool      // pan stop is accumulator-travel driven (cable-wrap relief) vs direct convergence
-	mvTiltActive               bool      // closed-loop goto: tilt axis still jogging
-	mvTiltDir                  int       // tilt jog direction: -1 down, +1 up
-	mvTiltStart, mvTiltTravel  float64   // tilt position at goto start + planned travel (overshoot backstop)
-	// Open-loop tilt slew (303Z/3050DZ: tilt readback is constant garbage while
-	// the motor runs). The slew is jogged blind and halted on a planned-travel
-	// deadline (mvTiltHaltDeadline), then confirmed against the now-stable idle
-	// readback. mvTiltHalted marks the confirm phase; mvTiltConfirmCount counts
-	// consecutive within-deadband samples; mvTiltConfirmTries bounds the
-	// correction pulses that re-jog the remaining gap if the blind halt lands
-	// short/long. tiltSlewRate == 0 keeps the legacy closed-loop path (these
-	// fields stay zero and are never consulted).
-	mvTiltHalted       bool
-	mvTiltHaltDeadline time.Time
-	mvTiltConfirmTries int
-	mvTiltConfirmCount int
+	gotoDeadline               time.Time // goto safety timeout (stall watchdog)
+	mvActive                   bool      // goto: pan axis still seeking (SetPan sent, readback not yet converged)
+	mvTiltActive               bool      // goto: tilt axis still seeking (SetTilt sent, readback not yet converged)
+	pendingTiltSet             bool      // a SetTilt for the in-flight goto is queued for the next poll tick
+	calZero                    bool      // goto targets physical 0° (calibration zero) and re-zeroes the wrap accumulator on arrival
 
 	// inbound rotctld server
 	rotctldSrv  *control.Server
@@ -266,6 +249,7 @@ func New(o Options) *Engine {
 		azOffset:    o.AzOffset,
 		tiltInvert:  o.TiltInvert,
 		rotctldWant: o.Rotctld,
+		autoArm:     o.AutoArm,
 		rotctldPort: o.Rotctld.Port,
 		pos:         &control.Pos{},
 		logw:        o.Logw,
@@ -288,42 +272,17 @@ func New(o Options) *Engine {
 	if strings.EqualFold(strings.TrimSpace(o.Protocol), config.ProtocolP) {
 		e.proto = pelco.ProtocolP
 	}
-	// Refine the tilt calibration: two calibration points (raw at 0° and 90°)
-	// define a linear raw = offset + scale*elev map. Without calibration
-	// (raw_at_90 == 0) the Pelco-standard hundredths decode stays in effect
-	// (offset 0, scale 100), so the in-memory simulator and any standard head
-	// keep working unchanged. A calibrated raw-encoder head (303Z/3050DZ)
-	// supplies the per-device offset and scale here.
-	if o.TiltCal.RawAt90 > 0 {
-		e.tiltOffset = o.TiltCal.RawAt0
-		e.tiltScale = (o.TiltCal.RawAt90 - o.TiltCal.RawAt0) / 90.0
-	} else {
-		e.tiltOffset = 0
-		e.tiltScale = 100
-	}
-	// Closed-loop goto tuning (defaults apply when unset, so the simulator and a
-	// bare config keep working without a goto: block).
+	// Goto tuning (default applies when unset, so the simulator and a bare
+	// config keep working without a goto: block).
 	e.gotoTimeout = time.Duration(o.Goto.TimeoutSec * float64(time.Second))
 	if e.gotoTimeout <= 0 {
 		e.gotoTimeout = 60 * time.Second
 	}
-	// Open-loop tilt slew rate. 0 (default) keeps the legacy closed-loop path
-	// (works for the sim and any head with clean motion readback); >0 enables
-	// the open-loop-slew-then-halt-and-confirm path for the 303Z/3050DZ, whose
-	// tilt readback is constant garbage while the motor runs.
-	e.tiltSlewRate = o.Goto.TiltSlewRate
-	e.maxTiltConfirms = o.Goto.TiltMaxConfirms
-	if e.maxTiltConfirms <= 0 {
-		// Each correction is one open-loop pulse + halt-and-confirm (~1–2s on
-		// real hardware), so 8 is well within the 60s goto timeout. A generous
-		// default makes the loop converge for a roughly-calibrated rate
-		// (tolerating a ~3x mis-calibration) instead of giving up early.
-		e.maxTiltConfirms = 8
-	}
 	// Per-tick poll cadence. The default (pollInterval const, 500ms) gives the
-	// 2400-baud 303Z/3050DZ a full tick to answer one query before the next. The
-	// in-memory simulator has no such constraint, so tests override it with a
-	// short interval to converge closed-loop gotos in milliseconds, not seconds.
+	// 2400-baud 303Z/3050DZ a full tick to answer one frame before the next —
+	// alternating pan/tilt queries read each axis once a second. The in-memory
+	// simulator has no such constraint, so tests override it with a short
+	// interval to converge gotos in milliseconds, not seconds.
 	e.pollInterval = pollInterval
 	if o.PollInterval > 0 {
 		e.pollInterval = o.PollInterval
@@ -382,6 +341,11 @@ func (e *Engine) run() {
 	defer e.retry.Stop()
 
 	e.reconnect(ConnSpec{Transport: e.transport, SerialPort: e.serialPort, Baud: e.baud, TCPAddr: e.tcpAddr})
+	// auto_arm (headless/sim use): arm before the inbound servers accept
+	// traffic, so no disarmed refusal window exists in unattended deployments.
+	if e.autoArm {
+		e.arm()
+	}
 	e.setServer(e.rotctldWant.Enabled, e.rotctldWant.Port)
 	e.publish()
 	for {
@@ -432,6 +396,74 @@ func (e *Engine) Home() { e.do(func() { e.startGoto(0, 0) }) }
 // StopMotion halts all motion.
 func (e *Engine) StopMotion() { e.do(func() { e.stop() }) }
 
+// Arm unlocks network-originated motion (the inbound rotctld server). The
+// operator is expected to have run the calibration workflow first — confirmed
+// goto-0 and the true-azimuth offset — so incoming network azimuths map onto
+// the physical frame and the cable-wind accumulator starts from a known-safe
+// zero. Armed state is never persisted: every run starts disarmed.
+func (e *Engine) Arm() {
+	e.do(func() { e.arm() })
+}
+
+// Arm sets armed on the actor goroutine.
+func (e *Engine) arm() {
+	if e.armed {
+		return
+	}
+	e.armed = true
+	e.status = "ARMED — network motion enabled"
+	e.logf(config.LogInfo, "armed: inbound network motion enabled")
+}
+
+// GotoZero drives the pan axis to PHYSICAL 0° — the unit's own zero reference,
+// deliberately bypassing the azimuth offset — and re-zeroes the cable-wind
+// accumulator when the readback converges there. This is the calibration step
+// of the arm workflow: the user confirms the antenna is safe to swing to the
+// mechanical zero, and 0° becomes the cable-safe reference the ±wrap-limit
+// accounting starts from. Elevation is untouched.
+func (e *Engine) GotoZero() {
+	e.do(func() { e.gotoZero() })
+}
+
+func (e *Engine) gotoZero() {
+	if e.gotoing {
+		e.status = "goto 0: motion already in flight"
+		return
+	}
+	if !e.havePan {
+		e.status = "goto 0: no position readback yet"
+		e.logf(config.LogWarn, "goto 0 blocked: no pan readback")
+		return
+	}
+	// Target physical 0° directly (no physAz — the offset does not apply).
+	short := shortestDelta(e.curPan, 0)
+	e.beginGoto(0, e.curTilt, MovePlan{Kind: MoveShort, Dir: sign(short), Travel: short, NewWrap: 0}, true)
+	if e.gotoing {
+		e.logf(config.LogInfo, "calibration: goto physical 0° (from %.2f°)", e.curPan)
+	}
+}
+
+// SetAzimuthTrue calibrates the azimuth offset: the user reads what the antenna
+// ACTUALLY points at (the logical azimuth) while the unit holds its current
+// physical direction, and the offset is set so that direction reports the given
+// value. All subsequent incoming azimuths map onto the physical frame through
+// this offset (azOffset = curPan − true).
+func (e *Engine) SetAzimuthTrue(trueAz float64) {
+	e.do(func() { e.setAzimuthTrue(trueAz) })
+}
+
+func (e *Engine) setAzimuthTrue(trueAz float64) {
+	if !e.havePan {
+		e.status = "true-az: no position readback yet"
+		e.logf(config.LogWarn, "true-az blocked: no pan readback")
+		return
+	}
+	e.azOffset = norm360(e.curPan - norm360(trueAz))
+	e.status = fmt.Sprintf("az offset set (true %.1f° = physical %.2f°)", norm360(trueAz), e.curPan)
+	e.logf(config.LogInfo, "azimuth offset set: logical %.2f° = physical %.2f° (offset %.2f°)",
+		norm360(trueAz), e.curPan, e.azOffset)
+}
+
 // ZeroWrap resets the cable-wind accumulator to zero (cable manually centered).
 func (e *Engine) ZeroWrap() {
 	e.do(func() {
@@ -481,14 +513,6 @@ func (e *Engine) physTilt(logical float64) float64 {
 	return logical
 }
 
-// decodeTilt maps a raw tilt readback word to physical elevation degrees using
-// the configured linear calibration. The Pelco standard is hundredths of a
-// degree (offset 0, scale 100); a calibrated raw-encoder head (303Z/3050DZ)
-// carries an offset and per-device scale so the raw count decodes to degrees.
-func (e *Engine) decodeTilt(raw uint16) float64 {
-	return (float64(raw) - e.tiltOffset) / e.tiltScale
-}
-
 // SetWrap enables/disables wrap protection and sets the ± limit (degrees).
 func (e *Engine) SetWrap(enabled bool, limit float64) {
 	e.do(func() {
@@ -532,6 +556,10 @@ func (e *Engine) Snapshot() State {
 // hex the poll loop emits. Position queries never reach exec (the server
 // answers those from the thread-safe Pos), so only motion commands appear as
 // CMD lines.
+//
+// ARM GATE: while disarmed, network motion (KindSetPos) is refused and logged.
+// Stop always passes (it is always safe), and the local TUI path never reaches
+// exec at all — the gate protects only the unattended interfaces.
 func (e *Engine) exec(c control.Command) {
 	src := c.Source
 	if src == "" {
@@ -545,6 +573,11 @@ func (e *Engine) exec(c control.Command) {
 	case control.KindStop:
 		e.stop()
 	case control.KindSetPos:
+		if !e.armed {
+			e.status = "DISARMED — network move refused (arm via TUI 'A' or auto_arm)"
+			e.logf(config.LogWarn, "network setpos refused: disarmed (az=%.1f el=%.1f)", c.Az, c.El)
+			return
+		}
 		e.startGoto(c.Az, c.El)
 	}
 }
@@ -566,9 +599,7 @@ func (e *Engine) jog(pan, tilt int, turbo bool) {
 		tilt = -tilt // upside-down mount: logical up is physical down
 	}
 	e.jogDir, e.jogging = pelco.Direction{Pan: pan, Tilt: tilt}, true
-	e.gotoing, e.mvActive, e.mvTiltActive, e.unwrapping = false, false, false, false
-	e.mvTiltHalted, e.mvTiltConfirmTries, e.mvTiltConfirmCount = false, 0, 0
-	e.setMovePoll(false)
+	e.gotoing, e.mvActive, e.mvTiltActive, e.pendingTiltSet, e.calZero = false, false, false, false, false
 	panS, tiltS := jogKeySpeed, jogKeySpeed
 	if turbo {
 		panS, tiltS = pelco.TurboSpeed, pelco.MaxSpeed
@@ -583,31 +614,31 @@ func (e *Engine) jog(pan, tilt int, turbo bool) {
 	e.send(pelco.Jog(e.addr, e.jogDir.Cmd2(), e.jogPan, e.jogTilt))
 }
 
-// startGoto commands an absolute move to (az, el) degrees. Absolute positioning
-// on the 303Z/3050DZ is achieved by CLOSED-LOOP JOG: the device ignores the
-// Pelco-D absolute SetPan/SetTilt opcodes (0x4B/0x4D) — confirmed live (zero
-// movement for minutes after each set) and by every third-party controller of
-// this rotor family — while jog + readback both work. So goto jogs each axis
-// toward its target and stops on readback convergence, reusing the cable-wrap
-// unwrap pattern (beginGoto/stepGoto/poll keepalive) generalized to both axes.
+// startGoto commands an absolute move to (az, el) degrees. The device honors
+// the Pelco-D absolute SetPan/SetTilt opcodes (0x4B/0x4D) — confirmed on the
+// bench 2026-08-28 (an earlier finding that it ignored them was a misread) — so
+// the engine sends the absolute position (one set per poll tick) and settles
+// the goto on readback convergence at ~1 Hz per axis. No jog keepalive runs
+// during a goto: the unit slews itself.
 //
-// Azimuth carries cable-wrap protection: a move that would over-wind the cable
-// is driven the long way round (MoveUnwrap, accumulator-travel stop); otherwise
-// the short path is taken (MoveShort, direct-convergence stop). Elevation jogs
-// directly to the target. Repeated identical calls (e.g. key-repeat while held)
-// are idempotent so an in-flight goto is not restarted.
+// Azimuth carries cable-wrap protection: only the shortest-path representation
+// is ever commanded (SetPan is absolute shortest-path), and a move whose short
+// path would over-wind the cable is REFUSED — over-winding is relieved manually
+// (TUI jog + zero-wrap), never by driving the long way round. Repeated
+// identical calls (e.g. tracking updates to an unchanged target) are idempotent
+// so an in-flight goto is not restarted.
 func (e *Engine) startGoto(az, el float64) {
 	az = e.physAz(az) // command the unit in physical coordinates
 	if el < 0 {
 		el = 0
 	} else if el > 90 {
-		el = 90 // keep the jog target inside the physical 0–90° travel
+		el = 90 // keep the target inside the physical 0–90° travel
 	}
 	el = e.physTilt(el)
 	if e.gotoing && e.gotoTargetAz == az && e.gotoTargetEl == el {
 		return // already heading there; let it run
 	}
-	// Closed-loop goto is readback-driven, so both axes need a current position.
+	// Goto settling is readback-driven, so both axes need a current position.
 	if !e.havePan || !e.haveTilt {
 		e.status = "goto: no position readback yet — move blocked"
 		e.logf(config.LogWarn, "goto blocked: no readback (havePan=%v haveTilt=%v)", e.havePan, e.haveTilt)
@@ -617,8 +648,8 @@ func (e *Engine) startGoto(az, el float64) {
 	if e.wrapEnabled {
 		plan = planMove(e.wrap, e.curPan, az, e.wrapLimit)
 		if plan.Kind == MoveBlock {
-			e.status = fmt.Sprintf("wrap: %.0f° unreachable within ±%.0f°", az, e.wrapLimit)
-			e.logf(config.LogWarn, "wrap: blocked goto %.0f° (wind %+.0f°, limit ±%.0f°)", az, e.wrap, e.wrapLimit)
+			e.status = fmt.Sprintf("wrap: %.0f° unreachable within ±%.0f° — unwind manually (jog + 'z')", az, e.wrapLimit)
+			e.logf(config.LogWarn, "wrap: refused goto %.0f° (wind %+.0f°, limit ±%.0f°)", az, e.wrap, e.wrapLimit)
 			return
 		}
 	} else {
@@ -631,51 +662,36 @@ func (e *Engine) startGoto(az, el float64) {
 			plan = MovePlan{Kind: MoveShort, Dir: sign(short), Travel: short, NewWrap: e.wrap + short}
 		}
 	}
-	e.beginGoto(az, el, plan)
+	e.beginGoto(az, el, plan, false)
 }
 
-// beginGoto arms a closed-loop jog of both axes toward the target. The pan axis
-// jogs in the planned direction (accumulator-travel stop for a cable-wrap
-// unwrap, direct-convergence stop for a short move); the tilt axis jogs
-// directly toward the target elevation. poll() re-sends the combined jog
-// keepalive each cycle; stepGoto (on readback) stops each axis as it converges.
-func (e *Engine) beginGoto(az, el float64, plan MovePlan) {
+// beginGoto arms an absolute-set goto: SetPan is sent immediately if the pan
+// axis must move, and SetTilt is deferred one poll tick (pendingTiltSet) so the
+// two sets never go back-to-back on the 2400-baud half-duplex link. The unit
+// slews itself; stepGoto (on readback) ends the goto when both axes converge.
+// calZero marks a calibration goto-0: on arrival the cable-wind accumulator is
+// re-zeroed (the confirmed physical 0° is the cable-safe reference).
+func (e *Engine) beginGoto(az, el float64, plan MovePlan, calZero bool) {
 	wasMoving := e.gotoing || e.jogging // retarget of live motion vs a standing start
 	e.jogging = false
 	e.gotoing, e.gotoTargetAz, e.gotoTargetEl = true, az, el
 
-	// Pan axis.
-	e.mvActive = plan.Kind == MoveShort || plan.Kind == MoveUnwrap
-	e.unwrapping = plan.Kind == MoveUnwrap
-	e.mvDir = plan.Dir
-	e.mvWrapStart = e.wrap
-	e.mvTravel = math.Abs(plan.Travel)
+	// Pan axis: a SetPan takes the shortest physical path by itself, so the
+	// planned direction/travel is bookkeeping only — convergence is read from
+	// the position readback. e.wrap is NOT set from the plan: the wind
+	// accumulator is integrated from observed readback (handleFrame) so it
+	// stays correct through interrupted or retargeted moves.
+	e.mvActive = plan.Kind == MoveShort
 
-	// Tilt axis (direct convergence).
-	dTilt := el - e.curTilt
-	e.mvTiltActive = math.Abs(dTilt) > moveTolerance
-	e.mvTiltDir = sign(dTilt)
-	e.mvTiltStart = e.curTilt
-	e.mvTiltTravel = math.Abs(dTilt)
-
-	// Open-loop tilt slew: the 303Z/3050DZ tilt readback is a constant
-	// valid-checksum garbage stream while the motor runs, so the closed loop
-	// cannot watch it move. When a slew rate is configured, arm a
-	// planned-travel deadline — jog blind, halt on the deadline, then confirm
-	// against the now-stable idle readback with a bounded correction loop.
-	// tiltSlewRate == 0 keeps the legacy closed-loop path (mvTiltHalted stays
-	// false, the deadline is never consulted).
-	e.mvTiltHalted = false
-	e.mvTiltConfirmTries = 0
-	e.mvTiltConfirmCount = 0
-	if e.tiltSlewRate > 0 && e.mvTiltActive {
-		e.armTiltHaltDeadline(e.mvTiltTravel)
-	}
+	// Tilt axis.
+	e.mvTiltActive = math.Abs(el-e.curTilt) > moveTolerance
+	e.pendingTiltSet = e.mvTiltActive
+	e.calZero = calZero
 
 	// Stall watchdog. Armed when motion STARTS, not on every retarget: tracking
 	// software streams a new target every second or two, and re-arming here each
 	// time defeated the backstop completely — a jammed or unreadable axis would
-	// jog for as long as the pass lasted. Motion already in flight keeps its
+	// slew for as long as the pass lasted. Motion already in flight keeps its
 	// existing deadline, and only OBSERVED travel pushes that deadline out (see
 	// noteGotoProgress), so a stuck axis still expires within gotoTimeout no
 	// matter how many targets arrive meanwhile.
@@ -690,190 +706,70 @@ func (e *Engine) beginGoto(az, el float64, plan MovePlan) {
 		// position the unit had just reached — and Pelco-D Jog has no auto-stop.
 		// Clearing the flags without the frame left the unit slewing with no
 		// keepalive left to correct it and no goto to time out.
-		e.gotoing, e.unwrapping = false, false
-		e.setMovePoll(false)
+		e.gotoing = false
+		if e.calZero {
+			e.calZero = false
+			e.wrap = 0
+			e.logf(config.LogInfo, "calibration: already at physical 0° — wrap accumulator re-zeroed")
+		}
 		e.send(pelco.Stop(e.addr))
 		e.status = "at target"
 		return
 	}
-	if e.unwrapping {
-		e.status = fmt.Sprintf("wrap: unwinding %s to reach %.0f°", dirArrow(plan.Dir), e.logicalPan(az))
-		e.logf(config.LogInfo, "goto: unwinding %s %.0f° to reach %.0f° / %.0f°",
-			dirArrow(plan.Dir), e.mvTravel, e.logicalPan(az), e.logicalTilt(el))
-	} else {
-		e.status = fmt.Sprintf("seeking %.0f° / %.0f°", e.logicalPan(az), e.logicalTilt(el))
-		e.logf(config.LogInfo, "goto: seeking %.2f° / %.2f°", e.logicalPan(az), e.logicalTilt(el))
-	}
-	e.setMovePoll(true)
-	e.sendGotoJog()
-}
-
-// armTiltHaltDeadline sets the open-loop tilt slew halt time for a planned
-// travel (degrees) at the configured slew rate. The deadline is safety-biased
-// short (tiltSlewSafety) so a mis-calibrated rate undershoots rather than
-// overshoots into the mechanical stop, and capped at the goto timeout so a
-// grossly wrong rate cannot run the slew past the safety backstop.
-func (e *Engine) armTiltHaltDeadline(travel float64) {
-	ns := travel / e.tiltSlewRate * float64(time.Second) * tiltSlewSafety
-	d := time.Duration(ns)
-	// Guarantee at least one jog keepalive so a correction for a gap just over
-	// the deadband (whose planned deadline would be shorter than one poll)
-	// actually moves the motor instead of halting before any jog is sent and
-	// then re-reading the same off-target position until the goto times out.
-	if d < e.pollInterval {
-		d = e.pollInterval
-	}
-	if d > e.gotoTimeout {
-		d = e.gotoTimeout
-	}
-	e.mvTiltHaltDeadline = time.Now().Add(d)
-}
-
-// sendGotoJog emits the combined pan/tilt jog for an in-flight closed-loop goto.
-// Each active axis jogs in its planned direction at jogKeySpeed; a converged
-// axis is dropped (no direction bit, speed 0) so the device halts that axis
-// while the other keeps moving. Pelco-D has no per-axis stop, so a converged
-// axis is signalled by omitting its direction bit. If neither axis is active an
-// all-stop is sent. beginGoto already mapped the target into physical space, so
-// the direction bits map directly to physical increase/decrease (the tiltInvert
-// flip for logical/UI directions is NOT applied here).
-func (e *Engine) sendGotoJog() {
-	if !e.gotoing {
-		return
-	}
-	dir := pelco.Direction{}
-	panS, tiltS := 0, 0
+	e.status = fmt.Sprintf("seeking %.0f° / %.0f°", e.logicalPan(az), e.logicalTilt(el))
+	e.logf(config.LogInfo, "goto: seeking %.2f° / %.2f° (SetPan sent, SetTilt pending: %v)",
+		e.logicalPan(az), e.logicalTilt(el), e.pendingTiltSet)
 	if e.mvActive {
-		dir.Pan = e.mvDir
-		panS = jogKeySpeed
+		e.send(pelco.SetPan(e.addr, az))
 	}
-	// The open-loop tilt slew halts by dropping the tilt direction bit (the
-	// device stops the tilt motor while the confirm phase reads the stable
-	// idle position). mvTiltActive stays true during confirm so the goto is
-	// not finished, but the jog bit is omitted so the motor is stopped.
-	if e.mvTiltActive && !e.mvTiltHalted {
-		dir.Tilt = e.mvTiltDir
-		tiltS = jogKeySpeed
-	}
-	if !e.mvActive && !e.mvTiltActive {
-		e.send(pelco.Stop(e.addr))
-		return
-	}
-	e.send(pelco.Jog(e.addr, dir.Cmd2(), panS, tiltS))
 }
 
-// stepGoto advances the closed-loop goto: stops each axis when it reaches its
-// target, and ends the goto when both axes have converged. Called from
-// handleFrame after each pan/tilt readback; tiltRead is true when the readback
-// that triggered this call was a tilt response. The tilt axis logic is gated
-// on tiltRead because stepGoto also fires on pan readbacks, and during an
-// open-loop tilt slew curTilt is frozen (readback ignored while the motor
-// runs) — acting on a pan readback then would see the stale pre-slew curTilt
-// and issue a full-travel correction. Pan stops on the cable-wind accumulator
-// (unwrap) or on direct azimuth convergence (short move); tilt stops on
-// direct elevation convergence with a travel backstop (legacy) or via the
-// open-loop halt-and-confirm path. When one axis converges the combined jog
-// is re-sent to halt that axis while the other continues; when both converge
-// an all-stop ends the goto.
+// stepGoto advances the goto: ends it when both commanded axes have converged
+// on readback. Called from handleFrame after each pan/tilt readback; tiltRead
+// tells which axis the readback was. Each axis is checked only on its own
+// readback (the other's stale value must not settle it). Absolute sets are not
+// latched motion, so convergence needs no per-axis halt frame — the device has
+// already stopped there; only the final all-stop is sent. calZero gotos
+// (calibration goto-0) additionally re-zero the cable-wind accumulator: the
+// confirmed physical 0° is the cable-safe reference.
 func (e *Engine) stepGoto(tiltRead bool) {
 	if !e.gotoing {
 		return
 	}
-	panDone := false
-	if e.mvActive {
-		travelled := math.Abs(e.wrap - e.mvWrapStart)
-		// Accumulator-travel stop (both unwrap and short paths travel mvTravel
-		// degrees; the wind accumulator integrates the observed travel either
-		// way). For a short move, a direct deadband check stops it precisely.
-		atTarget := !e.unwrapping && math.Abs(shortestDelta(e.curPan, e.gotoTargetAz)) < moveTolerance
-		if travelled >= e.mvTravel-moveTolerance || atTarget {
+	if e.mvActive && !tiltRead {
+		if math.Abs(shortestDelta(e.curPan, e.gotoTargetAz)) < moveTolerance {
 			e.mvActive = false
-			panDone = true
-			e.logf(config.LogDebug, "goto: pan settled (travel %.1f°, at %.2f°)", travelled, e.curPan)
+			e.logf(config.LogDebug, "goto: pan settled (readback %.2f°)", e.curPan)
 		}
 	}
-	tiltDone := false
 	if e.mvTiltActive && tiltRead {
-		if e.tiltSlewRate > 0 {
-			// Open-loop tilt path (303Z/3050DZ). The slew is jogged blind and
-			// timed by the configured rate; while slewing (not halted) the
-			// readback is ignored (handleFrame) and curTilt is frozen, so there
-			// is nothing to check here. Once halted, the stable idle readback
-			// drives a halt-and-confirm: settle on consecutive within-deadband
-			// samples (guards one transient post-halt frame), or issue a
-			// bounded correction pulse back toward the target if the blind
-			// halt landed short/long.
-			if e.mvTiltHalted {
-				travelled := math.Abs(e.curTilt - e.mvTiltStart)
-				if math.Abs(e.curTilt-e.gotoTargetEl) < moveTolerance {
-					e.mvTiltConfirmCount++
-					if e.mvTiltConfirmCount >= tiltConfirmSamples {
-						e.mvTiltActive = false
-						tiltDone = true
-						e.logf(config.LogDebug, "goto: tilt settled (travel %.1f°, at %.2f°, %d confirm)",
-							travelled, e.curTilt, e.mvTiltConfirmCount)
-					}
-				} else if e.mvTiltConfirmTries < e.maxTiltConfirms {
-					// Blind halt landed off-target: re-jog the remaining gap,
-					// then halt-and-confirm again. The correction is itself an
-					// open-loop pulse (same rate), so it converges geometrically
-					// even with a mis-calibrated rate; bounded by
-					// maxTiltConfirms so a grossly wrong rate gives up to the
-					// goto timeout instead of hunting forever.
-					e.mvTiltConfirmTries++
-					e.mvTiltConfirmCount = 0
-					corr := math.Abs(e.gotoTargetEl - e.curTilt)
-					e.mvTiltDir = sign(e.gotoTargetEl - e.curTilt)
-					e.mvTiltHalted = false
-					e.armTiltHaltDeadline(corr)
-					e.logf(config.LogDebug, "goto: tilt correction #%d %.1f° toward %.2f°",
-						e.mvTiltConfirmTries, corr, e.gotoTargetEl)
-				}
-			}
-		} else {
-			// Legacy closed-loop tilt path (sim / any head with clean motion
-			// readback): stop on direct convergence (deadband) or the travel
-			// backstop. This path assumes clean motion readback — a head whose
-			// tilt readback goes to garbage while the motor runs (303Z/3050DZ)
-			// must use the open-loop path (tilt_slew_rate > 0) above instead.
-			travelled := math.Abs(e.curTilt - e.mvTiltStart)
-			if math.Abs(e.curTilt-e.gotoTargetEl) < moveTolerance {
-				e.mvTiltActive = false
-				tiltDone = true
-				e.logf(config.LogDebug, "goto: tilt settled (travel %.1f°, at %.2f°)", travelled, e.curTilt)
-			} else if travelled >= e.mvTiltTravel+moveTolerance {
-				// Overshoot backstop: readback blew past the target without
-				// hitting the deadband (a fast slew sampled coarsely).
-				e.mvTiltActive = false
-				tiltDone = true
-				e.logf(config.LogDebug, "goto: tilt travel backstop (travel %.1f°, at %.2f°)", travelled, e.curTilt)
-			}
+		if math.Abs(e.curTilt-e.gotoTargetEl) < moveTolerance {
+			e.mvTiltActive = false
+			e.logf(config.LogDebug, "goto: tilt settled (readback %.2f°)", e.curTilt)
 		}
 	}
-	switch {
-	case !e.mvActive && !e.mvTiltActive:
+	if !e.mvActive && !e.mvTiltActive {
 		e.send(pelco.Stop(e.addr))
-		e.gotoing, e.unwrapping = false, false
-		e.setMovePoll(false)
+		e.gotoing, e.pendingTiltSet = false, false
+		if e.calZero {
+			e.calZero = false
+			e.wrap = 0
+			e.logf(config.LogInfo, "calibration: at physical 0° — wrap accumulator re-zeroed")
+		}
 		e.status = "at target"
 		e.logf(config.LogInfo, "goto: at target %.1f° / %.1f°", e.logicalPan(e.curPan), e.logicalTilt(e.curTilt))
-	case panDone || tiltDone:
-		// One axis converged: re-jog to halt it while the other keeps moving.
-		e.sendGotoJog()
 	}
 }
 
-// expireGoto is the safety backstop: if a closed-loop goto has not converged
-// within gotoTimeout (a stuck axis, or persistent tilt readback noise that never
+// expireGoto is the safety backstop: if a goto has not converged within
+// gotoTimeout (a dropped set frame, a stuck axis, or readback that never
 // reaches the deadband), stop all motion and abandon the move. Without this a
-// runaway jog would slew the rotor into a mechanical stop.
+// runaway slew would drive the rotor into a mechanical stop.
 func (e *Engine) expireGoto() {
 	e.send(pelco.Stop(e.addr))
 	e.logf(config.LogWarn, "goto: timed out after %v (pan %.1f°→%.1f°, tilt %.1f°→%.1f°)",
 		e.gotoTimeout, e.curPan, e.gotoTargetAz, e.curTilt, e.gotoTargetEl)
-	e.gotoing, e.mvActive, e.mvTiltActive, e.unwrapping = false, false, false, false
-	e.mvTiltHalted, e.mvTiltConfirmTries, e.mvTiltConfirmCount = false, 0, 0
-	e.setMovePoll(false)
+	e.gotoing, e.mvActive, e.mvTiltActive, e.pendingTiltSet, e.calZero = false, false, false, false, false
 	e.status = "goto timeout — readback did not converge"
 }
 
@@ -907,61 +803,42 @@ func (e *Engine) stop() {
 	e.jogging = false
 	e.jogPan, e.jogTilt = 0, 0
 	e.jogDir = pelco.Direction{}
-	e.gotoing, e.mvActive, e.mvTiltActive, e.unwrapping = false, false, false, false
-	e.mvTiltHalted, e.mvTiltConfirmTries, e.mvTiltConfirmCount = false, 0, 0
-	e.setMovePoll(false)
+	e.gotoing, e.mvActive, e.mvTiltActive, e.pendingTiltSet, e.calZero = false, false, false, false, false
 	e.send(pelco.Stop(e.addr))
 }
 
-// poll issues the readback query for one cycle and re-sends any active jog
-// keepalive. Exactly ONE position query is sent per cycle — never the
-// back-to-back QueryPan+QueryTilt pair the engine once sent. On the 303Z/3050DZ
-// (2400 baud, ~58 ms per 7-byte frame) that pair's pan reply collides with the
-// outgoing tilt query, collapsing readback to occasional random replies
-// (observed live: ~0–1% response rate). One query per cycle, with the next
-// query paced by reply completion + pollInterval (see run's pollTimer), gives
-// the device a full gap to answer before the next query, restoring reliable
-// readback at the cost of halving the per-axis query rate.
+// poll issues the ONE frame for this tick — a position query, or the pending
+// SetTilt of a two-axis goto — and re-sends any active jog keepalive. Exactly
+// ONE query is sent per cycle — never the back-to-back QueryPan+QueryTilt pair
+// the engine once sent. On the 303Z/3050DZ (2400 baud, ~58 ms per 7-byte frame)
+// that pair's pan reply collides with the outgoing tilt query, collapsing
+// readback to occasional random replies (observed live: ~0–1% response rate).
+// One frame per cycle, with the next paced by reply completion + pollInterval
+// (see run's pollTimer), gives the device a full gap to answer before the next,
+// restoring reliable readback at the cost of halving the per-axis query rate.
 //
-// During a closed-loop goto the axis being driven is queried: both axes moving
-// → alternate pan/tilt (each axis read every other cycle, the safe cadence);
-// one axis moving → query that axis every cycle for faster convergence. While
-// idle or jogging (UI hold-to-move), pan and tilt alternate.
-//
-// The goto jog keepalive is sent BEFORE the query, not after. On the real rotator
-// this is neutral — a sat rotator moves <0.1° in the ~58 ms frame gap between the
-// jog and the query — but it makes the in-memory simulator's readback reflect the
-// post-jog position. With query-then-jog the stepped sim would read its pre-jog
-// (lagging) position, stop on a near-target sample, and then expose the one-step
-// overshoot once idle polling resumes; jog-then-query makes the convergence
-// readback the actual rest position.
+// During a goto there is no jog keepalive (the unit slews itself after the
+// absolute sets). A pending SetTilt takes the tick (deferred from beginGoto so
+// the two sets never go back-to-back); otherwise the axis still being sought is
+// queried: both axes moving → alternate pan/tilt (each axis read every other
+// cycle, ~1 Hz per axis at the default cadence); one axis moving → query that
+// axis every cycle for faster convergence. While idle or jogging (UI
+// hold-to-move), pan and tilt alternate.
 func (e *Engine) poll() {
 	if e.port == nil {
 		return
 	}
-	// Closed-loop goto: re-send the combined jog keepalive first, then query the
-	// result. Per-axis convergence is driven by stepGoto on the readback. The
-	// safety timeout is checked here too; on expiry the move is abandoned and no
-	// query is sent this tick.
-	if e.gotoing {
-		// Open-loop tilt slew halt (303Z/3050DZ): the tilt readback is constant
-		// garbage while the motor runs, so the slew is timed blind by the
-		// configured rate. Halt on the planned deadline and enter the confirm
-		// phase. Checked BEFORE sendGotoJog so the halt tick emits the jog with
-		// the tilt bit DROPPED (mvTiltHalted), stopping the motor, rather than
-		// one more slew jog followed by a stop.
-		if e.tiltSlewRate > 0 && e.mvTiltActive && !e.mvTiltHalted && time.Now().After(e.mvTiltHaltDeadline) {
-			e.mvTiltHalted = true
-			e.mvTiltConfirmCount = 0
-			e.logf(config.LogDebug, "goto: tilt open-loop slew halted (deadline); confirming")
-		}
-		e.sendGotoJog()
-		if time.Now().After(e.gotoDeadline) {
-			e.expireGoto()
-			return
-		}
+	// Goto safety timeout: on expiry the move is abandoned and no query is sent
+	// this tick.
+	if e.gotoing && time.Now().After(e.gotoDeadline) {
+		e.expireGoto()
+		return
 	}
 	switch {
+	case e.pendingTiltSet:
+		// Deferred SetTilt of the in-flight goto (one frame per tick).
+		e.pendingTiltSet = false
+		e.send(pelco.SetTilt(e.addr, e.gotoTargetEl))
 	case e.mvActive && e.mvTiltActive:
 		// Two-axis goto: alternate one query per cycle.
 		if e.pollPan {
@@ -984,7 +861,8 @@ func (e *Engine) poll() {
 		e.send(pelco.QueryTilt(e.addr))
 		e.pollPan = true
 	}
-	// UI hold-to-move jog keepalive (separate from the goto jog; jog() clears gotoing).
+	// UI hold-to-move jog keepalive (jog() clears gotoing, so this never
+	// interleaves with a goto).
 	if e.jogging {
 		e.send(pelco.Jog(e.addr, e.jogDir.Cmd2(), e.jogPan, e.jogTilt))
 	}
@@ -1016,19 +894,11 @@ func (e *Engine) handleFrame(ev serialio.Event, ok bool) {
 		e.armNextPoll()
 	case ev.Frame.IsTiltResponse():
 		raw := ev.Frame.Word()
-		e.armNextPoll() // a reply (even garbage during a slew) ends the outstanding query
-		decoded := e.decodeTilt(raw)
-		// Open-loop tilt slew (303Z/3050DZ): while the tilt motor runs the
-		// device emits a constant valid-checksum garbage stream (observed live:
-		// raw 59776 for the entire slew), NEVER the true position. Readback is
-		// trustworthy only once the motor halts (idle). So while the open-loop
-		// slew runs, ignore tilt readback entirely — it cannot inform the move
-		// and, accepted, would derail the loop with garbage. The halt-and-
-		// confirm path reads the stable idle position after the deadline.
-		if e.tiltSlewRate > 0 && e.gotoing && e.mvTiltActive && !e.mvTiltHalted {
-			e.logf(config.LogTrace, "RX  tilt %02X %02X  (word 0x%04X) — ignored (open-loop slew; readback garbage while motor runs)", byte(raw>>8), byte(raw), raw)
-			break
-		}
+		e.armNextPoll() // a reply (even garbage) ends the outstanding query
+		// Textbook Pelco-D: the tilt word is elevation in hundredths of a
+		// degree, exactly like pan (confirmed on the bench 2026-08-28 — the
+		// earlier raw-encoder calibration model was a misread).
+		decoded := pelco.HundredthsToDeg(raw)
 		if e.haveTilt {
 			e.noteGotoProgress(e.mvTiltActive, decoded-e.curTilt)
 		}
@@ -1077,13 +947,11 @@ func (e *Engine) closePort() {
 // and schedules an automatic reconnect. Idempotent: a no-op if already down.
 //
 // It also abandons any in-flight motion. Pelco-D Jog has no auto-stop, so a
-// dropped link leaves the unit physically moving, and an active closed-loop
-// unwrap (mvActive) must not be resumed against the cable-wind accumulator —
-// that accumulator is integrated from observed readback and so misses all
-// travel during the disconnect, which would let a resumed unwrap drive the
-// cable past the wrap limit. stop() clears the motion state here; its Stop
-// send is a no-op now that the port is closed, so a fresh Stop is issued on
-// the new link in connect().
+// dropped link leaves the unit physically moving, and an active goto must not
+// resume against a stale position — the readback gate would re-arm the move
+// from coordinates computed before the disconnect. stop() clears the motion
+// state here; its Stop send is a no-op now that the port is closed, so a fresh
+// Stop is issued on the new link in connect().
 func (e *Engine) linkFailed(reason string) {
 	if e.port == nil {
 		return
@@ -1111,11 +979,10 @@ func (e *Engine) connect() {
 		p, err = serialio.Dial(e.tcpAddr)
 	case config.TransportSim:
 		p = serialio.OpenSim(serialio.SimOptions{
-			Addr:                e.addr,
-			StartPan:            e.sim.StartPan,
-			StartTilt:           e.sim.StartTilt,
-			JogStep:             e.sim.JogStep,
-			WildTiltWhileMoving: e.sim.WildTiltWhileMoving,
+			Addr:      e.addr,
+			StartPan:  e.sim.StartPan,
+			StartTilt: e.sim.StartTilt,
+			JogStep:   e.sim.JogStep,
 		})
 	default:
 		p, err = serialio.Open(e.serialPort, e.baud)
@@ -1126,7 +993,7 @@ func (e *Engine) connect() {
 		// these when a live link dies; clearing them here covers the other way in
 		// — an explicit Reconnect (TUI 'r'/'m') to a target that is down, or a
 		// first connect that never succeeded — which otherwise left the readback
-		// gate in startGoto open, so an inbound move armed a closed-loop goto
+		// gate in startGoto open, so an inbound move armed a goto
 		// against a stale position that then drove the unit on the fresh link.
 		e.havePan, e.haveTilt = false, false
 		if !e.retrying {
@@ -1152,11 +1019,10 @@ func (e *Engine) connect() {
 	// connect, including the first) is defensive and idempotent.
 	//
 	// stop() rather than a bare Stop frame: it also clears any in-flight
-	// closed-loop motion state, so a goto armed while the link was down cannot
-	// resume on the fresh link and drive the unit toward a target computed from
-	// a position that is now stale. linkFailed() clears the same state on the
-	// other path, where a stale wrap accumulator would additionally have let an
-	// unwrap run past wrapLimit.
+	// motion state, so a goto armed while the link was down cannot resume on
+	// the fresh link and drive the unit toward a target computed from a
+	// position that is now stale. linkFailed() clears the same state on the
+	// other path.
 	e.stop()
 	// Disable the PTZ self-check once per successful connect (set preset 105 on
 	// the 303Z/3050DZ). The setting is persistent on the unit, so this keeps it
@@ -1215,16 +1081,6 @@ func (e *Engine) closeServers() {
 		_ = e.rotctldSrv.Close()
 		e.rotctldSrv, e.rotctldOn = nil, false
 	}
-}
-
-func (e *Engine) setMovePoll(fast bool) {
-	if e.pollTimer == nil || fast == e.pollFast {
-		return
-	}
-	e.pollFast = fast
-	// Closed-loop moves and idle both poll at the configured cadence; the fast/slow
-	// distinction is kept for future tuning but currently identical.
-	e.pollTimer.Reset(e.pollInterval)
 }
 
 // armNextPoll is called when a position-query reply arrives. Only the FIRST
@@ -1301,7 +1157,7 @@ func (e *Engine) publish() {
 		JogPan:       e.jogPan,
 		JogTilt:      e.jogTilt,
 		Gotoing:      e.gotoing,
-		Unwrapping:   e.unwrapping,
+		Armed:        e.armed,
 		WrapEnabled:  e.wrapEnabled,
 		WrapLimit:    e.wrapLimit,
 		Wrap:         e.wrap,
@@ -1312,11 +1168,4 @@ func (e *Engine) publish() {
 		Log:          logCopy,
 	}
 	e.mu.Unlock()
-}
-
-func dirArrow(dir int) string {
-	if dir < 0 {
-		return "←"
-	}
-	return "→"
 }

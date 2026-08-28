@@ -45,7 +45,8 @@ const (
 	focusRotctld              // 4  rotctld port
 	focusRotctldOn            // 5  rotctld on/off toggle
 	focusWrapLimit            // 6  cable-wrap limit
-	fieldCount     = 7
+	focusTrueAz               // 7  true azimuth (calibration: what the antenna actually points at)
+	fieldCount     = 8
 )
 
 // isToggle reports whether a focus index is a boolean toggle field (flipped in
@@ -60,6 +61,18 @@ type tickMsg time.Time
 // motion, ending the step. It is the tap-step replacement for hold-to-move.
 type stepMsg struct{}
 
+// confirmKind is a pending y/n question the TUI asks before a motion or
+// arming action that must not fire on a stray keypress: the calibration
+// goto-0 (drives the unit to its mechanical zero) and the arm (unlocks
+// network motion). While a confirm is active all other keys are swallowed.
+type confirmKind string
+
+const (
+	confirmNone  confirmKind = ""
+	confirmGoto0 confirmKind = "goto0"
+	confirmArm   confirmKind = "arm"
+)
+
 // Model is the Bubble Tea application state.
 type Model struct {
 	eng  *engine.Engine
@@ -67,6 +80,10 @@ type Model struct {
 
 	inputs []textinput.Model
 	focus  int
+
+	// confirm holds a pending y/n question (calibration goto-0, arm). While
+	// set, all other keys are swallowed until the user answers.
+	confirm confirmKind
 
 	// connection being edited (mirrors the active transport's endpoint fields)
 	transport  string
@@ -116,6 +133,7 @@ func New(eng *engine.Engine, cfg config.Config, logPath string) Model {
 	m.inputs[focusEndpoint] = mk(endpoint, 24)
 	m.inputs[focusRotctld] = mk(strconv.Itoa(cfg.Control.Rotctld.Port), 6)
 	m.inputs[focusWrapLimit] = mk(strconv.FormatFloat(cfg.Wrap.Limit, 'f', -1, 64), 6)
+	m.inputs[focusTrueAz] = mk("0", 7)
 	m.snap = eng.Snapshot()
 	m.logLevel = cfg.LogLevel
 	return m
@@ -158,10 +176,24 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.cycleFocus(-1)
 		return m, nil
 	case "esc":
-		// Esc is the always-available emergency stop: halt all motion and drop
-		// out of any focused field. Stopping is harmless when idle.
+		// Esc is the always-available emergency stop: halt all motion, cancel
+		// any pending confirm, and drop out of any focused field. Stopping is
+		// harmless when idle.
+		m.confirm = confirmNone
 		m.stopAll()
 		m.blur()
+		return m, nil
+	}
+
+	// A pending confirm swallows every other key: y (or enter) executes the
+	// guarded action, anything else cancels.
+	if m.confirm != confirmNone {
+		switch msg.String() {
+		case "y", "Y":
+			m.doConfirm()
+		default:
+			m.confirm = confirmNone
+		}
 		return m, nil
 	}
 
@@ -205,6 +237,13 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.eng.ZeroWrap()
 	case "a":
 		m.eng.ZeroAzimuth()
+	case "c":
+		// Calibration goto-0: asks before driving the unit to its mechanical
+		// zero (the cable-safe reference the arm workflow re-zeros the wind at).
+		m.confirm = confirmGoto0
+	case "A":
+		// Arm: asks before unlocking inbound network motion.
+		m.confirm = confirmArm
 	case "up", "k":
 		cmd = m.keyStep(0, 1)
 	case "down", "j":
@@ -222,6 +261,19 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m *Model) stopAll() {
 	m.stepUntil = time.Time{}
 	m.eng.StopMotion()
+}
+
+// doConfirm executes the guarded action the user just confirmed with y.
+func (m *Model) doConfirm() {
+	k := m.confirm
+	m.confirm = confirmNone
+	switch k {
+	case confirmGoto0:
+		m.applyAddr()
+		m.eng.GotoZero()
+	case confirmArm:
+		m.eng.Arm()
+	}
 }
 
 // keyStep drives the unit for one tap-step in the given pan/tilt direction.
@@ -294,6 +346,20 @@ func (m *Model) commitFocused() tea.Cmd {
 		m.eng.SetRotctld(m.snap.RotctldOn, m.portField(focusRotctld, m.snap.RotctldPort))
 	case focusWrapLimit:
 		m.eng.SetWrap(m.snap.WrapEnabled, m.limitField())
+	case focusTrueAz:
+		// Offset entry: what the antenna ACTUALLY points at right now. The
+		// engine sets azOffset = curPan − true so incoming azimuths map onto
+		// the physical frame. Invalid text reverts to the current readback.
+		if v, err := strconv.ParseFloat(strings.TrimSpace(m.inputs[focusTrueAz].Value()), 64); err == nil {
+			m.eng.SetAzimuthTrue(v)
+		} else {
+			s := m.eng.Snapshot()
+			fallback := 0.0
+			if s.HavePan {
+				fallback = s.CurPan
+			}
+			m.inputs[focusTrueAz].SetValue(strconv.FormatFloat(fallback, 'f', -1, 64))
+		}
 	}
 	m.blur()
 	return nil
