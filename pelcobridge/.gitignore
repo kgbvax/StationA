@@ -12,3 +12,8 @@ pelcots.yaml
 
 # OS cruft
 .DS_Store
+docs/~$*
+docs/*.xlsx
+docs/*.xls
+docs/*.doc
+docs/*.docx
