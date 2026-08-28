@@ -55,6 +55,24 @@ const (
 	// for the goto stall watchdog: above readback dither, far below the travel
 	// one poll interval of a real slew produces.
 	progressDeadband = 0.1
+
+	// Absolute-set pacing, in multiples of the poll tick (so the in-memory sim,
+	// with its short tick, keeps the same proportions at test speed):
+	//
+	//   - setQuietTicks: after an absolute SetPan/SetTilt the line is held
+	//     SILENT for this many ticks. Bench evidence (2026-08-28) shows the
+	//     303Z/3050DZ ignoring byte-perfect SetPan frames when they are embedded
+	//     in the query stream — the same frames move the head when ptest sends
+	//     them onto a silent line, and third-party controllers of this family
+	//     report the firmware mishandles traffic around the absolute-position
+	//     command. The quiet window gives the head an uncontended slot to latch
+	//     the set and start slewing.
+	//   - setRetryTicks: if no axis has visibly moved this long after the last
+	//     set went out, the set was lost — it is re-sent, up to maxSetResends
+	//     times, each re-send followed by a fresh quiet window.
+	setQuietTicks = 3
+	setRetryTicks = 6
+	maxSetResends = 3
 )
 
 // ConnSpec describes an outbound connection target.
@@ -204,16 +222,20 @@ type Engine struct {
 	jogging         bool
 	gotoing         bool
 	// gotoTargetAz/El are the PHYSICAL coordinates of the in-flight goto
-	// (already through physAz/physTilt). pendingTiltSet arms the SetTilt send on
-	// the next poll tick: beginGoto sends SetPan immediately and defers SetTilt
-	// by one tick so the two absolute sets never go back-to-back on the
-	// 2400-baud half-duplex link (one frame per tick, same discipline as the
-	// query alternation).
+	// (already through physAz/physTilt). pendingPanSet/pendingTiltSet arm the
+	// SetPan/SetTilt sends on successive poll ticks (one frame per tick, same
+	// discipline as the query alternation — the two sets never go back-to-back
+	// on the 2400-baud half-duplex link), each followed by a quiet window with
+	// no queries: this head ignores absolute sets embedded in the query stream.
 	gotoTargetAz, gotoTargetEl float64
 	gotoDeadline               time.Time // goto safety timeout (stall watchdog)
 	mvActive                   bool      // goto: pan axis still seeking (SetPan sent, readback not yet converged)
 	mvTiltActive               bool      // goto: tilt axis still seeking (SetTilt sent, readback not yet converged)
+	pendingPanSet              bool      // a SetPan for the in-flight goto is queued for the next poll tick
 	pendingTiltSet             bool      // a SetTilt for the in-flight goto is queued for the next poll tick
+	setsSentAt                 time.Time // last absolute set (or re-send) went out; drives the lost-set re-send
+	travelSinceSets            float64   // observed readback travel since the last set went out
+	setResends                 int       // lost-set re-sends issued for the current goto (bounded by maxSetResends)
 	calZero                    bool      // goto targets physical 0° (calibration zero) and re-zeroes the wrap accumulator on arrival
 
 	// inbound rotctld server
@@ -599,7 +621,7 @@ func (e *Engine) jog(pan, tilt int, turbo bool) {
 		tilt = -tilt // upside-down mount: logical up is physical down
 	}
 	e.jogDir, e.jogging = pelco.Direction{Pan: pan, Tilt: tilt}, true
-	e.gotoing, e.mvActive, e.mvTiltActive, e.pendingTiltSet, e.calZero = false, false, false, false, false
+	e.gotoing, e.mvActive, e.mvTiltActive, e.pendingPanSet, e.pendingTiltSet, e.calZero = false, false, false, false, false, false
 	panS, tiltS := jogKeySpeed, jogKeySpeed
 	if turbo {
 		panS, tiltS = pelco.TurboSpeed, pelco.MaxSpeed
@@ -616,8 +638,11 @@ func (e *Engine) jog(pan, tilt int, turbo bool) {
 
 // startGoto commands an absolute move to (az, el) degrees. The device honors
 // the Pelco-D absolute SetPan/SetTilt opcodes (0x4B/0x4D) — confirmed on the
-// bench 2026-08-28 (an earlier finding that it ignored them was a misread) — so
-// the engine sends the absolute position (one set per poll tick) and settles
+// bench 2026-08-28, but ONLY when the set is not embedded in the query stream:
+// sets sent amid the readback polling were ignored (the same frames move the
+// head when sent onto a silent line, as ptest does). The engine therefore
+// queues the sets on the poll ticks (one per tick) and holds the line quiet
+// around them, re-sending sets that produce no observed travel, and settles
 // the goto on readback convergence at ~1 Hz per axis. No jog keepalive runs
 // during a goto: the unit slews itself.
 //
@@ -665,10 +690,12 @@ func (e *Engine) startGoto(az, el float64) {
 	e.beginGoto(az, el, plan, false)
 }
 
-// beginGoto arms an absolute-set goto: SetPan is sent immediately if the pan
-// axis must move, and SetTilt is deferred one poll tick (pendingTiltSet) so the
-// two sets never go back-to-back on the 2400-baud half-duplex link. The unit
-// slews itself; stepGoto (on readback) ends the goto when both axes converge.
+// beginGoto arms an absolute-set goto: SetPan and SetTilt are queued
+// (pendingPanSet/pendingTiltSet) and sent one per poll tick, each followed by a
+// quiet window (setQuietTicks) during which no query goes out — the 303Z/3050DZ
+// ignores absolute sets embedded in the query stream (bench 2026-08-28: the
+// same frames move the head when sent onto a silent line). The unit slews
+// itself; stepGoto (on readback) ends the goto when both axes converge.
 // calZero marks a calibration goto-0: on arrival the cable-wind accumulator is
 // re-zeroed (the confirmed physical 0° is the cable-safe reference).
 func (e *Engine) beginGoto(az, el float64, plan MovePlan, calZero bool) {
@@ -687,6 +714,12 @@ func (e *Engine) beginGoto(az, el float64, plan MovePlan, calZero bool) {
 	e.mvTiltActive = math.Abs(el-e.curTilt) > moveTolerance
 	e.pendingTiltSet = e.mvTiltActive
 	e.calZero = calZero
+	// Set scheduling: both sets ride the poll ticks, and the re-send bookkeeping
+	// starts fresh — a retargeted goto gets its own budget of lost-set retries.
+	e.pendingPanSet = e.mvActive
+	e.setsSentAt = time.Now()
+	e.travelSinceSets = 0
+	e.setResends = 0
 
 	// Stall watchdog. Armed when motion STARTS, not on every retarget: tracking
 	// software streams a new target every second or two, and re-arming here each
@@ -717,11 +750,8 @@ func (e *Engine) beginGoto(az, el float64, plan MovePlan, calZero bool) {
 		return
 	}
 	e.status = fmt.Sprintf("seeking %.0f° / %.0f°", e.logicalPan(az), e.logicalTilt(el))
-	e.logf(config.LogInfo, "goto: seeking %.2f° / %.2f° (SetPan sent, SetTilt pending: %v)",
-		e.logicalPan(az), e.logicalTilt(el), e.pendingTiltSet)
-	if e.mvActive {
-		e.send(pelco.SetPan(e.addr, az))
-	}
+	e.logf(config.LogInfo, "goto: seeking %.2f° / %.2f° (sets armed: pan=%v tilt=%v)",
+		e.logicalPan(az), e.logicalTilt(el), e.pendingPanSet, e.pendingTiltSet)
 }
 
 // stepGoto advances the goto: ends it when both commanded axes have converged
@@ -750,7 +780,7 @@ func (e *Engine) stepGoto(tiltRead bool) {
 	}
 	if !e.mvActive && !e.mvTiltActive {
 		e.send(pelco.Stop(e.addr))
-		e.gotoing, e.pendingTiltSet = false, false
+		e.gotoing, e.pendingPanSet, e.pendingTiltSet = false, false, false
 		if e.calZero {
 			e.calZero = false
 			e.wrap = 0
@@ -769,7 +799,7 @@ func (e *Engine) expireGoto() {
 	e.send(pelco.Stop(e.addr))
 	e.logf(config.LogWarn, "goto: timed out after %v (pan %.1f°→%.1f°, tilt %.1f°→%.1f°)",
 		e.gotoTimeout, e.curPan, e.gotoTargetAz, e.curTilt, e.gotoTargetEl)
-	e.gotoing, e.mvActive, e.mvTiltActive, e.pendingTiltSet, e.calZero = false, false, false, false, false
+	e.gotoing, e.mvActive, e.mvTiltActive, e.pendingPanSet, e.pendingTiltSet, e.calZero = false, false, false, false, false, false
 	e.status = "goto timeout — readback did not converge"
 }
 
@@ -778,8 +808,14 @@ func (e *Engine) expireGoto() {
 // gotoDeadline a no-progress timer rather than a total-duration timer: a long
 // tracking pass never trips it, while a jammed axis — or one whose readback has
 // collapsed, so nothing ever converges — still expires within gotoTimeout.
+// The same observed travel feeds travelSinceSets, the lost-set detector in
+// poll() (no travel after the sets → re-send them).
 func (e *Engine) noteGotoProgress(axisActive bool, moved float64) {
-	if !e.gotoing || !axisActive || math.Abs(moved) < progressDeadband {
+	if !e.gotoing || !axisActive {
+		return
+	}
+	e.travelSinceSets += math.Abs(moved)
+	if math.Abs(moved) < progressDeadband {
 		return
 	}
 	e.gotoDeadline = time.Now().Add(e.gotoTimeout)
@@ -803,7 +839,7 @@ func (e *Engine) stop() {
 	e.jogging = false
 	e.jogPan, e.jogTilt = 0, 0
 	e.jogDir = pelco.Direction{}
-	e.gotoing, e.mvActive, e.mvTiltActive, e.pendingTiltSet, e.calZero = false, false, false, false, false
+	e.gotoing, e.mvActive, e.mvTiltActive, e.pendingPanSet, e.pendingTiltSet, e.calZero = false, false, false, false, false, false
 	e.send(pelco.Stop(e.addr))
 }
 
@@ -818,8 +854,14 @@ func (e *Engine) stop() {
 // restoring reliable readback at the cost of halving the per-axis query rate.
 //
 // During a goto there is no jog keepalive (the unit slews itself after the
-// absolute sets). A pending SetTilt takes the tick (deferred from beginGoto so
-// the two sets never go back-to-back); otherwise the axis still being sought is
+// absolute sets). The pending SetPan/SetTilt take their own ticks (one frame
+// per tick, never back-to-back), and each set is followed by a SILENT window
+// (setQuietTicks): the 303Z/3050DZ ignores absolute sets embedded in the query
+// stream (bench 2026-08-28 — the same frames move the head when ptest sends
+// them onto a quiet line), so queries are held off while the head latches the
+// set. If no axis has visibly moved setRetryTicks after the last set went out,
+// the set was lost and is re-sent (bounded by maxSetResends). Once the sets are
+// away and the quiet window has passed, the axis still being sought is
 // queried: both axes moving → alternate pan/tilt (each axis read every other
 // cycle, ~1 Hz per axis at the default cadence); one axis moving → query that
 // axis every cycle for faster convergence. While idle or jogging (UI
@@ -835,10 +877,30 @@ func (e *Engine) poll() {
 		return
 	}
 	switch {
+	case e.pendingPanSet:
+		// SetPan of the in-flight goto, sent on its own tick.
+		e.pendingPanSet = false
+		e.send(pelco.SetPan(e.addr, e.gotoTargetAz))
+		e.setsSentAt, e.travelSinceSets = time.Now(), 0
 	case e.pendingTiltSet:
-		// Deferred SetTilt of the in-flight goto (one frame per tick).
+		// SetTilt of the in-flight goto, deferred one tick so the two sets
+		// never go back-to-back.
 		e.pendingTiltSet = false
 		e.send(pelco.SetTilt(e.addr, e.gotoTargetEl))
+		e.setsSentAt, e.travelSinceSets = time.Now(), 0
+	case e.gotoing && time.Since(e.setsSentAt) < setQuietTicks*e.pollInterval:
+		// Quiet window after the last absolute set: hold the line silent so the
+		// head can latch the set without contending with a query.
+	case e.gotoing && e.setResends < maxSetResends &&
+		time.Since(e.setsSentAt) >= setRetryTicks*e.pollInterval &&
+		e.travelSinceSets < progressDeadband:
+		// No axis has moved since the sets went out: they were lost (this head
+		// drops a set that lands in traffic). Re-send and open a fresh quiet
+		// window; the overall gotoDeadline still bounds the move.
+		e.setResends++
+		e.pendingPanSet, e.pendingTiltSet = e.mvActive, e.mvTiltActive
+		e.logf(config.LogWarn, "goto: no travel after sets — re-sending (attempt %d/%d, pan %.2f°→%.2f°, tilt %.2f°→%.2f°)",
+			e.setResends, maxSetResends, e.curPan, e.gotoTargetAz, e.curTilt, e.gotoTargetEl)
 	case e.mvActive && e.mvTiltActive:
 		// Two-axis goto: alternate one query per cycle.
 		if e.pollPan {

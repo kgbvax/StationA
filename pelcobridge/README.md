@@ -140,6 +140,15 @@ declares arrival when readback converges on the target. A stall watchdog
 aborts a goto whose readback stops progressing. Jog motion (TUI hold-to-move)
 sends jog frames while the key is held.
 
+**The sets get a quiet line.** The 303Z/3050DZ ignores absolute set frames that
+land in the middle of the readback-query stream (bench-observed 2026-08-28:
+byte-perfect `0x4B`/`0x4D` frames embedded in the polling produced no motion,
+while the same frames sent onto a silent line move the head). pelcots therefore
+sends the sets one per poll tick and holds the line **silent** for a short
+window after each set, and if no axis has visibly moved afterwards it
+**re-sends the sets** (up to 3 times) before the goto's stall watchdog
+abandons the move.
+
 ## Cable-wrap protection
 
 For rotators with infinite azimuth rotation, pelcots tracks a signed

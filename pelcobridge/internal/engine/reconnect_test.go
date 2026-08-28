@@ -295,7 +295,9 @@ func TestSetGotoDroppedLinkNotResumed(t *testing.T) {
 	if first == nil {
 		t.Fatal("no first connection recorded")
 	}
-	if _, _, sets := first.snapshot(); sets == 0 {
+	// The sets ride the poll ticks (one per tick, quiet window after), so wait
+	// for the first SetPan rather than asserting on an instant snapshot.
+	if !waitFor(2*time.Second, func() bool { _, _, sets := first.snapshot(); return sets > 0 }) {
 		t.Fatal("expected SetPan frames on the first connection while seeking")
 	}
 
