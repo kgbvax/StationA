@@ -9,7 +9,7 @@ control paths: a GS-232B TCP server on port 7373 and a PSTRotator-compatible
 UDP listener on port 12040. Either path lets rotator-control software drive the
 rotator directly; resulting motion still surfaces in `/state`. It is
 **read-write**. The UHF sat rotator is a separate slot (`muehle/uhf/rotator`)
-served by pelcobridge — no collision.
+— no collision.
 
 ---
 

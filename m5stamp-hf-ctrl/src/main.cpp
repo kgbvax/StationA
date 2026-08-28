@@ -9,10 +9,11 @@
 //                        sets the `enabled` permit; `armed` is derived.
 //
 // The arm logic is the model's planned embedded safety node (§6, §11.3): the
-// firmware subscribes hf/radio/state and computes
-//   armed = enabled ∧ radio_online ∧ ¬radio.tuning ∧ band_safe ∧ heartbeat
+// firmware subscribes hf/radio/state and hf/ant-switch/state and computes
+//   armed = enabled ∧ radio_online ∧ ¬radio.tuning ∧ band_safe ∧ heartbeat ∧ antenna_ready
 // driving relay 1 so that ANY failure (radio offline, tuning, unsafe band,
-// heartbeat lost, 13.8 V lost, PLC crash) drops the relay open → PA disabled.
+// heartbeat lost, antenna grounded, 13.8 V lost, PLC crash) drops the relay
+// open → PA disabled.
 //
 // See docs/m5stamp-hf-ctrl-mqtt-api.md and
 // ../stationa/docs/station-integration-model.md §7.1.
@@ -51,6 +52,7 @@ bool radioOnline = false;
 bool radioTuning = false;
 String radioBand = "";       // canonical band name (e.g. "20m"), "" if unknown
 unsigned long lastRadioStateMs = 0;  // heartbeat freshness
+bool antennaReady = false;    // ant-switch/state.selected != "off" (an antenna is in circuit)
 
 // Deduplication: publish immediately when enabled/armed/error change, otherwise
 // only on heartbeat. lastPublishedEnabled/Armed/Error track the last snapshot we
@@ -70,6 +72,7 @@ static void publishPaArmState(SlotMqtt& s);
 static void handleSwitchCmd(const char* topic, const uint8_t* payload, unsigned int len);
 static void handlePaArmCmd(const char* topic, const uint8_t* payload, unsigned int len);
 static void handleRadioState(const char* topic, const uint8_t* payload, unsigned int len);
+static void handleAntSwitchState(const char* topic, const uint8_t* payload, unsigned int len);
 static bool bandSafe(const String& band);
 static bool recomputeArm(SlotMqtt& paArm);
 static void uiInit();
@@ -120,13 +123,18 @@ static void handleSwitchCmd(const char* topic, const uint8_t* payload, unsigned 
 // ---------------------------------------------------------------------------
 // pa-arm slot
 // ---------------------------------------------------------------------------
-// The paArmSlot connection subscribes BOTH its own /cmd AND the radio /state
-// feed (for arm logic). Both arrive through the same PubSubClient callback, so
-// dispatch by topic suffix here: */cmd → set_enabled; */radio/state → arm inputs.
+// The paArmSlot connection subscribes its own /cmd AND the radio + ant-switch
+// /state feeds (for arm logic). All arrive through the same PubSubClient
+// callback, so dispatch by topic suffix here: */cmd → set_enabled;
+// */radio/state → radio inputs; */ant-switch/state → antenna_ready.
 static void handlePaArmCmd(const char* topic, const uint8_t* payload, unsigned int len) {
     String t(topic);
-    if (t.endsWith("/state")) {
+    if (t.endsWith("/radio/state")) {
         handleRadioState(topic, payload, len);
+        return;
+    }
+    if (t.endsWith("/ant-switch/state")) {
+        handleAntSwitchState(topic, payload, len);
         return;
     }
     // /cmd path
@@ -151,6 +159,16 @@ static void handleRadioState(const char* topic, const uint8_t* payload, unsigned
     lastRadioStateMs = millis();
 }
 
+static void handleAntSwitchState(const char* topic, const uint8_t* payload, unsigned int len) {
+    JsonDocument doc;
+    DeserializationError err = deserializeJson(doc, payload, len);
+    if (err) return;
+    // antennaReady = an antenna is actually in circuit (not the grounded "off"
+    // position). Conservative: unknown/missing selected drops the arm.
+    String sel = doc["selected"] | "";
+    antennaReady = (sel.length() > 0 && sel != "off");
+}
+
 static bool bandSafe(const String& band) {
     if (band.length() == 0) return false;
     for (int i = 0; i < SAFE_BANDS_COUNT; ++i) {
@@ -165,7 +183,7 @@ static bool bandSafe(const String& band) {
 static bool recomputeArm(SlotMqtt& paArm) {
     bool heartbeatFresh =
         (millis() - lastRadioStateMs) < RADIO_HEARTBEAT_MS && lastRadioStateMs != 0;
-    bool newArmed = enabled && radioOnline && !radioTuning && bandSafe(radioBand) && heartbeatFresh;
+    bool newArmed = enabled && radioOnline && !radioTuning && bandSafe(radioBand) && heartbeatFresh && antennaReady;
     if (newArmed != armed) {
         armed = newArmed;
         relaySet(RELAY_PA_ARM, armed);  // energize on arm, de-energize (open) on any drop
@@ -291,6 +309,7 @@ static String currentPaArmError() {
     if (!radioOnline) return "radio offline";
     if (radioTuning) return "radio tuning";
     if (!bandSafe(radioBand)) return "band not safe";
+    if (!antennaReady) return "antenna grounded";
     return "";
 }
 
@@ -446,8 +465,9 @@ void onSwitchConnect() {
 void onPaArmConnect() {
     publishPaArmMeta(*gPaArm);
     publishPaArmState(*gPaArm);
-    // (re)subscribe the radio state feed for arm logic.
+    // (re)subscribe the radio + ant-switch state feeds for arm logic.
     gPaArm->subscribeAbs(RADIO_BASE "/state");
+    gPaArm->subscribeAbs(ANT_SWITCH_BASE "/state");
     paArmConnectedOnce = true;
 }
 

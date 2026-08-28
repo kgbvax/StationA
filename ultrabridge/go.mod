@@ -5,8 +5,8 @@ go 1.26.5
 require (
 	codeberg.org/kgbvax/stationa/shared v0.0.0
 	github.com/eclipse/paho.mqtt.golang v1.5.1
-	github.com/pelletier/go-toml/v2 v2.4.2
-	go.bug.st/serial v1.7.1
+	github.com/pelletier/go-toml/v2 v2.4.3
+	go.bug.st/serial v1.8.0
 )
 
 require (

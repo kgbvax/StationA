@@ -621,10 +621,18 @@ dropped automatically on TX when the radio removes the bias — so preamp protec
 internal to the radio and needs no slot and no external sequencer. Preamp is a
 *capability* plus a passive LNA, not an active slot.
 
-**`muehle/uhf/rotator`** — SPID rotator with its own controller, driven over serial by
-PSTRotator on host `shack-pc`. `capabilities: axes [az, el]`. Same role name as the HF
-rotator but a completely different control stack; a satellite-tracking consumer reads
-the axes rather than knowing the hardware.
+**`muehle/uhf/rotator`** — PTS-303Z/3050DZ pan/tilt head (Pelco-D/P over RS-485),
+driven by **pelcobridge2** on host `shack-pc` — an interactive TUI that doubles as a
+hamlib `rotctld` server (`-m 901`, port 4533). `capabilities: axes [az, el]`. Same
+role name as the HF rotator but a completely different control stack; a
+satellite-tracking consumer reads the axes rather than knowing the hardware. The
+safety model differs from every other bridge: the component is **disarmed at every
+start**, arming is a keyboard act in the TUI (requires entering the head's true
+azimuth to calibrate the offset; never automatic, never remote-controlled), and MQTT
+`/cmd` accepts **only** `stop` — no motion path exists from the bus. Absolute sets
+use a verify-and-resend ladder (quiet-line window, one verification query, bounded
+retries) instead of readback polling. The self-test (preset call 125) re-homes the
+head and can rip cables; it is disarmed-only and two-stage confirmed in the TUI.
 
 **`muehle/uhf/pol-ctrl`** — M5 Stamp PLC #2 with custom firmware. `capabilities:
 polarizations [h, v, cl, cr]`. Settable state, operator-driven; no automatic binding.

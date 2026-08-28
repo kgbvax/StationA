@@ -1,3 +1,7 @@
+import 'dart:async';
+import 'dart:math' as math;
+
+import 'package:clock/clock.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../store/bus_store.dart';
@@ -15,11 +19,24 @@ class PaPanel extends StatefulWidget {
 
 class _PaPanelState extends State<PaPanel> {
   // Rolling 1-second window of forward-power samples, used to draw the peak
-  // (max) and 95th-percentile markers on the FWD meter.
+  // (max) and 95th-percentile markers on the FWD meter. Timestamped via
+  // package:clock so widget tests advance the window with tester.pump.
   final List<_FwdSample> _fwdSamples = [];
 
+  // Peak-hold ballistics: the markers snap up instantly to the window maxima
+  // and then decay linearly at a rate that drains a full-scale (1200 W) peak
+  // in ~5 s, instead of vanishing the moment the sample window rolls over.
+  static const double _meterFullScale = 1200;
+  static const double _peakDecayPerTick = _meterFullScale / 50; // W per 100 ms
+  static const Duration _decayInterval = Duration(milliseconds: 100);
+
+  double _lastFwd = 0;
+  double _peakHold = 0;
+  double _p95Hold = 0;
+  Timer? _decayTimer;
+
   void _recordFwd(double fwd) {
-    final now = DateTime.now();
+    final now = clock.now();
     if (_fwdSamples.isNotEmpty && _fwdSamples.last.v == fwd) {
       // Constant value: refresh the timestamp so it stays "present" in the
       // window even when the amp holds a steady power level.
@@ -29,6 +46,9 @@ class _PaPanelState extends State<PaPanel> {
     }
     final cutoff = now.subtract(const Duration(seconds: 1));
     _fwdSamples.removeWhere((s) => s.t.isBefore(cutoff));
+    _peakHold = math.max(_peakHold, _maxOverWindow());
+    _p95Hold = math.max(_p95Hold, _p95OverWindow());
+    _syncDecayTimer();
   }
 
   double _maxOverWindow() {
@@ -40,6 +60,35 @@ class _PaPanelState extends State<PaPanel> {
     if (_fwdSamples.isEmpty) return 0;
     final vals = _fwdSamples.map((s) => s.v).toList()..sort();
     return _percentile(vals, 0.95);
+  }
+
+  /// Keep the decay timer running exactly while a held marker still stands
+  /// above the live power; once both markers have come down to the reading
+  /// the timer stops until the next burst.
+  void _syncDecayTimer() {
+    if (_peakHold > _lastFwd || _p95Hold > _lastFwd) {
+      _decayTimer ??= Timer.periodic(_decayInterval, (_) => _decayTick());
+    } else {
+      _decayTimer?.cancel();
+      _decayTimer = null;
+    }
+  }
+
+  void _decayTick() {
+    if (!mounted) return;
+    setState(() {
+      // Decay toward the live reading, never below it — a new transmission
+      // takes the marker over immediately.
+      _peakHold = math.max(_lastFwd, _peakHold - _peakDecayPerTick);
+      _p95Hold = math.max(_lastFwd, _p95Hold - _peakDecayPerTick);
+    });
+    _syncDecayTimer();
+  }
+
+  @override
+  void dispose() {
+    _decayTimer?.cancel();
+    super.dispose();
   }
 
   @override
@@ -57,9 +106,10 @@ class _PaPanelState extends State<PaPanel> {
     final fwd = store.stateValueAs<num>('muehle/hf/pa', 'fwd_power_w')?.toDouble() ?? 0.0;
     final swr = store.stateValueAs<num>('muehle/hf/pa', 'swr')?.toDouble() ?? 1.0;
 
+    _lastFwd = fwd;
     _recordFwd(fwd);
-    final maxFwd = _maxOverWindow();
-    final p95Fwd = _p95OverWindow();
+    final maxFwd = _peakHold;
+    final p95Fwd = _p95Hold;
 
     final (tagLabel, tagColor) = _paTag(mode, keyed, fault, error, temp, online);
 

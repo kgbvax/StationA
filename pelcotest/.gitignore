@@ -1,0 +1,15 @@
+# Build artifacts
+/ptest/ptest
+/ptest/ptest.exe
+/ptest/ptest-mock
+/ptest/ptest-mock.exe
+dist/**/*.exe
+
+# Office lock files next to the spec sheets
+docs/~$*
+
+# Local Claude Code settings
+.claude/
+
+# OS cruft
+.DS_Store

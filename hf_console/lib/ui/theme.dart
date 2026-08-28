@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 
 enum AppColorScheme {
   dc,
-  aether,
   paper,
   forest,
 }
@@ -31,22 +30,6 @@ class AppTheme extends ChangeNotifier {
       amber: const Color(0xFFD7B04A),
       red: const Color(0xFFD9685C),
       orange: const Color(0xFFD99A5F),
-    ),
-    AppColorScheme.aether: _Palette(
-      page: const Color(0xFF05070A),
-      pane: const Color(0xFF090C12),
-      card: const Color(0xFF0D1119),
-      line: const Color(0xFF1A2030),
-      lineHi: const Color(0xFF283040),
-      txt: const Color(0xFFD7DFEA),
-      txtMute: const Color(0xFF7E8CA3),
-      txtFaint: const Color(0xFF4C566B),
-      accent: const Color(0xFF00C6E0),
-      accentDim: const Color(0x1E00C6E0),
-      green: const Color(0xFF38F580),
-      amber: const Color(0xFFF0C040),
-      red: const Color(0xFFFF4D4D),
-      orange: const Color(0xFFFF9A3C),
     ),
     AppColorScheme.paper: _Palette(
       page: const Color(0xFFE5E3DD),
@@ -114,6 +97,7 @@ class AppTheme extends ChangeNotifier {
 
   /// Colour for a DX-spot dot by its horstreporter `sourceType`
   /// (`mqtt`→FT8/FT4 green, `dxcluster`→cyan, `rbn`→amber, `wspr`→orange).
+  /// Used as a fallback when a spot has no `band` tag.
   static Color spotColor(String sourceType) {
     switch (sourceType) {
       case 'mqtt':
@@ -127,6 +111,46 @@ class AppTheme extends ChangeNotifier {
       default:
         return txtMute;
     }
+  }
+
+  /// Colour for a DX-spot dot by its amateur band (`20m`, `40m`, …). Mirrors
+  /// horstreporter's `static/utils.js:577-592` `bandColors` *exactly* so a
+  /// spot dot in this console matches the colour the user sees in the web
+  /// frontend for the same band — the visual cross-component invariant is
+  /// deliberate. Hex values are fixed (not theme tokens); see
+  /// `docs/conventions/band-mode-reference.md` for the canonical table and
+  /// rationale. Falls back to grey for unknown / blank labels.
+  static Color bandColor(String band) => _bandColorFor(band);
+
+  static Color _bandColorFor(String band) {
+    const palette = <String, Color>{
+      '160m': Color(0xFF8B0000), // dark red
+      '80m':  Color(0xFF800080), // purple
+      '60m':  Color(0xFF4B0082), // indigo
+      '40m':  Color(0xFF0000FF), // blue
+      '30m':  Color(0xFF03B1B1), // teal
+      '20m':  Color(0xFF008000), // green
+      '17m':  Color(0xFF808000), // olive
+      '15m':  Color(0xFFFFA500), // orange
+      '12m':  Color(0xFF00FFFF), // cyan
+      '10m':  Color(0xFFFF0000), // red
+      '6m':   Color(0xFFFF00FF), // magenta
+      '4m':   Color(0xFFFF1493), // deep pink
+      '2m':   Color(0xFF008080), // dark teal
+    };
+    final c = palette[band];
+    return c ?? const Color(0xFF555555); // matches horstreporter's bandColors.all
+  }
+
+  /// Continuous opacity for a grid-square fill from its top-quartile mean SNR
+  /// (dB). Mirrors `horstreporter/static/utils.js:656-661` `gridSnrOpacity`:
+  /// 0 dB → 0.45, -10 dB → 0.15, floor 0.10, cap 0.75.
+  static double gridSnrOpacity(double scoreDb) {
+    if (!scoreDb.isFinite) return 0.10;
+    if (scoreDb < 0) {
+      return (0.45 + 0.03 * scoreDb).clamp(0.10, 0.75);
+    }
+    return (0.45 + 0.015 * scoreDb).clamp(0.10, 0.75);
   }
 
   static Color get purpleBorder => const Color(0x597C5CFF);
@@ -159,9 +183,7 @@ class AppTheme extends ChangeNotifier {
             ? activeButtonText
             : danger
                 ? red
-                : amber
-                    ? AppTheme.amber
-                    : txt,
+                : txt,
         side: BorderSide(
           color: active
               ? accent
@@ -176,6 +198,23 @@ class AppTheme extends ChangeNotifier {
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
         minimumSize: const Size(44, 40),
         textStyle: mono(13, weight: FontWeight.w600),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+      );
+
+  /// Icon-button sibling of [actionButton]. Used by the compass +/- zoom
+  /// buttons. Same `pane` / `cardLineHi` chrome as the inactive preset row,
+  /// 48 dp hit target per hf_console/CLAUDE.md ("All touch targets ≥48dp").
+  static ButtonStyle iconActionButton({bool active = false, bool danger = false}) =>
+      ElevatedButton.styleFrom(
+        backgroundColor: active ? blend(accent, 0.18) : pane,
+        foregroundColor: danger ? red : txt,
+        side: BorderSide(color: active ? accent : cardLineHi),
+        shadowColor: const Color(0x40000000),
+        elevation: 0,
+        padding: EdgeInsets.zero,
+        minimumSize: const Size(48, 48),
+        iconSize: 18,
+        iconColor: txt,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
       );
 

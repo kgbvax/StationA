@@ -3,13 +3,14 @@ import 'package:provider/provider.dart';
 import '../../store/bus_store.dart';
 import '../../mqtt/mqtt_service.dart';
 import '../theme.dart';
-import '../widgets/compass_panel.dart';
+import '../widgets/dx_map_container.dart';
 import '../widgets/pa_panel.dart';
 import '../widgets/tuner_panel.dart';
 import '../widgets/ultrabeam_panel.dart';
 import '../widgets/dvk_panel.dart';
 import '../widgets/antenna_panel.dart';
 import '../widgets/power_panel.dart';
+import '../widgets/rotator_presets_bar.dart';
 import '../widgets/climate_panel.dart';
 import '../widgets/faults_bar.dart';
 import '../widgets/dx_config_sheet.dart';
@@ -87,8 +88,52 @@ class _HfPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Canonical iOS tablet/phone split: phones (shortestSide < 600) get a
+    // single vertical scroll of every panel for full feature parity on a
+    // small screen; tablets keep the side-by-side map + controls layout.
+    final isPhone = MediaQuery.of(context).size.shortestSide < 600;
+
     return LayoutBuilder(
       builder: (context, constraints) {
+        if (isPhone) {
+          return Container(
+            color: AppTheme.page,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _PageTopBar(page: 'hf', onSelect: onSelect, onScheme: onScheme),
+                Expanded(
+                  flex: 5,
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: AppTheme.pane,
+                      border: Border(bottom: BorderSide(color: AppTheme.cardLine)),
+                    ),
+                    child: const DxMapContainer(),
+                  ),
+                ),
+                Expanded(
+                  flex: 6,
+                  child: SingleChildScrollView(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: const [
+                        UltrabeamPanel(),
+                        AntennaPanel(),
+                        RotatorPresetsBar(),
+                        PaPanel(),
+                        TunerPanel(),
+                        DvkPanel(),
+                        FaultsBar(),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          );
+        }
+
         final isCompact = constraints.maxWidth < 1200 || constraints.maxHeight < 720;
         final rightFraction = isCompact ? 0.48 : 0.44;
         final rightMinWidth = isCompact ? 320.0 : 420.0;
@@ -108,11 +153,12 @@ class _HfPage extends StatelessWidget {
                           color: AppTheme.pane,
                           border: Border(bottom: BorderSide(color: AppTheme.cardLine)),
                         ),
-                        child: const CompassPanel(),
+                        child: const DxMapContainer(),
                       ),
                     ),
                     const UltrabeamPanel(),
                     const AntennaPanel(),
+                    const RotatorPresetsBar(),
                   ],
                 ),
               ),
@@ -132,7 +178,6 @@ class _HfPage extends StatelessWidget {
                       page: 'hf',
                       onSelect: onSelect,
                       onScheme: onScheme,
-                      showRadioReadout: true,
                     ),
                     Expanded(
                       child: SingleChildScrollView(
@@ -224,13 +269,11 @@ class _PageTopBar extends StatelessWidget {
   final String page;
   final ValueChanged<String> onSelect;
   final ValueChanged<AppColorScheme> onScheme;
-  final bool showRadioReadout;
 
   const _PageTopBar({
     required this.page,
     required this.onSelect,
     required this.onScheme,
-    this.showRadioReadout = false,
   });
 
   @override
@@ -249,75 +292,10 @@ class _PageTopBar extends StatelessWidget {
           _Tab('Station', 'station', page == 'station', onSelect),
           _Tab('HF', 'hf', page == 'hf', onSelect),
           _Tab('UHF', 'uhf', page == 'uhf', onSelect),
-          if (showRadioReadout) const _RadioReadout(),
           _SchemePicker(onScheme: onScheme),
           const _DxSettingsButton(),
           _ConnectionIndicator(mqtt: mqtt),
           const _OnlineTag(),
-        ],
-      ),
-    );
-  }
-}
-
-class _RadioReadout extends StatelessWidget {
-  const _RadioReadout();
-
-  @override
-  Widget build(BuildContext context) {
-    final store = context.watch<BusStore>();
-    final slot = store.slots['muehle/hf/radio'];
-    final online = slot?.isOnline ?? false;
-    final freqHz = store.stateValueAs<int>('muehle/hf/radio', 'freq_hz') ?? 0;
-    final band = store.stateValueAs<String>('muehle/hf/radio', 'band') ?? '';
-    final mode = store.stateValueAs<String>('muehle/hf/radio', 'mode') ?? '';
-    final tx = store.stateValueAs<String>('muehle/hf/radio', 'tx') ?? 'rx';
-    final drive = store.stateValueAs<int>('muehle/hf/radio', 'drive') ?? 0;
-
-    if (!online) {
-      return Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-        decoration: BoxDecoration(
-          color: AppTheme.blend(AppTheme.red, 0.12),
-          border: Border.all(color: AppTheme.blend(AppTheme.red, 0.45)),
-          borderRadius: BorderRadius.circular(4),
-        ),
-        child: Text('RADIO OFFLINE', style: AppTheme.mono(12, color: AppTheme.red, weight: FontWeight.w700)),
-      );
-    }
-
-    final mhz = (freqHz / 1e6).toStringAsFixed(3);
-    final txColor = tx == 'tx' ? AppTheme.red : AppTheme.green;
-    final txLabel = tx == 'tx' ? 'TX' : 'RX';
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
-      decoration: BoxDecoration(
-        color: AppTheme.pane,
-        border: Border.all(color: AppTheme.cardLine),
-        borderRadius: BorderRadius.circular(4),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(mhz, style: AppTheme.mono(16, weight: FontWeight.w700)),
-          Text(' MHz', style: AppTheme.mono(10, color: AppTheme.txtFaint)),
-          const SizedBox(width: 12),
-          Text(mode.toUpperCase(), style: AppTheme.mono(13, weight: FontWeight.w700, color: AppTheme.accent)),
-          const SizedBox(width: 12),
-          Text(band.toUpperCase(), style: AppTheme.mono(13, color: AppTheme.txtMute, weight: FontWeight.w600)),
-          const SizedBox(width: 12),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-            decoration: BoxDecoration(
-              color: AppTheme.blend(txColor, 0.12),
-              border: Border.all(color: txColor),
-              borderRadius: BorderRadius.circular(4),
-            ),
-            child: Text(txLabel, style: AppTheme.mono(11, color: txColor, weight: FontWeight.w700)),
-          ),
-          const SizedBox(width: 12),
-          Text('$drive%', style: AppTheme.mono(13, color: AppTheme.txt, weight: FontWeight.w600)),
         ],
       ),
     );
@@ -422,12 +400,16 @@ class _DxSettingsButton extends StatelessWidget {
       borderRadius: BorderRadius.circular(4),
       onTap: () => showDxConfigSheet(context),
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
         decoration: BoxDecoration(
+          color: AppTheme.pane,
           border: Border.all(color: AppTheme.cardLineHi),
           borderRadius: BorderRadius.circular(4),
         ),
-        child: Icon(Icons.tune, size: 16, color: AppTheme.txtMute),
+        child: Tooltip(
+          message: 'DX overlay settings',
+          child: Icon(Icons.tune, size: 20, color: AppTheme.txt),
+        ),
       ),
     );
   }
@@ -442,7 +424,6 @@ class _SchemePicker extends StatelessWidget {
   Widget build(BuildContext context) {
     final schemes = [
       (AppColorScheme.dc, 'DC'),
-      (AppColorScheme.aether, 'AE'),
       (AppColorScheme.paper, 'PA'),
       (AppColorScheme.forest, 'FO'),
     ];

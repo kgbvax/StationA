@@ -70,7 +70,6 @@ model. None of them is the model; together they prove the model is buildable and
 | [antennaselect](antennaselect/) | Antenna-selection reconciler | `muehle/hf/antenna-select` | logic slot |
 | [acom1200s-pa-bridge](acom1200s-pa-bridge/) | ACOM 1200S PA bridge | `muehle/hf/pa` | Serial (telemetry only) |
 | [wrc-rotator-bridge](wrc-rotator-bridge/) | HF rotator bridge (Yaesu G-450DC via AF6SA WRC) | `muehle/hf/rotator` | WebSocket (AF6SA WRC) |
-| [pelcobridge](pelcobridge/) | Pelco-D rotator controller (UHF sat rotator) | `muehle/uhf/rotator` | Serial |
 | [atr1k-tuner-bridge](atr1k-tuner-bridge/) | ATR-1000 ATU bridge | `muehle/hf/tuner` | wifi (binary WebSocket) |
 | [shelly-power-bridge](shelly-power-bridge/) | Shelly smart-plug bridge (master mains + 13.8 V PSU) | `muehle/power/master`, `muehle/power/psu-13v8` | wifi (Gen2+ MQTT) |
 | [m5stamp-hf-ctrl](m5stamp-hf-ctrl/) | M5 Stamp PLC firmware (PA/TRX remote-on + arm relay) | `muehle/hf/switch`, `muehle/hf/pa-arm` | wifi (embedded) |
@@ -108,8 +107,6 @@ muehle/
     rotator/         ← wrc-rotator-bridge   (Yaesu G-450DC via AF6SA WRC, websocket)
     tuner/           ← atr1k-tuner-bridge (ATR-1000 ATU, wifi)
     discovery/       ← hadiscovery      (HA discovery consumer — reads /meta.expose)
-  uhf/
-    rotator/         ← pelcobridge      (UHF sat rotator, Pelco-D)
   host/
     shari/           ← shari RPi liveness
 ```

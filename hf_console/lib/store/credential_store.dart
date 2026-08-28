@@ -6,7 +6,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 class CredentialStore {
   final _secure = const FlutterSecureStorage();
 
-  bool get _useSecureStorage => !kIsWeb && Platform.isAndroid;
+  // Android + iOS use the platform keystore/keychain; web falls back to
+  // SharedPreferences (no secure storage available in the browser).
+  bool get _useSecureStorage => !kIsWeb && (Platform.isAndroid || Platform.isIOS);
 
   Future<Map<String, String?>> readAll() async {
     if (_useSecureStorage) {

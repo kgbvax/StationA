@@ -100,7 +100,8 @@ void main() {
         'device_online': true,
         'ts': '2026-08-20T14:30:00.000000',
       });
-      await tester.pumpAndSettle();
+      // pump, not pumpAndSettle: the peak-hold decay timer is still running.
+      await tester.pump();
 
       expect(find.textContaining('REFL'), findsNothing);
     });
@@ -116,6 +117,42 @@ void main() {
       // Two triangle markers: peak above the bar, 95th-percentile below it.
       expect(find.byKey(const ValueKey('pa-fwd-peak')), findsOneWidget);
       expect(find.byKey(const ValueKey('pa-fwd-p95')), findsOneWidget);
+    });
+
+    testWidgets('peak markers decay slowly after unkeying', (tester) async {
+      final store = BusStore();
+      final mqtt = FakeMqttService(store);
+      store.setPaTransmitting(fwd: 800, rfl: 20);
+
+      await tester.pumpWidget(TestHarness(store: store, mqtt: mqtt, child: const PaPanel()));
+      await tester.pumpAndSettle();
+
+      // Unkey: live power drops to zero, but the held peak marker must not.
+      store.applyState('muehle/hf/pa', {
+        'mode': 'operate',
+        'keyed': 'rx',
+        'fault': 'none',
+        'error': '',
+        'temp_c': 38.5,
+        'fwd_power_w': 0,
+        'rfl_power_w': 20,
+        'swr': 1.1,
+        'pa_state': 'OPR/RX',
+        'power': 'on',
+        'device_online': true,
+        'ts': '2026-08-20T14:30:00.000000',
+      });
+      await tester.pump();
+
+      // ~2 s after unkeying the marker is still on the meter, partway down
+      // (800 W drains at 1200 W / 5 s = 240 W per second).
+      await tester.pump(const Duration(seconds: 2));
+      expect(find.byKey(const ValueKey('pa-fwd-peak')), findsOneWidget);
+
+      // A full-scale peak would take ~5 s; 800 W is gone well before that.
+      await tester.pump(const Duration(seconds: 4));
+      expect(find.byKey(const ValueKey('pa-fwd-peak')), findsNothing);
+      expect(find.byKey(const ValueKey('pa-fwd-p95')), findsNothing);
     });
   });
 }

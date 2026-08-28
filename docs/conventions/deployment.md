@@ -3,6 +3,13 @@
 All stationa services follow the same deploy pattern: cross-compile on the workstation,
 copy via SCP, install as a hardened systemd service on the Raspberry Pi (`shari`).
 
+> **Deviation — interactive components:** a component that is an *operator TUI* is not
+> a service. `pelcobridge2` (UHF rotator, host `shack-pc`, Windows) deploys as a bare
+> binary (`deploy.sh`: cross-compile + scp) and is started interactively by the
+> operator. No systemd unit, no auto-start, no hardened unit — arming the rotator is a
+> keyboard act, so a headless always-on process would contradict its safety model.
+> The seed-once config and 0600 rules still apply.
+
 ---
 
 ## Build

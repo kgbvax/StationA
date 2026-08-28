@@ -45,7 +45,7 @@ class FaultsBar extends StatelessWidget {
       if (pri != 0) return pri;
       return b.at.compareTo(a.at);
     });
-    final visible = faults.take(5).toList();
+    final visible = faults.take(4).toList();
     final activeCount = faults.where((f) => f.active).length;
 
     return Container(
