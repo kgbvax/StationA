@@ -5,6 +5,9 @@ import (
 	"math"
 	"sync"
 	"testing"
+	"time"
+
+	pahomqtt "github.com/eclipse/paho.mqtt.golang"
 
 	"pelcobridge2/internal/control"
 )
@@ -151,6 +154,16 @@ func TestStatePublishAndDedup(t *testing.T) {
 		t.Fatalf("changed snapshot not published: %d msgs, want %d", got, n+1)
 	}
 
+	// Only the readback age churning (a quiescent head's snapshots tick the
+	// age every publish) must NOT publish — otherwise the dedup is useless
+	// and the bus sees a state frame every snapshot.
+	snap3 := snap2
+	snap3.PanAge = 7 * time.Second
+	slot.PublishState(&snap3)
+	if got := len(memo.Messages()); got != n+1 {
+		t.Fatalf("age-only change republished: %d msgs, want %d", got, n+1)
+	}
+
 	// NaN positions become JSON null.
 	empty := &control.Snapshot{Az: nan(), El: nan(), PhysAz: nan(), PhysEl: nan(),
 		TargetAz: nan(), TargetEl: nan()}
@@ -198,3 +211,106 @@ func TestCmdStopOnly(t *testing.T) {
 }
 
 func nan() float64 { return math.NaN() }
+
+// memoClient is a paho.Client test double for OnConnect: it records publishes
+// and subscriptions and hands back satisfied tokens.
+type memoClient struct {
+	mu   sync.Mutex
+	pubs []struct {
+		topic    string
+		retained bool
+		payload  []byte
+	}
+	subs []string
+}
+
+type readyToken struct{}
+
+func (readyToken) Wait() bool                     { return true }
+func (readyToken) WaitTimeout(time.Duration) bool { return true }
+func (readyToken) Error() error                   { return nil }
+func (readyToken) Done() <-chan struct{}          { return nil }
+
+func (c *memoClient) Publish(topic string, _ byte, retained bool, payload interface{}) pahomqtt.Token {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.pubs = append(c.pubs, struct {
+		topic    string
+		retained bool
+		payload  []byte
+	}{topic, retained, payload.([]byte)})
+	return readyToken{}
+}
+
+func (c *memoClient) Subscribe(topic string, _ byte, _ pahomqtt.MessageHandler) pahomqtt.Token {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.subs = append(c.subs, topic)
+	return readyToken{}
+}
+
+func (c *memoClient) IsConnected() bool                    { return true }
+func (c *memoClient) IsConnectionOpen() bool               { return true }
+func (c *memoClient) Connect() pahomqtt.Token              { return readyToken{} }
+func (c *memoClient) Disconnect(uint)                      {}
+func (c *memoClient) Unsubscribe(...string) pahomqtt.Token { return readyToken{} }
+func (c *memoClient) SubscribeMultiple(map[string]byte, pahomqtt.MessageHandler) pahomqtt.Token {
+	return readyToken{}
+}
+func (c *memoClient) AddRoute(string, pahomqtt.MessageHandler) {}
+func (c *memoClient) OptionsReader() pahomqtt.ClientOptionsReader {
+	return pahomqtt.ClientOptionsReader{}
+}
+
+func (c *memoClient) lastPub(topic string) *struct {
+	topic    string
+	retained bool
+	payload  []byte
+} {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for i := len(c.pubs) - 1; i >= 0; i-- {
+		if c.pubs[i].topic == topic {
+			p := c.pubs[i]
+			return &p
+		}
+	}
+	return nil
+}
+
+// A quiescent parked head emits no snapshots (no polling): after a broker
+// restart, consumers that subscribe see no /state at all unless OnConnect
+// republishes the last payload as retained.
+func TestOnConnectRepublishesState(t *testing.T) {
+	memo := NewMemoPublisher()
+	slot := NewSlot(testConfig(), memo, nilLogger{}, nil, nil)
+
+	snap := &control.Snapshot{
+		Az: 123.45, El: 30, PhysAz: 123.45, PhysEl: 30,
+		ReadbackValid: true, DeviceOnline: true, JogSpeed: 0x12,
+	}
+	slot.PublishState(snap)
+
+	cl := &memoClient{}
+	slot.OnConnect(cl)
+
+	// Birth + meta + the state republish.
+	if msg := cl.lastPub(testConfig().StatusTopic()); msg == nil || !msg.retained || string(msg.payload) != "online" {
+		t.Errorf("status publish = %+v, want retained \"online\"", msg)
+	}
+	if msg := cl.lastPub(testConfig().MetaTopic()); msg == nil || !msg.retained {
+		t.Errorf("meta not republished on connect: %+v", msg)
+	}
+	want := memo.Last(testConfig().StateTopic())
+	got := cl.lastPub(testConfig().StateTopic())
+	if got == nil || !got.retained {
+		t.Fatalf("state not republished on connect: %+v", got)
+	}
+	if string(got.payload) != string(want.Payload) {
+		t.Errorf("republished state payload differs:\n got %s\nwant %s", got.payload, want.Payload)
+	}
+	// And /cmd is subscribed for the stop action.
+	if len(cl.subs) != 1 || cl.subs[0] != testConfig().CmdTopic() {
+		t.Errorf("subscriptions = %v, want [%s]", cl.subs, testConfig().CmdTopic())
+	}
+}

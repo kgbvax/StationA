@@ -14,6 +14,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"net"
 	"strconv"
 	"strings"
@@ -146,7 +147,11 @@ func (s *Server) Handle(line string) (string, bool) {
 		}
 		az, errAz := strconv.ParseFloat(strings.ReplaceAll(fields[1], ",", "."), 64)
 		el, errEl := strconv.ParseFloat(strings.ReplaceAll(fields[2], ",", "."), 64)
-		if errAz != nil || errEl != nil {
+		// ParseFloat accepts "nan"/"inf" without error; DegToWord would park
+		// both at 0° — real motion from a garbage target. Refuse up front.
+		if errAz != nil || errEl != nil ||
+			math.IsNaN(az) || math.IsInf(az, 0) ||
+			math.IsNaN(el) || math.IsInf(el, 0) {
 			return "RPRT -1\n", false
 		}
 		if r := s.call(control.SetPanIntent{Deg: az}); r.Err != nil {

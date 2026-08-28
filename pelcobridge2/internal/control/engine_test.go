@@ -136,6 +136,22 @@ func (h *harness) logDump() string {
 	return strings.Join(h.logs, "\n")
 }
 
+// --- startup -------------------------------------------------------------------
+
+// No polling means nothing else guarantees a snapshot: the engine must publish
+// one BEFORE the loop, or the TUI sits on "waiting for engine…" forever.
+func TestInitialSnapshotBeforeLoop(t *testing.T) {
+	h := startHarness(t, simhead.New(simhead.Options{Addr: 1}), testCfg())
+
+	if !h.waitFor(2*time.Second, func(s *Snapshot) bool { return s != nil }) {
+		t.Fatal("no snapshot ever published")
+	}
+	s := h.lastSnap()
+	if s.Armed || s.DeviceOnline {
+		t.Fatalf("initial snapshot not pristine: armed=%v online=%v", s.Armed, s.DeviceOnline)
+	}
+}
+
 // --- queries ------------------------------------------------------------------
 
 func TestQueryPanReturnsTextbookDegrees(t *testing.T) {
@@ -167,15 +183,28 @@ func TestQueryTiltReturnsTextbookDegrees(t *testing.T) {
 func TestDisarmedRefusals(t *testing.T) {
 	h := startHarness(t, simhead.New(simhead.Options{Addr: 1}), testCfg())
 
+	// Absolute sets stay arm-gated for EVERY source.
 	for _, it := range []Intent{
-		JogIntent{Dir: DirUp},
 		SetPanIntent{Deg: 100},
 		SetTiltIntent{Deg: 30},
-		GotoPhysZeroIntent{},
 	} {
 		if r := h.call(SrcTUI, it); r.Err != ErrDisarmed {
 			t.Fatalf("%T disarmed: %v, want ErrDisarmed", it, r.Err)
 		}
+	}
+	// TUI manual motion (jog, goto 0) is NOT gated by arming — the operator
+	// positions the head with it BEFORE arming.
+	for _, it := range []Intent{
+		JogIntent{Dir: DirUp},
+		GotoPhysZeroIntent{},
+	} {
+		if r := h.call(SrcTUI, it); r.Err != nil {
+			t.Fatalf("%T from TUI disarmed: %v, want allowed", it, r.Err)
+		}
+	}
+	// Non-TUI jog is still arm-gated.
+	if r := h.call(SrcRotctld, JogIntent{Dir: DirUp}); r.Err != ErrDisarmed {
+		t.Fatalf("rotctld jog disarmed: %v, want ErrDisarmed", r.Err)
 	}
 	// Stop is always allowed, disarmed or not.
 	if r := h.call(SrcTUI, StopIntent{}); r.Err != nil {
@@ -391,6 +420,279 @@ func TestJogSpeedClamped(t *testing.T) {
 	h.call(SrcTUI, JogSpeedIntent{Speed: 0xFF})
 	if !h.waitFor(2*time.Second, func(s *Snapshot) bool { return s.JogSpeed == pelco.MaxSpeed }) {
 		t.Fatalf("jog speed not clamped, snap=%+v", h.lastSnap())
+	}
+}
+
+// --- e-stop vs queued motion ----------------------------------------------------
+
+// An e-stop must also kill motion that is still QUEUED (gate closed / query
+// outstanding). If it only killed the active ladder, the next drain would
+// replay a stale set seconds after the all-stop frame — motion with no
+// operator input behind it.
+func TestEstopCancelsPendingMotion(t *testing.T) {
+	bh := &blackhole{closed: make(chan struct{})}
+	reqCh := make(chan Request, 8)
+	evCh := make(chan Event, 64)
+	eng := New(testCfg(), bh, nil, reqCh, evCh)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go eng.Run(ctx)
+
+	// A query that never gets an answer holds e.inFlight for ReplyWait; with
+	// the query outstanding a following set is queued, not executed.
+	qrep := make(chan Result, 1)
+	reqCh <- Request{From: SrcTUI, Intent: QueryPanIntent{}, Reply: qrep}
+	time.Sleep(100 * time.Millisecond) // query TXed, inFlight set, frame gap elapsed
+
+	rep := make(chan Result, 1)
+	reqCh <- Request{From: SrcTUI, Intent: GotoPhysZeroIntent{}, Reply: rep}
+	time.Sleep(50 * time.Millisecond) // must sit in the queue, not execute
+
+	bh.mu.Lock()
+	nWrites := len(bh.writes)
+	bh.mu.Unlock()
+	if nWrites != 2 { // self-check disable + the query — and nothing else
+		t.Fatalf("%d frames on the wire after queued goto (want 2)", nWrites)
+	}
+
+	if r := eng.Call(context.Background(), SrcTUI, StopIntent{}); r.Err != nil {
+		t.Fatalf("estop: %v", r.Err)
+	}
+
+	select {
+	case r := <-rep:
+		if !errors.Is(r.Err, ErrCancelled) {
+			t.Fatalf("queued goto answered %v, want ErrCancelled", r.Err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("queued goto never answered after e-stop")
+	}
+
+	// No set frame may have reached the wire — before or after the stop.
+	bh.mu.Lock()
+	defer bh.mu.Unlock()
+	if len(bh.writes) != 3 { // + the all-stop frame
+		t.Fatalf("%d frames after e-stop (want 3)", len(bh.writes))
+	}
+	for i, w := range bh.writes {
+		if w[3] == pelco.OpSetPan || w[3] == pelco.OpSetTilt {
+			t.Fatalf("frame %d is a set opcode — queued motion survived the e-stop", i)
+		}
+	}
+	if bh.writes[2][3] != pelco.OpStop {
+		t.Fatalf("last frame opcode %#x, want all-stop", bh.writes[2][3])
+	}
+}
+
+// --- reader restart / auto-reopen ------------------------------------------------
+
+// flakyTransport fails the first N reads, then serves frames from a channel.
+// Writes are recorded so tests can wait for a frame to actually be TXed.
+type flakyTransport struct {
+	mu      sync.Mutex
+	fails   int
+	reopens int
+	writes  [][]byte
+	frames  chan []byte
+}
+
+func (f *flakyTransport) Read(p []byte) (int, error) {
+	f.mu.Lock()
+	if f.fails > 0 {
+		f.fails--
+		f.mu.Unlock()
+		return 0, errors.New("simulated read error")
+	}
+	f.mu.Unlock()
+	fr, ok := <-f.frames
+	if !ok {
+		return 0, errors.New("transport closed")
+	}
+	return copy(p, fr), nil
+}
+
+func (f *flakyTransport) Write(b []byte) error {
+	f.mu.Lock()
+	f.writes = append(f.writes, append([]byte(nil), b...))
+	f.mu.Unlock()
+	return nil
+}
+func (f *flakyTransport) Close() error { return nil }
+
+// awaitWrite polls until a frame with the given opcode hit the wire.
+func (f *flakyTransport) awaitWrite(t *testing.T, op byte) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		f.mu.Lock()
+		for _, w := range f.writes {
+			if w[3] == op {
+				f.mu.Unlock()
+				return
+			}
+		}
+		f.mu.Unlock()
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("no %#x frame on the wire within 3s", op)
+}
+
+func panRspFrame(addr byte, deg float64) []byte {
+	w := uint16(deg * 100)
+	f := pelco.Build(addr, 0x00, pelco.OpRspPan, byte(w>>8), byte(w))
+	return f[:]
+}
+
+// A dead read (re-enumerated USB fd, dropped TCP mock) must not leave the
+// engine deaf: it reopens the transport and starts a fresh reader, which picks
+// up new frames and brings the head back online.
+func TestReadLoopRestartsAfterReadError(t *testing.T) {
+	tr := &flakyTransport{frames: make(chan []byte, 4)}
+	tr.mu.Lock()
+	tr.fails = 1 // the very first reader dies on its first read
+	tr.mu.Unlock()
+
+	reqCh := make(chan Request, 8)
+	evCh := make(chan Event, 256)
+	eng := New(testCfg(), tr, func() error { tr.mu.Lock(); tr.reopens++; tr.mu.Unlock(); return nil }, reqCh, evCh)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go eng.Run(ctx)
+	go func() {
+		for range evCh { // drain: slow-consumer drops must not wedge the test
+		}
+	}()
+
+	// Feed a pan response for the fresh reader: the engine must mark the head
+	// online. Only then start a query — and answer it only once its frame is
+	// actually on the wire (a readback arriving before the query TX would
+	// legitimately not match the in-flight query).
+	tr.frames <- panRspFrame(1, 87.65)
+
+	done := make(chan Result, 1)
+	go func() {
+		cctx, ccancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer ccancel()
+		done <- eng.Call(cctx, SrcTUI, QueryPanIntent{})
+	}()
+	tr.awaitWrite(t, pelco.OpQueryPan)
+	tr.frames <- panRspFrame(1, 87.65)
+
+	select {
+	case r := <-done:
+		if r.Err != nil {
+			t.Fatalf("query after auto-reopen: %v", r.Err)
+		}
+		if r.Deg != 87.65 {
+			t.Fatalf("query = %.2f, want 87.65", r.Deg)
+		}
+	case <-time.After(4 * time.Second):
+		t.Fatal("engine never recovered from the read error")
+	}
+
+	tr.mu.Lock()
+	defer tr.mu.Unlock()
+	if tr.reopens != 1 {
+		t.Errorf("reopen called %d times, want 1", tr.reopens)
+	}
+}
+
+// --- write-error unwinding ---------------------------------------------------------
+
+// errWrite blocks reads forever (nothing ever comes back) and fails every
+// write: a dead fd whose EIO surfaces on the TX side.
+type errWrite struct {
+	block chan struct{}
+}
+
+func (w *errWrite) Read(p []byte) (int, error) {
+	<-w.block // never answered
+	return 0, errors.New("transport closed")
+}
+func (w *errWrite) Write(b []byte) error { return errors.New("serial write: port gone") }
+func (w *errWrite) Close() error         { return nil }
+
+// A failed write must unwind the state machine (fail the in-flight query, kill
+// the ladder) instead of wedging it — no timer is armed when nothing went out
+// on the wire, so a half-set-up ladder would otherwise hang forever.
+func TestWriteErrorUnwinds(t *testing.T) {
+	w := &errWrite{block: make(chan struct{})}
+	reqCh := make(chan Request, 8)
+	evCh := make(chan Event, 64)
+	eng := New(testCfg(), w, nil, reqCh, evCh)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go eng.Run(ctx)
+	snaps := make(chan *Snapshot, 64)
+	go func() {
+		for ev := range evCh {
+			if ev.Snap != nil {
+				snaps <- ev.Snap
+			}
+		}
+	}()
+	var lastSnap *Snapshot
+	last := func() *Snapshot {
+		for {
+			select {
+			case s := <-snaps:
+				lastSnap = s
+			default:
+				return lastSnap
+			}
+		}
+	}
+
+	// A query whose write fails is answered promptly with no-fix, not left
+	// dangling until the reply-wait timeout.
+	qctx, qcancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer qcancel()
+	start := time.Now()
+	if r := eng.Call(qctx, SrcTUI, QueryPanIntent{}); !errors.Is(r.Err, ErrNoFix) {
+		t.Fatalf("query on dead port: %v, want ErrNoFix", r.Err)
+	} else if time.Since(start) > time.Second {
+		t.Fatalf("query took %s on a dead port — not unwound", time.Since(start))
+	}
+
+	// A goto-0 whose first set write fails must report failure, not sit in
+	// "setting" forever.
+	go func() {
+		cctx, ccancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer ccancel()
+		eng.Call(cctx, SrcTUI, GotoPhysZeroIntent{})
+	}()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if s := last(); s != nil && s.SetStatus == "failed" {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if s := last(); s == nil || s.SetStatus != "failed" {
+		t.Fatalf("goto 0 on dead port: set status %q, want \"failed\"", s.SetStatus)
+	}
+}
+
+// --- true-az query replies ---------------------------------------------------------
+
+// User-facing query replies (rotctld get_pos, TUI 'a'/'e') are answered in
+// TRUE degrees — the same frame set_pos speaks — not raw physical readback.
+func TestQueryReplyAppliesOffset(t *testing.T) {
+	h := startHarness(t, simhead.New(simhead.Options{Addr: 1, PanDeg: 100}), testCfg())
+
+	if r := h.call(SrcTUI, QueryPanIntent{}); r.Err != nil {
+		t.Fatalf("pre-arm query: %v", r.Err)
+	}
+	if r := h.call(SrcTUI, ArmIntent{TrueAz: 30}); r.Err != nil {
+		t.Fatalf("arm: %v", r.Err)
+	}
+
+	r := h.call(SrcTUI, QueryPanIntent{})
+	if r.Err != nil {
+		t.Fatalf("armed query: %v", r.Err)
+	}
+	if r.Deg != 30 {
+		t.Fatalf("armed query = %.2f, want 30 (phys 100 − offset 70)", r.Deg)
 	}
 }
 

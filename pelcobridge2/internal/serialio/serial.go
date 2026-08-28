@@ -2,6 +2,7 @@ package serialio
 
 import (
 	"fmt"
+	"sync"
 	"time"
 
 	"go.bug.st/serial"
@@ -10,7 +11,12 @@ import (
 // SerialPort wraps the real serial link. 8N1; baud is configurable because the
 // 303Z/3050DZ family is documented for 1200–9600 baud (the head defaults are
 // unit-specific and third-party controllers of the same family default 9600).
+//
+// The port field is mutex-guarded: Read runs on the engine's reader goroutine
+// while Reopen runs on the engine loop (ctrl+r / auto-heal) — an unsynchronized
+// swap is a data race under -race and a use-after-close on real hardware.
 type SerialPort struct {
+	mu   sync.Mutex
 	port serial.Port
 	name string
 	baud int
@@ -41,28 +47,44 @@ func OpenPort(name string, baud int) (*SerialPort, error) {
 func (s *SerialPort) Name() string { return s.name }
 func (s *SerialPort) Baud() int    { return s.baud }
 
+// current snapshots the live port handle.
+func (s *SerialPort) current() serial.Port {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.port
+}
+
 // Read reads available bytes. A timeout (when configured) returns (0, nil).
+// Never hold the mutex across the blocking read — a concurrent Reopen must be
+// able to swap the port (Close unblocks this Read with an error).
 func (s *SerialPort) Read(p []byte) (int, error) {
-	if s.port == nil {
+	port := s.current()
+	if port == nil {
 		return 0, fmt.Errorf("port is closed")
 	}
-	return s.port.Read(p)
+	return port.Read(p)
 }
 
 // Reopen closes and reopens the port under the same name. A USB-serial adapter
 // that drops and re-enumerates leaves a stale descriptor whose reads fail
 // forever; without this the RX side stayed dead for the rest of the session
-// (bench failure recorded in ptest).
+// (bench failure recorded in ptest). The engine restarts its reader after a
+// successful reopen.
 func (s *SerialPort) Reopen() error {
-	if s.port != nil {
-		_ = s.port.Close()
+	s.mu.Lock()
+	old := s.port
+	s.port = nil
+	s.mu.Unlock()
+	if old != nil {
+		_ = old.Close()
 	}
 	p, err := serial.Open(s.name, mode(s.baud))
 	if err != nil {
-		s.port = nil
 		return err
 	}
+	s.mu.Lock()
 	s.port = p
+	s.mu.Unlock()
 	return nil
 }
 
@@ -70,10 +92,11 @@ func (s *SerialPort) Reopen() error {
 // a partially-transmitted frame silently logged as sent is a bench failure
 // recorded in ptest.
 func (s *SerialPort) Write(b []byte) error {
-	if s.port == nil {
+	port := s.current()
+	if port == nil {
 		return fmt.Errorf("port is closed")
 	}
-	n, err := s.port.Write(b)
+	n, err := port.Write(b)
 	if err != nil {
 		return err
 	}
@@ -85,42 +108,14 @@ func (s *SerialPort) Write(b []byte) error {
 
 // Close closes the port.
 func (s *SerialPort) Close() error {
-	if s.port == nil {
+	s.mu.Lock()
+	port := s.port
+	s.port = nil
+	s.mu.Unlock()
+	if port == nil {
 		return nil
 	}
-	return s.port.Close()
-}
-
-// ReadErr carries which reader generation failed, so an error from a reader
-// that has already been replaced does not tear down the live one.
-type ReadErr struct {
-	Gen int
-	Err error
-}
-
-// ReadLoop blocks reading the port and pushes every chunk on ch; on error it
-// reports once on errCh and exits. Purely event-driven — no timers, no
-// polling, nothing is ever sent from here. The generation counter lets the
-// caller ignore a stale loop's error after a Reopen started a fresh one.
-func (s *SerialPort) ReadLoop(gen int, ch chan<- []byte, errCh chan<- ReadErr) {
-	buf := make([]byte, 256)
-	for {
-		p := s.port
-		if p == nil {
-			errCh <- ReadErr{Gen: gen, Err: fmt.Errorf("port is closed")}
-			return
-		}
-		n, err := p.Read(buf)
-		if n > 0 {
-			chunk := make([]byte, n)
-			copy(chunk, buf[:n])
-			ch <- chunk
-		}
-		if err != nil {
-			errCh <- ReadErr{Gen: gen, Err: err}
-			return
-		}
-	}
+	return port.Close()
 }
 
 // idleGap is ~1.5 frame times at the given baud: long enough that a frame

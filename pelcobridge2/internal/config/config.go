@@ -108,21 +108,46 @@ func Default() Config {
 	}
 }
 
-// EngineConfig maps the TOML control section onto the engine's Config.
+// EngineConfig maps the TOML control section onto the engine's Config. Out-of-
+// range values are clamped here, once, rather than becoming wrong wire bytes:
+// jog_speed 300 truncated to a byte is 0x2C — a silent speed change.
 func (c Config) EngineConfig() control.Config {
+	jog := c.Control.JogSpeed
+	if jog < 0 || jog > int(pelco.MaxSpeed) {
+		jog = int(pelco.DefaultJogSpeed)
+	}
+	settleMS := c.Control.SettleMS
+	if settleMS < 0 {
+		settleMS = Default().Control.SettleMS
+	}
+	attempts := c.Control.SetAttempts
+	if attempts < 1 {
+		attempts = 1
+	}
+	ageS := c.Control.ArmMaxReadbackAgeS
+	if ageS < 0 {
+		ageS = Default().Control.ArmMaxReadbackAgeS
+	}
 	return control.Config{
 		Addr:              c.Serial.Addr,
 		Baud:              c.Serial.Baud,
-		JogSpeed:          byte(c.Control.JogSpeed),
-		Settle:            time.Duration(c.Control.SettleMS) * time.Millisecond,
-		SetAttempts:       c.Control.SetAttempts,
+		PelcoP:            c.Serial.PelcoP,
+		JogSpeed:          byte(jog),
+		Settle:            time.Duration(settleMS) * time.Millisecond,
+		SetAttempts:       attempts,
 		SetTolerance:      c.Control.SetToleranceDeg,
-		ArmMaxReadbackAge: time.Duration(c.Control.ArmMaxReadbackAgeS * float64(time.Second)),
+		ArmMaxReadbackAge: time.Duration(ageS * float64(time.Second)),
 	}
 }
 
-// MQTTConfig maps the TOML section onto the slot config.
+// MQTTConfig maps the TOML section onto the slot config. The password comes
+// from the environment (PELCOBRIDGE2_MQTT_PASSWORD); the TOML [mqtt] password
+// is the fallback for hosts with no process environment to speak of (a
+// double-clicked Windows exe) — the file itself is 0600.
 func (c Config) MQTTConfig(password string) mqtt.Config {
+	if password == "" {
+		password = c.MQTT.Password
+	}
 	return mqtt.Config{
 		Enabled:     c.MQTT.Enabled,
 		Broker:      c.MQTT.Broker,
@@ -145,7 +170,10 @@ func (c Config) RotctldAddr() string {
 }
 
 // Load reads the TOML file at path over the defaults. The file is optional
-// (seed-once deploy: the file may not exist before the first seed).
+// (seed-once deploy): ResolvePath only returns paths it has verified to exist,
+// so a NOT-FOUND here means the operator explicitly asked for a file (flag or
+// PELCOBRIDGE2_CONFIG) that is not there — that must fail loudly, not silently
+// fall back to defaults.
 func Load(path string) (Config, error) {
 	cfg := Default()
 	if path == "" {
@@ -154,7 +182,7 @@ func Load(path string) (Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return cfg, nil
+			return cfg, fmt.Errorf("config file %s not found", path)
 		}
 		return cfg, err
 	}

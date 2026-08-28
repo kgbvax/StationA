@@ -38,7 +38,8 @@ type Slot struct {
 	jobs chan func() // /cmd work queue; drained by RunJobs
 
 	mu       sync.Mutex
-	lastBody string // last published /state body (dedup key, ts excluded)
+	lastBody string // last published /state body (dedup key, ts+age excluded)
+	lastData []byte // last published /state payload, republished on reconnect
 }
 
 func NewSlot(cfg Config, pub Publisher, log Logger, submit Submitter, clients func() int) *Slot {
@@ -58,6 +59,15 @@ func (s *Slot) Jobs() <-chan func() { return s.jobs }
 func (s *Slot) OnConnect(c pahomqtt.Client) {
 	_ = c.Publish(s.cfg.StatusTopic(), 1, true, []byte("online"))
 	s.publishMeta(&PahoPublisher{Client: c})
+	// Republish the last /state: a quiescent parked head emits no snapshots
+	// (no polling), so without this consumers that subscribe after a broker
+	// restart see no rotator state at all.
+	s.mu.Lock()
+	data := s.lastData
+	s.mu.Unlock()
+	if data != nil {
+		_ = c.Publish(s.cfg.StateTopic(), 1, true, data)
+	}
 	tok := c.Subscribe(s.cfg.CmdTopic(), 1, func(_ pahomqtt.Client, m pahomqtt.Message) {
 		payload := append([]byte(nil), m.Payload()...)
 		sharedmqtt.Enqueue(s.jobs, func() { s.HandleCmd(payload) })
@@ -163,7 +173,9 @@ func (s *Slot) PublishState(snap *control.Snapshot) {
 		clients = s.clients()
 	}
 	body := stateBody(snap, clients)
+	age := body.ReadbackAgeS
 	body.Ts = ""
+	body.ReadbackAgeS = 0 // age churns every publish; excluded like the ts
 	key, err := json.Marshal(body)
 	if err != nil {
 		s.log.Warnf("marshal state: %v", err)
@@ -178,12 +190,16 @@ func (s *Slot) PublishState(snap *control.Snapshot) {
 	if !changed {
 		return
 	}
+	body.ReadbackAgeS = age
 	body.Ts = time.Now().UTC().Format(time.RFC3339)
 	data, err := json.Marshal(body)
 	if err != nil {
 		s.log.Warnf("marshal state ts: %v", err)
 		return
 	}
+	s.mu.Lock()
+	s.lastData = data
+	s.mu.Unlock()
 	_ = s.pub.Publish(s.cfg.StateTopic(), true, data)
 }
 
