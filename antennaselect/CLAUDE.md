@@ -89,8 +89,10 @@ The seed config bakes the Mühle wiring map and band policy (matching
 
 ## Known dependencies / residuals
 
-- The station `activity` flag (`muehle/hf`) needs a publisher (operator/HA). If absent,
-  treat as `active` and log — never silently assume inactive.
+- The station `activity` flag is **inferred** by this reconciler (not operator-set): a
+  `freq_hz` change or `tx == "tx"` marks `active`; after `[idle].timeout_minutes` (default 30)
+  with neither, it marks `inactive` and resolves `target = off` (walk-away lightning
+  protection). No manual override.
 - 30/60/80/160m on the fan dipole are non-resonant; the `[tuner_follow]` binding now engages
   the `hf/tuner` ATU in-line for those bands and bypasses it otherwise (integration model
   §7.1 soft binding `tuner.set_inline ← band_policy`), closing the former §10 residual.

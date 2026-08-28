@@ -12,10 +12,11 @@ relationship, model §3):
 | `muehle/hf/pa-arm` | `pa-arm` | 1 (arm) | the PA-enable arm relay, **fail-safe-open**, with the arm logic embedded |
 
 Relay 2 is spare. The PLC is the model's planned embedded safety node (§6,
-§11.3, now realized here): it subscribes `hf/radio/state` and computes
+§11.3, now realized here): it subscribes `hf/radio/state` and `hf/ant-switch/state`
+and computes
 
 ```
-armed = enabled ∧ radio_online ∧ ¬radio.tuning ∧ band_safe ∧ heartbeat
+armed = enabled ∧ radio_online ∧ ¬radio.tuning ∧ band_safe ∧ heartbeat ∧ antenna_ready
 ```
 
 driving relay 1 so that **any** failure drops the relay open → PA disabled.
@@ -77,12 +78,15 @@ HAL (M5StamPLC) → relays; and relays read back → main.cpp → MQTT.
    credentials + device identity.
 
 **Arm logic** (`recomputeArm`): runs every `loop()` iteration. `armed` is
-recomputed from `enabled ∧ radio_online ∧ ¬tuning ∧ bandSafe ∧ heartbeat` and
-drives relay 1 (energize to arm, de-energize/open on any drop). The radio inputs
-(`device_online`, `tuning`, `band`) come from `hf/radio/state` subscribed on
-the pa-arm slot's connection (dispatched by topic in `handlePaArmCmd`).
-Heartbeat: if no `/state` arrives within `RADIO_HEARTBEAT_MS` (10 s) the arm
-drops. `band_safe` checks `band` against the ACOM 1200S band set (160m..6m).
+recomputed from `enabled ∧ radio_online ∧ ¬tuning ∧ bandSafe ∧ heartbeat ∧
+antenna_ready` and drives relay 1 (energize to arm, de-energize/open on any
+drop). The radio inputs (`device_online`, `tuning`, `band`) come from
+`hf/radio/state` and `antenna_ready` from `hf/ant-switch/state` (`selected` ≠
+`off`), both subscribed on the pa-arm slot's connection (dispatched by topic in
+`handlePaArmCmd`). Heartbeat: if no `/state` arrives within
+`RADIO_HEARTBEAT_MS` (10 s) the arm drops. `band_safe` checks `band` against the
+ACOM 1200S band set (160m..6m). `antenna_ready` drops the arm when the antenna
+switch is in the grounded `off` position (walk-away lightning protection).
 
 **Fail-safe-open:** relay 1 is energized ONLY to arm. Power loss, PLC crash, or
 any safety failure de-energizes it → open → PA disabled. On cold boot
@@ -116,8 +120,9 @@ reconnect the broker replays the last command and the firmware re-applies it.
 The arm relay is **never** commanded directly — `armed` is derived. See
 `docs/m5stamp-hf-ctrl-mqtt-api.md` for the full on-the-wire contract.
 
-The firmware also **subscribes** `muehle/hf/radio/state` (on the pa-arm
-connection) for the arm-logic inputs; it does not publish there.
+The firmware also **subscribes** `muehle/hf/radio/state` and
+`muehle/hf/ant-switch/state` (on the pa-arm connection) for the arm-logic
+inputs; it does not publish there.
 
 ---
 
@@ -131,7 +136,7 @@ map, band allow-list, heartbeat window). Secrets live in `src/secrets.h`
 // src/secrets.h
 #define WIFI_SSID     "..."
 #define WIFI_PASSWORD "..."
-#define MQTT_HOST     "192.168.1.50"
+#define MQTT_HOST     "192.168.1.139"
 #define MQTT_PORT     1883
 #define MQTT_USER     "hf"
 #define MQTT_PASSWORD "..."

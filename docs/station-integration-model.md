@@ -4,7 +4,7 @@ Version 0.7 (draft). This defines the *shape* the configuration takes and, from 
 transport binding. Resolved in 0.2: hierarchy and tune-routing confirmed; band policy
 completed; rotators, the polarization controller, and PA-arm hardware pinned down;
 compute hosts added as a first-class node kind. In 0.3: the `station` node reduced to a
-structural grouping with a single operator-set `activity` flag. In 0.4: MQTT fixed as the
+structural grouping with a single inferred `activity` flag. In 0.4: MQTT fixed as the
 transport binding, and the design invariants (one-way dependency, optional consumers,
 UI-agnostic operator surface) written down. In 0.5: worked on-the-wire payloads for the
 `radio` slot added as Appendix A, and band capability declared by name against the
@@ -72,7 +72,8 @@ site / station / position / <slot>
 - **station** — a transmitting entity (`hf`, `uhf`). This is the unit of contention in
   a multi-multi setup: one transmitter per band, shared-resource claims. The station
   node is a structural grouping, not a stateful component: membership is everything
-  under its path, and it carries only an operator-set `activity` flag (never inferred).
+  under its path, and it carries only an inferred `activity` flag (derived from radio
+  VFO/frequency changes and transmits by the antenna-select reconciler).
 - **position** — an operator seat. Collapses to one and disappears in a single-op
   shack; reappears only when two operators share a station.
 - **slot** — a role at that position (`radio`, `pa`, `ant-switch`, ...).
@@ -369,7 +370,7 @@ muehle/hf   |   muehle/uhf
 role:     station
 kind:     { hf | uhf }
 location: bauwagen
-activity: { active | inactive }    # operator-set, never inferred; read by ladder tier 1
+activity: { active | inactive }    # inferred from radio VFO/TX by antenna-select; read by ladder tier 1
 ```
 
 Everything else a station might report (band, tx, readiness) already lives on the radio;
@@ -555,7 +556,9 @@ sequence, so a different setup defines a different sequence with no Go change.
 
 **`muehle/hf/antenna-select`** — reconciler/arbiter (logic slot)
 ```
-subscribes: radio.band, radio.tx, station.activity, operator.request, ant-switch.selected
+subscribes: radio.band, radio.tx, radio.freq_hz, operator.request, ant-switch.selected
+            (activity is inferred: a freq_hz change or tx == "tx" marks active; an idle
+            timeout with neither marks inactive)
 emits:      ant-switch.select; <controller>.cmd (band/freq follow, per controller map)
 config:     wiring_map  { port1: dummy-load, port3: ultrabeam, port6: fan-dipole, off: grounded }
             controllers { ultrabeam: ant-ctrl }            # resource → controller slot
@@ -590,9 +593,11 @@ override / pre-position path, not the primary follow mechanism.
   its resource and the band is non-resonant; bypass otherwise — closes the §10 residual)
 - `ant-ctrl.{band,freq}` ← `radio.{band,freq}` (via the controller map)
 - `ant-switch.select` ← arbiter(band_policy, wiring_map, ladder)
-- `ant-switch.select` → `off` when `station.activity = inactive` (ladder tier 1)
-- `pa-arm.armed` ← `enabled ∧ ¬radio.tuning ∧ band_safe` (realized in the M5 Stamp
-  firmware, not the reconciler; fail-safe open, heartbeat-driven)
+- `ant-switch.select` → `off` when the idle timeout elapses with no VFO change or TX
+  (ladder tier 1; walk-away lightning protection)
+- `pa-arm.armed` ← `enabled ∧ radio_online ∧ ¬radio.tuning ∧ band_safe ∧ heartbeat ∧
+  antenna_ready` (realized in the M5 Stamp firmware, not the reconciler; fail-safe open,
+  heartbeat-driven; `antenna_ready` drops the arm when the antenna is grounded/off)
 - `power-seq.{start,stop}` ← operator one-button; the sequencer then issues the ordered
   chain `power/master → power/psu-13v8 → hf/switch.trx → hf/switch.pa → hf/pa-arm` on
   start (reverse on stop), gated on liveness confirmations and delays (§6, §7.1)
@@ -616,10 +621,18 @@ dropped automatically on TX when the radio removes the bias — so preamp protec
 internal to the radio and needs no slot and no external sequencer. Preamp is a
 *capability* plus a passive LNA, not an active slot.
 
-**`muehle/uhf/rotator`** — SPID rotator with its own controller, driven over serial by
-PSTRotator on host `shack-pc`. `capabilities: axes [az, el]`. Same role name as the HF
-rotator but a completely different control stack; a satellite-tracking consumer reads
-the axes rather than knowing the hardware.
+**`muehle/uhf/rotator`** — PTS-303Z/3050DZ pan/tilt head (Pelco-D/P over RS-485),
+driven by **pelcobridge2** on host `shack-pc` — an interactive TUI that doubles as a
+hamlib `rotctld` server (`-m 901`, port 4533). `capabilities: axes [az, el]`. Same
+role name as the HF rotator but a completely different control stack; a
+satellite-tracking consumer reads the axes rather than knowing the hardware. The
+safety model differs from every other bridge: the component is **disarmed at every
+start**, arming is a keyboard act in the TUI (requires entering the head's true
+azimuth to calibrate the offset; never automatic, never remote-controlled), and MQTT
+`/cmd` accepts **only** `stop` — no motion path exists from the bus. Absolute sets
+use a verify-and-resend ladder (quiet-line window, one verification query, bounded
+retries) instead of readback polling. The self-test (preset call 125) re-homes the
+head and can rip cables; it is disarmed-only and two-stage confirmed in the TUI.
 
 **`muehle/uhf/pol-ctrl`** — M5 Stamp PLC #2 with custom firmware. `capabilities:
 polarizations [h, v, cl, cr]`. Settable state, operator-driven; no automatic binding.

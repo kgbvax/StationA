@@ -3,6 +3,7 @@ package mqtt
 import (
 	"context"
 	"encoding/json"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -767,4 +768,193 @@ func TestRadioOnlineRequiresDeviceOnline(t *testing.T) {
 			t.Errorf("after radio drop: expected no new select, got %d", len(got))
 		}
 	})
+}
+
+// --- idle timeout (walk-away safety, §10) tests -----------------------------
+
+// idleClient builds a client wired like radioOnlineClient but with an explicit idle
+// timeout and a controllable lastActivity, so the idle-timeout logic can be exercised
+// deterministically.
+func idleClient(t *testing.T, timeout time.Duration) (c *Client, antSwitchCmds func() []recordedMsg, drain func(), cancel context.CancelFunc) {
+	t.Helper()
+	var (
+		mu     sync.Mutex
+		record []recordedMsg
+	)
+	cfg := config.Config{
+		Location: "bauwagen", Host: "shari",
+		MQTT: config.MQTT{Site: "muehle", Station: "hf", Slot: "antenna-select"},
+		WiringMap: map[string]string{
+			"port1": "dummy-load", "port3": "ultrabeam", "port6": "fan-dipole", "off": "grounded",
+		},
+		BandPolicy: config.BandPolicy{
+			Bands:    map[string][]string{"ultrabeam": {"20m"}, "fan-dipole": {"40m"}},
+			Fallback: "fan-dipole",
+		},
+		Idle: config.Idle{TimeoutMinutes: int(timeout / time.Minute)},
+	}
+	fake := fakePaho{pub: func(topic string, qos byte, retained bool, payload any) paho.Token {
+		b, _ := payload.([]byte)
+		mu.Lock()
+		record = append(record, recordedMsg{topic, qos, retained, b})
+		mu.Unlock()
+		return okToken{}
+	}}
+	ctx, cancel := context.WithCancel(context.Background())
+	c = &Client{
+		client: fake, cfg: cfg, rec: reconcile.New(cfg),
+		site: "muehle", station: "hf", slot: "antenna-select",
+		jobs: make(chan func(), 256), ctx: ctx, cancel: cancel,
+		lastActivity: time.Now(),
+	}
+	go sharedmqtt.RunJobs(ctx, c.jobs)
+	antSwitchCmds = func() []recordedMsg {
+		mu.Lock()
+		defer mu.Unlock()
+		var out []recordedMsg
+		for _, m := range record {
+			if m.topic == "muehle/hf/ant-switch/cmd" {
+				out = append(out, m)
+			}
+		}
+		return out
+	}
+	drain = func() {
+		done := make(chan struct{})
+		sharedmqtt.Enqueue(c.jobs, func() { close(done) })
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			t.Fatal("worker did not drain queued handler jobs in time")
+		}
+	}
+	return c, antSwitchCmds, drain, cancel
+}
+
+// radioStateMsgFreq is like radioStateMsg but with an explicit frequency, so a VFO change
+// can be simulated.
+func radioStateMsgFreq(deviceOnline bool, band string, freqHz int64) fakeMessage {
+	return fakeMessage{
+		topic:   "muehle/hf/radio/state",
+		payload: []byte("{\"band\":\"" + band + "\",\"freq_hz\":" + strconv.FormatInt(freqHz, 10) + ",\"tx\":\"rx\",\"device_online\":" + boolStr(deviceOnline) + "}"),
+	}
+}
+
+func TestIdleTimeoutGroundsAntenna(t *testing.T) {
+	c, antSwitchCmds, drain, cancel := idleClient(t, time.Hour)
+	defer cancel()
+	// Radio online on 20m -> selects port3.
+	c.onRadioStatus(nil, radioStatusMsg(true))
+	c.onRadioState(nil, radioStateMsg(true, "20m"))
+	drain()
+	if got := antSwitchCmds(); len(got) != 1 {
+		t.Fatalf("setup: expected 1 select, got %d", len(got))
+	}
+	// Simulate the idle timeout elapsing: lastActivity is now stale.
+	c.lastActivity = time.Now().Add(-2 * time.Hour)
+	c.checkIdle()
+	drain()
+	cmds := antSwitchCmds()
+	if len(cmds) != 2 {
+		t.Fatalf("expected 2 selects (port3 then off), got %d", len(cmds))
+	}
+	var p struct {
+		Select string `json:"select"`
+	}
+	if err := json.Unmarshal(cmds[len(cmds)-1].payload, &p); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if p.Select != "off" {
+		t.Errorf("last select=%q, want off", p.Select)
+	}
+	if c.in.StationActivity != "inactive" {
+		t.Errorf("StationActivity=%q, want inactive", c.in.StationActivity)
+	}
+}
+
+func TestIdleTimeoutNotElapsedKeepsActive(t *testing.T) {
+	c, _, drain, cancel := idleClient(t, time.Hour)
+	defer cancel()
+	c.onRadioStatus(nil, radioStatusMsg(true))
+	c.onRadioState(nil, radioStateMsg(true, "20m"))
+	drain()
+	// lastActivity is recent (set by the activity detection above), so checkIdle must
+	// NOT mark inactive.
+	c.checkIdle()
+	drain()
+	if c.in.StationActivity == "inactive" {
+		t.Errorf("StationActivity became inactive despite recent activity")
+	}
+}
+
+func TestVFOChangeMarksActive(t *testing.T) {
+	c, _, drain, cancel := idleClient(t, time.Hour)
+	defer cancel()
+	c.onRadioStatus(nil, radioStatusMsg(true))
+	c.onRadioState(nil, radioStateMsg(true, "20m"))
+	drain()
+	// Force idle.
+	c.lastActivity = time.Now().Add(-2 * time.Hour)
+	c.checkIdle()
+	drain()
+	if c.in.StationActivity != "inactive" {
+		t.Fatalf("setup: expected inactive, got %q", c.in.StationActivity)
+	}
+	// A VFO change (14.0 -> 14.1 MHz) marks active again.
+	c.onRadioState(nil, radioStateMsgFreq(true, "20m", 14100000))
+	drain()
+	if c.in.StationActivity != "active" {
+		t.Errorf("StationActivity=%q, want active after VFO change", c.in.StationActivity)
+	}
+}
+
+func TestTXMarksActive(t *testing.T) {
+	c, _, drain, cancel := idleClient(t, time.Hour)
+	defer cancel()
+	c.onRadioStatus(nil, radioStatusMsg(true))
+	c.onRadioState(nil, radioStateMsg(true, "20m"))
+	drain()
+	c.lastActivity = time.Now().Add(-2 * time.Hour)
+	c.checkIdle()
+	drain()
+	if c.in.StationActivity != "inactive" {
+		t.Fatalf("setup: expected inactive, got %q", c.in.StationActivity)
+	}
+	// A transmit (tx="tx") marks active again, even with the same frequency.
+	c.onRadioState(nil, fakeMessage{
+		topic:   "muehle/hf/radio/state",
+		payload: []byte("{\"band\":\"20m\",\"freq_hz\":14000000,\"tx\":\"tx\",\"device_online\":true}"),
+	})
+	drain()
+	if c.in.StationActivity != "active" {
+		t.Errorf("StationActivity=%q, want active after TX", c.in.StationActivity)
+	}
+}
+
+func TestActivityAfterIdleReselects(t *testing.T) {
+	c, antSwitchCmds, drain, cancel := idleClient(t, time.Hour)
+	defer cancel()
+	c.onRadioStatus(nil, radioStatusMsg(true))
+	c.onRadioState(nil, radioStateMsg(true, "20m"))
+	drain()
+	// Idle -> off.
+	c.lastActivity = time.Now().Add(-2 * time.Hour)
+	c.checkIdle()
+	drain()
+	// Activity (VFO change) -> re-select port3.
+	c.onRadioState(nil, radioStateMsgFreq(true, "20m", 14100000))
+	drain()
+	cmds := antSwitchCmds()
+	if len(cmds) < 3 {
+		t.Fatalf("expected at least 3 selects (port3, off, port3), got %d", len(cmds))
+	}
+	var p struct {
+		Select string `json:"select"`
+	}
+	if err := json.Unmarshal(cmds[len(cmds)-1].payload, &p); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if p.Select != "port3" {
+		t.Errorf("last select=%q, want port3", p.Select)
+	}
 }

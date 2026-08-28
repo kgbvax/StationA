@@ -27,7 +27,6 @@ separate per-component remotes to push to.
 | ultrabridge | `ultrabridge/` | Ultrabeam RCU-06 controller (tunes one antenna) |
 | acom1200s-pa-bridge | `acom1200s-pa-bridge/` | ACOM 1200S PA bridge |
 | wrc-rotator-bridge | `wrc-rotator-bridge/` | HF rotator bridge (Yaesu G-450DC via AF6SA WRC, websocket) |
-| pelcobridge | `pelcobridge/` | Pelco-D rotator controller (UHF sat rotator) |
 | atr1k-tuner-bridge | `atr1k-tuner-bridge/` | ATR-1000 ATU bridge (in-line/bypass + tune, binary WebSocket) |
 | waveshare_relay-antswitch-bridge | `waveshare_relay-antswitch-bridge/` | 1:6 antenna switch bridge (ESPHome, WaveShare relay-board family) |
 | shelly-power-bridge | `shelly-power-bridge/` | Shelly smart-plug bridge → `power/master` + `power/psu-13v8` (supply layer) |
@@ -35,6 +34,7 @@ separate per-component remotes to push to.
 | powerseq | `powerseq/` | Startup/shutdown sequencer → `hf/power-seq` (ordered, delay + liveness confirmations) |
 | antennaselect | `antennaselect/` | Antenna-selection reconciler (core implemented) |
 | hadiscovery | `hadiscovery/` | Home Assistant discovery consumer (reads `/meta` `expose`, renders HA discovery) |
+| pelcobridge2 | `pelcobridge2/` | UHF rotator TUI + rotctld server (Pelco-D/P pan/tilt head over RS-485) |
 
 Each project has its own `CLAUDE.md` and is independently buildable (`go build`/`go test`
 from its own directory works without the workspace, via the `replace … => ../shared`).
@@ -59,8 +59,8 @@ and `go work sync` operate over the whole workspace at once.
 | `muehle/hf/rotator` | wrc-rotator-bridge | Yaesu G-450DC via AF6SA WRC, websocket |
 | `muehle/hf/tuner` | atr1k-tuner-bridge | ATR-1000 ATU, wifi (binary WebSocket) |
 | `muehle/hf/power-seq` | powerseq | logic slot — no device (runs on shari); startup/shutdown sequencer |
-| `muehle/uhf/rotator` | pelcobridge | UHF sat rotator, Pelco-D, serial |
 | `muehle/uhf/pol-ctrl` | m5stamp-hf-ctrl (PLC #2) | M5 Stamp PLC #2 — X-Quad polarization, wifi |
+| `muehle/uhf/rotator` | pelcobridge2 | PTS-303Z/3050DZ pan/tilt head, RS-485 — interactive TUI on shack-pc (arming is manual, never remote) |
 | `muehle/hf/discovery` | hadiscovery | logic slot — no device (runs on shari); passive consumer of `/meta` |
 
 **Antennas are not slots.** `ant-ctrl` is the *controller* that tunes the Ultrabeam

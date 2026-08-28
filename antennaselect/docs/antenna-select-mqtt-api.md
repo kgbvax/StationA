@@ -241,9 +241,8 @@ defaults). The `set_inline` vocabulary matches atr1k-tuner-bridge's `/cmd` contr
 
 | Topic | Fields used |
 |-------|-------------|
-| `muehle/hf/radio/state` | `band`, `freq_hz`, `tx`, `device_online` (radio-link liveness) (`tuning`: future input, not yet used) |
+| `muehle/hf/radio/state` | `band`, `freq_hz`, `tx`, `device_online` (radio-link liveness) (`tuning`: future input, not yet used). `freq_hz` change or `tx == "tx"` marks the station active (idle-timeout input) |
 | `muehle/hf/radio/status` | bridge liveness (LWT) — one half of the radio-online gate |
-| `muehle/hf` (station node) | `activity` (`active`\|`inactive`) — tier 1 |
 | `muehle/hf/antenna-select/cmd` | operator `request` — tier 2 |
 | `muehle/hf/ant-switch/state` | `selected` — confirm (`settled`: received, gating is backlog) |
 
@@ -255,5 +254,8 @@ radio is online and reporting a band; gated by `[pa_follow].enabled`);
 the tuner's resource is selected and the band is non-resonant; gated by
 `[tuner_follow].enabled`).
 
-**Dependency not built here:** the station `activity` flag needs a publisher (operator/HA
-sets `muehle/hf`). If absent, treat as `active` and log — never silently assume inactive.
+**Idle timeout (walk-away safety, §10):** the reconciler infers `activity` itself — a
+`freq_hz` change or `tx == "tx"` marks the station `active`; after `[idle].timeout_minutes`
+(default 30m) with neither, it marks `inactive` and resolves `target = off` (tier 1). The
+switch's `off` position shorts the open ports to ground (lightning protection). No manual
+override; activity is the only re-arm.

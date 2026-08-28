@@ -66,6 +66,54 @@ resource = "ultrabeam"
 	}
 }
 
+func TestIdleTimeout(t *testing.T) {
+	// Default is 30 minutes.
+	if got := Default().Idle.TimeoutMinutes; got != 30 {
+		t.Errorf("default idle timeout = %d, want 30", got)
+	}
+
+	// A config file can override it (integer minutes, matching the codebase's
+	// integer-in-TOML convention — not a duration string).
+	path := writeTemp(t, `
+location = "bauwagen"
+host     = "shari"
+
+[mqtt]
+broker  = "tcp://broker.local:1883"
+site    = "muehle"
+station = "hf"
+
+[wiring_map]
+port1 = "dummy-load"
+port3 = "ultrabeam"
+port6 = "fan-dipole"
+off   = "grounded"
+
+[band_policy]
+fallback = "fan-dipole"
+
+[band_policy.bands]
+ultrabeam  = ["20m"]
+fan-dipole = ["40m"]
+
+[idle]
+timeout_minutes = 45
+`)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Idle.TimeoutMinutes != 45 {
+		t.Errorf("idle timeout = %d, want 45", cfg.Idle.TimeoutMinutes)
+	}
+
+	// Non-positive timeout is rejected.
+	cfg.Idle.TimeoutMinutes = 0
+	if err := cfg.Validate(); err == nil {
+		t.Error("expected error for idle.timeout_minutes = 0")
+	}
+}
+
 func TestValidateMissingFallback(t *testing.T) {
 	cfg := Config{
 		Location:  "bauwagen",

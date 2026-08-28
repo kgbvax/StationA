@@ -174,6 +174,54 @@ func TestHandleTelemetryFaultMapping(t *testing.T) {
 	}
 }
 
+// TestHandleTelemetryZeroesPowerWhenNotKeyed locks the tx→rx fix: the amp can
+// keep reporting the last transmit power (and the forward-power averager holds
+// stale samples) after it unkeys, which leaves display units stuck at the last
+// reported value. The bridge must publish 0 W for forward/reflected power
+// whenever keyed != tx.
+func TestHandleTelemetryZeroesPowerWhenNotKeyed(t *testing.T) {
+	b, pub := newTestBridge(t, &fakeCommander{}, false)
+
+	// Transmitting: power is reported as-is.
+	b.HandleTelemetry(acom.Observation{
+		ForwardPower:   600,
+		ReflectedPower: 3,
+		ModeRaw:        "OPR/TX",
+		ErrByte:        0xFF,
+		ErrMsg:         "NONE",
+	})
+	msg, _ := lastMsg(pub.Messages(), "muehle/hf/pa/state")
+	var tx struct {
+		Keyed     string `json:"keyed"`
+		FwdPowerW uint16 `json:"fwd_power_w"`
+		RflPowerW uint16 `json:"rfl_power_w"`
+	}
+	json.Unmarshal(msg.Payload, &tx)
+	if tx.Keyed != "tx" || tx.FwdPowerW != 600 || tx.RflPowerW != 3 {
+		t.Fatalf("tx snapshot = keyed %q fwd %d rfl %d, want tx/600/3", tx.Keyed, tx.FwdPowerW, tx.RflPowerW)
+	}
+
+	// Unkeyed (rx): the amp still reports the last transmit power, but the bridge
+	// must zero the meters.
+	b.HandleTelemetry(acom.Observation{
+		ForwardPower:   600, // stale: amp keeps reporting the last TX value
+		ReflectedPower: 3,
+		ModeRaw:        "OPR/RX",
+		ErrByte:        0xFF,
+		ErrMsg:         "NONE",
+	})
+	msg, _ = lastMsg(pub.Messages(), "muehle/hf/pa/state")
+	var rx struct {
+		Keyed     string `json:"keyed"`
+		FwdPowerW uint16 `json:"fwd_power_w"`
+		RflPowerW uint16 `json:"rfl_power_w"`
+	}
+	json.Unmarshal(msg.Payload, &rx)
+	if rx.Keyed != "rx" || rx.FwdPowerW != 0 || rx.RflPowerW != 0 {
+		t.Fatalf("rx snapshot = keyed %q fwd %d rfl %d, want rx/0/0", rx.Keyed, rx.FwdPowerW, rx.RflPowerW)
+	}
+}
+
 func TestHandleTelemetryStandbyKeyedInhibited(t *testing.T) {
 	b, pub := newTestBridge(t, &fakeCommander{}, false)
 	b.HandleTelemetry(acom.Observation{ModeRaw: "STANDBY", ErrByte: 0xFF, ErrMsg: "NONE"})

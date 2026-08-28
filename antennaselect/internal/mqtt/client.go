@@ -30,6 +30,11 @@ const (
 	slotAntSwitch = "ant-switch"
 )
 
+// idleCheckInterval is how often the idle loop re-checks the walk-away timeout. Coarse
+// enough to be negligible, fine enough that the antenna grounds within a few seconds of
+// the configured [idle].timeout_minutes.
+const idleCheckInterval = 5 * time.Second
+
 type Client struct {
 	client  paho.Client
 	cfg     config.Config
@@ -46,6 +51,12 @@ type Client struct {
 	lastFollowFreq  int64
 	lastPaBand      string
 	lastTunerInline *bool
+
+	// lastActivity is the wall-clock time of the last radio activity (a VFO/frequency
+	// change or a transmit). It drives the idle timeout (config [idle].timeout_minutes): when
+	// time.Since(lastActivity) exceeds the timeout the reconciler grounds the antenna.
+	// Only touched on the jobs worker (under c.mu), so no cross-goroutine race.
+	lastActivity time.Time
 
 	// RadioOnline (in.RadioOnline) is the AND of the two radio-liveness signals below;
 	// both are recomputed in onRadioStatus/onRadioState under c.mu.
@@ -98,7 +109,9 @@ func New(ctx context.Context, cfg config.Config, rec *reconcile.Reconciler) (*Cl
 		jobs:    make(chan func(), 256),
 	}
 	c.ctx, c.cancel = context.WithCancel(ctx)
+	c.lastActivity = time.Now()
 	go sharedmqtt.RunJobs(c.ctx, c.jobs)
+	go c.idleLoop()
 
 	opts := paho.NewClientOptions().
 		AddBroker(cfg.MQTT.Broker).
@@ -154,6 +167,33 @@ func (c *Client) Close() {
 	}
 }
 
+// idleLoop periodically re-checks the idle timeout so the antenna grounds even when the
+// radio is silent (no radio/state updates to trigger onRadioState). The actual check runs
+// on the jobs worker (via Enqueue) so lastActivity is only read under c.mu.
+func (c *Client) idleLoop() {
+	ticker := time.NewTicker(idleCheckInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			sharedmqtt.Enqueue(c.jobs, c.checkIdle)
+		case <-c.ctx.Done():
+			return
+		}
+	}
+}
+
+// checkIdle marks the station inactive when the idle timeout has elapsed since the last
+// activity. It re-checks time.Since(lastActivity) under lock so a late activity that
+// arrived after the tick but before this job ran does not get clobbered.
+func (c *Client) checkIdle() {
+	c.update(func(in *reconcile.Inputs) {
+		if time.Since(c.lastActivity) >= time.Duration(c.cfg.Idle.TimeoutMinutes)*time.Minute {
+			in.StationActivity = "inactive"
+		}
+	})
+}
+
 // --- subscriptions ----------------------------------------------------------
 
 func (c *Client) subscribeAll() {
@@ -161,10 +201,6 @@ func (c *Client) subscribeAll() {
 	c.subscribe(c.siblingTopic(slotRadio, "status"), c.onRadioStatus)
 	c.subscribe(c.siblingTopic(slotAntSwitch, "state"), c.onAntSwitchState)
 	c.subscribe(c.selfTopic("cmd"), c.onOperatorCmd)
-	// The station node carries the operator-set activity flag (integration model §7).
-	// It is published at the station path itself; exact-topic subscribe avoids the
-	// site/station/# wildcard (which would capture our own slot).
-	c.subscribe(c.stationTopic(), c.onStationNode)
 }
 
 func (c *Client) onRadioState(_ paho.Client, msg paho.Message) {
@@ -181,6 +217,12 @@ func (c *Client) onRadioState(_ paho.Client, msg paho.Message) {
 	sharedmqtt.Enqueue(c.jobs, func() {
 		c.update(func(in *reconcile.Inputs) {
 			c.radioDeviceOnline = s.DeviceOnline
+			// Activity = a VFO/frequency change or a transmit. Either marks the station
+			// active and resets the idle clock (walk-away safety, §10).
+			if s.FreqHz != in.RadioFreqHz || s.TX == reconcile.TXTransmit {
+				c.lastActivity = time.Now()
+				in.StationActivity = "active"
+			}
 			in.RadioBand = s.Band
 			in.RadioFreqHz = s.FreqHz
 			in.RadioTX = s.TX
@@ -231,29 +273,6 @@ func (c *Client) onOperatorCmd(_ paho.Client, msg paho.Message) {
 		return
 	}
 	sharedmqtt.Enqueue(c.jobs, func() { c.update(func(in *reconcile.Inputs) { in.OperatorRequest = strings.TrimSpace(cmd.Request) }) })
-}
-
-func (c *Client) onStationNode(_ paho.Client, msg paho.Message) {
-	// Copy the payload out of the paho message: it is only valid for the duration of the
-	// handler, but update runs later, off this goroutine, on the worker.
-	payload := append([]byte(nil), msg.Payload()...)
-	sharedmqtt.Enqueue(c.jobs, func() { c.update(func(in *reconcile.Inputs) { in.StationActivity = parseActivity(payload) }) })
-}
-
-// parseActivity reads the station activity flag leniently: it accepts a JSON object with
-// an "activity" field, or a bare "active"/"inactive" string. Anything else is unknown ("").
-func parseActivity(payload []byte) string {
-	var obj struct {
-		Activity string `json:"activity"`
-	}
-	if err := json.Unmarshal(payload, &obj); err == nil && obj.Activity != "" {
-		return strings.ToLower(strings.TrimSpace(obj.Activity))
-	}
-	s := strings.ToLower(strings.TrimSpace(string(payload)))
-	if s == "active" || s == "inactive" {
-		return s
-	}
-	return ""
 }
 
 // --- the reconcile step -----------------------------------------------------
@@ -437,11 +456,9 @@ func (c *Client) publishString(topic, payload string, qos byte, retained bool) {
 
 // --- topic helpers ----------------------------------------------------------
 // The slot address format lives in shared/schema; these wrap it for the suffix style this
-// consumer uses (own meta/state/status, sibling slots). stationTopic is the station node
-// itself (no slot), which schema does not model, so it stays local.
+// consumer uses (own meta/state/status, sibling slots).
 
-func (c *Client) stationTopic() string { return c.site + "/" + c.station }
-func (c *Client) selfBase() string     { return schema.SlotBase(c.site, c.station, c.slot) }
+func (c *Client) selfBase() string { return schema.SlotBase(c.site, c.station, c.slot) }
 func (c *Client) selfTopic(suffix string) string {
 	return schema.SiblingTopic(c.site, c.station, c.slot, suffix)
 }

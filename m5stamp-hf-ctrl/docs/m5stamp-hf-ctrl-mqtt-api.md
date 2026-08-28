@@ -13,7 +13,7 @@ compound device; the shared `device{model,serial}` is the relationship, model
 
 | Property | Value |
 |----------|-------|
-| Protocol | MQTT 3.1.1 (plain TCP, `192.168.1.50:1883`) |
+| Protocol | MQTT 3.1.1 (plain TCP, `192.168.1.139:1883`) |
 | Authentication | Username/password (`hf` user) |
 | Clean session | false; retained `/cmd` is replayed on every reconnect (self-heal) |
 | Auto-reconnect | handled in `loop()` (WiFi + two MQTT clients) |
@@ -43,8 +43,9 @@ All topics are addressed `<site>/<station>/<slot>/<suffix>`. The site is
 `/cmd` is **retained** for both slots: they hold steady-state intent. On
 reconnect the broker replays the last command and the firmware re-applies it.
 
-The firmware also **subscribes** `muehle/hf/radio/state` (on the pa-arm
-connection) for arm-logic inputs; it never publishes there.
+The firmware also **subscribes** `muehle/hf/radio/state` and
+`muehle/hf/ant-switch/state` (on the pa-arm connection) for arm-logic inputs; it
+never publishes there.
 
 ---
 
@@ -160,7 +161,7 @@ firmware arms when safe and drops automatically when not.
 ### Arm logic (embedded)
 
 ```
-armed = enabled ∧ radio_online ∧ ¬radio.tuning ∧ band_safe ∧ heartbeat
+armed = enabled ∧ radio_online ∧ ¬radio.tuning ∧ band_safe ∧ heartbeat ∧ antenna_ready
 ```
 
 | Input | Source | Meaning |
@@ -170,12 +171,14 @@ armed = enabled ∧ radio_online ∧ ¬radio.tuning ∧ band_safe ∧ heartbeat
 | `radio.tuning` | `hf/radio/state` `tuning` | a tune cycle is in progress → drop |
 | `band_safe` | `hf/radio/state` `band` ∈ {160m,80m,60m,40m,30m,20m,17m,15m,12m,10m,6m} | a band the PA can amplify |
 | `heartbeat` | `hf/radio/state` received within `RADIO_HEARTBEAT_MS` (10 s) | the radio feed is live |
+| `antenna_ready` | `hf/ant-switch/state` `selected` ≠ `off` | an antenna is in circuit (not the grounded `off` position) |
 
 The relay is energized **only** when `armed` is true; any failure de-energizes
 it → open → PA disabled (fail-safe-open). Loss of 13.8 V (which powers the PLC)
 or a PLC crash drops the relay open by hardware. The firmware subscribes
-`muehle/hf/radio/state` on the pa-arm connection and dispatches it by topic in
-`handlePaArmCmd` (anything ending `/state` → arm inputs; `/cmd` → set_enabled).
+`muehle/hf/radio/state` and `muehle/hf/ant-switch/state` on the pa-arm connection
+and dispatches them by topic in `handlePaArmCmd` (`/radio/state` → radio inputs,
+`/ant-switch/state` → `antenna_ready`, `/cmd` → set_enabled).
 
 ---
 

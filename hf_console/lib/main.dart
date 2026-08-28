@@ -13,10 +13,10 @@ import 'ui/screens/setup_screen.dart';
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
   if (!kIsWeb) {
-    SystemChrome.setPreferredOrientations([
-      DeviceOrientation.landscapeLeft,
-      DeviceOrientation.landscapeRight,
-    ]);
+    // Allow all orientations; the console layout adapts via LayoutBuilder
+    // (phones stack vertically, tablets stay side-by-side). immersiveSticky
+    // is an Android-only full-screen mode (no-op on iOS/desktop).
+    SystemChrome.setPreferredOrientations(DeviceOrientation.values);
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
   }
   runApp(const HfConsoleApp());
@@ -50,8 +50,17 @@ class _AppRootState extends State<_AppRoot> {
   void initState() {
     super.initState();
     _mqtt = MqttService(_store);
+    _store.addListener(_onBusStoreUpdate);
     _enforceFullScreen();
     _tryAutoConnect();
+  }
+
+  void _onBusStoreUpdate() {
+    // Drive the DX-spot SNR filter from the live radio mode. Defaults to SSB
+    // threshold when the radio is in a phone/data mode, switches to CW in cw,
+    // and disables gating when no mode is known.
+    final mode = _store.stateValue('muehle/hf/radio', 'mode') as String?;
+    _dxSpot.setMode(mode);
   }
 
   void _enforceFullScreen() {
@@ -101,6 +110,7 @@ class _AppRootState extends State<_AppRoot> {
 
   @override
   void dispose() {
+    _store.removeListener(_onBusStoreUpdate);
     _dxSpot.dispose();
     _mqtt.dispose();
     super.dispose();

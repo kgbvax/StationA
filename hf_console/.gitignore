@@ -43,3 +43,9 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Web channel build artifacts (./deploy.sh cross-compiles the Go bridge to
+# dist/, and a plain `go build` in webbridge/ emits the host binary). Source
+# lives in webbridge/{main.go,go.mod,go.sum}; only the binaries are ignored.
+/dist/
+/webbridge/webbridge

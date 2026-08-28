@@ -71,6 +71,16 @@ type TunerFollow struct {
 	ATUBands []string `toml:"atu_bands"` // non-resonant bands needing the ATU in-line
 }
 
+// Idle is the walk-away safety timeout (integration model §10): after this long with no
+// radio activity (a VFO/frequency change or a transmit), the reconciler grounds the
+// antenna (target = off) to protect against lightning. Activity is inferred from
+// radio/state (freq_hz change or tx == "tx"), not operator-set. The timeout is expressed
+// in whole minutes (matching the codebase's integer-in-TOML convention; the reconciler
+// converts to time.Duration).
+type Idle struct {
+	TimeoutMinutes int `toml:"timeout_minutes"`
+}
+
 // Config is the full runtime configuration for the reconciler.
 type Config struct {
 	// Location and Host are deployment facts published in /meta (integration model §3).
@@ -86,6 +96,7 @@ type Config struct {
 	BandFollow  BandFollow        `toml:"band_follow"`
 	PAFollow    PAFollow          `toml:"pa_follow"`
 	TunerFollow TunerFollow       `toml:"tuner_follow"`
+	Idle        Idle              `toml:"idle"`
 }
 
 // Default returns the built-in defaults. Maps are left nil; a usable deployment must
@@ -100,6 +111,7 @@ func Default() Config {
 		BandFollow:  BandFollow{Slot: "ant-ctrl"},
 		PAFollow:    PAFollow{Slot: "pa"},
 		TunerFollow: TunerFollow{Slot: "tuner"},
+		Idle:        Idle{TimeoutMinutes: 30},
 	}
 }
 
@@ -190,6 +202,9 @@ func (c Config) Validate() error {
 		} else if _, ok := r2p[c.TunerFollow.Resource]; !ok {
 			problems = append(problems, fmt.Sprintf("tuner_follow.resource %q is not in wiring_map", c.TunerFollow.Resource))
 		}
+	}
+	if c.Idle.TimeoutMinutes <= 0 {
+		problems = append(problems, "idle.timeout_minutes must be positive")
 	}
 	if len(problems) > 0 {
 		return fmt.Errorf("config: %s", strings.Join(problems, "; "))

@@ -1,0 +1,43 @@
+# pelcobridge2 configuration — seed-once, store 0600.
+# The MQTT password is NOT here: export PELCOBRIDGE2_MQTT_PASSWORD instead.
+# Missing keys fall back to the built-in defaults shown below.
+
+[serial]
+port   = "COM3"   # COM3, /dev/ttyUSB0, /dev/serial/by-id/..., or tcp:host:port (mock)
+baud   = 2400     # bench link is 2400 8N1
+addr   = 1        # head's Pelco DIP address
+pelco_p = false   # TX envelope (P frames); RX is always protocol-adaptive
+
+[rotctld]
+enabled = true
+bind    = "0.0.0.0"  # 127.0.0.1 to keep rotctl local
+port    = 4533
+
+[control]
+jog_speed              = 18     # 0x12, Pelco default; 0x00–0x3F
+settle_ms              = 2000   # quiet-line window around absolute sets
+set_attempts           = 3      # verification-ladder re-sends
+set_tolerance_deg      = 0.3
+arm_max_readback_age_s = 10     # pan readback must be fresher to arm
+jog_hold_ms            = 250    # TUI hold-to-move stop timer
+min_az = 0.0
+max_az = 360.0
+min_el = 0.0
+max_el = 90.0
+
+[mqtt]
+enabled      = false
+broker       = "tcp://192.168.1.50:1883"
+client_id    = ""          # default: muehle-uhf-rotator
+user         = "hf"
+password     = ""          # unused; env PELCOBRIDGE2_MQTT_PASSWORD wins
+site         = "muehle"
+station      = "uhf"
+slot         = "rotator"
+device_model = "PTS-303Z/3050DZ"
+device_name  = "UHF Rotator"
+device_link  = "rs485"
+host         = "shack-pc"
+
+[log]
+file = ""   # optional log file; empty disables

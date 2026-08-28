@@ -57,7 +57,7 @@ void main() {
       expect(find.textContaining('muehle/hf/pa: bridge down'), findsNothing);
     });
 
-    testWidgets('caps visible list at 5 entries', (tester) async {
+    testWidgets('caps visible list at 4 entries', (tester) async {
       final store = BusStore();
       final mqtt = FakeMqttService(store);
       for (var i = 0; i < 10; i++) {
@@ -72,7 +72,7 @@ void main() {
       await tester.pumpWidget(TestHarness(store: store, mqtt: mqtt, child: const FaultsBar()));
       await tester.pumpAndSettle();
 
-      expect(find.textContaining('FAULT '), findsNWidgets(5));
+      expect(find.textContaining('FAULT '), findsNWidgets(4));
     });
   });
 }

@@ -65,6 +65,37 @@ LatLng locatorToLatLng(String locator) {
   return (lat: lat, lng: lng);
 }
 
+/// Lat/lng bounds (south-west, north-east corners) for a Maidenhead locator.
+/// Returns `null` if the locator is < 2 chars. Ported from
+/// `horstreporter/utils.js:422-...` (`locatorToBounds`); the SW/NE corners are
+/// what the grid-square overlay projects, not the cell center.
+typedef LatLngBounds = ({LatLng sw, LatLng ne});
+
+LatLngBounds? locatorToBounds(String locator) {
+  final s = locator.toUpperCase();
+  if (s.length < 2) return null;
+
+  // Field anchors (-180, -90), 20° lng × 10° lat cells.
+  double west = (s.codeUnitAt(0) - 65) * 20.0 - 180.0;
+  double south = (s.codeUnitAt(1) - 65) * 10.0 - 90.0;
+  double lngStep = 20.0;
+  double latStep = 10.0;
+
+  if (s.length >= 4) {
+    west += (s.codeUnitAt(2) - 48) * 2.0;
+    south += (s.codeUnitAt(3) - 48) * 1.0;
+    lngStep = 2.0;
+    latStep = 1.0;
+    if (s.length >= 6) {
+      west += (s.codeUnitAt(4) - 65) * (5.0 / 60.0);
+      south += (s.codeUnitAt(5) - 65) * (2.5 / 60.0);
+      lngStep = 5.0 / 60.0;
+      latStep = 2.5 / 60.0;
+    }
+  }
+  return (sw: (lat: south, lng: west), ne: (lat: south + latStep, lng: west + lngStep));
+}
+
 /// A normalized AEQD projection result: `x`/`y` on the unit disc (where `|(x, y)| = c`,
 /// the angular distance from the center in radians) and `c` itself. `null` if the
 /// point is beyond the visible horizon (near-antipode).

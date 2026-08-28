@@ -1,12 +1,12 @@
 {
-    "name": "hf_console",
-    "short_name": "hf_console",
+    "name": "Mühle HF Console",
+    "short_name": "HF Console",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
-    "orientation": "portrait-primary",
+    "background_color": "#121212",
+    "theme_color": "#121212",
+    "description": "Mühle HF station operations console",
+    "orientation": "landscape",
     "prefer_related_applications": false,
     "icons": [
         {

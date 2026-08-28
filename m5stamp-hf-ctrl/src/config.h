@@ -18,12 +18,14 @@
 
 #define SWITCH_SLOT "hf/switch"
 #define PA_ARM_SLOT "hf/pa-arm"
-#define RADIO_SLOT "hf/radio"   // subscribed for arm logic (tuning / band / liveness)
+#define RADIO_SLOT "hf/radio"       // subscribed for arm logic (tuning / band / liveness)
+#define ANT_SWITCH_SLOT "hf/ant-switch"  // subscribed for arm logic (antenna grounded?)
 
 // Full topic bases (no leading slash — station convention).
 #define SWITCH_BASE SITE "/" SWITCH_SLOT     // muehle/hf/switch
 #define PA_ARM_BASE  SITE "/" PA_ARM_SLOT     // muehle/hf/pa-arm
 #define RADIO_BASE    SITE "/" RADIO_SLOT      // muehle/hf/radio
+#define ANT_SWITCH_BASE SITE "/" ANT_SWITCH_SLOT  // muehle/hf/ant-switch
 
 // --- relay map (M5StamPLC relay channels are 0-indexed 0..3) -----------------
 // Plan relay numbering is 1-based; subtract 1 for the library channel.

@@ -1,0 +1,7 @@
+dist/
+*.exe
+pelcobridge2
+config.toml
+state.toml
+.DS_Store
+.claude/

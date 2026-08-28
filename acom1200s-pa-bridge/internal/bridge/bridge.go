@@ -273,13 +273,23 @@ func (b *Bridge) Reset() {
 // states (rx / inhibited) we dedupe identical snapshots to avoid bus flooding
 // (model §8: retained state, not a firehose).
 func (b *Bridge) HandleTelemetry(obs acom.Observation) {
+	keyed := acom.CanonicalKeyed(obs.ModeRaw)
+	fwd, rfl := obs.ForwardPower, obs.ReflectedPower
+	// The amp's forward/reflected power telemetry is only meaningful while
+	// keyed=tx. On the tx→rx transition the amp can keep reporting the last
+	// transmit value (and the forward-power averager holds stale samples), which
+	// leaves display units stuck at the last reported power. Zero the meters
+	// whenever the amp is not keyed so consumers see 0 W in rx/inhibited.
+	if keyed != "tx" {
+		fwd, rfl = 0, 0
+	}
 	b.mu.Lock()
 	b.state = paState{
 		Mode:         acom.CanonicalMode(obs.ModeRaw),
 		Band:         obs.BandName,
-		Keyed:        acom.CanonicalKeyed(obs.ModeRaw),
-		FwdPowerW:    obs.ForwardPower,
-		RflPowerW:    obs.ReflectedPower,
+		Keyed:        keyed,
+		FwdPowerW:    fwd,
+		RflPowerW:    rfl,
 		TempC:        roundTempC(obs.Temperature),
 		SWR:          obs.SWR,
 		Fault:        acom.CanonicalFault(obs.ErrByte, obs.ErrMsg),
