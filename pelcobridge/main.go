@@ -35,6 +35,7 @@ func main() {
 	logLevel := flag.String("loglevel", "", "log verbosity: error | warn | info | debug | trace (overrides config)")
 	tcp := flag.String("tcp", "", "TCP serial-bridge address host:port (overrides config)")
 	transport := flag.String("transport", "", "outbound transport: serial | tcp | sim (overrides config; sim = in-memory emulator, no hardware)")
+	listPorts := flag.Bool("list-ports", false, "list available serial ports (with USB details) and exit")
 	daemon := flag.Bool("d", false, "run headless as a network controller (no TUI)")
 	flag.Parse()
 
@@ -89,6 +90,13 @@ func main() {
 		cfg.Transport = *transport
 	} else if set["tcp"] {
 		cfg.Transport = config.TransportTCP // -tcp implies TCP unless -transport says otherwise
+	}
+
+	if *listPorts {
+		// Pure query mode: print and exit, no engine, no config side effects.
+		// After the overrides so a `-port X -list-ports` marks X, not the
+		// config value.
+		os.Exit(listSerialPorts(cfg.Serial.Port))
 	}
 
 	logw, closeLog := openLog(cfg.Log, *daemon)

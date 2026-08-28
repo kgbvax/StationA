@@ -84,6 +84,15 @@ control path). At least one control server must be enabled in the config.
 Switch live in the TUI with `m` (transport) and `r` (reconnect), or set it at
 launch with `-transport` / `-tcp` / `-transport sim`.
 
+Not sure which device the rotator is on? List what the OS exposes — USB
+VID/PID, product and serial number where available — and the configured port
+is marked:
+
+```sh
+./pelcots -list-ports
+# /dev/tty.usbmodem5AF50020681  USB 1A86:55D3 "USB-Enhanced-SERIAL CH343" serial=5AF5002068
+```
+
 ### PTZ self-check (disable)
 
 Some PTZs (e.g. the 303Z/3050DZ) run a self-check sweep on power-up (and after a
@@ -238,6 +247,7 @@ Flags override the corresponding config values for that run:
 | `-config <path>` | settings file (default `pelcots.yaml`) |
 | `-transport serial\|tcp\|sim` | outbound transport (`sim` = in-memory emulator, no hardware) |
 | `-port <dev>` | serial device path |
+| `-list-ports` | list available serial ports (with USB details) and exit |
 | `-baud <n>` | serial baud rate |
 | `-tcp <host:port>` | TCP bridge address (implies `-transport tcp`) |
 | `-addr <1-255>` | Pelco-D camera address |
