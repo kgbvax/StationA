@@ -1,14 +1,14 @@
-// world_layer_cache.dart — AEQD-projected world-coastline raster cache.
+// world_layer_cache.dart — AEQD-projected world-landmass raster cache.
 //
 // The world layer is the single most expensive thing the compass painter does:
-// ~30k rings × hundreds of vertices × AEQD trig = ~6–10 ms per frame, which
-// caps the zoom-drag at ~10 fps. Mirrors horstreporter's `drawWorldCached`
-// (azimuth-runtime.js:846-892), which caches an `OffscreenCanvas` of the
-// coastline layer and blits it during the per-frame draw. Our Flutter
-// analogue is a `ui.Picture` recorded once per (cx, cy, r, zoom, centerLat,
-// centerLng, ring-count) and reused as long as none of those change. Cache
-// hit = single GPU blit (~0.2 ms); zoom-drag then costs only the grid-square
-// + chrome layers.
+// ~1.6k rings / ~100k vertices × AEQD trig = tens of ms per rebuild, which
+// would cap zoom-drag well below 60 fps if paid per frame. Mirrors
+// horstreporter's `drawWorldCached` (azimuth-runtime.js:846-892), which caches
+// an `OffscreenCanvas` of the coastline layer and blits it during the
+// per-frame draw. Our Flutter analogue is a `ui.Picture` recorded once per
+// (cx, cy, r, zoom, centerLat, centerLng, ring-count, colors) and reused as
+// long as none of those change. Cache hit = single GPU blit (~0.2 ms);
+// zoom-drag then costs only the grid-square + chrome layers.
 //
 // One cache instance lives on `_CompassPanelState` so it survives across
 // rebuilds. Dispose with the state.
@@ -33,17 +33,23 @@ class WorldLayerCache {
     double? centerLat,
     double? centerLng,
     int ringCount,
+    Color fillColor,
+    Color strokeColor,
   ) =>
       'w=${cx.toStringAsFixed(1)},${cy.toStringAsFixed(1)}|'
       'r=${r.toStringAsFixed(1)}|'
       'z=${zoom.toStringAsFixed(2)}|'
       'c=${(centerLat ?? 0).toStringAsFixed(2)},${(centerLng ?? 0).toStringAsFixed(2)}|'
-      'n=$ringCount';
+      'n=$ringCount|'
+      'f=${fillColor.toARGB32()}|'
+      's=${strokeColor.toARGB32()}';
 
-  /// Raster the world coastline layer to the cache (when the key changes) and
-  /// blit it onto [canvas] covering the whole widget rect. Returns `true` if
-  /// the cache was rebuilt this call. No-op (returns false) when there's no
-  /// center or rings to render.
+  /// Raster the world landmass layer to the cache (when the key changes) and
+  /// blit it onto [canvas] covering the whole widget rect. Land polygons are
+  /// filled with [fillColor] (even-odd, so GeoJSON hole rings — Caspian,
+  /// enclaves — stay unfilled) and the coastlines are stroked over with
+  /// [strokeColor]. Returns `true` if the cache was rebuilt this call. No-op
+  /// (returns false) when there's no center or rings to render.
   bool draw(
     Canvas canvas,
     Rect bounds,
@@ -54,6 +60,7 @@ class WorldLayerCache {
     double? centerLat,
     double? centerLng,
     List<List<LatLng>>? rings,
+    Color fillColor,
     Color strokeColor,
   ) {
     if (centerLat == null || centerLng == null || rings == null || rings.isEmpty) {
@@ -61,7 +68,7 @@ class WorldLayerCache {
       _key = null;
       return false;
     }
-    final key = _makeKey(cx, cy, r, zoom, centerLat, centerLng, rings.length);
+    final key = _makeKey(cx, cy, r, zoom, centerLat, centerLng, rings.length, fillColor, strokeColor);
     if (_key == key && _image != null) {
       paintImage(
         canvas: canvas,
@@ -81,12 +88,13 @@ class WorldLayerCache {
     final clipPath = Path()..addOval(Rect.fromCircle(center: Offset(cx, cy), radius: r));
     c.save();
     c.clipPath(clipPath);
-    final stroke = Paint()
-      ..color = strokeColor
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 0.8
-      ..strokeJoin = StrokeJoin.round
-      ..strokeCap = StrokeCap.round;
+
+    // Project every ring into a single path. Even-odd fill makes hole rings
+    // subtract from their enclosing outer ring; a ring whose projection hits
+    // the near-antipode null (rare — only land within 0.02 rad of the
+    // antipode) is broken into subpaths so the implicit close chords along the
+    // rim instead of across the disc.
+    final path = Path()..fillType = PathFillType.evenOdd;
     final aeqd = Aeqd(centerLat, centerLng);
     final scale = (r - 6) * zoom / math.pi;
     for (final ring in rings) {
@@ -97,14 +105,32 @@ class WorldLayerCache {
           prev = null;
           continue;
         }
-        final px = cx + n.x * scale;
-        final py = cy - n.y * scale;
-        if (prev != null) {
-          c.drawLine(prev, Offset(px, py), stroke);
+        final o = Offset(cx + n.x * scale, cy - n.y * scale);
+        if (prev == null) {
+          path.moveTo(o.dx, o.dy);
+        } else {
+          path.lineTo(o.dx, o.dy);
         }
-        prev = Offset(px, py);
+        prev = o;
       }
     }
+
+    c.drawPath(
+      path,
+      Paint()
+        ..color = fillColor
+        ..style = PaintingStyle.fill
+        ..isAntiAlias = true,
+    );
+    c.drawPath(
+      path,
+      Paint()
+        ..color = strokeColor
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 0.8
+        ..strokeJoin = StrokeJoin.round
+        ..strokeCap = StrokeCap.round,
+    );
     c.restore();
     final pic = recorder.endRecording();
     final img = pic.toImageSync(w, h);
