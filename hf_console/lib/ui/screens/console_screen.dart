@@ -53,8 +53,9 @@ class _ConsoleScreenState extends State<ConsoleScreen> {
 }
 
 /// Full-width warning strip shown while the MQTT link is down. Everything on
-/// screen is stale retained state and every publish goes nowhere — that has
-/// to be unmissable, not a tiny dot in the top bar.
+/// screen is stale retained state and every publish is dropped — that has to
+/// be unmissable, not a tiny dot in the top bar. The copy promises only what
+/// is true: taps are not gated panel-by-panel, commands are simply lost.
 class LinkStatusBanner extends StatelessWidget {
   const LinkStatusBanner({super.key});
 
@@ -69,7 +70,7 @@ class LinkStatusBanner extends StatelessWidget {
           color: AppTheme.blend(AppTheme.red, 0.18),
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
           child: Text(
-            'LINK DOWN — DATA STALE · CONTROLS INACTIVE',
+            'LINK DOWN — DATA STALE · COMMANDS NOT DELIVERED',
             textAlign: TextAlign.center,
             style: AppTheme.mono(13, color: AppTheme.red, weight: FontWeight.w700, letterSpacing: 0.14),
           ),

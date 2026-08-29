@@ -133,6 +133,22 @@ void main() {
       expect(find.text('PA RELAY OFF'), findsOneWidget);
     });
 
+    testWidgets('shows RELAY ? when the hf/switch state is unknown, not a fabricated OFF', (tester) async {
+      final store = BusStore();
+      final mqtt = FakeMqttService(store);
+      store.setPaHealthy();
+      // Strip the switch slot entirely: silence must not become an
+      // affirmative open-relay claim.
+      store.apply('muehle/hf/switch/status', '', true);
+      store.apply('muehle/hf/switch/state', '', true);
+
+      await tester.pumpWidget(TestHarness(store: store, mqtt: mqtt, child: const PaPanel()));
+      await tester.pumpAndSettle();
+
+      expect(find.text('RELAY ?'), findsOneWidget);
+      expect(find.text('PA RELAY OFF'), findsNothing);
+    });
+
     testWidgets('peak markers decay slowly after unkeying', (tester) async {
       final store = BusStore();
       final mqtt = FakeMqttService(store);
