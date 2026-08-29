@@ -1,10 +1,17 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hf_console/store/bus_store.dart';
+import 'package:hf_console/ui/theme.dart';
 import 'package:hf_console/ui/widgets/antenna_panel.dart';
 import '../../support/fake_mqtt_service.dart';
 import '../../support/fixtures.dart';
 import '../../support/test_harness.dart';
+
+// Resolve the effective background color of a labelled action button.
+Color buttonBg(WidgetTester tester, String label) {
+  final btn = tester.widget<ElevatedButton>(find.widgetWithText(ElevatedButton, label));
+  return btn.style!.backgroundColor!.resolve({})!;
+}
 
 void main() {
   group('AntennaPanel', () {
@@ -90,6 +97,45 @@ void main() {
       expect(mqtt.publishes.length, 1);
       expect(mqtt.publishes.first.topic, 'muehle/hf/ant-switch/cmd');
       expect(mqtt.publishes.first.payload, contains('port1'));
+    });
+
+    testWidgets('grounded state renders the GROUNDED button in solid red', (tester) async {
+      final store = BusStore();
+      final mqtt = FakeMqttService(store);
+      store.setAntenna(selected: 'off', settled: true, mode: 'auto');
+
+      await tester.pumpWidget(TestHarness(store: store, mqtt: mqtt, child: const AntennaPanel()));
+      await tester.pumpAndSettle();
+
+      expect(buttonBg(tester, 'GROUNDED'), AppTheme.red);
+      // The header label is red too; the other ports stay chrome-coloured.
+      expect(buttonBg(tester, 'ULTRABEAM'), isNot(AppTheme.red));
+      expect(find.textContaining('AUTO · Grounded'), findsOneWidget);
+    });
+
+    testWidgets('non-grounded selection does not render red', (tester) async {
+      final store = BusStore();
+      final mqtt = FakeMqttService(store);
+      store.setAntenna(selected: 'port4', settled: true, mode: 'auto');
+
+      await tester.pumpWidget(TestHarness(store: store, mqtt: mqtt, child: const AntennaPanel()));
+      await tester.pumpAndSettle();
+
+      expect(buttonBg(tester, 'ULTRABEAM'), isNot(AppTheme.red));
+      expect(buttonBg(tester, 'GROUNDED'), isNot(AppTheme.red));
+      expect(find.textContaining('AUTO · Ultrabeam'), findsOneWidget);
+    });
+
+    testWidgets('manual mode renders the MANUAL button in solid red', (tester) async {
+      final store = BusStore();
+      final mqtt = FakeMqttService(store);
+      store.setAntenna(selected: 'port4', settled: true, mode: 'manual');
+
+      await tester.pumpWidget(TestHarness(store: store, mqtt: mqtt, child: const AntennaPanel()));
+      await tester.pumpAndSettle();
+
+      expect(buttonBg(tester, 'MANUAL'), AppTheme.red);
+      expect(buttonBg(tester, 'AUTO'), isNot(AppTheme.red));
     });
   });
 }

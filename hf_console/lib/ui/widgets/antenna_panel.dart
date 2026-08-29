@@ -23,11 +23,23 @@ class AntennaPanel extends StatelessWidget {
 
     final selectSlot = store.slots['muehle/hf/antenna-select'];
     final selectOnline = selectSlot?.isOnline ?? false;
-    final mode = store.stateValueAs<String>('muehle/hf/antenna-select', 'mode') ?? 'auto';
+    // No fabricated 'auto': with the reconciler offline or absent (it may not
+    // even be deployed), the operator drives the switch directly and the
+    // header must say so instead of asserting a policy nobody enforces.
+    final mode = store.stateValueAs<String>('muehle/hf/antenna-select', 'mode');
+    final managed = selectOnline && mode != null;
 
     final antName = antennaMap[selected] ?? selected;
 
     final isManual = mode == 'manual';
+    // 'off' = all antenna ports grounded: nothing is connected to the TX
+    // path, so operating is impossible — the label must shout that in red.
+    final grounded = selected == 'off';
+    // Manual antenna-select also blocks operational routing; it is a
+    // deliberate override state and gets the same red treatment.
+    final blocked = grounded || isManual;
+    // With the reconciler absent the operator taps drive ant-switch directly.
+    final modeLabel = managed ? mode.toUpperCase() : 'DIRECT';
 
     void selectPort(String port) {
       if (!switchOnline) return;
@@ -79,8 +91,18 @@ class AntennaPanel extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Text(
-                  '${mode.toUpperCase()} · $antName',
-                  style: AppTheme.mono(12, weight: FontWeight.w700, color: settled ? AppTheme.accent : AppTheme.amber),
+                  '$modeLabel · $antName',
+                  style: AppTheme.mono(
+                    12,
+                    weight: FontWeight.w700,
+                    color: blocked
+                        ? AppTheme.red
+                        : managed
+                            ? settled
+                                ? AppTheme.accent
+                                : AppTheme.amber
+                            : AppTheme.amber,
+                  ),
                 ),
                 if (!settled) ...[
                   const SizedBox(width: 6),
@@ -99,19 +121,26 @@ class AntennaPanel extends StatelessWidget {
                 final isActive = port == selected;
                 return ElevatedButton(
                   onPressed: switchOnline ? () => selectPort(port) : null,
-                  style: AppTheme.actionButton(active: isActive),
+                  // Grounded is the one selection that prevents operation,
+                  // so even while active it renders in solid red, not accent.
+                  style: AppTheme.actionButton(
+                    dangerActive: isActive && grounded,
+                    active: isActive && !grounded,
+                  ),
                   child: Text(label.toUpperCase()),
                 );
               }),
               const SizedBox(width: 16),
               ElevatedButton(
                 onPressed: selectOnline ? () => setMode('auto') : null,
-                style: AppTheme.actionButton(active: mode == 'auto'),
+                style: AppTheme.actionButton(active: managed && mode == 'auto'),
                 child: const Text('AUTO'),
               ),
               ElevatedButton(
                 onPressed: selectOnline ? () => setMode('manual') : null,
-                style: AppTheme.actionButton(active: mode == 'manual'),
+                // Manual routing overrides the reconciler — shown in solid
+                // red while engaged, like the grounded state.
+                style: AppTheme.actionButton(dangerActive: isManual),
                 child: const Text('MANUAL'),
               ),
             ],
