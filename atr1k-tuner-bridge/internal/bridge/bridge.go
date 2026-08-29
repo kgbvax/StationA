@@ -104,14 +104,17 @@ type metaExposeField struct {
 	Max        *float64     `json:"max,omitempty"`
 	Step       *float64     `json:"step,omitempty"`
 	Options    []string     `json:"options,omitempty"`
+	OptionsRef string       `json:"options_ref,omitempty"` // names a capabilities key holding the enum options
 	Writable   bool         `json:"writable,omitempty"`
 	Command    *metaCommand `json:"command,omitempty"`
 }
 
 type metaExposeAction struct {
-	Key     string       `json:"key"`
-	Name    string       `json:"name"`
-	Command *metaCommand `json:"command"`
+	Key        string       `json:"key"`
+	Name       string       `json:"name"`
+	Options    []string     `json:"options,omitempty"`
+	OptionsRef string       `json:"options_ref,omitempty"` // names a capabilities key holding the enum options
+	Command    *metaCommand `json:"command"`
 }
 
 // metaCommand describes how a write is encoded on /cmd (Appendix C).
@@ -176,7 +179,8 @@ func (b *Bridge) PublishMeta() {
 				{Key: "device_online", Name: "Device Online", Type: "boolean"},
 			},
 			Actions: []metaExposeAction{
-				{Key: "tune", Name: "Tune", Command: &metaCommand{Action: "tune", ValueKey: "value", ValueType: "enum"}},
+				{Key: "tune", Name: "Tune", OptionsRef: "tune_modes",
+					Command: &metaCommand{Action: "tune", ValueKey: "value", ValueType: "enum"}},
 			},
 		},
 	}
