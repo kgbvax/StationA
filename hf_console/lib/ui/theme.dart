@@ -36,7 +36,7 @@ class AppTheme extends ChangeNotifier {
       page: const Color(0xFFE5E3DD),
       pane: const Color(0xFFEFEDE7),
       card: const Color(0xFFF9F8F5),
-      land: const Color(0xFFDAD3C7),
+      land: const Color(0xFFD0C6B4),
       line: const Color(0xFFD4D1CA),
       lineHi: const Color(0xFFB8B4AB),
       txt: const Color(0xFF1A1A1A),
