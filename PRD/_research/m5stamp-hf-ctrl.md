@@ -461,7 +461,7 @@ systemd EnvironmentFile convention):
 | `RADIO_SLOT` / `ANT_SWITCH_SLOT` | `"hf/radio"` / `"hf/ant-switch"` | subscribed feeds for arm logic |
 | `RELAY_PA_ARM/SPARE/PA_REMOTE/TRX_REMOTE` | 0 / 1 / 2 / 3 | 0-based expander channels for plan relays 1/2/3/4 |
 | `RADIO_HEARTBEAT_MS` | 10000 | input-heartbeat window (s) |
-| `SAFE_BANDS[]` | 160m,80m,60m,40m,30m,20m,17m,15m,12m,10m,6m | PA-safe band allow-list (ACOM 1200S coverage) |
+| `SAFE_BANDS[]` | 160m,80m,60m,40m,30m,20m,17m,15m,12m,10m,6m | PA-safe band allow-list — the firmware's own list (11 bands incl. 60m). NOT the ACOM 1200S coverage: the amp has 10 bands and no 60m (see acom1200s research). Arming on 60m permits PA drive on a band the amp does not cover — unresolved |
 | `MQTT_BUFFER_SIZE` | 1024 | PubSubClient buffer |
 | `MQTT_KEEPALIVE_S` | 30 | MQTT keep-alive |
 | `META_REFRESH_MS` | 300000 | **defined but unused** — intended periodic `/meta` republish, never wired |
@@ -525,8 +525,11 @@ field names, `link:"wifi"`, `host:"embedded"`, `capabilities` contents, the
 3. **The arm relay is never commandable.** The only accepted command is the
    `set_enabled` permit; there is no arm/disarm/force action, and the permit
    alone can never close the relay.
-4. **Conservative defaults for all arm inputs**: missing fields read as
-   radio-offline / not-tuning / band-unknown(unsafe) / antenna-not-ready.
+4. **Defaults for arm inputs — mostly conservative, one exception**: missing
+   fields read as radio-offline / band-unknown(unsafe) / antenna-not-ready.
+   EXCEPTION: a missing `tuning` field reads as `false` (not tuning) — the
+   permissive side. A radio state snapshot without the `tuning` key would let
+   the arm close during a real tune cycle (fail-open for that input).
 5. **Per-slot LWT**: two independent MQTT connections, each with a retained
    `offline` will on its own `<slot>/status` and publishing retained `online`
    on connect — a crash marks BOTH slots offline at once. `/status` is PLC

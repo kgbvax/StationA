@@ -69,7 +69,7 @@ pelcobridge2 is a **single-process interactive console application** (not a
 daemon) that:
 
 1. Drives the PTS-303Z/3050DZ pan/tilt head (the UHF antenna rotator) over
-   RS-485 using the Pelco-D or Pelco-P protocol.
+   RS-485 using the Pelco-D protocol.
 2. Presents the operator a full-screen terminal UI for manual motion, position
    queries, arming, and a live wire log.
 3. Serves the same head to Hamlib clients (`rotctl`, `gpredict`) as a
@@ -85,9 +85,9 @@ shari, because its primary interface is a human at a keyboard and its core
 safety rule is that a human must arm it locally.
 
 A companion binary, **pelcobridge2-mock**, serves a simulated head
-(`internal/simhead`) over a pty or TCP socket for bench testing with all the
+(`internal/simhead`) over a pty or TCP socket for bench testing with the
 hardware's quirks reproduced (silence-required sets, garbage readback while
-moving, protocol-adaptive answers).
+moving).
 
 ---
 
@@ -110,7 +110,7 @@ moving, protocol-adaptive answers).
 - One frame at a time; after every transmit the engine holds the line quiet
   for the **frame gap** (§5.1) before allowing the next transmit.
 
-### 2.2 Pelco-D framing (default TX envelope)
+### 2.2 Pelco-D framing (the TX/RX envelope)
 
 7-byte frame: `FF addr cmd1 cmd2 d1 d2 sum` where
 
@@ -121,18 +121,24 @@ moving, protocol-adaptive answers).
 - `d1`, `d2` are data bytes (speed or 16-bit position word halves);
 - `sum` = `(addr + cmd1 + cmd2 + d1 + d2) & 0xFF` (8-bit additive checksum).
 
-### 2.3 Pelco-P framing (optional TX envelope, `[serial].pelco_p = true`)
+### 2.3 Pelco-P framing (removed from the component 2026-08-29)
+
+Historical record — the component earlier offered Pelco-P as an optional TX
+envelope (`[serial].pelco_p = true`) and accepted P frames on RX. It was
+removed; the component now speaks Pelco-D only. The bench facts about the
+head itself stay valid:
 
 8-byte frame: `A0 addr cmd1 cmd2 d1 d2 AF xor` — same logical fields; the
 checksum is the **XOR of the seven bytes preceding it** (indices 0..6,
 including STX `A0` and ETX `AF`). Note: this head uses the **same address
 byte in both protocols** (it matches one DIP code regardless of protocol;
-strict Pelco-P gear is zero-indexed, this unit is not).
+strict Pelco-P gear is zero-indexed, this unit is not — the equivalence is
+an unverified bench assumption).
 
-**RX is always protocol-adaptive**: the head answers in whichever envelope a
-frame arrived in, and the component's receive assembler accepts both D and P
-frames at all times. The engine records the envelope of the last received
-frame as `protocol` = `"D"` or `"P"`.
+**The head is protocol-adaptive on RX**: it answers in whichever envelope a
+frame arrived in. The component never sends P, so every answer comes back in
+the Pelco-D envelope; the receive assembler accepts only D frames (a P
+frame's `A0` start byte assembles as noise).
 
 ### 2.4 Opcodes used (cmd2 values)
 
@@ -642,7 +648,6 @@ explicitly named missing file is an error (never a silent fallback).
 | `[serial] port` | `""` (must be set or `-port` given; fatal otherwise) | `COM3`, `/dev/ttyUSB0`, `/dev/serial/by-id/...`, or `tcp:host:port` |
 | `[serial] baud` | `2400` | 8N1 always |
 | `[serial] addr` | `1` | head's Pelco DIP address |
-| `[serial] pelco_p` | `false` | TX envelope; RX is always adaptive |
 | `[rotctld] enabled` | `true` | serve rotctld |
 | `[rotctld] bind` | `"0.0.0.0"` | `127.0.0.1` keeps it local |
 | `[rotctld] port` | `4533` | TCP listen port |
@@ -656,13 +661,13 @@ explicitly named missing file is an error (never a silent fallback).
 | `[mqtt] enabled` | `false` | MQTT off by default |
 | `[mqtt] broker` | `"tcp://192.168.1.50:1883"` | |
 | `[mqtt] client_id` | `""` → `muehle-uhf-rotator` | |
-| `[mqtt] user` | `"hf"` | |
+| `[mqtt] user` | `""` (built-in; example config seeds `"hf"`) | binary default empty — no username sent; `"hf"` only via config.example.toml / deploy seed |
 | `[mqtt] password` | `""` | fallback only, for hosts with no environment (double-clicked exe); env `PELCOBRIDGE2_MQTT_PASSWORD` always wins |
 | `[mqtt] site / station / slot` | `muehle / uhf / rotator` | topic namespace |
 | `[mqtt] device_model` | `"PTS-303Z/3050DZ"` | /meta device model |
 | `[mqtt] device_name` | `"UHF Rotator"` | /meta expose name and rotctld `get_info` |
 | `[mqtt] device_link` | `"rs485"` | /meta link |
-| `[mqtt] host` | `"shack-pc"` | /meta compute host |
+| `[mqtt] host` | `""` (built-in; example config seeds `"shack-pc"`) | /meta compute host; serialized omitempty — omitted from /meta entirely when empty |
 | `[log] file` | `""` | optional log file; empty disables |
 
 Secrets: MQTT password via environment variable
@@ -825,10 +830,10 @@ passed.
 
 **Must be preserved verbatim (behavior contract):**
 
-- All Pelco frame bytes, checksum algorithms (additive D / XOR-of-7-bytes P),
-  opcode values, speed-byte placement (d1 pan / d2 tilt), degrees×100
-  big-endian word encoding, and the head's three bench quirks (quiet-line
-  sets, garbage readback while moving, protocol-adaptive RX).
+- All Pelco-D frame bytes, the additive checksum, opcode values, speed-byte
+  placement (d1 pan / d2 tilt), degrees×100 big-endian word encoding, and the
+  head's bench quirks (quiet-line sets, garbage readback while moving). The
+  component speaks Pelco-D only; Pelco-P framing was removed 2026-08-29 (§2.3).
 - The RX assembler's two rules (noise-before-frame ordering; partial frames
   bounded by a receive gap) — they exist because of observed bench failures
   (fabricated checksum-valid positions).

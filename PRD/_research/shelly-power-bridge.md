@@ -274,9 +274,14 @@ The bridge itself is the only publisher of the RPC topic; multiple writers may w
    On config error: print to stderr, exit code **2**. On validation error: same.
 2. Create a signal-bound context (SIGINT, SIGTERM).
 3. Spawn one goroutine per `[[slot]]` (`runSlot`). Slots are fully independent; the
-   process exits only when all have returned. If any slot's initial MQTT connect fails,
-   that slot returns an error and the process eventually exits with code **1**
-   (systemd then restarts the whole process, `Restart=on-failure`, `RestartSec=5`).
+   process exits only when all have returned, and `run()` reads the error channel
+   only after `wg.Wait()`. A healthy slot goroutine returns only on ctx cancel
+   (`<-ctx.Done()`), so if ONE slot's initial MQTT connect fails while another
+   stays connected, the process does NOT exit — it hangs running the healthy
+   slot with the failed slot dark until SIGTERM (no exit 1, no systemd restart).
+   In practice both slots share one broker, so the common failure is both
+   failing together: all goroutines return, the process exits with code **1**,
+   and systemd restarts the whole process (`Restart=on-failure`, `RestartSec=5`).
 4. Per slot, before connecting: build the per-slot jobs worker (a single goroutine that
    serializes ALL state mutation and publishing for that slot, fed by a bounded channel
    of capacity **64**; when the buffer is full, incoming work is **dropped**, never
@@ -347,7 +352,7 @@ The bridge itself is the only publisher of the RPC topic; multiple writers may w
 |---|---|
 | Config file unreadable (other than missing) / TOML decode error | stderr message, exit 2 |
 | Validation failure (no site, no broker, no slots, empty station/slot/shelly_id/device_serial, bad fail_safe, duplicate slot address) | stderr message, exit 2 |
-| Initial MQTT connect failure | slot goroutine returns error → process exits 1 → systemd restart after 5 s |
+| Initial MQTT connect failure (all slots) | slot goroutines return error → process exits 1 → systemd restart after 5 s. One slot only: process does NOT exit (wg.Wait blocks on the healthy slot) — failed slot stays dark until SIGTERM |
 | Broker disconnect after initial connect | WARN log, `/state` publish suppressed, auto-reconnect; Will fires broker-side (`/status` = `offline`) |
 | Malformed native status / online not `"true"` handling / malformed `/cmd` / unknown cmd action or value | WARN log, no state change, message dropped |
 | `Switch.Set` publish fails (client disconnected mid-dispatch) | WARN log, nothing published; retained `/cmd` replay re-drives it later |
