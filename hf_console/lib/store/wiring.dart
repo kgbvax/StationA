@@ -29,10 +29,12 @@ const cmdRetain = {
 
 String cmdTopic(String slot) => 'muehle/$slot/cmd';
 
-/// Every slot the station model defines (see ../docs/station-integration-model.md).
-/// The offline list also reports these when the console has never heard
-/// anything from them — a dead-since-boot or undeployed service must not be
-/// invisible just because it never published a retained state.
+/// Every deployed slot this console monitors — the HF + power + UHF device
+/// slots from the station model (see ../docs/station-integration-model.md;
+/// TBD/precision slots and host-liveness nodes are excluded until they
+/// exist). The offline list also reports these when the console has never
+/// heard anything from them — a dead-since-boot or undeployed service must
+/// not be invisible just because it never published a retained state.
 const expectedSlots = [
   'muehle/power/master',
   'muehle/power/psu-13v8',
@@ -47,6 +49,8 @@ const expectedSlots = [
   'muehle/hf/tuner',
   'muehle/hf/power-seq',
   'muehle/hf/discovery',
+  'muehle/uhf/rotator',
+  'muehle/uhf/pol-ctrl',
 ];
 
 String cmdPayload(String action, dynamic value) =>

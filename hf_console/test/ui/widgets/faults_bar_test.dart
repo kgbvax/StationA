@@ -74,5 +74,61 @@ void main() {
 
       expect(find.textContaining('FAULT '), findsNWidgets(4));
     });
+
+    group('PSU root-cause line', () {
+      testWidgets('names the PSU when it is confirmed off and the HF chain is dead', (tester) async {
+        final store = BusStore();
+        final mqtt = FakeMqttService(store);
+        store.setPower(psu: false, master: true);
+        store.setDeviceOffline('muehle/hf/tuner'); // the dead HF downstream
+
+        await tester.pumpWidget(TestHarness(store: store, mqtt: mqtt, child: const FaultsBar()));
+        await tester.pumpAndSettle();
+
+        expect(find.textContaining('muehle/power/psu-13v8: PSU OFF'), findsOneWidget);
+      });
+
+      testWidgets('does not name the PSU while it is on', (tester) async {
+        final store = BusStore();
+        final mqtt = FakeMqttService(store);
+        store.setPower(psu: true);
+        store.setDeviceOffline('muehle/hf/tuner');
+
+        await tester.pumpWidget(TestHarness(store: store, mqtt: mqtt, child: const FaultsBar()));
+        await tester.pumpAndSettle();
+
+        expect(find.textContaining('PSU OFF'), findsNothing);
+      });
+
+      testWidgets('does not manufacture the line from a missing power key', (tester) async {
+        final store = BusStore();
+        final mqtt = FakeMqttService(store);
+        // PSU bridge online but its state carries no 'power' key: unknown,
+        // not off — inferring otherwise fabricates a root cause.
+        store.setOnline('muehle/power/psu-13v8');
+        store.applyState('muehle/power/psu-13v8', {'device_online': true});
+        store.setDeviceOffline('muehle/hf/tuner');
+
+        await tester.pumpWidget(TestHarness(store: store, mqtt: mqtt, child: const FaultsBar()));
+        await tester.pumpAndSettle();
+
+        expect(find.textContaining('PSU OFF'), findsNothing);
+      });
+
+      testWidgets('does not name the PSU when the bridge itself is dead', (tester) async {
+        final store = BusStore();
+        final mqtt = FakeMqttService(store);
+        // Stale retained 'off' + dead bridge: the console cannot know the
+        // PSU state, so it must not assert the cause.
+        store.applyStatus('muehle/power/psu-13v8', '');
+        store.applyState('muehle/power/psu-13v8', {'power': 'off', 'device_online': true});
+        store.setDeviceOffline('muehle/hf/tuner');
+
+        await tester.pumpWidget(TestHarness(store: store, mqtt: mqtt, child: const FaultsBar()));
+        await tester.pumpAndSettle();
+
+        expect(find.textContaining('PSU OFF'), findsNothing);
+      });
+    });
   });
 }

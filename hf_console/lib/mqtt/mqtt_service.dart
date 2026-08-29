@@ -27,6 +27,7 @@ class MqttService {
     client.resubscribeOnAutoReconnect = true;
     client.onConnected = () {
       connected.value = true;
+      store.markConnected();
       client.subscribe('muehle/#', MqttQos.atMostOnce);
     };
     client.onDisconnected = () {
@@ -37,6 +38,7 @@ class MqttService {
     };
     client.onAutoReconnected = () {
       connected.value = true;
+      store.markConnected();
     };
 
     final conn = MqttConnectMessage()

@@ -29,23 +29,29 @@ class FaultsBar extends StatelessWidget {
         .map((r) => r.address)
         .toSet();
 
+    final offlineSince = store.offlineSince;
     final List<_Fault> offline = [];
     for (final entry in store.offlineList) {
       final address = entry.split(':').first;
       if (activeFaultAddresses.contains(address)) continue;
-      // Stamp the row with when the slot actually went offline (retained
-      // state lies about recency; render time would lie harder).
-      final since = store.slots[address]?.statusChangedAt ?? now;
+      // Stamp the row with when the slot actually went offline — the store
+      // tracks /status flips, /state device-link flips and connect time for
+      // silent slots individually (retained state lies about recency; a
+      // render-time fallback would lie harder and tick on every rebuild).
+      final since = offlineSince[address] ?? now;
       offline.add(_Fault(_clockTime(since, time), since, entry, active: true));
     }
 
     // Root cause: a switched-off PSU silently kills hf/switch, pa-arm,
     // ant-switch and everything downstream of 13.8 V — the wall of
     // 'device unreachable' entries needs its cause named on the top line.
-    final psuOn = (store.stateValueAs<String>('muehle/power/psu-13v8', 'power') ?? 'off') == 'on';
+    // Confirmed-off only: a missing 'power' key is unknown, not off —
+    // inferring a fault from an absent key manufactures the one claim the
+    // inference exists to avoid.
+    final psuPower = store.stateValueAs<String>('muehle/power/psu-13v8', 'power');
     final psuOnline = store.slots['muehle/power/psu-13v8']?.isOnline ?? false;
     final hfChainDead = store.offlineList.any((e) => e.startsWith('muehle/hf/'));
-    if (psuOnline && !psuOn && hfChainDead) {
+    if (psuOnline && psuPower == 'off' && hfChainDead) {
       offline.add(_Fault(time, now, 'muehle/power/psu-13v8: PSU OFF — HF control chain unpowered', active: true));
     }
 
