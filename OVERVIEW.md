@@ -54,10 +54,13 @@ routing among them is `ant-switch` (actuator) driven by `antenna-select` (policy
 | `hf/discovery` | hadiscovery | HA discovery consumer (logic) | reads `/meta.expose` |
 | `uhf/rotator` | pelcobridge2 | UHF rotator console — interactive TUI + rotctld server (Pelco-D/P head) | RS-485 (shack-pc, not a daemon) |
 
-All HF bridges run on **shari** (Raspberry Pi, `192.168.1.139`) against the MQTT
-broker at `192.168.1.50:1883`, under the `muehle/…` address tree. The exception is
+All HF bridges run on **shari** (Raspberry Pi, `192.168.1.139`) against the
+**shack-local Mosquitto broker on shari** (`127.0.0.1:1883` on shari,
+`192.168.1.139:1883` from the LAN), bridged to the HA broker at
+`192.168.1.50:1883`, under the `muehle/…` address tree. The exception is
 `uhf/rotator` (pelcobridge2), which runs interactively on the **shack PC** — arming
-is manual, so it is intentionally not a service.
+is manual, so it is intentionally not a service. See
+`docs/conventions/mqtt-topology.md`.
 
 > **Bridge naming:** device-specific bridges follow `<devtag>-<function>-bridge`
 > (e.g. `atr1k-tuner-bridge`); the `<devtag>` is the device *family / control

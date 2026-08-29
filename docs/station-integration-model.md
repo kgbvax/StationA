@@ -729,6 +729,16 @@ connection is diagnosable. Broker: Mosquitto with a persistent store (so retaine
 and `state` survive a restart); EMQX only if a rules engine or clustering is wanted
 later, which it isn't yet.
 
+**Broker topology:** the station runs a **shack-local Mosquitto on shari**
+(`mqtt-broker/`) as the authoritative broker for `muehle/#`, so the station
+keeps a working bus even when the shack↔house link is down. A mosquitto
+`bridge` connection replicates `muehle/#` to the Home Assistant broker at
+`192.168.1.50:1883` (HA's own Mosquitto add-on, left untouched — it still serves
+HA's other MQTT devices). HA is still the reference consumer (§9): the bridge
+forwards slot `state`/`meta`/`status` and the discovery config `hadiscovery`
+renders out, and forwards HA's birth + `cmd` in. See
+`conventions/mqtt-topology.md` for the topic-direction table and ACLs.
+
 ### 8.1 Adapter conformance checklist
 
 The strict target this document promises. An adapter is conformant iff every line

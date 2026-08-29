@@ -17,10 +17,13 @@
 #   - publishes the `rotor2mqtt/...` topic tree + embedded HA discovery under
 #     `homeassistant/...` (NOT the stationa three-plane muehle/hf/rotator/*).
 #
-# The stationa wrc-rotator-bridge defaults already match rotint's hardcoded
-# values (WRC ws://192.168.1.108/wsrotor, broker tcp://192.168.1.50:1883, user hf,
-# GS-232 0.0.0.0:7373), so deploy.sh's seed-once config.toml is functionally
-# equivalent. The ONLY thing deploy.sh cannot seed is the MQTT password — so this
+# The stationa wrc-rotator-bridge defaults match rotint's hardcoded values for
+# everything except the broker: WRC ws://192.168.1.108/wsrotor, user hf,
+# GS-232 0.0.0.0:7373 are unchanged, but the broker is now the shack-local
+# Mosquitto on shari (tcp://127.0.0.1:1883, see docs/conventions/mqtt-topology.md)
+# rather than rotint's tcp://192.168.1.50:1883. So deploy.sh's seed-once config.toml
+# is functionally equivalent modulo the broker repoint. The ONLY thing deploy.sh
+# cannot seed is the MQTT password — so this
 # migration extracts it from the old unit's command line and writes it to the new
 # EnvironmentFile.
 #

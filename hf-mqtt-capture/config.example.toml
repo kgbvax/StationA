@@ -3,7 +3,7 @@
 # On the target this lives at /etc/hf-mqtt-capture/config.toml (0600, owned by the
 # service user). See docs/conventions/config-and-secrets.md.
 
-broker   = "tcp://192.168.1.50:1883"
+broker   = "tcp://127.0.0.1:1883"
 user     = "hf"
 password = ""               # set on the device; never on the command line
 site     = "muehle"

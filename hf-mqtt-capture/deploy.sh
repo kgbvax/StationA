@@ -13,7 +13,7 @@
 #   SERVICE_USER      system user to run as (default: hf-mqtt-capture)
 #   INSTALL_DIR       remote install dir    (default: /opt/hf-mqtt-capture)
 #
-#   MQTT_BROKER       broker     value (default: tcp://192.168.1.50:1883)
+#   MQTT_BROKER       broker     value (default: tcp://127.0.0.1:1883)
 #   MQTT_USER         user       value (default: hf)
 #   MQTT_PASSWORD     password   value (default: empty -> auto-pulled on-device
 #                     from an existing hf service env, so a re-seed is self-sufficient)
@@ -39,7 +39,7 @@ CONFIG_FILE="${CONFIG_FILE:-${CONFIG_DIR}/config.toml}"
 BINARY="${BINARY:-hf-mqtt-capture}"
 PKG="./cmd/hf-mqtt-capture"
 
-MQTT_BROKER="${MQTT_BROKER:-tcp://192.168.1.50:1883}"
+MQTT_BROKER="${MQTT_BROKER:-tcp://127.0.0.1:1883}"
 MQTT_USER="${MQTT_USER:-hf}"
 MQTT_PASSWORD="${MQTT_PASSWORD:-}"
 SITE="${SITE:-muehle}"

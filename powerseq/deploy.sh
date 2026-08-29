@@ -26,7 +26,7 @@
 #   HOST_NAME       host value            (default: shari)     [published in /meta]
 #   LOCATION        location value        (default: bauwagen)  [published in /meta]
 #   LOG_LEVEL       log.level value       (default: info)
-#   MQTT_BROKER     mqtt.broker value     (default: tcp://192.168.1.50:1883)
+#   MQTT_BROKER     mqtt.broker value     (default: tcp://127.0.0.1:1883)
 #   MQTT_SITE       mqtt.site             (default: muehle)
 #   MQTT_STATION    mqtt.station           (default: hf)
 #   MQTT_SLOT       mqtt.slot             (default: power-seq)
@@ -62,7 +62,7 @@ PKG="./cmd/powerseq"
 HOST_NAME="${HOST_NAME:-shari}"
 LOCATION="${LOCATION:-bauwagen}"
 LOG_LEVEL="${LOG_LEVEL:-info}"
-MQTT_BROKER="${MQTT_BROKER:-tcp://192.168.1.50:1883}"
+MQTT_BROKER="${MQTT_BROKER:-tcp://127.0.0.1:1883}"
 MQTT_SITE="${MQTT_SITE:-muehle}"
 MQTT_STATION="${MQTT_STATION:-hf}"
 MQTT_SLOT="${MQTT_SLOT:-power-seq}"
@@ -248,4 +248,4 @@ echo "   Logs:    ssh ${SSH_TARGET} 'journalctl -u ${SERVICE_NAME} -f'"
 echo "   Config:  ${CONFIG_FILE}"
 echo "   Secret:  ${ENV_FILE}  (set POWERSEQ_MQTT_PASSWORD if not seeded)"
 echo "   Topics:  muehle/hf/power-seq/{meta,state,status,cmd}"
-echo "   Start:   mosquitto_pub -h 192.168.1.50 -t 'muehle/hf/power-seq/cmd' -m '{\"action\":\"start\"}'"
+echo "   Start:   mosquitto_pub -h 127.0.0.1 -t 'muehle/hf/power-seq/cmd' -m '{\"action\":\"start\"}'"

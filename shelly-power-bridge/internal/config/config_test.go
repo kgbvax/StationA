@@ -11,7 +11,7 @@ func TestDefaults(t *testing.T) {
 	if c.MQTT.Site != "muehle" || c.Host != "shari" {
 		t.Errorf("defaults = site=%q host=%q, want muehle/shari", c.MQTT.Site, c.Host)
 	}
-	if c.MQTT.Broker != "tcp://192.168.1.50:1883" {
+	if c.MQTT.Broker != "tcp://127.0.0.1:1883" {
 		t.Errorf("default broker = %q", c.MQTT.Broker)
 	}
 	if c.Log.Level != "info" {

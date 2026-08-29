@@ -17,7 +17,7 @@ on-the-wire contract — derived from `internal/bridge/bridge.go` and
 
 | Property | Value |
 |----------|-------|
-| Protocol | MQTT 3.1.1 (plain TCP, `tcp://192.168.1.50:1883`) |
+| Protocol | MQTT 3.1.1 (plain TCP, `tcp://192.168.1.139:1883`) |
 | Authentication | Username/password (`hf` user) |
 | Clean session | false (`CleanSession=false`); retained `/cmd` is replayed on every reconnect (self-heal) |
 | Auto-reconnect | yes (`SetAutoReconnect`) |

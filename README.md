@@ -143,7 +143,9 @@ them all. Non-Go components (ESPHome YAML, PlatformIO firmware) live alongside a
 subdirectories and are not in `go.work`. Bridges import `shared/` but never another
 bridge's `internal/` (Go's `internal/` rule enforces this across separate modules).
 
-**MQTT broker:** `tcp://192.168.1.50:1883` (Mosquitto, persistent store).
+**MQTT broker:** a shack-local Mosquitto on shari (`127.0.0.1:1883` for shari
+services, `192.168.1.139:1883` from the LAN), bridged to the HA broker at
+`192.168.1.50:1883` (see `docs/conventions/mqtt-topology.md`). Persistent store.
 
 **shari** — Raspberry Pi, `192.168.1.139`, user `io`; all Go services run here as hardened
 systemd units.

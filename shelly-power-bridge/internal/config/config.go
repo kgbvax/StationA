@@ -87,7 +87,7 @@ func Defaults() Config {
 	return Config{
 		Host: "shari",
 		MQTT: MQTTConfig{
-			Broker:          "tcp://192.168.1.50:1883",
+			Broker:          "tcp://127.0.0.1:1883",
 			ClientID:        "",
 			User:            "hf",
 			Site:            "muehle",

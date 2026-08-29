@@ -427,13 +427,13 @@ Generic — not per-role. Also log at INFO: `slot <addr> role=<role> has no expo
 **Live smoke (pure MQTT, no hardware — like antennaselect):**
 ```bash
 # from hadiscovery/
-go run ./cmd/hadiscovery -config ./config.example.toml   # broker tcp://192.168.1.50:1883
+go run ./cmd/hadiscovery -config ./config.example.toml   # broker tcp://192.168.1.139:1883
 # observe discovery populated:
-mosquitto_sub -h 192.168.1.50 -u hf -P "$MQTT_PASSWORD" -t 'homeassistant/#' -v
+mosquitto_sub -h 192.168.1.139 -u hf -P "$MQTT_PASSWORD" -t 'homeassistant/#' -v
 # confirm a slot, e.g.:
-mosquitto_sub -h 192.168.1.50 -u hf -P "$MQTT_PASSWORD" -t 'homeassistant/sensor/muehle-hf-radio/frequency/config' -v
+mosquitto_sub -h 192.168.1.139 -u hf -P "$MQTT_PASSWORD" -t 'homeassistant/sensor/muehle-hf-radio/frequency/config' -v
 # trigger HA rebirth, confirm republish in logs:
-mosquitto_pub -h 192.168.1.50 -u hf -P "$MQTT_PASSWORD" -t 'homeassistant/status' -m 'online' -r
+mosquitto_pub -h 192.168.1.139 -u hf -P "$MQTT_PASSWORD" -t 'homeassistant/status' -m 'online' -r
 ```
 Migrate flexbridge/ultrabridge, redeploy, confirm HA shows one device per slot under
 `muehle-hf-*` identifiers and the old `flexradio-*`/`hf-ant-ctrl` entities are gone (gate off).

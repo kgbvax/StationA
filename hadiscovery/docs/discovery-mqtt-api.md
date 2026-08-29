@@ -233,16 +233,16 @@ replaced by the real entities (the diagnostic topic is cleared).
 
 ```bash
 # from hadiscovery/
-go run ./cmd/hadiscovery -config ./config.example.toml   # broker tcp://192.168.1.50:1883
+go run ./cmd/hadiscovery -config ./config.example.toml   # broker tcp://192.168.1.139:1883
 
 # watch the discovery tree:
-mosquitto_sub -h 192.168.1.50 -u hf -P "$MQTT_PASSWORD" -t 'homeassistant/#' -v
+mosquitto_sub -h 192.168.1.139 -u hf -P "$MQTT_PASSWORD" -t 'homeassistant/#' -v
 
 # confirm a specific slot:
-mosquitto_sub -h 192.168.1.50 -u hf -P "$MQTT_PASSWORD" -t 'homeassistant/sensor/muehle-hf-radio/freq_hz/config' -v
+mosquitto_sub -h 192.168.1.139 -u hf -P "$MQTT_PASSWORD" -t 'homeassistant/sensor/muehle-hf-radio/freq_hz/config' -v
 
 # trigger HA rebirth, confirm republish in hadiscovery logs:
-mosquitto_pub -h 192.168.1.50 -u hf -P "$MQTT_PASSWORD" -t 'homeassistant/status' -m 'online' -r
+mosquitto_pub -h 192.168.1.139 -u hf -P "$MQTT_PASSWORD" -t 'homeassistant/status' -m 'online' -r
 ```
 
 ---

@@ -22,7 +22,7 @@ area = "Bauwagen"
 
 # --- MQTT -------------------------------------------------------------------
 [mqtt]
-broker           = "tcp://192.168.1.50:1883"
+broker           = "tcp://127.0.0.1:1883"
 # client_id defaults to "<site>-<station>-<slot>" (model §8); set only to override.
 site             = "muehle"
 station          = "hf"

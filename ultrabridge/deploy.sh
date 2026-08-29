@@ -21,7 +21,7 @@
 #   BAUD            baud  value              (default: 19200)
 #   LOCATION        location value           (default: bauwagen)  [published in /meta]
 #   HOST_NAME       host value               (default: shari)     [published in /meta]
-#   MQTT_BROKER     mqtt.broker value        (default: empty -> disabled)
+#   MQTT_BROKER     mqtt.broker value        (default: tcp://127.0.0.1:1883, the shack broker on shari)
 #   MQTT_SITE       mqtt.site                (default: empty)
 #   MQTT_STATION    mqtt.station             (default: empty)
 #   MQTT_SLOT       mqtt.slot                (default: ant-ctrl, the canonical role)
@@ -59,7 +59,7 @@ SERIAL_PORT="${SERIAL_PORT:-}"
 BAUD="${BAUD:-19200}"
 LOCATION="${LOCATION:-bauwagen}"
 HOST_NAME="${HOST_NAME:-shari}"
-MQTT_BROKER="${MQTT_BROKER:-}"
+MQTT_BROKER="${MQTT_BROKER:-tcp://127.0.0.1:1883}"
 MQTT_SITE="${MQTT_SITE:-}"
 MQTT_STATION="${MQTT_STATION:-}"
 MQTT_SLOT="${MQTT_SLOT:-ant-ctrl}"

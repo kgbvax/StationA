@@ -28,7 +28,7 @@ host = "shari"
 location = "bauwagen"
 
 [mqtt]
-broker = "tcp://192.168.1.50:1883"
+broker = "tcp://127.0.0.1:1883"
 # client_id defaults to "<site>-<station>-<slot>" (model §8) when empty.
 client_id = ""
 # The sequencer's OWN address: <site>/<station>/<slot>/{meta,state,status,cmd}.

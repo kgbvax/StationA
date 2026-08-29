@@ -35,7 +35,7 @@ go vet ./... && gofmt -l .     # vet + format check
 
 # Run locally against a broker (no hardware — passive MQTT consumer)
 go run ./cmd/hadiscovery -config ./config.example.toml
-go run ./cmd/hadiscovery -broker tcp://192.168.1.50:1883   # broker via flag
+go run ./cmd/hadiscovery -broker tcp://192.168.1.139:1883   # broker via flag
 ```
 
 ## Layout
@@ -59,7 +59,7 @@ config to `shari`, and installs the `hadiscovery` service (seed-once; see
 — so the unit carries no `DeviceAllow`/`SupplementaryGroups`.
 
 ```bash
-./deploy.sh                                      # defaults: shari, broker 192.168.1.50:1883
+./deploy.sh                                      # defaults: shari, broker tcp://127.0.0.1:1883 (shack broker, loopback on shari)
 MQTT_PASSWORD=... ./deploy.sh                    # seed the password on first deploy
 ssh io@192.168.1.139 'journalctl -u hadiscovery -f'
 ```

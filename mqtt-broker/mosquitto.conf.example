@@ -1,0 +1,69 @@
+# Shack-local Mosquitto broker — example config.
+# Lives at /etc/mosquitto/mosquitto.conf on shari (192.168.1.139), 0600, owned by
+# the mosquitto user. Seeded once by deploy.sh; edit on the device after that.
+# See README.md for the full two-broker topology and the topic-direction table.
+
+# --- listener ---------------------------------------------------------------
+# Listen on all interfaces so remote shack clients (Shelly plugs, M5 PLC,
+# ant-switch ESP, the console tablet) can reach it. shari-local Go services
+# connect via 127.0.0.1.
+listener 1883 0.0.0.0
+allow_anonymous false
+per_listener_settings false
+password_file /etc/mosquitto/passwd
+acl_file /etc/mosquitto/acl.conf
+
+# --- persistence ------------------------------------------------------------
+# Required by the station model: retained /meta and /state must survive a
+# shari reboot so the bus re-seeds before the bridges reconnect.
+persistence true
+persistence_location /var/lib/mosquitto/
+autosave_interval 1800
+
+# --- logging ----------------------------------------------------------------
+log_dest file /var/log/mosquitto/mosquitto.log
+log_type error
+log_type warning
+log_type notice
+log_type information
+
+# --- bridge to the Home Assistant broker (192.168.1.50:1883) ---------------
+# The HA broker is HA's own Mosquitto add-on; it stays untouched and keeps
+# serving HA's other MQTT devices. We only add a `stationa-bridge` account +
+# ACL there (see README.md "HA-side setup"). This connection block is a client
+# of the HA broker; it connects out from shari and replicates the muehle/#
+# namespace. Direction is split (no `both`) so message loops are structurally
+# impossible; `try_private true` (default) marks bridge-originated messages as
+# an extra loop guard.
+connection bridge-to-ha
+address 192.168.1.50:1883
+remote_username stationa-bridge
+# remote_password is a secret — set it on the device (0600 file), never in repo.
+# Uncomment and fill in /etc/mosquitto/mosquitto.conf after the first deploy:
+#   remote_password <SET_ON_DEVICE>
+try_private true
+cleansession false
+start_type automatic
+restart_timeout 5 30
+notifications true
+notification_topic local/bridge-to-ha
+
+# station telemetry -> HA (outbound). QoS 1 matches the station convention.
+topic muehle/+/+/state out 1
+topic muehle/+/+/meta out 1
+topic muehle/+/+/status out 1
+
+# HA discovery config, rendered on THIS broker by hadiscovery, -> HA (outbound).
+# HA discovery objects are homeassistant/<component>/<node>/<object>/config.
+topic homeassistant/+/+/+/config out 1
+
+# HA birth -> this broker (inbound). HA publishes homeassistant/status=online on
+# startup; hadiscovery (on shari) sees it and re-publishes discovery out.
+topic homeassistant/status in 1
+
+# HA commands -> this broker (inbound). hadiscovery renders command_topic=
+# <addr>/cmd for writable components, so HA publishes muehle/.../cmd on the HA
+# broker; the bridge forwards it in so station services on shari receive it.
+# (Local command origins — the console tablet — publish on this broker
+# directly and are NOT bridged out: HA does not subscribe to /cmd.)
+topic muehle/+/+/cmd in 1

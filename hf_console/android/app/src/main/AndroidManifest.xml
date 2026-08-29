@@ -1,8 +1,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <!-- The MQTT client opens a raw TCP socket to 192.168.1.50:1883; the
-         app also subscribes/reads via the same socket. INTERNET is required
-         for both. The debug/profile variants carry the same permission as a
-         no-op for clarity. -->
+    <!-- The MQTT client opens a raw TCP socket to the shack broker on shari
+         (192.168.1.139:1883); the app also subscribes/reads via the same socket.
+         INTERNET is required for both. The debug/profile variants carry the
+         same permission as a no-op for clarity. -->
     <uses-permission android:name="android.permission.INTERNET"/>
     <application
         android:label="hf_console"

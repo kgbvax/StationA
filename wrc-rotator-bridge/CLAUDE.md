@@ -155,7 +155,7 @@ removes its unit. It deliberately leaves `/home/io/rotint` and user `io` in plac
 (the user's files / the deploy user). Idempotent — safe to re-run. Ordering
 matters: migration first, then `./deploy.sh`, whose seed-once seeds `config.toml`
 with defaults that match rotint's hardcoded values (WRC `ws://192.168.1.108/wsrotor`,
-broker `tcp://192.168.1.50:1883`, user `hf`, GS-232 `0.0.0.0:7373`) and leaves the
+broker `tcp://192.168.1.139:1883`, user `hf`, GS-232 `0.0.0.0:7373`) and leaves the
 migrated env file (the real password) untouched. wrc-rotator-bridge is network-only,
 so the migration creates no udev rule and adds no serial group.
 

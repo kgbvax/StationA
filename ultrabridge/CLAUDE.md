@@ -90,7 +90,7 @@ location    = "bauwagen"   # published in /meta
 host        = "shari"      # published in /meta
 
 [mqtt]
-broker           = "tcp://192.168.1.50:1883"
+broker           = "tcp://127.0.0.1:1883"
 site             = "muehle"
 station          = "hf"
 slot             = "ant-ctrl"

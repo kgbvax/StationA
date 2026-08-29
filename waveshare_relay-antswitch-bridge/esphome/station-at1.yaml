@@ -17,8 +17,8 @@ substitutions:
   friendly_name: Antenna Select
   device_comment: "WaveShare ESP32-S3-POE-ETH-8DI-8DO Device (1:6 antenna switch)"
 
-  # --- Station MQTT bus (see ../CLAUDE.md) ---
-  mqtt_broker: "192.168.1.50"
+  # --- Station MQTT bus — the shack broker on shari (see ../mqtt-broker/README.md) ---
+  mqtt_broker: "192.168.1.139"
   mqtt_port: "1883"
   mqtt_user: "hf"
   # mqtt_password comes from !secret mqtt_password (secrets file, gitignored).

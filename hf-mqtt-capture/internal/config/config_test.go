@@ -9,7 +9,7 @@ import (
 func TestLoadAndValidate(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.toml")
 	content := `
-broker   = "tcp://192.168.1.50:1883"
+broker   = "tcp://127.0.0.1:1883"
 user     = "hf"
 password = "secret"
 site     = "muehle"
@@ -24,8 +24,8 @@ retention_hours = 72
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.Broker != "tcp://192.168.1.50:1883" {
-		t.Errorf("broker = %q, want tcp://192.168.1.50:1883", cfg.Broker)
+	if cfg.Broker != "tcp://127.0.0.1:1883" {
+		t.Errorf("broker = %q, want tcp://127.0.0.1:1883", cfg.Broker)
 	}
 	if cfg.RetentionHours != 72 {
 		t.Errorf("retention_hours = %d, want 72", cfg.RetentionHours)
