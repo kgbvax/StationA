@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -214,43 +215,145 @@ func TestArmFlow(t *testing.T) {
 	}
 }
 
-// Self-test needs both confirm stages: y, then the typed word.
-func TestSelfTestTwoStage(t *testing.T) {
+// The self-test is a y/n confirm: n cancels, y sends — and never opens while
+// armed (disarmed-only is checked here too, mirroring the s-key pre-gate).
+func TestSelfTestConfirm(t *testing.T) {
 	se := newStubEngine()
 	m := newTestModel(se)
 
-	// Stage 0 answered with n: cancelled, nothing sent.
+	// s while armed: refused without opening the prompt.
+	m.snap = &control.Snapshot{Armed: true}
 	m2, _ := m.handleKey(key(tea.KeyRunes, 's'))
 	m = m2.(model)
+	if m.prompt != promptNone {
+		t.Fatal("s opened the self-test prompt while armed")
+	}
+	se.none(t)
+
+	// n cancels: nothing sent.
+	m.snap = &control.Snapshot{}
+	m2, _ = m.handleKey(key(tea.KeyRunes, 's'))
+	m = m2.(model)
+	if m.prompt != promptSelfTest {
+		t.Fatal("s did not open the self-test prompt")
+	}
 	m2, _ = m.handleKey(key(tea.KeyRunes, 'n'))
 	m = m2.(model)
-	se.none(t)
-
-	// Full two-stage confirm sends SelfTestIntent.
-	m2, _ = m.handleKey(key(tea.KeyRunes, 's'))
-	m = m2.(model)
-	m2, _ = m.handleKey(key(tea.KeyRunes, 'y'))
-	m = m2.(model)
-	if m.selfStage != 1 {
-		t.Fatalf("stage after y = %d, want 1", m.selfStage)
+	if m.prompt != promptNone {
+		t.Fatal("n did not cancel the self-test prompt")
 	}
-	// Wrong word: cancelled, nothing sent.
-	m.input.SetValue("nope")
-	m2, _ = m.handleKey(key(tea.KeyEnter))
-	m = m2.(model)
 	se.none(t)
 
-	// Correct word.
+	// y sends — the intent rides the blocking round-trip cmd now.
 	m2, _ = m.handleKey(key(tea.KeyRunes, 's'))
 	m = m2.(model)
-	m2, _ = m.handleKey(key(tea.KeyRunes, 'y'))
+	m2, cmd := m.handleKey(key(tea.KeyRunes, 'y'))
 	m = m2.(model)
-	m.input.SetValue("RIPCABLES")
-	m2, _ = m.handleKey(key(tea.KeyEnter))
-	m = m2.(model)
+	runCmd(cmd)
 	got := se.intents(t, 1)
 	if _, ok := got[0].(control.SelfTestIntent); !ok {
 		t.Errorf("sent %T, want SelfTestIntent", got[0])
+	}
+}
+
+// c disables the self-check directly (safe direction, no confirm); C needs
+// the y/n confirm and never opens while armed. Both go through a blocking
+// round-trip, so a refusal lands in the status line — a refused intent must
+// never read as "sent".
+func TestSelfCheckKeys(t *testing.T) {
+	se := newStubEngine()
+	m := newTestModel(se)
+
+	// c: straight through, disable; the success status is the cmd's verdict.
+	// It sends even when the pane already claims "off" — that claim is the
+	// engine's model, not proof, so a re-send is always in order.
+	m.snap = &control.Snapshot{SelfCheck: "off"}
+	m2, cmd := m.handleKey(key(tea.KeyRunes, 'c'))
+	m = m2.(model)
+	msgs := runCmd(cmd)
+	got := se.intents(t, 1)
+	if sc, ok := got[0].(control.SelfCheckIntent); !ok || sc.Enable {
+		t.Fatalf("c sent %#v, want SelfCheckIntent{Enable:false}", got[0])
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("c produced %d msgs, want 1", len(msgs))
+	}
+	if sm := msgs[0].(selfMsg); sm.err != nil || sm.okStatus == "" {
+		t.Errorf("c verdict = %+v, want success", sm)
+	}
+
+	// A refusal the engine answers (here: moving) surfaces as such in the
+	// status line — never as a silent success.
+	se.reply = func(it control.Intent) control.Result {
+		if _, ok := it.(control.SelfCheckIntent); ok {
+			return control.Result{Err: control.ErrMoving}
+		}
+		return control.Result{}
+	}
+	m2, cmd = m.handleKey(key(tea.KeyRunes, 'c'))
+	m = m2.(model)
+	msgs = runCmd(cmd)
+	se.intents(t, 1)
+	if len(msgs) != 1 {
+		t.Fatalf("refused c produced %d msgs, want 1", len(msgs))
+	}
+	if sm := msgs[0].(selfMsg); sm.err != control.ErrMoving {
+		t.Errorf("refused c verdict = %+v, want ErrMoving", sm)
+	}
+	m2, _ = m.Update(msgs[0])
+	m = m2.(model)
+	if !strings.Contains(m.status, "refused") {
+		t.Errorf("status after refused disable = %q, want a refused: line", m.status)
+	}
+	se.reply = func(it control.Intent) control.Result { return control.Result{} }
+
+	// C while armed: refused without opening the prompt.
+	m.snap = &control.Snapshot{Armed: true, SelfCheck: "off"}
+	m2, _ = m.handleKey(key(tea.KeyRunes, 'C'))
+	m = m2.(model)
+	if m.prompt != promptNone {
+		t.Fatal("C opened the self-check prompt while armed")
+	}
+	se.none(t)
+
+	// C disarmed: y/n confirm; n cancels, y enables.
+	m.snap = &control.Snapshot{}
+	m2, _ = m.handleKey(key(tea.KeyRunes, 'C'))
+	m = m2.(model)
+	if m.prompt != promptSelfCheck {
+		t.Fatal("C did not open the self-check prompt")
+	}
+	m2, _ = m.handleKey(key(tea.KeyRunes, 'n'))
+	m = m2.(model)
+	if m.prompt != promptNone {
+		t.Fatal("n did not cancel the self-check prompt")
+	}
+	se.none(t)
+
+	m2, _ = m.handleKey(key(tea.KeyRunes, 'C'))
+	m = m2.(model)
+	m2, cmd = m.handleKey(key(tea.KeyRunes, 'y'))
+	m = m2.(model)
+	runCmd(cmd)
+	got = se.intents(t, 1)
+	if sc, ok := got[0].(control.SelfCheckIntent); !ok || !sc.Enable {
+		t.Fatalf("C+y sent %#v, want SelfCheckIntent{Enable:true}", got[0])
+	}
+
+	// No "already on" short-circuit: "on" in the pane is the engine's
+	// liveness-gated claim, not proof, so C always offers the confirm.
+	m.snap = &control.Snapshot{SelfCheck: "on"}
+	m2, _ = m.handleKey(key(tea.KeyRunes, 'C'))
+	m = m2.(model)
+	if m.prompt != promptSelfCheck {
+		t.Fatal("C must always open the self-check prompt")
+	}
+	m2, cmd = m.handleKey(key(tea.KeyRunes, 'y'))
+	m = m2.(model)
+	runCmd(cmd)
+	got = se.intents(t, 1)
+	if sc, ok := got[0].(control.SelfCheckIntent); !ok || !sc.Enable {
+		t.Fatalf("C+y with SelfCheck=on sent %#v, want SelfCheckIntent{Enable:true}", got[0])
 	}
 }
 

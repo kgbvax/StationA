@@ -43,6 +43,11 @@ type (
 	// can rip cables). TUI-only and refused while armed.
 	SelfTestIntent struct{}
 
+	// SelfCheckIntent toggles the head's periodic self-check (preset
+	// set/call 105). While enabled the head re-homes itself UNPROMPTED —
+	// maintenance only. TUI-only; enabling is additionally disarmed-only.
+	SelfCheckIntent struct{ Enable bool }
+
 	// JogSpeedIntent sets the jog speed byte (0x00–0x3F). TUI-only.
 	JogSpeedIntent struct{ Speed byte }
 
@@ -60,6 +65,7 @@ func (GotoPhysZeroIntent) intent() {}
 func (ArmIntent) intent()          {}
 func (DisarmIntent) intent()       {}
 func (SelfTestIntent) intent()     {}
+func (SelfCheckIntent) intent()    {}
 func (JogSpeedIntent) intent()     {}
 func (ReopenIntent) intent()       {}
 

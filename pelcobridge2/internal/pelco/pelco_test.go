@@ -56,27 +56,6 @@ func TestJogSpeedClamp(t *testing.T) {
 	}
 }
 
-func TestWrapPRoundTrip(t *testing.T) {
-	f := Build(1, 0x00, OpQueryTilt, 0x00, 0x00)
-	w := WrapP(f)
-	if len(w) != FrameLenP {
-		t.Fatalf("WrapP len = %d", len(w))
-	}
-	if w[0] != STX || w[6] != ETX {
-		t.Fatalf("WrapP envelope: % X", w)
-	}
-	if !PChkOK(w) {
-		t.Fatal("WrapP frame fails P checksum")
-	}
-	// The logical fields survive unchanged (only the start byte differs:
-	// 0xA0 on the wire vs 0xFF in the logical D view).
-	for i := 1; i <= 5; i++ {
-		if w[i] != f[i] {
-			t.Fatalf("WrapP field %d drifted: wire %02X want %02X", i, w[i], f[i])
-		}
-	}
-}
-
 func TestDegWordRoundTrip(t *testing.T) {
 	for _, d := range []float64{0, 0.01, 45, 123.45, 359.99, 655.35} {
 		w, err := DegToWord(d)
@@ -124,7 +103,7 @@ func TestAssemblerFrameAndFields(t *testing.T) {
 		t.Fatalf("want one frame, got %+v", ev)
 	}
 	rf := ev[0].Frame
-	if rf.P || rf.Op() != OpRspTilt || rf.Addr() != 1 {
+	if rf.Op() != OpRspTilt || rf.Addr() != 1 {
 		t.Fatalf("frame fields: %+v", rf)
 	}
 	if WordToDeg(rf.Word()) != 45.00 {
@@ -207,21 +186,6 @@ func TestAssemblerFlushIdlePreventsFabricatedWord(t *testing.T) {
 	ev2 = a2.Feed(next[:])
 	if len(ev2) != 1 || ev2[0].IsNoise() || ev2[0].Frame.Op() != OpQueryPan {
 		t.Fatalf("genuine reply corrupted by previous truncation: %+v", ev2)
-	}
-}
-
-func TestAssemblerPelcoPResponse(t *testing.T) {
-	a := &Assembler{}
-	// Take a pan query's response and wrap it as P.
-	f := Frame{0xFF, 1, 0x00, OpRspPan, 0x53, 0x59}
-	f[6] = checksum(f)
-	w := WrapP(f)
-	ev := a.Feed(w)
-	if len(ev) != 1 || ev[0].IsNoise() || !ev[0].Frame.P {
-		t.Fatalf("want one P frame, got %+v", ev)
-	}
-	if ev[0].Frame.Word() != 0x5359 {
-		t.Fatalf("P frame word: %04X", ev[0].Frame.Word())
 	}
 }
 

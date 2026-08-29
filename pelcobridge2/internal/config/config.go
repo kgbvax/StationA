@@ -25,10 +25,9 @@ import (
 
 // Serial holds the RS-485 link settings.
 type Serial struct {
-	Port   string `toml:"port"`    // e.g. COM3, /dev/serial/by-id/...
-	Baud   int    `toml:"baud"`    // 2400 on the bench link
-	Addr   byte   `toml:"addr"`    // head's DIP address
-	PelcoP bool   `toml:"pelco_p"` // TX envelope; RX is always adaptive
+	Port string `toml:"port"` // e.g. COM3, /dev/serial/by-id/...
+	Baud int    `toml:"baud"` // 2400 on the bench link
+	Addr byte   `toml:"addr"` // head's DIP address
 }
 
 // Rotctld holds the hamlib rotctld TCP server settings.
@@ -131,7 +130,6 @@ func (c Config) EngineConfig() control.Config {
 	return control.Config{
 		Addr:              c.Serial.Addr,
 		Baud:              c.Serial.Baud,
-		PelcoP:            c.Serial.PelcoP,
 		JogSpeed:          byte(jog),
 		Settle:            time.Duration(settleMS) * time.Millisecond,
 		SetAttempts:       attempts,

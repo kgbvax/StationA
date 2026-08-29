@@ -1,7 +1,7 @@
 # pelcobridge2
 
 UHF rotator console for the stationa monorepo — a **TUI application** (not a
-daemon) that drives the PTS-303Z/3050DZ Pelco-D/P pan/tilt head over RS-485,
+daemon) that drives the PTS-303Z/3050DZ Pelco-D pan/tilt head over RS-485,
 and serves it to hamlib clients as a **rotctld server** (`-m 901`).
 
 Design evolved from `../pelcotest/ptest` (bench TUI) — its serial/assembler
@@ -23,8 +23,8 @@ invariants and TUI disciplines are kept; the daemon-shaped predecessor
   also cancels motion that is merely *queued* behind a settle window or an
   outstanding query, so nothing starts moving after the all-stop frame.
 - **Self-test (preset call 125) re-homes the head and can rip cables** if it
-  is pointed wrong. It is refused while armed and requires a two-stage
-  confirmation: `y`, then typing `RIPCABLES`.
+  is pointed wrong. It is refused while armed and requires a `y/n`
+  confirmation.
 - **No timer polling.** The engine is purely event-driven; the only timers are
   one-shots that *release gates* (frame gap, reply wait, settle window after
   an absolute set). The single deliberate deviation is the TUI's hold-to-move
@@ -42,7 +42,9 @@ invariants and TUI disciplines are kept; the daemon-shaped predecessor
 | `A` | arm flow: enter true azimuth (prefilled from `state.toml`) |
 | `0` | goto **physical** zero (offset never applied) — works disarmed |
 | `+` / `-` | jog speed ±1 (clamped 0x00–0x3F, default `0x12`) |
-| `s` | self-test — disarmed only, two-stage `RIPCABLES` confirm |
+| `s` | self-test — disarmed only, `y/n` confirm |
+| `c` | disable the head's periodic self-check — no confirm, always sends |
+| `C` | enable the periodic self-check — maintenance only, disarmed, `y/n` confirm |
 | `d` | disarm |
 | `ctrl+r` | reopen serial port (USB re-enumeration heal) |
 | `ctrl+l` / `tab` | clear / scroll the wire log |
@@ -71,7 +73,11 @@ reports the physical position (offset 0).
 
 **Self-check suppression:** the head's periodic self-check re-homes it
 unprompted. At every connect the engine sends "disable self-check" (preset set
-105) once, before anything else uses the line.
+105) once, before anything else uses the line, and again after every successful
+port reopen. RS-485 proves nothing on transmit, so the modelled state
+(`self_check` in `/state`: `on`/`off`/`unknown`) is liveness-gated: a claim
+lands only after the head answers a frame, and any link death returns it to
+`unknown`.
 
 **Link self-heal:** a transport read error (USB adapter re-enumeration, dropped
 TCP mock) marks the head offline and automatically reopens the port (throttled
@@ -119,7 +125,7 @@ Four planes per the station integration model (`../docs/station-integration-mode
   target_el, moving, armed, device_online`; exactly one action, `stop`.
 - `/state` (retained, change-deduped JSON): `ts, az, el, phys_az, phys_el,
   readback_valid, readback_age_s, armed, az_offset_deg, moving, target_az/el,
-  set_status, jog_speed, protocol, rotctld_clients, device_online, link, error`.
+  set_status, jog_speed, rotctld_clients, device_online, link, error`.
 - `/status`: component LWT (`online`/`offline` retained) — distinct from
   `/state.device_online`, which is the head's serial link.
 - `/cmd`: **only** `{"action":"stop"}` is accepted; everything else is logged

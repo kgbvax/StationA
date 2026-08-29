@@ -6,7 +6,6 @@
 port   = "COM3"   # COM3, /dev/ttyUSB0, /dev/serial/by-id/..., or tcp:host:port (mock)
 baud   = 2400     # bench link is 2400 8N1
 addr   = 1        # head's Pelco DIP address
-pelco_p = false   # TX envelope (P frames); RX is always protocol-adaptive
 
 [rotctld]
 enabled = true

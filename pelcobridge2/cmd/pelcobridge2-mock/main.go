@@ -1,8 +1,8 @@
 // pelcobridge2-mock serves a canned PTS-303Z/3050DZ head (internal/simhead)
 // over a REAL serial port or TCP socket, for bench smoke tests without the
 // hardware. The quirks the engine relies on — silence-required absolute sets,
-// garbage readback while a motor runs, D/P adaptive answers — are all on by
-// default, so a loopback exercise behaves like the bench link.
+// garbage readback while a motor runs — are all on by default, so a loopback
+// exercise behaves like the bench link.
 //
 // Typical use with socat (macOS/Linux):
 //

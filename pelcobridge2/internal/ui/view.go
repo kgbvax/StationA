@@ -29,7 +29,9 @@ var helpLines = []string{
 	"  A               ARM: enter the TRUE azimuth the head points at now — enables rotctl",
 	"  d               disarm (rotctl motion locked again)",
 	"  + / -           jog speed ±1",
-	"  s               self-test — DANGER re-homes head, can rip cables; disarmed only, type RIPCABLES",
+	"  s               self-test — DANGER re-homes head, can rip cables; disarmed only, y/n confirm",
+	"  c               self-check OFF — station default, no confirm",
+	"  C               self-check ON — maintenance: head re-homes itself UNPROMPTED; disarmed only, y/n",
 	"  SPACE / ESC     E-STOP: all-stop now, cancels prompts — always works",
 	"  tab / shift+tab scroll wire log",
 	"  ctrl+r          reopen serial port      ctrl+l  clear log",
@@ -90,7 +92,7 @@ func fmtAge(d time.Duration, valid bool) string {
 func (m model) View() string {
 	var b strings.Builder
 
-	// Header bar: identity, protocol, armed state, links.
+	// Header bar: identity, armed state, links.
 	armed := styleDim.Render("DISARMED")
 	if m.snap != nil && m.snap.Armed {
 		armed = styleArmed.Render("● ARMED")
@@ -115,16 +117,12 @@ func (m model) View() string {
 			linkTxt = styleBad.Render("head: offline")
 		}
 	}
-	proto := "--"
 	speed := "--"
 	if m.snap != nil {
-		if m.snap.Protocol != "" {
-			proto = m.snap.Protocol
-		}
 		speed = fmt.Sprintf("0x%02X", m.snap.JogSpeed)
 	}
-	bar := fmt.Sprintf(" pelcobridge2 · %s · %d 8N1 · addr %d · proto %s · jog %s · rotctl:%s · %s · %s · %s ",
-		displayPort(m.opts.PortName), m.opts.Baud, m.opts.Addr, proto, speed, clients, mqttTxt, linkTxt, armed)
+	bar := fmt.Sprintf(" pelcobridge2 · %s · %d 8N1 · addr %d · jog %s · rotctl:%s · %s · %s · %s ",
+		displayPort(m.opts.PortName), m.opts.Baud, m.opts.Addr, speed, clients, mqttTxt, linkTxt, armed)
 	b.WriteString(styleBar.Width(m.width).Render(bar))
 	b.WriteString("\n\n")
 
@@ -184,6 +182,17 @@ func (m model) positionPane() string {
 	moving := ""
 	if s.Moving {
 		moving = " · " + styleLabel.Render("MOVING")
+	}
+	// The periodic self-check is a standing hazard while on: the head
+	// re-homes itself unprompted. "on" must be loud; "unknown" (no RX proof
+	// of the claim yet, or the link died) stays honest, never optimistic.
+	switch s.SelfCheck {
+	case "on":
+		moving += " · " + styleBad.Render("SELF-CHECK ON")
+	case "off":
+		moving += " · " + styleDim.Render("self-check off")
+	default: // "unknown" — claim not proven by a frame from the head
+		moving += " · " + styleDim.Render("self-check ?")
 	}
 	if s.Error != "" {
 		moving += " · " + styleBad.Render(s.Error)

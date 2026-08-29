@@ -99,6 +99,18 @@ func (h *harness) call(from Source, it Intent) Result {
 	return h.eng.Call(ctx, from, it)
 }
 
+// callNoBusy retries ErrBusy: a preset frame must not break a frame-gap or
+// reply window, so the engine answers "retry" — tests do exactly that.
+func (h *harness) callNoBusy(from Source, it Intent) Result {
+	deadline := time.Now().Add(2 * time.Second)
+	r := h.call(from, it)
+	for r.Err == ErrBusy && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+		r = h.call(from, it)
+	}
+	return r
+}
+
 // arm queries pan once, then arms with the given true azimuth.
 func (h *harness) arm(trueAz float64) {
 	if r := h.call(SrcTUI, QueryPanIntent{}); r.Err != nil {
@@ -671,6 +683,22 @@ func TestWriteErrorUnwinds(t *testing.T) {
 	if s := last(); s == nil || s.SetStatus != "failed" {
 		t.Fatalf("goto 0 on dead port: set status %q, want \"failed\"", s.SetStatus)
 	}
+
+	// A self-test / self-check toggle whose write fails is answered with
+	// txfail, not success — and the self-check model must not claim a frame
+	// that never left: it stays "unknown", never "off" or "on".
+	if r := eng.Call(qctx, SrcTUI, SelfCheckIntent{Enable: false}); !errors.Is(r.Err, ErrTxFail) {
+		t.Fatalf("self-check disable on dead port: %v, want ErrTxFail", r.Err)
+	}
+	if r := eng.Call(qctx, SrcTUI, SelfCheckIntent{Enable: true}); !errors.Is(r.Err, ErrTxFail) {
+		t.Fatalf("self-check enable on dead port: %v, want ErrTxFail", r.Err)
+	}
+	if r := eng.Call(qctx, SrcTUI, SelfTestIntent{}); !errors.Is(r.Err, ErrTxFail) {
+		t.Fatalf("self-test on dead port: %v, want ErrTxFail", r.Err)
+	}
+	if s := last(); s == nil || s.SelfCheck != "unknown" {
+		t.Fatalf("self-check model = %q on a dead port, want unknown", s.SelfCheck)
+	}
 }
 
 // --- true-az query replies ---------------------------------------------------------
@@ -706,15 +734,128 @@ func TestSelfTestOnlyFromTUI(t *testing.T) {
 	if r := h.call(SrcMQTT, SelfTestIntent{}); r.Err != ErrSource {
 		t.Fatalf("self-test from mqtt: %v, want ErrSource", r.Err)
 	}
+	if r := h.call(SrcRotctld, SelfTestIntent{}); r.Err != ErrSource {
+		t.Fatalf("self-test from rotctld: %v, want ErrSource", r.Err)
+	}
 
-	// The TUI can — and the (simulated) head re-homes to 0/0.
-	h.eng.Call(context.Background(), SrcTUI, SelfTestIntent{})
+	// The TUI can — but the call may race the connect-disable's frame-gap
+	// window: ErrBusy means "retry", never "refused".
+	r := h.callNoBusy(SrcTUI, SelfTestIntent{})
+	if r.Err != nil {
+		t.Fatalf("self-test from TUI: %v", r.Err)
+	}
+
+	// The (simulated) head re-homes to 0/0.
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) && h.tr.PanDeg() != 0 {
 		time.Sleep(20 * time.Millisecond)
 	}
 	if h.tr.PanDeg() != 0 {
 		t.Fatalf("self-test did not re-home: %.2f", h.tr.PanDeg())
+	}
+
+	// Factory defaults restore the periodic self-check AND invalidate every
+	// readback: the arm gate must demand a fresh position after a re-home.
+	if !h.waitFor(2*time.Second, func(s *Snapshot) bool { return s.SelfCheck == "on" }) {
+		t.Fatalf("snapshot self-check = %q, want on after self-test", h.lastSnap().SelfCheck)
+	}
+	if s := h.lastSnap(); s.ReadbackValid {
+		t.Error("self-test must invalidate the readback (pre-re-home position is stale)")
+	}
+	if !h.tr.SelfCheck() {
+		t.Error("self-test must restore the simulated head's factory self-check")
+	}
+}
+
+// The self-check model is honest about proof. No reply follows a preset frame
+// (RS-485 has no link ACK), so the connect-time disable leaves the model at
+// "unknown" until the head proves it is alive with a frame — then the pending
+// claim lands. The claim dies with the link, and the toggle keeps its guards.
+func TestSelfCheckLifecycle(t *testing.T) {
+	h := startHarness(t, simhead.New(simhead.Options{Addr: 1, PanDeg: 10, TiltDeg: 5,
+		RateAzDegPerS: 200, RateElDegPerS: 100, SilenceRequired: 30 * time.Millisecond}), testCfg())
+
+	// Before any RX frame the model reads "unknown" — never a premature "off",
+	// even though the disable frame itself did reach the head.
+	if !h.waitFor(2*time.Second, func(s *Snapshot) bool { return s.SelfCheck == "unknown" }) {
+		t.Fatalf("snapshot self-check = %q before any reply, want unknown", h.lastSnap().SelfCheck)
+	}
+	if h.tr.SelfCheck() {
+		t.Fatal("connect-time disable never reached the simulated head")
+	}
+
+	// Only the TUI may touch the self-check.
+	if r := h.call(SrcMQTT, SelfCheckIntent{Enable: true}); r.Err != ErrSource {
+		t.Fatalf("self-check enable from mqtt: %v, want ErrSource", r.Err)
+	}
+	if r := h.call(SrcRotctld, SelfCheckIntent{Enable: false}); r.Err != ErrSource {
+		t.Fatalf("self-check disable from rotctld: %v, want ErrSource", r.Err)
+	}
+
+	// Proof of life: the arm precondition's query reply is the first RX frame,
+	// and the pending "off" claim lands with it.
+	h.arm(10)
+	if !h.waitFor(2*time.Second, func(s *Snapshot) bool { return s.SelfCheck == "off" }) {
+		t.Fatalf("snapshot self-check = %q after the head answered, want off", h.lastSnap().SelfCheck)
+	}
+
+	// Enabling under an armed rotator is the hazard the arm gate exists for.
+	if r := h.call(SrcTUI, SelfCheckIntent{Enable: true}); r.Err == nil {
+		t.Fatal("self-check enable accepted while armed")
+	}
+	if r := h.call(SrcTUI, SelfTestIntent{}); r.Err == nil {
+		t.Fatal("self-test accepted while armed")
+	}
+	if r := h.call(SrcTUI, DisarmIntent{}); r.Err != nil {
+		t.Fatalf("disarm: %v", r.Err)
+	}
+
+	// A moving rotator refuses the toggle, and the model does not flip on a
+	// refusal.
+	if r := h.call(SrcTUI, JogIntent{Dir: DirRight}); r.Err != nil {
+		t.Fatalf("jog: %v", r.Err)
+	}
+	if r := h.call(SrcTUI, SelfCheckIntent{Enable: false}); r.Err != ErrMoving {
+		t.Fatalf("self-check disable while moving: %v, want ErrMoving", r.Err)
+	}
+	if s := h.lastSnap(); s.SelfCheck != "off" {
+		t.Fatalf("model = %q after a refused toggle, want off unchanged", s.SelfCheck)
+	}
+	if r := h.call(SrcTUI, StopIntent{}); r.Err != nil {
+		t.Fatalf("stop: %v", r.Err)
+	}
+
+	// TUI enable, disarmed: the head flips and the snapshot follows.
+	if r := h.callNoBusy(SrcTUI, SelfCheckIntent{Enable: true}); r.Err != nil {
+		t.Fatalf("self-check enable: %v", r.Err)
+	}
+	if !h.waitFor(2*time.Second, func(s *Snapshot) bool { return s.SelfCheck == "on" }) {
+		t.Fatalf("snapshot self-check = %q, want on", h.lastSnap().SelfCheck)
+	}
+	if !h.tr.SelfCheck() {
+		t.Fatal("enable never reached the simulated head")
+	}
+
+	// And back off — the station default.
+	if r := h.callNoBusy(SrcTUI, SelfCheckIntent{Enable: false}); r.Err != nil {
+		t.Fatalf("self-check disable: %v", r.Err)
+	}
+	if !h.waitFor(2*time.Second, func(s *Snapshot) bool { return s.SelfCheck == "off" }) {
+		t.Fatalf("snapshot self-check = %q, want off", h.lastSnap().SelfCheck)
+	}
+	if h.tr.SelfCheck() {
+		t.Fatal("disable never reached the simulated head")
+	}
+
+	// Link death drops the claim: the model returns to "unknown" (honesty
+	// over optimism). No reopener is wired in tests, so no re-send happens
+	// either — that path is the reopen intents' job.
+	h.tr.Close()
+	if !h.waitFor(2*time.Second, func(s *Snapshot) bool { return s.SelfCheck == "unknown" }) {
+		t.Fatalf("snapshot self-check = %q after link death, want unknown", h.lastSnap().SelfCheck)
+	}
+	if s := h.lastSnap(); s.DeviceOnline {
+		t.Error("device still online after link death")
 	}
 }
 
