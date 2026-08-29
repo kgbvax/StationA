@@ -147,25 +147,35 @@ extension BusStoreFixtures on BusStore {
     });
   }
 
-  /// Populate the Ultrabeam controller.
-  void setUltrabeam({String direction = 'forward', bool moving = false}) {
+  /// Populate the Ultrabeam controller. `band` defaults to '' (unknown) so
+  /// tests that don't care aren't tripped into the mismatch pill.
+  void setUltrabeam({String direction = 'forward', bool moving = false, String band = ''}) {
     setOnline('muehle/hf/ant-ctrl');
     applyState('muehle/hf/ant-ctrl', {
       'direction': direction,
       'moving': moving,
+      'band': band,
       'device_online': true,
       'ts': '2026-08-20T14:30:00.000000',
     });
   }
 
   /// Populate the radio slot.
-  void setRadio({int freqHz = 14200000, String band = '20m', String mode = 'usb', String tx = 'rx', int drive = 50}) {
+  void setRadio({
+    int freqHz = 14200000,
+    String band = '20m',
+    String mode = 'usb',
+    String tx = 'rx',
+    bool tuning = false,
+    int drive = 50,
+  }) {
     setOnline('muehle/hf/radio');
     applyState('muehle/hf/radio', {
       'freq_hz': freqHz,
       'band': band,
       'mode': mode,
       'tx': tx,
+      'tuning': tuning,
       'drive': drive,
       'dvk_status': 'idle',
       'dvk_id': 0,
