@@ -17,6 +17,7 @@ import 'dart:ui' as ui;
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import '../../dxspot/projection.dart';
+import '../../dxspot/ring_subpaths.dart';
 
 class WorldLayerCache {
   String? _key;
@@ -90,28 +91,31 @@ class WorldLayerCache {
     c.clipPath(clipPath);
 
     // Project every ring into a single path. Even-odd fill makes hole rings
-    // subtract from their enclosing outer ring; a ring whose projection hits
-    // the near-antipode null (rare — only land within 0.02 rad of the
-    // antipode) is broken into subpaths so the implicit close chords along the
-    // rim instead of across the disc.
-    final path = Path()..fillType = PathFillType.evenOdd;
+    // subtract from their enclosing outer ring. AEQD has no wrap seam; the
+    // only discontinuity is the near-antipode null cap (land within 0.02 rad
+    // of the antipode), which breaks a ring into subpaths there — see
+    // ring_subpaths.dart. Latent caveat for exotic locators: each broken
+    // subpath implicitly closes with a straight chord that can cut across the
+    // disc interior (not along the rim), so a QTH whose antipode lies inside
+    // or near landmass (New Zealand, Brazil, China) gets spurious filled
+    // wedges near the antipode sector. For the Mühle QTH (antipode in the
+    // South Pacific, ~700 km from any coastline) no ring ever reaches the cap
+    // and the fill is exact.
     final aeqd = Aeqd(centerLat, centerLng);
     final scale = (r - 6) * zoom / math.pi;
-    for (final ring in rings) {
-      Offset? prev;
-      for (final p in ring) {
-        final n = aeqd.normalized(p.lat, p.lng);
-        if (n == null) {
-          prev = null;
-          continue;
-        }
-        final o = Offset(cx + n.x * scale, cy - n.y * scale);
-        if (prev == null) {
-          path.moveTo(o.dx, o.dy);
-        } else {
-          path.lineTo(o.dx, o.dy);
-        }
-        prev = o;
+    final subpaths = projectRingSubpaths(
+      rings,
+      (lat, lng) {
+        final n = aeqd.normalized(lat, lng);
+        if (n == null) return null;
+        return (x: cx + n.x * scale, y: cy - n.y * scale);
+      },
+    );
+    final path = Path()..fillType = PathFillType.evenOdd;
+    for (final s in subpaths) {
+      path.moveTo(s[0].x, s[0].y);
+      for (int i = 1; i < s.length; i++) {
+        path.lineTo(s[i].x, s[i].y);
       }
     }
 

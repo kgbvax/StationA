@@ -7,6 +7,7 @@
 import 'dart:math' as math;
 
 import 'projection.dart';
+import 'ring_subpaths.dart' show ProjectedPoint;
 
 const double _mercatorRadius = 6378137.0;
 const double _webMercatorMaxLat = 85.05112878;
@@ -71,6 +72,58 @@ class MercatorProjection {
     final lng = centerLng + _radToDeg(deltaLngRad);
     if (!lat.isFinite || !lng.isFinite) return null;
     return (lat: lat, lng: lng);
+  }
+
+  /// Longitude wrapped into the projection's continuous window relative to
+  /// the centre, (-180, 180] — the value [project] derives x from. The
+  /// discontinuity at ±180 (raw lng = [centerLng] ± 180°) is the wrap seam:
+  /// consecutive vertices whose wrapped deltas differ by more than 180°
+  /// straddle it, so filled landmass subpaths must split there (see
+  /// `ring_subpaths.dart`).
+  double deltaLngWrapped(double lng) => _wrapLng180(lng - centerLng);
+
+  /// Project a point lying exactly on the wrap seam (lng = centerLng ± 180°)
+  /// onto [side]'s canvas edge: -1 the −180 branch (left edge), +1 the +180
+  /// branch (right edge, where [project] sends an on-seam longitude via
+  /// _wrapLng180's −180→+180 convention). Latitude is clamped like [project].
+  MercatorPoint projectSeamEdge(double lat, double side) {
+    final y = height / 2.0 - (_latToY(lat) - _centerWorldY) * scale;
+    return (
+      x: width / 2.0 + side * _mercatorRadius * math.pi * scale,
+      y: y,
+    );
+  }
+
+  /// If the raw segment a→b crosses the wrap seam, interpolate the crossing
+  /// vertex and return it projected onto both canvas edges (a's side, b's
+  /// side) — the [SeamCrossing] resolver for the Mercator land layer. Returns
+  /// null when the segment doesn't cross.
+  ///
+  /// The crossing meridian in raw longitude is the candidate of
+  /// centerLng ± 180° (± k·360°) inside the segment's raw span; consecutive
+  /// raw Δlng is at most ~6° on the Natural Earth asset, so at most one
+  /// candidate fits. The pan center accumulates longitude unwrapped (the
+  /// panel never wraps it), so the in-span representative must be picked for
+  /// any centerLng magnitude — take the candidate nearest the segment
+  /// midpoint, which is the in-span one whenever a crossing was detected.
+  /// Latitude is interpolated linearly along the raw segment.
+  ({ProjectedPoint prevSide, ProjectedPoint nextSide})? seamCrossingBetween(
+      LatLng a, LatLng b) {
+    final da = deltaLngWrapped(a.lng);
+    final db = deltaLngWrapped(b.lng);
+    if ((db - da).abs() <= 180.0) return null;
+    final seam = centerLng +
+        180.0 -
+        360.0 *
+            ((centerLng + 180.0 - (a.lng + b.lng) / 2.0) / 360.0)
+                .roundToDouble();
+    final t = (seam - a.lng) / (b.lng - a.lng);
+    if (!t.isFinite || t < 0.0 || t > 1.0) return null;
+    final lat = a.lat + t * (b.lat - a.lat);
+    return (
+      prevSide: projectSeamEdge(lat, da < 0.0 ? -1.0 : 1.0),
+      nextSide: projectSeamEdge(lat, db < 0.0 ? -1.0 : 1.0),
+    );
   }
 
   /// True if [lat] is inside the Mercator latitude domain.

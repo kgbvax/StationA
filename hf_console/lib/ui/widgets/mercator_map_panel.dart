@@ -15,6 +15,7 @@ import 'package:provider/provider.dart';
 import '../../dxspot/dxspot_service.dart';
 import '../../dxspot/mercator_projection.dart';
 import '../../dxspot/projection.dart';
+import '../../dxspot/ring_subpaths.dart';
 import '../../dxspot/world_geometry.dart';
 import '../theme.dart';
 
@@ -358,32 +359,27 @@ class _MercatorPainter extends CustomPainter {
     final c = Canvas(recorder, Offset.zero & size);
 
     // Project every ring into a single path. Even-odd fill makes GeoJSON hole
-    // rings subtract from their enclosing outer ring. Natural Earth admin_0
-    // polygons are pre-cut at the antimeridian, so a raw Δlng > 180° between
-    // consecutive vertices marks the cut: split the subpath there so the
-    // implicit close chords at the seam instead of streaking across the
-    // canvas (the old stroke-only draw skipped those segments by length).
+    // rings subtract from their enclosing outer ring. Subpaths are CUT at the
+    // projection's wrap seam — lng = centerLng ± 180°, moving with every pan
+    // (NOT the raw ±180° dateline: Natural Earth rings are pre-cut there with
+    // no raw Δlng jump). The seam resolver interpolates each crossing vertex
+    // onto both canvas edges so every piece closes along the seam; a plain
+    // unsplit segment is both stroked and used as a fill boundary, streaking
+    // a land-colored band across the whole canvas. See ring_subpaths.dart.
+    final subpaths = projectRingSubpaths(
+      rings,
+      (lat, lng) {
+        final m = projection.project(lat, lng);
+        if (m == null) return null;
+        return (x: m.x, y: m.y);
+      },
+      seamCrossing: projection.seamCrossingBetween,
+    );
     final path = Path()..fillType = PathFillType.evenOdd;
-    for (final ring in rings) {
-      Offset? prev;
-      double? prevLng;
-      for (final p in ring) {
-        final m = projection.project(p.lat, p.lng);
-        if (m == null || (prevLng != null && (p.lng - prevLng).abs() > 180.0)) {
-          // Out of Mercator domain, or dateline cut — break the subpath.
-          prev = null;
-          prevLng = p.lng;
-          if (m == null) continue;
-        } else {
-          prevLng = p.lng;
-        }
-        final o = Offset(m.x, m.y);
-        if (prev == null) {
-          path.moveTo(o.dx, o.dy);
-        } else {
-          path.lineTo(o.dx, o.dy);
-        }
-        prev = o;
+    for (final s in subpaths) {
+      path.moveTo(s[0].x, s[0].y);
+      for (int i = 1; i < s.length; i++) {
+        path.lineTo(s[i].x, s[i].y);
       }
     }
 
