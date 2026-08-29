@@ -173,7 +173,7 @@ Deviations from the §2 defaults, per component. Components not in the table fol
 | **hf-console (iOS channel)** | iOS device | self-sideloaded app | The same application, self-sideloaded as an IPA (no app store). Credentials go to the iOS Keychain. The app speaks raw-TCP MQTT. Raw TCP bypasses Apple's App Transport Security, so the app needs no ATS exception. No server-side deploy. See `04-console.md`. |
 | ant-switch firmware | embedded | USB-flash (+ over-network updates) | Not a §2 service. The firmware speaks the four-plane schema directly over wifi. |
 | m5stamp-hf-ctrl firmware | embedded | USB-flash | Two slots (`hf/switch`, `hf/pa-arm`) from one firmware. **PLC #2 firmware (`uhf/pol-ctrl`) does not exist — gap.** |
-| pelcotest | workstation | none — bench tool | Never deployed anywhere. An operator runs it by hand over a USB-serial adapter (§4.4). |
+| pelcotest | workstation | none — bench tool | Never deployed anywhere. The team deleted the tool from the repository on 2026-08-29. An operator ran it by hand over a USB-serial adapter (§4.4). Its measured facts stay contract. |
 
 A fourth auxiliary project, `sas/`, holds static design mockups and screenshots for the console user interface. It is never deployed and contains no runtime code. See `04-console.md` for the visual specification.
 
@@ -245,7 +245,7 @@ Other recorded behaviors (contract for a replacement): SSE (server-sent events: 
 
 ### 4.4 pelcotest — bench tool and its measured facts (not deployed)
 
-`pelcotest` is a manual bench TUI (terminal user interface: the whole user interface is text in a terminal). An operator used it once to re-engineer the serial behavior of the UHF pan/tilt head. It is **never deployed and needs no reconstruction**. What must survive is the **knowledge** it produced. That knowledge binds any UHF-rotator bridge as contract (full detail in `03-components/pelcobridge2.md`):
+`pelcotest` was a manual bench TUI (terminal user interface: the whole user interface is text in a terminal). An operator used it once to re-engineer the serial behavior of the UHF pan/tilt head. It was **never deployed and needs no reconstruction**. The team deleted the tool from the repository on 2026-08-29. The vendor reference material that the tool carried (the head's user manual) now lives in `pelcobridge2/docs/`. What must survive is the **knowledge** it produced. That knowledge binds any UHF-rotator bridge as contract (full detail in `03-components/pelcobridge2.md`):
 
 - The head **ignores absolute-position commands** as sent naively by the bench tool. Position control needs a quiet-line protocol (and see §6 for the recorded bench-vs-bridge discrepancy on this point).
 - **Tilt readback is unusable as an elevation value**. The manual's degrees×100 claim is false for the tilt reply word. Nobody has checked any model of the word. A bridge must not present it as elevation.

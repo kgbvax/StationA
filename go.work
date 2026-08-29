@@ -8,7 +8,6 @@ use (
 	./hadiscovery
 	./hf-mqtt-capture
 	./pelcobridge2
-	./pelcotest/ptest
 	./powerseq
 	./shared
 	./shelly-power-bridge

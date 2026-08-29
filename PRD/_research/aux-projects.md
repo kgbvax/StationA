@@ -33,7 +33,7 @@ Background terms (the reader is assumed to know nothing about amateur radio):
 |---|---|---|---|---|---|
 | `hf-mqtt-capture/` | Passive MQTT bus recorder (logs every message to hourly files) | Small, complete, hardened deploy script | Yes — systemd service `hf-mqtt-capture` on shari | Optional diagnostic. Not part of station behavior, but extremely cheap and the only black-box record of bus traffic | **P3** (nice-to-have; build early if anything, it aids debugging the rest) |
 | `testui/` | Web-based schema-aware MQTT monitor **and stimulator** (browser UI over an HTTP+SSE relay; can publish/clear arbitrary bus topics) | Working, feature-rich, **no tests** | Yes — systemd service `testui` on shari, LAN-served on `0.0.0.0:8090` | Dev/operator tool. Not part of station runtime, but its **publish-safety rules** (reject retained `/cmd`, site-prefix scoping) encode bus contract and any re-construction benefits from an equivalent bus-inspection tool | **P3** (as a tool); its safety rules are **contract** and must be preserved in whatever tool replaces it |
-| `pelcotest/` (`ptest`) | Manual bench TUI + sweep recorder for re-engineering the 303Z/3050DZ rotor's serial behavior | Mature for its purpose (heavy test coverage: `protocol_test.go`, `sweep_test.go`, `ui_test.go`) | **No** — bench tool run on a workstation over a USB-serial adapter; never a service | Not needed as software. The **knowledge it produced** (below) is contract for any UHF-rotator bridge: the head ignores absolute-position commands, tilt readback is unusable, RX is D/P-adaptive, checksum-valid garbage while moving | **P4** (tool itself); the measured facts are **P1 contract** for the UHF rotator bridge |
+| `pelcotest/` (`ptest`) | Manual bench TUI + sweep recorder for re-engineering the 303Z/3050DZ rotor's serial behavior — **deleted from the repository 2026-08-29** | Was mature for its purpose (heavy test coverage: `protocol_test.go`, `sweep_test.go`, `ui_test.go`) | **No** — bench tool run on a workstation over a USB-serial adapter; never a service | Not needed as software. The **knowledge it produced** (below) is contract for any UHF-rotator bridge: the head ignores absolute-position commands, tilt readback is unusable, RX is D/P-adaptive, checksum-valid garbage while moving | **P4** (tool itself, moot — deleted); the measured facts are **P1 contract** for the UHF rotator bridge |
 | `sas/` | Design assets for the hf_console Flutter UI redesign: HTML mockups, design plan, PNG screenshots, design handoff + copied MQTT schemas | Static HTML/Markdown only; no runtime code | No — authoring material | No software. It is the **visual specification** for the operator console; a re-construction needs the screenshots/HTML as design input | **P3** (design input for the console UI, not for bus behavior) |
 
 None of the four is a bus slot; none publishes `/meta`, `/state`, `/status` or
@@ -409,6 +409,12 @@ for bring-up and debugging of the re-construction itself.
 ---
 
 ## 3. `pelcotest/` (`ptest`) — manual bench TUI for the 303Z/3050DZ rotor
+
+> **Deleted 2026-08-29.** The team removed the tool from the repository. This
+> section stays as the historical record: the measured facts below are the
+> product that must survive (they are contract for `pelcobridge2`), the code
+> is gone and does not need reconstruction. `pelcobridge2` absorbed the
+> serial/assembler invariants into its own `internal/pelco`.
 
 ### 3.1 Purpose & role
 

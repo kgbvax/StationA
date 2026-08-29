@@ -960,8 +960,8 @@ does not apply here.
 - The component evolved from a one-time bench tool (`pelcotest`/`ptest`).
   The team used that tool to reverse-engineer the head's serial behavior.
   The authors folded the knowledge that the tool produced into §3. That
-  knowledge is contract for this bridge. The tool itself does not need
-  reconstruction.
+  knowledge is contract for this bridge. The team deleted the tool from the
+  repository on 2026-08-29. It does not need reconstruction.
 
 ---
 
