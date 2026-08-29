@@ -108,8 +108,8 @@ class PowerPanel extends StatelessWidget {
             onPressed: seqOnline && !seqRunning ? startStation : null,
             style: AppTheme.actionButton().copyWith(
               backgroundColor: const WidgetStatePropertyAll(Color(0x1E5CCB8A)),
-              foregroundColor: const WidgetStatePropertyAll(AppTheme.green),
-              side: const WidgetStatePropertyAll(BorderSide(color: AppTheme.green)),
+              foregroundColor: WidgetStatePropertyAll(AppTheme.green),
+              side: WidgetStatePropertyAll(BorderSide(color: AppTheme.green)),
               minimumSize: const WidgetStatePropertyAll(Size(76, 52)),
               padding: const WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: 10, vertical: 10)),
             ),
