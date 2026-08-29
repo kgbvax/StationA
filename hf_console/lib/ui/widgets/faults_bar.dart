@@ -33,7 +33,20 @@ class FaultsBar extends StatelessWidget {
     for (final entry in store.offlineList) {
       final address = entry.split(':').first;
       if (activeFaultAddresses.contains(address)) continue;
-      offline.add(_Fault(time, now, entry, active: true));
+      // Stamp the row with when the slot actually went offline (retained
+      // state lies about recency; render time would lie harder).
+      final since = store.slots[address]?.statusChangedAt ?? now;
+      offline.add(_Fault(_clockTime(since, time), since, entry, active: true));
+    }
+
+    // Root cause: a switched-off PSU silently kills hf/switch, pa-arm,
+    // ant-switch and everything downstream of 13.8 V — the wall of
+    // 'device unreachable' entries needs its cause named on the top line.
+    final psuOn = (store.stateValueAs<String>('muehle/power/psu-13v8', 'power') ?? 'off') == 'on';
+    final psuOnline = store.slots['muehle/power/psu-13v8']?.isOnline ?? false;
+    final hfChainDead = store.offlineList.any((e) => e.startsWith('muehle/hf/'));
+    if (psuOnline && !psuOn && hfChainDead) {
+      offline.add(_Fault(time, now, 'muehle/power/psu-13v8: PSU OFF — HF control chain unpowered', active: true));
     }
 
     final faults = [...history, ...offline];
@@ -73,6 +86,13 @@ class FaultsBar extends StatelessWidget {
   }
 
   String _twoDigits(int n) => n.toString().padLeft(2, '0');
+
+  String _clockTime(DateTime at, String fallback) {
+    if (at.year > 2000) {
+      return '${_twoDigits(at.hour)}:${_twoDigits(at.minute)}:${_twoDigits(at.second)}';
+    }
+    return fallback;
+  }
 
   String _ts(String? ts, String fallback) {
     if (ts != null && ts.length >= 19) {

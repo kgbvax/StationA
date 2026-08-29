@@ -12,6 +12,11 @@ class Slot {
   String? status;
   Map<String, dynamic>? cmd;
 
+  /// When /status last changed for this slot (local clock). Best-effort:
+  /// on a fresh connect the retained status counts as a change, so the
+  /// timestamp floors at connect time, never earlier bus truth.
+  DateTime? statusChangedAt;
+
   Slot(this.address);
 
   bool get bridgeOnline => status == 'online';
@@ -95,7 +100,9 @@ class BusStore extends ChangeNotifier {
             _updateFaultHistory(addr, slot.state);
           }
         case 'status':
-          slot.status = value as String?;
+          final newStatus = value as String?;
+          if (slot.status != newStatus) slot.statusChangedAt = clock.now();
+          slot.status = newStatus;
         case 'cmd':
           slot.cmd = value as Map<String, dynamic>?;
       }
