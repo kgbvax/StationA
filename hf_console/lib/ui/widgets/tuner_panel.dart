@@ -29,8 +29,8 @@ class TunerPanel extends StatelessWidget {
             : settling
                 ? AppTheme.amber
                 : inline
-                    ? AppTheme.green
-                    : AppTheme.txtMute;
+                    ? _swrColor(swr)
+                    : AppTheme.amber; // bypass: degraded TX path, not plain info
 
     void setInline(bool value) {
       if (!online) return;
@@ -42,7 +42,9 @@ class TunerPanel extends StatelessWidget {
     }
 
     void tune(String mode) {
-      if (!online) return;
+      // A second tune queued against a settling tuner just competes with the
+      // in-flight one — hold taps while it works.
+      if (!online || settling) return;
       mqtt.publish(
         cmdTopic('hf/tuner'),
         tunerTunePayload(mode),
@@ -69,21 +71,28 @@ class TunerPanel extends StatelessWidget {
               )),
               const SizedBox(width: 5),
               Expanded(child: ElevatedButton(
-                onPressed: online ? () => tune('mem') : null,
+                onPressed: online && !settling ? () => tune('mem') : null,
                 style: AppTheme.actionButton(),
-                child: const Text('TUNE MEM'),
+                child: Text(settling ? 'TUNING…' : 'TUNE MEM'),
               )),
               const SizedBox(width: 5),
               Expanded(child: ElevatedButton(
-                onPressed: online ? () => tune('full') : null,
+                onPressed: online && !settling ? () => tune('full') : null,
                 style: AppTheme.actionButton(),
-                child: const Text('TUNE FULL'),
+                child: Text(settling ? 'TUNING…' : 'TUNE FULL'),
               )),
             ],
           ),
         ],
       ),
     );
+  }
+
+  /// SWR thresholds on the inline tag — 3.5:1 and 1.1:1 must not read alike.
+  Color _swrColor(double swr) {
+    if (swr >= 3.0) return AppTheme.red;
+    if (swr >= 2.0) return AppTheme.amber;
+    return AppTheme.green;
   }
 
   String _tunerTag(bool inline, bool settling, String fault, double swr, bool online) {

@@ -119,6 +119,20 @@ void main() {
       expect(find.byKey(const ValueKey('pa-fwd-p95')), findsOneWidget);
     });
 
+    testWidgets('shows PA RELAY OFF when the remote-on relay is open', (tester) async {
+      final store = BusStore();
+      final mqtt = FakeMqttService(store);
+      store.setPaHealthy();
+      // Relay off: hf/switch has the PA relay de-energized.
+      store.applyState('muehle/hf/switch', {'pa': 'off', 'trx': 'on', 'device_online': true});
+      // Amp's own power telemetry reports OFF (powered-down at the device).
+      store.applyState('muehle/hf/pa', {'power': 'off'});
+      await tester.pumpWidget(TestHarness(store: store, mqtt: mqtt, child: const PaPanel()));
+      await tester.pumpAndSettle();
+
+      expect(find.text('PA RELAY OFF'), findsOneWidget);
+    });
+
     testWidgets('peak markers decay slowly after unkeying', (tester) async {
       final store = BusStore();
       final mqtt = FakeMqttService(store);

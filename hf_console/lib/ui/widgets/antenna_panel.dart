@@ -23,6 +23,10 @@ class AntennaPanel extends StatelessWidget {
 
     final selectSlot = store.slots['muehle/hf/antenna-select'];
     final selectOnline = selectSlot?.isOnline ?? false;
+    // Cold-switch guard: the relay board must not move while RF is up
+    // (model §6). Only the console's direct-drive paths need the check —
+    // with the reconciler online it arbitrates the RF-inhibit ordering.
+    final radioTx = (store.stateValueAs<String>('muehle/hf/radio', 'tx') ?? 'rx') == 'tx';
     // No fabricated 'auto': with the reconciler offline or absent (it may not
     // even be deployed), the operator drives the switch directly and the
     // header must say so instead of asserting a policy nobody enforces.
@@ -46,6 +50,8 @@ class AntennaPanel extends StatelessWidget {
       // In manual mode the operator drives the switch directly. In auto mode,
       // send a request to antenna-select if it is online; otherwise fall back
       // to driving the switch directly.
+      final direct = isManual || !selectOnline;
+      if (direct && radioTx) return; // hot-switch guard: RF active
       if (isManual) {
         mqtt.publish(
           cmdTopic('hf/ant-switch'),
@@ -106,7 +112,15 @@ class AntennaPanel extends StatelessWidget {
                 ),
                 if (!settled) ...[
                   const SizedBox(width: 6),
+                  // Moving relays pass no RF; make that explicit, not a
+                  // blink-and-guess dot.
+                  Text('NO RF', style: AppTheme.mono(10, color: AppTheme.amber, weight: FontWeight.w700)),
+                  const SizedBox(width: 4),
                   _PendingDot(),
+                ],
+                if (radioTx) ...[
+                  const SizedBox(width: 6),
+                  Text('RF ON', style: AppTheme.mono(10, color: AppTheme.red, weight: FontWeight.w700)),
                 ],
               ],
             ),
@@ -119,8 +133,9 @@ class AntennaPanel extends StatelessWidget {
               ..._ports.map((port) {
                 final label = antennaMap[port] ?? port;
                 final isActive = port == selected;
+                final direct = isManual || !selectOnline;
                 return ElevatedButton(
-                  onPressed: switchOnline ? () => selectPort(port) : null,
+                  onPressed: switchOnline && !(direct && radioTx) ? () => selectPort(port) : null,
                   // Grounded is the one selection that prevents operation,
                   // so even while active it renders in solid red, not accent.
                   style: AppTheme.actionButton(

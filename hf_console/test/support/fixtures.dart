@@ -33,6 +33,13 @@ extension BusStoreFixtures on BusStore {
   }
 
   /// Populate the PA slot with an active fault.
+  /// Seed the hf/switch PA remote-on relay as energized — the default
+  /// station backdrop for PA panel fixtures (relay off is the special case).
+  void setPaRelayOn() {
+    setOnline('muehle/hf/switch');
+    applyState('muehle/hf/switch', {'pa': 'on', 'trx': 'on', 'device_online': true});
+  }
+
   void setPaFault({
     String fault = 'other',
     String error = 'HOT SWITCHING ATTEMPT',
@@ -40,6 +47,7 @@ extension BusStoreFixtures on BusStore {
     String keyed = 'rx',
     double temp = 35.0,
   }) {
+    setPaRelayOn();
     setOnline('muehle/hf/pa');
     applyState('muehle/hf/pa', {
       'mode': mode,
@@ -59,6 +67,7 @@ extension BusStoreFixtures on BusStore {
 
   /// Populate the PA slot as transmitting (keyed=tx) with forward/reflected power.
   void setPaTransmitting({double fwd = 800, double rfl = 20, double swr = 1.5}) {
+    setPaRelayOn();
     setOnline('muehle/hf/pa');
     applyState('muehle/hf/pa', {
       'mode': 'operate',
@@ -78,6 +87,7 @@ extension BusStoreFixtures on BusStore {
 
   /// Populate the PA slot as healthy operate.
   void setPaHealthy() {
+    setPaRelayOn();
     setOnline('muehle/hf/pa');
     applyState('muehle/hf/pa', {
       'mode': 'operate',

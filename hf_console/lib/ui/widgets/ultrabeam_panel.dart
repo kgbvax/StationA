@@ -58,13 +58,19 @@ class _UltrabeamPanelState extends State<UltrabeamPanel> {
     final online = slot?.isOnline ?? false;
     final direction = store.stateValueAs<String>('muehle/hf/ant-ctrl', 'direction') ?? 'forward';
     final moving = store.stateValueAs<bool>('muehle/hf/ant-ctrl', 'moving') ?? false;
-    final band = store.stateValueAs<String>('muehle/hf/radio', 'band') ?? '';
+    final radioBand = store.stateValueAs<String>('muehle/hf/radio', 'band') ?? '';
+    // The controller's own tuned band can lag the radio after a QSY with the
+    // controller link flaky or a failed freq cmd — operating then means
+    // keying into a mis-tuned beam. Unknown/empty is reported as unknown, not
+    // as a mismatch, so pre-first-state silence doesn't cry wolf.
+    final ctrlBand = store.stateValueAs<String>('muehle/hf/ant-ctrl', 'band') ?? '';
+    final bandMismatch = online && ctrlBand.isNotEmpty && radioBand.isNotEmpty && ctrlBand != radioBand;
 
     // 6m is the only band where the Ultrabeam's elements support just the
     // forward direction — 180° and bi-dir don't exist there. Force the
     // controller back to forward (once per invalid state) and grey the
     // invalid direction buttons until the radio leaves 6m.
-    final on6m = band == '6m';
+    final on6m = radioBand == '6m';
     final needsForward = on6m && online && direction != 'forward';
     if (needsForward && !_forwardForced) {
       _forwardForced = true;
@@ -86,9 +92,11 @@ class _UltrabeamPanelState extends State<UltrabeamPanel> {
       mqtt.publish(cmdTopic('hf/ant-ctrl'), cmd, retain: cmdRetain['muehle/hf/ant-ctrl']!);
     }
 
-    final (pillLabel, pillColor) = online
-        ? (moving ? 'MOVING' : direction.toUpperCase(), moving ? AppTheme.red : AppTheme.accent)
-        : ('OFFLINE', AppTheme.red);
+    final (pillLabel, pillColor) = bandMismatch
+        ? ('BAND MISMATCH · $ctrlBand ≠ $radioBand', AppTheme.red)
+        : online
+            ? (moving ? 'MOVING' : direction.toUpperCase(), moving ? AppTheme.red : AppTheme.accent)
+            : ('OFFLINE', AppTheme.red);
 
     return Container(
       decoration: BoxDecoration(
@@ -127,23 +135,26 @@ class _UltrabeamPanelState extends State<UltrabeamPanel> {
               _DirectionButton(
                 label: 'FORWARD',
                 active: direction == 'forward',
-                onPressed: online ? () => send(antCtrlDirectionPayload('forward')) : null,
+                // Elements moving: lock taps so rapid presses can't queue
+                // competing direction cmds against mid-travel motors —
+                // the same lockout ultrabridge's own web UI applies.
+                onPressed: (online && !moving) ? () => send(antCtrlDirectionPayload('forward')) : null,
               ),
               const SizedBox(width: 4),
               _DirectionButton(
                 label: '180°',
                 active: direction == 'reverse',
-                onPressed: (online && !on6m) ? () => send(antCtrlDirectionPayload('reverse')) : null,
+                onPressed: (online && !moving && !on6m) ? () => send(antCtrlDirectionPayload('reverse')) : null,
               ),
               const SizedBox(width: 4),
               _DirectionButton(
                 label: 'BI-DIR',
                 active: direction == 'bidirectional',
-                onPressed: (online && !on6m) ? () => send(antCtrlDirectionPayload('bidirectional')) : null,
+                onPressed: (online && !moving && !on6m) ? () => send(antCtrlDirectionPayload('bidirectional')) : null,
               ),
               const SizedBox(width: 4),
               ElevatedButton(
-                onPressed: online ? () => send(antCtrlRetractPayload()) : null,
+                onPressed: (online && !moving) ? () => send(antCtrlRetractPayload()) : null,
                 style: AppTheme.actionButton(danger: true),
                 child: const Text('RETRACT'),
               ),
