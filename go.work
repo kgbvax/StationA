@@ -12,6 +12,7 @@ use (
 	./powerseq
 	./shared
 	./shelly-power-bridge
+	./testui
 	./ultrabridge
 	./wrc-rotator-bridge
 )

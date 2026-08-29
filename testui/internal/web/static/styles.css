@@ -45,11 +45,6 @@ main { flex: 1; display: grid; grid-template-columns: 220px 1fr; min-height: 0; 
 .tree .node:hover { background: var(--panel-2); }
 .tree .node.station { font-weight: 600; color: var(--accent); }
 .tree .node.slot { padding-left: 18px; color: var(--dim); }
-.tree .node.slot .rail-dot { margin-right: 4px; }
-.tree .node.slot .rail-red { color: var(--red); }
-.tree .node.slot .rail-orange { color: var(--amber); }
-.tree .node.slot .rail-green { color: var(--green); }
-/* legacy names kept in case other code still uses them */
 .tree .node.slot .live { color: var(--green); }
 .tree .node.slot .dead { color: var(--red); }
 .tree .group { color: var(--dimmer); text-transform: uppercase; font-size: 10px;
@@ -91,7 +86,7 @@ main { flex: 1; display: grid; grid-template-columns: 220px 1fr; min-height: 0; 
 .pill.rx { color: var(--green); border-color: var(--green); }
 .pill.warn { color: var(--amber); border-color: var(--amber); }
 .pill.on { color: var(--green); border-color: var(--green); }
-.pill.off { color: var(--dim); }
+.pill.off { color: var(--dim); border-color: var(--line); background: var(--panel-2); }
 .pill.fault { color: var(--red); border-color: var(--red); background: rgba(224,85,107,.12); }
 
 .meta-line { display: flex; flex-wrap: wrap; gap: 5px; }

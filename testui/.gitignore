@@ -1,5 +1,12 @@
-/testui
-/bin/testui
-/dist/testui-linux-arm64
+# Local config holds the MQTT password (0600) — never commit it.
+# Use config.example.toml as the template; supply the password via the
+# EnvironmentFile on the deploy host.
 config.toml
-*.env
+
+# Build artifacts
+bin/
+dist/
+/testui
+
+# Local Claude settings
+.claude/

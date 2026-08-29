@@ -1,16 +1,30 @@
-.PHONY: run build build-linux vet clean
+BINARY := testui
+PKG := ./cmd/testui
+VERSION := $(shell git describe --tags --dirty --always 2>/dev/null || echo dev)
+LDFLAGS := -s -w
+BIN_DIR := bin
 
-run: build
-	./testui -config config.toml
+.PHONY: all build run vet test test-race fmt clean
+
+all: build
 
 build:
-	GOWORK=off go build -o testui ./cmd/testui
+	go build -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/$(BINARY) $(PKG)
 
-build-linux:
-	GOWORK=off CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o dist/testui-linux-arm64 ./cmd/testui
+run: build
+	./$(BIN_DIR)/$(BINARY) -config config.toml
 
 vet:
-	GOWORK=off go vet ./cmd/testui
+	go vet ./...
+
+test:
+	go test ./...
+
+test-race:
+	go test -race ./...
+
+fmt:
+	gofmt -s -w .
 
 clean:
-	rm -f testui bin/testui dist/testui-linux-arm64
+	rm -rf $(BIN_DIR)

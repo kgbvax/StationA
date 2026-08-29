@@ -7,9 +7,8 @@
 // Rendering is expose-driven first (each slot's /meta.expose is the authoritative
 // field/command surface), with a role-registry fallback for slots whose expose is
 // read-only but still drivable (notably antennaselect's operator-hold `request`), and a
-// raw-JSON fallback for anything unknown. discovery (hadiscovery) has no /cmd handler at
-// all → command panel hidden. radio (flexbridge) drives the DVK one-shot actions
-// (dvk_play_1..12, dvk_stop) via /cmd — rendered from expose.actions as buttons.
+// raw-JSON fallback for anything unknown. radio (flexbridge) and discovery (hadiscovery)
+// have no /cmd handler at all → command panel hidden.
 
 // --- canonical data -------------------------------------------------------
 
@@ -42,9 +41,8 @@ function bandFromFreq(hz) {
 
 const CANONICAL_MODES = ['cw', 'usb', 'lsb', 'am', 'fm', 'data'];
 
-// Roles with NO /cmd handler: hide the command panel entirely. radio is NOT here: it
-// drives DVK via /cmd (expose.actions dvk_play_N / dvk_stop). discovery is passive.
-const NO_CMD_ROLES = new Set(['discovery']);
+// Roles with NO /cmd handler: hide the command panel entirely.
+const NO_CMD_ROLES = new Set(['radio', 'discovery']);
 
 // Role-registry fallback for slots whose /meta.expose is read-only but which still
 // accept a /cmd. Currently only the reconciler's operator-hold surface. Each entry
@@ -102,7 +100,6 @@ const FIELD_HINTS = {
   drive:     { kind: 'bar', max: 100, unit: '%' },
   swr:       { kind: 'swr' },
   device_online: { kind: 'devonline' },
-  dvk_status: { kind: 'dvk' },
   settling:  { kind: 'spinner' },
   moving:    { kind: 'spinner' },
 };
@@ -222,29 +219,6 @@ function statusText(slot) {
 }
 function isOnline(slot) { return statusText(slot) === 'online'; }
 
-// Rail colour policy (left panel):
-//   RED    = the bridge/component is not running or not reachable.
-//   ORANGE = the bridge is connected/running, but the underlying device is not
-//            (or this is a logic slot with no underlying device).
-//   GREEN  = the bridge is running AND the underlying device is responding.
-function railState(slot) {
-  const bridge = isOnline(slot);
-  if (!bridge) return 'red';
-  const st = stateObj(slot);
-  // device_online is the canonical hardware-liveness field (see integration model).
-  // Logic slots (antenna-select, hadiscovery, powerseq) have no device_online;
-  // when their bridge is running they show orange, not misleading green.
-  if (st.device_online === true) return 'green';
-  return 'orange';
-}
-
-function railTitle(slot) {
-  const s = railState(slot);
-  if (s === 'green') return 'bridge online, device online';
-  if (s === 'orange') return 'bridge online, device offline';
-  return 'bridge offline / not running';
-}
-
 function stateObj(slot) {
   const p = slot.state;
   if (!p) return {};
@@ -324,11 +298,10 @@ function renderRail() {
     tree.appendChild(sn);
     for (const addr of addrs) {
       const slot = store.slots.get(addr);
-      const state = railState(slot);
+      const online = isOnline(slot);
       const n = document.createElement('div');
       n.className = 'node slot';
-      n.title = railTitle(slot);
-      n.innerHTML = `<span class="rail-dot rail-${state}">●</span> ${escapeHtml(addr.split('/').slice(2).join('/') || addr)}`;
+      n.innerHTML = `<span class="${online ? 'live' : 'dead'}">●</span> ${escapeHtml(addr.split('/').slice(2).join('/') || addr)}`;
       n.onclick = () => { store.filter = addr; el('filter').value = addr; renderCards(); };
       tree.appendChild(n);
     }
@@ -600,13 +573,6 @@ function fieldValueEl(key, value, field, hint, meta, slot) {
   if (hint.kind === 'devonline') {
     return span(`pill ${value ? 'online' : 'offline'}`, value ? 'device online' : 'device offline');
   }
-  if (hint.kind === 'dvk') {
-    // DVK (SmartSDR v4+) operation. playback keys the transmitter → render it as a TX
-    // pill; recording/preview/disabled are caution states; idle is dim. The active
-    // memory id rides in the separate dvk_id field (omitted while idle).
-    const cls = { playback: 'tx', recording: 'warn', preview: 'warn', disabled: 'warn', idle: 'off' }[value] || 'off';
-    return span(`pill ${cls}`, value || '—');
-  }
   if (hint.kind === 'spinner') {
     if (value) { const s = span('pill warn', '◆ ' + key); return s; }
     return span('pill off', 'idle');
@@ -617,7 +583,10 @@ function fieldValueEl(key, value, field, hint, meta, slot) {
     return span(`pill ${value ? 'on' : 'off'}`, label);
   }
   if (field?.type === 'enum' || (field?.options_ref)) {
-    return span('pill on', String(value));
+    // Enum values like the m5stamp switch's pa/trx use strings 'on'/'off'. Color
+    // the pill so state changes are visible instead of always showing green.
+    const active = value === 'on' || value === true || value === 1 || value === 'true';
+    return span(`pill ${active ? 'on' : 'off'}`, String(value));
   }
   // default: value + unit
   let s = value === null || value === undefined ? '—' : String(value);
@@ -632,7 +601,7 @@ function fieldValueEl(key, value, field, hint, meta, slot) {
 
 function renderCommandPanel(addr, slot, meta) {
   const role = meta.role || '';
-  if (NO_CMD_ROLES.has(role)) return null; // discovery: no /cmd handler
+  if (NO_CMD_ROLES.has(role)) return null; // radio/discovery: no /cmd handler
 
   const wrap = document.createElement('div');
   wrap.className = 'section';
@@ -778,7 +747,7 @@ function buildActionRow(addr, a, meta) {
     row.appendChild(input);
   }
 
-  const danger = ['retract', 'stop', 'tune', 'dvk_stop'].includes(cmd.action);
+  const danger = ['retract', 'stop', 'tune'].includes(cmd.action);
   const send = document.createElement('button');
   send.className = 'send' + (danger ? ' danger' : '');
   send.textContent = cmd.action || a.key;
