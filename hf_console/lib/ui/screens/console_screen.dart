@@ -5,6 +5,7 @@ import '../../mqtt/mqtt_service.dart';
 import '../theme.dart';
 import '../widgets/dx_map_container.dart';
 import '../widgets/pa_panel.dart';
+import '../widgets/pa_arm_panel.dart';
 import '../widgets/tuner_panel.dart';
 import '../widgets/ultrabeam_panel.dart';
 import '../widgets/dvk_panel.dart';
@@ -35,6 +36,7 @@ class _ConsoleScreenState extends State<ConsoleScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          const LinkStatusBanner(),
           Expanded(
             key: ValueKey(AppTheme.selected),
             child: _PageContent(
@@ -46,6 +48,34 @@ class _ConsoleScreenState extends State<ConsoleScreen> {
           if (_page != 'hf') const FaultsBar(),
         ],
       ),
+    );
+  }
+}
+
+/// Full-width warning strip shown while the MQTT link is down. Everything on
+/// screen is stale retained state and every publish is dropped — that has to
+/// be unmissable, not a tiny dot in the top bar. The copy promises only what
+/// is true: taps are not gated panel-by-panel, commands are simply lost.
+class LinkStatusBanner extends StatelessWidget {
+  const LinkStatusBanner({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final mqtt = context.read<MqttService>();
+    return ValueListenableBuilder<bool>(
+      valueListenable: mqtt.connected,
+      builder: (context, connected, _) {
+        if (connected) return const SizedBox.shrink();
+        return Container(
+          color: AppTheme.blend(AppTheme.red, 0.18),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          child: Text(
+            'LINK DOWN — DATA STALE · COMMANDS NOT DELIVERED',
+            textAlign: TextAlign.center,
+            style: AppTheme.mono(13, color: AppTheme.red, weight: FontWeight.w700, letterSpacing: 0.14),
+          ),
+        );
+      },
     );
   }
 }
@@ -122,6 +152,7 @@ class _HfPage extends StatelessWidget {
                         AntennaPanel(),
                         RotatorPresetsBar(),
                         PaPanel(),
+                        PaArmPanel(),
                         TunerPanel(),
                         DvkPanel(),
                         FaultsBar(),
@@ -185,6 +216,7 @@ class _HfPage extends StatelessWidget {
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: const [
                             PaPanel(),
+                            PaArmPanel(),
                             TunerPanel(),
                             DvkPanel(),
                           ],

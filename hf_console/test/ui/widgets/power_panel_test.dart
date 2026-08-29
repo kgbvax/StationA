@@ -28,5 +28,39 @@ void main() {
       expect(mqtt.publishes.first.topic, 'muehle/hf/power-seq/cmd');
       expect(mqtt.publishes.first.payload, contains('stop'));
     });
+
+    testWidgets('START STATION is disabled while the sequence runs', (tester) async {
+      final store = BusStore();
+      final mqtt = FakeMqttService(store);
+      store.setPower(); // seeds power-seq phase 'running'
+
+      await tester.pumpWidget(TestHarness(store: store, mqtt: mqtt, child: const PowerPanel()));
+      await tester.pumpAndSettle();
+
+      final start = tester.widget<ElevatedButton>(find.widgetWithText(ElevatedButton, 'START\nSTATION'));
+      expect(start.onPressed, isNull);
+      await tester.tap(find.widgetWithText(ElevatedButton, 'START\nSTATION'), warnIfMissed: false);
+      await tester.pumpAndSettle();
+      expect(mqtt.publishes, isEmpty);
+    });
+
+    testWidgets('START STATION publishes the start cmd when idle', (tester) async {
+      final store = BusStore();
+      final mqtt = FakeMqttService(store);
+      store.setPower();
+      store.applyState('muehle/hf/power-seq', {'phase': 'idle', 'fault': '', 'device_online': true});
+
+      await tester.pumpWidget(TestHarness(store: store, mqtt: mqtt, child: const PowerPanel()));
+      await tester.pumpAndSettle();
+
+      final start = tester.widget<ElevatedButton>(find.widgetWithText(ElevatedButton, 'START\nSTATION'));
+      expect(start.onPressed, isNotNull);
+      await tester.tap(find.widgetWithText(ElevatedButton, 'START\nSTATION'));
+      await tester.pumpAndSettle();
+
+      expect(mqtt.publishes.length, 1);
+      expect(mqtt.publishes.first.topic, 'muehle/hf/power-seq/cmd');
+      expect(mqtt.publishes.first.payload, contains('start'));
+    });
   });
 }

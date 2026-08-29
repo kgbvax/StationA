@@ -66,6 +66,11 @@ func TestWireTable(t *testing.T) {
 		{"set_pos disarmed", newStub(control.Result{Err: control.ErrDisarmed}, control.Result{}),
 			"P 180 45\n", "RPRT -9\n"},
 		{"set_pos garbage az", newStubOk(), "P abc 45\n", "RPRT -1\n"},
+		// ParseFloat("nan"/"inf") succeeds — DegToWord would park them at 0°,
+		// real motion to a garbage target. Must be refused like any other junk.
+		{"set_pos nan az", newStubOk(), "P nan 45\n", "RPRT -1\n"},
+		{"set_pos inf az", newStubOk(), "P inf 45\n", "RPRT -1\n"},
+		{"set_pos nan el", newStubOk(), "P 180 nan\n", "RPRT -1\n"},
 		{"set_pos missing el", newStubOk(), "P 180\n", "RPRT -1\n"},
 		{"set_pos short", newStubOk(), "S\n", "RPRT 0\n"},
 		{"stop long", newStubOk(), "\\stop\n", "RPRT 0\n"},

@@ -12,18 +12,39 @@ import (
 var (
 	styleBar    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("15")).Background(lipgloss.Color("62"))
 	styleArmed  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("15")).Background(lipgloss.Color("52"))
-	styleGood   = lipgloss.NewStyle().Foreground(lipgloss.Color("114"))
+	styleGood   = lipgloss.NewStyle().Foreground(lipgloss.Color("120"))
 	styleBad    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("203"))
-	styleDim    = lipgloss.NewStyle().Foreground(lipgloss.Color("243"))
-	styleLabel  = lipgloss.NewStyle().Foreground(lipgloss.Color("75"))
-	styleNumber = lipgloss.NewStyle().Bold(true)
+	styleDim    = lipgloss.NewStyle().Foreground(lipgloss.Color("248"))
+	styleLabel  = lipgloss.NewStyle().Foreground(lipgloss.Color("117"))
+	styleNumber = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("15"))
 )
+
+// helpLines is the ? overlay: every key with what it really does. Manual
+// motion comes first — it is the primary use and works while disarmed.
+var helpLines = []string{
+	"keys",
+	"  ←→↑↓ / hjkl     jog (HOLD the key; auto-repeat keeps it moving, release stops) — works DISARMED",
+	"  0               goto PHYSICAL zero (offset not applied) — works disarmed",
+	"  a / e           query azimuth / elevation",
+	"  A               ARM: enter the TRUE azimuth the head points at now — enables rotctl",
+	"  d               disarm (rotctl motion locked again)",
+	"  + / -           jog speed ±1",
+	"  s               self-test — DANGER re-homes head, can rip cables; disarmed only, type RIPCABLES",
+	"  SPACE / ESC     E-STOP: all-stop now, cancels prompts — always works",
+	"  tab / shift+tab scroll wire log",
+	"  ctrl+r          reopen serial port      ctrl+l  clear log",
+	"  ctrl+c / ctrl+q quit (all-stop sent first)",
+	"  ?               toggle this help",
+}
 
 // layout re-sizes the log viewport to the space below the fixed panes. The
 // fixed chrome is 7 rows: header, blank, 3 position lines, blank, prompt,
-// status. Everything else is log.
+// status — plus the help overlay when open. Everything else is log.
 func (m *model) layout() {
-	const chrome = 7
+	chrome := 7
+	if m.help {
+		chrome += len(helpLines) + 2
+	}
 	h := m.height - chrome
 	if h < 3 {
 		h = 3
@@ -114,6 +135,14 @@ func (m model) View() string {
 	// Wire log.
 	b.WriteString(m.logView.View())
 	b.WriteString("\n")
+
+	// Help overlay (toggle with ?) — the full keymap, since the status line
+	// only carries the highlights.
+	if m.help {
+		b.WriteString("\n")
+		b.WriteString(strings.Join(helpLines, "\n"))
+		b.WriteString("\n")
+	}
 
 	// Prompt line (input visible only while a prompt is open).
 	if m.prompt != promptNone {

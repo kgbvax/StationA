@@ -64,12 +64,22 @@ slot = "rotator"
 }
 
 func TestLoadMissingFileUsesDefaults(t *testing.T) {
-	cfg, err := Load(filepath.Join(t.TempDir(), "absent.toml"))
+	// No path at all: pure defaults (seed-once deploy before the first seed).
+	cfg, err := Load("")
 	if err != nil {
-		t.Fatalf("missing file must not error: %v", err)
+		t.Fatalf("empty path must not error: %v", err)
 	}
 	if cfg.Control.SettleMS != 2000 || cfg.Rotctld.Port != 4533 {
 		t.Errorf("defaults not applied: %+v", cfg)
+	}
+}
+
+// An EXPLICIT path (flag / PELCOBRIDGE2_CONFIG) that does not exist must fail
+// loudly — silent fallback to defaults once masked a mistyped -config flag.
+func TestLoadExplicitMissingFileErrors(t *testing.T) {
+	_, err := Load(filepath.Join(t.TempDir(), "absent.toml"))
+	if err == nil {
+		t.Fatal("explicit missing config must error, not fall back")
 	}
 }
 

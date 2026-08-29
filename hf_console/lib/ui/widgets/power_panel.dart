@@ -75,6 +75,16 @@ class PowerPanel extends StatelessWidget {
       );
     }
 
+    void startStation() {
+      mqtt.publish(
+        cmdTopic('hf/power-seq'),
+        powerSeqStartPayload(),
+        retain: cmdRetain['muehle/hf/power-seq']!,
+      );
+    }
+
+    final seqRunning = const {'running', 'starting'}.contains(seqPhase);
+
     final seqColor = seqFault.isNotEmpty
         ? AppTheme.red
         : const {'running': true, 'starting': true}.containsKey(seqPhase)
@@ -94,6 +104,18 @@ class PowerPanel extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
+          ElevatedButton(
+            onPressed: seqOnline && !seqRunning ? startStation : null,
+            style: AppTheme.actionButton().copyWith(
+              backgroundColor: const WidgetStatePropertyAll(Color(0x1E5CCB8A)),
+              foregroundColor: WidgetStatePropertyAll(AppTheme.green),
+              side: WidgetStatePropertyAll(BorderSide(color: AppTheme.green)),
+              minimumSize: const WidgetStatePropertyAll(Size(76, 52)),
+              padding: const WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: 10, vertical: 10)),
+            ),
+            child: const Text('START\nSTATION'),
+          ),
+          const SizedBox(width: 8),
           ElevatedButton(
             onPressed: seqOnline ? stopStation : null,
             style: AppTheme.actionButton(danger: true).copyWith(
@@ -146,7 +168,11 @@ class _Relay extends StatelessWidget {
   Widget build(BuildContext context) {
     return GestureDetector(
       onTap: online ? () => onToggle(!on) : null,
-      child: Container(
+      // A disabled relay must explain itself — a silent dim could be
+      // deliberate-off or a dead bridge.
+      child: Tooltip(
+        message: online ? '' : '$name offline — relay uncontrollable',
+        child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
         decoration: BoxDecoration(
           color: AppTheme.pane,
@@ -182,9 +208,13 @@ class _Relay extends StatelessWidget {
               ),
             ),
             const SizedBox(width: 8),
-            Text(on ? 'ON' : 'OFF', style: AppTheme.mono(11, color: on && online ? AppTheme.green : AppTheme.txtFaint, weight: FontWeight.w700)),
+            Text(
+              online ? (on ? 'ON' : 'OFF') : 'OFFLINE',
+              style: AppTheme.mono(11, color: online ? (on ? AppTheme.green : AppTheme.txtFaint) : AppTheme.red, weight: FontWeight.w700),
+            ),
           ],
         ),
+      ),
       ),
     );
   }

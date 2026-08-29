@@ -49,3 +49,7 @@ app.*.map.json
 # lives in webbridge/{main.go,go.mod,go.sum}; only the binaries are ignored.
 /dist/
 /webbridge/webbridge
+
+# Per-developer macOS signing overrides (see macos/Runner/Configs/Developer.xcconfig.example;
+# the Apple team ID must not be committed — see CLAUDE.md)
+/macos/Runner/Configs/Developer.xcconfig

@@ -2,8 +2,8 @@
 //
 // A companion to CompassPanel: same underlying DxSpotService data, but projected
 // with EPSG:3857 instead of AEQD. Mirrors horstreporter's Leaflet map view
-// (`static/map.js`): pan/zoom canvas, country outlines, grid-square fills by
-// dominant band + SNR opacity, and FT8/FT4 spot dots.
+// (`static/map.js`): pan/zoom canvas, country landmass fills + coastline outlines,
+// grid-square fills by dominant band + SNR opacity, and FT8/FT4 spot dots.
 
 import 'dart:ui' as ui;
 import 'dart:math' as math;
@@ -242,7 +242,7 @@ class _MercatorPainter extends CustomPainter {
       Paint()..color = AppTheme.page,
     );
 
-    // 2. World coastline outlines
+    // 2. World landmass fill + coastline outlines
     if (rings != null && rings!.isNotEmpty) {
       _drawWorld(canvas, size, rings!);
     }
@@ -341,7 +341,8 @@ class _MercatorPainter extends CustomPainter {
         '${projection.zoom.toStringAsFixed(2)}|'
         '${size.width.toStringAsFixed(0)}|'
         '${size.height.toStringAsFixed(0)}|'
-        '${isDark ? 'd' : 'l'}';
+        '${isDark ? 'd' : 'l'}|'
+        '${AppTheme.selected.name}';
 
     if (_cacheKey == key && _cacheImage != null) {
       paintImage(
@@ -355,31 +356,53 @@ class _MercatorPainter extends CustomPainter {
 
     final recorder = ui.PictureRecorder();
     final c = Canvas(recorder, Offset.zero & size);
-    final stroke = Paint()
-      ..color = isDark ? const Color(0xFF3A4A5A) : const Color(0xFF9CA3AF)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 0.7
-      ..strokeJoin = StrokeJoin.round
-      ..strokeCap = StrokeCap.round;
 
+    // Project every ring into a single path. Even-odd fill makes GeoJSON hole
+    // rings subtract from their enclosing outer ring. Natural Earth admin_0
+    // polygons are pre-cut at the antimeridian, so a raw Δlng > 180° between
+    // consecutive vertices marks the cut: split the subpath there so the
+    // implicit close chords at the seam instead of streaking across the
+    // canvas (the old stroke-only draw skipped those segments by length).
+    final path = Path()..fillType = PathFillType.evenOdd;
     for (final ring in rings) {
       Offset? prev;
+      double? prevLng;
       for (final p in ring) {
         final m = projection.project(p.lat, p.lng);
-        if (m == null) {
+        if (m == null || (prevLng != null && (p.lng - prevLng).abs() > 180.0)) {
+          // Out of Mercator domain, or dateline cut — break the subpath.
           prev = null;
-          continue;
+          prevLng = p.lng;
+          if (m == null) continue;
+        } else {
+          prevLng = p.lng;
         }
         final o = Offset(m.x, m.y);
-        if (prev != null) {
-          // Don't draw lines that wrap across the whole canvas.
-          if ((o.dx - prev.dx).abs() < size.width * 0.8) {
-            c.drawLine(prev, o, stroke);
-          }
+        if (prev == null) {
+          path.moveTo(o.dx, o.dy);
+        } else {
+          path.lineTo(o.dx, o.dy);
         }
         prev = o;
       }
     }
+
+    c.drawPath(
+      path,
+      Paint()
+        ..color = AppTheme.land
+        ..style = PaintingStyle.fill
+        ..isAntiAlias = true,
+    );
+    c.drawPath(
+      path,
+      Paint()
+        ..color = AppTheme.cardLineHi
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 0.8
+        ..strokeJoin = StrokeJoin.round
+        ..strokeCap = StrokeCap.round,
+    );
 
     final pic = recorder.endRecording();
     final img = pic.toImageSync(size.width.ceil(), size.height.ceil());

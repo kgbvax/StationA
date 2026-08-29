@@ -15,6 +15,7 @@ package ui
 import (
 	"context"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -89,7 +90,7 @@ func New(opts Options) model {
 	return model{
 		opts:   opts,
 		input:  in,
-		status: "DISARMED — motion locked · press A to arm · ? shows all keys · SPACE/ESC = E-STOP",
+		status: "arrows/hjkl: jog (works disarmed) · A: arm (enables rotctl) · a/e: query · ? : all keys · SPACE/ESC = E-STOP",
 	}
 }
 
@@ -110,11 +111,22 @@ func (m *model) submit(it control.Intent) {
 	_ = control.Submit(m.opts.ReqCh, control.SrcTUI, it)
 }
 
-func (m *model) submitStop(reason string) {
-	m.submit(control.StopIntent{})
+// submitStop arms the e-stop delivery as a Cmd. Unlike Submit, control.Call
+// blocks until the engine has actually DEQUEUED the stop — a saturated queue
+// or a stalled engine can never silently drop an e-stop while the status line
+// claims it was sent.
+func (m *model) submitStop(reason string) tea.Cmd {
+	it := control.StopIntent{}
+	reqCh := m.opts.ReqCh
 	m.status = "E-STOP sent"
 	if reason != "" {
 		m.status += " (" + reason + ")"
+	}
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = control.Call(ctx, reqCh, control.SrcTUI, it)
+		return nil
 	}
 }
 
@@ -141,8 +153,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if int(msg) == m.holdSeq {
 			// No jog keypress since this tick was armed: the key was
 			// released (or auto-repeat is suppressed) → all-stop.
-			m.submitStop("hold expired")
 			m.layout()
+			return m, m.submitStop("hold expired")
 		}
 		return m, nil
 
@@ -177,10 +189,6 @@ func (m model) waitEvent() tea.Cmd {
 	return func() tea.Msg { return <-ch }
 }
 
-// armed reports the snapshot's arm state; a missing snapshot is treated as
-// disarmed (fail-safe default).
-func (m model) armed() bool { return m.snap != nil && m.snap.Armed }
-
 // handleKey is the keymap. Prompt rules: a prompt owns the keyboard until
 // answered; space/esc (e-stop) and ctrl chords cut through everything.
 func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -190,11 +198,10 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch key {
 	case " ", "esc":
 		m.cancelPrompt()
-		m.submitStop("")
-		return m, nil
+		return m, m.submitStop("")
 	case "ctrl+c", "ctrl+q":
-		m.submitStop("quitting") // best-effort all-stop; the engine repeats on ctx end
-		return m, tea.Quit
+		// best-effort all-stop; the engine repeats on ctx end
+		return m, tea.Batch(m.submitStop("quitting"), tea.Quit)
 	case "ctrl+l":
 		m.log = nil
 		m.logView.SetContent("")
@@ -223,16 +230,16 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch key {
 	case "up", "k":
 		m.status = "jog up — release to stop"
-		return m, m.jog(control.DirUp)
+		return m.jog(control.DirUp)
 	case "down", "j":
 		m.status = "jog down — release to stop"
-		return m, m.jog(control.DirDown)
+		return m.jog(control.DirDown)
 	case "left", "h":
 		m.status = "jog left — release to stop"
-		return m, m.jog(control.DirLeft)
+		return m.jog(control.DirLeft)
 	case "right", "l":
 		m.status = "jog right — release to stop"
-		return m, m.jog(control.DirRight)
+		return m.jog(control.DirRight)
 	case "a":
 		return m, queryCmd(m.opts.ReqCh, false)
 	case "e":
@@ -266,9 +273,9 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.status = "disarm sent"
 		return m, nil
 	case "+", "=":
-		return m, m.bumpSpeed(1)
+		return m.bumpSpeed(1)
 	case "-", "_":
-		return m, m.bumpSpeed(-1)
+		return m.bumpSpeed(-1)
 	case "tab":
 		m.logView.HalfPageDown()
 		return m, nil
@@ -339,12 +346,15 @@ func (m *model) cancelPrompt() {
 // jog submits the jog intent and arms the one-shot hold timer. Terminal
 // auto-repeat re-arms with a fresh sequence; a tick firing with the CURRENT
 // sequence number means no keypress landed since it was armed → stop.
-func (m model) jog(dir control.Dir) tea.Cmd {
+// The incremented sequence flows back into the model on purpose: if it were
+// lost, no tick would ever match and releasing the key would never stop the
+// head (this exact bug shipped once).
+func (m model) jog(dir control.Dir) (model, tea.Cmd) {
 	m.holdSeq++
 	seq := m.holdSeq
 	it := control.JogIntent{Dir: dir}
 	reqCh := m.opts.ReqCh
-	return tea.Batch(
+	return m, tea.Batch(
 		func() tea.Msg { _ = control.Submit(reqCh, control.SrcTUI, it); return nil },
 		tea.Tick(m.opts.JogHold, func(time.Time) tea.Msg { return jogHoldMsg(seq) }),
 	)
@@ -369,7 +379,9 @@ func queryCmd(reqCh chan<- control.Request, tilt bool) tea.Cmd {
 func armCmd(reqCh chan<- control.Request, raw string, onArm func(float64)) tea.Cmd {
 	return func() tea.Msg {
 		deg, err := strconv.ParseFloat(strings.TrimSpace(raw), 64)
-		if err != nil || deg < 0 || deg > 360 {
+		// ParseFloat("nan") succeeds with NaN — both NaN and the range must
+		// be checked, or "nan" arms the rotator with a NaN offset.
+		if err != nil || math.IsNaN(deg) || deg < 0 || deg > 360 {
 			return armMsg{err: fmt.Errorf("azimuth %q is not a degree number in 0..360", raw)}
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -386,7 +398,7 @@ func armCmd(reqCh chan<- control.Request, raw string, onArm func(float64)) tea.C
 }
 
 // bumpSpeed adjusts the jog speed one step inside 0x00..0x3F.
-func (m model) bumpSpeed(delta int) tea.Cmd {
+func (m model) bumpSpeed(delta int) (model, tea.Cmd) {
 	cur := pelco.DefaultJogSpeed
 	if m.snap != nil && m.snap.JogSpeed != 0 {
 		cur = int(m.snap.JogSpeed)
@@ -400,5 +412,5 @@ func (m model) bumpSpeed(delta int) tea.Cmd {
 	}
 	m.submit(control.JogSpeedIntent{Speed: byte(next)})
 	m.status = fmt.Sprintf("jog speed 0x%02X", next)
-	return nil
+	return m, nil
 }

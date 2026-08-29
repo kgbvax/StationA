@@ -63,19 +63,27 @@ func key(k tea.KeyType, runes ...rune) tea.KeyMsg {
 }
 
 // runCmd executes a command, descending into Batch members (tea.Batch returns
-// the inner commands instead of running them).
-func runCmd(c tea.Cmd) {
+// the inner commands instead of running them), and returns the produced msgs.
+func runCmd(c tea.Cmd) []tea.Msg {
 	if c == nil {
-		return
+		return nil
 	}
-	if batch, ok := c().(tea.BatchMsg); ok {
+	msg := c()
+	if batch, ok := msg.(tea.BatchMsg); ok {
+		var msgs []tea.Msg
 		for _, inner := range batch {
 			if inner != nil {
-				_ = inner()
+				if m := inner(); m != nil {
+					msgs = append(msgs, m)
+				}
 			}
 		}
-		return
+		return msgs
 	}
+	if msg != nil {
+		return []tea.Msg{msg}
+	}
+	return nil
 }
 
 func runeKey(s string) tea.KeyMsg { return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)} }
@@ -101,11 +109,12 @@ func TestEstopAlwaysStops(t *testing.T) {
 				t.Fatal("arm prompt did not open")
 			}
 		}
-		m2, _ := m.handleKey(key(tea.KeyEscape))
+		m2, cmd := m.handleKey(key(tea.KeyEscape))
 		m = m2.(model)
 		if m.prompt != promptNone {
 			t.Error("estop did not cancel the prompt")
 		}
+		runCmd(cmd) // the stop is delivered asynchronously via the Cmd now
 		if got := se.intents(t, 1); len(got) != 1 {
 			t.Fatalf("estop submitted %d intents, want 1", len(got))
 		} else if _, ok := got[0].(control.StopIntent); !ok {
@@ -142,20 +151,29 @@ func TestArmFlow(t *testing.T) {
 	// Bad azimuth: refused without touching the engine.
 	m2, _ := m.handleKey(key(tea.KeyRunes, 'A'))
 	m = m2.(model)
-	m.input.SetValue("abc")
-	m2, cmd := m.handleKey(key(tea.KeyEnter))
-	m = m2.(model)
-	if cmd != nil {
-		if msg, ok := cmd().(armMsg); !ok || msg.err == nil {
-			t.Fatal("garbage azimuth accepted")
+	var cmd tea.Cmd
+	for _, bad := range []string{"abc", "nan", "inf"} {
+		m.input.SetValue(bad)
+		m2, cmd = m.handleKey(key(tea.KeyEnter))
+		m = m2.(model)
+		if cmd != nil {
+			if msg, ok := cmd().(armMsg); !ok || msg.err == nil {
+				t.Fatalf("azimuth %q accepted", bad)
+			}
+		}
+		// Re-open the prompt for the next round.
+		if m.prompt != promptArm {
+			m2, _ = m.handleKey(key(tea.KeyRunes, 'A'))
+			m = m2.(model)
 		}
 	}
 	se.none(t)
 
 	// Cancel path. ESC is the global e-stop: it cancels the prompt AND sends
 	// one all-stop.
-	m2, _ = m.handleKey(key(tea.KeyEscape))
+	m2, cmd = m.handleKey(key(tea.KeyEscape))
 	m = m2.(model)
+	runCmd(cmd)
 	if m.prompt != promptNone {
 		t.Error("esc did not cancel arm prompt")
 	}
@@ -264,24 +282,47 @@ func TestQueryKeys(t *testing.T) {
 }
 
 // Jog submits a jog intent; the hold tick with the CURRENT sequence stops.
+// The tick's own sequence — not one reconstructed from the model — must match,
+// or a lost sequence increment means release never stops the head (live bug).
 func TestJogHold(t *testing.T) {
 	se := newStubEngine()
 	m := newTestModel(se)
 	m2, cmd := m.handleKey(key(tea.KeyUp))
 	m = m2.(model)
-	go func() { runCmd(cmd) }() // execute the batch: submit + arm the hold tick
+	done := make(chan []tea.Msg, 1)
+	go func() { done <- runCmd(cmd) }() // execute the batch: submit + arm the hold tick
 	got := se.intents(t, 1)
 	if j, ok := got[0].(control.JogIntent); !ok || j.Dir != control.DirUp {
 		t.Fatalf("jog = %v, want JogIntent{up}", got[0])
 	}
-	if cmd == nil {
-		t.Fatal("jog did not arm the hold tick")
+	var msgs []tea.Msg
+	select {
+	case msgs = <-done:
+	case <-time.After(time.Second):
+		t.Fatal("hold tick never fired")
+	}
+	var seq int
+	for _, msg := range msgs {
+		if s, ok := msg.(jogHoldMsg); ok {
+			seq = int(s)
+		}
+	}
+	if seq == 0 {
+		t.Fatalf("no hold tick armed; msgs=%v", msgs)
+	}
+	// The sequence the TICK carries must be the one the MODEL holds. With the
+	// value-receiver bug these diverged (tick 1, model 0) and release never
+	// stopped the head.
+	if int(m.holdSeq) != seq {
+		t.Fatalf("model holdSeq=%d, tick seq=%d — sequence lost", m.holdSeq, seq)
 	}
 	// A stale tick (wrong sequence) must NOT stop.
-	m.Update(jogHoldMsg(999))
+	_, cmd = m.Update(jogHoldMsg(seq + 999))
+	runCmd(cmd)
 	se.none(t)
-	// The current-sequence tick stops.
-	m.Update(jogHoldMsg(m.holdSeq))
+	// The real tick stops.
+	_, cmd = m.Update(jogHoldMsg(seq))
+	runCmd(cmd)
 	got2 := se.intents(t, 1)
 	if _, ok := got2[0].(control.StopIntent); !ok {
 		t.Errorf("hold expiry sent %T, want StopIntent", got2[0])

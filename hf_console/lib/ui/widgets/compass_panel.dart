@@ -59,7 +59,7 @@ bool canZoomOut(double z) => z > kCompassZoomMin + 1e-9;
 
 class _CompassPanelState extends State<CompassPanel> {
   double _zoom = kCompassZoomDefault;
-  // World coastline raster cache — lives across rebuilds so a zoom drag reuses
+  // World landmass raster cache — lives across rebuilds so a zoom drag reuses
   // the projected bitmap while (cx, cy, r, zoom, center) don't change. Owned
   // here (not on the painter) because the painter is reconstructed every
   // frame. Disposed in `dispose()`.
@@ -581,11 +581,12 @@ class _CompassPainter extends CustomPainter {
         ..strokeWidth = 1,
     );
 
-    // Continent outlines, AEQD-projected from Natural Earth 50m. Drawn before the
-    // tick marks so the ticks read above the outlines; no fill, just stroke so the
-    // beam wedges + spots remain legible. The bitmap is cached on `world` and
-    // reused across frames while (cx, cy, r, zoom, center) don't change, so a
-    // zoom-drag re-blits the same rasterized layer.
+    // Land masses, AEQD-projected from Natural Earth 50m: filled with the theme
+    // land color (one step above the disc background for contrast) plus the
+    // coastline stroke on top. Drawn before the tick marks so the ticks read
+    // above the land. The bitmap is cached on `world` and reused across frames
+    // while (cx, cy, r, zoom, center) don't change, so a zoom-drag re-blits the
+    // same rasterized layer.
     _drawWorld(canvas, cx, cy, r, size);
 
     final tickPaint = Paint()
@@ -666,10 +667,10 @@ class _CompassPainter extends CustomPainter {
               ];
   }
 
-  /// Stroke the Natural Earth 50m coastline outlines (bundled as
-  /// `assets/geo/world.geojson`, AEQD-projected via the same `Aeqd` the spots use).
-  /// No-op without a projection center or until the loader has produced rings.
-  /// The 30k-ring projection is rasterized into a `ui.Picture` on the
+  /// Fill + stroke the Natural Earth 50m land masses (bundled as
+  /// `assets/geo/world.geojson`, AEQD-projected via the same `Aeqd` the spots
+  /// use). No-op without a projection center or until the loader has produced
+  /// rings. The ~100k-vertex projection is rasterized into a `ui.Picture` on the
   /// [WorldLayerCache] and blitted here — a zoom drag reuses the same bitmap
   /// while (cx, cy, r, zoom, center) don't change, dropping per-frame cost
   /// from ~6–10 ms to a single GPU blit. Polygons that wrap past the rim are
@@ -691,6 +692,7 @@ class _CompassPainter extends CustomPainter {
       lat0,
       lon0,
       rings,
+      AppTheme.land,
       AppTheme.cardLineHi,
     );
   }

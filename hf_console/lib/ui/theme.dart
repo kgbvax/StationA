@@ -19,6 +19,7 @@ class AppTheme extends ChangeNotifier {
       page: const Color(0xFF0A0C10),
       pane: const Color(0xFF0F1218),
       card: const Color(0xFF151923),
+      land: const Color(0xFF232C3E),
       line: const Color(0xFF2A3142),
       lineHi: const Color(0xFF3D4558),
       txt: const Color(0xFFDEE3EC),
@@ -35,6 +36,7 @@ class AppTheme extends ChangeNotifier {
       page: const Color(0xFFE5E3DD),
       pane: const Color(0xFFEFEDE7),
       card: const Color(0xFFF9F8F5),
+      land: const Color(0xFFDAD3C7),
       line: const Color(0xFFD4D1CA),
       lineHi: const Color(0xFFB8B4AB),
       txt: const Color(0xFF1A1A1A),
@@ -51,6 +53,7 @@ class AppTheme extends ChangeNotifier {
       page: const Color(0xFF151A17),
       pane: const Color(0xFF1C231E),
       card: const Color(0xFF242C26),
+      land: const Color(0xFF34403A),
       line: const Color(0xFF3D4740),
       lineHi: const Color(0xFF515C54),
       txt: const Color(0xFFDDE4DD),
@@ -79,6 +82,7 @@ class AppTheme extends ChangeNotifier {
   static Color get page => _p.page;
   static Color get pane => _p.pane;
   static Color get card => _p.card;
+  static Color get land => _p.land;
   static Color get cardLine => _p.line;
   static Color get cardLineHi => _p.lineHi;
   static Color get txt => _p.txt;
@@ -170,24 +174,30 @@ class AppTheme extends ChangeNotifier {
     return 1.0;
   }
 
-  static ButtonStyle actionButton({bool active = false, bool danger = false, bool amber = false, bool fullWidth = false}) =>
+  static ButtonStyle actionButton({bool active = false, bool danger = false, bool amber = false, bool dangerActive = false, bool fullWidth = false}) =>
       ElevatedButton.styleFrom(
-        backgroundColor: active
-            ? accent
-            : danger
+        backgroundColor: dangerActive
+            ? red
+            : active
+                ? accent
+                : danger
                 ? blend(red, 0.12)
                 : amber
                     ? blend(AppTheme.amber, 0.12)
                     : pane,
-        foregroundColor: active
+        foregroundColor: dangerActive
             ? activeButtonText
-            : danger
-                ? red
-                : txt,
+            : active
+                ? activeButtonText
+                : danger
+                    ? red
+                    : txt,
         side: BorderSide(
-          color: active
-              ? accent
-              : danger
+          color: dangerActive
+              ? red
+              : active
+                  ? accent
+                  : danger
                   ? red
                   : amber
                       ? AppTheme.amber
@@ -242,6 +252,7 @@ class _Palette {
   final Color page;
   final Color pane;
   final Color card;
+  final Color land;
   final Color line;
   final Color lineHi;
   final Color txt;
@@ -258,6 +269,7 @@ class _Palette {
     required this.page,
     required this.pane,
     required this.card,
+    required this.land,
     required this.line,
     required this.lineHi,
     required this.txt,

@@ -1,0 +1,6 @@
+// Local-only, gitignored signing settings for the macOS build.
+// Copy this file to Developer.xcconfig (same directory) and fill in your team ID.
+// The Release.entitlements (app-sandbox + keychain-access-groups) require a
+// real Apple Development certificate — ad-hoc signing does not work.
+CODE_SIGN_IDENTITY = Apple Development
+DEVELOPMENT_TEAM = YOUR_TEAM_ID

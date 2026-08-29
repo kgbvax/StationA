@@ -33,6 +33,13 @@ extension BusStoreFixtures on BusStore {
   }
 
   /// Populate the PA slot with an active fault.
+  /// Seed the hf/switch PA remote-on relay as energized — the default
+  /// station backdrop for PA panel fixtures (relay off is the special case).
+  void setPaRelayOn() {
+    setOnline('muehle/hf/switch');
+    applyState('muehle/hf/switch', {'pa': 'on', 'trx': 'on', 'device_online': true});
+  }
+
   void setPaFault({
     String fault = 'other',
     String error = 'HOT SWITCHING ATTEMPT',
@@ -40,6 +47,7 @@ extension BusStoreFixtures on BusStore {
     String keyed = 'rx',
     double temp = 35.0,
   }) {
+    setPaRelayOn();
     setOnline('muehle/hf/pa');
     applyState('muehle/hf/pa', {
       'mode': mode,
@@ -59,6 +67,7 @@ extension BusStoreFixtures on BusStore {
 
   /// Populate the PA slot as transmitting (keyed=tx) with forward/reflected power.
   void setPaTransmitting({double fwd = 800, double rfl = 20, double swr = 1.5}) {
+    setPaRelayOn();
     setOnline('muehle/hf/pa');
     applyState('muehle/hf/pa', {
       'mode': 'operate',
@@ -78,6 +87,7 @@ extension BusStoreFixtures on BusStore {
 
   /// Populate the PA slot as healthy operate.
   void setPaHealthy() {
+    setPaRelayOn();
     setOnline('muehle/hf/pa');
     applyState('muehle/hf/pa', {
       'mode': 'operate',
@@ -137,25 +147,35 @@ extension BusStoreFixtures on BusStore {
     });
   }
 
-  /// Populate the Ultrabeam controller.
-  void setUltrabeam({String direction = 'forward', bool moving = false}) {
+  /// Populate the Ultrabeam controller. `band` defaults to '' (unknown) so
+  /// tests that don't care aren't tripped into the mismatch pill.
+  void setUltrabeam({String direction = 'forward', bool moving = false, String band = ''}) {
     setOnline('muehle/hf/ant-ctrl');
     applyState('muehle/hf/ant-ctrl', {
       'direction': direction,
       'moving': moving,
+      'band': band,
       'device_online': true,
       'ts': '2026-08-20T14:30:00.000000',
     });
   }
 
   /// Populate the radio slot.
-  void setRadio({int freqHz = 14200000, String band = '20m', String mode = 'usb', String tx = 'rx', int drive = 50}) {
+  void setRadio({
+    int freqHz = 14200000,
+    String band = '20m',
+    String mode = 'usb',
+    String tx = 'rx',
+    bool tuning = false,
+    int drive = 50,
+  }) {
     setOnline('muehle/hf/radio');
     applyState('muehle/hf/radio', {
       'freq_hz': freqHz,
       'band': band,
       'mode': mode,
       'tx': tx,
+      'tuning': tuning,
       'drive': drive,
       'dvk_status': 'idle',
       'dvk_id': 0,

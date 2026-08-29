@@ -1,6 +1,10 @@
+import 'dart:async';
 import 'dart:collection';
 import 'dart:convert';
+import 'package:clock/clock.dart';
 import 'package:flutter/foundation.dart';
+
+import 'wiring.dart' show expectedSlots;
 
 class Slot {
   final String address;
@@ -8,6 +12,17 @@ class Slot {
   Map<String, dynamic>? state;
   String? status;
   Map<String, dynamic>? cmd;
+
+  /// When /status last changed for this slot (local clock). Best-effort:
+  /// on a fresh connect the retained status counts as a change, so the
+  /// timestamp floors at connect time, never earlier bus truth. An empty
+  /// (retained-clear) status payload is a change too.
+  DateTime? statusChangedAt;
+
+  /// When the device link (/state.device_online) last changed. Bridges flip
+  /// device_online inside /state while their LWT stays 'online', so this is
+  /// the only honest timestamp for 'device unreachable' rows.
+  DateTime? deviceChangedAt;
 
   Slot(this.address);
 
@@ -42,6 +57,23 @@ class BusStore extends ChangeNotifier {
   final _highFreq = <String, ValueNotifier<dynamic>>{};
   final List<FaultRecord> _faultHistory = [];
 
+  /// When the MQTT link came up this session. Silence reporting (expected
+  /// slots never heard from) runs on a grace period after it — NOT after the
+  /// first message: a broker with no retained payloads under muehle/# (fresh
+  /// or migrated broker, retention wipe) delivers zero messages, yet that is
+  /// exactly the dead-station case the report exists for.
+  DateTime? _connectedAt;
+  static const _silenceGrace = Duration(seconds: 3);
+
+  /// Call from the MQTT service when a (re)connect has been established.
+  /// Restarts the silence grace — a reconnect re-floods retained state —
+  /// and schedules the one-shot re-check so the silence report appears even
+  /// on a band quiet enough that no further bus message ever rebuilds the UI.
+  void markConnected() {
+    _connectedAt = clock.now();
+    Timer(_silenceGrace, notifyListeners);
+  }
+
   UnmodifiableMapView<String, Slot> get slots => UnmodifiableMapView(_slots);
   UnmodifiableListView<FaultRecord> get faultHistory => UnmodifiableListView(_faultHistory);
 
@@ -66,8 +98,10 @@ class BusStore extends ChangeNotifier {
         case 'meta':
           slot.meta = null;
         case 'state':
+          if (slot.state != null) slot.deviceChangedAt = clock.now();
           slot.state = null;
         case 'status':
+          if (slot.status != null) slot.statusChangedAt = clock.now();
           slot.status = null;
         case 'cmd':
           slot.cmd = null;
@@ -78,13 +112,21 @@ class BusStore extends ChangeNotifier {
         case 'meta':
           slot.meta = value as Map<String, dynamic>?;
         case 'state':
+          final oldState = slot.state;
           slot.state = value as Map<String, dynamic>?;
           if (slot.state != null) {
+            // device_online carries the operator-visible liveness; stamp its
+            // flips so 'device unreachable' rows can show when it happened.
+            if (oldState == null || oldState['device_online'] != slot.state!['device_online']) {
+              slot.deviceChangedAt = clock.now();
+            }
             _updateHotValues(addr, slot.state!);
             _updateFaultHistory(addr, slot.state);
           }
         case 'status':
-          slot.status = value as String?;
+          final newStatus = value as String?;
+          if (slot.status != newStatus) slot.statusChangedAt = clock.now();
+          slot.status = newStatus;
         case 'cmd':
           slot.cmd = value as Map<String, dynamic>?;
       }
@@ -166,6 +208,11 @@ class BusStore extends ChangeNotifier {
     });
   }
 
+  bool get _silenceReportActive {
+    final connected = _connectedAt;
+    return connected != null && clock.now().difference(connected) > _silenceGrace;
+  }
+
   List<String> get offlineList {
     final out = <String>[];
     for (final s in _slots.values) {
@@ -175,7 +222,41 @@ class BusStore extends ChangeNotifier {
         out.add('${s.address}: device unreachable');
       }
     }
+    // Expected slots this session has heard nothing from at all — the service
+    // is down, or was never deployed since the console started. Reported only
+    // after the grace period so connect-time silence doesn't trip it.
+    if (_silenceReportActive) {
+      for (final addr in expectedSlots) {
+        if (!_slots.containsKey(addr)) {
+          out.add('$addr: silent (no state since connect)');
+        }
+      }
+    }
     return out;
+  }
+
+  /// Per-address best-effort "when this went wrong" times, aligned with
+  /// [offlineList] (same keys and rows). Silent entries have no Slot — they
+  /// map to the session connect time, since "silent since connect" is
+  /// precisely their claim. UI must not fall back to render time.
+  Map<String, DateTime?> get offlineSince {
+    final since = <String, DateTime?>{};
+    for (final s in _slots.values) {
+      if (s.status != 'online') {
+        since[s.address] = s.statusChangedAt;
+      } else if (!s.deviceOnline) {
+        since[s.address] = s.deviceChangedAt ?? s.statusChangedAt;
+      }
+    }
+    if (_silenceReportActive) {
+      final connected = _connectedAt;
+      for (final addr in expectedSlots) {
+        if (!_slots.containsKey(addr)) {
+          since[addr] = connected;
+        }
+      }
+    }
+    return since;
   }
 
   dynamic stateValue(String address, String key) =>

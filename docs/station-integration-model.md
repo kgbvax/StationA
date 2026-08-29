@@ -628,7 +628,9 @@ role name as the HF rotator but a completely different control stack; a
 satellite-tracking consumer reads the axes rather than knowing the hardware. The
 safety model differs from every other bridge: the component is **disarmed at every
 start**, arming is a keyboard act in the TUI (requires entering the head's true
-azimuth to calibrate the offset; never automatic, never remote-controlled), and MQTT
+azimuth to calibrate the offset; never automatic, never remote-controlled), arming
+gates only the rotctld path — TUI manual motion (jog, goto-0) works disarmed so
+the head can be positioned first — and MQTT
 `/cmd` accepts **only** `stop` — no motion path exists from the bus. Absolute sets
 use a verify-and-resend ladder (quiet-line window, one verification query, bounded
 retries) instead of readback polling. The self-test (preset call 125) re-homes the

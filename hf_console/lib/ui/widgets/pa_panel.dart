@@ -106,12 +106,20 @@ class _PaPanelState extends State<PaPanel> {
     final fwd = store.stateValueAs<num>('muehle/hf/pa', 'fwd_power_w')?.toDouble() ?? 0.0;
     final swr = store.stateValueAs<num>('muehle/hf/pa', 'swr')?.toDouble() ?? 1.0;
 
+    // Cross-links: the PA remote-on relay (hf/switch) and the amp's own
+    // power telemetry both gate operation but live on other slots — without
+    // them a dead amp presents as a healthy standby PA. Unknown state must
+    // not be asserted as 'off': a silent/cleared hf/switch slot knows nothing
+    // about the relay, and claiming it open would fabricate a no-RF verdict.
+    final paRelayState = store.stateValueAs<String>('muehle/hf/switch', 'pa');
+    final paPower = store.stateValueAs<String>('muehle/hf/pa', 'power');
+
     _lastFwd = fwd;
     _recordFwd(fwd);
     final maxFwd = _peakHold;
     final p95Fwd = _p95Hold;
 
-    final (tagLabel, tagColor) = _paTag(mode, keyed, fault, error, temp, online);
+    final (tagLabel, tagColor) = _paTag(mode, keyed, fault, error, temp, paRelayState, paPower, online);
 
     void setMode(String value) {
       if (!online) return;
@@ -197,13 +205,20 @@ class _PaPanelState extends State<PaPanel> {
     );
   }
 
-  (String, Color) _paTag(String mode, String keyed, String fault, String error, double temp, bool online) {
+  (String, Color) _paTag(
+      String mode, String keyed, String fault, String error, double temp, String? paRelayState, String? paPower, bool online) {
     if (!online) return ('OFFLINE', AppTheme.txtMute);
     if (fault.isNotEmpty && fault != 'none') {
       final label = error.isNotEmpty ? error.toUpperCase() : fault.toUpperCase();
       return (label, AppTheme.red);
     }
+    // A live transmit outranks relay/power plumbing: an amber 'relay off'
+    // tag must never sit where red 'TX' belongs — the relay bookkeeping is
+    // the subordinate fact of the two.
     if (keyed == 'tx') return ('● TX', AppTheme.red);
+    if (paRelayState == null) return ('RELAY ?', AppTheme.amber);
+    if (paRelayState == 'off') return ('PA RELAY OFF', AppTheme.amber);
+    if (paPower == 'off') return ('PA OFF', AppTheme.amber);
     if (keyed == 'inhibited') return ('INHIBITED', AppTheme.amber);
     final tempLabel = temp > 0 ? ' · ${temp.round()} °C' : '';
     if (mode == 'operate') return ('OPERATE$tempLabel', AppTheme.green);

@@ -46,5 +46,22 @@ void main() {
       expect(mqtt.publishes.first.payload, contains('false'));
       expect(mqtt.publishes.first.retain, isFalse);
     });
+
+    testWidgets('locks tune taps while settling', (tester) async {
+      final store = BusStore();
+      final mqtt = FakeMqttService(store);
+      store.setTuner(settling: true);
+
+      await tester.pumpWidget(TestHarness(store: store, mqtt: mqtt, child: const TunerPanel()));
+      await tester.pumpAndSettle();
+
+      expect(find.text('TUNING…'), findsNWidgets(2));
+      final mem = tester.widget<ElevatedButton>(find.widgetWithText(ElevatedButton, 'TUNING…').first);
+      expect(mem.onPressed, isNull);
+
+      await tester.tap(find.widgetWithText(ElevatedButton, 'TUNING…').first, warnIfMissed: false);
+      await tester.pumpAndSettle();
+      expect(mqtt.publishes, isEmpty);
+    });
   });
 }

@@ -52,7 +52,9 @@ type Request struct {
 // Result is the reply to one Request.
 type Result struct {
 	Err error
-	// Deg carries the readback position for query intents (NaN if none).
+	// Deg carries the position for query intents (NaN if none): TRUE degrees
+	// (offset-corrected) for user queries, matching set_pos's argument
+	// convention; the ladder's internal verification stays physical.
 	Deg float64
 	// Age is the age of that readback at reply time.
 	Age time.Duration
@@ -93,6 +95,7 @@ func Call(ctx context.Context, reqCh chan<- Request, from Source, it Intent) Res
 type Config struct {
 	Addr              byte          // head's DIP address
 	Baud              int           // 2400 on the bench link
+	PelcoP            bool          // TX envelope; false = Pelco-D, RX always adaptive
 	JogSpeed          byte          // 0x00–0x3F, default 0x12
 	Settle            time.Duration // quiet-line window around absolute sets
 	SetAttempts       int           // verification-ladder re-sends
@@ -127,13 +130,14 @@ func (c *Config) fillDefaults() {
 
 // Errors returned as Result.Err.
 var (
-	ErrBusy     = errors.New("engine busy")
-	ErrDisarmed = errors.New("rotator is not armed")
-	ErrMoving   = errors.New("rotator is moving")
-	ErrNoFix    = errors.New("no valid readback")
-	ErrStale    = errors.New("readback too old to arm")
-	ErrSource   = errors.New("intent not allowed from this source")
-	ErrFailed   = errors.New("set did not converge")
+	ErrBusy      = errors.New("engine busy")
+	ErrCancelled = errors.New("request cancelled (all-stop)")
+	ErrDisarmed  = errors.New("rotator is not armed")
+	ErrMoving    = errors.New("rotator is moving")
+	ErrNoFix     = errors.New("no valid readback")
+	ErrStale     = errors.New("readback too old to arm")
+	ErrSource    = errors.New("intent not allowed from this source")
+	ErrFailed    = errors.New("set did not converge")
 )
 
 // Snapshot is the engine's published state, fanned out to the TUI and MQTT

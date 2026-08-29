@@ -2,13 +2,13 @@
 //
 // The asset is copied verbatim from horstreporter's `static/vendor/world.geojson`
 // (Natural Earth ne_50m_admin_0_countries, public domain). We only need the outlines
-// for AEQD re-projection in the compass painter — the per-feature properties
+// for AEQD / Mercator re-projection in the map painters — the per-feature properties
 // (country name, ISO codes, etc.) are discarded.
 //
 // Loading is one-shot: the first call decodes + flattens all Polygon / MultiPolygon
 // shapes into a flat `List<List<LatLng>>`; subsequent reads return the cached list.
 // The cache lives for the lifetime of the process; the file is ~3 MB raw and the
-// decoded list is ~30k rings.
+// decoded list is ~1.6k rings (~100k vertices).
 //
 // Pure parser (no Flutter dependency on the load path) lives in [_parse] so the
 // unit test can exercise it without `rootBundle`.
@@ -19,7 +19,7 @@ import 'package:flutter/services.dart' show rootBundle;
 
 import 'projection.dart';
 
-/// Singleton lazy-loader for the bundled world coastline outlines. See file-level
+/// Singleton lazy-loader for the bundled world coastline rings. See file-level
 /// comment. `load()` is idempotent and reentrant; multiple callers in the same frame
 /// share the same future.
 class WorldGeometry {
@@ -83,8 +83,10 @@ class WorldGeometry {
   }
 
   /// A Polygon is `List<List<List<num>>>` — outer = rings (first is outer, rest are
-  /// holes), middle = vertices, inner = [lng, lat]. We keep all rings; the painter
-  /// treats holes as just more outlines to draw (we don't fill, only stroke).
+  /// holes), middle = vertices, inner = [lng, lat]. We keep all rings in a flat
+  /// list without recording which are holes; the painters fill the projected
+  /// rings with the even-odd rule, which subtracts hole rings from their
+  /// enclosing outer ring without needing the grouping.
   static void _flattenPolygon(dynamic polygon, List<List<LatLng>> out) {
     if (polygon is! List) return;
     for (final ring in polygon) {

@@ -16,8 +16,12 @@ invariants and TUI disciplines are kept; the daemon-shaped predecessor
   the head is physically pointing at; this sets the offset. The last entered
   value is kept in `state.toml` as a *prefill only* — you confirm or correct
   it each run.
-- **Motion intents are refused while disarmed.** The all-stop (`SPACE`/`ESC`)
-  always works, from every source, in every state.
+- **Arming gates the rotctld path only.** TUI manual motion — jog and goto-0 —
+  works while *disarmed* (that is how you position the head before arming);
+  rotctld motion intents are refused with `RPRT -9` until armed. The all-stop
+  (`SPACE`/`ESC`) always works, from every source, in every state — and it
+  also cancels motion that is merely *queued* behind a settle window or an
+  outstanding query, so nothing starts moving after the all-stop frame.
 - **Self-test (preset call 125) re-homes the head and can rip cables** if it
   is pointed wrong. It is refused while armed and requires a two-stage
   confirmation: `y`, then typing `RIPCABLES`.
@@ -32,11 +36,11 @@ invariants and TUI disciplines are kept; the daemon-shaped predecessor
 
 | Key | Action |
 |---|---|
-| `←→↑↓` / `hjkl` | hold-to-move jog at the jog speed (auto-repeat refreshes; release → stop) |
+| `←→↑↓` / `hjkl` | hold-to-move jog at the jog speed (auto-repeat refreshes; release → stop) — **works disarmed** |
 | `SPACE` / `ESC` | **global e-stop** — all-stop frame, cancels prompts, always allowed |
 | `a` / `e` | query azimuth / elevation (event-driven; no polling) |
 | `A` | arm flow: enter true azimuth (prefilled from `state.toml`) |
-| `0` | goto **physical** zero (offset never applied) |
+| `0` | goto **physical** zero (offset never applied) — works disarmed |
 | `+` / `-` | jog speed ±1 (clamped 0x00–0x3F, default `0x12`) |
 | `s` | self-test — disarmed only, two-stage `RIPCABLES` confirm |
 | `d` | disarm |
@@ -58,6 +62,24 @@ compare within `set_tolerance_deg` (default 0.3°) — converged; otherwise
 re-send up to `set_attempts` (default 3), else report failure. Any stop, jog,
 or new set cancels the ladder (the human wins). No polling loop anywhere; the
 only engine timers are one-shot gate releases.
+
+**Coordinate frame:** all user-facing degrees are **true** azimuth — `get_pos`
+replies have the arm offset applied, exactly as `set_pos` arguments are
+interpreted. The raw physical readback stays visible in the TUI (`PHYS` rows)
+and on MQTT (`phys_az`/`phys_el`). An un-armed rotctld `get_pos` therefore
+reports the physical position (offset 0).
+
+**Self-check suppression:** the head's periodic self-check re-homes it
+unprompted. At every connect the engine sends "disable self-check" (preset set
+105) once, before anything else uses the line.
+
+**Link self-heal:** a transport read error (USB adapter re-enumeration, dropped
+TCP mock) marks the head offline and automatically reopens the port (throttled
+to one attempt per 2 s), then restarts the reader — no restart needed;
+`ctrl+r` always works as the manual fallback. A failed *write* unwinds the
+state machine instead of wedging it: the in-flight query is failed, an active
+set ladder is reported failed, and nothing waits on a timer that was never
+armed.
 
 ## Run
 
@@ -111,8 +133,10 @@ never the config file.
 
 Seed-once TOML, 0600 (see `../docs/conventions/config-and-secrets.md`). Path
 resolution: `-config` flag > `PELCOBRIDGE2_CONFIG` > `config.toml` next to the
-executable (Windows double-click friendly) > `./config.toml`. Missing file →
-built-in defaults. See `config.example.toml` for every key with defaults.
+executable (Windows double-click friendly) > `./config.toml`. No file found
+anywhere → built-in defaults; but a *missing file that was explicitly named*
+(flag or env) is an error, not a silent fallback — a mistyped path must not
+quietly run on defaults. See `config.example.toml` for every key with defaults.
 
 `state.toml` (next to the config, 0600) stores the last entered azimuth
 offset as an arm-prompt prefill. Nothing else is persisted; armed state never

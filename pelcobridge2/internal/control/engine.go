@@ -21,6 +21,23 @@ const (
 	tickSettle // quiet-line window around absolute sets
 )
 
+// maxPending caps the gate-closed request queue. Without a cap a stuck line
+// (head unplugged mid-move) grows the queue without bound and replays every
+// stale command the moment the gate reopens.
+const maxPending = 16
+
+// readErr tags a transport read failure with the generation of the reader
+// that produced it, so an error from a reader that has already been replaced
+// (reopen started a fresh one) does not tear down the live one.
+type readErr struct {
+	gen int
+	err error
+}
+
+// reopenCooldown throttles the auto-reopen: a flapping USB adapter or a dead
+// TCP peer must not spin open/read/close in a tight loop.
+const reopenCooldown = 2 * time.Second
+
 // query is the one outstanding position query. reply is nil for the engine's
 // own verification queries inside the set ladder.
 type query struct {
@@ -69,6 +86,14 @@ type Engine struct {
 	ladder   *ladderState
 	jogSpeed byte
 
+	// Reader generation: the transport reader dies on every read error (a
+	// closed/re-enumerated USB fd, a dropped TCP mock). startReader spawns a
+	// fresh one; late errors from a stale generation are ignored by tag.
+	rxCh       chan []byte
+	readErrCh  chan readErr
+	readGen    int
+	lastReopen time.Time
+
 	physAz, physEl  float64
 	panAt, tiltAt   time.Time
 	havePan, haveEl bool
@@ -98,9 +123,15 @@ func (e *Engine) Run(ctx context.Context) {
 		<-e.timer.C
 	}
 
-	rxCh := make(chan []byte, 64)
-	errCh := make(chan error, 1)
-	go readLoop(e.tr, rxCh, errCh)
+	e.rxCh = make(chan []byte, 64)
+	e.readErrCh = make(chan readErr, 4)
+	e.startReader()
+
+	// The head's periodic self-check re-homes it UNPROMPTED — unacceptable for
+	// an antenna rotor mid-contact. Disable it (preset set 105) once per
+	// connect, before anything else uses the line. If the head is merely
+	// powered off, the TX fails and unwinds cleanly (see tx).
+	e.tx(pelco.SelfCheckDisableFrame(e.cfg.Addr), "disable periodic self-check (preset set 105)")
 
 	// Publish once BEFORE the loop: with no polling, nothing else guarantees a
 	// snapshot — without this the TUI sits on "waiting for engine…" and MQTT
@@ -116,17 +147,67 @@ func (e *Engine) Run(ctx context.Context) {
 		case req := <-e.reqCh:
 			e.handle(req)
 
-		case chunk := <-rxCh:
+		case chunk := <-e.rxCh:
 			e.onRX(chunk)
 
-		case err := <-errCh:
-			e.deviceOn = false
-			e.setError("serial read: " + err.Error())
+		case re := <-e.readErrCh:
+			e.onReadErr(re)
 
 		case <-e.timer.C:
 			e.onTick()
 		}
 	}
+}
+
+// startReader spawns one reader generation for the transport. The previous
+// generation, if any, dies on its own error (or when a reopen closes the old
+// fd under it); its late error arrives tagged with the stale generation and
+// is ignored in onReadErr.
+func (e *Engine) startReader() {
+	e.readGen++
+	gen := e.readGen
+	go func() {
+		buf := make([]byte, 256)
+		for {
+			n, err := e.tr.Read(buf)
+			if n > 0 {
+				c := make([]byte, n)
+				copy(c, buf[:n])
+				e.rxCh <- c
+			}
+			if err != nil {
+				select {
+				case e.readErrCh <- readErr{gen: gen, err: err}:
+				default: // engine gone (shutdown); nothing is reading anymore
+				}
+				return
+			}
+		}
+	}()
+}
+
+// onReadErr handles a transport read failure: mark the head offline, then
+// auto-heal by reopening and starting a fresh reader — a re-enumerated USB
+// adapter or a dropped TCP mock must not leave the engine deaf until restart
+// (the bench failure recorded in ptest and hit live by ultrabridge).
+func (e *Engine) onReadErr(re readErr) {
+	if re.gen != e.readGen {
+		return // stale reader; a fresh one already owns the line
+	}
+	e.deviceOn = false
+	e.setError("serial read: " + re.err.Error())
+	if e.reopen == nil {
+		return // in-memory transport: nothing to heal
+	}
+	if time.Since(e.lastReopen) < reopenCooldown {
+		return // flapping link: wait for the cooldown (ctrl+r always works)
+	}
+	e.lastReopen = time.Now()
+	if err := e.reopen(); err != nil {
+		e.setError("reopen: " + err.Error())
+		return
+	}
+	e.startReader()
 }
 
 // Call submits a request and waits for its reply or the ctx deadline.
@@ -140,6 +221,9 @@ func (e *Engine) handle(req Request) {
 	switch it := req.Intent.(type) {
 	case StopIntent:
 		// Always allowed, every source, gate open or closed: human wins.
+		// Queued motion dies with the ladder — otherwise a set or jog parked
+		// in the gate-closed window would drain and start moving right after
+		// the all-stop frame.
 		stopAll(e)
 		e.tx(pelco.StopFrame(e.cfg.Addr), "all-stop")
 		e.publish() // Moving just changed
@@ -152,14 +236,15 @@ func (e *Engine) handle(req Request) {
 		if req.From != SrcTUI && !e.armed {
 			e.reply(req, Result{Err: ErrDisarmed})
 		} else if !e.gateOpen {
-			e.pending = append(e.pending, req)
+			e.enqueue(req)
 		} else {
 			e.execJog(it.Dir)
+			e.reply(req, Result{})
 		}
 
 	case QueryPanIntent, QueryTiltIntent:
 		if !e.gateOpen {
-			e.pending = append(e.pending, req)
+			e.enqueue(req)
 		} else {
 			e.execQuery(req)
 		}
@@ -167,8 +252,14 @@ func (e *Engine) handle(req Request) {
 	case SetPanIntent:
 		if !e.armed {
 			e.reply(req, Result{Err: ErrDisarmed})
-		} else if !e.gateOpen {
-			e.pending = append(e.pending, req)
+		} else if !finiteDeg(it.Deg) {
+			e.reply(req, Result{Err: fmt.Errorf("azimuth %v is not finite", it.Deg)})
+		} else if !e.gateOpen || e.inFlight != nil || e.ladder != nil {
+			// Queue while a query is outstanding too: execSet would overwrite
+			// e.inFlight and orphan the caller's reply channel; queue while a
+			// ladder runs so a new set cannot silently drop a goto-zero's
+			// remaining steps.
+			e.enqueue(req)
 		} else {
 			// true az → physical az; goto-zero bypasses the offset entirely
 			e.execSet([]ladderStep{{'p', pelco.Norm360(it.Deg + e.offset)}})
@@ -178,8 +269,10 @@ func (e *Engine) handle(req Request) {
 	case SetTiltIntent:
 		if !e.armed {
 			e.reply(req, Result{Err: ErrDisarmed})
-		} else if !e.gateOpen {
-			e.pending = append(e.pending, req)
+		} else if !finiteDeg(it.Deg) {
+			e.reply(req, Result{Err: fmt.Errorf("elevation %v is not finite", it.Deg)})
+		} else if !e.gateOpen || e.inFlight != nil || e.ladder != nil {
+			e.enqueue(req)
 		} else {
 			e.execSet([]ladderStep{{'t', it.Deg}})
 			e.reply(req, Result{})
@@ -190,8 +283,8 @@ func (e *Engine) handle(req Request) {
 		// sources (rotctld) still need the arm gate.
 		if req.From != SrcTUI && !e.armed {
 			e.reply(req, Result{Err: ErrDisarmed})
-		} else if !e.gateOpen {
-			e.pending = append(e.pending, req)
+		} else if !e.gateOpen || e.inFlight != nil || e.ladder != nil {
+			e.enqueue(req)
 		} else {
 			e.execSet([]ladderStep{{'p', 0}, {'t', 0}}) // physical zero, offset never applied
 			e.reply(req, Result{})
@@ -237,8 +330,12 @@ func (e *Engine) handle(req Request) {
 		if err != nil {
 			e.setError("reopen: " + err.Error())
 		} else {
+			e.lastReopen = time.Now()
 			e.deviceOn = false
 			e.publish()
+			// The old reader died with the old fd: a reopened port is deaf
+			// unless a fresh reader generation picks it up.
+			e.startReader()
 		}
 		e.reply(req, Result{Err: err})
 
@@ -301,6 +398,9 @@ func (e *Engine) txSetStep() {
 		f = pelco.SetTiltFrame(e.cfg.Addr, st.target)
 	}
 	e.tx(f, fmt.Sprintf("set %c=%.2f", st.axis, st.target))
+	if e.ladder == nil {
+		return // the write failed; tx unwound and killed the ladder
+	}
 	// The set frame itself needs quiet air around it: hold the gate and wait
 	// out the settle window before the verification query (or a re-send).
 	e.ladder.phase = 2 // set is on the wire; next settle tick verifies
@@ -313,11 +413,30 @@ func (e *Engine) moving() bool { return e.jogOp != 0 || e.ladder != nil }
 func stopAll(e *Engine) {
 	e.jogOp = 0
 	e.ladder = nil
+	// Queued motion is motion that has not happened YET. An e-stop must kill
+	// it, or the next drain replays a stale set/jog seconds after the all-stop
+	// frame — motion with no operator input behind it.
+	for _, req := range e.pending {
+		e.reply(req, Result{Err: ErrCancelled})
+	}
+	e.pending = nil
+}
+
+// enqueue parks a request for the next drain, honouring the queue cap.
+func (e *Engine) enqueue(req Request) {
+	if len(e.pending) >= maxPending {
+		e.reply(req, Result{Err: ErrBusy}) // a stuck line must not grow the queue
+		return
+	}
+	e.pending = append(e.pending, req)
 }
 
 func (e *Engine) arm(req Request, trueAz float64) Result {
 	if req.From != SrcTUI {
 		return Result{Err: ErrSource} // no code path from MQTT/rotctld exists
+	}
+	if !finiteDeg(trueAz) || trueAz < 0 || trueAz > 360 {
+		return Result{Err: fmt.Errorf("true azimuth %v is not a number in 0..360", trueAz)}
 	}
 	if e.moving() {
 		return Result{Err: ErrMoving}
@@ -400,16 +519,34 @@ func (e *Engine) onTick() {
 	}
 }
 
-// drain releases queued motion intents while the gate stays open.
+// drain releases queued motion intents while the gate stays open. Sets are
+// left queued while a query is outstanding or a ladder runs — starting one
+// would clobber e.inFlight or drop the ladder's remaining steps; the ladder's
+// completion calls drain again.
 func (e *Engine) drain() {
 	for e.gateOpen && len(e.pending) > 0 {
 		req := e.pending[0]
+		if blocksSet(req.Intent) && (e.inFlight != nil || e.ladder != nil) {
+			return // head of queue must wait; FIFO ordering keeps the rest
+		}
 		e.pending = e.pending[1:]
 		e.execQueued(req)
 	}
 }
 
-// execQueued runs a gate-held request; its source/armed checks already passed.
+// blocksSet reports whether an intent must not run concurrently with an
+// outstanding query or an active set ladder.
+func blocksSet(it Intent) bool {
+	switch it.(type) {
+	case SetPanIntent, SetTiltIntent, GotoPhysZeroIntent:
+		return true
+	}
+	return false
+}
+
+// execQueued runs a gate-held request; its source checks already passed. The
+// armed check is repeated: state may have changed while the request sat
+// queued (e.g. a disarm during a settle window).
 func (e *Engine) execQueued(req Request) {
 	switch it := req.Intent.(type) {
 	case JogIntent:
@@ -418,8 +555,16 @@ func (e *Engine) execQueued(req Request) {
 		e.execQuery(req) // answers via the in-flight reply channel
 		return
 	case SetPanIntent:
+		if !e.armed {
+			e.reply(req, Result{Err: ErrDisarmed})
+			return
+		}
 		e.execSet([]ladderStep{{'p', pelco.Norm360(it.Deg + e.offset)}})
 	case SetTiltIntent:
+		if !e.armed {
+			e.reply(req, Result{Err: ErrDisarmed})
+			return
+		}
 		e.execSet([]ladderStep{{'t', it.Deg}})
 	case GotoPhysZeroIntent:
 		e.execSet([]ladderStep{{'p', 0}, {'t', 0}})
@@ -443,6 +588,7 @@ func (e *Engine) ladderRetry(why string) {
 	e.ladder = nil
 	e.setStat = "failed"
 	e.publish()
+	e.drain() // the queue may proceed even though this ladder failed
 }
 
 // --- RX ----------------------------------------------------------------------
@@ -484,8 +630,17 @@ func (e *Engine) gotReadback(axis byte, deg float64, rx pelco.RxFrame) {
 	if q != nil && q.op == opForAxis(axis) {
 		e.inFlight = nil
 		if q.reply != nil {
+			// USER queries are answered in TRUE degrees (offset applied) so
+			// get_pos, the TUI's 'a'/'e' readouts, and set_pos's argument
+			// convention all speak the same coordinate frame. The ladder's
+			// own verification queries (reply == nil) keep the raw physical
+			// readback — its targets are physical.
+			ans := deg
+			if axis == 'p' {
+				ans = pelco.Norm360(deg - e.offset)
+			}
 			select {
-			case q.reply <- Result{Deg: deg}:
+			case q.reply <- Result{Deg: ans}:
 			default:
 			}
 		}
@@ -516,6 +671,7 @@ func (e *Engine) ladderVerify(deg float64) {
 			e.ladder = nil
 			e.setStat = "converged"
 			e.publish()
+			e.drain() // sets queued behind the ladder may run now
 			return
 		}
 		e.ladder.tries = e.cfg.SetAttempts
@@ -528,15 +684,38 @@ func (e *Engine) ladderVerify(deg float64) {
 
 // --- wire TX -----------------------------------------------------------------
 
+// tx sends one frame in the configured envelope ([serial] pelco_p selects the
+// 8-byte Pelco-P wrap; RX is always adaptive). A failed write must unwind the
+// state machine, not wedge it: the caller may already have stored an inFlight
+// query or a ladder phase that would otherwise never resolve, because no
+// timer is armed when nothing went out on the wire.
 func (e *Engine) tx(f pelco.Frame, note string) {
-	wire := f[:]
+	wire := []byte(f[:])
+	if e.cfg.PelcoP {
+		wire = pelco.WrapP(f)
+	}
 	if err := e.tr.Write(wire); err != nil {
 		e.deviceOn = false
+		if q := e.inFlight; q != nil {
+			e.inFlight = nil
+			if q.reply != nil {
+				select {
+				case q.reply <- Result{Err: ErrNoFix}:
+				default:
+				}
+			}
+		}
+		if e.ladder != nil {
+			e.ladder = nil
+			e.setStat = "failed"
+		}
+		e.jogOp = 0
+		e.gateOpen = true // no frame on the wire: the gate has nothing to protect
 		e.setError("serial write: " + err.Error())
 		return
 	}
 	rx := pelco.RxFrame{Frame: f, Wire: wire}
-	e.emit(Event{Log: "TX " + f.Hex() + "  " + note, RX: &rx, Dir: "TX"})
+	e.emit(Event{Log: "TX " + rx.Hex() + "  " + note, RX: &rx, Dir: "TX"})
 	e.gateOpen = false
 	e.armTick(serialio.IdleGap(e.cfg.Baud), tickFrameGap)
 }
@@ -607,22 +786,11 @@ func (e *Engine) setError(msg string) {
 	e.publish()
 }
 
-// readLoop pumps the transport into the engine. No timers, no polling — it
-// only ever forwards what actually arrived.
-func readLoop(tr serialio.Transport, ch chan<- []byte, errCh chan<- error) {
-	buf := make([]byte, 256)
-	for {
-		n, err := tr.Read(buf)
-		if n > 0 {
-			c := make([]byte, n)
-			copy(c, buf[:n])
-			ch <- c
-		}
-		if err != nil {
-			errCh <- err
-			return
-		}
-	}
+// finiteDeg rejects the NaN/Inf values strconv.ParseFloat happily produces
+// ("nan", "inf"): DegToWord would park them at 0° and arm would compute a NaN
+// offset — both real motion with garbage targets.
+func finiteDeg(v float64) bool {
+	return !math.IsNaN(v) && !math.IsInf(v, 0)
 }
 
 // envName names a wire envelope.
