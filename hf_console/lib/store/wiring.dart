@@ -29,6 +29,26 @@ const cmdRetain = {
 
 String cmdTopic(String slot) => 'muehle/$slot/cmd';
 
+/// Every slot the station model defines (see ../docs/station-integration-model.md).
+/// The offline list also reports these when the console has never heard
+/// anything from them — a dead-since-boot or undeployed service must not be
+/// invisible just because it never published a retained state.
+const expectedSlots = [
+  'muehle/power/master',
+  'muehle/power/psu-13v8',
+  'muehle/hf/radio',
+  'muehle/hf/ant-ctrl',
+  'muehle/hf/ant-switch',
+  'muehle/hf/switch',
+  'muehle/hf/pa-arm',
+  'muehle/hf/antenna-select',
+  'muehle/hf/pa',
+  'muehle/hf/rotator',
+  'muehle/hf/tuner',
+  'muehle/hf/power-seq',
+  'muehle/hf/discovery',
+];
+
 String cmdPayload(String action, dynamic value) =>
     jsonEncode({'action': action, 'value': value});
 

@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hf_console/store/bus_store.dart';
 
@@ -73,6 +74,37 @@ void main() {
       expect(offline, contains('muehle/hf/pa: bridge down'));
       expect(offline, contains('muehle/hf/tuner: device unreachable'));
       expect(offline, isNot(contains('muehle/hf/radio')));
+    });
+
+    test('reports expected slots silent only after the grace period', () {
+      fakeAsync((async) {
+        final store = BusStore();
+        store.setOnline('muehle/hf/radio');
+        // antenna-select and power-seq never publish anything this session.
+
+        // Grace period not yet elapsed: silence not reported.
+        async.elapse(const Duration(seconds: 2));
+        expect(store.offlineList.where((e) => e.contains('silent')), isEmpty);
+
+        async.elapse(const Duration(seconds: 2));
+        final offline = store.offlineList;
+        expect(offline, contains('muehle/hf/antenna-select: silent (no state since connect)'));
+        expect(offline, contains('muehle/hf/power-seq: silent (no state since connect)'));
+        // Slots that DID publish are never reported as silent.
+        expect(offline.where((e) => e.startsWith('muehle/hf/radio: silent')), isEmpty);
+      });
+    });
+
+    test('a slot heard from once is never reported silent', () {
+      fakeAsync((async) {
+        final store = BusStore();
+        store.setOnline('muehle/hf/antenna-select');
+        store.setBridgeOffline('muehle/hf/antenna-select');
+        async.elapse(const Duration(seconds: 10));
+
+        expect(store.offlineList, contains('muehle/hf/antenna-select: bridge down'));
+        expect(store.offlineList.where((e) => e.startsWith('muehle/hf/antenna-select: silent')), isEmpty);
+      });
     });
   });
 

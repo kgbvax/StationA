@@ -1,6 +1,9 @@
 import 'dart:collection';
 import 'dart:convert';
+import 'package:clock/clock.dart';
 import 'package:flutter/foundation.dart';
+
+import 'wiring.dart' show expectedSlots;
 
 class Slot {
   final String address;
@@ -42,6 +45,13 @@ class BusStore extends ChangeNotifier {
   final _highFreq = <String, ValueNotifier<dynamic>>{};
   final List<FaultRecord> _faultHistory = [];
 
+  /// When the first bus message of this session arrived. Silence reporting
+  /// (expected slots never heard from) activates a grace period after it, so
+  /// the console does not paint every slot red while retained states are
+  /// still in flight on connect.
+  DateTime? _firstMessageAt;
+  static const _silenceGrace = Duration(seconds: 3);
+
   UnmodifiableMapView<String, Slot> get slots => UnmodifiableMapView(_slots);
   UnmodifiableListView<FaultRecord> get faultHistory => UnmodifiableListView(_faultHistory);
 
@@ -50,6 +60,7 @@ class BusStore extends ChangeNotifier {
   }
 
   void apply(String topic, dynamic payload, bool retained) {
+    _firstMessageAt ??= clock.now();
     final parts = topic.split('/');
     if (parts.isEmpty) return;
     final plane = parts.removeLast();
@@ -173,6 +184,17 @@ class BusStore extends ChangeNotifier {
         out.add('${s.address}: bridge down');
       } else if (!s.deviceOnline) {
         out.add('${s.address}: device unreachable');
+      }
+    }
+    // Expected slots this session has heard nothing from at all — the service
+    // is down, or was never deployed since the console started. Reported only
+    // after the grace period so connect-time silence doesn't trip it.
+    final first = _firstMessageAt;
+    if (first != null && clock.now().difference(first) > _silenceGrace) {
+      for (final addr in expectedSlots) {
+        if (!_slots.containsKey(addr)) {
+          out.add('$addr: silent (no state since connect)');
+        }
       }
     }
     return out;
