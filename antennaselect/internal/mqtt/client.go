@@ -272,7 +272,28 @@ func (c *Client) onOperatorCmd(_ paho.Client, msg paho.Message) {
 		log.Printf("[mqtt] bad operator cmd: %v", err)
 		return
 	}
-	sharedmqtt.Enqueue(c.jobs, func() { c.update(func(in *reconcile.Inputs) { in.OperatorRequest = strings.TrimSpace(cmd.Request) }) })
+	req := strings.TrimSpace(cmd.Request)
+	if req == "" || req == reconcile.RequestAuto {
+		// Release ("auto") is not evidence of presence: it withdraws the hold
+		// and leaves the idle clock alone.
+		sharedmqtt.Enqueue(c.jobs, func() { c.update(func(in *reconcile.Inputs) { in.OperatorRequest = req }) })
+		return
+	}
+	sharedmqtt.Enqueue(c.jobs, func() { c.update(func(in *reconcile.Inputs) { c.applyOperatorHold(in, req) }) })
+}
+
+// applyOperatorHold records a hold and marks the station active. A hold is
+// evidence that someone is at the console and explicitly wants an antenna: the
+// only other activity source is a radio/state change, so without this the
+// Tier-1 idle override (reconcile.go) silently defeats every operator command
+// exactly when the radio link is down or silent — the rig is off, booting, or
+// parked on a quiet frequency — leaving no manual re-arm at all. Walk-away
+// safety is preserved: checkIdle grounds the antenna again after
+// [idle].timeout_minutes with no further hold or radio activity.
+func (c *Client) applyOperatorHold(in *reconcile.Inputs, req string) {
+	in.OperatorRequest = req
+	c.lastActivity = time.Now()
+	in.StationActivity = "active"
 }
 
 // --- the reconcile step -----------------------------------------------------

@@ -92,7 +92,10 @@ The seed config bakes the Mühle wiring map and band policy (matching
 - The station `activity` flag is **inferred** by this reconciler (not operator-set): a
   `freq_hz` change or `tx == "tx"` marks `active`; after `[idle].timeout_minutes` (default 30)
   with neither, it marks `inactive` and resolves `target = off` (walk-away lightning
-  protection). No manual override.
+  protection). No dedicated override command, but an operator **hold is presence**: a
+  non-empty non-`auto` `/cmd` request resets the idle clock, so a hold doubles as a manual
+  re-arm while the radio is down (tier 1 would otherwise override it there);
+  `[idle].timeout_minutes` later, tier 1 retakes the antenna.
 - 30/60/80/160m on the fan dipole are non-resonant; the `[tuner_follow]` binding now engages
   the `hf/tuner` ATU in-line for those bands and bypasses it otherwise (integration model
   §7.1 soft binding `tuner.set_inline ← band_policy`), closing the former §10 residual.

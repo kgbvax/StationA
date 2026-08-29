@@ -958,3 +958,105 @@ func TestActivityAfterIdleReselects(t *testing.T) {
 		t.Errorf("last select=%q, want port3", p.Select)
 	}
 }
+
+// operatorHoldMsg builds an operator /cmd message like a console or HA would
+// publish to muehle/hf/antenna-select/cmd.
+func operatorHoldMsg(request string) fakeMessage {
+	return fakeMessage{
+		topic:   "muehle/hf/antenna-select/cmd",
+		payload: []byte(`{"request":"` + request + `"}`),
+	}
+}
+
+// TestOperatorHoldMarksActiveAndReselects: after the idle timeout grounds the
+// antenna, an operator hold must work as a manual re-arm — even with the radio
+// link down, where previously only a radio/state change could mark activity
+// and Tier 1 (idle) silently overrode every operator command. The hold is
+// evidence of presence; a later idle timeout re-grounds (walk-away safety).
+func TestOperatorHoldMarksActiveAndReselects(t *testing.T) {
+	c, antSwitchCmds, drain, cancel := idleClient(t, time.Hour)
+	defer cancel()
+	// Ground first: radio on 20m selects port3, then the idle timeout fires.
+	c.onRadioStatus(nil, radioStatusMsg(true))
+	c.onRadioState(nil, radioStateMsg(true, "20m"))
+	drain()
+	c.lastActivity = time.Now().Add(-2 * time.Hour)
+	c.checkIdle()
+	drain()
+	if got := antSwitchCmds(); len(got) != 2 {
+		t.Fatalf("setup: expected 2 selects (port3, off), got %d", len(got))
+	}
+	// Radio bridge drops — the only other activity source is now dead.
+	c.onRadioStatus(nil, radioStatusMsg(false))
+	drain()
+
+	// The operator asks for port6. Tier 2 (operator) must win over Tier 1.
+	c.onOperatorCmd(nil, operatorHoldMsg("port6"))
+	drain()
+	if c.in.StationActivity != "active" {
+		t.Errorf("StationActivity=%q, want active after operator hold", c.in.StationActivity)
+	}
+	if c.in.OperatorRequest != "port6" {
+		t.Errorf("OperatorRequest=%q, want port6", c.in.OperatorRequest)
+	}
+	if !c.lastActivity.After(time.Now().Add(-time.Minute)) {
+		t.Error("operator hold did not reset lastActivity (idle clock)")
+	}
+	cmds := antSwitchCmds()
+	if len(cmds) != 3 {
+		t.Fatalf("expected 3rd select (port6) from the hold, got %d", len(cmds))
+	}
+	var p struct {
+		Select string `json:"select"`
+	}
+	if err := json.Unmarshal(cmds[len(cmds)-1].payload, &p); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if p.Select != "port6" {
+		t.Errorf("select=%q, want port6", p.Select)
+	}
+
+	// The hold also re-arms the idle clock: an immediate checkIdle must not
+	// re-ground (walk-away timeout restarts from the hold).
+	c.checkIdle()
+	drain()
+	if c.in.StationActivity != "active" {
+		t.Errorf("checkIdle marked inactive right after an operator hold")
+	}
+	if got := antSwitchCmds(); len(got) != 3 {
+		t.Errorf("checkIdle after hold emitted extra selects (grounding): %d", len(got))
+	}
+}
+
+// TestOperatorReleaseDoesNotMarkActive: the "auto" release withdraws the hold
+// but is not evidence of presence — it must not reset the idle clock or
+// re-activate a grounded station.
+func TestOperatorReleaseDoesNotMarkActive(t *testing.T) {
+	c, antSwitchCmds, drain, cancel := idleClient(t, time.Hour)
+	defer cancel()
+	c.onRadioStatus(nil, radioStatusMsg(true))
+	c.onRadioState(nil, radioStateMsg(true, "20m"))
+	drain()
+	c.lastActivity = time.Now().Add(-2 * time.Hour)
+	c.checkIdle()
+	drain()
+	if c.in.StationActivity != "inactive" {
+		t.Fatalf("setup: expected inactive, got %q", c.in.StationActivity)
+	}
+	c.onOperatorCmd(nil, operatorHoldMsg("auto"))
+	drain()
+	// "auto" is stored verbatim (pre-existing behavior); holdActive treats it
+	// as no hold, which is what the decision then reflects.
+	if hold := c.in.OperatorRequest != "" && c.in.OperatorRequest != "auto"; hold {
+		t.Errorf("OperatorRequest=%q, want \"auto\" (a release) after \"auto\" cmd", c.in.OperatorRequest)
+	}
+	if c.in.StationActivity != "inactive" {
+		t.Errorf("StationActivity=%q, want still inactive after release", c.in.StationActivity)
+	}
+	if !c.lastActivity.Before(time.Now().Add(-time.Hour)) {
+		t.Error("release reset lastActivity (should be untouched)")
+	}
+	if got := antSwitchCmds(); len(got) != 2 {
+		t.Errorf("release emitted extra selects, got %d want 2", len(got))
+	}
+}
