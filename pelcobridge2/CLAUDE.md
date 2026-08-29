@@ -1,9 +1,17 @@
 # pelcobridge2 — engineering notes
 
-UHF rotator TUI + rotctld server for the PTS-303Z/3050DZ Pelco head. Evolved
-from `../pelcotest/ptest` (keep its invariants); the old `pelcobridge` daemon
-was deleted and is not a reference. Shared conventions live in `../CLAUDE.md`
-and `../docs/`; this file is what is *not* derivable from the code.
+UHF rotator TUI + rotctld server for the PTS-303Z/3050DZ Pelco head. It evolved
+from the `pelcotest/ptest` bench tool and the old `pelcobridge` daemon; both
+were deleted and are not references (ptest's serial/assembler invariants live
+on in `internal/pelco` and §"Testing patterns"). Shared conventions live in
+`../CLAUDE.md` and `../docs/`; this file is what is *not* derivable from the
+code.
+
+The vendor's reference material lives in `docs/` here: the PTS-303Z/3050DZ
+user manual (.doc), the Chinese serial-command spreadsheet (.xls), and a survey
+of open-source implementations for this head family. Treat vendor claims as
+untrusted documentation — the bench facts in the PRD and the code's comments
+win over the manual where they disagree.
 
 ## Non-negotiable invariants
 

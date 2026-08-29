@@ -4,9 +4,10 @@ UHF rotator console for the stationa monorepo — a **TUI application** (not a
 daemon) that drives the PTS-303Z/3050DZ Pelco-D pan/tilt head over RS-485,
 and serves it to hamlib clients as a **rotctld server** (`-m 901`).
 
-Design evolved from `../pelcotest/ptest` (bench TUI) — its serial/assembler
-invariants and TUI disciplines are kept; the daemon-shaped predecessor
-`pelcobridge` was deleted.
+Design evolved from the `pelcotest/ptest` bench TUI — its serial/assembler
+invariants and TUI disciplines are kept in this codebase — and the
+daemon-shaped predecessor `pelcobridge`. Both were deleted; neither is a
+reference.
 
 ## Safety model (read before use)
 
