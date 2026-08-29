@@ -1,6 +1,7 @@
 package bridge
 
 import (
+	"context"
 	"encoding/json"
 	"strconv"
 	"strings"
@@ -1077,4 +1078,51 @@ func TestHandleCommand_SetMicProfile(t *testing.T) {
 		b, _ := newTestBridge(t)
 		b.HandleCommand(cmdJSON("set_mic_profile", "Default ProSet HC6")) // must not panic
 	})
+}
+
+// TestBridge_StateHeartbeat pins the recency contract the m5stamp pa-arm's 10 s
+// radio heartbeat depends on: while the radio link is live the snapshot is
+// republished on the ticker even with zero radio activity (nothing else in
+// flexbridge publishes /state on a change-only basis), and it stops — without
+// stopping the loop — as soon as device_online goes false.
+func TestBridge_StateHeartbeat(t *testing.T) {
+	b, pub := newTestBridge(t) // SetDevice marks device_online=true
+	seedSlice(t, b, "14.025000")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	go func() { b.StateHeartbeat(ctx, 10*time.Millisecond); close(done) }()
+
+	// Live link: heartbeats flow (~interval each).
+	deadline := time.Now().Add(2 * time.Second)
+	for countFrom(pub.Messages()) < 3 && time.Now().Before(deadline) {
+		time.Sleep(2 * time.Millisecond)
+	}
+	if n := countFrom(pub.Messages()); n < 2 {
+		t.Fatalf("heartbeat while live: %d state publishes, want >=2", n)
+	}
+
+	// Link down: ticker keeps running but must not publish.
+	pub.Reset()
+	b.Reset()
+	nAfterReset := countFrom(pub.Messages())
+	deadline = time.Now().Add(300 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if countFrom(pub.Messages()) > nAfterReset {
+			t.Fatal("heartbeat published while device_online=false (should skip)")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// countFrom counts state-topic publishes in the memo publisher.
+func countFrom(msgs []MemoMsg) int {
+	n := 0
+	for _, m := range msgs {
+		if m.Topic == testStateTopic {
+			n++
+		}
+	}
+	return n
 }
