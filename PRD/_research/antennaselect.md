@@ -138,7 +138,7 @@ resolved decision changes** (deduped; no periodic republication):
 |---|---|---|
 | `ts` | string | RFC 3339, UTC, time of this decision |
 | `mode` | string | `auto` \| `manual`. Derived: `manual` iff an operator hold is active, else `auto`. There is no separate mode switch. |
-| `target` | string | the port the reconciler currently wants: `off` or a wiring-map port key (`port1`..`port6`). Empty string is never published here (it is the internal "hold last" marker). |
+| `target` | string | the port the reconciler currently wants: `off` or a wiring-map port key (`port1`..`port6`). Empty string is the internal "hold last" marker and IS published here: it is the first publish after any process start with unresolved inputs, and it reappears on every transition into hold-last (radio offline, empty band) — update() publishes the triple whenever it changes, including the empty target. |
 | `target` ground truth | — | this is *intent*; the switch's actual position lives in `ant-switch/state.selected` |
 | `source` | string | *why*: `idle` \| `operator` \| `auto` |
 

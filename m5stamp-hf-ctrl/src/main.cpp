@@ -177,13 +177,21 @@ static bool bandSafe(const String& band) {
     return false;
 }
 
+// radioHeartbeatFresh reports whether a radio/state message arrived within
+// RADIO_HEARTBEAT_MS (and at all). Shared by recomputeArm and currentPaArmError
+// so the relay decision and the reported error can never disagree. With no
+// fresh heartbeat the radio-derived inputs (device_online, tuning, band) are
+// a frozen snapshot and must not be trusted (§10).
+static bool radioHeartbeatFresh() {
+    return lastRadioStateMs != 0 && (millis() - lastRadioStateMs) < RADIO_HEARTBEAT_MS;
+}
+
 // recomputeArm evaluates the arm condition and drives relay 1. Fail-safe-open:
 // the relay is energized ONLY when every condition holds; any failure drops it
 // open. Returns whether `armed` changed.
 static bool recomputeArm(SlotMqtt& paArm) {
-    bool heartbeatFresh =
-        (millis() - lastRadioStateMs) < RADIO_HEARTBEAT_MS && lastRadioStateMs != 0;
-    bool newArmed = enabled && radioOnline && !radioTuning && bandSafe(radioBand) && heartbeatFresh && antennaReady;
+    bool newArmed = enabled && radioOnline && !radioTuning && bandSafe(radioBand)
+                 && radioHeartbeatFresh() && antennaReady;
     if (newArmed != armed) {
         armed = newArmed;
         relaySet(RELAY_PA_ARM, armed);  // energize on arm, de-energize (open) on any drop
@@ -304,9 +312,15 @@ static void publishPaArmMeta(SlotMqtt& s) {
 }
 
 // currentPaArmError returns the human-readable reason the arm is blocked, or
-// an empty string when there is no error.
+// an empty string when there is no error. Heartbeat staleness is reported
+// right after "radio offline": the tuning/band inputs below are only as fresh
+// as the last radio/state message, so a stale feed outranks them — and it must
+// be surfaced, because the arm drops on staleness alone while the radio inputs
+// themselves may all still look healthy (this was a silent failure before;
+// flexbridge now heartbeats /state, so staleness means a real feed problem).
 static String currentPaArmError() {
     if (!radioOnline) return "radio offline";
+    if (!radioHeartbeatFresh()) return "radio feed stale";
     if (radioTuning) return "radio tuning";
     if (!bandSafe(radioBand)) return "band not safe";
     if (!antennaReady) return "antenna grounded";

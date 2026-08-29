@@ -18,9 +18,11 @@ const (
 	OpPresetCall = 0x07 // "call preset N" / extended selector call
 )
 
-// PresetSelfCheckOff is the "disable self-check" selector (preset set 105).
-// Enabling it again is preset call 105 — never sent by this bridge: a periodic
-// self-check re-homes the head unprompted.
+// PresetSelfCheckOff is the "disable self-check" selector: preset SET 105
+// disables the head's periodic self-check, preset CALL 105 re-enables it. The
+// engine sends the disable once per connect (a periodic self-check re-homes
+// the head unprompted); the call is reachable only from the TUI, as a manual
+// maintenance toggle.
 const PresetSelfCheckOff = 0x69
 
 // Preset selectors ride in d2 of a preset set/call frame.
@@ -111,3 +113,8 @@ func SelfTestFrame(addr byte) Frame { return PresetCallFrame(addr, PresetSelfTes
 // self-check. That self-check re-homes the head unprompted — unacceptable for
 // an antenna rotor mid-contact — so the engine sends this once per connect.
 func SelfCheckDisableFrame(addr byte) Frame { return PresetSetFrame(addr, PresetSelfCheckOff) }
+
+// SelfCheckEnableFrame sends "call preset 105", re-enabling the head's periodic
+// self-check. MAINTENANCE ONLY: while enabled, the head re-homes itself
+// unprompted. TUI-only, disarmed-only, behind a y/n confirm.
+func SelfCheckEnableFrame(addr byte) Frame { return PresetCallFrame(addr, PresetSelfCheckOff) }

@@ -1,5 +1,5 @@
-// Package pelco implements the Pelco-D and Pelco-P wire protocols as spoken by
-// the PTS-303Z/3050DZ pan/tilt head: frame construction, checksums, an RX
+// Package pelco implements the Pelco-D wire protocol as spoken by the
+// PTS-303Z/3050DZ pan/tilt head: frame construction, checksums, an RX
 // assembler, and opcode builders.
 //
 // Bench facts this package is built on (bench 2026-08-28, authoritative):
@@ -9,8 +9,6 @@
 //     ptest's "meaning unknown" conclusion were superseded.
 //   - Absolute sets (0x4B SetPan / 0x4D SetTilt) work, but only on a quiet
 //     line — callers must hold other traffic around them (the engine's gate).
-//   - The unit is protocol-adaptive on RX: it answers in the envelope the
-//     frame arrived in, so both envelopes are always accepted inbound.
 package pelco
 
 import (
@@ -19,24 +17,12 @@ import (
 	"strings"
 )
 
-// Frame is the logical Pelco-D field layout: FF addr cmd1 cmd2 d1 d2 sum.
-// cmd1 is 0x00 for everything this head documents; the action lives in cmd2.
+// Frame is the wire layout: FF addr cmd1 cmd2 d1 d2 sum. cmd1 is 0x00 for
+// everything this head documents; the action lives in cmd2.
 // checksum = (addr + cmd1 + cmd2 + d1 + d2) & 0xFF.
-//
-// Pelco-P carries the SAME logical fields in an 8-byte envelope:
-// A0 addr cmd1 cmd2 d1 d2 AF xor, the checksum being the XOR of bytes 1..7
-// (STX and ETX included). The same address byte is used in both protocols —
-// this head matches one DIP address code regardless of protocol (strict
-// Pelco-P gear is zero-indexed; this unit is not).
-const (
-	FrameLen  = 7
-	FrameLenP = 8
-	STX       = 0xA0
-	ETX       = 0xAF
-)
+const FrameLen = 7
 
-// Frame is the logical 7-byte Pelco-D view; Pelco-P frames are built from it
-// via WrapP and normalized back into it on parse.
+// Frame is one 7-byte Pelco-D wire frame.
 type Frame [FrameLen]byte
 
 // Build assembles a Pelco-D frame and computes the checksum.
@@ -74,41 +60,13 @@ func (f Frame) ChkOK() bool { return checksum(f) == f[6] }
 // Word is d1..d2 read as a big-endian 16-bit value.
 func (f Frame) Word() uint16 { return uint16(f[4])<<8 | uint16(f[5]) }
 
-// WrapP re-wraps a logically-built Pelco-D frame as an 8-byte Pelco-P wire
-// frame: the address/cmd/data bytes shift right by one to make room for ETX,
-// and the checksum becomes the XOR of bytes 1..7 (STX and ETX included).
-func WrapP(f Frame) []byte {
-	w := []byte{STX, f[1], f[2], f[3], f[4], f[5], ETX, 0}
-	w[7] = PXor(w)
-	return w
-}
-
-// PXor is the Pelco-P checksum: XOR of the seven bytes before it.
-func PXor(w []byte) byte {
-	c := byte(0)
-	for _, b := range w[:7] {
-		c ^= b
-	}
-	return c
-}
-
-// PChkOK reports whether an 8-byte buffer is a well-formed Pelco-P frame.
-func PChkOK(w []byte) bool {
-	if len(w) != FrameLenP || w[0] != STX || w[6] != ETX {
-		return false
-	}
-	return PXor(w) == w[7]
-}
-
-// RxFrame is one frame off the wire: the logical D-fields view plus the exact
-// wire bytes and the envelope it arrived in.
+// RxFrame is one frame off the wire: the fields plus the exact wire bytes.
 type RxFrame struct {
 	Frame
-	P    bool
 	Wire []byte
 }
 
-// Hex renders the exact wire bytes (7 for D, 8 for P).
+// Hex renders the exact wire bytes.
 func (r RxFrame) Hex() string {
 	w := r.Wire
 	if len(w) == 0 {
@@ -121,11 +79,8 @@ func (r RxFrame) Hex() string {
 	return strings.Join(parts, " ")
 }
 
-// ChkOK validates the frame's checksum in its own protocol.
+// ChkOK validates the frame's checksum.
 func (r RxFrame) ChkOK() bool {
-	if r.P {
-		return PChkOK(r.Wire)
-	}
 	return r.Frame.ChkOK()
 }
 

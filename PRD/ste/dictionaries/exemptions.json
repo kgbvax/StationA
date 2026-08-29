@@ -1,0 +1,5 @@
+{
+  "exemptions": {
+    "retain": "retained message is a domain term (MQTT retained flag)"
+  }
+}

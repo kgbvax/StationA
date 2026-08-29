@@ -117,8 +117,8 @@ type statePayload struct {
 	TargetAz       *float64 `json:"target_az,omitempty"`
 	TargetEl       *float64 `json:"target_el,omitempty"`
 	SetStatus      string   `json:"set_status,omitempty"`
+	SelfCheck      string   `json:"self_check"` // engine-canonical "on" | "off" | "unknown"; "unknown" is honest — AND with device_online
 	JogSpeed       int      `json:"jog_speed"`
-	Protocol       string   `json:"protocol,omitempty"`
 	RotctldClients int      `json:"rotctld_clients"`
 	DeviceOnline   bool     `json:"device_online"`
 	Link           string   `json:"link"`
@@ -141,6 +141,9 @@ func stateBody(snap *control.Snapshot, clients int) statePayload {
 	if snap.DeviceOnline {
 		link = "ok"
 	}
+	// SelfCheck publishes verbatim: the engine owns the canonical tri-state
+	// ("on" | "off" | "unknown"), so no remap here — an empty value would be
+	// an engine bug that must show up, not be papered over.
 	return statePayload{
 		Az:             f2Ptr(snap.Az),
 		El:             f2Ptr(snap.El),
@@ -154,8 +157,8 @@ func stateBody(snap *control.Snapshot, clients int) statePayload {
 		TargetAz:       f2Ptr(snap.TargetAz),
 		TargetEl:       f2Ptr(snap.TargetEl),
 		SetStatus:      snap.SetStatus,
+		SelfCheck:      snap.SelfCheck,
 		JogSpeed:       int(snap.JogSpeed),
-		Protocol:       snap.Protocol,
 		RotctldClients: clients,
 		DeviceOnline:   snap.DeviceOnline,
 		Link:           link,
@@ -285,6 +288,7 @@ func (s *Slot) publishMeta(pub Publisher) {
 				{Key: "target_el", Name: "Target Elevation", Type: "number", Unit: "°", Class: "elevation", StateClass: "measurement"},
 				{Key: "moving", Name: "Moving", Type: "boolean"},
 				{Key: "armed", Name: "Armed", Type: "boolean"},
+				{Key: "self_check", Name: "Self Check", Type: "string"},
 				{Key: "device_online", Name: "Device Online", Type: "boolean"},
 			},
 			Actions: []metaExposeAction{

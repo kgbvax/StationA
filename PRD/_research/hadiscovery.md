@@ -249,7 +249,7 @@ else → key omitted.
 | HA key | source |
 |---|---|
 | `identifiers` | `[<nodeID>]` (one HA device per slot) |
-| `name` | `expose.device.name`, else `expose.device.model`, else `"<role> <addr>"` |
+| `name` | `expose.device.name`, else the effective `model` value (`expose.device.model`, else `meta.device.model`), else `"<role> <addr>"` |
 | `model` | `expose.device.model`, else `meta.device.model` |
 | `manufacturer` | `expose.device.manufacturer` (no fallback) |
 | `sw_version` | `expose.device.sw_version`, else `meta.device.firmware` |

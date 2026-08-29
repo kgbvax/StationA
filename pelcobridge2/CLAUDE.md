@@ -32,12 +32,12 @@ and `../docs/`; this file is what is *not* derivable from the code.
    generation. Late errors from a stale generation are ignored by tag.
    `ReopenIntent` (ctrl+r) does the same manually.
 7. **Arming is TUI-only, twice enforced** (`ErrSource` gate in the engine AND
-   no construction site for `ArmIntent`/`SelfTestIntent` outside the TUI).
-   Never persisted; disarmed at every start. **Arming gates the rotctld path
-   only**: TUI jog and goto-0 are allowed disarmed (`req.From != SrcTUI &&
-   !e.armed` in `internal/control/engine.go`) — that is how the head is
-   positioned before arming. MQTT has no motion intents at all: `/cmd` accepts
-   only `{"action":"stop"}` (`internal/mqtt/slot.go`).
+   no construction site for `ArmIntent`/`SelfTestIntent`/`SelfCheckIntent`
+   outside the TUI). Never persisted; disarmed at every start. **Arming gates
+   the rotctld path only**: TUI jog and goto-0 are allowed disarmed
+   (`req.From != SrcTUI && !e.armed` in `internal/control/engine.go`) — that is
+   how the head is positioned before arming. MQTT has no motion intents at
+   all: `/cmd` accepts only `{"action":"stop"}` (`internal/mqtt/slot.go`).
 8. **Set ladder phases**: 1 = set TX due after settle, 2 = verify TX due after
    settle (`txSetStep` MUST advance phase to 2), 3 = verify query in flight.
    Stop/jog/new set cancels the ladder — human wins. The all-stop ALSO
@@ -47,7 +47,22 @@ and `../docs/`; this file is what is *not* derivable from the code.
 9. **Pelco opcodes are untyped consts** — cast at use sites (`byte(x)`).
    Readbacks (0x59/0x5B) are textbook degrees×100; absolute sets (0x4B/0x4D)
    need the quiet line. The engine sends self-check disable (preset set 105)
-   once per connect, before anything else uses the line.
+   once per connect, before anything else uses the line, and RE-SENDS it after
+   every successful reopen (the head may have power-cycled meanwhile). Preset
+   call 105 re-enables the head's periodic self-check — manual maintenance
+   toggle, TUI-only (`c` off / `C` on behind a y/n confirm, enable additionally
+   disarmed-only; the TUI never short-circuits on the pane's current value —
+   the model is a claim, not proof). Both self-test (preset call 125) and its
+   factory restore invalidate every readback (`havePan`/`haveEl` cleared) and
+   set the modelled self-check back to "on". The snapshot's `SelfCheck` is a
+   canonical tri-state "on"/"off"/"unknown" — and it is LIVENESS-GATED: RS-485
+   has no link ACK, so a preset frame leaving the adapter proves nothing; a
+   sent-but-unproven claim parks in `selfCheckPend` and lands only once the
+   head proves it is alive (a checksum-valid RX frame after the preset went
+   out). Any link death (read error, manual reopen) drops the model to
+   "unknown" before the reopen is even attempted; `publish()` is the single
+   point that maps an empty internal value to "unknown", so consumers render
+   the field verbatim (`mqtt` does NO remap).
 10. **paho foot-guns** (`shared/mqtt`): connect via `sharedmqtt.Connect`
    (ctx-aware); message handlers only `Enqueue` — one `RunJobs` worker does
    all publishing (hadiscovery deadlocked live on blocking Publish in a
@@ -73,9 +88,12 @@ hamlib's `rotctl_parse.c` / `netrotctl.c`.
 ## Testing patterns
 
 - `internal/simhead` models the head AS THE ENGINE MEETS IT (silence-required
-  sets, garbage-while-moving, D/P adaptive); each quirk toggleable.
+  sets, garbage-while-moving); each quirk toggleable.
 - Engine tests need `cfg.Settle` scaled above the simulated travel time —
   the first verify readback is garbage while the head is moving.
+- Self-test/self-check frames must not break a frame-gap or reply window, so
+  the engine answers ErrBusy ("retry", not refusal) — tests retry with
+  `harness.callNoBusy` (`engine_test.go`).
 - `TestJogMovesAndStops` polls `h.tr.PanDeg()` directly, not the snapshot:
   no readbacks happen while moving, so `PhysAz` is stale mid-jog.
 - UI tests: `tea.Batch` returns its inner commands — `runCmd` in

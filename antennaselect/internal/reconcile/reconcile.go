@@ -30,8 +30,10 @@ const (
 )
 
 const (
-	// requestAuto releases an operator hold.
-	requestAuto = "auto"
+	// RequestAuto is the operator-request value that releases a hold. Exported
+	// for the mqtt layer, which must recognize a release to leave the idle
+	// clock untouched (a hold marks presence; a release does not).
+	RequestAuto = "auto"
 	// PortOff is the switch's no-radiate / grounded position.
 	PortOff = "off"
 )
@@ -123,7 +125,7 @@ func New(cfg config.Config) *Reconciler {
 // holdActive reports whether an operator hold is in effect. An empty request or the
 // explicit "auto" release both mean no hold.
 func holdActive(request string) bool {
-	return request != "" && request != requestAuto
+	return request != "" && request != RequestAuto
 }
 
 // Resolve applies the priority ladder. The returned bool is false when the auto tier

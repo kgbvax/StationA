@@ -273,7 +273,13 @@ trimmed and upper-cased before matching.
 | `S` | stop | `\r` |
 | anything else | — | `?>\r` |
 
-Edge behaviors: an `M`/`W` line whose digits don't match the pattern (e.g. `M` alone or `M1234`)
+Edge behaviors: the `M`/`W` matchers anchor **only at the start of the line** and silently
+ignore trailing characters after the captured digits (regexes `^M(\d{1,3})` and
+`^W(\d{1,3})\s+\d+` in `internal/gs232/server.go`). So `M1234` prefix-matches, captures `123`,
+acks `\r`, and rotates to 123°; `M12.5`/`M12X` likewise rotate to 12°. For `W`, the 1–3 azimuth
+digits plus the whitespace-separated integer elevation argument are required; trailing
+characters after the elevation integer are ignored (`W180 000abc` → rotate to 180°, ack). Only
+an `M` with zero following digits (or a `W` lacking the whitespace+integer elevation part)
 gets **no response at all** (no `\r`, no error). The line reader stops at the first `\r` or
 `\n` and deliberately does not consume a following `\n` (a `\r\n` pair leaves the `\n` to be
 read as a harmless empty line). The azimuth source for `C` replies is the last WRC status

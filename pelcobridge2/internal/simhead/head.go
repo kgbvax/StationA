@@ -5,8 +5,7 @@
 //
 //   - absolute sets (0x4B/0x4D) are IGNORED unless the line has been quiet for
 //     a configurable silence window;
-//   - readback while a motor runs is checksum-valid garbage (unless disabled);
-//   - the head answers in the protocol the frame arrived in (D/P adaptive).
+//   - readback while a motor runs is checksum-valid garbage (unless disabled).
 package simhead
 
 import (
@@ -52,9 +51,9 @@ type Head struct {
 	rateAz, rateEl  float64
 	silenceRequired time.Duration
 	garbage         bool
+	selfCheck       bool // periodic self-check enabled (factory default on)
 
 	// wire state (engine side)
-	protocol  bool // envelope of the frame currently being answered
 	lastWrite time.Time
 
 	replies chan []byte
@@ -81,6 +80,7 @@ func New(opts Options) *Head {
 		rateEl:          opts.RateElDegPerS,
 		silenceRequired: opts.SilenceRequired,
 		garbage:         !opts.HonestReadback,
+		selfCheck:       true, // factory default: periodic self-check on
 		replies:         make(chan []byte, 64),
 		closed:          make(chan struct{}),
 	}
@@ -109,8 +109,17 @@ func (h *Head) Moving() bool {
 	return h.panDir != 0 || h.tiltDir != 0 || h.panHasTgt || h.tiltHasTgt
 }
 
-// Write decodes one frame from the engine and acts on it. The head answers in
-// the protocol the frame arrived in (D/P adaptive); undecodable and
+// SelfCheck reports whether the periodic self-check is enabled. The head
+// itself is NOT modeled as re-homing on its periodic self-check: tests stay
+// deterministic, and the engine has no defence against that hazard anyway —
+// which is exactly why the engine disables it once per connect.
+func (h *Head) SelfCheck() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.selfCheck
+}
+
+// Write decodes one frame from the engine and acts on it. Undecodable and
 // wrong-address frames are silently ignored, like the real head.
 func (h *Head) Write(b []byte) error {
 	rx, ok := DecodeAny(b)
@@ -124,7 +133,6 @@ func (h *Head) Write(b []byte) error {
 	h.mu.Lock()
 	quietFor := time.Since(h.lastWrite)
 	h.lastWrite = time.Now()
-	h.protocol = rx.P
 	h.mu.Unlock()
 
 	switch rx.Op() {
@@ -141,9 +149,9 @@ func (h *Head) Write(b []byte) error {
 		h.jogAxis(0, -1)
 
 	case pelco.OpQueryPan:
-		h.emit(rx.P, pelco.OpRspPan, h.readback(quietFor, h.PanDeg()))
+		h.emit(pelco.OpRspPan, h.readback(quietFor, h.PanDeg()))
 	case pelco.OpQueryTilt:
-		h.emit(rx.P, pelco.OpRspTilt, h.readback(quietFor, h.TiltDeg()))
+		h.emit(pelco.OpRspTilt, h.readback(quietFor, h.TiltDeg()))
 
 	case pelco.OpSetPan:
 		if quietFor >= h.silenceRequired {
@@ -154,13 +162,29 @@ func (h *Head) Write(b []byte) error {
 			h.goTo(math.NaN(), pelco.WordToDeg(rx.Frame.Word()))
 		}
 
+	case pelco.OpPresetSet:
+		if rx.Frame[5] == pelco.PresetSelfCheckOff {
+			h.setSelfCheck(false)
+		}
+
 	case pelco.OpPresetCall:
-		if rx.Frame[5] == pelco.PresetSelfTest {
-			// Factory defaults + self-test: re-home to mechanical zero.
+		switch rx.Frame[5] {
+		case pelco.PresetSelfCheckOff:
+			h.setSelfCheck(true)
+		case pelco.PresetSelfTest:
+			// Factory defaults + self-test: re-home to mechanical zero,
+			// and the factory defaults restore the periodic self-check.
+			h.setSelfCheck(true)
 			h.goTo(0, 0)
 		}
 	}
 	return nil
+}
+
+func (h *Head) setSelfCheck(on bool) {
+	h.mu.Lock()
+	h.selfCheck = on
+	h.mu.Unlock()
 }
 
 // Read blocks until the head emits a reply or Close.
@@ -229,14 +253,10 @@ func (h *Head) readback(quietFor time.Duration, cur float64) uint16 {
 	return degWord(cur)
 }
 
-func (h *Head) emit(p bool, op byte, word uint16) {
+func (h *Head) emit(op byte, word uint16) {
 	f := pelco.Build(h.addr, 0x00, op, byte(word>>8), byte(word))
-	wire := f[:]
-	if p {
-		wire = pelco.WrapP(f)
-	}
 	select {
-	case h.replies <- wire:
+	case h.replies <- f[:]:
 	case <-h.closed:
 	}
 }

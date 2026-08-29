@@ -44,13 +44,8 @@ func trunc(s string, n int) string {
 	return s[:n]
 }
 
-// chkByte is the checksum byte actually on the wire. For a Pelco-P frame that
-// is wire[7] (the XOR), not Frame[6]: Frame is the logical D-fields view whose
-// [6] holds the additive D sum.
+// chkByte is the checksum byte actually on the wire.
 func (r RxFrame) chkByte() byte {
-	if r.P && len(r.Wire) >= FrameLenP {
-		return r.Wire[7]
-	}
 	if len(r.Wire) == FrameLen {
 		return r.Wire[6]
 	}
@@ -64,15 +59,6 @@ func (r RxFrame) checksum() byte {
 func chkStr(r RxFrame) string {
 	if r.ChkOK() {
 		return "ok"
-	}
-	if r.P {
-		if len(r.Wire) >= FrameLenP && r.Wire[6] != ETX {
-			return fmt.Sprintf("BAD (byte 7 is %02X, not ETX AF)", r.Wire[6])
-		}
-		return fmt.Sprintf("BAD (want %02X)", PXor(r.Wire))
-	}
-	if len(r.Wire) == FrameLenP {
-		return "unverifiable (8 bytes, no A0 STX)"
 	}
 	return fmt.Sprintf("BAD (want %02X)", r.checksum())
 }

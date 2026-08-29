@@ -141,7 +141,7 @@ arm logic embedded in the firmware. Same device as `hf/switch` (compound).
 | `enabled` | bool | software arm-permit (last `set_enabled` cmd) |
 | `armed` | bool | **derived** actual relay state — see arm logic below; never commanded directly |
 | `device_online` | bool | the PLC (true while publishing) |
-| `error` | string, omitempty | why the arm is dropped: `radio offline` / `radio tuning` / `band not safe` |
+| `error` | string, omitempty | why the arm is dropped: `radio offline` / `radio feed stale` / `radio tuning` / `band not safe` / `antenna grounded` (first failing check in priority order) |
 
 `error` is omitted when `armed` would be true (i.e. when enabled and all
 safety conditions hold). When `enabled` is false, `armed` is false with no

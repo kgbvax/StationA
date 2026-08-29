@@ -95,7 +95,6 @@ func Call(ctx context.Context, reqCh chan<- Request, from Source, it Intent) Res
 type Config struct {
 	Addr              byte          // head's DIP address
 	Baud              int           // 2400 on the bench link
-	PelcoP            bool          // TX envelope; false = Pelco-D, RX always adaptive
 	JogSpeed          byte          // 0x00–0x3F, default 0x12
 	Settle            time.Duration // quiet-line window around absolute sets
 	SetAttempts       int           // verification-ladder re-sends
@@ -138,6 +137,7 @@ var (
 	ErrStale     = errors.New("readback too old to arm")
 	ErrSource    = errors.New("intent not allowed from this source")
 	ErrFailed    = errors.New("set did not converge")
+	ErrTxFail    = errors.New("frame never reached the wire")
 )
 
 // Snapshot is the engine's published state, fanned out to the TUI and MQTT
@@ -159,8 +159,13 @@ type Snapshot struct {
 	TargetAz, TargetEl float64 // ladder targets, NaN when none
 	SetStatus          string  // "", "setting", "converged", "failed"
 
+	// SelfCheck is the head's periodic self-check as the engine models it:
+	// "on" (head may re-home itself unprompted — maintenance only), "off",
+	// or "unknown" (canonical tri-state — the claim is liveness-gated and
+	// dropped on every link death, so consumers render it verbatim).
+	SelfCheck string
+
 	JogSpeed byte
-	Protocol string // "D" or "P": envelope of the last RX frame
 
 	DeviceOnline bool // a checksum-valid frame was seen recently
 	Error        string

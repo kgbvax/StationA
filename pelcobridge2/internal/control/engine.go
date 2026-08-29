@@ -86,6 +86,16 @@ type Engine struct {
 	ladder   *ladderState
 	jogSpeed byte
 
+	// The head's periodic self-check, as the engine models it: "on", "off",
+	// or "unknown". RS-485 has no link-level ACK, so a write that left the
+	// adapter proves nothing — a claim lands only once the head has proven
+	// it is alive (a checksum-valid frame AFTER the preset frame went out).
+	// selfCheckPend holds a sent-but-unproven claim until that proof arrives
+	// (onRX); any link death drops the model back to "unknown" (the head may
+	// have power-cycled to factory defaults: self-check on).
+	selfCheck     string
+	selfCheckPend string // "" none, else the claim awaiting proof of life
+
 	// Reader generation: the transport reader dies on every read error (a
 	// closed/re-enumerated USB fd, a dropped TCP mock). startReader spawns a
 	// fresh one; late errors from a stale generation are ignored by tag.
@@ -98,7 +108,6 @@ type Engine struct {
 	panAt, tiltAt   time.Time
 	havePan, haveEl bool
 	deviceOn        bool
-	protocol        string // envelope of the last RX frame: "D" or "P"
 	errStr          string
 	setStat         string // "", "converged", "failed"
 }
@@ -130,8 +139,10 @@ func (e *Engine) Run(ctx context.Context) {
 	// The head's periodic self-check re-homes it UNPROMPTED — unacceptable for
 	// an antenna rotor mid-contact. Disable it (preset set 105) once per
 	// connect, before anything else uses the line. If the head is merely
-	// powered off, the TX fails and unwinds cleanly (see tx).
-	e.tx(pelco.SelfCheckDisableFrame(e.cfg.Addr), "disable periodic self-check (preset set 105)")
+	// powered off the TX can still succeed (RS-485 has no ACK), so the "off"
+	// claim stays pending until the head proves it is alive.
+	e.selfCheckUnknown()
+	e.txSelfCheck(false)
 
 	// Publish once BEFORE the loop: with no polling, nothing else guarantees a
 	// snapshot — without this the TUI sits on "waiting for engine…" and MQTT
@@ -195,6 +206,7 @@ func (e *Engine) onReadErr(re readErr) {
 		return // stale reader; a fresh one already owns the line
 	}
 	e.deviceOn = false
+	e.selfCheckUnknown() // the link died: the head's self-check is unproven
 	e.setError("serial read: " + re.err.Error())
 	if e.reopen == nil {
 		return // in-memory transport: nothing to heal
@@ -208,6 +220,7 @@ func (e *Engine) onReadErr(re readErr) {
 		return
 	}
 	e.startReader()
+	e.resendSelfCheckDisable() // the head may have power-cycled meanwhile
 }
 
 // Call submits a request and waits for its reply or the ctx deadline.
@@ -310,10 +323,57 @@ func (e *Engine) handle(req Request) {
 			e.reply(req, Result{Err: ErrSource})
 		} else if e.armed {
 			e.reply(req, Result{Err: fmt.Errorf("self-test is disarmed-only")})
+		} else if e.moving() {
+			e.reply(req, Result{Err: ErrMoving}) // never re-home under a ladder or jog
+		} else if !e.gateOpen || e.inFlight != nil {
+			// A frame sent inside a settle/reply window would replace the
+			// ladder's timer and wedge it; a re-home is never urgent — retry.
+			e.reply(req, Result{Err: ErrBusy})
 		} else {
 			e.log("SELF-TEST: head will re-home — KEEP CABLES CLEAR")
-			e.tx(pelco.SelfTestFrame(e.cfg.Addr), "self-test (preset call 125)")
-			e.reply(req, Result{})
+			if e.tx(pelco.SelfTestFrame(e.cfg.Addr), "self-test (preset call 125)") {
+				// The re-home invalidates every readback we hold: the arm
+				// gate must not accept a pre-re-home position as fresh.
+				// Factory defaults also restore the periodic self-check.
+				e.havePan, e.haveEl = false, false
+				e.selfCheck = "on"
+				e.log("self-test sent: readback invalidated; periodic self-check is back ON — press c to re-disable")
+				e.publish()
+				e.reply(req, Result{})
+			} else {
+				// tx recorded the write error; the reply must not claim a
+				// frame that never left the wire.
+				e.reply(req, Result{Err: ErrTxFail})
+			}
+		}
+
+	case SelfCheckIntent:
+		if req.From != SrcTUI {
+			e.reply(req, Result{Err: ErrSource})
+		} else if it.Enable && e.armed {
+			// An armed rotator is in operational use; enabling a periodic
+			// un-prompted re-home under it is exactly the hazard the arm
+			// gate exists for.
+			e.reply(req, Result{Err: fmt.Errorf("enabling the periodic self-check is disarmed-only")})
+		} else if e.moving() {
+			// Same refusal as the self-test: a preset frame under motion is
+			// "do not", not "retry" — ErrBusy alone means retry.
+			e.reply(req, Result{Err: ErrMoving})
+		} else if !e.gateOpen || e.inFlight != nil {
+			e.reply(req, Result{Err: ErrBusy}) // a preset frame must not break a settle window
+		} else if it.Enable {
+			e.log("SELF-CHECK ENABLE: head will re-home itself UNPROMPTED while on")
+			if e.txSelfCheck(true) {
+				e.reply(req, Result{})
+			} else {
+				e.reply(req, Result{Err: ErrTxFail})
+			}
+		} else {
+			if e.txSelfCheck(false) {
+				e.reply(req, Result{})
+			} else {
+				e.reply(req, Result{Err: ErrTxFail})
+			}
 		}
 
 	case JogSpeedIntent:
@@ -332,16 +392,60 @@ func (e *Engine) handle(req Request) {
 		} else {
 			e.lastReopen = time.Now()
 			e.deviceOn = false
+			e.selfCheckUnknown() // reopened line: the head's self-check is unproven
 			e.publish()
 			// The old reader died with the old fd: a reopened port is deaf
 			// unless a fresh reader generation picks it up.
 			e.startReader()
+			e.resendSelfCheckDisable() // the head may have power-cycled meanwhile
 		}
 		e.reply(req, Result{Err: err})
 
 	default:
 		e.reply(req, Result{Err: fmt.Errorf("unhandled intent %T", req.Intent)})
 	}
+}
+
+// txSelfCheck sends one periodic-self-check preset frame and models the
+// result — the ONE site that may change e.selfCheck (never claim a state
+// change the wire never saw). A write that left the USB adapter proves
+// nothing on RS-485: the head can be unpowered. The claim lands only when
+// the head has proven it is alive; otherwise it pends until the first
+// checksum-valid frame arrives (onRX).
+func (e *Engine) txSelfCheck(enable bool) bool {
+	f, note, val := pelco.SelfCheckDisableFrame(e.cfg.Addr), "disable periodic self-check (preset set 105)", "off"
+	if enable {
+		f, note, val = pelco.SelfCheckEnableFrame(e.cfg.Addr), "enable periodic self-check (preset call 105)", "on"
+	}
+	if !e.tx(f, note) {
+		return false // tx recorded the write error; claim nothing
+	}
+	if e.deviceOn {
+		e.selfCheck = val
+		e.publish()
+	} else {
+		e.selfCheckPend = val // land the claim when the head proves it is alive
+	}
+	return true
+}
+
+// selfCheckUnknown drops the model to "unknown": the head's actual self-check
+// is unproven — the link died, the port reopened, the head may have
+// power-cycled to factory defaults (self-check on).
+func (e *Engine) selfCheckUnknown() {
+	e.selfCheck, e.selfCheckPend = "unknown", ""
+}
+
+// resendSelfCheckDisable re-sends the connect-time disable after a successful
+// reopen: the head may have power-cycled while the line was down. Skipped
+// under motion or a closed gate — a preset frame must not break a ladder's
+// settle window; the model then stays "unknown" until the operator re-sends
+// with the TUI c key.
+func (e *Engine) resendSelfCheckDisable() {
+	if e.moving() || !e.gateOpen || e.inFlight != nil {
+		return
+	}
+	e.txSelfCheck(false)
 }
 
 func (e *Engine) reply(req Request, r Result) {
@@ -605,6 +709,13 @@ func (e *Engine) onRX(chunk []byte) {
 		}
 		rx := ev.Frame
 		e.deviceOn = true
+		// First proof of life since a self-check frame went out: the
+		// sent-but-unproven claim becomes fact.
+		if e.selfCheckPend != "" {
+			e.selfCheck = e.selfCheckPend
+			e.selfCheckPend = ""
+			e.publish()
+		}
 		switch rx.Op() {
 		case pelco.OpRspPan:
 			e.gotReadback('p', pelco.WordToDeg(rx.Word()), rx)
@@ -623,7 +734,6 @@ func (e *Engine) gotReadback(axis byte, deg float64, rx pelco.RxFrame) {
 	} else {
 		e.physEl, e.tiltAt, e.haveEl = deg, now, true
 	}
-	e.protocol = envName(rx.P)
 	e.emit(Event{Log: fmt.Sprintf("RX %s  %c %.2f°", rx.Hex(), axis, deg), RX: &rx, Dir: "RX"})
 
 	q := e.inFlight
@@ -684,16 +794,14 @@ func (e *Engine) ladderVerify(deg float64) {
 
 // --- wire TX -----------------------------------------------------------------
 
-// tx sends one frame in the configured envelope ([serial] pelco_p selects the
-// 8-byte Pelco-P wrap; RX is always adaptive). A failed write must unwind the
+// tx sends one frame on the wire. A failed write must unwind the
 // state machine, not wedge it: the caller may already have stored an inFlight
 // query or a ladder phase that would otherwise never resolve, because no
-// timer is armed when nothing went out on the wire.
-func (e *Engine) tx(f pelco.Frame, note string) {
+// timer is armed when nothing went out on the wire. The return reports whether
+// the write succeeded, so callers that model device-side state (the periodic
+// self-check) do not claim a frame that never left.
+func (e *Engine) tx(f pelco.Frame, note string) bool {
 	wire := []byte(f[:])
-	if e.cfg.PelcoP {
-		wire = pelco.WrapP(f)
-	}
 	if err := e.tr.Write(wire); err != nil {
 		e.deviceOn = false
 		if q := e.inFlight; q != nil {
@@ -712,12 +820,13 @@ func (e *Engine) tx(f pelco.Frame, note string) {
 		e.jogOp = 0
 		e.gateOpen = true // no frame on the wire: the gate has nothing to protect
 		e.setError("serial write: " + err.Error())
-		return
+		return false
 	}
 	rx := pelco.RxFrame{Frame: f, Wire: wire}
 	e.emit(Event{Log: "TX " + rx.Hex() + "  " + note, RX: &rx, Dir: "TX"})
 	e.gateOpen = false
 	e.armTick(serialio.IdleGap(e.cfg.Baud), tickFrameGap)
+	return true
 }
 
 func (e *Engine) flushPartials() {
@@ -731,6 +840,10 @@ func (e *Engine) flushPartials() {
 // --- snapshot fan-out ----------------------------------------------------------
 
 func (e *Engine) publish() {
+	selfCheck := e.selfCheck
+	if selfCheck == "" {
+		selfCheck = "unknown" // canonical tri-state: "" must never leave the engine
+	}
 	snap := Snapshot{
 		Ts:           time.Now(),
 		JogSpeed:     e.jogSpeed,
@@ -738,9 +851,9 @@ func (e *Engine) publish() {
 		Offset:       e.offset,
 		Moving:       e.moving(),
 		SetStatus:    e.setStat,
+		SelfCheck:    selfCheck,
 		DeviceOnline: e.deviceOn,
 		Error:        e.errStr,
-		Protocol:     e.protocol,
 		Az:           math.NaN(), El: math.NaN(),
 		PhysAz: math.NaN(), PhysEl: math.NaN(),
 		TargetAz: math.NaN(), TargetEl: math.NaN(),
@@ -791,14 +904,6 @@ func (e *Engine) setError(msg string) {
 // offset — both real motion with garbage targets.
 func finiteDeg(v float64) bool {
 	return !math.IsNaN(v) && !math.IsInf(v, 0)
-}
-
-// envName names a wire envelope.
-func envName(p bool) string {
-	if p {
-		return "P"
-	}
-	return "D"
 }
 
 // opForAxis is the position opcode for a ladder axis.

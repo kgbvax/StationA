@@ -1,6 +1,6 @@
 // Package ui is pelcobridge2's Bubble Tea TUI: header, position pane, wire-log
-// viewport, and the prompt state machine (arm azimuth entry, self-test
-// confirmation).
+// viewport, and the prompt state machine (arm azimuth entry, self-test and
+// self-check confirmations).
 //
 // Hold-to-move: Bubble Tea has no key-release events, so each jog keypress arms
 // a ONE-SHOT tea.Tick(jog_hold); terminal auto-repeat refreshes the deadline and
@@ -32,9 +32,10 @@ import (
 type promptKind int
 
 const (
-	promptNone     promptKind = iota
-	promptArm                 // enter the true azimuth the head is pointing at
-	promptSelfTest            // two-stage: y/n, then type RIPCABLES
+	promptNone      promptKind = iota
+	promptArm                  // enter the true azimuth the head is pointing at
+	promptSelfTest             // y/n only: the factory self-test (re-homes head)
+	promptSelfCheck            // y/n only: enable the periodic self-check
 )
 
 // jogHoldMsg fires when the hold-to-move window expires; the sequence number
@@ -46,6 +47,15 @@ type queryMsg struct {
 	axis string // "azimuth" | "elevation"
 	deg  float64
 	err  error
+}
+
+// selfMsg carries one self-check/self-test round-trip's outcome. The okStatus
+// carries the safety text ("STAND CLEAR"), so it lives in the message, not in
+// the key handler.
+type selfMsg struct {
+	kind     string // status-line label on refusal
+	okStatus string // status line on success
+	err      error
 }
 
 // armMsg carries the arm flow's outcome.
@@ -72,10 +82,9 @@ type model struct {
 	logView viewport.Model
 	log     []string
 
-	input     textinput.Model
-	prompt    promptKind
-	selfStage int // self-test confirm stage: 0 = y/n, 1 = type RIPCABLES
-	help      bool
+	input  textinput.Model
+	prompt promptKind
+	help   bool
 
 	holdSeq int
 	status  string
@@ -163,6 +172,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = "query " + msg.axis + ": " + msg.err.Error()
 		} else {
 			m.status = fmt.Sprintf("%s = %.2f°", msg.axis, msg.deg)
+		}
+		m.layout()
+		return m, nil
+
+	case selfMsg:
+		if msg.err != nil {
+			// A refused intent must never read as "sent": the engine's
+			// verdict (busy, moving, armed, write failure) is the news.
+			m.status = msg.kind + " refused: " + msg.err.Error()
+		} else {
+			m.status = msg.okStatus
 		}
 		m.layout()
 		return m, nil
@@ -265,8 +285,21 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.prompt = promptSelfTest
-		m.selfStage = 0
 		m.status = "SELF-TEST re-homes the head — KEEP CABLES CLEAR.  Send? y/n"
+		return m, nil
+	case "c": // safe direction: restoring the station default needs no confirm.
+		// Always sent — "off" in the pane is the engine's liveness-gated
+		// claim, not proof, so a re-send is cheap and never wrong.
+		m.status = "self-check disable…"
+		return m, selfCmd(m.opts.ReqCh, "self-check disable", "self-check disabled (preset set 105)",
+			control.SelfCheckIntent{Enable: false})
+	case "C":
+		if m.snap != nil && m.snap.Armed {
+			m.status = "enabling the self-check is disarmed-only — disarm first"
+			return m, nil
+		}
+		m.prompt = promptSelfCheck
+		m.status = "SELF-CHECK ON: head re-homes itself UNPROMPTED while on.  Enable? y/n"
 		return m, nil
 	case "d":
 		m.submit(control.DisarmIntent{})
@@ -301,44 +334,35 @@ func (m model) handlePromptKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 	case promptSelfTest:
-		switch {
-		case m.selfStage == 0:
-			if key == "y" || key == "Y" {
-				m.selfStage = 1
-				m.input.Prompt = "type RIPCABLES > "
-				m.input.Reset()
-				m.input.Focus()
-				m.status = "This fires preset call 125: the head re-homes and can RIP CABLES."
-				return m, textinput.Blink
-			}
+		if key == "y" || key == "Y" {
 			m.cancelPrompt()
-			m.status = "self-test cancelled"
-			m.layout()
-			return m, nil
-		default: // stage 1: type-the-word confirmation
-			if key == "enter" {
-				if strings.TrimSpace(m.input.Value()) == "RIPCABLES" {
-					m.cancelPrompt()
-					m.submit(control.SelfTestIntent{})
-					m.status = "SELF-TEST sent — stand clear"
-				} else {
-					m.cancelPrompt()
-					m.status = "self-test cancelled (confirmation text mismatch)"
-				}
-				m.layout()
-				return m, nil
-			}
-			var cmd tea.Cmd
-			m.input, cmd = m.input.Update(msg)
-			return m, cmd
+			m.status = "SELF-TEST…"
+			return m, selfCmd(m.opts.ReqCh, "self-test", "SELF-TEST sent — head re-homing, STAND CLEAR",
+				control.SelfTestIntent{})
 		}
+		m.cancelPrompt()
+		m.status = "self-test cancelled"
+		m.layout()
+		return m, nil
+
+	case promptSelfCheck:
+		if key == "y" || key == "Y" {
+			m.cancelPrompt()
+			m.status = "self-check enable…"
+			return m, selfCmd(m.opts.ReqCh, "self-check enable",
+				"SELF-CHECK enabled — head re-homes itself UNPROMPTED while on",
+				control.SelfCheckIntent{Enable: true})
+		}
+		m.cancelPrompt()
+		m.status = "self-check enable cancelled"
+		m.layout()
+		return m, nil
 	}
 	return m, nil
 }
 
 func (m *model) cancelPrompt() {
 	m.prompt = promptNone
-	m.selfStage = 0
 	m.input.Reset()
 	m.input.Blur()
 }
@@ -358,6 +382,29 @@ func (m model) jog(dir control.Dir) (model, tea.Cmd) {
 		func() tea.Msg { _ = control.Submit(reqCh, control.SrcTUI, it); return nil },
 		tea.Tick(m.opts.JogHold, func(time.Time) tea.Msg { return jogHoldMsg(seq) }),
 	)
+}
+
+// selfCmd runs one self-check/self-test round-trip with ErrBusy retries: the
+// engine answers "busy" while a frame gap, reply window, or settle window is
+// open — "retry", never a refusal. A blocking Call, not a fire-and-forget
+// submit, so the engine's actual verdict reaches the status line: a refused
+// intent must never read as "sent".
+func selfCmd(reqCh chan<- control.Request, kind, okStatus string, it control.Intent) tea.Cmd {
+	return func() tea.Msg {
+		var err error
+		deadline := time.Now().Add(2 * time.Second)
+		for {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			r := control.Call(ctx, reqCh, control.SrcTUI, it)
+			cancel()
+			err = r.Err
+			if err != control.ErrBusy || time.Now().After(deadline) {
+				break
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+		return selfMsg{kind: kind, okStatus: okStatus, err: err}
+	}
 }
 
 // queryCmd runs one readback round-trip off the update loop.

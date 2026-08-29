@@ -1,20 +1,21 @@
 # 03 — Component spec: 1:6 coaxial antenna switch (slot `muehle/hf/ant-switch`)
 
-This document specifies the station's coaxial antenna switch: an embedded-firmware component
-that connects exactly one of six physical antenna ports (or none) to the single coaxial feed
-line ("coax" — the shielded cable carrying radio-frequency signals) that runs to the
-transceiver. The reader needs no amateur-radio background: **amateur radio** is the licensed
-hobby of two-way radio communication; a **transceiver** ("TRX") is the radio device used to
-transmit and receive; **RF** means radio-frequency energy; **TX** means transmitting, **RX**
-means receiving. The switch is a deliberately *dumb actuator*: it selects a port when told to,
-reports what is selected, and holds **zero policy** about which antenna is appropriate for the
-current frequency — that decision belongs to the antenna-selection reconciler (a separate
-component, slot `muehle/hf/antenna-select`; see `03-components/antennaselect.md`). This
-document is the normative behavior contract for any re-implementation, independent of the
-reference technology (which is ESPHome firmware on an ESP32-S3 relay board, described
-non-normatively in §13). Terms from the bus architecture (**MQTT**, **broker**, **retained
-message**, **slot**, **plane**, **LWT**) are defined in `02-interface-spec.md` §1–§3 and are
-used here per that document; brief reminders are given at first use anyway.
+This document specifies the station's coaxial antenna switch. It is an embedded-firmware
+component. It connects exactly one of six physical antenna ports (or none) to the single
+coaxial feed line ("coax" — the shielded cable carrying radio-frequency signals) that runs
+to the transceiver. The reader needs no amateur-radio background: **amateur radio** is the
+licensed hobby of two-way radio communication. A **transceiver** ("TRX") is the radio device
+used to transmit and receive. **RF** means radio-frequency energy. **TX** means transmitting.
+**RX** means receiving. The switch is a deliberately *dumb actuator*. It selects a port when
+told to. It reports the selected port. It applies **zero policy** about which antenna is
+correct for the current frequency. That decision belongs to the antenna-selection reconciler
+(a separate component, slot `muehle/hf/antenna-select` — see
+`03-components/antennaselect.md`). This document is the normative behavior contract for any
+re-implementation, independent of the reference technology. The reference technology is
+ESPHome firmware on an ESP32-S3 relay board (§13 describes it non-normatively).
+`02-interface-spec.md` §1–§3 defines the terms from the bus architecture (**MQTT**,
+**broker**, **retained message**, **slot**, **plane**, **LWT**). This document uses those
+terms as that document gives them. Brief reminders also come at first use.
 
 ---
 
@@ -24,125 +25,146 @@ The station has three antennas but one coaxial feed line to the radio:
 
 - **Ultrabeam** — a motorized beam (directional) antenna, tuned by a separate controller
   (slot `muehle/hf/ant-ctrl`, see `03-components/ultrabridge.md`).
-- **80/40 m fan dipole** — a passive wire antenna resonant on the 80 m and 40 m bands.
+- **80/40 m fan dipole** — a passive wire antenna resonant on the 80 m and 40 m bands
+  (frequency ranges named for their wavelength — about 3.5 MHz and 7 MHz).
 - **Dummy load** — a heat-dissipating resistor used as a safe, non-radiating test load
   (transmitting into it radiates nothing, so it is used for testing).
 
-A **coaxial antenna switch** is an electromechanical relay matrix that connects exactly one
-of its six physical ports — each wired to one antenna (or the dummy load) — to the feed line
-at a time. The component specified here is the firmware that runs on the switching hardware
-itself: there is no separate daemon process and no upstream device behind a serial or network
-link — the firmware *is* the bridge and the device in one unit.
+A **coaxial antenna switch** is an electromechanical relay matrix. It connects exactly one
+of its six physical ports to the feed line at a time. Each port goes to one antenna (or the
+dummy load). The component specified here is the firmware that runs on the switching
+hardware itself. There is no separate daemon process and no upstream device behind a serial
+or network link. The firmware *is* the bridge and the device in one unit.
 
 Responsibilities of the component:
 
 1. Accept one command over the station MQTT bus: select a port (one of six, or "off").
-2. Enforce **exclusive selection**: at most one port relay energized at any instant.
-3. Report, as retained MQTT state, (a) which port is selected — derived by reading the relay
-   state back, never by echoing the command — and (b) whether the relay move has **settled**
-   (finished moving, conservatively timed; see §6.3).
-4. Come up in the all-off position after any power loss and self-heal to the last commanded
+2. Enforce **exclusive selection**: energize at most one port relay at any instant.
+3. Report the selected port as retained MQTT state. Derive it by reading the relay state
+   back, never by echoing the command. Also report whether the relay move has **settled**
+   (finished moving, conservatively timed — see §6.3).
+4. Come up in the all-off position after any power loss. Self-heal to the last commanded
    port by re-executing the retained command on reconnect (§6.1, §6.2).
 
 Explicitly **not** its responsibilities:
 
-- **No antenna knowledge.** The firmware knows nothing about which antenna is wired to which
+- **No antenna knowledge.** The firmware knows nothing about which antenna goes to which
   port. The port↔antenna mapping lives entirely in the reconciler's configuration
-  (§9.1). A re-implementation SHALL NOT hardcode any port↔antenna assignment.
+  (§9.1). A re-implementation must not hardcode any port↔antenna assignment.
 - **No transmit (TX) gating.** The switch has no RF sensing and never refuses a command
-  because the station is transmitting. Sequencing port changes to occur only while receiving
-  ("**cold switching**" — changing the relay matrix while no transmit RF is flowing, to avoid
-  arcing the relay contacts) is the **commander's** responsibility. The switch declares this
-  in its capability block via `hot_switch: false` (§4.2) and executes any valid command
-  immediately. See `06-safety.md` for the station-wide cold-switch sequencing rules.
+  because the station transmits. The **commander** must sequence port changes to happen
+  only while the station receives ("**cold switching**" — changing the relay matrix while
+  no transmit RF flows, so the relay contacts do not arc). This is the commander's
+  responsibility. The switch declares this in its capability block through
+  `hot_switch: false` (§4.2) and executes any valid command immediately. See
+  `06-safety.md` for the station-wide cold-switch sequencing rules.
 
 The station's power sequencer (`powerseq`, slot `muehle/hf/power-seq`,
-see `03-components/powerseq.md`) depends on this slot's liveness during station start-up: the
-switch is powered from the station's 13.8 V DC supply rail, and the sequencer waits for this
-slot's `/status` to go `online` after power-on before proceeding. The exact boot topic order
-below is therefore load-bearing beyond this component.
+see `03-components/powerseq.md`) depends on this slot's liveness during station start-up.
+The switch gets power from the station's 13.8 V DC supply rail. The sequencer waits for
+this slot's `/status` to go `online` after power-on before it continues. The `/status`
+birth timing is therefore load-bearing beyond this component. The relative order of
+`/meta` and `/state` after that birth is not load-bearing (§5.1).
 
 ---
 
 ## 2. Hardware interface (what the firmware drives)
 
-This section is descriptive of the deployed hardware and is normative only where marked: a
-re-implementation on different hardware must preserve the *behavior* (§4–§8), while the
-board, pin numbers, and expander chip may change (§13).
+This section describes the deployed hardware. It is normative only where marked. A
+re-implementation on different hardware must preserve the *behavior* (§4–§8). But the
+board, the pin numbers, and the expander chip can change (§13).
 
 **Board**: WaveShare ESP32-S3-POE-ETH-8DI-8DO — an ESP32-S3 microcontroller module
-(16 MB flash, 8 MB PSRAM) on a carrier board with 8 relay outputs (relay = an electrically
-operated electromechanical switch; the coil is driven by a logic pin, the contacts switch the
-coax line), 8 opto-isolated digital inputs, an RS-485 UART port, a hardware real-time clock
-chip, one RGB LED, and a buzzer. Network transport is Wi-Fi.
+(16 MB flash, 8 MB PSRAM — PSRAM is an extra external RAM chip) on a carrier board. The
+carrier board has 8 relay outputs
+(a relay is an electrically operated electromechanical switch) and 8 opto-isolated digital
+inputs. It also has an RS-485 UART port (RS-485 is a differential multi-drop serial-bus
+standard), a hardware real-time clock chip, one RGB LED, and
+a buzzer. A logic pin drives each relay coil. The relay contacts switch the coax line.
+Network transport is Wi-Fi. The board also carries a W5500 wired-Ethernet controller
+chip. The reference firmware disables that option: its Ethernet block exists only as
+comments (`clk_pin: GPIO15`, `mosi_pin: GPIO13`, `miso_pin: GPIO14`, `cs_pin: GPIO16`,
+`interrupt_pin: GPIO12`). A re-implementation can use wired Ethernet instead of Wi-Fi.
+Then it must set the `/meta` `link` value accordingly (§3.2). The `link` field is an
+informational transport descriptor, not a behavioral contract.
 
-**Relay drive — I/O mapping (normative for a re-implementation of this hardware, or wherever
-a port-multiplexing expander is used)**: the 8 relay coils are not driven by the
-microcontroller's own pins but through a **PCA9554** I²C GPIO expander (a small chip that
-adds remotely-readable/writable I/O pins over a two-wire bus) at address `0x20`
-(SCL = GPIO41, SDA = GPIO42). Expander pins 0 and 1 drive board relays 1 and 2, which are
-**not part of the antenna switch function** (they exist as spare toggles). The six switch
-positions use expander pins 2–7 → board relays 3–8 → logical ports 1–6:
+**Relay drive — I/O mapping (normative for a re-implementation of this hardware, or
+wherever a design uses a port-multiplexing expander)**: the microcontroller does not drive
+the 8 relay coils with its own pins. A **PCA9554** I²C GPIO expander (a small chip that
+adds remotely-readable/writable I/O pins over a two-wire bus. GPIO = general-purpose
+input/output pin) at address `0x20` (SCL = the bus clock line, on GPIO41. SDA = the bus
+data line, on GPIO42) drives them. Expander pins 0 and 1 drive board relays 1 and 2,
+which are **not part of the antenna switch function** (they exist as spare toggles). The
+six switch positions use expander pins 2–7 → board relays 3–8 → logical ports 1–6:
 
 | Logical port | MQTT value string | Board relay | PCA9554 expander pin |
 |---|---|---|---|
-| none (feed line unconnected) | `off` | — (all relays off) | — |
-| port 1 | `port1` | Relay 3 | 2 |
-| port 2 | `port2` | Relay 4 | 3 |
-| port 3 | `port3` | Relay 5 | 4 |
-| port 4 | `port4` | Relay 6 | 5 |
-| port 5 | `port5` | Relay 7 | 6 |
-| port 6 | `port6` | Relay 8 | 7 |
-| (spare, not part of the switch) | — | Relay 1 | 0 |
-| (spare, not part of the switch) | — | Relay 2 | 1 |
+| none (feed line unconnected) | `off` | — (all relays off) | —. |
+| port 1 | `port1` | Relay 3 | 2. |
+| port 2 | `port2` | Relay 4 | 3. |
+| port 3 | `port3` | Relay 5 | 4. |
+| port 4 | `port4` | Relay 6 | 5. |
+| port 5 | `port5` | Relay 7 | 6. |
+| port 6 | `port6` | Relay 8 | 7. |
+| (spare, not part of the switch) | — | Relay 1 | 0. |
+| (spare, not part of the switch) | — | Relay 2 | 1. |
 
-The command value→relay mapping is fixed: `"off"` → no relay; `"port1"`→relay 3 …
+The contract gives the command value→relay mapping as fixed: `"off"` → no relay,
+`"port1"`→relay 3, …
 `"port6"`→relay 8 (§5).
 
 **No contact feedback (normative)**: the expander drives the relay *coils* and there is no
-input wired back from the relay *contacts*. The firmware therefore cannot verify that a
-relay's contacts actually closed or remained closed. Consequences that the behavior contract
-must state honestly (§6.4, §8): a jammed or failed relay is invisible on the bus; `selected`
-reports the driven coil state (a best-effort readback), not verified contact closure, and
-`settled` becomes `true` on the 200 ms timer regardless of what the contacts physically did.
-A re-implementation SHALL treat `selected` as *commanded-coil readback*, and SHALL NOT
-represent it as verified contact state. If new hardware provides contact feedback, that is an
-improvement the consumers can benefit from, but the wire format stays the same.
+input wired back from the relay *contacts*. The firmware therefore cannot check that a
+relay's contacts actually closed or stayed closed. The behavior contract must state these
+consequences honestly (§6.4, §8). A jammed or failed relay is invisible on the bus.
+`selected` reports the driven coil state (a best-effort readback), not confirmed contact
+closure. `settled` becomes `true` on the 200 ms timer, no matter what the contacts
+physically did. A re-implementation must treat `selected` as *commanded-coil readback*. It
+must not present it as confirmed contact state. If new hardware provides contact feedback,
+that is an improvement the consumers can benefit from, but the wire format stays the same.
 
 **Other on-board hardware** (configured in the reference firmware but unused by the switch
-function): spare relays 1–2 as plain toggles; buzzer on GPIO48; WS2812 RGB LED on GPIO38;
-8 digital inputs with pull-ups on GPIOs 47, 40, 39, 5, 6, 7, 1, 2; RS-485 UART
-(TX GPIO17 / RX GPIO18, 9600 baud, no protocol attached); PCF85063 hardware RTC on the same
-I²C bus. These are free to drop or keep in a re-implementation.
+function):
+
+- spare relays 1–2 as plain toggles.
+- buzzer on GPIO48.
+- WS2812 RGB LED on GPIO38.
+- 8 digital inputs with pull-ups on GPIOs 47, 40, 39, 5, 6, 7, 1, 2.
+- RS-485 UART (TX GPIO17 / RX GPIO18, 9600 baud, no protocol attached).
+- PCF85063 hardware RTC on the same I²C bus.
+
+A re-implementation can drop these or keep them.
 
 ---
 
 ## 3. MQTT presence — topics
 
-Connects to the station MQTT broker (a message server that fans published messages out to
-subscribers) at `192.168.1.50:1883` (plain TCP; user `hf`; see §11 for the planned broker
-migration), MQTT client id `ant-switch` (a fixed string, not suffixed by MAC address — the
-single-device assumption this encodes is listed as a constraint in §12.2), with a
-**persistent session** (`clean_session: false`), so the broker keeps the subscription and
-queued messages across reconnects.
+The firmware connects to the station MQTT broker (a message server that fans published
+messages out to subscribers) at `192.168.1.50:1883` (plain TCP, user `hf` — see §11 for the
+planned broker migration). The MQTT client id is `ant-switch` (a fixed string, not suffixed
+by MAC address). §12.2 lists the single-device assumption that this encodes as a
+constraint. The session is **persistent** (`clean_session: false`). The broker therefore
+keeps the subscription and the queued messages across reconnects.
 
-All per-entity automatic topics of the reference framework are suppressed; the bus carries
+The reference framework disables all per-entity automatic topics. The bus then carries
 **exactly four topics**, all under the slot address `muehle/hf/ant-switch`. A "slot" is one
-component's address on the bus; the four "planes" (`meta`, `state`, `status`, `cmd`) are
-defined in `02-interface-spec.md` §2.
+component's address on the bus. `02-interface-spec.md` §1.2 defines the four "planes"
+(`meta`, `state`, `status`, `cmd`). **QoS 1** is an MQTT quality-of-service level: the
+broker re-transmits a message until the receiver acknowledges it. Every QoS 1 message
+therefore arrives at least once.
 
 | Topic (exact) | Direction | Retained | QoS | Payload |
 |---|---|---|---|---|
-| `muehle/hf/ant-switch/meta` | switch → bus | yes | 1 | JSON identity/capability block (§4.2) |
-| `muehle/hf/ant-switch/state` | switch → bus | yes | 1 | JSON state snapshot (§4.3) |
-| `muehle/hf/ant-switch/status` | switch → bus | yes | 1 | plain string `online` / `offline` (§4.1) |
-| `muehle/hf/ant-switch/cmd` | bus → switch (subscribed, QoS 1) | retained **by the commander**, not by the switch | 1 | JSON `{"select":"<value>"}` (§5) |
+| `muehle/hf/ant-switch/meta` | switch → bus | yes | 1 | JSON identity/capability block (§4.2). |
+| `muehle/hf/ant-switch/state` | switch → bus | yes | 1 | JSON state snapshot (§4.3). |
+| `muehle/hf/ant-switch/status` | switch → bus | yes | 1 | plain string `online` / `offline` (§4.1). |
+| `muehle/hf/ant-switch/cmd` | bus → switch (subscribed, QoS 1) | retained **by the commander**, not by the switch | 1 | JSON `{"select":"<value>"}` (§5). |
 
 ### 3.1 `/status` — liveness
 
-Liveness uses MQTT's **Last Will and Testament** (LWT): a message the client registers with
-the broker at connect time, which the broker publishes automatically if the client disappears
-without a clean disconnect (power loss, crash, Wi-Fi drop).
+Liveness uses MQTT's **Last Will and Testament** (LWT). The client registers this message
+with the broker at connect time. The broker publishes it automatically if the client
+disappears without a clean disconnect (power loss, crash, Wi-Fi drop).
 
 - On every MQTT (re)connect the switch publishes: topic `muehle/hf/ant-switch/status`,
   payload `online`, QoS 1, retained ("birth message").
@@ -150,27 +172,30 @@ without a clean disconnect (power loss, crash, Wi-Fi drop).
 - On an orderly shutdown the firmware itself publishes `offline` (retained, QoS 1) before
   disconnecting.
 
-There is no periodic heartbeat topic; state changes (§4.3) are the only other traffic.
-**This slot has no `device_online` field** (the second liveness layer most other slots carry
-in `/state` for the health of a *device behind* the bridge): the firmware and the device are
-the same unit, so `/status` alone is the liveness signal for this slot. Consumers apply the
-station's two-layer liveness rule (`02-interface-spec.md` §5) by treating this slot as
-single-layer: `/status` = `online` is the only availability check available.
+There is no periodic heartbeat topic. State changes (§4.3) are the only other traffic.
+**This slot has no `device_online` field** (the second liveness layer most other slots
+carry in `/state` for the health of a *device behind* the bridge). The firmware and the
+device are the same unit. `/status` alone is therefore the liveness signal for this slot.
+Consumers apply the station's two-layer liveness rule (`02-interface-spec.md` §5) by
+treating this slot as single-layer. `/status` = `online` is the only availability check
+they can do.
 
-Station-wide caveat (from `02-interface-spec.md` §5, repeated because it applies here): on a
-*clean* process shutdown with no explicit offline publish, the broker does not fire the LWT
-and a retained `/status` of `online` can persist for a stopped component. The reference
-firmware does publish `offline` on orderly shutdown, so the stale-online risk here is limited
-to firmware that halts without reaching its shutdown path (e.g. a hard fault); consumers
-SHALL NOT treat a retained `online` alone as proof of current availability.
+Station-wide caveat (from `02-interface-spec.md` §5, repeated because it applies here): on
+a *clean* process shutdown with no explicit offline publish, the broker does not fire the
+LWT. A retained `/status` of `online` can then persist for a stopped component. The
+reference firmware does publish `offline` on orderly shutdown. The stale-online risk here
+is therefore limited to firmware that halts before it reaches its shutdown path (a hard
+fault, for example). Consumers must not treat a retained `online` alone as proof of
+current availability.
 
 ### 3.2 `/meta` — identity and capability block
 
-Published once per connect cycle, retained, QoS 1, after a deliberate **100 ms delay from
-connect** (a connect-window jitter guard; the value is a default, not protocol — a
-re-implementation may choose a different guard as long as `/meta` is published promptly after
-connect and before any consumer needs it). Exact payload (field names and values normative;
-the `device.model` free-text string may differ for different hardware):
+The switch publishes `/meta` once per connect cycle, retained, QoS 1, after a deliberate
+**100 ms delay from connect** (a connect-window jitter guard). The delay value is a
+default, not protocol. A re-implementation can choose a different guard if `/meta` still
+appears promptly after connect and before any consumer needs it. Exact payload follows
+(field names and values normative, except that the `device.model` free-text string can
+differ for different hardware):
 
 ```json
 {"schema":"1.0","role":"ant-switch","device":{"model":"WaveShare ESP32-S3-POE-ETH-8DI-8DO (1:6 relay switch)"},"link":"wifi","location":"bauwagen","capabilities":{"ports":[1,2,3,4,5,6],"off":true,"exclusive":true,"hot_switch":false},"expose":{"device":{"name":"Antenna switch","model":"WaveShare ESP32-S3-POE-ETH-8DI-8DO (1:6 relay switch)"},"fields":[{"key":"selected","name":"Selected port","type":"enum","options":["off","port1","port2","port3","port4","port5","port6"],"writable":true,"command":{"value_key":"select","value_type":"string"}},{"key":"settled","name":"Settled","type":"boolean"}]}}
@@ -185,46 +210,48 @@ Semantics a re-implementation must reproduce:
 - `location`: `"bauwagen"` — German for the trailer/wagon building that houses the station.
 - `capabilities.ports`: array of integers `[1,2,3,4,5,6]` — the selectable port numbers.
 - `capabilities.off: true` — an explicit no-antenna position exists (all relays open).
-- `capabilities.exclusive: true` — exactly one port may be connected at any time; enforced
-  by construction (§6.2).
-- `capabilities.hot_switch: false` — **load-bearing**: declares that transmit RF must NOT be
-  flowing while the port changes; the commander must sequence changes into receive-only
-  periods. The switch itself will not enforce this (§1).
+- `capabilities.exclusive: true` — exactly one port can connect at any time. The method of
+  §6.2 enforces this by construction.
+- `capabilities.hot_switch: false` — **load-bearing**: transmit RF must not flow while the
+  port changes. The commander must sequence changes into receive-only periods. The switch
+  itself does not enforce this (§1).
 - `expose`: the consumer-neutral field surface (used by the station's Home Assistant
   discovery renderer, slot `muehle/hf/discovery`) with two fields:
-  - `selected` — writable enum with option strings `off`, `port1` … `port6`; its
-    `command.value_key` is `"select"`, meaning a command payload puts the chosen value under
-    the JSON key `"select"` as a string (§5). The enum option *strings* are inlined here
-    (rather than derived from `capabilities.ports` integers) because the shapes differ.
+  - `selected` — writable enum with option strings `off`, `port1` … `port6`. Its
+    `command.value_key` is `"select"`. A command payload puts the chosen value under the
+    JSON key `"select"` as a string (§5). The descriptor inlines the enum option *strings*
+    here, instead of deriving them from the `capabilities.ports` integers, because the
+    shapes differ.
   - `settled` — read-only boolean.
 
-Note on the station-wide command-payload convention (`02-interface-spec.md` §4): commands
+Note on the station-wide command-payload convention (`02-interface-spec.md` §1.4): commands
 normally look like `{"action":"<name>","value":"<string>"}`. This slot uses the
-**value-key-only** form documented there: the expose descriptor names `value_key:"select"`
-and carries no `action`, so the payload is `{"select":"<value>"}` with the argument as a
-string under that key. This is conformant, not an exception.
+**value-key-only** form documented there. The expose descriptor names `value_key:"select"`
+and carries no `action`. The payload is therefore `{"select":"<value>"}`, with the
+argument as a string under that key. This is conformant, not an exception.
 
 ### 3.3 `/state` — live state snapshot
 
-Retained, QoS 1, JSON, published **only when `selected` or `settled` changes** — there is no
-periodic republication (consumers must not expect a heartbeat on this topic; see the
-pa-arm heartbeat requirement in `06-safety.md` for why other slots differ). Exact shape:
+The switch publishes `/state` retained, QoS 1, JSON, **only when `selected` or `settled`
+changes**. There is no periodic republication (consumers must not expect a heartbeat on
+this topic — see the pa-arm heartbeat requirement in `06-safety.md` for why other slots
+differ). Exact shape:
 
 ```json
 { "ts": "2026-07-06T12:34:56Z", "selected": "port3", "settled": true }
 ```
 
-- `ts`: string, `YYYY-MM-DDTHH:MM:SSZ`, UTC. In the reference implementation this clock comes
-  from a Home Assistant time sync over the vendor's native API — a fragility listed in
-  §12.1; a re-implementation should use an independent source (NTP — network time protocol —
-  or the on-board RTC) but SHALL keep the exact format.
+- `ts`: string, `YYYY-MM-DDTHH:MM:SSZ`, UTC. In the reference implementation this clock
+  comes from a Home Assistant time sync over the vendor's native API (a fragility — §12.1
+  lists it). A re-implementation must use an independent source (NTP — network time
+  protocol — or the on-board RTC) and must keep the exact format.
 - `selected`: string, one of `off`, `port1`, `port2`, `port3`, `port4`, `port5`, `port6`.
-  **Normative semantics**: derived by reading the six relay states back in fixed priority
-  order (port 1's relay checked first, then port 2's, … port 6's; the first relay found
-  energized wins; none energized → `off`). It is **never** an echo of the last received
-  command. Because of the no-contact-feedback hardware (§2) this is a readback of driven
-  coil state, best-effort.
-- `settled`: boolean, conservative timed guard, specified in §6.3.
+  **Normative semantics**: the firmware derives it by reading the six relay states back in
+  fixed priority order (port 1's relay first, then port 2's, up to port 6's — the first
+  energized relay wins — no energized relay → `off`). It is **never** an echo of the last
+  received command. The hardware has no contact feedback (§2). This value is therefore a
+  best-effort readback of driven coil state.
+- `settled`: boolean. §6.3 specifies the conservative timed guard.
 
 ---
 
@@ -242,37 +269,37 @@ Valid values of the `select` string: `"off"`, `"port1"`, `"port2"`, `"port3"`, `
 
 Behavior on receipt:
 
-1. Map the value to a relay: `"off"` → none; `"port1"`→relay 3; `"port2"`→relay 4;
-   `"port3"`→relay 5; `"port4"`→relay 6; `"port5"`→relay 7; `"port6"`→relay 8 (§2 table).
-2. An invalid value — anything not in the list, or a missing / non-string `select` key — is
-   **silently ignored**: no relay moves, no state publish, no error message anywhere. The
-   reference handler just returns. (Normative for wire compatibility; the absence of any
-   rejection feedback is a known defect, see §8.)
-3. The selection procedure of §6.2 runs: idempotent if the target equals the current
-   position; otherwise an exclusive move with `settled:false` published immediately and
-   `settled:true` 200 ms after the change.
+1. Map the value to a relay: `"off"` → none, `"port1"`→relay 3, `"port2"`→relay 4,
+   `"port3"`→relay 5, `"port4"`→relay 6, `"port5"`→relay 7, `"port6"`→relay 8 (§2 table).
+2. The firmware **silently ignores** an invalid value (anything not in the list, or a
+   missing / non-string `select` key). No relay moves. No state publish appears. No error
+   message appears anywhere. The reference handler just returns. (This is normative for
+   wire compatibility. The absence of any rejection feedback is a known defect — see §8.)
+3. The selection procedure of §6.2 then runs. If the target equals the current position,
+   the run is idempotent. Otherwise the firmware makes an exclusive move. It publishes
+   `settled:false` immediately and `settled:true` 200 ms after the change.
 
 **Retention of `/cmd` (normative and deliberate)**: this slot's command is an idempotent,
-position-based setpoint, so the **commander** (the antennaselect reconciler) publishes it
-**retained**. The switch never publishes to `/cmd` and never clears the retained message.
-Retention is what makes power-loss self-heal possible (§6.1) and is only safe because every
-command is idempotent; a re-implementation SHALL NOT add non-idempotent (one-shot) commands
-to this slot without breaking that contract. This is the documented exception to the
-station-wide "commands are not retained" default (`02-interface-spec.md` §4), alongside the
-other retained actuator setpoints (e.g. power switching). Note that generic bus-inspection
-tools may reject retained publishes to `/cmd` as a blanket safety rule (the station's
-`testui` tool does); operator-issued selections made through such a tool are therefore
-*not* retained and will not be replayed on a later power loss — only the reconciler's
-commands participate in self-heal.
+position-based setpoint. The **commander** (the antennaselect reconciler) therefore
+publishes it **retained**. The switch never publishes to `/cmd` and never clears the
+retained message. Retention makes power-loss self-heal possible (§6.1). It is only safe
+because every command is idempotent. A re-implementation must not add non-idempotent
+(one-shot) commands to this slot without breaking that contract. This is the documented
+exception to the station-wide "commands are not retained" default
+(`02-interface-spec.md` §1.5), alongside the other retained actuator setpoints (power
+switching, for example). Generic bus-inspection tools can reject retained publishes to
+`/cmd` as a blanket safety rule (the station's `testui` tool does). Such a tool therefore
+does not retain operator-issued selections, and the broker does not replay them on a later
+power loss. Only the reconciler's commands participate in self-heal.
 
-**Secondary (non-bus) manual surface — non-normative**: the reference firmware also exposes
-the same selection as a vendor-platform "select entity" with options `off`/`port1`…`port6`
-over its native API and a built-in web server on port 80 (bring-up/debug only). It drives the
-same selection procedure with identical semantics and never touches MQTT. Nothing in the
-station core depends on it. There are no other commands: no reboot command topic, no
-relay-pulse commands, no raw per-relay control on the bus (the six individual relay toggles
-are hidden from the external surface; the spare relays 1–2 and the buzzer are exposed natively
-but are not part of the switch function).
+**Secondary (non-bus) manual surface — non-normative**: the reference firmware also
+exposes the same selection as a vendor-platform "select entity" with options
+`off`/`port1`…`port6` over its native API. It also runs a built-in web server on port 80
+(bring-up/debug only). Both drive the same selection procedure with the same semantics and
+never touch MQTT. Nothing in the station core depends on them. There are no other
+commands: no reboot command topic, no relay-pulse commands, no raw per-relay control on
+the bus. The external surface hides the six individual relay toggles. The firmware exposes
+the spare relays 1–2 and the buzzer natively, but they are not part of the switch function.
 
 ---
 
@@ -281,19 +308,27 @@ but are not part of the switch function).
 ### 5.1 Boot / power-on (normative)
 
 1. All six port relays are **off** at boot. The reference firmware's GPIO switches default
-   to off with no position restore, and the I/O expander chip itself powers up with all
-   pins as inputs (de-energized). **After any power loss the switch comes up disconnected
+   to off with no position restore. The I/O expander chip itself powers up with all pins
+   as inputs (de-energized). **After any power loss the switch comes up disconnected
    (`selected` = `off`)** — relays never "hold last position" across a power loss.
-2. The internal settled flag starts `true` (nothing is moving).
-3. Wi-Fi associates; MQTT connects (persistent session, LWT registered).
-4. On MQTT connect, in order: birth message `/status` = `online`; after the 100 ms guard,
-   retained `/meta`; retained `/state` (`selected:"off"`, `settled:true` — unless a relay is
-   somehow already driven, in which case the readback value).
+2. The internal settled flag starts `true` (nothing moves).
+3. Wi-Fiassociates. MQTT connects (persistent session, LWT registered).
+4. On MQTT connect: birth message `/status` = `online` (the framework publishes it on
+   CONNACK). Then the switch publishes retained `/state` (`selected:"off"`,
+   `settled:true` — or the readback value if a relay is somehow already driven). Then it
+   publishes retained `/meta`, about 100 ms after connect (the guard of §3.2).
+   **Reference behavior, not a normative order**: the reference firmware starts both
+   publish tasks at connect, one after the other. Its `/state` task contains no delay and
+   finishes first. Its `/meta` task contains the 100 ms delay. The wire order is therefore
+   `/status`, then `/state`, then `/meta`. The comment in the reference YAML claims the
+   opposite order. That comment is wrong. The relative order of `/meta` and `/state` is
+   **not normative**: consumers read retained planes, so they must not depend on it. Only
+   the `/status` birth is load-bearing (§1).
 5. Because the session is persistent and the commander retains `/cmd`, the broker
    redelivers the retained command to the freshly subscribed switch. **Self-heal
    (normative)**: if the retained command names a different port than the hardware's
-   current (off) position, the switch executes the selection — it re-converges to the last
-   commanded port after a power cycle with no action from the commander. If the retained
+   current (off) position, the switch executes the selection. It re-converges to the last
+   commanded port after a power cycle, with no action from the commander. If the retained
    command matches the current position, the idempotent path runs: a `/state` publish with
    **no relay movement** (no relay chatter).
 
@@ -301,24 +336,24 @@ but are not part of the switch function).
 
 Given a target (port or off):
 
-1. Determine the current position by reading back relay states (§3.3).
-2. **Idempotence**: if current == target, publish `/state` and return. No relay toggles;
+1. Get the current position by reading back relay states (§3.3).
+2. **Idempotence**: if current == target, publish `/state` and return. No relay toggles.
    `settled` stays `true` — a repeated command must not produce a `settled:false`→`true`
    flap.
-3. Otherwise: turn **all six** relays off, then turn exactly the target relay on (for
+3. Otherwise: turn **all six** relays off. Then turn exactly the target relay on (for
    `off`, the second step turns none on). This all-off-then-one-on ordering guarantees the
-   exclusive invariant by construction — there is never an instant with two ports
-   connected. Note it also means every change passes through a brief moment with **zero**
-   relays on (**break-before-make**): mid-change the feed line is connected to no antenna
-   (and, per §9.2's open grounding question, possibly to no ground either). This is
-   deliberate — hot switching is forbidden anyway, so no make-before-break is attempted.
+   exclusive invariant by construction — no instant ever has two ports connected. It also
+   means every change passes through a brief moment with **zero** relays on
+   (**break-before-make**): mid-change no antenna connects to the feed line (and, per
+   §9.2's open grounding question, possibly no ground either). This is deliberate — hot
+   switching is forbidden anyway, so the firmware does not try make-before-break.
 4. Set the settled flag `false` and immediately publish `/state` (new `selected`,
    `settled:false`).
 5. Arm a restartable settle timer: wait `relay_settle_ms` = **200 ms** (a conservative
-   default, chosen to cover worst-case relay mechanical travel time; tunable in
-   configuration, §10), measured from the **most recent** commanded change — a new command
-   arriving inside the window cancels and re-arms the timer. Then set the settled flag
-   `true` and publish `/state` again (`settled:true`).
+   default that covers worst-case relay mechanical travel time, tunable in configuration —
+   §10). Measure the time from the **most recent** commanded change. A new command inside
+   the window cancels the timer and re-arms it. Then set the settled flag `true` and
+   publish `/state` again (`settled:true`).
 
 A port change therefore produces exactly two `/state` publishes: (`selected` = new,
 `settled` = false) at T+0, then (`settled` = true) at T+200 ms.
@@ -326,222 +361,246 @@ A port change therefore produces exactly two `/state` publishes: (`selected` = n
 ### 5.3 The settle guard — why 200 ms is load-bearing (normative)
 
 `settled` is a **conservative timed guard**, not a hardware signal. The rule: publish
-`settled:false` from the moment a relay move is commanded until the guard time has elapsed
-since the most recent change; never publish `settled:true` optimistically. Downstream
-consumers gate RF re-enable on it — the station's cold-switch sequencing (antenna change →
-wait for `settled:true` → allow transmit again; see `06-safety.md`) depends on `settled`
-never lying in the *optimistic* direction. A jammed relay can make it lie in the
-*pessimistic-optimistic* direction (it goes `true` at 200 ms even if the contacts never
-moved — §8), but a re-implementation SHALL NOT shorten the guard below the relay's
-worst-case specified travel time, and SHALL keep the timer-restart semantics (settle
-measured from the latest change, not the first of a burst).
+`settled:false` from the moment the firmware commands a relay move until the guard time
+has elapsed since the most recent change. Never publish `settled:true` optimistically.
+Downstream consumers gate RF re-enable on it — the station's cold-switch sequencing
+(antenna change, then wait for `settled:true`, then allow transmit again — see
+`06-safety.md`) depends on `settled` never lying in the *optimistic* direction. A jammed
+relay can make it lie in the *pessimistic-optimistic* direction (it goes `true` at 200 ms
+even if the contacts never moved — §8). A re-implementation must not shorten the guard
+below the relay's worst-case specified travel time. It must also keep the timer-restart
+semantics (settle measured from the latest change, not the first of a burst).
 
 ### 5.4 Reconnection and outage behavior (normative)
 
-- **MQTT outage, firmware alive**: the LWT fires (`/status` = `offline`, retained). Relays
-  **hold their current position** through an MQTT outage — only a reboot/power loss resets
-  them. The settled flag also survives (the firmware did not reboot).
-- **Reconnect**: birth message `online`, then `/meta` (after the 100 ms guard) and
-  `/state` (current readback position, `settled` true), then the retained-`/cmd` redelivery
-  runs the idempotent path if position matches, or a real move if the retained command
-  names a different port (e.g. moved manually via the native surface during the outage).
-- Wi-Fi loss behaves like MQTT loss; the firmware auto-reconnects both.
+- **MQTT outage, firmware alive**: the LWT fires (`/status` = `offline`, retained).
+  Relays **hold their current position** through an MQTT outage — only a reboot/power
+  loss resets them. The settled flag also survives (the firmware did not reboot).
+- **Reconnect**: birth message `online`. Then `/state` (current readback position,
+  `settled` true) and `/meta` (about 100 ms after connect — §5.1 step 4). The relative
+  order of these two is not normative. Then the retained-`/cmd` redelivery runs the
+  idempotent path if the position matches, or a real move if the retained command names a
+  different port (someone moved the switch manually through the native surface during the
+  outage, for example).
+- Wi-Fi loss behaves like MQTT loss. The firmware auto-reconnects both.
 
 ---
 
 ## 6. Invariants and safety rules (normative summary)
 
-The following are the testable requirements extracted from the above; a re-implementation
-SHALL satisfy each:
+The following are the testable requirements extracted from the sections above.
+A re-implementation must satisfy each:
 
-1. **Exclusive selection**: at most one port relay is energized at any instant, enforced by
-   the all-off-then-one-on procedure (§5.2 step 3). Two ports connected at once would put
-   transmitter power into an unexpected antenna path.
-2. **Never echo the command**: `selected` SHALL always be derived from the relay state
+1. **Exclusive selection**: the firmware energizes at most one port relay at any instant.
+   The all-off-then-one-on procedure (§5.2 step 3) enforces this. Two ports connected at
+   once puts transmitter power into an unexpected antenna path.
+2. **Never echo the command**: the firmware always derives `selected` from the relay state
    readback, never from the last received `/cmd`.
 3. **Conservative settle**: `settled:false` from the commanded change until 200 ms (the
-   configured default) after the *most recent* change; `true` only after. Timer restart
-   semantics on repeated commands. Never optimistic (§5.3).
+   configured default) after the *most recent* change. `true` only after that. Timer
+   restart semantics apply on repeated commands. Never optimistic (§5.3).
 4. **Idempotent re-apply**: re-receiving the current position's command must not toggle
-   relays and must not flap `settled` (§5.2 step 2) — this is what makes safe
+   relays and must not flap `settled` (§5.2 step 2). This is what makes safe
    reconnect/redelivery and the retained-`/cmd` contract possible.
-5. **Power loss → all relays open** (feed line disconnected; the safe default position),
-   then self-healing re-application of the retained `/cmd` on reconnect (§5.1). Relays
-   hold state through MQTT-only outages (§5.4).
-6. **No TX gating inside the switch**: it executes any valid command immediately; cold-switch
-   sequencing is the commander's job, declared via `hot_switch:false` in `/meta` (§1, §3.2).
-7. **Topic and QoS contract**: exactly the four topics of §3, all retained where specified,
-   QoS 1; `/status` plain `online`/`offline` with broker-side LWT plus explicit
-   clean-shutdown `offline`; `/meta` republished on every connect; `/state` published only
-   on change of `selected` or `settled`.
-8. **`/cmd` retained only because it is idempotent and position-based** — no one-shot
-   commands may be added to this slot without breaking the retention contract (§4).
-9. **No port↔antenna knowledge** in the switch (§1); the wiring map is external
+5. **Power loss → all relays open** (the safe default position — the feed line
+   disconnects). The switch then re-applies the retained `/cmd` on reconnect (§5.1).
+   Relays hold state through MQTT-only outages (§5.4).
+6. **No TX gating inside the switch**: it executes any valid command immediately.
+   Cold-switch sequencing is the commander's job, declared through `hot_switch:false` in
+   `/meta` (§1, §3.2).
+7. **Topic and QoS contract**: exactly the four topics of §3, all retained where
+   specified, QoS 1. `/status` is plain `online`/`offline`, with broker-side LWT plus an
+   explicit clean-shutdown `offline`. The switch republishes `/meta` on every connect. It
+   publishes `/state` only on a change of `selected` or `settled`.
+8. **`/cmd` retained only because it is idempotent and position-based** — nobody can add
+   one-shot commands to this slot without breaking the retention contract (§4).
+9. **No port↔antenna knowledge** in the switch (§1). The wiring map is external
    configuration (§9.1).
 
 ---
 
 ## 7. Fault reporting — absent (documented gap)
 
-There is **no fault-reporting path** on this slot, and a re-implementation must decide
+There is **no fault-reporting path** on this slot. A re-implementation must decide
 consciously what to keep of that:
 
 - No "hardware unreachable" state exists. Partly inherent — there is no separate device
-  behind the bridge to lose; if the firmware is dead, the LWT says so and nothing else can
-  be published anyway. But the reference component's own doc describes an optional
-  stale-marking behavior ("hold last `selected` with `settled:false`" when the hardware is
-  suspected stale) that the firmware simply does not implement.
-- **I²C expander communication failures surface only in the device's local logs** (reference
-  log level: WARN) — never on the bus. A bus consumer cannot distinguish "expander write
-  failed" from normal operation.
-- **No contact feedback** (§2): a jammed or failed relay is invisible; `selected` reports the
-  commanded coil state and `settled` goes `true` after 200 ms regardless. There is no fault
-  state for "relay did not move".
+  behind the bridge to lose. If the firmware is dead, the LWT says so, and nothing else
+  can go out on the bus anyway. But the reference component's own doc describes a
+  stale-marking behavior that is not necessary ("hold last `selected` with
+  `settled:false`" when the hardware looks stale). The firmware simply does not have it.
+- **I²C expander communication failures surface only in the device's local logs**
+  (reference log level: WARN) — never on the bus. A bus consumer cannot distinguish
+  "expander write failed" from normal operation.
+- **No contact feedback** (§2): a jammed or failed relay is invisible. `selected` reports
+  the driven coil state and `settled` goes `true` after 200 ms regardless. There is no
+  fault state for "relay did not move".
 - **Silent drop of invalid commands** (§4 step 2): a commander publishing a malformed
   payload gets no error feedback whatsoever.
 
-A re-implementation SHOULD keep the wire format identical but MAY add fault visibility
-(e.g. a read-only fault field in `/state` — additive, so consumers that ignore it are
-unaffected). The station's specified-but-unimplemented logging layer
-(`00-system-overview.md`) would be the natural place to route device-level faults; nothing
-in the deployed system expects them today.
+A re-implementation must keep the wire format the same. It can add fault visibility (a
+read-only fault field in `/state`, for example — additive, so consumers that ignore it see
+no change). The station's specified-but-unbuilt logging layer (`00-system-overview.md`)
+is the natural place to route device-level faults. Nothing in the deployed system expects
+them today.
 
 ---
 
 ## 8. Liveness within station start-up
 
-The switch is powered from the station's 13.8 V DC supply rail, so it boots when that
-supply turns on during station start-up. The power sequencer (`powerseq`) waits for
-`muehle/hf/ant-switch/status` to be `online` before proceeding to later steps, and the
+The station's 13.8 V DC supply rail powers the switch. It therefore boots when that supply
+turns on during station start-up. The power sequencer (`powerseq`) waits for
+`muehle/hf/ant-switch/status` to be `online` before it continues to later steps. The
 antenna-selection reconciler acts on this slot's `/state` (readback position) as ground
-truth for the station's antenna-safety interlocks (the PA arm path drops when the antenna
-is `off`). Requirements:
+truth for the station's antenna-safety interlocks (PA = power amplifier, the station's
+high-power transmit amplifier. The PA arm path drops when the antenna is `off`).
+Requirements:
 
-- The switch SHALL connect and publish `/status` = `online`, `/meta`, and `/state`
-  promptly after supply power (the reference achieves this within normal Wi-Fi association
-  + MQTT connect time; no explicit bound is implemented, and none is specified beyond
-  "prompt" — the sequencer's liveness-wait policy in `03-components/powerseq.md` defines
-  the acceptable window).
+- The switch must connect and publish `/status` = `online`, and retained `/meta` and
+  retained `/state` must be present, within the liveness-wait window that
+  `03-components/powerseq.md` defines for this slot. That window is the deadline of the
+  sequencer's `wait-controllers-online` step: 120 s after the 13.8 V supply turns on (the
+  default `step_timeout_s` of the sequencer's step timing). The reference implementation
+  has no bound of its own. The sequencer deadline is the operative acceptance bound. The
+  acceptance test must show all three planes present inside that window on the reference
+  hardware.
 - Because `/state` is publish-on-change (§3.3), a consumer that misses the boot-time
-  publish still gets the current position from the retained message; consumers SHALL read
-  retained `/state` rather than waiting for a fresh publish.
+  publish still gets the current position from the retained message. Consumers must read
+  retained `/state` instead of waiting for a fresh publish.
 
 ---
 
 ## 9. Open decisions encoded as configuration or hardware wiring
 
-### 9.1 Port↔antenna wiring map — OPEN DECISION (must be confirmed on-site)
+### 9.1 Port↔antenna wiring map — OPEN DECISION (on-site confirmation needed)
 
-The switch itself is agnostic (§6 item 9), but the station's port↔antenna assignment is
-**contradicted between sources** and must be treated as unresolved deployment configuration:
+The switch itself carries no port↔antenna knowledge (§6 item 9). But the station's
+port↔antenna assignment **contradicts itself between sources**. You must treat it as
+unresolved deployment configuration:
 
 - **Variant A — Ultrabeam on port 3**: repo-root component documentation, the station
-  integration model (`docs/station-integration-model.md` shows
-  `wiring_map { port1: dummy-load, port3: ultrabeam, port6: fan-dipole }`), and the
-  antennaselect unit tests all say port 1 = dummy load, **port 3 = Ultrabeam**,
-  port 6 = 80/40 fan dipole; ports 2, 4, 5 unused.
+  integration model, and the antennaselect unit tests agree. They say port 1 = dummy
+  load, **port 3 = Ultrabeam**, and port 6 = 80/40 fan dipole. Ports 2, 4, 5 stay unused.
+  (`docs/station-integration-model.md` shows
+  `wiring_map { port1: dummy-load, port3: ultrabeam, port6: fan-dipole }`.)
 - **Variant B — Ultrabeam on port 4**: the antennaselect example configuration
   (`antennaselect/config.example.toml`, which the deploy script seeds) maps
-  `port4 = "ultrabeam"` and calls port 3 unused; the operator console's antenna map agrees
-  with port 4.
+  `port4 = "ultrabeam"` and calls port 3 unused. The operator console's antenna map
+  agrees with port 4.
 
-Port 1 = dummy load and port 6 = fan dipole are consistent in both variants. The
-authoritative source is the **deployed reconciler configuration on the station's Raspberry
-Pi "shari"** (`/etc/antennaselect/config.toml`), which was not readable from the workstation
-when this PRD was written. Any re-implementation SHALL (a) keep the port↔antenna mapping as
-external, editable configuration, never code, and (b) resolve this conflict by reading the
-deployed config (or the physical cabling) before first use. Until resolved, treat the
-Ultrabeam's port as *unknown between 3 and 4*. See also
-`03-components/antennaselect.md` (open decisions) and `06-safety.md`.
+The fan dipole's port is also contradicted across sources. The station integration model
+gives it port 6 in its `wiring_map` but port 2 in its "Passive resources" list, a few lines
+later. The port↔antenna assignment is therefore contested **as a whole**, not only for the
+Ultrabeam. The authoritative source is the **deployed reconciler configuration on the
+station's Raspberry Pi "shari"** (`/etc/antennaselect/config.toml`). It was not readable
+from the workstation when the PRD authors wrote this document. A re-implementation must
+(a) keep the port↔antenna mapping as external, editable configuration, never code. It
+must (b) resolve the full wiring map before first use by reading the deployed config (or
+the physical cabling). Until then, treat every port↔antenna assignment as unknown. See
+also `03-components/antennaselect.md` (open decisions) and `06-safety.md`.
 
 ### 9.2 What the "off" position physically is — OPEN DECISION (grounding)
 
 Two readings of the `off` position exist in the sources:
 
 - **Variant A — off = grounded / shorted**: the antenna-selection reconciler's
-  documentation and configuration comments state that the switch's "off" position "shorts
-  the open ports to ground" for lightning protection, and the station integration model
-  relies on a "fail-safe-to-ground default" at power loss. The live incident record
-  (first key-up after an idle-grounding transmits into a "grounded/short switch port",
-  documented in the antennaselect research) is consistent with the feed being shorted in
-  the off position on the real hardware.
+  documentation and configuration comments say that the switch's "off" position "shorts
+  the open ports to ground". That gives lightning protection. The station integration
+  model
+  relies on a "fail-safe-to-ground default" at power loss. The live incident record (first
+  key-up after an idle-grounding transmits into a "grounded/short switch port", documented
+  in the antennaselect research) also agrees. On the real hardware, something shorts the
+  feed in the off position.
 - **Variant B — off = open / unconnected**: the switch firmware's own contract describes
-  `off` as *all relays open, feed line unconnected*, and notes that during every port
-  change (and thus in the off position) "there is no antenna and no ground connection on
-  the feed line". Nothing in the firmware drives any grounding relay (the spare relays
-  1–2 are unused by the switch function), and the firmware's capability block says only
-  `off:true` (an explicit no-port position exists), nothing about grounding.
+  `off` as *all relays open, feed line unconnected*. The PRD research inferred that, with
+  zero relays energized (the break-before-make moment of §5.2 step 3), no antenna and no
+  ground connect to the feed line in the off position. That sentence is the research's
+  own analysis. No firmware text or firmware doc states it. Nothing in the firmware
+  drives any grounding relay (the switch function does not use the spare relays 1–2). The
+  firmware's capability block says only `off:true` (an explicit no-port position exists).
+  It says nothing about grounding. But the component's own API doc
+  (`waveshare_relay-antswitch-bridge/docs/ant-switch-mqtt-api.md`, capabilities table for
+  `off`) says "an explicit no-port / grounded position exists (all relays off)" — a
+  grounding claim inside the firmware component's own documentation. That doc carries
+  wording for both variants. This makes the contradiction deeper, not weaker.
 
 These cannot both be true as stated. Possibly the physical relay wiring (SPDT relay
-contacts with their normally-closed terminals tied to ground, or an external grounding
-relay outside the firmware's view) shorts the feed when all six port relays are open —
-making variant A true *in hardware* even though the firmware only knows "all coils off".
-The repo does not settle it; it must be verified on the physical hardware. The safety
-consequence is significant: whether an idle, unattended station's antenna feed is actually
-grounded against lightning depends on the answer, and the reconciler's auto-grounding
-feature (idle timeout → select `off`, see `03-components/antennaselect.md`) is sold as
-lightning protection on variant A's assumption. A re-implementation SHALL: (a) not claim
-grounding in any documentation until the physical behavior is verified; (b) if grounding is
-required and not present in hardware, add it explicitly (e.g. drive one of the spare
-relays as an external grounding relay with its own exposed capability) rather than leave it
-ambiguous.
+contacts — single-pole double-throw, a changeover contact with one common terminal and
+two selectable outputs — with their normally-closed terminals tied to ground, or an
+external grounding relay outside the firmware's view) shorts the feed when all six port
+relays are open.
+Then variant A is true *in hardware*, even though the firmware only knows "all coils
+off". The repo does not settle the question. Someone must check it on the physical
+hardware. The safety consequence is significant: whether an idle, unattended station's
+antenna feed is actually grounded against lightning depends on the answer. The
+reconciler's auto-grounding feature (idle timeout → select `off`, see
+`03-components/antennaselect.md`) presents itself as lightning protection on variant A's
+assumption. A re-implementation must not claim grounding in any documentation before
+someone checks the physical behavior. If the design needs grounding and the hardware does
+not have it, add it explicitly. For example: drive one of the spare relays as an external
+grounding relay with its own exposed capability.
 
 ---
 
 ## 10. Configuration
 
-This component is embedded firmware, not a hosted service, and deliberately does **not**
-follow the station's TOML-config / systemd conventions (those apply to the hosted bridges;
-see `05-deployment-ops.md`). All build-time knobs are substitution variables at the top of
-the reference firmware configuration:
+This component is firmware that runs embedded in the switching hardware, not a hosted
+service. It deliberately does **not**
+follow the station's TOML-config / systemd conventions (those apply to the hosted bridges
+— see `05-deployment-ops.md`). All build-time knobs are substitution variables at the top
+of the reference firmware configuration:
 
 | Key | Default value | Meaning |
 |---|---|---|
-| `device_name` | `station-at1` | firmware node name (network/OTA identity) |
-| `friendly_name` | `Antenna Select` | UI label |
-| `mqtt_broker` | `192.168.1.50` | broker host |
-| `mqtt_port` | `1883` | broker port (plain TCP) |
-| `mqtt_user` | `hf` | broker username |
-| `site` / `station` / `slot` | `muehle` / `hf` / `ant-switch` | topic prefix — all four topic strings derive from these |
-| `relay_settle_ms` | `"200"` | conservative settle guard, milliseconds (§5.3) |
+| `device_name` | `station-at1` | firmware node name (network/OTA identity). |
+| `friendly_name` | `Antenna Select` | UI label. |
+| `mqtt_broker` | `192.168.1.50` | broker host. |
+| `mqtt_port` | `1883` | broker port (plain TCP). |
+| `mqtt_user` | `hf` | broker username. |
+| `site` / `station` / `slot` | `muehle` / `hf` / `ant-switch` | topic prefix — all four topic strings derive from these. |
+| `relay_settle_ms` | `"200"` | conservative settle guard, milliseconds (§5.3). |
 
-Secrets (broker password, Wi-Fi SSID and password) are resolved at **compile time** from a
-`secrets.yaml` next to the firmware config — gitignored, never committed. Note the inherent
-limitation of the embedded-secrets model: credentials end up embedded in the compiled
-firmware image and are recoverable from the flash of a physically taken device. This is
-accepted for hardware sited on a private LAN, but a re-implementation SHALL NOT move
-credentials into any committed file.
+The firmware resolves secrets (broker password, Wi-Fi SSID and password) at **compile
+time** from a `secrets.yaml` next to the firmware config — gitignored, never committed.
+Note the inherent limitation of the embedded-secrets model: the credentials end up inside
+the compiled firmware image. Someone who physically takes the device can recover them from
+its flash. The project accepts this for hardware on a private LAN. A re-implementation must
+not move credentials into any committed file.
 
 Other configuration baked into the reference firmware, with its security posture (see
-§12.2 for assessment): native-API encryption key (committed in the repo — defeats its
-purpose if the repo is shared; a re-implementation SHALL generate a fresh secret and keep
-it out of the repo); OTA (over-the-air update) platform with the password line commented
-out, i.e. **currently no OTA password**; built-in web server on port 80 with **no
-authentication**; log level WARN; client-id suffixing disabled.
+§12.2 for assessment):
+
+- native-API encryption key (committed in the repo — this defeats its purpose if someone
+  shares the repo. A re-implementation must generate a fresh secret and keep it out of the
+  repo).
+- OTA (over-the-air update) platform with the password line commented out — **there is now
+  no OTA password**.
+- built-in web server on port 80 with **no authentication**.
+- log level WARN.
+- client-id suffixing disabled
 
 ---
 
 ## 11. Deployment
 
 No systemd unit, no deploy to shari — the device runs standalone in the "bauwagen"
-(trailer building), powered from the station's 13.8 V rail (§8) and reachable over Wi-Fi.
+(trailer building). The station's 13.8 V rail powers it (§8). It is reachable over Wi-Fi.
 
-- **First flash**: over USB from a workstation using the vendor toolchain
-  (`esphome run esphome/station-at1.yaml` in the reference; the mechanism is
-  tool-specific, the sequence is not: compile → flash over USB → device joins Wi-Fi →
-  connects to the broker).
-- **Subsequent updates**: over-the-air (OTA) over Wi-Fi. The update channel currently has
-  no password (§10).
-- **Local validation** before flashing: `esphome config esphome/station-at1.yaml`
-  (requires a throwaway `secrets.yaml` to exist on the build host).
+- **First flash**: over USB from a workstation with the vendor toolchain (`esphome run
+  esphome/station-at1.yaml` in the reference). The mechanism is tool-specific. The
+  sequence is not: compile → flash over USB → device joins Wi-Fi → connects to the broker.
+- **Subsequent updates**: over-the-air (OTA) over Wi-Fi. The update channel has no
+  password now (§10).
+- **Local validation** before flashing: `esphome config esphome/station-at1.yaml` (this
+  needs a throwaway `secrets.yaml` on the build host).
 - Dependencies: the station MQTT broker at `192.168.1.50:1883` with `hf`-user credentials
-  (in `secrets.yaml`); optionally a Home Assistant server for the reference implementation's
-  clock source (§12.1) and as the secondary manual surface (§4).
+  (in `secrets.yaml`). Optionally a Home Assistant server for the reference
+  implementation's clock source (§12.1) and as the secondary manual surface (§4).
 - **Broker topology decision point**: deployed components point at the broker at
   `192.168.1.50:1883`. A migration of station components to a broker running on shari
-  (`192.168.1.139`) exists on an unmerged feature branch and was NOT deployed as of
-  2026-08-29; this PRD treats `192.168.1.50` as production. For embedded devices the
-  broker address is compile-time configuration (§10), so a migration requires a
+  (`192.168.1.139`) exists on an unmerged feature branch. Nobody had deployed it as of
+  2026-08-29. This PRD treats `192.168.1.50` as production. For embedded devices the
+  broker address is compile-time configuration (§10), so a migration needs a
   re-flash/reconfigure of this device — see `05-deployment-ops.md` §2 for the migration
   plan.
 
@@ -551,77 +610,85 @@ No systemd unit, no deploy to shari — the device runs standalone in the "bauwa
 
 ### 12.1 Known defects and fragilities of the deployed implementation
 
-Carried here so the re-implementation can fix them deliberately rather than reproduce them:
+This list exists so the re-implementation can fix the defects deliberately instead of
+reproducing them:
 
-- **`ts` clock source is Home Assistant**: the `/state` timestamp is set via the vendor
-  platform's HA time sync, not NTP and not the on-board PCF85063 RTC (which is read on
-  boot into a time entity that is never used). With no HA connected, `ts` is wrong
-  (epoch-era). Fix: use NTP or the RTC; keep the format.
-- **Silent drop of invalid commands** (§7) — no log even at WARN from the handler, no MQTT
-  response.
-- **`mode: single` on the selection procedure**: in the reference framework, a second
-  invocation while a previous one is still running is *dropped*. The procedure body is
-  synchronous and fast so the window is tiny, but a rapid bus + manual-surface command
-  collision could in principle drop one command. The settle timer itself uses restart
+- **`ts` clock source is Home Assistant**: the vendor platform's HA time sync sets the
+  `/state` timestamp — not NTP and not the on-board PCF85063 RTC (the firmware reads the
+  RTC on boot into a time entity that it never uses). With no HA connected, `ts` is wrong
+  (epoch-era). Fix: use NTP or the RTC. Keep the format.
+- **Silent drop of invalid commands** (§7) — no log even at WARN from the handler, no
+  MQTT response.
+- **`mode: single` on the selection procedure**: in the reference framework, the framework
+  drops a second invocation while a previous one still runs. The procedure body is
+  synchronous and fast, so the window is tiny. But a rapid bus + manual-surface command
+  collision can in principle drop one command. The settle timer itself uses restart
   semantics (correct, §5.2).
 - **No contact-feedback readback** — inherent to the hardware (§2, §7).
 - **Static client id `ant-switch`**: a second board flashed with the same configuration
-  would fight over the MQTT session. Single-device assumption, undocumented.
+  can fight over the MQTT session. Single-device assumption, undocumented.
 - **Documentation drift in the component's own API doc**: one example still shows
   `{"select":"port2"}` for "reconciler selects the dipole" — a leftover from an earlier
-  switch generation; at this station port 2 is unused and the dipole is port 6. The wire
-  format shown is right; the example value is misleading. Same doc also mentions a
-  `config.toml` that does not exist for this component.
-- **Security posture**: no OTA password; unauthenticated web server on port 80; committed
-  native-API encryption key; embedded compile-time secrets (§10).
+  switch generation. Sources contest the dipole's own port (6 or 2 — §13). Port 6 is the
+  majority reading, so the example value gives the wrong impression. The
+  wire format shown is right. The same doc
+  also mentions a `config.toml` that does not exist for this component.
+- **Security posture**: no OTA password. Unauthenticated web server on port 80. Committed
+  native-API encryption key. Embedded compile-time secrets (§10).
 - **Boot-hook comment error**: the reference YAML's boot hook comment claims an "early"
-  stage but uses the vendor's latest boot priority — cosmetic, but a caution that
-  comments there are not authoritative.
+  stage but uses the vendor's latest boot priority. The error is cosmetic. But it is a
+  caution that comments there are not authoritative.
 
 ### 12.2 What is free to change in a re-implementation
 
 - The firmware framework, microcontroller, expander chip, GPIO numbers, and the unused
-  peripherals — provided the exclusive all-off-then-one-on behavior, the readback
-  semantics, and the settle guard are preserved on the new hardware.
+  peripherals are free to change. This assumes the new hardware preserves the exclusive
+  all-off-then-one-on behavior, the readback semantics, and the settle guard.
 - The 100 ms connect-time delay before `/meta` (a jitter guard, not protocol).
 - The manual/secondary surface (native API, web server) — nothing in the station core
   depends on it.
-- The `ts` clock source (fixing the HA dependency is recommended; keep the format).
+- The `ts` clock source (recommended: fix the HA dependency, and keep the format).
 - The `device.model` free-text string.
-- Adding fault visibility (additively, §7).
+- Fault visibility, added additively (§7).
 
 ---
 
-## 13. Open decisions & unresolved facts
+## 13. Open decisions and unresolved facts
 
 1. **Ultrabeam port: 3 or 4** (§9.1). Variant A (port 3): repo docs, integration model,
    antennaselect tests. Variant B (port 4): `antennaselect/config.example.toml` + deploy
-   seed + console antenna map. Authoritative: the deployed `/etc/antennaselect/config.toml`
-   on shari, unreadable from the workstation at PRD time. Resolution requires on-device
-   confirmation; until then the switch spec stays port-agnostic (as it must be).
+   seed + console antenna map. The fan dipole's port is also contested (port 6 vs port 2
+   inside the integration model itself — §9.1). No source confirms any port↔antenna
+   assignment.
+   Authoritative: the deployed
+   `/etc/antennaselect/config.toml` on shari, unreadable from the workstation at PRD
+   time. Resolution needs on-device confirmation of the whole wiring map. Until then the
+   switch spec stays port-agnostic (as it must be).
 2. **What `off` physically is — grounded/short vs open** (§9.2). Variant A (shorted to
    ground, lightning-safe): reconciler docs/config comments, integration model
    "fail-safe-to-ground", live post-grounding key-up incident wording. Variant B (all
-   relays open, no ground): the switch firmware's own contract, its unused spare relays,
-   and its change-sequence description. Must be verified on the physical hardware; if
-   grounding is required, add it explicitly (external grounding relay) rather than assume.
-3. **Deployed firmware image version**: nothing in `/meta` reports a firmware version, so
-   whether the flashed device matches the source in the repo is unverifiable from the bus.
-   A re-implementation SHOULD add a version field to `/meta` (additive).
+   relays open, no ground): the switch firmware's own contract and its unused spare
+   relays. The component's own API doc carries wording for both variants ("an explicit
+   no-port / grounded position exists"). Someone must check this on the physical hardware.
+   If the design needs grounding, add it explicitly (external grounding relay) instead of
+   assuming it.
+3. **Deployed firmware image version**: nothing in `/meta` reports a firmware version. So
+   you cannot check from the bus whether the flashed device matches the source in the
+   repo. A re-implementation must add a version field to `/meta` (additive).
 4. **Retained-`/cmd` redelivery actually firing self-heal**: the mechanism (§5.1 step 5)
    depends on the reference framework's persistent-session subscription semantics at the
-   deployed version; the source asserts it, but it was not independently verified on the
+   deployed version. The source asserts it, but nobody independently checked it on the
    deployed device. The behavior contract (self-heal after power loss) is normative
-   regardless — a re-implementation must demonstrate it in acceptance tests rather than
-   inherit it from library behavior.
-5. **Invalid-command handling**: the wire-compatible contract is silent-ignore (§4), but a
-   re-implementation may justifiably add a rejection log or an additive error field; the
+   regardless — a re-implementation must show it in acceptance tests instead of inheriting
+   it from library behavior.
+5. **Invalid-command handling**: the wire-compatible contract is silent-ignore (§4). A
+   re-implementation can justifiably add a rejection log or an additive error field. The
    PRD leaves that as a deliberate deviation to record, not a silent change.
-6. **Broker migration** (§11): production is `192.168.1.50:1883`; the shari-broker
-   migration is planned but undeployed, and for this embedded device it requires a
+6. **Broker migration** (§11): production is `192.168.1.50:1883`. The shari-broker
+   migration has a plan, but nobody has deployed it. For this embedded device it needs a
    reconfigure/re-flash.
-7. **No heartbeat on `/state`** (§3.3) is a deliberate contract here, but consumers with
-   staleness expectations (and any future RF-safety logic keying on this slot) must rely on
-   retained `/state` + `/status`, not fresh-publish cadence — called out because the
+7. **No heartbeat on `/state`** (§3.3) is a deliberate contract here. But consumers with
+   staleness expectations (and any future RF-safety logic that keys on this slot) must
+   rely on retained `/state` + `/status`, not fresh-publish cadence. The reason: the
    station's pa-arm heartbeat incident (see `06-safety.md`) shows how publish-on-change
    starves liveness consumers in general.

@@ -83,7 +83,7 @@ func TestMetaShape(t *testing.T) {
 	if len(m.Expose.Actions) != 1 || m.Expose.Actions[0].Key != "stop" {
 		t.Fatalf("meta actions = %+v, want exactly [stop]", m.Expose.Actions)
 	}
-	want := map[string]bool{"az": false, "el": false, "target_az": false, "target_el": false, "moving": false, "armed": false, "device_online": false}
+	want := map[string]bool{"az": false, "el": false, "target_az": false, "target_el": false, "moving": false, "armed": false, "self_check": false, "device_online": false}
 	for _, f := range m.Expose.Fields {
 		if _, ok := want[f.Key]; ok {
 			want[f.Key] = true
@@ -103,7 +103,7 @@ func TestStatePublishAndDedup(t *testing.T) {
 	snap := &control.Snapshot{
 		Az: 123.456, El: 30, PhysAz: 130.456, PhysEl: 30,
 		ReadbackValid: true, Armed: true, Offset: 6.544, JogSpeed: 0x12,
-		DeviceOnline: true, SetStatus: "converged",
+		DeviceOnline: true, SetStatus: "converged", SelfCheck: "off",
 	}
 	slot.PublishState(snap)
 	msg := memo.Last(testConfig().StateTopic())
@@ -131,6 +131,9 @@ func TestStatePublishAndDedup(t *testing.T) {
 	}
 	if p.JogSpeed != 0x12 {
 		t.Errorf("jog_speed = %d, want 18", p.JogSpeed)
+	}
+	if p.SelfCheck != "off" {
+		t.Errorf("self_check = %q, want off", p.SelfCheck)
 	}
 	if p.RotctldClients != 2 {
 		t.Errorf("rotctld_clients = %d, want 2", p.RotctldClients)
@@ -166,7 +169,7 @@ func TestStatePublishAndDedup(t *testing.T) {
 
 	// NaN positions become JSON null.
 	empty := &control.Snapshot{Az: nan(), El: nan(), PhysAz: nan(), PhysEl: nan(),
-		TargetAz: nan(), TargetEl: nan()}
+		TargetAz: nan(), TargetEl: nan(), SelfCheck: "unknown"}
 	slot.PublishState(empty)
 	msg = memo.Last(testConfig().StateTopic())
 	var raw map[string]any
@@ -180,6 +183,12 @@ func TestStatePublishAndDedup(t *testing.T) {
 	}
 	if raw["link"] != "down" {
 		t.Errorf("link = %v with DeviceOnline=false, want down", raw["link"])
+	}
+	// Verbatim passthrough: the engine owns the canonical tri-state, so the
+	// slot publishes "unknown" (a claim not yet proven by a frame from the
+	// head) without any remap of its own.
+	if raw["self_check"] != "unknown" {
+		t.Errorf("self_check = %v, want unknown (verbatim)", raw["self_check"])
 	}
 }
 

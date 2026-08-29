@@ -1,6 +1,7 @@
 package bridge
 
 import (
+	"context"
 	"encoding/json"
 	"sort"
 	"strconv"
@@ -28,6 +29,13 @@ type bandTransition struct {
 	deadline  time.Time // hold expires here even if the pan never confirms
 	confirmed bool      // true once a tracked pan reports band==target
 }
+
+// DefaultStateHeartbeat is how often the /state snapshot is republished while the
+// radio link is live (see StateHeartbeat). 5 s sits well inside the 10 s
+// freshness windows consumers key their liveness on (m5stamp pa-arm's
+// RADIO_HEARTBEAT_MS holds its arm only while a radio/state message arrived
+// within the last 10 s).
+const DefaultStateHeartbeat = 5 * time.Second
 
 // Bridge owns the radio state model and translates radio events (TCP
 // status frames) into MQTT publishes following the station integration model.
@@ -267,6 +275,43 @@ func (b *Bridge) Reset() {
 	snap := b.state
 	b.mu.Unlock()
 	b.publishStateSnapshot(snap)
+}
+
+// StateHeartbeat republishes the current /state snapshot on a ticker until ctx
+// is cancelled, but only while the radio link is live (device_online). Everything
+// else that publishes /state is change-gated, so a quiet RX band — someone
+// listening without touching the VFO and not transmitting — produces no publishes
+// at all for arbitrarily long. Consumers that derive liveness from message
+// recency starve on that silence: the m5stamp pa-arm drops its arm 10 s after the
+// last radio/state and cannot re-assert until some radio field changes (moving
+// the antenna doesn't refresh its heartbeat), with no error surfaced. This
+// ticker is the "link live" proof those consumers actually need; while the link
+// is down, device_online=false in the frozen retained snapshot already tells
+// them the link state, so the heartbeat deliberately skips instead of masking it.
+// Run as `go b.StateHeartbeat(ctx, DefaultStateHeartbeat)` from the process
+// lifetime (cmd/flexbridge/main.go), not per radio connection: it self-suspends
+// on deviceOnline and resumes on the next handshake.
+func (b *Bridge) StateHeartbeat(ctx context.Context, interval time.Duration) {
+	if interval <= 0 {
+		interval = DefaultStateHeartbeat
+	}
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			b.mu.RLock()
+			live := b.state.deviceOnline
+			snap := b.state
+			b.mu.RUnlock()
+			if !live {
+				continue
+			}
+			b.publishStateSnapshot(snap)
+		}
+	}
 }
 
 // ------------------------------------------------------------------

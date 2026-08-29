@@ -13,7 +13,7 @@ import (
 // re-home. Timing-tolerant: polls with deadlines rather than sleeping fixed
 // amounts wherever an assertion depends on motion.
 
-// readOne blocks for exactly one reply frame (any protocol) with a timeout.
+// readOne blocks for exactly one reply frame with a timeout.
 func readOne(t *testing.T, h *Head) pelco.RxFrame {
 	t.Helper()
 	ch := make(chan pelco.RxFrame, 1)
@@ -58,7 +58,7 @@ func TestQueryPanTextbookDecode(t *testing.T) {
 
 	mustWrite(t, h, pelco.QueryFrame(1, pelco.OpQueryPan))
 	rx := readOne(t, h)
-	if rx.P || rx.Op() != pelco.OpRspPan {
+	if rx.Op() != pelco.OpRspPan {
 		t.Fatalf("wrong reply: %+v", rx)
 	}
 	if got := pelco.WordToDeg(rx.Word()); got != 123.45 {
@@ -77,21 +77,6 @@ func TestQueryTiltTextbookDecode(t *testing.T) {
 	}
 	if got := pelco.WordToDeg(rx.Word()); got != 45.5 {
 		t.Fatalf("tilt readback %.2f, want 45.5", got)
-	}
-}
-
-func TestPelcoPAdaptiveReply(t *testing.T) {
-	h := New(Options{Addr: 1, PanDeg: 77})
-	defer h.Close()
-
-	// The head answers in the envelope the frame arrived in.
-	mustWrite(t, h, pelco.WrapP(pelco.QueryFrame(1, pelco.OpQueryPan)))
-	rx := readOne(t, h)
-	if !rx.P {
-		t.Fatalf("reply must come back as Pelco-P: %s", rx.Hex())
-	}
-	if got := pelco.WordToDeg(rx.Word()); got != 77 {
-		t.Fatalf("pan readback %.2f, want 77", got)
 	}
 }
 
@@ -211,6 +196,32 @@ func TestSelfTestRehomes(t *testing.T) {
 	}
 }
 
+// Preset set/call 105 flips the periodic self-check; the self-test's factory
+// restore re-enables it.
+func TestSelfCheckToggle(t *testing.T) {
+	h := New(Options{Addr: 1})
+	defer h.Close()
+
+	if !h.SelfCheck() {
+		t.Fatal("factory default: the self-check must start enabled")
+	}
+	mustWrite(t, h, pelco.SelfCheckDisableFrame(1)) // preset set 105
+	if h.SelfCheck() {
+		t.Error("preset set 105 did not disable the self-check")
+	}
+	mustWrite(t, h, pelco.SelfCheckEnableFrame(1)) // preset call 105
+	if !h.SelfCheck() {
+		t.Error("preset call 105 did not re-enable the self-check")
+	}
+	mustWrite(t, h, pelco.SelfCheckDisableFrame(1))
+
+	// Factory defaults (self-test) restore the self-check along with the rest.
+	mustWrite(t, h, pelco.SelfTestFrame(1))
+	if !h.SelfCheck() {
+		t.Error("self-test did not restore the factory self-check")
+	}
+}
+
 func TestOtherPresetCallsIgnored(t *testing.T) {
 	h := New(Options{Addr: 1, PanDeg: 200, TiltDeg: 45, SilenceRequired: 30 * time.Millisecond})
 	defer h.Close()
@@ -257,19 +268,13 @@ func waitFor(t *testing.T, d time.Duration, cond func() bool) bool {
 	return cond()
 }
 
-// DecodeAny is the simulator's front door; both envelopes must parse and bad
-// checksums must be refused, mirroring the head's silence on garbage.
+// DecodeAny is the simulator's front door; a frame must parse and a bad
+// checksum must be refused, mirroring the head's silence on garbage.
 func TestDecodeAnyEnvelopes(t *testing.T) {
 	d := pelco.QueryFrame(1, pelco.OpQueryPan)
 	rx, ok := DecodeAny(d[:])
-	if !ok || rx.P || rx.Op() != pelco.OpQueryPan {
+	if !ok || rx.Op() != pelco.OpQueryPan {
 		t.Fatalf("D frame: %+v ok=%v", rx, ok)
-	}
-
-	p := pelco.WrapP(d)
-	rx, ok = DecodeAny(p)
-	if !ok || !rx.P {
-		t.Fatalf("P frame: %+v ok=%v", rx, ok)
 	}
 
 	bad := d
@@ -279,28 +284,5 @@ func TestDecodeAnyEnvelopes(t *testing.T) {
 	}
 	if _, ok := DecodeAny([]byte{0xFF, 0x01}); ok {
 		t.Fatal("short buffer must be refused")
-	}
-}
-
-// A P-wrapped absolute set must reach the head exactly like a D one — the
-// engine always sends D, but the adaptivity is a documented device behaviour.
-func TestSetViaPelcoP(t *testing.T) {
-	h := New(Options{Addr: 1, PanDeg: 10, TiltDeg: 5, SilenceRequired: 30 * time.Millisecond,
-		RateElDegPerS: 100})
-	defer h.Close()
-
-	time.Sleep(60 * time.Millisecond)
-	mustWrite(t, h, pelco.WrapP(pelco.SetTiltFrame(1, 33)))
-	if !waitFor(t, 3*time.Second, func() bool { return h.TiltDeg() == 33 }) {
-		t.Fatalf("P set tilt did not converge: tilt=%.2f", h.TiltDeg())
-	}
-	// The reply to a subsequent query comes back in the P envelope.
-	mustWrite(t, h, pelco.WrapP(pelco.QueryFrame(1, pelco.OpQueryTilt)))
-	rx := readOne(t, h)
-	if !rx.P {
-		t.Fatalf("reply envelope: %s", rx.Hex())
-	}
-	if got := pelco.WordToDeg(rx.Word()); got != 33 {
-		t.Fatalf("tilt readback %.2f, want 33", got)
 	}
 }

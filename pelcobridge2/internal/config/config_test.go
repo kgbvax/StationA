@@ -16,7 +16,6 @@ func TestLoadOverridesDefaults(t *testing.T) {
 port = "COM3"
 baud = 9600
 addr = 2
-pelco_p = true
 
 [rotctld]
 enabled = false
@@ -44,7 +43,7 @@ slot = "rotator"
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	if cfg.Serial.Port != "COM3" || cfg.Serial.Baud != 9600 || cfg.Serial.Addr != 2 || !cfg.Serial.PelcoP {
+	if cfg.Serial.Port != "COM3" || cfg.Serial.Baud != 9600 || cfg.Serial.Addr != 2 {
 		t.Errorf("serial = %+v", cfg.Serial)
 	}
 	if cfg.Rotctld.Enabled || cfg.Rotctld.Bind != "127.0.0.1" {

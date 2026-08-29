@@ -92,7 +92,14 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 	pub.Client = mqttClient
 	log.Info("MQTT connected", "broker", cfg.MQTT.Broker)
 
-	// 2. Run the radio-connection loop until ctx is cancelled.
+	// 2. Periodic /state heartbeat while the radio link is live: every other
+	// /state publisher here is change-gated, so a quiet RX band would otherwise
+	// produce no publishes and recency-based consumers (the m5stamp pa-arm's
+	// 10 s heartbeat) would starve and silently drop the arm. The heartbeat
+	// self-suspends whenever device_online=false. See Bridge.StateHeartbeat.
+	go b.StateHeartbeat(ctx, bridge.DefaultStateHeartbeat)
+
+	// 3. Run the radio-connection loop until ctx is cancelled.
 	_, err = radioLoop(ctx, cfg, b, pub, log)
 	return err
 }

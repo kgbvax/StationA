@@ -1,10 +1,8 @@
 package pelco
 
 // The assembler reassembles a raw byte stream into frames. It syncs on the
-// start byte (0xFF → 7-byte Pelco-D, 0xA0 → 8-byte Pelco-P), validates the
-// matching checksum (additive sum vs XOR), and on a bad checksum drops the
-// leading byte and resumes scanning. Both protocols are always accepted on RX —
-// the head answers in the protocol the frame arrived in.
+// start byte (0xFF → 7-byte Pelco-D), validates the checksum, and on a bad
+// checksum drops the leading byte and resumes scanning.
 //
 // Two invariants are load-bearing, both paid for on the bench with ptest:
 //
@@ -50,37 +48,26 @@ func (a *Assembler) Feed(data []byte) []Event {
 	a.buf = append(a.buf, data...)
 	var ev []Event
 	for len(a.buf) > 0 {
-		isP := a.buf[0] == STX
-		need := FrameLen
-		if isP {
-			need = FrameLenP
-		} else if a.buf[0] != 0xFF {
+		if a.buf[0] != 0xFF {
 			a.drop()
 			ev = a.capBad(ev)
 			continue
 		}
-		if len(a.buf) < need {
+		if len(a.buf) < FrameLen {
 			break // wait for the rest of the frame (or for FlushIdle)
 		}
-		wire := make([]byte, need)
-		copy(wire, a.buf[:need])
+		wire := make([]byte, FrameLen)
+		copy(wire, a.buf[:FrameLen])
 		var f Frame
-		ok := false
-		if isP {
-			ok = PChkOK(wire)
-			f = Frame{wire[0], wire[1], wire[2], wire[3], wire[4], wire[5], wire[7]}
-		} else {
-			copy(f[:], wire)
-			ok = f.ChkOK()
-		}
-		if !ok {
+		copy(f[:], wire)
+		if !f.ChkOK() {
 			a.drop()
 			ev = a.capBad(ev)
 			continue
 		}
 		ev = a.flushBad(ev) // noise precedes the frame that follows it
-		ev = append(ev, Event{Frame: RxFrame{Frame: f, P: isP, Wire: wire}})
-		a.buf = a.buf[need:]
+		ev = append(ev, Event{Frame: RxFrame{Frame: f, Wire: wire}})
+		a.buf = a.buf[FrameLen:]
 	}
 	// Bytes already definitively rejected are never withheld: buffering them
 	// made a single corrupted reply produce no output at all, which read as

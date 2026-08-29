@@ -257,5 +257,10 @@ the tuner's resource is selected and the band is non-resonant; gated by
 **Idle timeout (walk-away safety, §10):** the reconciler infers `activity` itself — a
 `freq_hz` change or `tx == "tx"` marks the station `active`; after `[idle].timeout_minutes`
 (default 30m) with neither, it marks `inactive` and resolves `target = off` (tier 1). The
-switch's `off` position shorts the open ports to ground (lightning protection). No manual
-override; activity is the only re-arm.
+switch's `off` position shorts the open ports to ground (lightning protection). There is no
+dedicated override command, but **an operator hold is presence**: a non-empty, non-`auto`
+`{"request": …}` on `/cmd` resets the idle clock and marks the station `active`, so a hold
+works as a manual re-arm even while the radio link is down or silent (previously tier 1
+overrode every hold in exactly that state). The walk-away re-ground still fires
+`[idle].timeout_minutes` after the last hold or radio activity. A release (`auto`) resets
+nothing.
