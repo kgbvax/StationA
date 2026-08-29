@@ -199,6 +199,7 @@ func connectMQTT(ctx context.Context, cfg config.Config, log *slog.Logger) (paho
 func serialLoop(ctx context.Context, cfg config.Config, b *bridge.Bridge, dev *acom.Device, log *slog.Logger) error {
 	const maxBackoff = 60 * time.Second
 	const initialBackoff = 2 * time.Second
+	const healthyRunForReset = time.Minute
 	backoff := initialBackoff
 
 	for {
@@ -206,19 +207,34 @@ func serialLoop(ctx context.Context, cfg config.Config, b *bridge.Bridge, dev *a
 			return ctx.Err()
 		}
 
+		runStart := time.Now()
 		runErr := runOnce(ctx, cfg, b, dev, log)
+		ran := time.Since(runStart) // run duration only — excludes the backoff sleep below
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
 		log.Warn("serial run ended", "err", runErr)
 		b.SetDeviceOnline(false, fmt.Sprintf("serial: %v", runErr))
 
+		// A run that lasted a while was a healthy episode; the escalation
+		// belongs to whatever broke it, not to history. Without this reset the
+		// backoff sits at maxBackoff forever after a few short-lived cycles
+		// (e.g. the amp's PSU cycled on/off repeatedly), making every later
+		// transient fault wait the full 60 s to reconnect. Applied BEFORE the
+		// sleep so the reconnect following the healthy run is the fast one,
+		// and measured on run duration so a persistently broken link still
+		// escalates to (and holds) maxBackoff.
+		if ran >= healthyRunForReset {
+			backoff = initialBackoff
+		} else {
+			backoff = scaleBackoff(backoff, maxBackoff)
+		}
+
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-time.After(backoff):
 		}
-		backoff = scaleBackoff(backoff, maxBackoff)
 	}
 }
 

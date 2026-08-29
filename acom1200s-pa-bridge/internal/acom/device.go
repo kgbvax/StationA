@@ -27,9 +27,16 @@ type Device struct {
 	debug    bool
 	log      Logger
 
-	mu     sync.Mutex
-	port   serial.Port
-	closed bool
+	// open resolves portPath to a fresh serial.Port. Kept as a field so the
+	// fault self-heal (reopen) can re-resolve the — preferably by-id — path
+	// after the USB-serial adapter drops and re-enumerates under a new tty, and
+	// so tests can inject a mock port factory.
+	open func() (serial.Port, error)
+
+	mu         sync.Mutex
+	port       serial.Port
+	closed     bool
+	lastReopen time.Time // guarded by mu; rate-bounds the in-place self-heal
 
 	stateMu sync.RWMutex
 	mode    string // raw firmware mode (diagnostic)
@@ -39,12 +46,38 @@ type Device struct {
 
 // New constructs a Device for the given port path and averaging window.
 func New(portPath string, avgMs int, debug bool, log Logger) *Device {
-	return &Device{
+	d := &Device{
 		portPath: portPath,
 		avgMs:    avgMs,
 		debug:    debug,
 		log:      log,
 	}
+	d.open = func() (serial.Port, error) {
+		mode := &serial.Mode{
+			BaudRate: 9600,
+			DataBits: 8,
+			Parity:   serial.NoParity,
+			StopBits: serial.OneStopBit,
+		}
+		return serial.Open(d.portPath, mode)
+	}
+	return d
+}
+
+// openPort dials the port via d.open and applies the standard setup (1 s read
+// timeout, flushed buffers). It does not touch Device state; callers own the
+// resulting handle.
+func (d *Device) openPort() (serial.Port, error) {
+	port, err := d.open()
+	if err != nil {
+		return nil, err
+	}
+	if err := port.SetReadTimeout(1 * time.Second); err != nil {
+		d.log.Warnf("set read timeout: %v", err)
+	}
+	port.ResetInputBuffer()
+	port.ResetOutputBuffer()
+	return port, nil
 }
 
 // Open opens the serial port (9600 8N1), resets the buffers, marks the device
@@ -55,21 +88,10 @@ func New(portPath string, avgMs int, debug bool, log Logger) *Device {
 // power-distribution layer (the hf/switch slot's remote-on relays); this slot
 // only reports the resulting power state in telemetry (pa.power).
 func (d *Device) Open() error {
-	mode := &serial.Mode{
-		BaudRate: 9600,
-		DataBits: 8,
-		Parity:   serial.NoParity,
-		StopBits: serial.OneStopBit,
-	}
-	port, err := serial.Open(d.portPath, mode)
+	port, err := d.openPort()
 	if err != nil {
 		return err
 	}
-	if err := port.SetReadTimeout(1 * time.Second); err != nil {
-		d.log.Warnf("set read timeout: %v", err)
-	}
-	port.ResetInputBuffer()
-	port.ResetOutputBuffer()
 
 	d.mu.Lock()
 	d.port = port
@@ -87,7 +109,8 @@ func (d *Device) Open() error {
 // Run is the read loop. It blocks reading frames, ACKing each and emitting
 // telemetry observations to onObs, until the port errors, 30 s of silence
 // elapses, or ctx is cancelled. Closing the port (from Close or ctx cancel)
-// unblocks the read.
+// unblocks the read. Port faults are self-healed in place when possible: see
+// the port == nil branch below for the reopen-retry half.
 func (d *Device) Run(ctx context.Context, onObs func(Observation)) error {
 	// Arrange for ctx cancellation to close the port and unblock the read.
 	stop := make(chan struct{})
@@ -111,13 +134,72 @@ func (d *Device) Run(ctx context.Context, onObs func(Observation)) error {
 		port := d.port
 		d.mu.Unlock()
 		if port == nil {
-			return fmt.Errorf("serial port closed")
+			// A previous reopen failed — typically ENOENT because udev has not
+			// yet recreated the by-id path after the adapter re-enumerated.
+			// Retry the open in place, spaced by reopenMinInterval and bounded
+			// by the silence watchdog, rather than tearing the run down: the
+			// canonical drop + re-enumeration fault heals here without
+			// flipping /state.device_online. (This is ultrabridge's "rw == nil,
+			// next poll tick retries" half, adapted to a push-based loop; the
+			// sleep is only a spin guard — the rate bound does the pacing.)
+			if time.Since(lastDataTime) > silenceLimit {
+				return fmt.Errorf("no data received for %s (port unrecoverable)", silenceLimit)
+			}
+			if d.selfHealAllowed() {
+				if rerr := d.reopen(); rerr == nil {
+					// Fresh link: partial frames from the old handle no longer
+					// apply. (Silence timers DO carry over — a reopened port
+					// that delivers nothing is still silent.)
+					rxBuf = rxBuf[:0]
+					lastRetryTime = time.Now() // reopen re-armed telemetry already
+					continue
+				} else {
+					d.log.Warnf("reopen retry: %v", rerr)
+				}
+			}
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(reopenRetrySleep):
+			}
+			continue
 		}
 
 		n, err := port.Read(tmpBuf)
 		if err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
+			}
+			// The silence watchdog applies on the fault path too: a link that
+			// faults (rather than times out) without delivering data for
+			// silenceLimit must not be held online by repeated reopens —
+			// device_online must reflect a dead link. lastDataTime is only
+			// ever reset by real data, never by a reopen.
+			if time.Since(lastDataTime) > silenceLimit {
+				return fmt.Errorf("no data received for %s (last fault: %w)", silenceLimit, err)
+			}
+			// Port-level fault — typically EIO after the USB-serial adapter
+			// dropped and the kernel re-enumerated it under a new tty. Try one
+			// in-place reopen (re-resolving the by-id path) before tearing the
+			// run down: a transient glitch heals without flipping
+			// device_online, while a persistently broken link surfaces the
+			// error for the serial restart loop's backoff. See reopen.
+			if d.selfHealAllowed() {
+				if rerr := d.reopen(); rerr == nil {
+					// Fresh link: partial frames from the old handle no longer
+					// apply. (Silence timers DO carry over — see above.)
+					rxBuf = rxBuf[:0]
+					lastRetryTime = time.Now()
+					continue
+				} else {
+					// The reopen itself failed — usually the by-id path is
+					// simply not there yet (udev still recreating it). Loop
+					// around to the in-place retry path above instead of
+					// returning: an adapter that is coming back is exactly
+					// what the in-place heal exists for.
+					d.log.Warnf("reopen after fault: %v", rerr)
+					continue
+				}
 			}
 			return err
 		}
@@ -130,8 +212,8 @@ func (d *Device) Run(ctx context.Context, onObs func(Observation)) error {
 		}
 
 		// n == 0: read timeout.
-		if time.Since(lastDataTime) > 30*time.Second {
-			return fmt.Errorf("no data received for 30s, restarting monitor")
+		if time.Since(lastDataTime) > silenceLimit {
+			return fmt.Errorf("no data received for %s, restarting monitor", silenceLimit)
 		}
 		if time.Since(lastDataTime) > 5*time.Second && time.Since(lastRetryTime) > 5*time.Second {
 			d.log.Infof("no data for 5s, re-sending enable telemetry")
@@ -159,6 +241,83 @@ func (d *Device) Close() {
 		port.Close()
 	}
 	d.setOnline(false)
+}
+
+// Timing knobs for the run loop's self-heal and watchdog. Vars (not consts) so
+// tests can compress them; the defaults are the live values.
+var (
+	// reopenMinInterval bounds how often the in-place self-heal may retry after
+	// a port fault. A transient USB re-enumeration heals within one reopen; a
+	// link that faults again inside this window is treated as persistently
+	// broken and falls back to the serial restart loop (whose backoff spaces
+	// the retries). This mirrors ultrabridge's "one reopen per exchange, poll
+	// tick spaces retries" bound, adapted to acom's push-based read loop.
+	reopenMinInterval = 2 * time.Second
+
+	// silenceLimit is how long the run loop tolerates a silent link (read
+	// timeouts OR read faults healed by reopen) before giving up and letting
+	// the serial restart loop mark the device offline. It applies to both the
+	// timeout path and the fault path: a link that keeps faulting but never
+	// delivers data is silent, however many times the port reopens.
+	silenceLimit = 30 * time.Second
+
+	// reopenRetrySleep spaces the idle loop between failed reopen attempts.
+	// Purely a spin guard while waiting out the reopenMinInterval window —
+	// the rate bound does the actual pacing.
+	reopenRetrySleep = 100 * time.Millisecond
+)
+
+// selfHealAllowed reports whether an in-place reopen may be attempted now: the
+// device must not be closed (shutdown) and the previous reopen attempt must be
+// older than reopenMinInterval (no tight reopen loop against a flapping port).
+func (d *Device) selfHealAllowed() bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return !d.closed && time.Since(d.lastReopen) >= reopenMinInterval
+}
+
+// reopen swaps the stale serial handle for a fresh one, re-resolving the
+// (preferably by-id) path so a USB-serial adapter that dropped and
+// re-enumerated under a new tty is picked up without tearing the run loop —
+// and without flipping /state.device_online, which a full serialLoop restart
+// does. The stale handle is closed best-effort (it is likely already gone).
+// On failure d.port is left nil and the caller falls back to the restart path.
+func (d *Device) reopen() error {
+	d.mu.Lock()
+	if d.closed {
+		d.mu.Unlock()
+		return fmt.Errorf("device closed")
+	}
+	d.lastReopen = time.Now()
+	stale := d.port
+	d.port = nil
+	d.mu.Unlock()
+
+	if stale != nil {
+		_ = stale.Close()
+	}
+	port, err := d.openPort()
+	if err != nil {
+		return err
+	}
+
+	d.mu.Lock()
+	if d.closed { // Close() raced us during the open; don't leak the handle.
+		d.mu.Unlock()
+		port.Close()
+		return fmt.Errorf("device closed")
+	}
+	d.port = port
+	d.mu.Unlock()
+
+	d.log.Infof("serial port reopened after fault (%s)", d.portPath)
+	// The amp keeps streaming once enabled, so telemetry resumes on its own;
+	// re-arm anyway in case the amp itself rebooted (PSU cycled) while the
+	// adapter was down. Failure is non-fatal — data may still flow.
+	if err := d.EnableTelemetry(); err != nil {
+		d.log.Warnf("re-arm telemetry after reopen: %v", err)
+	}
+	return nil
 }
 
 // Online reports whether the serial port is currently open.

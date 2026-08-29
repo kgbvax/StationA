@@ -68,6 +68,28 @@ silent and the loop backs off; once the amp is powered again telemetry resumes
 and the loop reconnects (Open re-sends the enable-telemetry command). There is
 no watchdog and no `power_default`.
 
+**Serial self-heal** (`acom.Device.reopen`): a transient port fault — the
+live failure mode is EIO after the USB-serial adapter drops and the kernel
+re-enumerates it under a new tty — is healed *in place* before the restart
+loop is entered: the stale handle is closed, the (by-id) port path is
+re-resolved to the fresh tty, and telemetry is re-armed, without `Run`
+returning and without `/state.device_online` flipping. Because the EIO
+surfaces *before* udev has recreated the by-id path, a reopen that fails
+with ENOENT is retried in place (spaced by `reopenMinInterval`, 2 s) until
+it lands — the adapter is coming back, and this is exactly the fault the
+in-place heal exists for. A link that *opens* but faults again inside the
+window is treated as persistently broken and falls through to the serialLoop
+restart path and its backoff. The 30 s silence watchdog also covers the
+fault path and the reopen-retry path, and is refreshed only by real data,
+never by a reopen: a flapping link that delivers no data for 30 s goes
+offline however often the port reopens (or fails to), so `device_online`
+cannot be held true by a dead link (two-layer liveness stays honest). The
+serialLoop backoff resets to the initial value after a run that lasted
+≥ 1 min (measured on run duration, applied before the wait), so escalation
+belongs to the episode that broke the link rather than to history.
+(Pattern ported from ultrabridge's transport self-heal, including its
+retry-next-tick half.)
+
 **Concurrency:** `acom.Device.mu` guards the serial port and all writes (ACK,
 enable, mode/band commands) — fixes the original single-file's ACK-without-lock
 race. `acom.Device.stateMu` guards mode/band/online. `bridge.Bridge.mu` guards
