@@ -153,3 +153,10 @@ for frame layout and byte offsets used in `internal/acom/parser.go`.
 | Deployment convention (serial addendum) | `../docs/conventions/deployment.md` |
 | Canonical band/mode vocabulary | `../docs/conventions/band-mode-reference.md` |
 | PA slot MQTT schema | `docs/pa-mqtt-api.md` |
+
+## License
+
+Copyright © 2026 Ingomar Otter.
+
+Licensed under the GNU Affero General Public License v3.0 or later
+(SPDX: `AGPL-3.0-or-later`) — see [LICENSE](LICENSE).

@@ -161,3 +161,10 @@ TARGETS=all ./build.sh     # + linux/arm64, darwin/amd64
 seeds `config.toml` once (never overwrites), and prints the manual start
 command. The Windows instance runs interactively — no auto-start, no service
 (deliberate deviation from the deployment convention, recorded there).
+
+## License
+
+Copyright © 2026 Ingomar Otter.
+
+Licensed under the GNU Affero General Public License v3.0 or later
+(SPDX: `AGPL-3.0-or-later`) — see [LICENSE](LICENSE).

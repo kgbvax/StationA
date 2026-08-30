@@ -48,3 +48,10 @@ ssh io@192.168.1.139 'journalctl -u hadiscovery -f'
 | `internal/ha` | the only HA knowledge — neutral→HA render |
 | `internal/engine` | discovery lifecycle (republish on HA birth, clear on meta-clear, idempotent) |
 | `internal/mqtt` | bus client (own LWT/meta, subscribe meta filter + `homeassistant/status`) |
+
+## License
+
+Copyright © 2026 Ingomar Otter.
+
+Licensed under the GNU Affero General Public License v3.0 or later
+(SPDX: `AGPL-3.0-or-later`) — see [LICENSE](LICENSE).

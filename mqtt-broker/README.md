@@ -194,3 +194,10 @@ in place where they diverge.
 - No TLS (the whole stack is plain `tcp://…:1883` on the LAN). If the
   house↔shack link ever leaves the LAN, revisit TLS on the bridge connection.
 - No change to HA's MQTT integration or to any station component's MQTT code.
+
+## License
+
+Copyright © 2026 Ingomar Otter.
+
+Licensed under the GNU Affero General Public License v3.0 or later
+(SPDX: `AGPL-3.0-or-later`) — see [LICENSE](LICENSE).

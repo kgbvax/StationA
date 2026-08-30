@@ -107,3 +107,10 @@ Live smoke test (with broker creds in `config.toml` and bridges running on shari
 open the UI, watch the HF cards populate, set a radio freq, watch `antennaselect`
 resolve and the switch move, simulate a 30m `radio/state` to engage the ATU, clear a
 stale retained topic. See the plan file's verification section.
+
+## License
+
+Copyright © 2026 Ingomar Otter.
+
+Licensed under the GNU Affero General Public License v3.0 or later
+(SPDX: `AGPL-3.0-or-later`) — see [LICENSE](LICENSE).

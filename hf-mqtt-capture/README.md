@@ -52,3 +52,10 @@ Then restart the service:
 ```bash
 sudo systemctl restart hf-mqtt-capture
 ```
+
+## License
+
+Copyright © 2026 Ingomar Otter.
+
+Licensed under the GNU Affero General Public License v3.0 or later
+(SPDX: `AGPL-3.0-or-later`) — see [LICENSE](LICENSE).

@@ -41,3 +41,10 @@ map, band allow-list, heartbeat window). Secrets live in `src/secrets.h`
 (gitignored — see `src/secrets.example.h`). This is the embedded-firmware
 secrets pattern, distinct from the Go services' systemd EnvironmentFile; see
 `../docs/conventions/config-and-secrets.md`.
+
+## License
+
+Copyright © 2026 Ingomar Otter.
+
+Licensed under the GNU Affero General Public License v3.0 or later
+(SPDX: `AGPL-3.0-or-later`) — see [LICENSE](LICENSE).

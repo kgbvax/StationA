@@ -57,3 +57,10 @@ full schema and the model §7.1 default sequence. The MQTT password is **not** i
 the TOML — it is loaded from an `EnvironmentFile` (`/etc/powerseq/powerseq.env`)
 per the
 [config-and-secrets convention](../docs/conventions/config-and-secrets.md).
+
+## License
+
+Copyright © 2026 Ingomar Otter.
+
+Licensed under the GNU Affero General Public License v3.0 or later
+(SPDX: `AGPL-3.0-or-later`) — see [LICENSE](LICENSE).

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 module codeberg.org/kgbvax/stationa/shared
 
 go 1.26.5
