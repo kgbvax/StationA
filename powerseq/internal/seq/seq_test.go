@@ -514,6 +514,35 @@ func TestWaitStateLivenessPrecondition(t *testing.T) {
 	}
 }
 
+// TestWaitStateDeviceOnlinePrecondition: the bridge is up (/status online) but the
+// fronted device is dead (/state.device_online false). The wait must NOT pass on the
+// stale retained /state — the LWT alone is layer 1 of the two-layer liveness rule
+// (model §3/§7.1); powerseq gated on the LWT only until 2026-09-03.
+func TestWaitStateDeviceOnlinePrecondition(t *testing.T) {
+	s, _ := newTestSeq(t)
+	s.markOnline("hf/switch", "hf/pa-arm", "hf/ant-switch", "hf/radio", "hf/pa")
+	// Bridge online, device link dead, retained /state.power says "on" (stale).
+	s.SetState(abs("hf/pa"), []byte(`{"power":"on","device_online":false}`))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go s.Run(ctx)
+
+	s.Start()
+	runUntil(t, s, func() bool {
+		_, step, _ := s.Phase()
+		return step == "wait-pa-power"
+	}, time.Second)
+	runUntil(t, s, func() bool {
+		ph, _, fault := s.Phase()
+		return ph == PhaseIdle && fault != ""
+	}, time.Second)
+
+	_, _, fault := s.Phase()
+	if !strings.Contains(fault, "wait-pa-power") || !strings.Contains(fault, "timeout") {
+		t.Errorf("fault = %q, want wait-pa-power timeout (dead device_online must not pass on stale /state)", fault)
+	}
+}
+
 func StepTimeoutInTest() time.Duration { return 200 * time.Millisecond }
 
 func TestBrokerDisconnectGatesCmd(t *testing.T) {

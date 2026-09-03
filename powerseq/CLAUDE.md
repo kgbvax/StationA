@@ -11,9 +11,10 @@ confirmations at each step.
 The sequence is **config-driven**, not hard-coded: a pair of ordered step lists
 (`[[startup]]` / `[[shutdown]]`) in `config.toml` define it. Each step is one of
 four kinds — `cmd` (emit a retained `/cmd`), `wait_status` (wait for N slots'
-`/status`), `wait_state` (wait for a slot's `/state` field; implicit
-`/status`-online precondition so a dead device cannot pass on stale retained
-`/state`), or `delay` (a literal `duration_s` or a symbolic `network`/`stagger`
+`/status`), `wait_state` (wait for a slot's `/state` field; implicit two-layer
+liveness precondition — `/status` online AND `/state.device_online` not `false`
+when present — so neither a dead bridge nor a dead device behind a live bridge
+can pass on stale retained `/state`), or `delay` (a literal `duration_s` or a symbolic `network`/`stagger`
 ref into `[timing]`). `config.example.toml` ships the model §7.1 sequence as the
 default; edit it to change the order, targets, waits, or delays for a different
 setup. The subscribed topics and the `/meta` `controls`/`watches` are derived

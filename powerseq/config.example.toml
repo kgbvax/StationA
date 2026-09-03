@@ -97,8 +97,11 @@ level = "info"
 #                                # is absent/nil/empty (wait for a field to clear)
 #     hold_ms   = 500            # optional (see wait_status)
 #     timeout_s = 60            # optional, must be > 0 if given
-#     # IMPLICIT liveness precondition: the slot's /status MUST also be online,
-#     # so a dead device whose LWT fired cannot pass on a stale retained /state.
+#     # IMPLICIT liveness precondition (two layers): the slot's /status MUST be
+#     # online, AND its /state.device_online must not be "false" when present —
+#     # so neither a dead bridge (LWT) nor a dead device behind a live bridge
+#     # passes on a stale retained /state. If a wait times out unexpectedly,
+#     # check both layers; the fault string does not say which one blocked.
 #     # A malformed /state drops the slot's prior snapshot (no stale poisoning).
 #     # A wait_state on the sequencer's OWN slot is a config error.
 #

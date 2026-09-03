@@ -180,10 +180,13 @@ is one of four kinds:
 `value` is always a string (the value-key convention; model value_type is
 string|int|float, no bool). For `wait_state`, `value` may be the empty string —
 this waits for the field to **clear** (become absent/`nil`/`""`), which is a
-legitimate wait the runtime supports. `wait_state` has an **implicit
-`/status`-online precondition** — a dead device whose LWT fired cannot pass on
-a stale retained `/state`. A `wait_state` on the sequencer's own slot is a
-config error.
+legitimate wait the runtime supports. `wait_state` has an **implicit liveness
+precondition** with two layers: the slot's `/status` must be `online` (a dead
+bridge whose LWT fired cannot pass on a stale retained `/state`), and its
+`/state.device_online` must not be `false` when the field is present (a dead
+*device* behind a live bridge cannot pass either — model §3 two-layer liveness).
+When a wait fails, check both layers: the fault string does not say which one
+blocked. A `wait_state` on the sequencer's own slot is a config error.
 
 `hold_ms` is optional (omitted → `[timing].default_hold_ms`; an **explicit `0`
 means edge-triggered** even when a default hold is set). `timeout_s` is optional

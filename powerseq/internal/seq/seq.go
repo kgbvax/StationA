@@ -7,9 +7,11 @@
 //	cmd          emit a retained /cmd {action, value} to a slot
 //	wait_status  wait until N slots' /status == online|offline
 //	wait_state   wait until a slot's /state top-level field == value
-//	             (implicit precondition: the slot's /status must be online, so
-//	             a dead device whose LWT fired cannot pass on a stale retained
-//	             /state — the fix for the dead-device masking case)
+//	             (implicit two-layer liveness precondition: the slot's /status
+//	             must be online AND its /state.device_online must not be "false"
+//	             when present, so neither a dead bridge whose LWT fired nor a
+//	             dead device behind a live bridge can pass on a stale retained
+//	             /state)
 //	delay        sleep a fixed duration (a literal duration_s or a symbolic
 //	             "network"/"stagger" ref into [timing])
 //
@@ -574,7 +576,21 @@ func (s *Sequencer) statusOf(slot string) string {
 	return s.status[slot]
 }
 
-func (s *Sequencer) isOnline(slot string) bool { return s.statusOf(slot) == "online" }
+// isOnline reports whether a slot is fit to act on: the bridge /status LWT says
+// "online" AND, when the /state doc carries the field, the fronted device is reachable
+// (device_online, model §3). Gating on the LWT alone let a dead device pass a wait_state
+// on its stale retained /state: bridge up, serial link dead, pre-outage power:"on"
+// retained — the sequencer would proceed to arm on an unreachable PA (fixed 2026-09-03).
+// An absent device_online field (slots that do not report it) does not block.
+func (s *Sequencer) isOnline(slot string) bool {
+	if s.statusOf(slot) != "online" {
+		return false
+	}
+	if v := s.stateField(slot, "device_online"); v == "false" {
+		return false
+	}
+	return true
+}
 
 // stateField returns a /state top-level field coerced to a string for
 // comparison against the configured value. Absent/nil → "".
