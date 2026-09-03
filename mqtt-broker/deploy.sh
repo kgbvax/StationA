@@ -23,7 +23,8 @@
 #
 #   HF_MQTT_PASSWORD      password for the `hf` station account (prompted if empty
 #   BRIDGE_MQTT_PASSWORD  password for the `bridge` account   and the passwd file
-#   CONSOLE_MQTT_PASSWORD password for the `console` account  does not exist yet)
+#   CONSOLE_MQTT_PASSWORD password for the `console` account does not exist yet)
+#   DIAL_MQTT_PASSWORD    password for the `dial` account
 #
 # Secrets handling follows the repo convention: the password db (/etc/mosquitto/passwd)
 # and the bridge remote_password (in /etc/mosquitto/mosquitto.conf) are SEEDED ONCE
@@ -46,6 +47,7 @@ HA_REMOTE_USER="${HA_REMOTE_USER:-stationa-bridge}"
 HF_MQTT_PASSWORD="${HF_MQTT_PASSWORD:-}"
 BRIDGE_MQTT_PASSWORD="${BRIDGE_MQTT_PASSWORD:-}"
 CONSOLE_MQTT_PASSWORD="${CONSOLE_MQTT_PASSWORD:-}"
+DIAL_MQTT_PASSWORD="${DIAL_MQTT_PASSWORD:-}"
 
 if [[ "$SSH_HOST" == *"@"* ]]; then
   SSH_TARGET="$SSH_HOST"
@@ -77,7 +79,7 @@ echo ">> Installing mosquitto on ${SSH_TARGET}..."
 scp "$SEED_CONF" "${SSH_TARGET}:/tmp/mosquitto.conf.seed"
 scp "$SEED_ACL" "${SSH_TARGET}:/tmp/acl.conf.seed"
 
-ssh "$SSH_TARGET" "CONF_FILE='${CONF_FILE}' ACL_FILE='${ACL_FILE}' PASSWD_FILE='${PASSWD_FILE}' CONFIG_DIR='${CONFIG_DIR}' HF_MQTT_PASSWORD='${HF_MQTT_PASSWORD}' BRIDGE_MQTT_PASSWORD='${BRIDGE_MQTT_PASSWORD}' CONSOLE_MQTT_PASSWORD='${CONSOLE_MQTT_PASSWORD}' HA_BROKER='${HA_BROKER}' HA_REMOTE_USER='${HA_REMOTE_USER}' bash -s" <<'REMOTE'
+ssh "$SSH_TARGET" "CONF_FILE='${CONF_FILE}' ACL_FILE='${ACL_FILE}' PASSWD_FILE='${PASSWD_FILE}' CONFIG_DIR='${CONFIG_DIR}' HF_MQTT_PASSWORD='${HF_MQTT_PASSWORD}' BRIDGE_MQTT_PASSWORD='${BRIDGE_MQTT_PASSWORD}' CONSOLE_MQTT_PASSWORD='${CONSOLE_MQTT_PASSWORD}' DIAL_MQTT_PASSWORD='${DIAL_MQTT_PASSWORD}' HA_BROKER='${HA_BROKER}' HA_REMOTE_USER='${HA_REMOTE_USER}' bash -s" <<'REMOTE'
 set -euo pipefail
 SEED_CONF="/tmp/mosquitto.conf.seed"
 SEED_ACL="/tmp/acl.conf.seed"
@@ -125,6 +127,7 @@ if [ -e "$PASSWD_FILE" ]; then
   echo "      sudo mosquitto_passwd $PASSWD_FILE hf"
   echo "      sudo mosquitto_passwd $PASSWD_FILE bridge"
   echo "      sudo mosquitto_passwd $PASSWD_FILE console"
+  echo "      sudo mosquitto_passwd $PASSWD_FILE dial"
 else
   # Helper: add a user with a given password non-interactively (only if the
   # password was supplied via env; otherwise skip that user with a note).
@@ -148,6 +151,7 @@ else
   fi
   add_user bridge "$BRIDGE_MQTT_PASSWORD"
   add_user console "$CONSOLE_MQTT_PASSWORD"
+  add_user dial "$DIAL_MQTT_PASSWORD"
   sudo chmod 0600 "$PASSWD_FILE"
   sudo chown mosquitto:mosquitto "$PASSWD_FILE"
   echo "   password db at $PASSWD_FILE (0600, owner mosquitto)."
@@ -165,7 +169,7 @@ echo ""
 echo ">> Done. Shack Mosquitto broker deployed to ${SSH_TARGET}."
 echo "   Config:  ${CONF_FILE}  (set 'remote_password' under [bridge-to-ha] for the HA bridge)"
 echo "   ACL:     ${ACL_FILE}"
-echo "   Secrets: ${PASSWD_FILE}  (hf / bridge / console users)"
+echo "   Secrets: ${PASSWD_FILE}  (hf / bridge / console / dial users)"
 echo "   Logs:    ssh ${SSH_TARGET} 'journalctl -u mosquitto -f'"
 echo "   Next:    reconfigure the HA Mosquitto add-on with the 'stationa-bridge' account + ACL"
 echo "            (see README.md 'HA-side setup'), then repoint station components at 127.0.0.1:1883."

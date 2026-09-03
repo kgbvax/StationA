@@ -34,7 +34,7 @@ single broker address, so each is simply repointed at the shack broker.
    │ all station Go services (flexbridge, ultra,  │  HA UI reads state & sends cmd
    │ antennaselect, powerseq, hadiscovery, …)     │  via its MQTT integration on .50
    └─────────────────────────────────────────────┘
-   Remote MQTT clients (Shelly plugs, M5 PLC, ant-switch ESP, console tablet)
+   Remote MQTT clients (Shelly plugs, M5 PLC, ant-switch ESP, console tablet, Dial)
    connect to shari:1883 over the shack LAN.
 ```
 
@@ -74,6 +74,7 @@ Shack broker (`acl.conf.example`):
 | `hf`     | `#` (full)                                            | `#` (full) — trusted station-internal account        |
 | `bridge` | `muehle/+/+/state`, `/meta`, `/status`, `homeassistant/+/+/+/config` | `homeassistant/status`, `muehle/+/+/cmd`, `local/bridge-to-ha` |
 | `console`| `muehle/+/+/state`, `/meta`, `/status`                | `muehle/+/+/cmd` (narrow)                            |
+| `dial`   | `muehle/hf/rotator/state`, `/status`                  | `muehle/hf/rotator/cmd` (one slot only)              |
 
 - **`hf`** is the shared account all station Go services (via `127.0.0.1`) and
   the **Shelly smart plugs** connect as. The Shelly plugs publish on their own
@@ -87,6 +88,13 @@ Shack broker (`acl.conf.example`):
 - **`console`** is the `hf_console` tablet (`hf_console/CLAUDE.md` already
   recommends a dedicated console user). Configure the tablet with this account,
   not `hf`.
+- **`dial`** is the M5Stack Dial rotator control head
+  (`m5dial-hf-rotctrl/` firmware) — the narrowest account on the broker: it
+  touches exactly one slot (`muehle/hf/rotator`, read its state/status, write
+  its cmd). Configure the Dial's `src/secrets.h` with this account, not `hf`.
+  The broker deploy is seed-once, so on an already-deployed broker add this
+  account by hand on shari (`acl.conf` + `mosquitto_passwd`, then restart
+  mosquitto).
 
 HA broker (`.50`, configured in the HA Mosquitto add-on — **outside this
 repo**): a `stationa-bridge` account with read `homeassistant/status` +
@@ -97,14 +105,15 @@ repo**): a `stationa-bridge` account with read `homeassistant/status` +
 
 ```bash
 # From this directory — seeds config, ACL, and password db once on shari.
-HF_MQTT_PASSWORD=... BRIDGE_MQTT_PASSWORD=... CONSOLE_MQTT_PASSWORD=... ./deploy.sh
+HF_MQTT_PASSWORD=... BRIDGE_MQTT_PASSWORD=... CONSOLE_MQTT_PASSWORD=... DIAL_MQTT_PASSWORD=... ./deploy.sh
 ```
 
 `deploy.sh` is seed-once (see `../docs/conventions/config-and-secrets.md`):
 - installs `mosquitto`/`mosquitto-clients` via apt if missing;
 - seeds `/etc/mosquitto/mosquitto.conf` (0600) and `acl.conf` only if absent;
-- seeds the password db `/etc/mosquitto/passwd` (0600) with `hf`/`bridge`/`console`
-  from the `*_MQTT_PASSWORD` env vars, only if absent;
+- seeds the password db `/etc/mosquitto/passwd` (0600) with
+  `hf`/`bridge`/`console`/`dial` from the `*_MQTT_PASSWORD` env vars, only if
+  absent;
 - enables + restarts the `mosquitto` systemd unit.
 
 After the first deploy, edit on the device — **do not** redeploy to change
@@ -115,7 +124,11 @@ settings (it would no-op):
    HA-side `stationa-bridge` account password. Restart mosquitto.
 2. If any password was skipped (env var empty), add it on the device:
    `sudo mosquitto_passwd /etc/mosquitto/passwd hf` (repeat for `bridge`,
-   `console`).
+   `console`, `dial`).
+3. To add the `dial` account to a broker deployed before it existed: append
+   the `dial` user block from `acl.conf.example` to `/etc/mosquitto/acl.conf`,
+   `sudo mosquitto_passwd /etc/mosquitto/passwd dial`, then
+   `sudo systemctl restart mosquitto`.
 
 ### HA-side setup (outside the repo)
 
@@ -149,6 +162,9 @@ in place where they diverge.
   the ESPHome YAML / `secrets.yaml` and reflash.
 - **`hf_console` tablet** — set the broker to `192.168.1.139:1883` on first
   launch or via the console top-bar gear. Use the `console` account.
+- **M5Stack Dial rotator head** (`m5dial-hf-rotctrl`) — set `MQTT_HOST` in
+  `src/secrets.h` (default already `192.168.1.139`) and reflash. Use the
+  `dial` account.
 
 ## Operational behavior
 

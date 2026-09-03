@@ -36,3 +36,12 @@ topic read muehle/+/+/state
 topic read muehle/+/+/meta
 topic read muehle/+/+/status
 topic write muehle/+/+/cmd
+
+# dial — the M5Stack Dial rotator control head (m5dial-hf-rotctrl firmware,
+# shack-local). Narrower still: it touches exactly one slot — the HF rotator.
+# It is a consumer + /cmd stimulator, not a slot (no meta/state/status of its
+# own), so read is limited to that slot's telemetry and write to its cmd.
+user dial
+topic read muehle/hf/rotator/state
+topic read muehle/hf/rotator/status
+topic write muehle/hf/rotator/cmd
