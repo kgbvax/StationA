@@ -123,6 +123,7 @@ All shared docs are in `docs/` in this repo:
 | MQTT schema template | `docs/templates/mqtt-schema.md` |
 | Station-wide known issues / decisions register | `docs/known-issues.md` |
 | Runtime-library constraints (shared/ contracts) | `docs/conventions/runtime-library.md` |
+| Logging convention (slog, stderr, component/slot attrs) | `docs/conventions/logging.md` |
 
 All components live as subdirectories of this one repo, so the shared docs path
 relative to any component is `../docs/` (e.g. `../docs/station-integration-model.md`
@@ -188,3 +189,7 @@ All components follow these shared conventions:
    (Go's `internal/` rule enforces this). Each module's `go.mod` carries both the
    `require` and a `replace … => ../shared` so it builds without the workspace;
    the root `go.work` ties the modules together for whole-repo `go build ./...`.
+10. **Logging** — `log/slog` text handler to stderr with a constant `component` attr
+    and per-slot child loggers; real `Warn`/`Error` levels so `journalctl -p warning`
+    filters errors; no per-service log files (journald is the consolidator)
+    (see `docs/conventions/logging.md`)
