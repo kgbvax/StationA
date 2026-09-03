@@ -18,6 +18,7 @@ import '../../dxspot/projection.dart';
 import '../../dxspot/ring_subpaths.dart';
 import '../../dxspot/world_geometry.dart';
 import '../theme.dart';
+import 'rotator_presets_bar.dart';
 
 const double _kMercatorZoomMin = 1.0;
 const double _kMercatorZoomMax = 12.0;
@@ -25,7 +26,12 @@ const double _kMercatorZoomDefault = 2.5;
 const double _kMercatorZoomStep = 0.5;
 
 class MercatorMapPanel extends StatefulWidget {
-  const MercatorMapPanel({super.key});
+  /// Whether to overlay the direction-preset rail on the right edge, above
+  /// the zoom row (tablet layout; phones keep the horizontal bar in their
+  /// scroll column). Mirrors `CompassPanel.showPresets`.
+  final bool showPresets;
+
+  const MercatorMapPanel({super.key, this.showPresets = true});
 
   @override
   State<MercatorMapPanel> createState() => _MercatorMapPanelState();
@@ -144,6 +150,15 @@ class _MercatorMapPanelState extends State<MercatorMapPanel> {
                       },
                     ),
                   ),
+                  // Direction presets, stacked directly above the zoom row
+                  // on the right map edge (tablet layout only).
+                  if (widget.showPresets)
+                    Positioned(
+                      right: 12,
+                      // Clears the zoom row: bottom 12 + ~32-high row + 4 gap.
+                      bottom: 48,
+                      child: const RotatorPresetsRail(),
+                    ),
                 ],
               ),
             ),

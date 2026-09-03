@@ -50,7 +50,9 @@ is the source of truth; this app's palette must be kept in sync with it.
 
 ## Retained /cmd policy
 
-Retained cmd slots (self-healing steady state): `power/master`, `power/psu-13v8`, `hf/switch`, `hf/pa-arm`, `hf/ant-ctrl`, `hf/ant-switch`, `hf/antenna-select`.
+Retained cmd slots (self-healing steady state): `power/master`, `power/psu-13v8`, `hf/switch`, `hf/pa-arm`, `hf/ant-switch`, `hf/antenna-select`.
+
+Retained but one-shot (consumer clears the topic after every execution — a command does NOT re-apply if the bridge restarts): `hf/ant-ctrl`.
 
 Non-retained (one-shot): `hf/pa`, `hf/rotator`, `hf/tuner`, `hf/power-seq`.
 

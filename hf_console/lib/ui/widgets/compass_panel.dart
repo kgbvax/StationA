@@ -8,10 +8,15 @@ import '../../dxspot/dxspot_service.dart';
 import '../../dxspot/projection.dart';
 import '../../dxspot/world_geometry.dart';
 import '../theme.dart';
+import 'rotator_presets_bar.dart';
 import 'world_layer_cache.dart';
 
 class CompassPanel extends StatefulWidget {
-  const CompassPanel({super.key});
+  /// Whether to overlay the direction-preset rail on the right card edge
+  /// (tablet layout; phones keep the horizontal bar in their scroll column).
+  final bool showPresets;
+
+  const CompassPanel({super.key, this.showPresets = true});
 
   @override
   State<CompassPanel> createState() => _CompassPanelState();
@@ -79,7 +84,7 @@ class _CompassPanelState extends State<CompassPanel> {
 
   @override
   Widget build(BuildContext context) {
-    return _CompassBody(zoom: _zoom, onZoomChanged: _setZoom, world: _world);
+    return _CompassBody(zoom: _zoom, onZoomChanged: _setZoom, world: _world, showPresets: widget.showPresets);
   }
 }
 
@@ -87,7 +92,8 @@ class _CompassBody extends StatelessWidget {
   final double zoom;
   final ValueChanged<double> onZoomChanged;
   final WorldLayerCache world;
-  const _CompassBody({required this.zoom, required this.onZoomChanged, required this.world});
+  final bool showPresets;
+  const _CompassBody({required this.zoom, required this.onZoomChanged, required this.world, required this.showPresets});
 
   @override
   Widget build(BuildContext context) {
@@ -296,6 +302,19 @@ class _CompassBody extends StatelessWidget {
                 onZoomChanged: onZoomChanged,
               ),
             ),
+            // Layer 5: direction presets, stacked directly above the zoom
+            // stepper on the right card edge (moved off the map column's
+            // footer row so the disc gets the full card height).
+            if (showPresets)
+              Positioned(
+                right: 4,
+                // Clears the stacked +/- stepper. The stepper buttons come
+                // out 48 dp high despite the `minimumSize` override (the
+                // theme's tap-target padding wins), so the stack is
+                // 4 + 2×48 + 2 ≈ 102 tall — measured in widget tests.
+                bottom: 108,
+                child: const RotatorPresetsRail(),
+              ),
           ],
         );
       },
@@ -363,9 +382,9 @@ class _ZoomIconButton extends StatelessWidget {
       message: tooltip,
       child: ElevatedButton(
         onPressed: onPressed,
-        // Slightly smaller than the global `iconActionButton` (48×48) so
-        // the two stacked buttons fit a 60 dp tall footer row next to the
-        // compressed preset buttons.
+        // Slightly smaller than the global `iconActionButton` (48×48) so the
+        // stacked stepper stays compact under the preset rail at the card's
+        // bottom-right corner.
         style: AppTheme.iconActionButton().copyWith(
           minimumSize: const WidgetStatePropertyAll(Size(40, 28)),
         ),

@@ -139,7 +139,9 @@ class _HfPage extends StatelessWidget {
                       color: AppTheme.pane,
                       border: Border(bottom: BorderSide(color: AppTheme.cardLine)),
                     ),
-                    child: const DxMapContainer(),
+                    // Presets stay in the scroll column on phones — the map
+                    // is too small to overlay the five-button rail.
+                    child: const DxMapContainer(showPresets: false),
                   ),
                 ),
                 Expanded(
@@ -184,12 +186,14 @@ class _HfPage extends StatelessWidget {
                           color: AppTheme.pane,
                           border: Border(bottom: BorderSide(color: AppTheme.cardLine)),
                         ),
+                        // Tablet: direction presets live on the map's right
+                        // edge (above the +/- zoom stepper) — the column no
+                        // longer spends a footer row on them.
                         child: const DxMapContainer(),
                       ),
                     ),
                     const UltrabeamPanel(),
                     const AntennaPanel(),
-                    const RotatorPresetsBar(),
                   ],
                 ),
               ),

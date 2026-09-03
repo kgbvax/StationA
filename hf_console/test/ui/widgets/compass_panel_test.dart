@@ -42,9 +42,9 @@ void main() {
     });
 
     // Preset-button coverage (NA / SA / VK / JA / STOP) lives in
-    // `rotator_presets_bar_test.dart` — those buttons were extracted out of
-    // the compass card into a dedicated `RotatorPresetsBar` widget so the
-    // disc can use the full card height. The compass card itself only
-    // owns tap-to-aim + the +/- zoom stepper now.
+    // `rotator_presets_bar_test.dart` — the rail overlay the compass card
+    // carries on its right edge (above the zoom stepper) plus the phone
+    // layout's horizontal bar. The compass card itself owns tap-to-aim +
+    // the +/- zoom stepper here.
   });
 }

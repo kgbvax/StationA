@@ -12,7 +12,13 @@ import 'mercator_map_panel.dart';
 enum DxProjection { azimuth, mercator }
 
 class DxMapContainer extends StatefulWidget {
-  const DxMapContainer({super.key});
+  /// Whether the map panels overlay the direction-preset rail on their right
+  /// edge (tablet). Phones pass false and keep the horizontal presets bar in
+  /// their scrolling controls column instead — the phone map is too small to
+  /// carry a five-button rail.
+  final bool showPresets;
+
+  const DxMapContainer({super.key, this.showPresets = true});
 
   @override
   State<DxMapContainer> createState() => _DxMapContainerState();
@@ -28,8 +34,8 @@ class _DxMapContainerState extends State<DxMapContainer> {
       fit: StackFit.expand,
       children: [
         _projection == DxProjection.azimuth
-            ? const CompassPanel()
-            : const MercatorMapPanel(),
+            ? CompassPanel(showPresets: widget.showPresets)
+            : MercatorMapPanel(showPresets: widget.showPresets),
         Positioned(
           top: 8,
           right: 8,
