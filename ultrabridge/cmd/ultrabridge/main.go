@@ -77,13 +77,20 @@ func main() {
 			ctrl,
 		)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "mqtt disabled: %v\n", err)
-		} else {
-			// Embedded HA discovery is gated off by default (model §9); hadiscovery
-			// renders discovery from /meta.expose instead.
-			mqttClient.PublishDiscoveryIfEnabled()
-			mqttClient.BindCommands(ctx)
+			// Fatal, deliberately: never run the bridge with its MQTT plane silently
+			// dead. An initial-connect failure here (e.g. the broker briefly unreachable
+			// in the boot storm) used to log "mqtt disabled" and keep running serial+web
+			// only for the life of the process — ant-ctrl showed offline for ~18 h on
+			// 2026-09-03 with no restart to rescue it. Exiting non-zero lets systemd's
+			// Restart=on-failure / RestartSec=5 crash-loop the unit until the broker
+			// answers (the same shape shelly-power-bridge/powerseq/antennaselect use).
+			fmt.Fprintf(os.Stderr, "mqtt connect failed: %v\n", err)
+			os.Exit(1)
 		}
+		// Embedded HA discovery is gated off by default (model §9); hadiscovery
+		// renders discovery from /meta.expose instead.
+		mqttClient.PublishDiscoveryIfEnabled()
+		mqttClient.BindCommands(ctx)
 	}
 
 	pollCtx, cancelPoll := context.WithCancel(ctx)

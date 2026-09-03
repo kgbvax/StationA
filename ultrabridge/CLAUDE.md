@@ -47,10 +47,20 @@ MQTT, and also subscribes to `/cmd` to move the antenna on request.
 **Poll loop** (`main.go`): every 2 seconds calls `ctrl.Refresh()`,
 `ctrl.PollMotorStatus()`, then publishes to web and MQTT if state changed.
 
-**`/cmd` handling:** The MQTT client subscribes to `<slot>/cmd`. On receipt it
-dispatches to the controller (`frequency`, `direction`, `band`, `retract`; `mode` is
-accepted as a deprecated alias for `direction`). `retract` is one-shot — it clears the
-retained `/cmd` topic after executing so it does not re-fire on the next restart.
+**`/cmd` handling:** The MQTT client subscribes to `<slot>/cmd` **at QoS 0** (a
+persistent-session QoS-1 subscription lets the broker queue a backlog while the bridge
+is offline and replay it on reconnect — the 2026-09-03 incident; powerseq subscribes
+its own `/cmd` at QoS 0 for the same reason). On receipt it dispatches to the
+controller (`frequency`, `direction`, `band`, `retract`; `mode` is accepted as a
+deprecated alias for `direction`). **Every** command is one-shot: the retained `/cmd`
+topic is cleared after the worker has acted on it (executed or rejected), so a command
+normally cannot re-fire on the next (re)connect — best-effort: a connection drop in
+the clear window (execution → clear publish) leaves it retained and replays it once.
+A command published while the bridge is offline also replays once on reconnect
+(retained delivery is QoS-independent). Commands may carry an RFC 3339 `ts`; one older
+than 30 s (or from the future) is dropped before reaching the serial device. On an
+initial connect failure the process exits non-zero — systemd's `Restart=on-failure`
+crash-loops it back; the bridge must never run with its MQTT plane silently disabled.
 
 ---
 
@@ -60,7 +70,7 @@ retained `/cmd` topic after executing so it does not re-fire on the next restart
 muehle/hf/ant-ctrl/meta      retained  birth certificate
 muehle/hf/ant-ctrl/state     retained  live JSON snapshot
 muehle/hf/ant-ctrl/status    retained  online | offline (LWT)
-muehle/hf/ant-ctrl/cmd       retained  desired state / command
+muehle/hf/ant-ctrl/cmd       retained  one-shot command — cleared after execution
 ```
 
 State fields: `ts`, `freq_hz` (Hz), `band`, `direction` (`forward`/`reverse`/`bidirectional`),

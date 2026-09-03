@@ -171,20 +171,50 @@ Retained JSON snapshot, QoS 1. Published only when a field value changes.
 
 ---
 
-## 6. `/cmd` — desired state
+## 6. `/cmd` — command (one-shot, execute-then-clear)
 
 Retained JSON, QoS 1. **Published by external systems** (the `antenna-select`
 reconciler's band-follow binding, HA, or an operator). ultrabridge subscribes and executes
-the command on receipt.
+the command on receipt, then **clears the retained topic** by publishing an empty payload.
 
-Because `/cmd` is retained, ultrabridge re-applies the last command on reconnect
-— providing self-healing behaviour after restarts (model §8 actuator exception).
+This replaced the former re-apply-the-last-command "self-heal" (2026-09-03): with a
+persistent session the broker replays the full queued command history on reconnect — not
+just the last value — and a retained setpoint outlives the operator that wrote it, so a
+restart physically re-drove the antenna with nobody behind it. Three defenses bound the
+replay paths (model §8 rules 1–3). None closes them completely — see the residual path
+at the end:
+
+1. **QoS-0 subscription** — the broker does not queue QoS-0 traffic for the offline
+   session, so nothing accumulates while ultrabridge is disconnected (retained delivery
+   is independent of subscription QoS). powerseq subscribes its own `/cmd` at QoS 0 for
+   the same reason.
+2. **Execute-then-clear** — after every action (executed *or* rejected), the retained
+   topic is emptied. Re-applying a command after reconnect is no longer
+   ultrabridge's job; the `antenna-select` reconciler re-resolves its band-follow
+   decisions, as it already does for the PA and tuner. Best-effort by construction:
+   the clear is a separate publish after the serial exchange, so a connection drop
+   in that window can leave the retained command alive — it replays once on the
+   next reconnect and is then cleared.
+3. **`ts` staleness gate** — see below.
+
+**Residual replay path (not closed):** a command published while ultrabridge is
+offline is retained on the broker and is delivered on its reconnect — independent of
+subscription QoS — and executes once, age-unbounded unless the producer stamps `ts`.
+No current producer does (the reconciler's band-follow, HA, and the console all
+publish ts-less payloads). This is accepted because such a value is by construction
+the latest intent anyone wrote, band-follow re-resolves on its own, and the command
+is cleared after execution. If a producer starts stamping `ts`, the gate below bounds
+it to 30 s.
 
 ### Command payloads
 
+Commands MAY carry a `ts` (RFC 3339 producer timestamp). When present, a command older
+than 30 s (or stamped in the future) is dropped before it reaches the serial device.
+Producers without `ts` are still accepted (existing producers predate the field).
+
 **Set frequency (Hz):**
 ```json
-{"action": "frequency", "freq_hz": 21225000}
+{"action": "frequency", "freq_hz": 21225000, "ts": "2026-09-03T12:00:00Z"}
 ```
 
 **Set direction:**
@@ -205,11 +235,12 @@ centre frequency (see §7.1), preserving current direction.
 ```json
 {"action": "retract"}
 ```
-One-shot physical command. After executing, ultrabridge **clears** the retained
-`/cmd` topic (publishes an empty payload) so retract does not re-execute on
-the next restart.
+One-shot physical command (storm safety). After executing, ultrabridge clears the
+retained `/cmd` topic (publishes an empty payload).
 
-All other commands remain retained and are re-applied on restart.
+All commands — frequency, direction, band, retract, and any rejected or unparseable
+payload — are cleared from the retained topic after the worker has acted on them, so no
+command re-executes on the next restart or reconnect.
 
 ---
 

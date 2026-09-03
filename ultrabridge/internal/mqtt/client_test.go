@@ -2,6 +2,7 @@ package mqtt
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -238,6 +239,177 @@ func (m fakeMessage) Topic() string     { return m.topic }
 func (m fakeMessage) MessageID() uint16 { return 0 }
 func (m fakeMessage) Payload() []byte   { return m.payload }
 func (m fakeMessage) Ack()              {}
+
+// instantToken completes immediately — stands in for a fast broker publish.
+type instantToken struct{ err error }
+
+func (t instantToken) Wait() bool                     { return true }
+func (t instantToken) WaitTimeout(time.Duration) bool { return t.err == nil }
+func (t instantToken) Done() <-chan struct{}          { return make(chan struct{}) }
+func (t instantToken) Error() error                   { return t.err }
+
+// recPub records one Publish call's arguments.
+type recPub struct {
+	topic    string
+	qos      byte
+	retained bool
+	payload  string
+}
+
+// recordingPaho records every Publish and completes it instantly; only Publish is
+// exercised on this path (no Connect/Subscribe, mirroring fakePaho above).
+type recordingPaho struct {
+	paho.Client
+	mu   sync.Mutex
+	pubs []recPub
+}
+
+func (f *recordingPaho) Publish(topic string, qos byte, retained bool, payload any) paho.Token {
+	b, ok := payload.([]byte)
+	if !ok {
+		b = []byte(fmt.Sprintf("%v", payload))
+	}
+	f.mu.Lock()
+	f.pubs = append(f.pubs, recPub{topic: topic, qos: qos, retained: retained, payload: string(b)})
+	f.mu.Unlock()
+	return instantToken{}
+}
+
+func (f *recordingPaho) recorded() []recPub {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]recPub(nil), f.pubs...)
+}
+
+// waitFor polls fn until it returns true or the timeout elapses.
+func waitFor(t *testing.T, timeout time.Duration, what string, fn func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if fn() {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("condition not met within %s: %s", timeout, what)
+}
+
+// cmdTestClient builds a Client wired to the recording paho + mock controller, with a
+// running jobs worker, for onCmd tests.
+func cmdTestClient(t *testing.T) (*Client, *recordingPaho, *service.Controller) {
+	t.Helper()
+	ctrl := service.NewController(transport.NewMock())
+	fake := &recordingPaho{}
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	c := &Client{
+		client: fake,
+		ctrl:   ctrl,
+		site:   "muehle", station: "hf", slot: "ant-ctrl",
+		discoveryPrefix: "homeassistant",
+		jobs:            make(chan func(), 16),
+		ctx:             ctx,
+		cancel:          cancel,
+	}
+	go sharedmqtt.RunJobs(ctx, c.jobs)
+	return c, fake, ctrl
+}
+
+// TestOnCmdExecutesThenClears locks the one-shot /cmd semantics (2026-09-03 stale-cmd
+// replay fix): a frequency command must reach the controller AND clear the retained topic
+// afterwards, so nothing re-fires on the next (re)connect.
+func TestOnCmdExecutesThenClears(t *testing.T) {
+	c, fake, ctrl := cmdTestClient(t)
+	msg := fakeMessage{topic: "muehle/hf/ant-ctrl/cmd", payload: []byte(`{"action":"frequency","freq_hz":21225000}`)}
+	c.onCmd(nil, msg)
+
+	waitFor(t, 2*time.Second, "frequency cmd executed on controller", func() bool {
+		return ctrl.State().FrequencyKHz == 21225
+	})
+	waitFor(t, 2*time.Second, "retained cmd cleared", func() bool {
+		for _, p := range fake.recorded() {
+			if p.topic == "muehle/hf/ant-ctrl/cmd" && p.retained && p.payload == "" {
+				return true
+			}
+		}
+		return false
+	})
+}
+
+// TestOnCmdDropsStaleTs locks the staleness gate: a command older than cmdMaxAge (or from
+// the future) must be dropped before it reaches the serial device — the guard that would
+// have rejected the 18 h queued backlog replayed on reconnect on 2026-09-03. A fresh ts
+// passes.
+func TestOnCmdDropsStaleTs(t *testing.T) {
+	cases := []struct {
+		name    string
+		ts      string
+		wantRun bool
+	}{
+		{"stale past", time.Now().Add(-2 * time.Minute).UTC().Format(time.RFC3339), false},
+		{"far future", time.Now().Add(2 * time.Minute).UTC().Format(time.RFC3339), false},
+		{"fresh", time.Now().UTC().Format(time.RFC3339), true},
+		{"bad ts", "not-a-timestamp", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c, fake, ctrl := cmdTestClient(t)
+			payload := fmt.Sprintf(`{"action":"frequency","freq_hz":21225000,"ts":%q}`, tc.ts)
+			c.onCmd(nil, fakeMessage{topic: "muehle/hf/ant-ctrl/cmd", payload: []byte(payload)})
+
+			waitFor(t, 2*time.Second, "retained cmd cleared", func() bool {
+				for _, p := range fake.recorded() {
+					if p.topic == "muehle/hf/ant-ctrl/cmd" && p.retained && p.payload == "" {
+						return true
+					}
+				}
+				return false
+			})
+			// Small grace so a (wrong) execution has time to surface before asserting.
+			time.Sleep(100 * time.Millisecond)
+			got := ctrl.State().FrequencyKHz
+			if tc.wantRun && got != 21225 {
+				t.Errorf("fresh cmd not executed: FrequencyKHz = %d, want 21225", got)
+			}
+			if !tc.wantRun && got != 0 {
+				t.Errorf("stale cmd executed: FrequencyKHz = %d, want 0 (untouched)", got)
+			}
+		})
+	}
+}
+
+// TestOnCmdEmptyPayloadIsClearMarker: the empty retained payload is the clear marker we
+// publish ourselves; receiving it back (we subscribe to the topic we clear) must be a
+// no-op — treating it as an invalid command would echo another clear and loop forever.
+func TestOnCmdEmptyPayloadIsClearMarker(t *testing.T) {
+	c, fake, _ := cmdTestClient(t)
+	c.onCmd(nil, fakeMessage{topic: "muehle/hf/ant-ctrl/cmd", payload: []byte{}})
+	time.Sleep(100 * time.Millisecond)
+	if pubs := fake.recorded(); len(pubs) != 0 {
+		t.Errorf("empty payload triggered %d publish(es), want none (clear loop): %v", len(pubs), pubs)
+	}
+}
+
+// TestOnCmdInvalidPayloadCleared: an unknown-action payload must not reach the controller
+// and must clear the retained topic so a typo'd retained cmd does not re-log on every reconnect.
+func TestOnCmdInvalidPayloadCleared(t *testing.T) {
+	c, fake, ctrl := cmdTestClient(t)
+	msg := fakeMessage{topic: "muehle/hf/ant-ctrl/cmd", payload: []byte(`{"action":"frequncy"}`)}
+	c.onCmd(nil, msg)
+
+	waitFor(t, 2*time.Second, "retained cmd cleared", func() bool {
+		for _, p := range fake.recorded() {
+			if p.topic == "muehle/hf/ant-ctrl/cmd" && p.retained && p.payload == "" {
+				return true
+			}
+		}
+		return false
+	})
+	time.Sleep(50 * time.Millisecond) // let any (wrong) execution surface
+	if got := ctrl.State().FrequencyKHz; got != 0 {
+		t.Errorf("invalid cmd executed: FrequencyKHz = %d, want 0 (untouched)", got)
+	}
+}
 
 // TestOnHAStatusDefersRepublish is the regression guard for the paho-handler deadlock.
 // onHAStatus runs on paho's matchAndDispatch goroutine (OrderMatters is the default) and

@@ -372,7 +372,10 @@ func (c *Client) PublishDiscovery() {
 		"unit_of_measurement": "Hz",
 		"value_template":      "{{ value_json.freq_hz }}",
 		"retain":              true,
-		"device":              device,
+		// Retained on purpose: a retained HA /cmd is safe here — onCmd clears the
+		// topic after every execution (model §8 rule 1), so a retained write executes
+		// exactly once and cannot re-fire on reconnect.
+		"device": device,
 	}, 1, true)
 	c.publishJSON(c.discoveryTopic("select", nodeID, "direction_set"), map[string]any{
 		"name":             nodeID + "_direction_set",
@@ -384,7 +387,8 @@ func (c *Client) PublishDiscovery() {
 		"options":          []string{"forward", "reverse", "bidirectional"},
 		"value_template":   "{{ value_json.direction }}",
 		"retain":           true,
-		"device":           device,
+		// Retained on purpose — see the frequency_set comment (§8 rule 1 clears it).
+		"device": device,
 	}, 1, true)
 	c.publishJSON(c.discoveryTopic("select", nodeID, "band_set"), map[string]any{
 		"name":             nodeID + "_band_set",
@@ -397,7 +401,8 @@ func (c *Client) PublishDiscovery() {
 		"value_template":   "{{ value_json.band }}",
 		"icon":             "mdi:radio-tower",
 		"retain":           true,
-		"device":           device,
+		// Retained on purpose — see the frequency_set comment (§8 rule 1 clears it).
+		"device": device,
 	}, 1, true)
 	c.publishJSON(c.discoveryTopic("button", nodeID, "retract"), map[string]any{
 		"name":          nodeID + "_retract",
@@ -415,52 +420,110 @@ func (c *Client) BindCommands(ctx context.Context) {
 	_ = ctx
 }
 
+// subscribeCmd subscribes /cmd at QoS 0 ON PURPOSE. With a persistent session
+// (CleanSession=false) a QoS-1 subscription lets the broker QUEUE every /cmd published
+// while this bridge is offline and replay the whole backlog on reconnect — observed live
+// 2026-09-03 as ~18 h of queued frequency commands executed on the antenna the moment the
+// connection came back. QoS 0 stops offline queueing; retained delivery (the last
+// retained cmd) still works at any subscription QoS, and clearCmdTopic after every
+// executed action means nothing stale lingers to be re-delivered. powerseq subscribes
+// its own /cmd at QoS 0 for the same reason; the §8.1 "QoS 1 on every subscribe" rule
+// predates this defense and is amended by the queued-command-replay rule.
 func (c *Client) subscribeCmd() {
-	_ = c.subscribe(c.cmdTopic(), c.onCmd)
+	_ = c.subscribe(c.cmdTopic(), 0, c.onCmd)
 }
 
+// cmdMaxAge bounds how old a /cmd may be when its producer stamped it with a ts.
+// Producers SHOULD stamp commands; the MQTT-level defenses (QoS-0 subscription +
+// clear-after-execute) cover producers that predate the field.
+const cmdMaxAge = 30 * time.Second
+
 // onCmd is the /cmd handler, extracted so it is unit-testable. It parses the command in the
-// paho handler (non-blocking) and runs the serial I/O + retract-clear publish on the worker
+// paho handler (non-blocking) and runs the serial I/O + retained-cmd clear on the worker
 // so it never blocks paho's inline dispatch goroutine.
+//
+// Commands are one-shot: whatever the payload, the retained topic is cleared once the
+// worker has acted on it, so no command can re-fire on the next (re)connect. The old
+// re-apply-the-retained-cmd self-heal (api doc §6) is gone: a persistent session replays
+// the full queued history, not just the last value, and a retained setpoint outlives the
+// operator that wrote it — both observed live 2026-09-03.
 func (c *Client) onCmd(_ paho.Client, msg paho.Message) {
 	var cmd struct {
 		Action string `json:"action"`
 		Value  string `json:"value,omitempty"`
 		FreqHz int64  `json:"freq_hz,omitempty"`
+		// Ts is the optional producer timestamp (RFC3339). When present, a command older
+		// than cmdMaxAge (or from the future) is dropped before it can reach the serial
+		// device — the guard that keeps a long-offline backlog from moving the antenna.
+		Ts string `json:"ts,omitempty"`
+	}
+	if len(msg.Payload()) == 0 {
+		// Empty payload = the retained-clear marker (our own clearCmdTopic echo — we are
+		// subscribed to the topic we clear). Not a command; do not re-clear (that would
+		// echo another empty payload and loop forever).
+		return
 	}
 	if err := json.Unmarshal(msg.Payload(), &cmd); err != nil || cmd.Action == "" {
 		log.Printf("[mqtt] rx invalid cmd topic=%s payload=%q", msg.Topic(), string(msg.Payload()))
+		c.clearCmdTopicAsync()
 		return
+	}
+	if cmd.Ts != "" {
+		ts, err := time.Parse(time.RFC3339, cmd.Ts)
+		if err != nil {
+			log.Printf("[mqtt] rx cmd with bad ts %q: %v", cmd.Ts, err)
+			c.clearCmdTopicAsync()
+			return
+		}
+		if age := time.Since(ts); age > cmdMaxAge || age < -cmdMaxAge {
+			log.Printf("[mqtt] dropping stale cmd action=%s age=%s (max %s)", cmd.Action, age.Round(time.Second), cmdMaxAge)
+			c.clearCmdTopicAsync()
+			return
+		}
 	}
 	log.Printf("[mqtt] rx cmd action=%s value=%q freq_hz=%d", cmd.Action, cmd.Value, cmd.FreqHz)
 	sharedmqtt.Enqueue(c.jobs, func() {
 		switch cmd.Action {
 		case "frequency":
 			khz := uint16(cmd.FreqHz / 1000)
-			_ = c.ctrl.SetFrequency(context.Background(), khz, c.ctrl.State().ModeName)
+			_ = c.ctrl.SetFrequency(c.ctx, khz, c.ctrl.State().ModeName)
 		case "direction", "mode": // "mode" accepted as a deprecated alias for "direction"
-			_ = c.ctrl.SetMode(context.Background(), cmd.Value)
+			_ = c.ctrl.SetMode(c.ctx, cmd.Value)
 		case "band":
 			khz, ok := bandCenterKHz[strings.TrimSpace(cmd.Value)]
 			if !ok {
 				log.Printf("[mqtt] unknown band %q in cmd", cmd.Value)
-				return
+				break
 			}
-			_ = c.ctrl.SetFrequency(context.Background(), khz, c.ctrl.State().ModeName)
+			_ = c.ctrl.SetFrequency(c.ctx, khz, c.ctrl.State().ModeName)
 		case "retract":
-			_ = c.ctrl.Retract(context.Background())
-			// Clear retained cmd so retract doesn't re-execute on next connect.
-			if token := c.client.Publish(c.cmdTopic(), 1, true, []byte{}); token.Wait() && token.Error() != nil {
-				log.Printf("[mqtt] failed to clear cmd topic: %v", token.Error())
-			}
+			_ = c.ctrl.Retract(c.ctx)
 		default:
 			log.Printf("[mqtt] unknown cmd action=%q", cmd.Action)
 		}
+		// One-shot semantics: clear the retained cmd after every action (or rejection) so
+		// nothing re-executes on the next (re)connect — not just retract.
+		c.clearCmdTopic()
 	})
 }
 
+// clearCmdTopic publishes an empty retained payload so no stale /cmd can re-fire on the
+// next (re)connect. Runs on the jobs worker: it does a blocking QoS-1 publish, which must
+// never happen inline on paho's dispatch goroutine (see the Client.jobs comment).
+func (c *Client) clearCmdTopic() {
+	if token := c.client.Publish(c.cmdTopic(), 1, true, []byte{}); token.Wait() && token.Error() != nil {
+		log.Printf("[mqtt] failed to clear cmd topic: %v", token.Error())
+	}
+}
+
+// clearCmdTopicAsync queues the retained-cmd clear onto the jobs worker; safe to call from
+// the paho dispatch goroutine (parse-time rejections land here).
+func (c *Client) clearCmdTopicAsync() {
+	sharedmqtt.Enqueue(c.jobs, c.clearCmdTopic)
+}
+
 func (c *Client) subscribeHABirth() {
-	_ = c.subscribe("homeassistant/status", c.onHAStatus)
+	_ = c.subscribe("homeassistant/status", 1, c.onHAStatus)
 }
 
 // onHAStatus is the homeassistant/status handler, extracted so it is unit-testable. The
@@ -480,12 +543,12 @@ func (c *Client) onHAStatus(_ paho.Client, msg paho.Message) {
 	})
 }
 
-func (c *Client) subscribe(topic string, handler paho.MessageHandler) error {
-	if token := c.client.Subscribe(topic, 1, handler); token.Wait() && token.Error() != nil {
+func (c *Client) subscribe(topic string, qos byte, handler paho.MessageHandler) error {
+	if token := c.client.Subscribe(topic, qos, handler); token.Wait() && token.Error() != nil {
 		log.Printf("[mqtt] subscribe failed topic=%s err=%v", topic, token.Error())
 		return token.Error()
 	}
-	log.Printf("[mqtt] subscribed topic=%s", topic)
+	log.Printf("[mqtt] subscribed topic=%s qos=%d", topic, qos)
 	return nil
 }
 
