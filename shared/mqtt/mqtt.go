@@ -19,6 +19,7 @@ package mqtt
 
 import (
 	"context"
+	"log"
 
 	pahomqtt "github.com/eclipse/paho.mqtt.golang"
 )
@@ -51,12 +52,15 @@ func Connect(ctx context.Context, client pahomqtt.Client) error {
 // Enqueue runs f on the jobs worker; non-blocking: if the worker is saturated it
 // drops the job rather than block paho's dispatch goroutine. Paho message
 // handlers must never block — call Enqueue from a handler, never Publish.
+// Drops are logged: a silently dropped closure is invisible (a dropped retract
+// left its retained cmd armed to re-fire on the next reconnect — 2026-09-03 audit).
 func Enqueue(jobs chan<- func(), f func()) {
 	select {
 	case jobs <- f:
 	default:
 		// Buffer full: drop. The next native announce / cmd re-arms once the
 		// worker drains. Preferred over blocking paho's dispatch goroutine.
+		log.Printf("[mqtt] jobs queue full: dropping job (worker saturated)")
 	}
 }
 
