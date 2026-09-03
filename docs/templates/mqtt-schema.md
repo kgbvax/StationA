@@ -17,8 +17,8 @@ It is the authoritative on-the-wire contract — derived from `internal/mqtt/cli
 |----------|-------|
 | Protocol | MQTT 3.1.1 (plain TCP, e.g. `tcp://host:1883`) |
 | Authentication | Username/password if the broker requires it |
-| Clean session | **No** — subscriptions survive restarts |
-| Auto-reconnect | [component] reconnects automatically |
+| Clean session | **No** — subscriptions survive restarts. A consumer of `/cmd` under a persistent session subscribes its command topic at QoS 0 so the broker cannot queue a backlog for offline replay (model §8 rule 2) |
+| Auto-reconnect | [component] reconnects automatically — and survives a broker outage at boot: the initial connect retries indefinitely, or the process exits non-zero so systemd restarts it (§8.1 item 10) |
 | Client ID | derived from the slot address, e.g. `[site]-[station]-[slot]` (configurable via `mqtt.client_id`) |
 
 ---
@@ -138,12 +138,24 @@ Publish triggers:
 
 > **Omit this section if the component is read-only (no /cmd topic).**
 
-[Retained / Not retained] JSON, QoS 1. Published by external systems (reconciler, HA,
-operator).
+[Retained] JSON. Published by external systems (reconciler, HA, operator). Under a
+persistent session the **subscription** is QoS 0 (§8 rule 2 — see §1); publishes stay
+QoS 1.
 
-[If retained:] Because `/cmd` is retained, [component] re-applies the last command on
-reconnect — providing self-healing behaviour after restarts. One-shot physical commands
-(e.g. `retract`) clear the retained topic after execution.
+Pick exactly one regime per topic (model §8):
+
+- **Steady-state intent** — the payload names a desired state to converge to (a
+  power, a permit, an idempotent mode). Retain it; every writer publishes retained so
+  the topic always tracks the latest intent, and [component] re-applies it on every
+  reconnect/restart. Never clear it, never age-gate it — an older retained intent is
+  still the current intent.
+- **One-shot command** — the payload is a momentary intent (a `retract`, a jog).
+  Retain it for delivery robustness, but [component] publishes an **empty retained
+  payload** after every execution or rejection (§8 rule 1) so nothing re-fires on the
+  next reconnect. Payloads MAY carry an RFC 3339 `ts`; [component] drops stamped
+  commands older than a small bound (§8 rule 3). Residual replay path: a command
+  published while [component] is offline replays **once** on reconnect (latest
+  intent, executed once, then cleared).
 
 ### Command payloads
 

@@ -542,11 +542,12 @@ intent:     start | stop                       # operator one-button; /cmd NOT r
 Startup (confirmations + delays): `power/master` on → ~30 s (network) → `power/psu-13v8`
 on → wait `hf/switch`, `hf/pa-arm`, `hf/ant-switch` `/status` online (they boot on 13.8 V)
 → `hf/switch` trx on → wait `hf/radio` `/status` online → `hf/switch` pa on → wait
-`hf/pa` `power` on (the slot's `/status` must also be online, so a dead PA cannot pass
-on a stale retained `/state`) → `hf/pa-arm` set_enabled true (arms when safe). Shutdown
-is the reverse, with short staggers for inrush. The sequencer is **one writer** of these
-slots but does not lock them — any channel stays directly toggleable for troubleshooting
-while the sequencer is idle.
+`hf/pa` `power` on (the slot's `/status` must also be online, and its
+`/state.device_online` must not be `false` when the field is present, so neither a dead
+bridge nor a dead device passes the wait on a stale retained `/state`) → `hf/pa-arm`
+set_enabled true (arms when safe). Shutdown is the reverse, with short staggers for
+inrush. The sequencer is **one writer** of these slots but does not lock them — any
+channel stays directly toggleable for troubleshooting while the sequencer is idle.
 
 This sequence is **config-driven** in `powerseq` (the `[[startup]]` / `[[shutdown]]`
 step lists in its TOML, each step `cmd` / `wait_status` / `wait_state` / `delay`); the
@@ -718,10 +719,53 @@ Four topic suffixes per slot — one per plane, plus liveness:
   **Exception: physical actuators with self-healing semantics.** For a physical device
   whose correct position must survive a software restart (e.g. an antenna controller
   tuned to a specific frequency), the `/cmd` topic MAY be retained with the desired
-  steady-state. One-shot physical commands (e.g. `retract`) MUST clear the retained
-  topic (publish empty payload) immediately after execution so they do not re-execute
-  on reconnect. A command is safe to retain only when re-applying it on reconnect
-  produces the same physical outcome as the original.
+  steady-state. A command is safe to retain only when re-applying it on reconnect
+  produces the same physical outcome as the original — and "re-applying" means the
+  single retained value, never a replay of history.
+
+  Three rules bound the re-delivery paths this exception opens (all three were
+  motivated live on 2026-09-03, when a bridge came back after ~18 h offline and the
+  broker delivered both its queued history and the retained value, physically
+  re-driving the antenna). They apply to **one-shot command topics** — topics whose
+  payloads are momentary intents, not desired steady state. A topic holding a
+  *desired steady state* (a power `set_power`, an arm permit, an idempotent mode) is
+  governed by the exception's own precondition above and by rule 2 only: its retained
+  value is *supposed to* survive and be re-applied on reconnect, so rules 1 and 3
+  must not be applied to it.
+
+  1. **One-shot commands clear the retained topic.** After the consumer has acted on
+     a one-shot command (executed *or* rejected), it publishes an empty payload to
+     the retained `/cmd` topic so nothing re-delivers on the next reconnect or
+     restart. Re-applying a one-shot command after a restart is not the actuator's
+     job; the arbiter that owns the command stream re-resolves (§5). A steady-state
+     intent topic does the opposite: its retained value is the latest writer's
+     intent *by design* (every writer — HA, a reconciler, an operator — publishes
+     retained so the topic always tracks the current intent, and the consumer
+     re-applies it on its own restart).
+  2. **A `/cmd` consumer under a persistent session subscribes the command topic at
+     QoS 0.** With `CleanSession=false` and a QoS-1 subscription the broker queues
+     every `/cmd` published while the consumer is offline and replays the whole
+     backlog on reconnect — retention is irrelevant to that mechanism. QoS 0 stops
+     offline queueing; retained delivery is independent of subscription QoS, so the
+     steady-state replay still works. (This exempts the command subscription from
+     checklist item 2's "QoS 1 on every subscribe". `powerseq` established the
+     pattern on its own `/cmd`; `ultrabridge` and `shelly-power-bridge` follow it.)
+     Adoption note: switching the subscription to QoS 0 does **not** purge a backlog
+     the broker already queued for the session under a previous QoS-1 subscription,
+     and does not suppress retained delivery — when adopting, clear the slot's
+     retained `/cmd` once (empty retained publish) so no pre-adoption value
+     replays.
+  3. **One-shot commands carry a producer timestamp and consumers bound their age.**
+     A `/cmd` payload on a one-shot topic SHOULD carry an RFC 3339 `ts`; a consumer
+     MUST drop a stamped command older than a small bound (tens of seconds) instead
+     of executing it. A stamp from the future is equally invalid. Producers that
+     predate the field are covered by rules 1 and 2 — and by the residual fact the
+     rules do *not* close: a command published while the consumer is down is
+     retained on the broker and replays **once** on its reconnect (the latest
+     intent, executed once, then cleared by rule 1). That is self-heal, bounded by
+     construction — but it is not a closed path, and no rule should claim it is.
+     Steady-state intent topics are exempt from this rule: an older retained intent
+     is still the current intent and is meant to be re-applied.
 
 Defaults: QoS 1 everywhere; QoS 2 only for a specific command that must not double-fire
 even under broker retry. Client IDs derived from the slot address, so a duplicate
@@ -745,10 +789,16 @@ The strict target this document promises. An adapter is conformant iff every lin
 holds; a review (human or GenAI) checks these one by one.
 
 1. Publishes exactly the four planes: `/meta`, `/state`, `/status` retained; `/cmd`
-   subscribed, and retained only under the §8 self-healing-actuator exception (with
-   one-shot commands cleared after execution). Read-only slots omit `/cmd`.
+   subscribed, and retained only under the §8 self-healing-actuator exception. A
+   **one-shot** command topic follows §8 rules 1 and 3 (execute-then-clear, `ts`
+   staleness bound); a **steady-state intent** topic follows the exception
+   precondition and rule 2 only — its retained value is deliberately never cleared.
+   Either way: QoS-0 command subscription when the session is persistent (§8 rule 2).
+   Read-only slots omit `/cmd`.
 2. QoS 1 on every publish and subscribe (QoS 2 only for a documented must-not-double-fire
-   command).
+   command) — except a `/cmd` consumer under a persistent session, which subscribes its
+   command topic at QoS 0 so the broker cannot queue a backlog for offline replay (§8
+   rule 2).
 3. `/status` is the plain string `online`/`offline`: registered as a retained Last Will,
    published `online` on (re)connect, `offline` on clean shutdown. No liveness field in
    `/state`; hardware reachability, if reported, is the `device_online`/`error` state
@@ -769,6 +819,14 @@ holds; a review (human or GenAI) checks these one by one.
    currently-documented deviation.
 9. Config in a single seed-once TOML (0600 when it holds secrets), secrets never on the
    command line; hardened systemd unit (see `conventions/`).
+10. **The initial connect must not strand the slot.** The first connect either retries
+    indefinitely (e.g. paho `SetConnectRetry(true)`) or fails the process with a
+    non-zero exit so systemd's `Restart=on-failure` crash-loops it back until the
+    broker answers. A component must never continue running with its MQTT plane
+    silently disabled — the web UI and serial side staying healthy while the bus never
+    hears from the slot again is the failure mode this item forbids (the 2026-09-03
+    ultrabridge outage ran ~18 h this way). Mid-run drops stay covered by the
+    auto-reconnect; the initial connect is the gap it does not cover.
 
 ---
 

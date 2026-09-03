@@ -10,8 +10,8 @@ every Go component imports it via a `replace … => ../shared` so each stays sel
 without the workspace. Bridges import `shared/` but never another bridge's `internal/`
 — enforced by Go's `internal/` visibility rule across separate modules, not just
 convention. Non-Go components (`waveshare_relay-antswitch-bridge` = ESPHome YAML,
-`m5stamp-hf-ctrl` = PlatformIO firmware) live alongside as plain subdirectories and are
-not in `go.work`.
+`m5stamp-hf-ctrl` and `m5dial-hf-rotctrl` = PlatformIO firmware) live alongside as plain
+subdirectories and are not in `go.work`.
 
 The projects below were previously standalone git repos nested here and gitignored;
 they have been folded into this repo with history (`git subtree`). There are no longer
@@ -35,6 +35,7 @@ separate per-component remotes to push to.
 | antennaselect | `antennaselect/` | Antenna-selection reconciler (core implemented) |
 | hadiscovery | `hadiscovery/` | Home Assistant discovery consumer (reads `/meta` `expose`, renders HA discovery) |
 | pelcobridge2 | `pelcobridge2/` | UHF rotator TUI + rotctld server (Pelco-D/P pan/tilt head over RS-485) |
+| m5dial-hf-rotctrl | `m5dial-hf-rotctrl/` | M5Stack Dial firmware — HF rotator control head (analog meter face + knob; not a slot; consumer + /cmd stimulator) |
 | testui | `testui/` | MQTT relay + schema-aware browser UI for the bus (not a slot; passive consumer + /cmd stimulator) |
 | mqtt-broker | `mqtt-broker/` | Shack-local Mosquitto broker on shari, bridged to the HA broker (infra — not a slot, not Go) |
 
@@ -120,6 +121,8 @@ All shared docs are in `docs/` in this repo:
 | Canonical band/mode reference | `docs/conventions/band-mode-reference.md` |
 | MQTT broker topology | `docs/conventions/mqtt-topology.md` |
 | MQTT schema template | `docs/templates/mqtt-schema.md` |
+| Station-wide known issues / decisions register | `docs/known-issues.md` |
+| Runtime-library constraints (shared/ contracts) | `docs/conventions/runtime-library.md` |
 
 All components live as subdirectories of this one repo, so the shared docs path
 relative to any component is `../docs/` (e.g. `../docs/station-integration-model.md`

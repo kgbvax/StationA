@@ -46,6 +46,7 @@ A bridge that fronts one specific piece of hardware is named
 | WaveShare relay-board family (ESPHome-managed relay expanders, e.g. PCA9554) | `waveshare_relay` | `waveshare_relay-antswitch-bridge` |
 | Shelly smart-plug family (HTTP/MQTT API) | `shelly` | `shelly-power-bridge` |
 | M5Stamp PLC family (embedded relay/DI controller, custom firmware) | `m5stamp` | `m5stamp-hf-ctrl` (firmware) |
+| M5Stack Dial family (round-face ESP32-S3 control knob, custom firmware) | `m5dial` | `m5dial-hf-rotctrl` (firmware) |
 
 > **Embedded firmware is not a Go bridge.** The M5Stamp PLC row names the *firmware*
 > project, not a `-bridge` binary — like the ant-switch, the M5 Stamp's custom firmware
@@ -53,6 +54,11 @@ A bridge that fronts one specific piece of hardware is named
 > into one embedded node). The firmware repo name follows `<devtag>-<role-or-site>-…`;
 > `m5stamp-hf-ctrl` fronts the HF station's `pa-arm` + `switch` slots (a compound device,
 > integration-model §3). The same family fronts `uhf/pol-ctrl` on a second M5 Stamp.
+> The `m5dial` row is the same pattern applied to a *consumer*: `m5dial-hf-rotctrl`
+> fronts no slot at all — it is a physical control head for the HF `rotator` slot
+> 
+(consumer + `/cmd` stimulator), so the `-bridge` suffix and the slot-derived
+> naming rules do not apply to it either.
 
 > **Deviation — `waveshare_relay`:** the `<devtag>` for this row uses an underscore
 > rather than a hyphen (`waveshare_relay` vs. `waveshare-relay`). This is a deliberate
