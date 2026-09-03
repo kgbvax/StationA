@@ -128,7 +128,12 @@ func New(ctx context.Context, cfg config.Config, rec *reconcile.Reconciler) (*Cl
 		// self-heal-from-retained behavior the PA/tuner follow bindings below depend on
 		// (they re-emit on the retained radio/state replay at reconnect). The reconciler is
 		// stateless and re-derives from retained state, so dropping messages published
-		// during a brief offline window is acceptable — and is the documented model.
+		// during a brief offline window is acceptable. (Model §8 rule 2 solves the same
+		// offline-backlog hazard differently for persistent sessions: /cmd consumers
+		// subscribe their command topic at QoS 0 so the broker cannot queue a replay
+		// backlog; this reconciler instead takes a fresh session and re-derives its
+		// inputs from retained state — either is compliant, but never a QoS-1 /cmd
+		// subscription under a persistent session.)
 		SetCleanSession(true).
 		SetWill(c.selfTopic("status"), "offline", 1, true)
 	if cfg.MQTT.User != "" {
