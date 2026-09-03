@@ -64,9 +64,9 @@ deterministic mapper (~5 type branches) from neutral primitives to HA components
 | neutral field | → HA component | notes |
 |---|---|---|
 | `number`, not `writable` | `sensor` | `state_topic=<addr>/state`, `value_template={{ value_json.<key> }}`, unit→`device_class`, `state_class` carried through |
-| `number`, `writable` | `number` | + `command_topic=<addr>/cmd`, `command_template` from `command`, `min`/`max`/`step`, `mode: box`, `retain: true` (a HA `number` both displays state and commands) |
+| `number`, `writable` | `number` | + `command_topic=<addr>/cmd`, `command_template` from `command`, `min`/`max`/`step`, `mode: box`, **retained** (model §8 exception: keeps the retained `/cmd` tracking the latest operator intent — steady-state slots re-apply it on their own reconnect; one-shot slots clear it after execution (§8 rule 1), so a retained HA write cannot re-fire) |
 | `enum`, not `writable` | `sensor` | `value_template` (options are informational; not emitted on a sensor) |
-| `enum`, `writable` | `select` | + `command_topic`, `options` (resolve `options_ref` against `capabilities`, else inline `options`), `command_template` from `command`, `retain: true`. **Skipped** if `writable` but no `command`. |
+| `enum`, `writable` | `select` | + `command_topic`, `options` (resolve `options_ref` against `capabilities`, else inline `options`), `command_template` from `command`, **retained** (same rationale as the writable number). **Skipped** if `writable` but no `command`. |
 | `boolean` | `binary_sensor` | see §2.3 |
 | `string` | `sensor` | `value_template` only; no unit/class |
 | `action` (in `actions[]`) | `button` | `command_topic`, `payload_press` = static JSON of `command` |

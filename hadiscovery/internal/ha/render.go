@@ -156,8 +156,18 @@ func fieldEntity(f expose.Field, stateTopic, cmdTopic, nodeID string, caps map[s
 			base.Max = f.Max
 			base.Step = f.Step
 			base.NumberMode = "box"
-			base.Retain = true
+			// Retained on purpose (model §8 exception). HA must
+			// keep the retained /cmd tracking the latest operator intent: for a
+			// steady-state slot (power, switch, pa-arm) the retained value is what the
+			// target re-applies on its own reconnect — a non-retained HA write would
+			// desync it (powerseq retains "off" at shutdown, the operator switches on via
+			// HA, a bridge restart replays "off" and cuts the rail). For a one-shot slot
+			// (ant-ctrl) the consumer now clears the topic after every execution (model
+			// §8 rule 1), so a retained HA write executes exactly once and cannot
+			// re-fire. Retaining here is safe in both regimes; NOT retaining it is safe
+			// in neither.
 			// A writable number reads its current value from the same state field.
+			base.Retain = true
 			return "number", marshal(base)
 		}
 		base.StateClass = f.StateClass
@@ -182,6 +192,7 @@ func fieldEntity(f expose.Field, stateTopic, cmdTopic, nodeID string, caps map[s
 			base.CommandTopic = cmdTopic
 			base.CommandTemplate = commandTemplate(f.Command)
 			base.Options = opts
+			// Retained on purpose — see the writable-number comment above.
 			base.Retain = true
 			return "select", marshal(base)
 		}

@@ -142,7 +142,7 @@ func TestNumberWritable(t *testing.T) {
 		t.Errorf("mode = %q, want box", p.NumberMode)
 	}
 	if !p.Retain {
-		t.Errorf("writable number must be retained")
+		t.Errorf("writable number must be retained (keeps the retained /cmd tracking the latest operator intent — see render.go)")
 	}
 }
 
@@ -185,7 +185,7 @@ func TestEnumWritable(t *testing.T) {
 		t.Errorf("command_template = %q, want %q", p.CommandTemplate, wantTpl)
 	}
 	if !p.Retain {
-		t.Errorf("writable select must be retained")
+		t.Errorf("writable select must be retained (keeps the retained /cmd tracking the latest operator intent — see render.go)")
 	}
 }
 
