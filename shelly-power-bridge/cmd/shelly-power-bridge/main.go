@@ -196,9 +196,14 @@ func runSlot(ctx context.Context, cfg config.Config, sc config.SlotConfig, adapt
 			log.Warn("subscribe shelly online failed", "err", tok.Error())
 		}
 
-		// Canonical /cmd (retained steady-state; the broker replays the last
-		// command on every reconnect — self-heal, model §8).
-		if tok := c.Subscribe(cmdTopic, 1, func(_ pahomqtt.Client, m pahomqtt.Message) {
+		// Canonical /cmd, subscribed at QoS 0 ON PURPOSE (the retained steady-state
+		// replay — self-heal, model §8 — still works: retained delivery is independent
+		// of subscription QoS). A QoS-1 subscription under the persistent session
+		// (CleanSession=false above) would additionally make the broker QUEUE every
+		// non-retained one-shot /cmd published while this bridge is offline and deliver
+		// them late on reconnect — powerseq subscribes its own /cmd at QoS 0 for
+		// exactly this reason; testui publishes power cmds non-retained.
+		if tok := c.Subscribe(cmdTopic, 0, func(_ pahomqtt.Client, m pahomqtt.Message) {
 			payload := append([]byte(nil), m.Payload()...) // copy; only valid during handler
 			sharedmqtt.Enqueue(jobs, func() { b.HandleCommand(payload) })
 		}); tok.Wait() && tok.Error() != nil {
