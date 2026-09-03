@@ -97,10 +97,18 @@ type Config struct {
 	Baud              int           // 2400 on the bench link
 	JogSpeed          byte          // 0x00–0x3F, default 0x12
 	Settle            time.Duration // quiet-line window around absolute sets
-	SetAttempts       int           // verification-ladder re-sends
 	SetTolerance      float64       // degrees
 	ArmMaxReadbackAge time.Duration // pan readback must be fresher to arm
 	ReplyWait         time.Duration // bound on the one outstanding query
+
+	// Crawl mode: gotos converge by timed low-speed jog bursts instead of
+	// absolute-set frames (which carry no speed on the wire). Zero values
+	// default in fillDefaults: speed 0x04, tolerance 4°, burst 1 s, cap 40.
+	Crawl          bool
+	CrawlSpeed     byte          // jog speed byte used for bursts
+	CrawlTol       float64       // "finished" tolerance in degrees
+	CrawlBurst     time.Duration // jog burst length
+	CrawlMaxBursts int           // per-axis safety cap on bursts
 }
 
 func (c *Config) fillDefaults() {
@@ -113,9 +121,6 @@ func (c *Config) fillDefaults() {
 	if c.Settle == 0 {
 		c.Settle = 2 * time.Second
 	}
-	if c.SetAttempts == 0 {
-		c.SetAttempts = 3
-	}
 	if c.SetTolerance == 0 {
 		c.SetTolerance = 0.3
 	}
@@ -124,6 +129,18 @@ func (c *Config) fillDefaults() {
 	}
 	if c.ReplyWait == 0 {
 		c.ReplyWait = 400 * time.Millisecond
+	}
+	if c.CrawlSpeed == 0 {
+		c.CrawlSpeed = 0x04
+	}
+	if c.CrawlTol == 0 {
+		c.CrawlTol = 4.0
+	}
+	if c.CrawlBurst == 0 {
+		c.CrawlBurst = 1 * time.Second
+	}
+	if c.CrawlMaxBursts == 0 {
+		c.CrawlMaxBursts = 40
 	}
 }
 
@@ -134,6 +151,7 @@ var (
 	ErrDisarmed  = errors.New("rotator is not armed")
 	ErrMoving    = errors.New("rotator is moving")
 	ErrNoFix     = errors.New("no valid readback")
+	ErrWire      = errors.New("serial write failed")
 	ErrStale     = errors.New("readback too old to arm")
 	ErrSource    = errors.New("intent not allowed from this source")
 	ErrFailed    = errors.New("set did not converge")

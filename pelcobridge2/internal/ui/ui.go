@@ -1,6 +1,6 @@
 // Package ui is pelcobridge2's Bubble Tea TUI: header, position pane, wire-log
-// viewport, and the prompt state machine (arm azimuth entry, self-test and
-// self-check confirmations).
+// viewport, and the prompt state machine (arm azimuth entry, goto az/el entry,
+// self-test and self-check confirmations).
 //
 // Hold-to-move: Bubble Tea has no key-release events, so each jog keypress arms
 // a ONE-SHOT tea.Tick(jog_hold); terminal auto-repeat refreshes the deadline and
@@ -34,6 +34,7 @@ type promptKind int
 const (
 	promptNone      promptKind = iota
 	promptArm                  // enter the true azimuth the head is pointing at
+	promptGoto                 // enter a target az and/or el to drive to
 	promptSelfTest             // y/n only: the factory self-test (re-homes head)
 	promptSelfCheck            // y/n only: enable the periodic self-check
 )
@@ -71,6 +72,7 @@ type Options struct {
 	JogHold  time.Duration     // hold-to-move window
 	Prefill  float64           // state.toml last offset, offered as the arm default
 	OnArm    func(deg float64) // called after a successful arm (persist prefill)
+	Crawl    bool              // crawl mode: gotos converge by 1 s jog bursts
 	MQTTOn   func() bool       // MQTT broker link, for the header
 	Clients  func() int        // rotctld client count, for the header
 }
@@ -277,15 +279,24 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, textinput.Blink
 	case "0":
 		m.submit(control.GotoPhysZeroIntent{})
-		m.status = "goto PHYSICAL zero (offset not applied)"
+		m.status = "goto PHYSICAL zero (offset not applied) — " + m.gotoMode()
 		return m, nil
+	case "g":
+		// Manual target entry (test/bench positioning): allowed disarmed like
+		// jog and 0 — the engine gates every other source of GotoAzElIntent.
+		m.prompt = promptGoto
+		m.input.Prompt = "goto az[ el] ° > "
+		m.input.SetValue("")
+		m.input.Focus()
+		m.status = "GOTO: enter az, el, or both (\"200\", \"200 45\", \"az 200\", \"el 45\") — enter confirms, esc cancels"
+		return m, textinput.Blink
 	case "s":
 		if m.snap != nil && m.snap.Armed {
 			m.status = "self-test is disarmed-only — disarm first"
 			return m, nil
 		}
 		m.prompt = promptSelfTest
-		m.status = "SELF-TEST re-homes the head — KEEP CABLES CLEAR.  Send? y/n"
+		m.status = "SELF-TEST re-homes: pan sweeps RIGHT past 0° twice (up to 2 turns) — wind 1 turn LEFT first; KEEP CABLES CLEAR.  Send? y/n"
 		return m, nil
 	case "c": // safe direction: restoring the station default needs no confirm.
 		// Always sent — "off" in the pane is the engine's liveness-gated
@@ -333,6 +344,35 @@ func (m model) handlePromptKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 
+	case promptGoto:
+		if key == "enter" {
+			az, el, hasAz, hasEl, err := parseGoto(m.input.Value())
+			if err != nil {
+				// Keep the prompt open on a typo: the entered text survives
+				// for a one-character fix.
+				m.status = "goto: " + err.Error()
+				return m, nil
+			}
+			m.cancelPrompt()
+			// Fire-and-forget submit, like goto-0: a queued ladder replies
+			// only when it drains (seconds), and a blocking Call would time
+			// out and misreport. The log pane shows the ladder's progress.
+			m.submit(control.GotoAzElIntent{Az: az, El: el, HasAz: hasAz, HasEl: hasEl})
+			switch {
+			case hasAz && hasEl:
+				m.status = fmt.Sprintf("goto az %.1f° el %.1f° — %s", az, el, m.gotoMode())
+			case hasAz:
+				m.status = fmt.Sprintf("goto az %.1f° — %s", az, m.gotoMode())
+			default:
+				m.status = fmt.Sprintf("goto el %.1f° — %s", el, m.gotoMode())
+			}
+			m.layout()
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.input, cmd = m.input.Update(msg)
+		return m, cmd
+
 	case promptSelfTest:
 		if key == "y" || key == "Y" {
 			m.cancelPrompt()
@@ -365,6 +405,94 @@ func (m *model) cancelPrompt() {
 	m.prompt = promptNone
 	m.input.Reset()
 	m.input.Blur()
+}
+
+// gotoMode names how the engine will converge the pending goto, for the
+// status line: crawl mode is process-wide (flag/[control] crawl), so every
+// goto source — the prompt, goto-0, rotctld — says it here once.
+func (m *model) gotoMode() string {
+	if m.opts.Crawl {
+		return "crawling (1 s jog bursts)"
+	}
+	return "one set, one verify, no auto re-send"
+}
+
+// parseGoto parses the goto prompt's answer into axis targets. Accepted
+// forms: "200" (az only — a bare number is an azimuth), "200 45" (az then
+// el), and the unambiguous keyword form "az 200" / "el 45" / "az 200 el 45".
+// Spaces, tabs, and commas separate. Azimuth wraps modulo 360; elevation
+// must land in 0..90 (out-of-range is a typo, not a target — the head would
+// silently clamp it). NaN/Inf are rejected: ParseFloat accepts them, and the
+// engine would park the ladder at 0°.
+func parseGoto(raw string) (az, el float64, hasAz, hasEl bool, err error) {
+	fields := strings.FieldsFunc(strings.ToLower(strings.TrimSpace(raw)),
+		func(r rune) bool { return r == ' ' || r == '\t' || r == ',' })
+	if len(fields) == 0 {
+		return 0, 0, false, false, fmt.Errorf("empty target")
+	}
+	fail := func(format string, a ...any) (float64, float64, bool, bool, error) {
+		return 0, 0, false, false, fmt.Errorf(format, a...)
+	}
+	parse := func(s string) (float64, error) {
+		n, e := strconv.ParseFloat(s, 64)
+		if e != nil || math.IsNaN(n) || math.IsInf(n, 0) {
+			return 0, fmt.Errorf("%q is not a finite number", s)
+		}
+		return n, nil
+	}
+	if fields[0] != "az" && fields[0] != "el" {
+		// Bare form: one number = az, two = az then el.
+		if len(fields) > 2 {
+			return fail("expected \"az\" or \"az el\", got %q", raw)
+		}
+		if az, err = parse(fields[0]); err != nil {
+			return fail("azimuth: %v", err)
+		}
+		hasAz = true
+		if len(fields) == 2 {
+			if el, err = parse(fields[1]); err != nil {
+				return fail("elevation: %v", err)
+			}
+			if el < 0 || el > 90 {
+				return fail("elevation %.1f outside 0..90", el)
+			}
+			hasEl = true
+		}
+		return az, el, hasAz, hasEl, nil
+	}
+	// Keyword form: az/el followed by its value, either order.
+	for i := 0; i < len(fields); i += 2 {
+		if i+1 >= len(fields) {
+			return fail("missing value after %q", fields[i])
+		}
+		switch fields[i] {
+		case "az":
+			if hasAz {
+				return fail("azimuth given twice")
+			}
+			if az, err = parse(fields[i+1]); err != nil {
+				return fail("azimuth: %v", err)
+			}
+			hasAz = true
+		case "el":
+			if hasEl {
+				return fail("elevation given twice")
+			}
+			if el, err = parse(fields[i+1]); err != nil {
+				return fail("elevation: %v", err)
+			}
+			if el < 0 || el > 90 {
+				return fail("elevation %.1f outside 0..90", el)
+			}
+			hasEl = true
+		default:
+			return fail("expected az or el, got %q", fields[i])
+		}
+	}
+	if !hasAz && !hasEl {
+		return fail("no axis in %q", raw)
+	}
+	return az, el, hasAz, hasEl, nil
 }
 
 // jog submits the jog intent and arms the one-shot hold timer. Terminal

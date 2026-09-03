@@ -83,7 +83,9 @@ func SetPanFrame(addr byte, deg float64) Frame {
 	return Build(addr, 0x00, OpSetPan, byte(w>>8), byte(w))
 }
 
-// SetTiltFrame builds an absolute tilt set in degrees. Tilt travel is 0..90°;
+// SetTiltFrame builds an absolute tilt set in degrees — the head's NATIVE
+// tilt, which is inverted relative to elevation (see TiltToEl); callers
+// holding an elevation convert with ElToTilt first. Tilt travel is 0..90°;
 // out-of-range values are clamped — a tilt set is a physical-position command
 // and overshooting the head's travel is the dangerous direction.
 func SetTiltFrame(addr byte, deg float64) Frame {

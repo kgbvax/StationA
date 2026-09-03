@@ -154,10 +154,13 @@ func (s *Server) Handle(line string) (string, bool) {
 			math.IsNaN(el) || math.IsInf(el, 0) {
 			return "RPRT -1\n", false
 		}
-		if r := s.call(control.SetPanIntent{Deg: az}); r.Err != nil {
-			return rprtLine(rprtForSet(r.Err)), false
-		}
-		if r := s.call(control.SetTiltIntent{Deg: el}); r.Err != nil {
+		// ONE intent for both axes: two sequential Calls would leave the el
+		// request queued behind the pan ladder, whose settle (set mode) or
+		// bursts (crawl) outlast this 2 s round-trip — the client would read
+		// RPRT -6 and the head would still move when the queued el drained.
+		// The goto ladder runs both axes in order and answers immediately.
+		r := s.call(control.GotoAzElIntent{Az: az, El: el, HasAz: true, HasEl: true})
+		if r.Err != nil {
 			return rprtLine(rprtForSet(r.Err)), false
 		}
 		return "RPRT 0\n", false

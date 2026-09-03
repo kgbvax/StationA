@@ -25,6 +25,7 @@ var helpLines = []string{
 	"keys",
 	"  ←→↑↓ / hjkl     jog (HOLD the key; auto-repeat keeps it moving, release stops) — works DISARMED",
 	"  0               goto PHYSICAL zero (offset not applied) — works disarmed",
+	"  g               GOTO az/el target — \"200\", \"200 45\", \"az 200\", \"el 45\"; works disarmed (one set+verify, or crawl bursts — the status line names the mode)",
 	"  a / e           query azimuth / elevation",
 	"  A               ARM: enter the TRUE azimuth the head points at now — enables rotctl",
 	"  d               disarm (rotctl motion locked again)",

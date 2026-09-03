@@ -11,14 +11,17 @@ import (
 )
 
 // tickKind tags what the engine's single one-shot timer is waiting on. Timers
-// only release gates or bound a wait — they never transmit on their own.
+// release gates, bound the one outstanding query, and chain ladder steps
+// (tickSettle already TXes the ladder's set/check; tickBurst TXes the crawl's
+// stop) — the recorded deviation from "a timer never transmits".
 type tickKind int
 
 const (
-	tickNone     tickKind = iota
+	tickNone      tickKind = iota
 	tickFrameGap          // inter-frame silence after every TX
 	tickReplyWait
 	tickSettle // quiet-line window around absolute sets
+	tickBurst  // crawl: one jog burst is over (stop the head)
 )
 
 // maxPending caps the gate-closed request queue. Without a cap a stuck line
@@ -52,13 +55,26 @@ type ladderStep struct {
 }
 
 // ladderState is the set_pos verification ladder: set → settle → one verify
-// query → tolerance check → converge or re-send (bench: sets only land on a
-// quiet line, readback is garbage while moving).
+// query → tolerance check → converge or fail (bench: sets only land on a
+// quiet line, readback is garbage while moving). ONE set and ONE verify per
+// step, no automatic re-send: a re-send moves the head again with no operator
+// behind it (bench decision 2026-08-30) — the operator reads the failure and
+// re-issues. Phase 1 exists for MULTI-STEP ladders (settle before the next
+// step's set), not for retries.
+//
+// crawl mode is a ladder KIND, not a new pointer: steps carry physical
+// targets and every unwind path (stopAll, tx failure, execJog) already nulls
+// e.ladder. The crawl loop starts at phase 3 (read state first), then
+// 4 (jog burst running, tickBurst armed) → stop → 2 (settle) → 3 (check
+// query) → converge / next burst, until within CrawlTol or the burst cap.
+// Phase 1 is never used by crawl.
 type ladderState struct {
-	steps []ladderStep
-	i     int
-	tries int
-	phase int // 1: set TX due after settle · 2: verify TX due after settle · 3: verify in flight
+	steps   []ladderStep
+	i       int
+	phase   int // 1: next step's set TX due after settle · 2: verify TX due after settle · 3: verify in flight · 4: crawl burst running
+	crawl   bool
+	burst   int     // bursts spent on steps[i] (crawl only)
+	lastDeg float64 // last readback for steps[i]; NaN before the first
 }
 
 // Engine owns the serial link and all rotator state. Exactly one goroutine
@@ -275,8 +291,7 @@ func (e *Engine) handle(req Request) {
 			e.enqueue(req)
 		} else {
 			// true az → physical az; goto-zero bypasses the offset entirely
-			e.execSet([]ladderStep{{'p', pelco.Norm360(it.Deg + e.offset)}})
-			e.reply(req, Result{})
+			e.reply(req, Result{Err: e.execSet([]ladderStep{{'p', pelco.Norm360(it.Deg + e.offset)}})})
 		}
 
 	case SetTiltIntent:
@@ -284,11 +299,14 @@ func (e *Engine) handle(req Request) {
 			e.reply(req, Result{Err: ErrDisarmed})
 		} else if !finiteDeg(it.Deg) {
 			e.reply(req, Result{Err: fmt.Errorf("elevation %v is not finite", it.Deg)})
+		} else if !elInRange(it.Deg) {
+			e.reply(req, Result{Err: fmt.Errorf("elevation %v is outside 0..90", it.Deg)})
 		} else if !e.gateOpen || e.inFlight != nil || e.ladder != nil {
 			e.enqueue(req)
 		} else {
-			e.execSet([]ladderStep{{'t', it.Deg}})
-			e.reply(req, Result{})
+			// true el → native tilt; the ladder target is physical (native),
+			// like a pan target — the tilt scale is inverted (bench 2026-08-30)
+			e.reply(req, Result{Err: e.execSet([]ladderStep{{'t', pelco.ElToTilt(it.Deg)}})})
 		}
 
 	case GotoPhysZeroIntent:
@@ -299,8 +317,28 @@ func (e *Engine) handle(req Request) {
 		} else if !e.gateOpen || e.inFlight != nil || e.ladder != nil {
 			e.enqueue(req)
 		} else {
-			e.execSet([]ladderStep{{'p', 0}, {'t', 0}}) // physical zero, offset never applied
-			e.reply(req, Result{})
+			// physical zero, offset never applied
+			e.reply(req, Result{Err: e.execSet([]ladderStep{{'p', 0}, {'t', 0}})})
+		}
+
+	case GotoAzElIntent:
+		// Manual target entry from the TUI ("g" prompt): same manual-
+		// positioning class as goto-0 — allowed disarmed. It speaks TRUE
+		// coordinates and ALWAYS crosses the current offset (the arm
+		// calibration stays valid across a disarm; disarm never clears it).
+		// Other sources need the arm gate.
+		if req.From != SrcTUI && !e.armed {
+			e.reply(req, Result{Err: ErrDisarmed})
+		} else if (it.HasAz && !finiteDeg(it.Az)) || (it.HasEl && !finiteDeg(it.El)) {
+			e.reply(req, Result{Err: fmt.Errorf("goto target %v/%v is not finite", it.Az, it.El)})
+		} else if it.HasEl && !elInRange(it.El) {
+			e.reply(req, Result{Err: fmt.Errorf("elevation %v is outside 0..90", it.El)})
+		} else if !it.HasAz && !it.HasEl {
+			e.reply(req, Result{Err: fmt.Errorf("goto with no axis selected")})
+		} else if !e.gateOpen || e.inFlight != nil || e.ladder != nil {
+			e.enqueue(req)
+		} else {
+			e.reply(req, Result{Err: e.execSet(gotoSteps(it, e.offset))})
 		}
 
 	case ArmIntent:
@@ -330,7 +368,7 @@ func (e *Engine) handle(req Request) {
 			// ladder's timer and wedge it; a re-home is never urgent — retry.
 			e.reply(req, Result{Err: ErrBusy})
 		} else {
-			e.log("SELF-TEST: head will re-home — KEEP CABLES CLEAR")
+			e.log("SELF-TEST: head will re-home — pan sweeps right up to 720°, KEEP CABLES CLEAR")
 			if e.tx(pelco.SelfTestFrame(e.cfg.Addr), "self-test (preset call 125)") {
 				// The re-home invalidates every readback we hold: the arm
 				// gate must not accept a pre-re-home position as fresh.
@@ -462,6 +500,7 @@ func (e *Engine) reply(req Request, r Result) {
 
 func (e *Engine) execJog(dir Dir) {
 	e.ladder = nil // human wins over any in-flight ladder
+	e.setStat = "" // a jog moves the head: a previous "converged" is stale news
 	e.jogOp = dirOpcode(dir)
 	e.tx(pelco.JogFrame(e.cfg.Addr, e.jogOp, e.jogSpeed), "jog "+dir.String())
 	e.publish() // Moving just changed
@@ -486,14 +525,141 @@ func (e *Engine) execQuery(req Request) {
 	e.tx(pelco.QueryFrame(e.cfg.Addr, opQueryFor(rsp)), "query")
 }
 
-// execSet starts the verification ladder for the given physical targets.
-func (e *Engine) execSet(steps []ladderStep) {
-	e.jogOp = 0
-	e.ladder = &ladderState{steps: steps, i: 0, tries: e.cfg.SetAttempts, phase: 2}
-	e.txSetStep()
+// execSet starts the verification ladder for the given physical targets —
+// the single point every goto source funnels through, so crawl mode (cfg.Crawl)
+// applies to all of them at once. Refused under a manual jog: a jog never
+// self-stops, and a ladder's check readback would be garbage mid-motion —
+// the caller replies ErrMoving and the operator's hold-stop ends the jog.
+// Both modes report a failed first write (ErrWire) instead of claiming a
+// ladder that tx already unwound.
+func (e *Engine) execSet(steps []ladderStep) error {
+	if e.jogOp != 0 {
+		// Fire-and-forget callers (the TUI prompt) never see the Result —
+		// the log line is the only place the operator learns of the refusal.
+		e.log("goto refused: a manual jog is active (stop it first)")
+		return ErrMoving
+	}
+	e.ladder = &ladderState{steps: steps, i: 0, crawl: e.cfg.Crawl, lastDeg: math.NaN()}
+	if e.cfg.Crawl {
+		return e.crawlStepStart() // read state first: one query, no set frame
+	}
+	e.ladder.phase = 2
+	if !e.txSetStep() {
+		return ErrWire // tx unwound the ladder; nothing is armed
+	}
+	return nil
 }
 
-func (e *Engine) txSetStep() {
+// crawlStepStart TXes the position check query for steps[i] and leaves phase
+// 3 — the frame-gap tick arms the reply wait for free, and a lost readback
+// fails the crawl through the same tickReplyWait path as a set ladder.
+func (e *Engine) crawlStepStart() error {
+	st := e.ladder.steps[e.ladder.i]
+	rsp := opForAxis(st.axis)
+	e.inFlight = &query{op: rsp}
+	if !e.tx(pelco.QueryFrame(e.cfg.Addr, opQueryFor(rsp)), "crawl query") {
+		return ErrWire // tx unwound the ladder; nothing is armed
+	}
+	e.ladder.phase = 3
+	return nil
+}
+
+// crawlVerify consumes one check readback: converge the step, move to the
+// next axis, or jog one burst toward the target. Human wins at every
+// readback: the drain runs a parked jog outright, and the queue scan below
+// catches one that could not run yet — without these a mid-crawl jog would
+// sit queued for the whole crawl (minutes) while the operator holds the key.
+// The e-stop cut through earlier as always.
+func (e *Engine) crawlVerify(deg float64) {
+	// This readback just answered the check query: the gate is open and no
+	// query is outstanding — the one moment in a crawl cycle where draining is
+	// free. Without it the gate stays closed for whole cycles and parked
+	// queries (rotctld get_pos polls whose callers long timed out) pile up
+	// unanswered behind the ladder.
+	e.drain()
+	if e.ladder == nil {
+		// A drained jog took over mid-drain — execJog killed the crawl and
+		// already published; nothing here may touch the dead ladder.
+		e.log("crawl cancelled: manual jog")
+		return
+	}
+	// The reply can also land inside the frame gap (gate still closed, drain
+	// a no-op): scan the WHOLE queue, not just the head — a jog parked behind
+	// timed-out query zombies must still win.
+	for _, pq := range e.pending {
+		if _, isJog := pq.Intent.(JogIntent); isJog {
+			e.log("crawl cancelled: manual jog")
+			e.ladder = nil
+			e.setStat = "" // a cancelled crawl must not inherit "converged"/"failed"
+			e.publish()
+			e.drain()
+			return
+		}
+	}
+	st := e.ladder.steps[e.ladder.i]
+	if !math.IsNaN(e.ladder.lastDeg) {
+		// Measured travel of the previous burst — the raw data the later
+		// "learn deg/s per speed byte" version will consume. Keep the format.
+		e.log("crawl %c: %+.2f° in %.1fs @ 0x%02X (err %.2f° → %.2f°)",
+			st.axis, signedAxisDelta(st.axis, e.ladder.lastDeg, deg),
+			e.cfg.CrawlBurst.Seconds(), e.cfg.CrawlSpeed,
+			axisErr(st.axis, st.target, e.ladder.lastDeg), axisErr(st.axis, st.target, deg))
+	}
+	e.ladder.lastDeg = deg
+	if axisErr(st.axis, st.target, deg) <= e.cfg.CrawlTol {
+		e.ladder.i++
+		e.ladder.burst = 0
+		e.ladder.lastDeg = math.NaN() // per-step: never measure across axes
+		if e.ladder.i >= len(e.ladder.steps) {
+			e.ladder = nil
+			e.setStat = "converged"
+			e.publish()
+			e.drain()
+			return
+		}
+		if err := e.crawlStepStart(); err != nil {
+			// The requester was already told success; tx logged the write
+			// error and unwound the ladder. Nothing else to do here.
+			e.log("crawl: next-axis read failed: %v", err)
+		}
+		return
+	}
+	if e.ladder.burst >= e.cfg.CrawlMaxBursts {
+		e.ladderFail(fmt.Sprintf("crawl: %d bursts on %c, still %.2f° off target %.2f°",
+			e.ladder.burst, st.axis, axisErr(st.axis, st.target, deg), st.target))
+		return
+	}
+	if !e.tx(pelco.JogFrame(e.cfg.Addr, jogToward(st.axis, st.target, deg), e.cfg.CrawlSpeed),
+		fmt.Sprintf("crawl %c toward %.2f (burst %d)", st.axis, st.target, e.ladder.burst+1)) {
+		// tx unwound (invariant 5) and re-opened the gate, but armed no
+		// timer — drain here or the queue strands until unrelated traffic.
+		e.drain()
+		return
+	}
+	e.ladder.burst++
+	e.ladder.phase = 4
+	e.armTick(e.cfg.CrawlBurst, tickBurst) // replaces the frame-gap tick
+}
+
+// gotoSteps shapes a GotoAzElIntent's TRUE az/el target into physical ladder
+// steps: pan crosses the arm offset (physical = Norm360(true + offset),
+// exactly where a SetPanIntent drives the head), elevation mirrors into the
+// head's native tilt word. Axes the intent did not select get no step.
+func gotoSteps(it GotoAzElIntent, offset float64) []ladderStep {
+	var steps []ladderStep
+	if it.HasAz {
+		steps = append(steps, ladderStep{'p', pelco.Norm360(it.Az + offset)})
+	}
+	if it.HasEl {
+		steps = append(steps, ladderStep{'t', pelco.ElToTilt(it.El)})
+	}
+	return steps
+}
+
+// txSetStep puts the current step's absolute-set frame on the wire and arms
+// the settle window. False means the write failed and tx already unwound the
+// ladder (invariant 5) — callers must not touch e.ladder afterwards.
+func (e *Engine) txSetStep() bool {
 	st := e.ladder.steps[e.ladder.i]
 	var f pelco.Frame
 	if st.axis == 'p' {
@@ -501,15 +667,16 @@ func (e *Engine) txSetStep() {
 	} else {
 		f = pelco.SetTiltFrame(e.cfg.Addr, st.target)
 	}
-	e.tx(f, fmt.Sprintf("set %c=%.2f", st.axis, st.target))
-	if e.ladder == nil {
-		return // the write failed; tx unwound and killed the ladder
+	if !e.tx(f, fmt.Sprintf("set %c=%.2f", st.axis, st.target)) {
+		return false // the write failed; tx unwound and killed the ladder
 	}
 	// The set frame itself needs quiet air around it: hold the gate and wait
-	// out the settle window before the verification query (or a re-send).
+	// out the settle window before the verification query (or the next step's
+	// set, in a multi-step ladder).
 	e.ladder.phase = 2 // set is on the wire; next settle tick verifies
 	e.gateOpen = false
 	e.armTick(e.cfg.Settle, tickSettle)
+	return true
 }
 
 func (e *Engine) moving() bool { return e.jogOp != 0 || e.ladder != nil }
@@ -517,6 +684,7 @@ func (e *Engine) moving() bool { return e.jogOp != 0 || e.ladder != nil }
 func stopAll(e *Engine) {
 	e.jogOp = 0
 	e.ladder = nil
+	e.setStat = "" // the all-stop voids every set outcome; "converged" must not outlive it
 	// Queued motion is motion that has not happened YET. An e-stop must kill
 	// it, or the next drain replays a stale set/jog seconds after the all-stop
 	// frame — motion with no operator input behind it.
@@ -595,7 +763,7 @@ func (e *Engine) onTick() {
 			}
 			e.inFlight = nil
 			if e.ladder != nil && e.ladder.phase == 3 {
-				e.ladderRetry("no readback")
+				e.ladderFail("no readback")
 			}
 		}
 		e.drain()
@@ -604,20 +772,39 @@ func (e *Engine) onTick() {
 		if e.ladder != nil {
 			switch e.ladder.phase {
 			case 1:
-				// Quiet line achieved: re-send the absolute set.
+				// Quiet line achieved: the NEXT step's set (multi-step
+				// ladders only — single-step ladders never revisit phase 1).
 				e.txSetStep()
 			case 2:
-				// Set sent and settled: one verification query (bench: never
-				// query while moving, at most one query outstanding).
+				// Set (or crawl stop) sent and settled: one verification
+				// query (bench: never query while moving, at most one query
+				// outstanding). Crawl reuses this path after its burst.
 				st := e.ladder.steps[e.ladder.i]
 				op := byte(pelco.OpRspPan)
 				if st.axis == 't' {
 					op = byte(pelco.OpRspTilt)
 				}
 				e.inFlight = &query{op: op}
-				e.tx(pelco.QueryFrame(e.cfg.Addr, opQueryFor(op)), "verify")
-				e.ladder.phase = 3
+				if e.tx(pelco.QueryFrame(e.cfg.Addr, opQueryFor(op)), "verify") {
+					e.ladder.phase = 3
+				}
+				// A failed write unwound the ladder (invariant 5) — never
+				// touch e.ladder afterwards; the drain below releases the queue.
 			}
+		}
+		e.drain()
+
+	case tickBurst:
+		// The crawl's jog burst is over: stop the head, then settle out
+		// before the check query (garbage while moving).
+		if e.ladder != nil && e.ladder.phase == 4 {
+			if e.tx(pelco.StopFrame(e.cfg.Addr), "crawl burst end (stop)") {
+				e.ladder.phase = 2
+				e.armTick(e.cfg.Settle, tickSettle) // tickSettle case 2 TXes the check query
+			}
+			// A failed stop write unwound the ladder (invariant 5): fall
+			// through to the drain — no timer is armed, the queue must not
+			// strand on a line that just proved writable-failure.
 		}
 		e.drain()
 	}
@@ -642,7 +829,7 @@ func (e *Engine) drain() {
 // outstanding query or an active set ladder.
 func blocksSet(it Intent) bool {
 	switch it.(type) {
-	case SetPanIntent, SetTiltIntent, GotoPhysZeroIntent:
+	case SetPanIntent, SetTiltIntent, GotoPhysZeroIntent, GotoAzElIntent:
 		return true
 	}
 	return false
@@ -652,6 +839,7 @@ func blocksSet(it Intent) bool {
 // armed check is repeated: state may have changed while the request sat
 // queued (e.g. a disarm during a settle window).
 func (e *Engine) execQueued(req Request) {
+	var err error
 	switch it := req.Intent.(type) {
 	case JogIntent:
 		e.execJog(it.Dir)
@@ -663,31 +851,37 @@ func (e *Engine) execQueued(req Request) {
 			e.reply(req, Result{Err: ErrDisarmed})
 			return
 		}
-		e.execSet([]ladderStep{{'p', pelco.Norm360(it.Deg + e.offset)}})
+		err = e.execSet([]ladderStep{{'p', pelco.Norm360(it.Deg + e.offset)}})
 	case SetTiltIntent:
 		if !e.armed {
 			e.reply(req, Result{Err: ErrDisarmed})
 			return
 		}
-		e.execSet([]ladderStep{{'t', it.Deg}})
+		if !elInRange(it.Deg) {
+			err = fmt.Errorf("elevation %v is outside 0..90", it.Deg)
+		} else {
+			// true el → native tilt (inverted scale, bench 2026-08-30)
+			err = e.execSet([]ladderStep{{'t', pelco.ElToTilt(it.Deg)}})
+		}
 	case GotoPhysZeroIntent:
-		e.execSet([]ladderStep{{'p', 0}, {'t', 0}})
+		err = e.execSet([]ladderStep{{'p', 0}, {'t', 0}})
+	case GotoAzElIntent:
+		if it.HasEl && !elInRange(it.El) {
+			err = fmt.Errorf("elevation %v is outside 0..90", it.El)
+		} else {
+			err = e.execSet(gotoSteps(it, e.offset))
+		}
 	default:
 		e.reply(req, Result{Err: fmt.Errorf("cannot queue %T", req.Intent)})
 		return
 	}
-	e.reply(req, Result{})
+	e.reply(req, Result{Err: err})
 }
 
-// ladderRetry waits out another quiet window and re-sends, or fails the ladder.
-func (e *Engine) ladderRetry(why string) {
-	e.ladder.tries--
-	if e.ladder.tries > 0 {
-		e.log("set verify: %s — re-sending (%d tries left)", why, e.ladder.tries)
-		e.ladder.phase = 1 // quiet first, then re-send (bench: sets need a quiet line)
-		e.armTick(e.cfg.Settle, tickSettle)
-		return
-	}
+// ladderFail ends the ladder as failed. No automatic re-send: an off-target
+// verify or a missing readback is news for the operator, not a trigger to
+// move the head again (bench decision 2026-08-30) — the operator re-issues.
+func (e *Engine) ladderFail(why string) {
 	e.log("set FAILED: %s", why)
 	e.ladder = nil
 	e.setStat = "failed"
@@ -737,17 +931,21 @@ func (e *Engine) gotReadback(axis byte, deg float64, rx pelco.RxFrame) {
 	e.emit(Event{Log: fmt.Sprintf("RX %s  %c %.2f°", rx.Hex(), axis, deg), RX: &rx, Dir: "RX"})
 
 	q := e.inFlight
-	if q != nil && q.op == opForAxis(axis) {
+	matched := q != nil && q.op == opForAxis(axis)
+	if matched {
 		e.inFlight = nil
 		if q.reply != nil {
-			// USER queries are answered in TRUE degrees (offset applied) so
-			// get_pos, the TUI's 'a'/'e' readouts, and set_pos's argument
-			// convention all speak the same coordinate frame. The ladder's
-			// own verification queries (reply == nil) keep the raw physical
-			// readback — its targets are physical.
+			// USER queries are answered in TRUE degrees (pan: offset applied;
+			// tilt: native word mirrored to elevation) so get_pos, the TUI's
+			// 'a'/'e' readouts, and set_pos's argument convention all speak
+			// the same coordinate frame. The ladder's own verification
+			// queries (reply == nil) keep the raw physical readback — its
+			// targets are physical.
 			ans := deg
 			if axis == 'p' {
 				ans = pelco.Norm360(deg - e.offset)
+			} else {
+				ans = pelco.TiltToEl(deg)
 			}
 			select {
 			case q.reply <- Result{Deg: ans}:
@@ -757,20 +955,23 @@ func (e *Engine) gotReadback(axis byte, deg float64, rx pelco.RxFrame) {
 	}
 	e.publish() // fresh readback is a state change
 
-	if e.ladder != nil && e.ladder.phase == 3 {
-		e.ladderVerify(deg)
+	// Only a readback that ANSWERS the ladder's outstanding query drives the
+	// ladder: a wrong-axis frame, a duplicate reply, or the late answer to an
+	// already-expired query must not be mistaken for the check readback — a
+	// bogus error would jog the head off garbage data (and violate the one
+	// outstanding query rule).
+	if matched && e.ladder != nil && e.ladder.phase == 3 {
+		if e.ladder.crawl {
+			e.crawlVerify(deg)
+		} else {
+			e.ladderVerify(deg)
+		}
 	}
 }
 
 func (e *Engine) ladderVerify(deg float64) {
 	st := e.ladder.steps[e.ladder.i]
-	d := math.Abs(deg - st.target)
-	if st.axis == 'p' {
-		if d = pelco.Norm360(deg - st.target); d > 180 {
-			d = 360 - d
-		}
-	}
-	if d <= e.cfg.SetTolerance {
+	if axisErr(st.axis, st.target, deg) <= e.cfg.SetTolerance {
 		if st.axis == 'p' {
 			e.physAz = deg
 		} else {
@@ -784,12 +985,11 @@ func (e *Engine) ladderVerify(deg float64) {
 			e.drain() // sets queued behind the ladder may run now
 			return
 		}
-		e.ladder.tries = e.cfg.SetAttempts
-		e.ladder.phase = 1
+		e.ladder.phase = 1 // settle out before the next step's set
 		e.armTick(e.cfg.Settle, tickSettle)
 		return
 	}
-	e.ladderRetry(fmt.Sprintf("readback %.2f° off target %.2f°", deg, st.target))
+	e.ladderFail(fmt.Sprintf("readback %.2f° off target %.2f°", deg, st.target))
 }
 
 // --- wire TX -----------------------------------------------------------------
@@ -866,8 +1066,8 @@ func (e *Engine) publish() {
 		snap.ArmFresh = snap.PanAge <= e.cfg.ArmMaxReadbackAge
 	}
 	if e.haveEl {
-		snap.PhysEl = e.physEl
-		snap.El = e.physEl
+		snap.PhysEl = e.physEl             // raw native tilt word
+		snap.El = pelco.TiltToEl(e.physEl) // true elevation (inverted scale)
 		snap.TiltAge = time.Since(e.tiltAt)
 		snap.ReadbackValid = true
 	}
@@ -876,7 +1076,7 @@ func (e *Engine) publish() {
 		if st.axis == 'p' {
 			snap.TargetAz = pelco.Norm360(st.target - e.offset) // snapshot carries TRUE targets
 		} else {
-			snap.TargetEl = st.target
+			snap.TargetEl = pelco.TiltToEl(st.target)
 		}
 		snap.SetStatus = "setting"
 	}
@@ -906,6 +1106,14 @@ func finiteDeg(v float64) bool {
 	return !math.IsNaN(v) && !math.IsInf(v, 0)
 }
 
+// elInRange rejects TRUE elevations the head cannot reach: the native tilt
+// word spans 0..90 and el mirrors onto the same range. The set ladder clamps
+// at the wire (SetTiltFrame, "overshooting the head's travel is the dangerous
+// direction"), but a crawl never builds a set frame — without this gate an
+// out-of-range el would be chased with jog bursts straight into the
+// mechanical limit until the burst cap.
+func elInRange(el float64) bool { return el >= 0 && el <= 90 }
+
 // opForAxis is the position opcode for a ladder axis.
 func opForAxis(axis byte) byte {
 	if axis == 'p' {
@@ -921,19 +1129,64 @@ func fmtAge(d time.Duration) string {
 	return d.Round(time.Millisecond).String()
 }
 
-// dirOpcode maps a jog direction onto its Pelco-D opcode.
+// dirOpcode maps a jog direction onto its Pelco-D opcode. The tilt pair is
+// SWAPPED: the jog opcodes speak the head's native (inverted) tilt scale, so
+// OpUp raises native tilt — i.e. LOWERS the antenna (bench 2026-08-30). A jog
+// "up" that means "raise elevation" must therefore send OpDown.
 func dirOpcode(d Dir) byte {
 	switch d {
 	case DirUp:
-		return pelco.OpUp
-	case DirDown:
 		return pelco.OpDown
+	case DirDown:
+		return pelco.OpUp
 	case DirLeft:
 		return pelco.OpLeft
 	case DirRight:
 		return pelco.OpRight
 	}
 	return pelco.OpStop
+}
+
+// axisErr is the distance in degrees from a readback to a ladder target:
+// wraparound-shortest for pan, absolute for the tilt word.
+func axisErr(axis byte, target, deg float64) float64 {
+	if axis != 'p' {
+		return math.Abs(deg - target)
+	}
+	d := pelco.Norm360(deg - target)
+	if d > 180 {
+		return 360 - d
+	}
+	return d
+}
+
+// signedAxisDelta is the signed travel from a to b: wraparound-shortest for
+// pan, plain difference for the tilt word.
+func signedAxisDelta(axis byte, a, b float64) float64 {
+	if axis != 'p' {
+		return b - a
+	}
+	d := pelco.Norm360(b - a)
+	if d > 180 {
+		return d - 360
+	}
+	return d
+}
+
+// jogToward picks the jog opcode that moves the axis from cur toward target.
+// Both speak the head's NATIVE frame — the tilt pair is deliberately NOT
+// swapped here (unlike dirOpcode, which translates the user-facing "up").
+func jogToward(axis byte, target, cur float64) byte {
+	if axis == 'p' {
+		if signedAxisDelta(axis, cur, target) > 0 {
+			return pelco.OpRight
+		}
+		return pelco.OpLeft
+	}
+	if target > cur {
+		return pelco.OpUp // OpUp RAISES native tilt (lowers the antenna)
+	}
+	return pelco.OpDown
 }
 
 // opQueryFor is the query opcode that provokes the given response opcode.

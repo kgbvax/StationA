@@ -215,6 +215,72 @@ func TestArmFlow(t *testing.T) {
 	}
 }
 
+// Goto prompt: enter submits one GotoAzElIntent shaped by the parsed answer;
+// a parse error keeps the prompt open (entered text survives); esc cancels.
+func TestGotoPrompt(t *testing.T) {
+	se := newStubEngine()
+	m := newTestModel(se)
+
+	m2, _ := m.handleKey(key(tea.KeyRunes, 'g'))
+	m = m2.(model)
+	if m.prompt != promptGoto {
+		t.Fatal("goto prompt did not open")
+	}
+
+	// Bad targets: refused locally, prompt stays open, nothing submitted.
+	for _, bad := range []string{"", "abc", "200 45 10", "el 95", "nan 45", "200 -5", "el"} {
+		m.input.SetValue(bad)
+		m2, _ = m.handleKey(key(tea.KeyEnter))
+		m = m2.(model)
+		if m.prompt != promptGoto {
+			t.Fatalf("target %q closed the prompt", bad)
+		}
+	}
+	se.none(t)
+
+	// Bare form: one number = az, two = az then el.
+	m.input.SetValue("200 45")
+	m2, _ = m.handleKey(key(tea.KeyEnter))
+	m = m2.(model)
+	if m.prompt != promptNone {
+		t.Fatal("goto prompt still open after a valid target")
+	}
+	got := se.intents(t, 1)
+	it, ok := got[0].(control.GotoAzElIntent)
+	if !ok || !it.HasAz || !it.HasEl || it.Az != 200 || it.El != 45 {
+		t.Fatalf("goto submitted %#v, want GotoAzElIntent{Az:200, El:45, both}", got[0])
+	}
+
+	// Keyword form, el only.
+	m2, _ = m.handleKey(key(tea.KeyRunes, 'g'))
+	m = m2.(model)
+	m.input.SetValue("el 30")
+	m2, _ = m.handleKey(key(tea.KeyEnter))
+	m = m2.(model)
+	got = se.intents(t, 1)
+	it, ok = got[0].(control.GotoAzElIntent)
+	if !ok || it.HasAz || !it.HasEl || it.El != 30 {
+		t.Fatalf("goto submitted %#v, want GotoAzElIntent{El:30, el only}", got[0])
+	}
+
+	// A prompt owns the keyboard: motion keys must not fire mid-prompt.
+	m2, _ = m.handleKey(key(tea.KeyRunes, 'g'))
+	m = m2.(model)
+	m2, _ = m.handleKey(key(tea.KeyUp))
+	m = m2.(model)
+	se.none(t)
+	m2, cmd := m.handleKey(key(tea.KeyEscape))
+	m = m2.(model)
+	runCmd(cmd) // esc is also the e-stop
+	if m.prompt != promptNone {
+		t.Error("esc did not cancel goto prompt")
+	}
+	stopped := se.intents(t, 1)
+	if _, ok := stopped[0].(control.StopIntent); !ok {
+		t.Errorf("esc in goto prompt sent %T, want StopIntent (e-stop)", stopped[0])
+	}
+}
+
 // The self-test is a y/n confirm: n cancels, y sends — and never opens while
 // armed (disarmed-only is checked here too, mirroring the s-key pre-gate).
 func TestSelfTestConfirm(t *testing.T) {

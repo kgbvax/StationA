@@ -41,7 +41,6 @@ type Rotctld struct {
 type Control struct {
 	JogSpeed           int     `toml:"jog_speed"`         // 0x00–0x3F, default 0x12
 	SettleMS           int     `toml:"settle_ms"`         // quiet window around absolute sets
-	SetAttempts        int     `toml:"set_attempts"`      // verification-ladder re-sends
 	SetToleranceDeg    float64 `toml:"set_tolerance_deg"` // degrees
 	ArmMaxReadbackAgeS float64 `toml:"arm_max_readback_age_s"`
 	JogHoldMS          int     `toml:"jog_hold_ms"` // TUI hold-to-move window
@@ -49,6 +48,13 @@ type Control struct {
 	MaxAz              float64 `toml:"max_az"`
 	MinEl              float64 `toml:"min_el"`
 	MaxEl              float64 `toml:"max_el"`
+
+	// Crawl mode: gotos converge by timed low-speed jog bursts instead of
+	// absolute-set frames (which carry no speed on the wire). Burst length
+	// (1 s) and the per-axis burst cap (40) are engine-internal, not TOML.
+	Crawl              bool    `toml:"crawl"`               // default off
+	CrawlSpeed         int     `toml:"crawl_speed"`         // 0x00–0x3F, default 0x04
+	CrawlToleranceDeg  float64 `toml:"crawl_tolerance_deg"` // "finished" tolerance
 }
 
 // Log holds optional file logging.
@@ -90,11 +96,13 @@ func Default() Config {
 		Control: Control{
 			JogSpeed:           int(pelco.DefaultJogSpeed), // 0x12 = "12"
 			SettleMS:           2000,
-			SetAttempts:        3,
 			SetToleranceDeg:    0.3,
 			ArmMaxReadbackAgeS: 10,
 			JogHoldMS:          250,
 			MinAz:              0, MaxAz: 360, MinEl: 0, MaxEl: 90,
+			Crawl:              false,
+			CrawlSpeed:         0x04,
+			CrawlToleranceDeg:  4.0,
 		},
 		MQTT: MQTT{
 			Enabled: false,
@@ -119,22 +127,29 @@ func (c Config) EngineConfig() control.Config {
 	if settleMS < 0 {
 		settleMS = Default().Control.SettleMS
 	}
-	attempts := c.Control.SetAttempts
-	if attempts < 1 {
-		attempts = 1
-	}
 	ageS := c.Control.ArmMaxReadbackAgeS
 	if ageS < 0 {
 		ageS = Default().Control.ArmMaxReadbackAgeS
+	}
+	crawl := c.Control.CrawlSpeed
+	if crawl < 0 || crawl > int(pelco.MaxSpeed) {
+		crawl = Default().Control.CrawlSpeed
+	}
+	crawlTol := c.Control.CrawlToleranceDeg
+	if crawlTol <= 0 {
+		crawlTol = Default().Control.CrawlToleranceDeg
 	}
 	return control.Config{
 		Addr:              c.Serial.Addr,
 		Baud:              c.Serial.Baud,
 		JogSpeed:          byte(jog),
 		Settle:            time.Duration(settleMS) * time.Millisecond,
-		SetAttempts:       attempts,
 		SetTolerance:      c.Control.SetToleranceDeg,
 		ArmMaxReadbackAge: time.Duration(ageS * float64(time.Second)),
+
+		Crawl:     c.Control.Crawl,
+		CrawlSpeed: byte(crawl),
+		CrawlTol:  crawlTol,
 	}
 }
 

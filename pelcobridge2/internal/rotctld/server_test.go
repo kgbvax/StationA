@@ -24,7 +24,7 @@ func (s *stubRot) Call(ctx context.Context, from control.Source, it control.Inte
 	s.calls = append(s.calls, it)
 	s.mu.Unlock()
 	switch it.(type) {
-	case control.QueryPanIntent, control.SetPanIntent:
+	case control.QueryPanIntent, control.SetPanIntent, control.GotoAzElIntent:
 		return s.pan
 	case control.QueryTiltIntent, control.SetTiltIntent:
 		return s.tilt
@@ -124,16 +124,12 @@ func TestSetPosCarriesDegrees(t *testing.T) {
 
 	s.Handle("P 179.5 12.25")
 	got := stub.intents()
-	if len(got) != 2 {
-		t.Fatalf("set_pos issued %d intents, want 2", len(got))
+	if len(got) != 1 {
+		t.Fatalf("set_pos issued %d intents, want 1 (atomic az+el)", len(got))
 	}
-	pan, ok1 := got[0].(control.SetPanIntent)
-	tilt, ok2 := got[1].(control.SetTiltIntent)
-	if !ok1 || pan.Deg != 179.5 {
-		t.Fatalf("set_pos pan = %#v, want SetPanIntent{179.5}", got[0])
-	}
-	if !ok2 || tilt.Deg != 12.25 {
-		t.Fatalf("set_pos tilt = %#v, want SetTiltIntent{12.25}", got[1])
+	gotoIt, ok := got[0].(control.GotoAzElIntent)
+	if !ok || !gotoIt.HasAz || !gotoIt.HasEl || gotoIt.Az != 179.5 || gotoIt.El != 12.25 {
+		t.Fatalf("set_pos = %#v, want GotoAzElIntent{179.5, 12.25, both axes}", got[0])
 	}
 }
 

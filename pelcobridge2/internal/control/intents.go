@@ -1,7 +1,5 @@
 package control
 
-import "pelcobridge2/internal/pelco"
-
 // Intent is one thing the engine can be asked to do. Concrete types keep the
 // source gating readable: the engine switches on type, then on Request.From.
 type Intent interface{ intent() }
@@ -14,7 +12,9 @@ type (
 	QueryTiltIntent struct{}
 
 	// JogIntent starts motion on one axis at the engine's jog speed. Armed
-	// only. Motion runs until a Stop (TUI hold-to-move supplies it).
+	// only. Motion runs until a Stop (TUI hold-to-move supplies it). DirUp/
+	// DirDown mean ELEVATION up/down; the engine translates them to the
+	// head's native jog opcodes, whose tilt scale is inverted.
 	JogIntent struct{ Dir Dir }
 
 	// StopIntent is the all-stop. Always allowed, from every source, even
@@ -22,14 +22,27 @@ type (
 	StopIntent struct{}
 
 	// SetPanIntent / SetTiltIntent drive the verification ladder toward a
-	// TRUE target (the offset is applied to a physical target internally).
+	// TRUE target (pan: offset applied to a physical target internally;
+	// tilt: elevation mirrored to the head's inverted native tilt).
 	// Armed only.
 	SetPanIntent  struct{ Deg float64 }
 	SetTiltIntent struct{ Deg float64 }
 
 	// GotoPhysZeroIntent drives both axes to PHYSICAL zero (the head's
-	// mechanical home). Armed only; the offset is never applied.
+	// mechanical home). The TUI may use it disarmed, like jog; the offset
+	// is never applied.
 	GotoPhysZeroIntent struct{}
+
+	// GotoAzElIntent drives one or both axes to a TRUE az/el target in a
+	// single ladder (pan crosses the arm offset, el mirrors to the native
+	// tilt). Manual-positioning class like jog and goto-0: the TUI may use
+	// it disarmed (offset is 0 then, so the target is physical); any other
+	// source needs the arm gate. HasAz/HasEl pick the axes — a NaN-free way
+	// to say "only one axis".
+	GotoAzElIntent struct {
+		Az, El       float64
+		HasAz, HasEl bool
+	}
 
 	// ArmIntent arms the rotator for rotctl use. TUI-only, enforced twice
 	// (source check here, and no code path from MQTT/rotctld builds it).
@@ -62,6 +75,7 @@ func (StopIntent) intent()         {}
 func (SetPanIntent) intent()       {}
 func (SetTiltIntent) intent()      {}
 func (GotoPhysZeroIntent) intent() {}
+func (GotoAzElIntent) intent()     {}
 func (ArmIntent) intent()          {}
 func (DisarmIntent) intent()       {}
 func (SelfTestIntent) intent()     {}
@@ -69,7 +83,8 @@ func (SelfCheckIntent) intent()    {}
 func (JogSpeedIntent) intent()     {}
 func (ReopenIntent) intent()       {}
 
-// Dir is a jog direction; it maps onto the Pelco-D jog opcodes.
+// Dir is a jog direction; the engine maps it onto the Pelco-D jog opcodes
+// (dirOpcode in engine.go — the single mapping, since the tilt pair swaps).
 type Dir int
 
 const (
@@ -91,18 +106,4 @@ func (d Dir) String() string {
 		return "right"
 	}
 	return "?"
-}
-
-func (d Dir) opcode() byte {
-	switch d {
-	case DirUp:
-		return pelco.OpUp
-	case DirDown:
-		return pelco.OpDown
-	case DirLeft:
-		return pelco.OpLeft
-	case DirRight:
-		return pelco.OpRight
-	}
-	return pelco.OpStop
 }

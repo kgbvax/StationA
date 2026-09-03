@@ -24,7 +24,6 @@ bind = "127.0.0.1"
 [control]
 jog_speed = 5
 settle_ms = 1500
-set_attempts = 4
 set_tolerance_deg = 0.5
 jog_hold_ms = 300
 
@@ -57,8 +56,33 @@ slot = "rotator"
 	}
 
 	eng := cfg.EngineConfig()
-	if eng.Settle != 1500*time.Millisecond || eng.JogSpeed != 5 || eng.SetAttempts != 4 || eng.Addr != 2 {
+	if eng.Settle != 1500*time.Millisecond || eng.JogSpeed != 5 || eng.Addr != 2 {
 		t.Errorf("engine mapping = %+v", eng)
+	}
+}
+
+// Crawl TOML keys map through EngineConfig; out-of-range values fall back to
+// the crawl defaults rather than becoming wrong wire bytes (the jog_speed
+// clamp's pattern — a speed of 300 truncated to a byte is a silent change).
+func TestCrawlKeysMapAndClamp(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	content := `
+[control]
+crawl = true
+crawl_speed = 300
+crawl_tolerance_deg = -2
+`
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	eng := cfg.EngineConfig()
+	if !eng.Crawl || eng.CrawlSpeed != 0x04 || eng.CrawlTol != 4.0 {
+		t.Errorf("crawl clamping = crawl=%v speed=0x%02X tol=%.1f, want on/0x04/4.0",
+			eng.Crawl, eng.CrawlSpeed, eng.CrawlTol)
 	}
 }
 

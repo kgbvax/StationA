@@ -6,6 +6,11 @@
 //   - absolute sets (0x4B/0x4D) are IGNORED unless the line has been quiet for
 //     a configurable silence window;
 //   - readback while a motor runs is checksum-valid garbage (unless disabled).
+//
+// The head's tilt is modeled in its NATIVE (inverted) frame — the word the
+// wire speaks, not elevation. SetAzEl/ElDeg are test conveniences that
+// convert TRUE azimuth/elevation to and from that frame; PanDeg/TiltDeg stay
+// raw native words.
 package simhead
 
 import (
@@ -95,11 +100,36 @@ func (h *Head) PanDeg() float64 {
 	return h.pan
 }
 
-// TiltDeg reads the simulated tilt position.
+// TiltDeg reads the simulated tilt position — the NATIVE word the wire
+// speaks, not elevation (use ElDeg for that).
 func (h *Head) TiltDeg() float64 {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return h.tilt
+}
+
+// SetAzEl teleports the head to the given PHYSICAL azimuth (no arm offset —
+// the head knows nothing about the engine's user frame; the control tests'
+// harness gotoAzEl crosses it) and TRUE elevation. A
+// test-setup primitive, not motion: no frames, no rates, no settle window.
+// The elevation is mirrored into the native tilt frame (pelco.ElToTilt) and
+// both axes clamp to their travel, matching what a clamped wire set would
+// leave behind. Any jog or set in progress is dropped.
+func (h *Head) SetAzEl(az, el float64) {
+	h.mu.Lock()
+	h.pan = pelco.Norm360(az)
+	h.tilt = clampTilt(pelco.ElToTilt(el))
+	h.panDir, h.tiltDir = 0, 0
+	h.panHasTgt, h.tiltHasTgt = false, false
+	h.mu.Unlock()
+}
+
+// ElDeg reads the current position as TRUE elevation — the mirror of the
+// native tilt word (pelco.TiltToEl).
+func (h *Head) ElDeg() float64 {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return pelco.TiltToEl(h.tilt)
 }
 
 // Moving reports whether either axis is animating.

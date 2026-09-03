@@ -3,7 +3,10 @@
 # Missing keys fall back to the built-in defaults shown below.
 
 [serial]
-port   = "COM3"   # COM3, /dev/ttyUSB0, /dev/serial/by-id/..., or tcp:host:port (mock)
+# Shack PC 2026-08-30: two Silicon Labs CP210x bridges (COM5, COM6) — COM5 is
+# the first guess for the RS-485 adapter; VERIFY at the bench (wrong port =
+# silent line, harmless: swap to COM6 in this file's remote twin).
+port   = "COM5"
 baud   = 2400     # bench link is 2400 8N1
 addr   = 1        # head's Pelco DIP address
 
@@ -28,7 +31,9 @@ max_el = 90.0
 
 [mqtt]
 enabled      = false
-broker       = "tcp://192.168.1.50:1883"
+# Shack-local broker per mqtt-topology (LAN clients → shari). Enable only
+# after the shari deploy, with PELCOBRIDGE2_MQTT_PASSWORD set in the shell.
+broker       = "tcp://192.168.1.139:1883"
 client_id    = ""          # default: muehle-uhf-rotator
 user         = "hf"
 password     = ""          # unused; env PELCOBRIDGE2_MQTT_PASSWORD wins

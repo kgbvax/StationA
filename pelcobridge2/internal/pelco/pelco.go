@@ -7,6 +7,13 @@
 //   - Pan (0x59) AND tilt (0x5B) position responses carry degrees×100 as a
 //     big-endian 16-bit word. The earlier "raw encoder counts" tilt model and
 //     ptest's "meaning unknown" conclusion were superseded.
+//   - The TILT scale is INVERTED relative to antenna elevation (bench
+//     2026-08-30): the head's native tilt word runs opposite to elevation over
+//     the 0..90 travel — native 0 is the antenna at zenith (the mechanical
+//     home), native 90 the horizon; elevation = 90° − native tilt. Set words,
+//     readback words, and the jog opcodes all speak the NATIVE scale (OpUp
+//     raises native tilt, i.e. lowers the antenna), so callers convert at the
+//     wire boundary: TiltToEl / ElToTilt.
 //   - Absolute sets (0x4B SetPan / 0x4D SetTilt) work, but only on a quiet
 //     line — callers must hold other traffic around them (the engine's gate).
 package pelco
@@ -107,6 +114,15 @@ func DegToWord(deg float64) (uint16, error) {
 	}
 	return uint16(centi), nil
 }
+
+// TiltToEl converts the head's native tilt word-degrees to antenna elevation.
+// The tilt scale is inverted (bench 2026-08-30): elevation = 90° − native tilt
+// over the 0..90 travel, so native 0 is zenith and native 90 the horizon.
+func TiltToEl(tilt float64) float64 { return 90 - tilt }
+
+// ElToTilt converts antenna elevation to the head's native tilt word-degrees
+// (the mirror of TiltToEl; the conversion is its own inverse).
+func ElToTilt(el float64) float64 { return 90 - el }
 
 // Norm360 wraps an angle into [0, 360).
 func Norm360(d float64) float64 {

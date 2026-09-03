@@ -19,7 +19,11 @@ CGO_ENABLED=0 GOOS=windows GOARCH=amd64 \
     go build -trimpath -ldflags "-s -w" -o dist/pelcobridge2-windows-amd64.exe ./cmd/pelcobridge2
 
 echo "==> copying binary to ${USER}@${HOST}:${DEST}/"
-ssh "${USER}@${HOST}" "if not exist ${DEST} mkdir ${DEST}"
+# The shack PC's sshd runs commands through (German) cmd.exe; `if not exist`
+# with forward-slash paths trips its parser ("Syntaxfehler"). An explicit
+# `cmd /c` with backslash paths works — verified 2026-08-30.
+WDEST=$(printf '%s' "$DEST" | tr '/' '\\')
+ssh "${USER}@${HOST}" "cmd /c \"if not exist ${WDEST} mkdir ${WDEST}\""
 scp dist/pelcobridge2-windows-amd64.exe "${USER}@${HOST}:${DEST}/pelcobridge2.exe"
 
 echo "==> seeding config (once; an existing config.toml is never touched)"
@@ -29,7 +33,7 @@ if [ ! -f .deploy-seed.toml ]; then
     echo "    (set [serial] port, then re-run deploy.sh)"
     exit 0
 fi
-ssh "${USER}@${HOST}" "if not exist ${DEST}\\config.toml (echo seed) else (echo exists)" | grep -q seed &&
+ssh "${USER}@${HOST}" "cmd /c \"if not exist ${WDEST}\\config.toml (echo seed) else (echo exists)\"" | grep -q seed &&
     scp .deploy-seed.toml "${USER}@${HOST}:${DEST}/config.toml" ||
     echo "    config.toml already present — left alone (seed-once)"
 

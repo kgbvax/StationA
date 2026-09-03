@@ -80,6 +80,56 @@ func TestQueryTiltTextbookDecode(t *testing.T) {
 	}
 }
 
+// SetAzEl speaks TRUE azimuth/elevation and converts to the native tilt word;
+// ElDeg reads back the mirrored elevation. Clamping matches a clamped wire set.
+func TestSetAzElMirrorsElevation(t *testing.T) {
+	h := New(Options{Addr: 1, PanDeg: 10, TiltDeg: 5})
+	defer h.Close()
+
+	h.SetAzEl(200, 30)
+	if got := h.PanDeg(); got != 200 {
+		t.Fatalf("pan = %.2f, want 200", got)
+	}
+	if got := h.TiltDeg(); got != 60 { // native word: 90 − el 30
+		t.Fatalf("native tilt = %.2f, want 60 (el 30 mirrored)", got)
+	}
+	if got := h.ElDeg(); got != 30 {
+		t.Fatalf("el = %.2f, want 30", got)
+	}
+
+	// Out-of-travel elevation clamps to the travel; azimuth wraps.
+	h.SetAzEl(370, 120) // el above zenith → native −30 → clamps to native 0 = el 90
+	if got := h.PanDeg(); got != 10 {
+		t.Fatalf("pan = %.2f, want 10 (370 wrapped)", got)
+	}
+	if got := h.ElDeg(); got != 90 {
+		t.Fatalf("el = %.2f, want 90 (el 120 clamped at zenith)", got)
+	}
+	h.SetAzEl(10, -30) // el below horizon → native 120 → clamps to native 90 = el 0
+	if got := h.ElDeg(); got != 0 {
+		t.Fatalf("el = %.2f, want 0 (el −30 clamped at horizon)", got)
+	}
+}
+
+// SetAzEl is a teleport, not motion: any jog or set in progress is dropped.
+func TestSetAzElDropsMotion(t *testing.T) {
+	h := New(Options{Addr: 1, PanDeg: 10, TiltDeg: 5,
+		RateAzDegPerS: 20, RateElDegPerS: 10})
+	defer h.Close()
+
+	mustWrite(t, h, pelco.JogFrame(1, pelco.OpRight, 0x12))
+	if !h.Moving() {
+		t.Fatal("jog did not start motion")
+	}
+	h.SetAzEl(50, 45)
+	if h.Moving() {
+		t.Fatal("SetAzEl left the head moving")
+	}
+	if got := h.PanDeg(); got != 50 {
+		t.Fatalf("pan = %.2f, want 50 (teleported, not animated)", got)
+	}
+}
+
 func TestWrongAddrIgnored(t *testing.T) {
 	h := New(Options{Addr: 1, PanDeg: 10})
 	defer h.Close()
