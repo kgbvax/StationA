@@ -19,7 +19,7 @@ package mqtt
 
 import (
 	"context"
-	"log"
+	"log/slog"
 
 	pahomqtt "github.com/eclipse/paho.mqtt.golang"
 )
@@ -60,7 +60,7 @@ func Enqueue(jobs chan<- func(), f func()) {
 	default:
 		// Buffer full: drop. The next native announce / cmd re-arms once the
 		// worker drains. Preferred over blocking paho's dispatch goroutine.
-		log.Printf("[mqtt] jobs queue full: dropping job (worker saturated)")
+		slog.Warn("[mqtt] jobs queue full: dropping job (worker saturated)")
 	}
 }
 

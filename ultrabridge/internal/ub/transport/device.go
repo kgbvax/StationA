@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -14,6 +15,14 @@ import (
 var (
 	ErrClosed = errors.New("device closed")
 )
+
+// log is the package-level logger; main installs the component/slot-stamped
+// one via SetLogger before any exchange runs. slog.Default() keeps tests sane.
+var log = slog.Default()
+
+// SetLogger installs the component/slot-stamped logger. Call once at startup,
+// before any Exchange runs.
+func SetLogger(l *slog.Logger) { log = l }
 
 type byteReadWriteCloser interface {
 	io.Reader
@@ -71,12 +80,22 @@ func (d *Device) reopen() error {
 	if d.opener == nil {
 		return ErrClosed
 	}
+	// hadPort distinguishes the first reopen failure after a working link
+	// (operator-visible Warn) from the repeat attempts the 2 s poll loop makes
+	// while the adapter stays gone (Debug — the outage itself is already
+	// surfaced once via the controller's "device offline" Warn).
+	hadPort := d.rw != nil
 	if d.rw != nil {
 		_ = d.rw.Close()
 	}
 	rw, err := d.opener()
 	if err != nil {
 		d.rw = nil
+		if hadPort {
+			log.Warn("serial reopen failed", "err", err)
+		} else {
+			log.Debug("serial reopen failed, link still down", "err", err)
+		}
 		return err
 	}
 	d.rw = rw
@@ -99,6 +118,9 @@ func (d *Device) Exchange(ctx context.Context, com byte, data []byte, timeout ti
 		if err := d.reopen(); err != nil {
 			return protocol.Packet{}, fmt.Errorf("reopen serial: %w", err)
 		}
+		// Self-heal: the adapter reappeared after a failed reopen left the
+		// handle nil. One Warn per recovery (logging convention §3).
+		log.Warn("serial port reopened after previous failure")
 	}
 
 	// retried bounds self-heal to one reopen per Exchange call. A second port
@@ -113,6 +135,9 @@ func (d *Device) Exchange(ctx context.Context, com byte, data []byte, timeout ti
 		req := protocol.Packet{Seq: seq, Com: com, Data: data}
 		if _, err := d.rw.Write(protocol.EncodePacket(req)); err != nil {
 			if !retried && d.reopen() == nil {
+				// Self-heal succeeded: the stale handle was replaced by the
+				// freshly re-enumerated tty and the exchange is retried once.
+				log.Warn("serial write fault, port reopened", "err", err)
 				retried = true
 				continue // re-send with a fresh sequence number
 			}
@@ -142,6 +167,7 @@ func (d *Device) Exchange(ctx context.Context, com byte, data []byte, timeout ti
 			// the exchange once; if the link is still gone, surface the
 			// error so the next poll tick retries rather than spinning.
 			if !retried && d.reopen() == nil {
+				log.Warn("serial read fault, port reopened", "err", err)
 				retried = true
 				break // restart the outer loop, re-send the request
 			}

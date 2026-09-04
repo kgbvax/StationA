@@ -7,7 +7,7 @@ package mqtt
 import (
 	"context"
 	"encoding/json"
-	"log"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
@@ -143,10 +143,10 @@ func New(ctx context.Context, cfg config.Config, rec *reconcile.Reconciler) (*Cl
 		opts.SetPassword(cfg.MQTT.Password)
 	}
 	opts.SetConnectionLostHandler(func(_ paho.Client, err error) {
-		log.Printf("[mqtt] connection lost: %v", err)
+		slog.Warn("[mqtt] connection lost", "err", err)
 	})
 	opts.SetOnConnectHandler(func(_ paho.Client) {
-		log.Printf("[mqtt] connected broker=%s slot=%s", cfg.MQTT.Broker, c.selfBase())
+		slog.Info("[mqtt] connected", "broker", cfg.MQTT.Broker, "slot", c.selfBase())
 		c.publishString(c.selfTopic("status"), "online", 1, true)
 		c.publishMeta()
 		c.subscribeAll()
@@ -216,7 +216,7 @@ func (c *Client) onRadioState(_ paho.Client, msg paho.Message) {
 		DeviceOnline bool   `json:"device_online"`
 	}
 	if err := json.Unmarshal(msg.Payload(), &s); err != nil {
-		log.Printf("[mqtt] bad radio/state: %v", err)
+		slog.Error("[mqtt] bad radio/state; dropping message", "err", err)
 		return
 	}
 	sharedmqtt.Enqueue(c.jobs, func() {
@@ -252,7 +252,7 @@ func (c *Client) onAntSwitchState(_ paho.Client, msg paho.Message) {
 		Settled  bool   `json:"settled"`
 	}
 	if err := json.Unmarshal(msg.Payload(), &s); err != nil {
-		log.Printf("[mqtt] bad ant-switch/state: %v", err)
+		slog.Error("[mqtt] bad ant-switch/state; dropping message", "err", err)
 		return
 	}
 	sharedmqtt.Enqueue(c.jobs, func() {
@@ -274,7 +274,7 @@ func (c *Client) onOperatorCmd(_ paho.Client, msg paho.Message) {
 		Request string `json:"request"`
 	}
 	if err := json.Unmarshal(msg.Payload(), &cmd); err != nil {
-		log.Printf("[mqtt] bad operator cmd: %v", err)
+		slog.Error("[mqtt] bad operator cmd; dropping message", "err", err)
 		return
 	}
 	req := strings.TrimSpace(cmd.Request)
@@ -368,20 +368,20 @@ func (c *Client) update(mutate func(*reconcile.Inputs)) {
 	c.mu.Unlock()
 
 	if deferred {
-		log.Printf("[reconcile] port change to %q deferred: radio is transmitting (cold-switch)", act.Decision.Target)
+		slog.Info("[reconcile] port change deferred: radio is transmitting (cold-switch)", "target", act.Decision.Target)
 	}
 	if pubState != nil {
 		c.publishJSON(c.selfTopic("state"), pubState, 1, true)
-		log.Printf("[reconcile] decision mode=%s target=%s source=%s", pubState.Mode, pubState.Target, pubState.Source)
+		slog.Info("[reconcile] decision", "mode", pubState.Mode, "target", pubState.Target, "source", pubState.Source)
 	}
 	if pubSelect != "" {
 		c.publishJSON(c.siblingTopic(slotAntSwitch, "cmd"), map[string]any{"select": pubSelect}, 1, true)
-		log.Printf("[reconcile] emit ant-switch select=%s", pubSelect)
+		slog.Info("[reconcile] emit ant-switch select", "port", pubSelect)
 	}
 	if pubFreq != 0 {
 		c.publishJSON(c.siblingTopic(c.cfg.BandFollow.Slot, "cmd"),
 			map[string]any{"action": "frequency", "freq_hz": pubFreq}, 1, true)
-		log.Printf("[reconcile] band-follow %s freq_hz=%d", c.cfg.BandFollow.Slot, pubFreq)
+		slog.Info("[reconcile] band-follow", "slot", c.cfg.BandFollow.Slot, "freq_hz", pubFreq)
 	}
 	if pubBand != "" {
 		// PA /cmd is NOT retained (acombridge subscribes not-retained; pa-mqtt-api.md).
@@ -389,14 +389,14 @@ func (c *Client) update(mutate func(*reconcile.Inputs)) {
 		// replay at its own reconnect — not from a retained pa/cmd.
 		c.publishJSON(c.siblingTopic(c.cfg.PAFollow.Slot, "cmd"),
 			map[string]any{"action": "set_band", "value": pubBand}, 1, false)
-		log.Printf("[reconcile] pa band-follow %s -> %s", c.cfg.PAFollow.Slot, pubBand)
+		slog.Info("[reconcile] pa band-follow", "slot", c.cfg.PAFollow.Slot, "band", pubBand)
 	}
 	if pubInline != nil {
 		// Tuner /cmd is NOT retained (the ATU self-heals from this reconciler re-resolving on
 		// the retained radio/state replay at reconnect), exactly like the PA /cmd above.
 		c.publishJSON(c.siblingTopic(c.cfg.TunerFollow.Slot, "cmd"),
 			map[string]any{"action": "set_inline", "value": *pubInline}, 1, false)
-		log.Printf("[reconcile] tuner inline-follow %s -> %v", c.cfg.TunerFollow.Slot, *pubInline)
+		slog.Info("[reconcile] tuner inline-follow", "slot", c.cfg.TunerFollow.Slot, "inline", *pubInline)
 	}
 }
 
@@ -461,22 +461,22 @@ func (c *Client) publishMeta() {
 
 func (c *Client) subscribe(topic string, handler paho.MessageHandler) {
 	if token := c.client.Subscribe(topic, 1, handler); token.Wait() && token.Error() != nil {
-		log.Printf("[mqtt] subscribe failed topic=%s err=%v", topic, token.Error())
+		slog.Error("[mqtt] subscribe failed", "topic", topic, "err", token.Error())
 		return
 	}
-	log.Printf("[mqtt] subscribed topic=%s", topic)
+	slog.Info("[mqtt] subscribed", "topic", topic)
 }
 
 func (c *Client) publishJSON(topic string, v any, qos byte, retained bool) {
 	b, _ := json.Marshal(v)
 	if token := c.client.Publish(topic, qos, retained, b); token.Wait() && token.Error() != nil {
-		log.Printf("[mqtt] publish failed topic=%s err=%v", topic, token.Error())
+		slog.Error("[mqtt] publish failed", "topic", topic, "err", token.Error())
 	}
 }
 
 func (c *Client) publishString(topic, payload string, qos byte, retained bool) {
 	if token := c.client.Publish(topic, qos, retained, payload); token.Wait() && token.Error() != nil {
-		log.Printf("[mqtt] publish failed topic=%s err=%v", topic, token.Error())
+		slog.Error("[mqtt] publish failed", "topic", topic, "err", token.Error())
 	}
 }
 

@@ -9,8 +9,8 @@ import (
 	"context"
 	"errors"
 	"flag"
-	"fmt"
 	"io/fs"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -25,6 +25,13 @@ import (
 const defaultConfigPath = "config.toml"
 
 func main() {
+	// Logging convention (docs/conventions/logging.md): one root slog text logger on
+	// stderr with a constant component attr, installed as the default so internal
+	// packages log through it.
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})).
+		With("component", "testui")
+	slog.SetDefault(logger)
+
 	def := config.Default()
 
 	configPath := flag.String("config", defaultConfigPath, "Path to the TOML config file")
@@ -46,8 +53,8 @@ func main() {
 	})
 
 	if cfg.MQTT.Broker == "" {
-		fmt.Fprintln(os.Stderr, "no mqtt broker configured (set [mqtt].broker in config)")
-		os.Exit(1)
+		slog.Error("no mqtt broker configured (set [mqtt].broker in config)")
+		os.Exit(2)
 	}
 	// Normalize the site: strip leading/trailing slashes and reject empty. The publish
 	// guard builds site+"/" as a prefix, so an empty or malformed site would silently
@@ -56,8 +63,8 @@ func main() {
 	cfg.Site = strings.Trim(cfg.Site, "/")
 	cfg.MQTT.Site = cfg.Site
 	if cfg.Site == "" {
-		fmt.Fprintln(os.Stderr, "site must be non-empty (set -site or [site] in config)")
-		os.Exit(1)
+		slog.Error("site must be non-empty (set -site or [site] in config)")
+		os.Exit(2)
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
@@ -71,7 +78,7 @@ func main() {
 		tree,
 	)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "mqtt connect failed: %v\n", err)
+		slog.Error("mqtt connect failed", "err", err)
 		os.Exit(1)
 	}
 
@@ -83,17 +90,16 @@ func main() {
 
 	go func() {
 		<-ctx.Done()
-		fmt.Println("\nshutting down...")
+		slog.Info("shutting down")
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = srv.Shutdown(shutdownCtx)
 		mqttClient.Close()
 	}()
 
-	fmt.Printf("testui listening on http://%s  (broker %s, sub %s/#)\n",
-		cfg.HTTPAddr, cfg.MQTT.Broker, cfg.Site)
+	slog.Info("testui listening", "http", cfg.HTTPAddr, "broker", cfg.MQTT.Broker, "sub", cfg.Site+"/#")
 	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		fmt.Fprintln(os.Stderr, err)
+		slog.Error("http server failed", "err", err)
 		os.Exit(1)
 	}
 }
@@ -109,8 +115,8 @@ func loadConfig(path string, explicit bool) config.Config {
 	if errors.Is(err, fs.ErrNotExist) && !explicit {
 		return config.Default()
 	}
-	fmt.Fprintf(os.Stderr, "config: %v\n", err)
-	os.Exit(1)
+	slog.Error("load config", "path", path, "err", err)
+	os.Exit(2)
 	return config.Default()
 }
 

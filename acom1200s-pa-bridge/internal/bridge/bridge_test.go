@@ -15,6 +15,7 @@ type testLogger struct{ t *testing.T }
 
 func (l *testLogger) Infof(f string, a ...any)  { l.t.Logf("INFO: "+f, a...) }
 func (l *testLogger) Warnf(f string, a ...any)  { l.t.Logf("WARN: "+f, a...) }
+func (l *testLogger) Errorf(f string, a ...any) { l.t.Logf("ERROR: "+f, a...) }
 func (l *testLogger) Debugf(f string, a ...any) {}
 
 // fakeCommander records /cmd dispatches without touching serial.

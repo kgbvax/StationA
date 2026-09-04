@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 	"flag"
-	"fmt"
 	"io/fs"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -21,6 +21,16 @@ import (
 const defaultConfigPath = "/etc/ultrabridge/config.toml"
 
 func main() {
+	// Root logger per ../docs/conventions/logging.md: log/slog text handler →
+	// stderr, one constant `component` attr, installed as the default so every
+	// package-level slog call carries it. The config schema has no [log] level
+	// key, so the level stays at the Info default (do not invent a key here —
+	// the schema is shared with the deployed 0600 file).
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+		Level: slog.LevelInfo,
+	})).With("component", "ultrabridge")
+	slog.SetDefault(logger)
+
 	// Defaults come from the config package so the file, flags, and built-in
 	// defaults all agree on a single source of truth.
 	def := config.Default()
@@ -43,8 +53,24 @@ func main() {
 		"mqtt-user": *mqttUser, "mqtt-password": *mqttPassword,
 	}, *baud)
 
+	// ultrabridge fronts exactly one slot (muehle/hf/ant-ctrl): stamp it as a
+	// child logger so transport/service/mqtt lines all carry `slot` (logging
+	// convention §2). The address needs site+station from config; when neither
+	// is configured (bare mock runs) fall back to the component-only logger.
+	slotLogger := logger
+	if cfg.MQTT.Site != "" && cfg.MQTT.Station != "" {
+		slotLogger = logger.With("slot", cfg.MQTT.Site+"/"+cfg.MQTT.Station+"/"+cfg.MQTT.Slot)
+	}
+	transport.SetLogger(slotLogger)
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
+
+	slog.Info("ultrabridge starting",
+		"http_addr", cfg.HTTPAddr,
+		"serial_port", cfg.SerialPort,
+		"baud", cfg.Baud,
+		"mqtt_broker", cfg.MQTT.Broker)
 
 	var dev transport.Client
 	var err error
@@ -53,7 +79,7 @@ func main() {
 	} else {
 		dev, err = transport.OpenSerial(cfg.SerialPort, cfg.Baud)
 		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
+			slog.Error("serial open failed", "port", cfg.SerialPort, "err", err)
 			os.Exit(1)
 		}
 	}
@@ -63,6 +89,7 @@ func main() {
 	dev = transport.NewTracing(dev, debugHub.Enabled, debugHub.Publish)
 
 	ctrl := service.NewController(dev)
+	ctrl.SetLogger(slotLogger)
 	ui := web.NewWithHub(ctrl, debugHub)
 	var mqttClient *mqttbridge.Client
 	if cfg.MQTT.Broker != "" {
@@ -84,7 +111,7 @@ func main() {
 			// 2026-09-03 with no restart to rescue it. Exiting non-zero lets systemd's
 			// Restart=on-failure / RestartSec=5 crash-loop the unit until the broker
 			// answers (the same shape shelly-power-bridge/powerseq/antennaselect use).
-			fmt.Fprintf(os.Stderr, "mqtt connect failed: %v\n", err)
+			slog.Error("mqtt connect failed", "broker", cfg.MQTT.Broker, "err", err)
 			os.Exit(1)
 		}
 		// Embedded HA discovery is gated off by default (model §9); hadiscovery
@@ -114,7 +141,9 @@ func main() {
 	}()
 
 	if err := ctrl.Refresh(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "initial refresh failed: %v\n", err)
+		// Warn, not Error: the bridge stays up and the 2 s poll loop keeps
+		// retrying — degraded but recovering (logging convention §3).
+		slog.Warn("initial refresh failed", "err", err)
 	}
 	ui.PublishStatus(ctrl.State())
 	if mqttClient != nil {
@@ -136,9 +165,9 @@ func main() {
 		}
 	}()
 
-	fmt.Printf("ultrabridge listening on http://%s\n", cfg.HTTPAddr)
+	slog.Info("http server listening", "addr", cfg.HTTPAddr)
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		fmt.Fprintln(os.Stderr, err)
+		slog.Error("http server failed", "addr", cfg.HTTPAddr, "err", err)
 		os.Exit(1)
 	}
 }
@@ -156,8 +185,8 @@ func loadConfig(path string, explicit bool) config.Config {
 		// Default path with no file present: run on defaults + flags.
 		return config.Default()
 	}
-	fmt.Fprintf(os.Stderr, "config: %v\n", err)
-	os.Exit(1)
+	slog.Error("config load failed", "path", path, "err", err)
+	os.Exit(2) // config errors exit 2, connect/run errors exit 1 (logging convention §3)
 	return config.Default() // unreachable
 }
 

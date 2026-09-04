@@ -6,7 +6,7 @@ package engine
 
 import (
 	"bytes"
-	"log"
+	"log/slog"
 	"strings"
 	"sync"
 
@@ -76,7 +76,7 @@ func (e *Engine) OnMeta(metaTopic string, payload []byte) {
 	}
 	m, err := expose.Parse(metaTopic, payload)
 	if err != nil {
-		log.Printf("[hadiscovery] skip meta %s: %v", metaTopic, err)
+		slog.Error("[hadiscovery] skip meta; dropping malformed announcement", "topic", metaTopic, "err", err)
 		if addr, addrErr := expose.AddrFromMetaTopic(metaTopic); addrErr == nil {
 			e.clearAddr(addr, "meta parse error")
 		}
@@ -100,7 +100,7 @@ func (e *Engine) OnMeta(metaTopic string, payload []byte) {
 	// that republishes its /meta on a heartbeat would otherwise spam journald forever
 	// even though the bus publish is correctly a no-op (Diagnostic is deterministic).
 	if noExpose {
-		log.Printf("[hadiscovery] slot %s role=%s has no expose block; emitting diagnostic only", m.Addr, m.Role)
+		slog.Info("[hadiscovery] slot has no expose block; emitting diagnostic only", "slot", m.Addr, "role", m.Role)
 	}
 	pub := e.pubSnap()
 
@@ -115,14 +115,14 @@ func (e *Engine) OnMeta(metaTopic string, payload []byte) {
 	allOK := true
 	for topic := range prevTopics {
 		if err := pub.Publish(topic, 1, true, []byte("")); err != nil {
-			log.Printf("[hadiscovery] clear %s: %v", topic, err)
+			slog.Error("[hadiscovery] clear failed", "topic", topic, "err", err)
 			allOK = false
 		}
 	}
 
 	for _, ent := range ents {
 		if err := pub.Publish(ent.Topic, 1, true, ent.Payload); err != nil {
-			log.Printf("[hadiscovery] publish %s: %v", ent.Topic, err)
+			slog.Error("[hadiscovery] publish failed", "topic", ent.Topic, "err", err)
 			allOK = false
 		}
 	}
@@ -147,15 +147,15 @@ func (e *Engine) OnHAStatus(payload string) {
 	}
 	e.mu.Unlock()
 	if len(snapshot) == 0 {
-		log.Printf("[hadiscovery] HA online; no known slots to re-publish")
+		slog.Info("[hadiscovery] HA online; no known slots to re-publish")
 		return
 	}
-	log.Printf("[hadiscovery] HA online; re-publishing discovery for %d slot(s)", len(snapshot))
+	slog.Info("[hadiscovery] HA online; re-publishing discovery", "slots", len(snapshot))
 	pub := e.pubSnap()
 	for _, ents := range snapshot {
 		for _, ent := range ents {
 			if err := pub.Publish(ent.Topic, 1, true, ent.Payload); err != nil {
-				log.Printf("[hadiscovery] re-publish %s: %v", ent.Topic, err)
+				slog.Error("[hadiscovery] re-publish failed", "topic", ent.Topic, "err", err)
 			}
 		}
 	}
@@ -168,7 +168,7 @@ func (e *Engine) OnHAStatus(payload string) {
 func (e *Engine) OnMetaCleared(metaTopic string) {
 	addr, err := expose.AddrFromMetaTopic(metaTopic)
 	if err != nil {
-		log.Printf("[hadiscovery] skip meta-clear %s: %v", metaTopic, err)
+		slog.Error("[hadiscovery] skip meta-clear; malformed topic", "topic", metaTopic, "err", err)
 		return
 	}
 	e.clearAddr(addr, "meta cleared")
@@ -183,7 +183,7 @@ func (e *Engine) clearAddr(addr, reason string) {
 	if len(prev) == 0 {
 		return
 	}
-	log.Printf("[hadiscovery] %s for %s; removing %d discovery entity(ies)", reason, addr, len(prev))
+	slog.Info("[hadiscovery] removing discovery entities", "reason", reason, "slot", addr, "entities", len(prev))
 	pub := e.pubSnap()
 	if e.clearEntities(pub, prev, "clear") {
 		e.mu.Lock()
@@ -198,7 +198,7 @@ func (e *Engine) clearEntities(pub Pub, ents []ha.Entity, logPrefix string) bool
 	allOK := true
 	for _, ent := range ents {
 		if err := pub.Publish(ent.Topic, 1, true, []byte("")); err != nil {
-			log.Printf("[hadiscovery] %s %s: %v", logPrefix, ent.Topic, err)
+			slog.Error("[hadiscovery] clear failed", "reason", logPrefix, "topic", ent.Topic, "err", err)
 			allOK = false
 		}
 	}

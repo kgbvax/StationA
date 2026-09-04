@@ -306,4 +306,5 @@ type slogAdapter struct{ l *slog.Logger }
 
 func (s *slogAdapter) Infof(format string, args ...any)  { s.l.Info(fmt.Sprintf(format, args...)) }
 func (s *slogAdapter) Warnf(format string, args ...any)  { s.l.Warn(fmt.Sprintf(format, args...)) }
+func (s *slogAdapter) Errorf(format string, args ...any) { s.l.Error(fmt.Sprintf(format, args...)) }
 func (s *slogAdapter) Debugf(format string, args ...any) { s.l.Debug(fmt.Sprintf(format, args...)) }

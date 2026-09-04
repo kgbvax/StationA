@@ -96,9 +96,10 @@ func (e *errPublisher) Publish(topic string, retained bool, payload []byte) erro
 
 type testLogger struct{ t *testing.T }
 
-func (l *testLogger) Infof(f string, a ...any) { l.t.Logf("INFO: "+f, a...) }
-func (l *testLogger) Warnf(f string, a ...any) { l.t.Logf("WARN: "+f, a...) }
-func (l *testLogger) Debugf(string, ...any)    {}
+func (l *testLogger) Infof(f string, a ...any)  { l.t.Logf("INFO: "+f, a...) }
+func (l *testLogger) Warnf(f string, a ...any)  { l.t.Logf("WARN: "+f, a...) }
+func (l *testLogger) Errorf(f string, a ...any) { l.t.Logf("ERROR: "+f, a...) }
+func (l *testLogger) Debugf(string, ...any)     {}
 
 const (
 	testSite     = "muehle"

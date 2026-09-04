@@ -40,6 +40,7 @@ type testLogger struct{ t *testing.T }
 
 func (l *testLogger) Infof(format string, args ...any)  { l.t.Logf("INFO: "+format, args...) }
 func (l *testLogger) Warnf(format string, args ...any)  { l.t.Logf("WARN: "+format, args...) }
+func (l *testLogger) Errorf(format string, args ...any) { l.t.Logf("ERROR: "+format, args...) }
 func (l *testLogger) Debugf(format string, args ...any) { l.t.Logf("DEBUG: "+format, args...) }
 
 func TestPublishMeta(t *testing.T) {

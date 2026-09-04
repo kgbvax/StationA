@@ -40,6 +40,7 @@ type Config struct {
 type Logger interface {
 	Infof(format string, args ...any)
 	Warnf(format string, args ...any)
+	Errorf(format string, args ...any)
 	Debugf(format string, args ...any)
 }
 
@@ -198,7 +199,7 @@ func (b *Bridge) publishMetaWith(pub Publisher) {
 	}
 	data, err := json.Marshal(p)
 	if err != nil {
-		b.log.Warnf("marshal meta: %v", err)
+		b.log.Errorf("marshal meta: %v", err)
 		return
 	}
 	_ = pub.Publish(b.metaTopic(), true, data)
@@ -299,7 +300,7 @@ func (b *Bridge) publishState(st rotor.State) {
 	}
 	data, err := json.Marshal(p)
 	if err != nil {
-		b.log.Warnf("marshal state: %v", err)
+		b.log.Errorf("marshal state: %v", err)
 		return
 	}
 	_ = b.pub.Publish(b.stateTopic(), true, data)

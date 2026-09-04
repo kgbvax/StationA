@@ -4,8 +4,9 @@ import (
 	"embed"
 	"encoding/json"
 	"io/fs"
-	"log"
+	"log/slog"
 	"net/http"
+	"os"
 )
 
 //go:embed static/*
@@ -37,7 +38,8 @@ func (s *Server) Routes() http.Handler {
 	// Static UI (embedded). Serve files from static/ at their root paths.
 	sub, err := fs.Sub(staticFS, "static")
 	if err != nil {
-		log.Fatalf("embed static: %v", err)
+		slog.Error("embed static", "err", err)
+		os.Exit(1)
 	}
 	mux.Handle("GET /", http.FileServer(http.FS(sub)))
 

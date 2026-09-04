@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -12,6 +13,10 @@ import (
 
 type Controller struct {
 	dev transport.Client
+
+	// log carries the component/slot attrs stamped by main (SetLogger); it
+	// defaults to slog.Default() so package-level tests still log sanely.
+	log *slog.Logger
 
 	mu    sync.RWMutex
 	state State
@@ -25,8 +30,12 @@ type Controller struct {
 const freqDeadbandKHz = 25
 
 func NewController(dev transport.Client) *Controller {
-	return &Controller{dev: dev}
+	return &Controller{dev: dev, log: slog.Default()}
 }
+
+// SetLogger installs the component/slot-stamped logger. Call once at startup,
+// before any polling or command goroutine runs.
+func (c *Controller) SetLogger(l *slog.Logger) { c.log = l }
 
 func (c *Controller) State() State {
 	c.mu.RLock()
@@ -53,6 +62,7 @@ func (c *Controller) Refresh(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	wasOffline := c.State().Offline
 	c.setState(State{
 		FrequencyKHz: gs.FrequencyKHz,
 		BandIndex:    gs.BandIndex,
@@ -62,6 +72,11 @@ func (c *Controller) Refresh(ctx context.Context) error {
 		MotorBits:    gs.MotorBits,
 		UpdatedAt:    time.Now(),
 	})
+	if wasOffline {
+		// Recovery from a device_offline=false stretch: edge-triggered so the
+		// journal gets one line per outage, not one per poll tick.
+		c.log.Info("device online")
+	}
 	return nil
 }
 
@@ -79,11 +94,15 @@ func (c *Controller) PollMotorStatus(ctx context.Context) error {
 		return err
 	}
 	state := c.State()
+	wasOffline := state.Offline
 	state.MotorsMoving = ms.TotalDistanceMM != 0
 	state.UpdatedAt = time.Now()
 	state.Offline = false
 	state.LastError = ""
 	c.setState(state)
+	if wasOffline {
+		c.log.Info("device online")
+	}
 	return nil
 }
 
@@ -161,10 +180,17 @@ func (c *Controller) SetMode(ctx context.Context, mode string) error {
 
 func (c *Controller) setOffline(err error) {
 	state := c.State()
+	wasOffline := state.Offline
 	state.Offline = true
 	state.LastError = err.Error()
 	state.UpdatedAt = time.Now()
 	c.setState(state)
+	// Edge-triggered Warn: the poll loop calls this every 2 s while the RCU-06
+	// is unreachable, but the operator needs one device_offline=false line per
+	// outage, not one per tick (logging convention §3).
+	if !wasOffline {
+		c.log.Warn("device offline", "err", err)
+	}
 }
 
 // absDiffU16 returns the absolute difference between two uint16 values without overflow.

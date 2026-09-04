@@ -53,10 +53,13 @@ const (
 	KindDelay      = "delay"
 )
 
-// Logger is the minimal logging surface the sequencer uses.
+// Logger is the minimal logging surface the sequencer uses. Errorf is for
+// lost state/data (publish or marshal failed, malformed payload dropped);
+// Warnf is for degraded-but-recovering events (logging.md §3).
 type Logger interface {
 	Infof(format string, args ...any)
 	Warnf(format string, args ...any)
+	Errorf(format string, args ...any)
 	Debugf(format string, args ...any)
 }
 
@@ -311,7 +314,8 @@ func (s *Sequencer) SetStatus(slot string, online bool) {
 func (s *Sequencer) SetState(slot string, payload []byte) {
 	var m map[string]any
 	if err := json.Unmarshal(payload, &m); err != nil {
-		s.log.Warnf("bad %s/state: %v", slot, err)
+		// Malformed payload dropped (the prior snapshot is deleted with it).
+		s.log.Errorf("bad %s/state: %v", slot, err)
 		s.mu.Lock()
 		delete(s.state, slot)
 		s.mu.Unlock()
@@ -668,11 +672,12 @@ func (s *Sequencer) publishState() {
 	s.mu.Unlock()
 	b, err := json.Marshal(p)
 	if err != nil {
-		s.log.Warnf("marshal state: %v", err)
+		s.log.Errorf("marshal state: %v", err)
 		return
 	}
 	if err := s.pub.Publish(s.self+"/state", true, b); err != nil {
-		s.log.Warnf("publish %s/state: %v", s.self, err)
+		// Publish failure lost state — Error, not Warn (logging.md §3).
+		s.log.Errorf("publish %s/state: %v", s.self, err)
 	}
 }
 

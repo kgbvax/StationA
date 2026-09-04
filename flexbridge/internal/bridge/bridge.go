@@ -207,10 +207,13 @@ type Config struct {
 	PublishHADiscovery bool   // gate the legacy embedded HA discovery (model §9); default false
 }
 
-// Logger is the minimal logging surface the bridge uses.
+// Logger is the minimal logging surface the bridge uses. Errorf is for
+// lost state/data (publish or marshal failed, malformed frame dropped);
+// Warnf is for degraded-but-recovering events (logging.md §3).
 type Logger interface {
 	Infof(format string, args ...any)
 	Warnf(format string, args ...any)
+	Errorf(format string, args ...any)
 	Debugf(format string, args ...any)
 }
 
@@ -480,7 +483,8 @@ func (b *Bridge) handleSlice(f flexradio.Frame) {
 	raw := fieldsString(f)
 	s, err := flexradio.ParseSlice(f.TopicArgs, raw, prev)
 	if err != nil {
-		b.log.Warnf("parse slice: %v", err)
+		// Malformed frame dropped: state was not updated from it.
+		b.log.Errorf("parse slice: %v", err)
 		return
 	}
 
@@ -984,7 +988,7 @@ func (b *Bridge) publishStateSnapshot(st radioState) {
 	}
 	data, err := json.Marshal(p)
 	if err != nil {
-		b.log.Warnf("marshal state: %v", err)
+		b.log.Errorf("marshal state: %v", err)
 		return
 	}
 	_ = b.pub.Publish(b.stateTopic(), true, data)
@@ -1059,7 +1063,7 @@ func (b *Bridge) publishMeta() {
 	}
 	data, err := json.Marshal(p)
 	if err != nil {
-		b.log.Warnf("marshal meta: %v", err)
+		b.log.Errorf("marshal meta: %v", err)
 		return
 	}
 	_ = b.pub.Publish(b.metaTopic(), true, data)

@@ -24,6 +24,7 @@ type Commander interface {
 type Logger interface {
 	Infof(format string, args ...any)
 	Warnf(format string, args ...any)
+	Errorf(format string, args ...any)
 	Debugf(format string, args ...any)
 }
 
@@ -100,7 +101,8 @@ func (d *Device) Run(ctx context.Context, onTelemetry func(State)) error {
 		}
 		var status RotorStatus
 		if err := json.Unmarshal(message, &status); err != nil {
-			d.log.Warnf("wrc: parse status: %v", err)
+			// Malformed frame dropped: state was not updated from it.
+			d.log.Errorf("wrc: parse status: %v", err)
 			continue
 		}
 		st := FromStatus(status, true)

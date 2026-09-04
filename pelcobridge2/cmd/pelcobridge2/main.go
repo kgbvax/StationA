@@ -11,6 +11,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"log/slog"
 	"net"
 	"os"
 	"os/signal"
@@ -33,6 +34,15 @@ import (
 )
 
 func main() {
+	// Root logger per the logging convention: slog text → stderr, one constant
+	// `component` attr, no app-side timestamps (journald stamps its own).
+	// The TUI renders on stdout's alt screen; stderr Warn+ lines are the exact
+	// pattern the MQTT slot already used before this migration, so they are
+	// proven not to disturb the TUI any more than the slot's old stderrLogger did.
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+		Level: slog.LevelInfo,
+	})).With("component", "pelcobridge2"))
+
 	var (
 		cfgFlag    = flag.String("config", "", "path to config.toml (default: $PELCOBRIDGE2_CONFIG > exe dir > ./config.toml)")
 		portFlag   = flag.String("port", "", "serial port (overrides [serial].port)")
@@ -135,7 +145,9 @@ func main() {
 		go func() {
 			if err := rotSrv.ListenAndServe(ctx, cfg.RotctldAddr()); err != nil && ctx.Err() == nil {
 				// Never cancel: a busy port or bad bind must not kill the
-				// whole console — say it in the TUI log pane instead.
+				// whole console — say it in the TUI log pane AND the journal
+				// (a lost listener is a real failure, hence Error level).
+				slog.Error("rotctld server failed", "err", err)
 				select {
 				case evCh <- control.Event{Log: "rotctld: " + err.Error()}:
 				default:
@@ -147,6 +159,9 @@ func main() {
 	// MQTT slot: background, never fatal, never allowed to arm or move.
 	var slot *mqtt.Slot
 	mqttUp := func() bool { return false }
+	// The rotator's slot address for the journal: engine events and MQTT lines
+	// are filterable by slot per the logging convention, even with MQTT off.
+	slotAddr := cfg.MQTT.Site + "/" + cfg.MQTT.Station + "/" + cfg.MQTT.Slot
 	if cfg.MQTT.Enabled {
 		mcfg := cfg.MQTTConfig(os.Getenv("PELCOBRIDGE2_MQTT_PASSWORD"))
 		// The client needs the slot's OnConnect; the slot needs the client.
@@ -158,24 +173,52 @@ func main() {
 				slot.OnConnect(c)
 			}
 		})
-		slot = mqtt.NewSlot(mcfg, &mqtt.PahoPublisher{Client: client}, stderrLogger{},
+		slotLog := slog.Default().With("slot", slotAddr)
+		slot = mqtt.NewSlot(mcfg, &mqtt.PahoPublisher{Client: client}, slogSlotLogger{slotLog},
 			func(it control.Intent) error { return control.Submit(reqCh, control.SrcMQTT, it) },
 			func() int { return rotSrv.Clients() })
 		// Connect is ctx-aware and non-fatal: the TUI works without a broker.
+		// A connect failure is a real failure (Error), but must not end the TUI.
 		go func() {
 			if err := sharedmqtt.Connect(ctx, client); err != nil {
-				fmt.Fprintf(os.Stderr, "mqtt: %v\n", err)
+				slotLog.Error("mqtt connect failed", "err", err)
 			}
 		}()
 		go sharedmqtt.RunJobs(ctx, slot.Jobs())
 		mqttUp = client.IsConnected
 	}
 
-	// Event pump: engine sink → MQTT /state + TUI log/snapshot.
+	// Event pump: engine sink → MQTT /state + TUI log/snapshot. Degraded
+	// states are mirrored to slog at Warn+ so an operator session lands in the
+	// journal even when this TUI runs unattended (convention: journalctl -p
+	// warning is the station-wide error filter). Ordinary engine activity
+	// (wire notes, frames) stays TUI-only — never mirrored.
+	//
+	// Dedup by transition: the engine's errStr never clears within a run, so
+	// compare each snapshot against the previous one and log only changes;
+	// device_online likewise flips only on link death / proof of life.
 	go func() {
+		var lastErr string
+		var lastOnline bool
 		for ev := range sink {
-			if slot != nil && ev.Snap != nil {
-				slot.PublishState(ev.Snap)
+			if ev.Snap != nil {
+				if slot != nil {
+					slot.PublishState(ev.Snap)
+				}
+				if ev.Snap.Error != lastErr {
+					if ev.Snap.Error != "" {
+						slog.Warn("engine error", "slot", slotAddr, "err", ev.Snap.Error)
+					}
+					lastErr = ev.Snap.Error
+				}
+				if ev.Snap.DeviceOnline != lastOnline {
+					lastOnline = ev.Snap.DeviceOnline
+					if lastOnline {
+						slog.Info("head link online", "slot", slotAddr)
+					} else {
+						slog.Warn("head link offline", "slot", slotAddr)
+					}
+				}
 			}
 			select {
 			case evCh <- ev:
@@ -203,7 +246,7 @@ func main() {
 		Clients: rotSrv.Clients,
 	})
 	if err := ui.Run(m); err != nil {
-		fmt.Fprintf(os.Stderr, "tui: %v\n", err)
+		slog.Error("tui exited", "err", err)
 	}
 	cancel()
 }
@@ -239,15 +282,14 @@ func rotctldInfo(cfg config.Config) string {
 	return "pelcobridge2 · " + name
 }
 
-// stderrLogger adapts stderr to the slot's Logger.
-type stderrLogger struct{}
+// slogSlotLogger adapts the slot's Logger interface to slog. The adapter (not
+// the slot code) carries the `slot` attr, and Warnf maps to slog.Warn — never
+// to Info, or `journalctl -p warning` would miss every MQTT failure
+// (logging-convention §5).
+type slogSlotLogger struct{ l *slog.Logger }
 
-func (stderrLogger) Infof(format string, args ...any) {
-	fmt.Fprintf(os.Stderr, "mqtt: "+format+"\n", args...)
-}
-func (stderrLogger) Warnf(format string, args ...any) {
-	fmt.Fprintf(os.Stderr, "mqtt: WARN "+format+"\n", args...)
-}
+func (s slogSlotLogger) Infof(format string, args ...any) { s.l.Info(fmt.Sprintf(format, args...)) }
+func (s slogSlotLogger) Warnf(format string, args ...any) { s.l.Warn(fmt.Sprintf(format, args...)) }
 
 func orNone(s string) string {
 	if s == "" {
@@ -331,7 +373,7 @@ func (t *tcpTransport) reconnect() error {
 }
 
 func fatal(format string, args ...any) {
-	fmt.Fprintf(os.Stderr, "pelcobridge2: "+format+"\n", args...)
+	slog.Error(fmt.Sprintf(format, args...))
 	// Double-clicked exe on Windows: the console window closes instantly and
 	// the error is never read. Hold it open until Enter (EOF on closed stdin
 	// returns immediately, so non-interactive callers are unaffected).

@@ -61,8 +61,6 @@ func main() {
 }
 
 func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
-	adapter := &slogAdapter{log}
-
 	var wg sync.WaitGroup
 	errCh := make(chan error, len(cfg.Slots))
 	for _, sc := range cfg.Slots {
@@ -70,7 +68,7 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if err := runSlot(ctx, cfg, sc, adapter, log); err != nil && !errors.Is(err, context.Canceled) {
+			if err := runSlot(ctx, cfg, sc, log); err != nil && !errors.Is(err, context.Canceled) {
 				errCh <- err
 			}
 		}()
@@ -87,8 +85,14 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 // (with the slot LWT), subscribes to the Shelly native status + heartbeat topics
 // and the canonical /cmd, and translates between them. Returns ctx.Err() on
 // shutdown.
-func runSlot(ctx context.Context, cfg config.Config, sc config.SlotConfig, adapter *slogAdapter, log *slog.Logger) error {
+func runSlot(ctx context.Context, cfg config.Config, sc config.SlotConfig, log *slog.Logger) error {
 	slotBase := schema.SlotBase(cfg.MQTT.Site, sc.Station, sc.Slot)
+	// Convention §2 (docs/conventions/logging.md): a multi-slot service gets one
+	// child logger per slot, so every line — direct slog calls here and the
+	// bridge's Logger-interface calls — carries the slot address. The adapter
+	// wraps this slot's child logger, not the shared root.
+	slotLog := log.With("slot", slotBase)
+	adapter := &slogAdapter{l: slotLog}
 	avail := schema.StatusTopic(cfg.MQTT.Site, sc.Station, sc.Slot)
 	cmdTopic := schema.CmdTopic(cfg.MQTT.Site, sc.Station, sc.Slot)
 	nativeStatus := shelly.StatusTopic(sc.ShellyID)
@@ -165,7 +169,7 @@ func runSlot(ctx context.Context, cfg config.Config, sc config.SlotConfig, adapt
 	opts.SetWill(avail, "offline", 1, true)
 
 	opts.OnConnect = func(c pahomqtt.Client) {
-		log.Info("MQTT (re)connected", "slot", slotBase, "broker", cfg.MQTT.Broker)
+		slotLog.Info("MQTT (re)connected", "broker", cfg.MQTT.Broker)
 		c.Publish(avail, 1, true, []byte("online"))
 		pub.Client = c
 		cmd.setClient(c, nativeRPC)
@@ -176,12 +180,12 @@ func runSlot(ctx context.Context, cfg config.Config, sc config.SlotConfig, adapt
 		if tok := c.Subscribe(nativeStatus, 1, func(_ pahomqtt.Client, m pahomqtt.Message) {
 			_, power, err := shelly.ParseStatus(m.Payload())
 			if err != nil {
-				log.Warn("bad shelly status", "topic", m.Topic(), "err", err)
+				slotLog.Warn("bad shelly status", "topic", m.Topic(), "err", err)
 				return
 			}
 			sharedmqtt.Enqueue(jobs, func() { b.HandleTelemetry(power) })
 		}); tok.Wait() && tok.Error() != nil {
-			log.Warn("subscribe shelly status failed", "err", tok.Error())
+			slotLog.Warn("subscribe shelly status failed", "err", tok.Error())
 		}
 
 		// Shelly native heartbeat → device_online.
@@ -193,7 +197,7 @@ func runSlot(ctx context.Context, cfg config.Config, sc config.SlotConfig, adapt
 				sharedmqtt.Enqueue(jobs, func() { b.MarkDeviceOffline("shelly online=false") })
 			}
 		}); tok.Wait() && tok.Error() != nil {
-			log.Warn("subscribe shelly online failed", "err", tok.Error())
+			slotLog.Warn("subscribe shelly online failed", "err", tok.Error())
 		}
 
 		// Canonical /cmd, subscribed at QoS 0 ON PURPOSE (the retained steady-state
@@ -207,11 +211,11 @@ func runSlot(ctx context.Context, cfg config.Config, sc config.SlotConfig, adapt
 			payload := append([]byte(nil), m.Payload()...) // copy; only valid during handler
 			sharedmqtt.Enqueue(jobs, func() { b.HandleCommand(payload) })
 		}); tok.Wait() && tok.Error() != nil {
-			log.Warn("subscribe cmd failed", "err", tok.Error())
+			slotLog.Warn("subscribe cmd failed", "err", tok.Error())
 		}
 	}
 	opts.OnConnectionLost = func(_ pahomqtt.Client, err error) {
-		log.Warn("MQTT connection lost", "slot", slotBase, "err", err)
+		slotLog.Warn("MQTT connection lost", "err", err)
 		b.SetConnected(false)
 	}
 
@@ -292,9 +296,15 @@ func newLogger(level string) *slog.Logger {
 		lv = slog.LevelInfo
 	}
 	h := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: lv})
-	return slog.New(h)
+	// Convention §1 (docs/conventions/logging.md): one constant `component` attr
+	// per service; slot-specific loggers are children of this root (§2).
+	return slog.New(h).With("component", "shelly-power-bridge")
 }
 
+// slogAdapter bridges the legacy Logger{Infof,Warnf,Debugf} interface
+// (internal/bridge) onto slog. Each instance wraps its own child logger, so
+// callers can hand per-slot loggers (with the `slot` attr attached) to their
+// bridges — convention §2/§5. Warnf maps to slog.Warn, never Info.
 type slogAdapter struct{ l *slog.Logger }
 
 func (s *slogAdapter) Infof(format string, args ...any)  { s.l.Info(fmt.Sprintf(format, args...)) }

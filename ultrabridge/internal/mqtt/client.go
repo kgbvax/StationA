@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
@@ -44,6 +44,11 @@ type Client struct {
 	publishHADiscovery bool
 	ctrl               *service.Controller
 
+	// log carries component (via slog.Default), the slot address, and the
+	// subsys=mqtt marker that replaces the old "[mqtt]" message prefix
+	// (logging convention §2/§5 migration note).
+	log *slog.Logger
+
 	mu           sync.Mutex
 	hasLastState bool
 	lastState    publishedState
@@ -66,6 +71,15 @@ type Client struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	jobs   chan func()
+}
+
+// logger returns the client's slot/subsys-stamped logger, tolerating Clients
+// built as bare struct literals (unit tests) that bypass New.
+func (c *Client) logger() *slog.Logger {
+	if c.log == nil {
+		return slog.Default()
+	}
+	return c.log
 }
 
 type publishedState struct {
@@ -121,7 +135,10 @@ func New(ctx context.Context, broker, clientID, site, station, slot, discoveryPr
 		host:               host,
 		publishHADiscovery: publishHADiscovery,
 		ctrl:               ctrl,
-		jobs:               make(chan func(), 256),
+		// slot=<site>/<station>/<slot> on every line; subsys=mqtt replaces the
+		// old "[mqtt]" prefix.
+		log:  slog.Default().With("slot", site+"/"+station+"/"+slot, "subsys", "mqtt"),
+		jobs: make(chan func(), 256),
 	}
 	c.ctx, c.cancel = context.WithCancel(ctx)
 	go sharedmqtt.RunJobs(c.ctx, c.jobs)
@@ -141,10 +158,11 @@ func New(ctx context.Context, broker, clientID, site, station, slot, discoveryPr
 	}
 
 	opts.SetConnectionLostHandler(func(_ paho.Client, err error) {
-		log.Printf("[mqtt] connection lost: %v", err)
+		// Degraded but recovering: paho auto-reconnects (logging convention §3).
+		c.logger().Warn("connection lost", "err", err)
 	})
 	opts.SetOnConnectHandler(func(_ paho.Client) {
-		log.Printf("[mqtt] connected broker=%s client_id=%s slot=%s/%s/%s", broker, clientID, site, station, slot)
+		c.logger().Info("connected", "broker", broker, "client_id", clientID)
 		c.publishString(c.statusTopic(), "online", 1, true)
 		c.PublishMeta()
 		// Re-subscribe on every connect in case the broker lost session state.
@@ -153,7 +171,7 @@ func New(ctx context.Context, broker, clientID, site, station, slot, discoveryPr
 	})
 
 	c.client = paho.NewClient(opts)
-	log.Printf("[mqtt] connecting to broker=%s client_id=%s slot=%s/%s/%s", broker, clientID, site, station, slot)
+	c.logger().Info("connecting", "broker", broker, "client_id", clientID)
 	// Context-aware connect: paho's Connect().Wait() blocks ignoring ctx, so a SIGTERM while
 	// the broker is unreachable can't interrupt it and systemd must SIGKILL after
 	// TimeoutStopSec. sharedmqtt.Connect bridges the wait through a goroutine + select on
@@ -464,24 +482,25 @@ func (c *Client) onCmd(_ paho.Client, msg paho.Message) {
 		return
 	}
 	if err := json.Unmarshal(msg.Payload(), &cmd); err != nil || cmd.Action == "" {
-		log.Printf("[mqtt] rx invalid cmd topic=%s payload=%q", msg.Topic(), string(msg.Payload()))
+		// Dropped malformed data → Error (logging convention §3).
+		c.logger().Error("rx invalid cmd", "topic", msg.Topic(), "payload", string(msg.Payload()))
 		c.clearCmdTopicAsync()
 		return
 	}
 	if cmd.Ts != "" {
 		ts, err := time.Parse(time.RFC3339, cmd.Ts)
 		if err != nil {
-			log.Printf("[mqtt] rx cmd with bad ts %q: %v", cmd.Ts, err)
+			c.logger().Error("rx cmd with bad ts", "ts", cmd.Ts, "err", err)
 			c.clearCmdTopicAsync()
 			return
 		}
 		if age := time.Since(ts); age > cmdMaxAge || age < -cmdMaxAge {
-			log.Printf("[mqtt] dropping stale cmd action=%s age=%s (max %s)", cmd.Action, age.Round(time.Second), cmdMaxAge)
+			c.logger().Warn("dropping stale cmd", "action", cmd.Action, "age", age.Round(time.Second), "max", cmdMaxAge)
 			c.clearCmdTopicAsync()
 			return
 		}
 	}
-	log.Printf("[mqtt] rx cmd action=%s value=%q freq_hz=%d", cmd.Action, cmd.Value, cmd.FreqHz)
+	c.logger().Info("rx cmd", "action", cmd.Action, "value", cmd.Value, "freq_hz", cmd.FreqHz)
 	sharedmqtt.Enqueue(c.jobs, func() {
 		switch cmd.Action {
 		case "frequency":
@@ -492,14 +511,14 @@ func (c *Client) onCmd(_ paho.Client, msg paho.Message) {
 		case "band":
 			khz, ok := bandCenterKHz[strings.TrimSpace(cmd.Value)]
 			if !ok {
-				log.Printf("[mqtt] unknown band %q in cmd", cmd.Value)
+				c.logger().Warn("unknown band in cmd", "band", cmd.Value)
 				break
 			}
 			_ = c.ctrl.SetFrequency(c.ctx, khz, c.ctrl.State().ModeName)
 		case "retract":
 			_ = c.ctrl.Retract(c.ctx)
 		default:
-			log.Printf("[mqtt] unknown cmd action=%q", cmd.Action)
+			c.logger().Warn("unknown cmd action", "action", cmd.Action)
 		}
 		// One-shot semantics: clear the retained cmd after every action (or rejection) so
 		// nothing re-executes on the next (re)connect — not just retract.
@@ -512,7 +531,7 @@ func (c *Client) onCmd(_ paho.Client, msg paho.Message) {
 // never happen inline on paho's dispatch goroutine (see the Client.jobs comment).
 func (c *Client) clearCmdTopic() {
 	if token := c.client.Publish(c.cmdTopic(), 1, true, []byte{}); token.Wait() && token.Error() != nil {
-		log.Printf("[mqtt] failed to clear cmd topic: %v", token.Error())
+		c.logger().Error("failed to clear cmd topic", "err", token.Error())
 	}
 }
 
@@ -536,7 +555,7 @@ func (c *Client) onHAStatus(_ paho.Client, msg paho.Message) {
 	}
 	sharedmqtt.Enqueue(c.jobs, func() {
 		if c.publishHADiscovery {
-			log.Printf("[mqtt] Home Assistant online -> re-publishing embedded discovery")
+			c.logger().Info("Home Assistant online, re-publishing embedded discovery")
 			c.PublishDiscovery()
 		}
 		c.PublishState(c.ctrl.State())
@@ -545,28 +564,29 @@ func (c *Client) onHAStatus(_ paho.Client, msg paho.Message) {
 
 func (c *Client) subscribe(topic string, qos byte, handler paho.MessageHandler) error {
 	if token := c.client.Subscribe(topic, qos, handler); token.Wait() && token.Error() != nil {
-		log.Printf("[mqtt] subscribe failed topic=%s err=%v", topic, token.Error())
+		c.logger().Error("subscribe failed", "topic", topic, "err", token.Error())
 		return token.Error()
 	}
-	log.Printf("[mqtt] subscribed topic=%s qos=%d", topic, qos)
+	c.logger().Info("subscribed", "topic", topic, "qos", qos)
 	return nil
 }
 
 func (c *Client) publishJSON(topic string, v any, qos byte, retained bool) {
 	b, _ := json.Marshal(v)
 	if token := c.client.Publish(topic, qos, retained, b); token.Wait() && token.Error() != nil {
-		log.Printf("[mqtt] publish failed topic=%s err=%v", topic, token.Error())
+		c.logger().Error("publish failed", "topic", topic, "err", token.Error())
 		return
 	}
-	log.Printf("[mqtt] tx topic=%s qos=%d retained=%t payload=%s", topic, qos, retained, string(b))
+	// Per-exchange protocol detail → Debug (logging convention §3).
+	c.logger().Debug("tx", "topic", topic, "qos", qos, "retained", retained, "payload", string(b))
 }
 
 func (c *Client) publishString(topic, payload string, qos byte, retained bool) {
 	if token := c.client.Publish(topic, qos, retained, payload); token.Wait() && token.Error() != nil {
-		log.Printf("[mqtt] publish failed topic=%s err=%v", topic, token.Error())
+		c.logger().Error("publish failed", "topic", topic, "err", token.Error())
 		return
 	}
-	log.Printf("[mqtt] tx topic=%s qos=%d retained=%t payload=%q", topic, qos, retained, payload)
+	c.logger().Debug("tx", "topic", topic, "qos", qos, "retained", retained, "payload", payload)
 }
 
 // Topic helpers. The slot address format lives in shared/schema; these wrap it for the

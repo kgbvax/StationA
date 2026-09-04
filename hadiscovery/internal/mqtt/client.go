@@ -8,7 +8,7 @@ package mqtt
 import (
 	"context"
 	"encoding/json"
-	"log"
+	"log/slog"
 
 	paho "github.com/eclipse/paho.mqtt.golang"
 
@@ -80,10 +80,10 @@ func New(ctx context.Context, cfg config.Config, eng *engine.Engine) (*Client, e
 		opts.SetPassword(cfg.MQTT.Password)
 	}
 	opts.SetConnectionLostHandler(func(_ paho.Client, err error) {
-		log.Printf("[mqtt] connection lost: %v", err)
+		slog.Warn("[mqtt] connection lost", "err", err)
 	})
 	opts.SetOnConnectHandler(func(_ paho.Client) {
-		log.Printf("[mqtt] connected broker=%s slot=%s", cfg.MQTT.Broker, c.selfBase())
+		slog.Info("[mqtt] connected", "broker", cfg.MQTT.Broker, "slot", c.selfBase())
 		c.publishString(c.selfTopic("status"), "online", 1, true)
 		c.publishMeta()
 		c.subscribeAll()
@@ -168,22 +168,22 @@ func (c *Client) publishMeta() {
 
 func (c *Client) subscribe(topic string, handler paho.MessageHandler) {
 	if token := c.client.Subscribe(topic, 1, handler); token.Wait() && token.Error() != nil {
-		log.Printf("[mqtt] subscribe failed topic=%s err=%v", topic, token.Error())
+		slog.Error("[mqtt] subscribe failed", "topic", topic, "err", token.Error())
 		return
 	}
-	log.Printf("[mqtt] subscribed topic=%s", topic)
+	slog.Info("[mqtt] subscribed", "topic", topic)
 }
 
 func (c *Client) publishJSON(topic string, v any, qos byte, retained bool) {
 	b, _ := json.Marshal(v)
 	if token := c.client.Publish(topic, qos, retained, b); token.Wait() && token.Error() != nil {
-		log.Printf("[mqtt] publish failed topic=%s err=%v", topic, token.Error())
+		slog.Error("[mqtt] publish failed", "topic", topic, "err", token.Error())
 	}
 }
 
 func (c *Client) publishString(topic, payload string, qos byte, retained bool) {
 	if token := c.client.Publish(topic, qos, retained, payload); token.Wait() && token.Error() != nil {
-		log.Printf("[mqtt] publish failed topic=%s err=%v", topic, token.Error())
+		slog.Error("[mqtt] publish failed", "topic", topic, "err", token.Error())
 	}
 }
 

@@ -24,20 +24,27 @@ import (
 )
 
 func main() {
+	// Logging convention (docs/conventions/logging.md): one root slog text logger on
+	// stderr with a constant component attr, installed as the default. The rotating
+	// capture files below are the tool's data output, not a service log — diagnostics
+	// go to stderr only.
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})).
+		With("component", "hf-mqtt-capture")
+	slog.SetDefault(logger)
+
 	cfgPath := flag.String("config", "/etc/hf-mqtt-capture/config.toml", "path to TOML config")
 	flag.Parse()
 
 	cfg, err := loadConfig(*cfgPath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "hf-mqtt-capture: load config: %v\n", err)
+		logger.Error("load config", "path", *cfgPath, "err", err)
 		os.Exit(2)
 	}
 	if err := cfg.Validate(); err != nil {
-		fmt.Fprintf(os.Stderr, "hf-mqtt-capture: %v\n", err)
+		logger.Error("invalid configuration", "err", err)
 		os.Exit(2)
 	}
 
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	logger.Info("hf-mqtt-capture starting", "broker", cfg.Broker, "site", cfg.Site, "station", cfg.Station, "log_dir", cfg.LogDir)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -136,8 +143,8 @@ func (w *rotatingWriter) writeLog(topic, payload string) {
 	defer w.mu.Unlock()
 
 	if err := w.rotateIfNeeded(); err != nil {
-		// Best-effort: log to stderr and keep going; do not drop the message.
-		fmt.Fprintf(os.Stderr, "rotate failed: %v\n", err)
+		// Best-effort: report on stderr and keep going; do not drop the message.
+		slog.Error("rotate failed; capture record for this message may be incomplete", "err", err)
 	}
 
 	ts := time.Now().UTC().Format(time.RFC3339Nano)

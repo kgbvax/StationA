@@ -7,6 +7,7 @@ type noopLog struct{}
 
 func (noopLog) Infof(string, ...any)  {}
 func (noopLog) Warnf(string, ...any)  {}
+func (noopLog) Errorf(string, ...any) {}
 func (noopLog) Debugf(string, ...any) {}
 
 // TestProcessBufferLengthZeroNoPanic is the regression test for the high-severity

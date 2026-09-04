@@ -10,7 +10,8 @@ import (
 	"errors"
 	"flag"
 	"io/fs"
-	"log"
+	"log/slog"
+	"os"
 	"os/signal"
 	"syscall"
 
@@ -20,8 +21,12 @@ import (
 )
 
 func main() {
-	log.SetFlags(log.LstdFlags | log.Lmsgprefix)
-	log.SetPrefix("hadiscovery ")
+	// Logging convention (docs/conventions/logging.md): one root slog text logger on
+	// stderr with a constant component attr, installed as the default so internal
+	// packages log through it.
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})).
+		With("component", "hadiscovery")
+	slog.SetDefault(logger)
 
 	def := config.Default()
 	configPath := flag.String("config", "/etc/hadiscovery/config.toml", "path to config TOML")
@@ -35,10 +40,12 @@ func main() {
 	cfg.MQTT.DiscoveryPrefix = orDefault(cfg.MQTT.DiscoveryPrefix, "homeassistant")
 
 	if err := cfg.Validate(); err != nil {
-		log.Fatalf("invalid configuration: %v", err)
+		slog.Error("invalid configuration", "err", err)
+		os.Exit(2)
 	}
 	if cfg.MQTT.Broker == "" {
-		log.Fatal("no MQTT broker configured (set [mqtt].broker or -broker)")
+		slog.Error("no MQTT broker configured (set [mqtt].broker or -broker)")
+		os.Exit(2)
 	}
 
 	eng := engine.NewEngine(cfg.MQTT.DiscoveryPrefix, cfg.Area)
@@ -48,14 +55,16 @@ func main() {
 
 	client, err := mqtt.New(ctx, cfg, eng)
 	if err != nil {
-		log.Fatalf("mqtt connect: %v", err)
+		slog.Error("mqtt connect", "err", err)
+		os.Exit(1)
 	}
 	defer client.Close()
 
-	log.Printf("running; slot=%s/%s/%s filter=%s prefix=%s area=%s",
-		cfg.MQTT.Site, cfg.MQTT.Station, cfg.MQTT.Slot, cfg.MQTT.MetaFilter, cfg.MQTT.DiscoveryPrefix, cfg.Area)
+	slog.Info("running",
+		"slot", cfg.MQTT.Site+"/"+cfg.MQTT.Station+"/"+cfg.MQTT.Slot,
+		"filter", cfg.MQTT.MetaFilter, "prefix", cfg.MQTT.DiscoveryPrefix, "area", cfg.Area)
 	<-ctx.Done()
-	log.Print("shutting down")
+	slog.Info("shutting down")
 }
 
 // loadConfig applies the config-and-secrets convention: a missing DEFAULT-path file is
@@ -67,12 +76,13 @@ func loadConfig(path string) config.Config {
 		return cfg
 	}
 	if errors.Is(err, fs.ErrNotExist) && !isFlagSet("config") {
-		log.Printf("no config at default path %s; using defaults + flags", path)
+		slog.Info("no config at default path; using defaults + flags", "path", path)
 		cfg := config.Default()
 		cfg.ApplyDerivedDefaults()
 		return cfg
 	}
-	log.Fatalf("load config %s: %v", path, err)
+	slog.Error("load config", "path", path, "err", err)
+	os.Exit(2)
 	return config.Config{} // unreachable
 }
 

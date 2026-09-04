@@ -21,7 +21,7 @@ package mqtt
 
 import (
 	"errors"
-	"log"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -79,10 +79,10 @@ func New(broker, clientID, site, user, password string, store Store) (*Client, e
 		SetAutoReconnect(true).
 		SetCleanSession(false).
 		SetConnectionLostHandler(func(_ paho.Client, err error) {
-			log.Printf("[mqtt] connection lost: %v", err)
+			slog.Warn("[mqtt] connection lost", "err", err)
 		}).
 		SetOnConnectHandler(func(_ paho.Client) {
-			log.Printf("[mqtt] connected broker=%s sub=%s", broker, topic)
+			slog.Info("[mqtt] connected", "broker", broker, "sub", topic)
 			c.subscribe(topic)
 		})
 
@@ -120,7 +120,7 @@ func (c *Client) subscribe(topic string) {
 		c.enqueue(func() { c.store.Update(m) })
 	}
 	if token := c.client.Subscribe(topic, 1, handler); token.Wait() && token.Error() != nil {
-		log.Printf("[mqtt] subscribe failed topic=%s err=%v", topic, token.Error())
+		slog.Error("[mqtt] subscribe failed", "topic", topic, "err", token.Error())
 		return
 	}
 	c.mu.Lock()
@@ -152,7 +152,7 @@ func (c *Client) Publish(topic string, qos byte, retained bool, payload []byte) 
 		tok := c.client.Publish(topic, qos, retained, payload)
 		tok.Wait()
 		if tok.Error() != nil {
-			log.Printf("[mqtt] publish failed topic=%s err=%v", topic, tok.Error())
+			slog.Error("[mqtt] publish failed", "topic", topic, "err", tok.Error())
 		}
 		res <- tok.Error()
 	}()

@@ -267,6 +267,7 @@ type slogAdapter struct{ l *slog.Logger }
 
 func (s *slogAdapter) Infof(f string, a ...any)  { s.l.Info(fmt.Sprintf(f, a...)) }
 func (s *slogAdapter) Warnf(f string, a ...any)  { s.l.Warn(fmt.Sprintf(f, a...)) }
+func (s *slogAdapter) Errorf(f string, a ...any) { s.l.Error(fmt.Sprintf(f, a...)) }
 func (s *slogAdapter) Debugf(f string, a ...any) { s.l.Debug(fmt.Sprintf(f, a...)) }
 
 // NewLogger builds the slog logger from a level string (shared with main).

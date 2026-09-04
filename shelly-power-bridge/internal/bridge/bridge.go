@@ -181,12 +181,22 @@ func (b *SlotBridge) HandleTelemetry(power string) {
 	}
 	b.mu.Lock()
 	st := b.state
+	wasOffline := !st.DeviceOnline
+	prevErr := st.Error
 	st.Power = power
 	st.DeviceOnline = true
 	st.Error = ""
 	snap, changed := b.snapshotLocked(st)
 	b.mu.Unlock()
 	if changed {
+		// Degraded → recovered transition (clears a MarkDeviceOffline error):
+		// Warn per the logging convention §3 so the episode is greppable at
+		// warning level alongside the offline transition. First-ever telemetry
+		// (no prior error) is just normal operation → Info.
+		if wasOffline && prevErr != "" {
+			b.log.Warnf("shelly reachable again: device_online=true (cleared: %s)", prevErr)
+		}
+		b.log.Infof("state published: power=%s device_online=true", st.Power)
 		b.publishState(snap)
 	}
 }
@@ -201,6 +211,9 @@ func (b *SlotBridge) MarkDeviceOffline(reason string) {
 	snap, changed := b.snapshotLocked(st)
 	b.mu.Unlock()
 	if changed {
+		// device_online=false is the degraded transition — Warn per the logging
+		// convention §3 (change-dedup keeps repeat watcher ticks silent).
+		b.log.Warnf("device offline: %s", reason)
 		b.publishState(snap)
 	}
 }
