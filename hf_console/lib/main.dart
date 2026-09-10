@@ -9,6 +9,12 @@ import 'dxspot/dxspot_service.dart';
 import 'ui/theme.dart';
 import 'ui/screens/console_screen.dart';
 import 'ui/screens/setup_screen.dart';
+import 'ui/screens/startup_splash.dart';
+
+/// Bound on the first broker-connect wait shown on the splash. After it
+/// expires the console takes over with its offline indicator; the MQTT
+/// service keeps retrying in the background regardless.
+const _connectWaitBudget = Duration(seconds: 20);
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -45,6 +51,8 @@ class _AppRootState extends State<_AppRoot> with WidgetsBindingObserver {
   final _dxSpot = DxSpotService();
   bool _ready = false;
   bool _showConsole = false;
+  String? _bootHost;
+  int? _bootPort;
 
   @override
   void initState() {
@@ -104,8 +112,10 @@ class _AppRootState extends State<_AppRoot> with WidgetsBindingObserver {
     );
     _dxSpot.start();
     if (host != null && port != null && user != null && pass != null && pass.isNotEmpty) {
+      _bootHost = host;
+      _bootPort = port;
       try {
-        await _connect(host, port, user, pass);
+        await _connect(host, port, user, pass).timeout(_connectWaitBudget);
       } catch (_) {
         // offline start is allowed; the indicator and faults bar show the state
       }
@@ -190,7 +200,24 @@ class _AppRootState extends State<_AppRoot> with WidgetsBindingObserver {
                           },
                         ),
                       ))
-                : Scaffold(body: Center(child: CircularProgressIndicator(color: AppTheme.accent))),
+                : StartupSplash(
+                    host: _bootHost,
+                    port: _bootPort,
+                    waitSeconds: _bootHost == null ? null : _connectWaitBudget.inSeconds,
+                    onWaitExpired: () {
+                      // The countdown only runs when broker credentials exist,
+                      // so expiry means "show the console with its offline
+                      // indicator" — set both flags in one pass so the splash
+                      // expiry timer racing the connect timeout cannot flash
+                      // the setup screen.
+                      if (mounted && !_ready) {
+                        setState(() {
+                          _ready = true;
+                          _showConsole = true;
+                        });
+                      }
+                    },
+                  ),
           );
         },
       ),
