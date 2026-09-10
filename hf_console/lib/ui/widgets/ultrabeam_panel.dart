@@ -55,7 +55,7 @@ class _UltrabeamPanelState extends State<UltrabeamPanel> {
     final mqtt = context.read<MqttService>();
 
     final slot = store.slots['muehle/hf/ant-ctrl'];
-    final online = slot?.isOnline ?? false;
+    final online = (slot?.isOnline ?? false) && store.linkUp;
     final direction = store.stateValueAs<String>('muehle/hf/ant-ctrl', 'direction') ?? 'forward';
     final moving = store.stateValueAs<bool>('muehle/hf/ant-ctrl', 'moving') ?? false;
     final radioBand = store.stateValueAs<String>('muehle/hf/radio', 'band') ?? '';

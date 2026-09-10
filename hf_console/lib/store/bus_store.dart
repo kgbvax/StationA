@@ -65,13 +65,43 @@ class BusStore extends ChangeNotifier {
   DateTime? _connectedAt;
   static const _silenceGrace = Duration(seconds: 3);
 
+  /// Whether the MQTT link to the broker is up. Panel controls gate on this
+  /// (in addition to per-slot isOnline) so stale pre-sleep state can never
+  /// render as operable while the link is down.
+  bool _linkUp = false;
+  bool get linkUp => _linkUp;
+  DateTime? _linkDownAt;
+
+  Timer? _graceTimer;
+
   /// Call from the MQTT service when a (re)connect has been established.
   /// Restarts the silence grace — a reconnect re-floods retained state —
   /// and schedules the one-shot re-check so the silence report appears even
   /// on a band quiet enough that no further bus message ever rebuilds the UI.
-  void markConnected() {
+  ///
+  /// [scheduleGraceNotify] false skips the grace timer — for tests, which
+  /// must not leave a pending timer behind at teardown.
+  void markConnected({bool scheduleGraceNotify = true}) {
     _connectedAt = clock.now();
-    Timer(_silenceGrace, notifyListeners);
+    _linkUp = true;
+    _graceTimer?.cancel();
+    notifyListeners();
+    if (scheduleGraceNotify) {
+      _graceTimer = Timer(_silenceGrace, notifyListeners);
+    }
+  }
+
+  /// Call from the MQTT service when the link drops (disconnect, reconnect
+  /// in progress, or the app backgrounding). Without it the store has no
+  /// notion of the link: retained snapshots keep every control enabled and
+  /// the faults list green while commands are silently dropped.
+  void markDisconnected() {
+    if (!_linkUp) return;
+    _linkUp = false;
+    _linkDownAt = clock.now();
+    _graceTimer?.cancel();
+    _graceTimer = null;
+    notifyListeners();
   }
 
   UnmodifiableMapView<String, Slot> get slots => UnmodifiableMapView(_slots);
@@ -215,6 +245,11 @@ class BusStore extends ChangeNotifier {
 
   List<String> get offlineList {
     final out = <String>[];
+    // Link state outranks slot state: with the broker link down, retained
+    // snapshots are stale by definition and every control is undeliverable.
+    if (!_linkUp) {
+      out.add('mqtt: link down — all data stale, commands not delivered');
+    }
     for (final s in _slots.values) {
       if (s.status != 'online') {
         out.add('${s.address}: bridge down');
@@ -241,6 +276,7 @@ class BusStore extends ChangeNotifier {
   /// precisely their claim. UI must not fall back to render time.
   Map<String, DateTime?> get offlineSince {
     final since = <String, DateTime?>{};
+    if (!_linkUp) since['mqtt'] = _linkDownAt;
     for (final s in _slots.values) {
       if (s.status != 'online') {
         since[s.address] = s.statusChangedAt;

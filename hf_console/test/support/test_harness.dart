@@ -28,6 +28,10 @@ class TestHarness extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final busStore = store ?? BusStore();
+    // The console under test is assumed link-up: panels gate their controls
+    // on store.linkUp in addition to per-slot liveness. No grace timer —
+    // widget tests must not leave a pending timer at teardown.
+    busStore.markConnected(scheduleGraceNotify: false);
     final fakeMqtt = mqtt ?? FakeMqttService(busStore);
     final dx = dxSpot ?? DxSpotService();
     return MultiProvider(

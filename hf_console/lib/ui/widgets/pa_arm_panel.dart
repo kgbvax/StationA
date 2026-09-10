@@ -15,7 +15,7 @@ class PaArmPanel extends StatelessWidget {
     final mqtt = context.read<MqttService>();
 
     final slot = store.slots['muehle/hf/pa-arm'];
-    final online = slot?.isOnline ?? false;
+    final online = (slot?.isOnline ?? false) && store.linkUp;
     final enabled = store.stateValueAs<bool>('muehle/hf/pa-arm', 'enabled') ?? false;
     final armed = store.stateValueAs<bool>('muehle/hf/pa-arm', 'armed') ?? false;
     final error = store.stateValueAs<String>('muehle/hf/pa-arm', 'error') ?? '';

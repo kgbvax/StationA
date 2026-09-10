@@ -111,16 +111,18 @@ void main() {
       });
     });
 
-    test('notifies listeners once when the grace period expires', () {
+    test('notifies on connect and again when the grace period expires', () {
       // On a quiet band no bus message ever rebuilds the UI after the
-      // retained flood — the store must push the report itself.
+      // retained flood — the store must push the report itself. The connect
+      // notify repaints the linkUp-gated controls the moment the link is up.
       fakeAsync((async) {
         final store = BusStore();
         var notified = 0;
         store.addListener(() => notified++);
         store.markConnected();
-        async.elapse(const Duration(seconds: 5));
         expect(notified, 1);
+        async.elapse(const Duration(seconds: 5));
+        expect(notified, 2);
       });
     });
 

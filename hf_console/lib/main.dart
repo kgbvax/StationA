@@ -38,7 +38,7 @@ class _AppRoot extends StatefulWidget {
   State<_AppRoot> createState() => _AppRootState();
 }
 
-class _AppRootState extends State<_AppRoot> {
+class _AppRootState extends State<_AppRoot> with WidgetsBindingObserver {
   final _storage = CredentialStore();
   final _store = BusStore();
   late final MqttService _mqtt;
@@ -49,10 +49,30 @@ class _AppRootState extends State<_AppRoot> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _mqtt = MqttService(_store);
     _store.addListener(_onBusStoreUpdate);
     _enforceFullScreen();
     _tryAutoConnect();
+  }
+
+  // MQTT-session recovery. Display-off/doze freezes Dart timers and kills
+  // the broker-side session, but the app-side socket can survive half-open
+  // still reporting 'connected' — so resume must actively probe/rebuild the
+  // link, and pause should tear it down cleanly. inactive/hidden are
+  // transient (notification shade, app switcher) and ignored.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    switch (state) {
+      case AppLifecycleState.resumed:
+        _mqtt.onAppResumed();
+      case AppLifecycleState.paused:
+        _mqtt.onAppPaused();
+      case AppLifecycleState.inactive:
+      case AppLifecycleState.hidden:
+      case AppLifecycleState.detached:
+        break;
+    }
   }
 
   void _onBusStoreUpdate() {
@@ -110,6 +130,7 @@ class _AppRootState extends State<_AppRoot> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _store.removeListener(_onBusStoreUpdate);
     _dxSpot.dispose();
     _mqtt.dispose();
