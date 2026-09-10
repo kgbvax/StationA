@@ -1,0 +1,287 @@
+# stationa — Mühle station automation, architecture overview
+# Render: d2 --layout tala docs/architecture.d2 docs/architecture.svg
+direction: up
+
+vars: {
+  d2-config: {
+    layout-engine: tala
+    theme-id: 0
+    sketch: false
+  }
+}
+
+classes: {
+  bridge: {
+    style.fill: honeydew
+    style.stroke: seagreen
+  }
+  logic: {
+    style.fill: lavender
+    style.stroke: slateblue
+    style.stroke-width: 2
+  }
+  device: {
+    style.fill: aliceblue
+    style.stroke: steelblue
+    shape: cylinder
+  }
+  ui: {
+    style.fill: cornsilk
+    style.stroke: darkgoldenrod
+  }
+  infra: {
+    style.fill: mistyrose
+    style.stroke: firebrick
+    style.stroke-width: 2
+  }
+  passive: {
+    style.fill: whitesmoke
+    style.stroke: gray
+    style.fill-pattern: dots
+  }
+}
+
+# ---------------- MQTT data plane ----------------
+
+bus: {
+  label: "MQTT data plane — muehle/#\n(meta · state · status · cmd)"
+  shape: hexagon
+  style.fill: ghostwhite
+  style.stroke: dimgray
+  style.font-size: 16
+
+  shari-broker: {
+    label: "Mosquitto (shack broker)\nshari 192.168.1.139:1883\nauthoritative for muehle/#"
+    class: infra
+  }
+
+  ha-broker: {
+    label: "HA Mosquitto\n192.168.1.50:1883"
+    class: infra
+  }
+}
+
+bus.shari-broker -> bus.ha-broker: "bridge connection\nmuehle/# replicated\n(bridge acct)"
+bus.ha-broker <- shari.hadiscovery: "reads /meta expose\n(renders HA discovery)"
+bus.ha-broker <-> ha: "HA MQTT integration\n(device entities)"
+
+ha: {
+  label: "Home Assistant"
+  class: ui
+}
+
+# ---------------- shari — logic slots & passive consumers ----------------
+
+shari: {
+  label: "shari (Raspberry Pi, 192.168.1.139)\nsystemd services, journald consolidated"
+  style.fill: snow
+  style.stroke: dimgray
+
+  broker: {
+    label: "mosquitto\n127.0.0.1:1883 local\nbridged to HA broker"
+    class: infra
+  }
+
+  antennaselect: {
+    label: "antennaselect\n(policy — wiring map:\nant/ultrabeam p3, ant/fan-dipole p6, ant/dummy-load p1)"
+    class: logic
+  }
+
+  powerseq: {
+    label: "powerseq\n(ordered startup/shutdown,\ndelay + liveness confirmations)"
+    class: logic
+  }
+
+  hadiscovery: {
+    label: "hadiscovery\n(passive /meta consumer)"
+    class: logic
+  }
+
+  testui: {
+    label: "testui\n(MQTT relay + schema-aware\nbrowser UI; /cmd stimulator)"
+    class: ui
+  }
+}
+
+bus.shari-broker - shari.broker: "same process, two views\n(LAN :1883 ↔ localhost)"
+
+shari.antennaselect <- bus: "consume:\nhf/radio, hf/ant-ctrl,\nhf/ant-switch state\n(ANDs /status + /state.device_online)"
+shari.antennaselect -> bus: "cmd → hf/ant-switch"
+shari.powerseq <-> bus: "orchestrates\npower/master, power/psu-13v8,\nhf/pa-arm, hf/switch\n→ hf/power-seq"
+shari.testui <-> bus: "subscribe muehle/#\npublish /cmd"
+
+# ---------------- bridges ----------------
+
+bridges: {
+  label: "Device bridges (Go, paho + shared/mqtt, shared/schema)"
+  style.fill: honeydew
+  style.stroke: seagreen
+
+  flexbridge: {
+    label: "flexbridge\nFLEX-8400 (SmartSDR TCP)\ntune/band/mode, pan, mic profile"
+    class: bridge
+  }
+  ultrabridge: {
+    label: "ultrabridge\nUltrabeam RCU-06 (USB-serial FTDI)\nant-ctrl tune; EIO serial self-heal"
+    class: bridge
+  }
+  acom1200s: {
+    label: "acom1200s-pa-bridge\nACOM 1200S (serial)\npower = telemetry only"
+    class: bridge
+  }
+  wrc: {
+    label: "wrc-rotator-bridge\nYaesu G-450DC via AF6SA WRC\n(websocket)"
+    class: bridge
+  }
+  atr1k: {
+    label: "atr1k-tuner-bridge\nATR-1000 ATU (binary websocket)\nin-line/bypass + tune"
+    class: bridge
+  }
+  shelly: {
+    label: "shelly-power-bridge\nShelly plugs (wifi HTTP)\npower/master + power/psu-13v8"
+    class: bridge
+  }
+  pelco: {
+    label: "pelcobridge2\nPelco-D/P pan/tilt (RS-485)\nTUI + rotctld on shack-pc;\narming manual, never remote"
+    class: bridge
+  }
+}
+
+# ---------------- firmware (non-Go) ----------------
+
+firmware: {
+  label: "Firmware (non-Go)"
+  style.fill: cornsilk
+  style.stroke: darkgoldenrod
+
+  antswitch: {
+    label: "waveshare_relay-\nantswitch-bridge\nESPHome, 1:6 relay board"
+    class: bridge
+  }
+  plc1: {
+    label: "m5stamp-hf-ctrl — PLC #1\nrelays: pa-arm (r1),\nPA/TRX remote-on (r3,r4)"
+    class: bridge
+  }
+  plc2: {
+    label: "m5stamp-hf-ctrl — PLC #2\nX-Quad polarization"
+    class: bridge
+  }
+  m5dial: {
+    label: "m5dial-hf-rotctrl\nM5Stack Dial control head\nanalog meter face + knob;\nown quadrature ISR (knob.h)"
+    class: ui
+  }
+}
+
+# ---------------- physical devices ----------------
+
+devices: {
+  label: "Physical devices / links"
+  style.fill: aliceblue
+  style.stroke: steelblue
+
+  flex: { label: "FLEX-8400\n(ethernet, SmartSDR)"; class: device }
+  ultrabeam: { label: "Ultrabeam RCU-06\n(USB-serial)"; class: device }
+  acom: { label: "ACOM 1200S\n(serial)"; class: device }
+  wrcdev: { label: "AF6SA WRC\n(websocket)"; class: device }
+  atr: { label: "ATR-1000\n(binary websocket)"; class: device }
+  switchhw: { label: "WaveShare 1:6\nrelay board"; class: device }
+  shellyhw: { label: "Shelly plugs ×2\n(master mains, 13.8 V PSU)"; class: device }
+  plc1hw: { label: "M5 Stamp PLC #1"; class: device }
+  plc2hw: { label: "M5 Stamp PLC #2"; class: device }
+  pelcohw: { label: "PTS-303Z/3050DZ\npan/tilt head"; class: device }
+  uhfrot: { label: "X-Quad\npolarization"; class: device }
+}
+
+antennas: {
+  label: "Antennas — passive resources\n(no MQTT presence; only in\nantennaselect wiring map)"
+  style.fill: whitesmoke
+  style.stroke: gray
+  style.fill-pattern: dots
+
+  ant1: { label: "ant/ultrabeam\n(port 3)" }
+  ant2: { label: "ant/fan-dipole 80/40\n(port 6)" }
+  ant3: { label: "ant/dummy-load\n(port 1)" }
+}
+
+# ---------------- consumers on the LAN ----------------
+
+consumers: {
+  label: "LAN clients (192.168.1.139:1883)"
+  style.fill: cornsilk
+  style.stroke: darkgoldenrod
+
+  tablet: { label: "hf_console tablet\n(Flutter, console acct)" ; class: ui }
+}
+
+# ---------------- wiring: bridge ↔ bus ----------------
+
+bridges.flexbridge -> bus: "muehle/hf/radio"
+bridges.ultrabridge -> bus: "muehle/hf/ant-ctrl"
+bridges.acom1200s -> bus: "muehle/hf/pa"
+bridges.wrc -> bus: "muehle/hf/rotator"
+bridges.atr1k -> bus: "muehle/hf/tuner"
+bridges.shelly -> bus: "muehle/power/master\nmuehle/power/psu-13v8"
+firmware.antswitch -> bus: "muehle/hf/ant-switch"
+firmware.plc1 -> bus: "muehle/hf/pa-arm\nmuehle/hf/switch"
+firmware.plc2 -> bus: "muehle/uhf/pol-ctrl"
+bridges.pelco -> bus: "muehle/uhf/rotator"
+
+firmware.m5dial <-> bus: "muehle/hf/rotator\n(/cmd stimulator)"
+consumers.tablet <-> bus: "console acct"
+
+# ---------------- wiring: bridge ↔ device ----------------
+
+bridges.flexbridge -> devices.flex: "SmartSDR TCP"
+bridges.ultrabridge -> devices.ultrabeam: "USB-serial (by-id,\nEIO reopen)"
+bridges.acom1200s -> devices.acom: "serial"
+bridges.wrc -> devices.wrcdev: "websocket"
+bridges.atr1k -> devices.atr: "binary websocket"
+firmware.antswitch -> devices.switchhw: "relay GPIO"
+bridges.shelly -> devices.shellyhw: "wifi HTTP"
+firmware.plc1 -> devices.plc1hw: "same firmware, two slots"
+firmware.plc2 -> devices.plc2hw: "same firmware, two slots"
+bridges.pelco -> devices.pelcohw: "RS-485 Pelco-D/P"
+devices.plc2hw -> devices.uhfrot: "drives"
+
+# ---------------- RF chain ----------------
+
+devices.switchhw -> antennas: "selects 1:6"
+antennas.ant1 -> rfchain: ""
+rfchain: {
+  label: "RF chain\nantenna → switch → ATR-1000\n→ ACOM 1200S → FLEX-8400"
+  style.fill: whitesmoke
+  style.stroke: gray
+  style.fill-pattern: dots
+  shape: rectangle
+}
+rfchain -> devices.atr: ""
+rfchain -> devices.acom: ""
+rfchain -> devices.flex: ""
+
+# ---------------- control-plane layering ----------------
+
+layering: {
+  label: "Control layering"
+  style.fill: snow
+  style.stroke: dimgray
+  l1: "policy: antennaselect, powerseq (logic slots, no device)" {
+    class: logic
+  }
+  l2: "actuator: bridges + firmware (own the devices)" {
+    class: bridge
+  }
+  l3: "device: serial/ws/wifi links" {
+    class: device
+  }
+  l1 -> l2 -> l3
+}
+
+legend: {
+  label: "Legend"
+  go: "Go bridge" { class: bridge }
+  logic: "Logic slot (no device)" { class: logic }
+  dev: "Physical device" { class: device }
+  ui: "UI / consumer" { class: ui }
+  inf: "Infrastructure" { class: infra }
+  pass: "Passive resource (no MQTT)" { class: passive }
+}
