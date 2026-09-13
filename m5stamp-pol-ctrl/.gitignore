@@ -1,0 +1,20 @@
+# Secrets — never commit (wifi + broker creds + OTA/API/web auth). Copy
+# secrets.example.yaml -> secrets.yaml and fill in. The pattern matches any
+# depth, so both m5stamp-pol-ctrl/secrets.yaml and esphome/secrets.yaml are
+# covered.
+secrets.yaml
+secrets/
+
+# ESPHome build artifacts and cache
+.esphome/
+build/
+
+# Python (local validation tooling)
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# macOS / local tooling noise
+.DS_Store

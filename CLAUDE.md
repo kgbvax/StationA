@@ -31,6 +31,7 @@ separate per-component remotes to push to.
 | waveshare_relay-antswitch-bridge | `waveshare_relay-antswitch-bridge/` | 1:6 antenna switch bridge (ESPHome, WaveShare relay-board family) |
 | shelly-power-bridge | `shelly-power-bridge/` | Shelly smart-plug bridge → `power/master` + `power/psu-13v8` (supply layer) |
 | m5stamp-hf-ctrl | `m5stamp-hf-ctrl/` | M5 Stamp PLC #1 firmware → `hf/pa-arm` + `hf/switch` (PA/TRX remote-on + arm) |
+| m5stamp-pol-ctrl | `m5stamp-pol-ctrl/` | M5 Stamp PLC #2 firmware → `uhf/pol-ctrl` (X-Quad polarization, ESPHome) |
 | powerseq | `powerseq/` | Startup/shutdown sequencer → `hf/power-seq` (ordered, delay + liveness confirmations) |
 | antennaselect | `antennaselect/` | Antenna-selection reconciler (core implemented) |
 | hadiscovery | `hadiscovery/` | Home Assistant discovery consumer (reads `/meta` `expose`, renders HA discovery) |
@@ -62,7 +63,7 @@ and `go work sync` operate over the whole workspace at once.
 | `muehle/hf/rotator` | wrc-rotator-bridge | Yaesu G-450DC via AF6SA WRC, websocket |
 | `muehle/hf/tuner` | atr1k-tuner-bridge | ATR-1000 ATU, wifi (binary WebSocket) |
 | `muehle/hf/power-seq` | powerseq | logic slot — no device (runs on shari); startup/shutdown sequencer |
-| `muehle/uhf/pol-ctrl` | m5stamp-hf-ctrl (PLC #2) | M5 Stamp PLC #2 — X-Quad polarization, wifi |
+| `muehle/uhf/pol-ctrl` | m5stamp-pol-ctrl | M5 Stamp PLC #2 — X-Quad polarization (ESPHome), wifi |
 | `muehle/uhf/rotator` | pelcobridge2 | PTS-303Z/3050DZ pan/tilt head, RS-485 — interactive TUI on shack-pc (arming is manual, never remote) |
 | `muehle/hf/discovery` | hadiscovery | logic slot — no device (runs on shari); passive consumer of `/meta` |
 

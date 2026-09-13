@@ -1,0 +1,520 @@
+# ==========================================================
+# xphasectrl — X-Quad polarization controller
+# M5 Stamp PLC #2 (StamPLC K141): the canonical muehle/uhf/pol-ctrl slot
+#
+# This ESPHome config IS the m5stamp-pol-ctrl component: it publishes the
+# canonical polarization MQTT surface (meta/state/status/cmd) directly over
+# the station bus (the waveshare ant-switch pattern — firmware is the bridge,
+# no Go component). One setting drives BOTH X-Quads (2 m + 70 cm) together:
+# the phase relays are paralleled across the two antennas.
+#
+# Honesty rules (KTD15 of the sat-ops plan; docs/m5stamp-pol-ctrl-mqtt-api.md):
+#   * /state derives from the AW9523 relay states (driven-latch readback),
+#     NEVER echoed from the select or the last /cmd.
+#   * The phase relays boot ALWAYS_OFF ⇒ the device boots honestly at "v"
+#     (vertical = all relays off); the select boots at "Vertical" to match,
+#     and the retained /cmd re-applies the last intent after reconnect.
+#   * An invalid /cmd is rejected LOUDLY: the rejection is published into the
+#     retained /state `error` field and shown on the display — never dropped
+#     silently (the m5stamp JSON-boolean trap).
+#
+# Interlock (unchanged from the original loose config): a phase change turns
+# ALL phase relays off first, then energizes the one relay for the chosen
+# phase — break-before-make, never two at once, vertical = all off.
+#
+# The FlexRadio power relay (AW9523 pin 3) is NOT part of the pol-ctrl slot:
+# it is local-only (Button C on the device), excluded from every
+# LAN-reachable surface (web_server, native API, MQTT) via `internal: true`.
+# ==========================================================
+
+# ==========================================================
+# Substitutions — slot addressing composes from these
+# ==========================================================
+substitutions:
+  device_name: xctrl
+  friendly_name: "Polarization Controller"
+  device_comment: "M5 Stamp PLC #2 (StamPLC K141) - X-Quad polarization phase controller"
+  # Firmware version — bumped per released flash; carried in /meta.device.firmware
+  fw_version: "1.0.0"
+
+  # --- Station MQTT bus — the shack broker on shari (see ../mqtt-broker/) ---
+  mqtt_broker: "192.168.1.139"
+  mqtt_port: "1883"
+  mqtt_user: "hf"
+  # mqtt_password comes from !secret mqtt_password (secrets file, gitignored).
+
+  # --- Canonical slot addressing ---
+  site: "muehle"
+  station: "uhf"
+  slot: "pol-ctrl"
+
+# ==========================================================
+# Core ESPHome Configuration
+# ==========================================================
+esphome:
+  name: ${device_name}
+  friendly_name: ${friendly_name}
+  comment: ${device_comment}
+  name_add_mac_suffix: false
+  # The display uses `update_interval: never` and is only redrawn from the
+  # `polarization` select's on_value. At power-on the ST7789V GRAM contains
+  # random data, so without an initial paint the screen shows garbage until the
+  # first state change. Draw one clean frame at boot, late enough (priority
+  # -100) that the panel and the select/relay states are all ready.
+  on_boot:
+    priority: -100
+    then:
+      - component.update: vdu
+
+esp32:
+  variant: ESP32S3
+  flash_size: 8MB
+  framework:
+    type: esp-idf
+
+# The on-board relays sit behind an AW9523B I2C expander, which is not a core
+# ESPHome component. The buttons (PI4IOE5V6408) and display (mipi_spi) are core.
+external_components:
+  - source: github://beormund/esphome-m5stamplc@main
+    components: [aw9523]
+
+logger:
+
+# Native API: manual bring-up surface only (web/HA), NOT the canonical bus.
+# The canonical surface is MQTT below; the /cmd handler never depends on API.
+api:
+  encryption:
+    key: !secret api_key
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  # Fallback hotspot so the captive portal below actually engages when the
+  # configured WiFi fails. No ssid/password given: ESPHome auto-generates
+  # both (derived from the MAC) and prints them at boot — provisioning
+  # convenience without a hardcoded LAN-reachable credential.
+  ap:
+
+captive_portal:
+
+# LAN-reachable web UI — digest auth via secrets (deliberate hardening over
+# the ant-switch precedent, which ships web_server with no auth; see the
+# exposure register extension in docs/m5stamp-pol-ctrl-mqtt-api.md).
+web_server:
+  auth:
+    # digest, not basic: the LAN-reachable UI must not send a reversible
+    # password (ESPHome's own default flips to digest in 2027.1).
+    type: digest
+    username: !secret web_server_username
+    password: !secret web_server_password
+
+# Hold GPIO3 (display reset / strapping pin) high at boot so the LCD powers up.
+power_supply:
+  - id: pin3_output_high
+    pin:
+      number: 3
+      ignore_strapping_warning: true
+    enable_on_boot: true
+
+i2c:
+  sda: GPIO13
+  scl: GPIO15
+  scan: false
+
+spi:
+  clk_pin: GPIO7
+  mosi_pin: GPIO8
+  miso_pin: GPIO9
+
+# Time for the /state `ts` field, synced from the native-API host (the
+# ant-switch pattern). If the API link is down, ts stamps epoch — pol itself
+# is still correct (see the API doc caveat).
+time:
+  - platform: homeassistant
+    id: pol_time
+
+# I2C IO expanders.
+pi4ioe5v6408:
+  - id: pi4ioe5v6408_1
+    address: 0x43
+
+aw9523:
+  - id: aw9523_1
+    address: 0x59
+
+# --- Relays: internal, driven only by the `polarization` select (interlock) ---
+# Physical wiring: AW9523 pin 0 = Horizontal, 1 = Circular Left, 2 = Circular
+# Right. Pin 3 (relay 4) = FlexRadio Power — deliberately local-only:
+# `internal: true` keeps it out of web_server AND the native API; it is driven
+# exclusively by Button C on the device. It is not part of the pol-ctrl slot
+# and is never touched by any /cmd path.
+switch:
+  - platform: gpio
+    id: r_horizontal
+    internal: true
+    pin:
+      aw9523: aw9523_1
+      number: 0
+    restore_mode: ALWAYS_OFF
+  - platform: gpio
+    id: r_circ_left
+    internal: true
+    pin:
+      aw9523: aw9523_1
+      number: 1
+    restore_mode: ALWAYS_OFF
+  - platform: gpio
+    id: r_circ_right
+    internal: true
+    pin:
+      aw9523: aw9523_1
+      number: 2
+    restore_mode: ALWAYS_OFF
+  - platform: gpio
+    id: r_flexradio_pwr
+    internal: true
+    pin:
+      aw9523: aw9523_1
+      number: 3
+    restore_mode: RESTORE_DEFAULT_OFF
+    on_turn_on:
+      - component.update: vdu
+    on_turn_off:
+      - component.update: vdu
+  # LCD backlight (PI4IOE5V6408 pin 7, active-low) — keep on.
+  - platform: gpio
+    id: lcd_backlight
+    internal: true
+    pin:
+      pi4ioe5v6408: pi4ioe5v6408_1
+      number: 7
+    inverted: true
+    restore_mode: ALWAYS_ON
+
+# --- Single source of truth + interlock ---
+# The select is the single command entry point: /cmd, Button A, and any manual
+# native-API/web_server selection all funnel through its on_value, which turns
+# ALL relays off first, then energizes the one relay for the chosen phase.
+# "Vertical" leaves all relays off. Because the relays are only ever driven
+# from here, two-active-at-once is structurally impossible.
+#
+# Boot honesty (KTD15): `restore_value: false` + `initial_option: "Vertical"`
+# so the select matches the relays, which boot ALWAYS_OFF (vertical). The old
+# optimistic restore claimed the last phase while the relays were all off —
+# the boot lie this config fixes. The retained /cmd re-applies the operator's
+# last intent after the MQTT reconnect (self-healing steady state, model §8).
+select:
+  - platform: template
+    id: polarization
+    name: "Polarization"
+    optimistic: true
+    restore_value: false
+    options:
+      - "Horizontal"
+      - "Circular Left"
+      - "Circular Right"
+      - "Vertical"
+    initial_option: "Vertical"
+    on_value:
+      then:
+        - lambda: |-
+            // Idempotency guard: derive the current phase from the relay
+            // states; if the target matches, do not touch the relays (no
+            // chatter, and a retained /cmd re-delivery on reconnect stays a
+            // physical no-op — it only refreshes /state).
+            std::string cur = "v";
+            if      (id(r_horizontal).state)  cur = "h";
+            else if (id(r_circ_left).state)  cur = "cl";
+            else if (id(r_circ_right).state) cur = "cr";
+            std::string tgt = "v";
+            if      (x == "Horizontal")          tgt = "h";
+            else if (x == "Circular Left")       tgt = "cl";
+            else if (x == "Circular Right")      tgt = "cr";
+            if (tgt != cur) {
+              // Interlock: break-before-make, all-off-then-one-on.
+              id(r_horizontal).turn_off();
+              id(r_circ_left).turn_off();
+              id(r_circ_right).turn_off();
+              if      (tgt == "h")  id(r_horizontal).turn_on();
+              else if (tgt == "cl") id(r_circ_left).turn_on();
+              else if (tgt == "cr") id(r_circ_right).turn_on();
+              // "v" => leave all relays off
+            }
+            // A valid state change clears the last /cmd error.
+            id(g_error) = "";
+        - script.execute: publish_state
+        - component.update: vdu
+
+# --- Globals ---
+globals:
+  # Last /cmd rejection message; published in the retained /state `error`
+  # field and shown on the display. Cleared by the next valid state change.
+  - id: g_error
+    type: std::string
+    initial_value: '""'
+
+# Holding Button A down for 4s reboots the device. The reboot is scheduled on
+# press and cancelled on release, so it never delays the immediate cycle action.
+script:
+  - id: button_a_hold_reboot
+    mode: restart
+    then:
+      - delay: 4s
+      - logger.log: "Button A held 4s - rebooting"
+      - lambda: 'App.safe_reboot();'
+
+  # publish_meta — retained birth certificate on /meta. Run from on_connect
+  # (script.execute, with a small jitter guard like the ant-switch pattern).
+  - id: publish_meta
+    mode: single
+    then:
+      - delay: 100ms
+      - mqtt.publish:
+          topic: ${site}/${station}/${slot}/meta
+          qos: 1
+          retain: true
+          payload: |-
+            {"schema":"1.0","role":"pol-ctrl","device":{"model":"M5 Stamp PLC #2 (StamPLC K141)","serial":"${device_name}","firmware":"${fw_version}"},"link":"wifi","host":"embedded","location":"bauwagen","capabilities":{"polarizations":["h","v","cl","cr"],"exclusive":true,"shared":true,"vertical":"all_relays_off"},"expose":{"device":{"name":"X-Quad polarization","model":"M5 Stamp PLC #2 (StamPLC K141)"},"fields":[{"key":"pol","name":"Polarization","type":"enum","options":["h","v","cl","cr"],"writable":true,"command":{"action":"set_pol","value_key":"value","value_type":"string"}},{"key":"error","name":"Error","type":"string"},{"key":"device_online","name":"Device Online","type":"boolean"}]}}
+
+  # publish_state — retained JSON snapshot on /state. `pol` is derived from
+  # the AW9523 relay states (driven-latch readback), never echoed from the
+  # select or the last /cmd. `error` is present only while set. A valid state
+  # change clears it (see the select's on_value).
+  - id: publish_state
+    mode: single
+    then:
+      - mqtt.publish_json:
+          topic: ${site}/${station}/${slot}/state
+          retain: true
+          qos: 1
+          payload: |-
+            std::string pol = "v";
+            if      (id(r_horizontal).state)  pol = "h";
+            else if (id(r_circ_left).state)  pol = "cl";
+            else if (id(r_circ_right).state) pol = "cr";
+            root["ts"] = id(pol_time).now().strftime("%Y-%m-%dT%H:%M:%SZ");
+            root["pol"] = pol;
+            root["device_online"] = !id(aw9523_1).is_failed();
+            if (!id(g_error).empty()) root["error"] = id(g_error);
+
+  # publish_error — loud rejection feedback for an invalid /cmd: record the
+  # message, publish it into the retained /state `error` field (so the console
+  # faults bar and any bus consumer sees it), and repaint the display with the
+  # error line. Never a silent drop.
+  - id: publish_error
+    mode: single
+    parameters:
+      msg: std::string
+    then:
+      - lambda: 'id(g_error) = msg;'
+      - logger.log:
+          level: WARN
+          format: "pol-ctrl: %s"
+          args: ['msg.c_str()']
+      - script.execute: publish_state
+      - component.update: vdu
+
+# --- Buttons: A = cycle polarization (hold 4s = reboot), B = unused, C = toggle FlexRadio Power ---
+binary_sensor:
+  - platform: gpio
+    name: "Button A"
+    pin:
+      pi4ioe5v6408: pi4ioe5v6408_1
+      number: 2
+      inverted: true
+      mode:
+        input: true
+        pullup: true
+    on_press:
+      then:
+        - select.next:
+            id: polarization
+            cycle: true
+        - script.execute: button_a_hold_reboot
+    on_release:
+      then:
+        - script.stop: button_a_hold_reboot
+  - platform: gpio
+    name: "Button B"
+    pin:
+      pi4ioe5v6408: pi4ioe5v6408_1
+      number: 1
+      inverted: true
+      mode:
+        input: true
+        pullup: true
+  - platform: gpio
+    name: "Button C"
+    pin:
+      pi4ioe5v6408: pi4ioe5v6408_1
+      number: 0
+      inverted: true
+      mode:
+        input: true
+        pullup: true
+    on_press:
+      then:
+        - switch.toggle: r_flexradio_pwr
+
+# ==========================================================
+# Canonical MQTT bus — the uhf/pol-ctrl slot
+# ==========================================================
+# Manual topics only (discovery off, topic_prefix null): the bus carries
+# exactly meta/state/status/cmd under ${site}/${station}/${slot}.
+mqtt:
+  broker: ${mqtt_broker}
+  port: ${mqtt_port}
+  username: ${mqtt_user}
+  password: !secret mqtt_password
+  # Client ID derived from the slot address + device-name suffix (per-device
+  # unique — the ant-switch's bare `ant-switch` id is a recorded pitfall).
+  client_id: ${site}-${station}-${slot}-${device_name}
+  clean_session: false   # persistent session; retained /cmd redelivered on reconnect (self-heal)
+  discovery: false       # HA is not an MQTT-discovery consumer; manual bring-up uses native API
+  topic_prefix: null     # suppress all automatic per-entity topics
+
+  # /status — liveness. online on (re)connect, offline via LWT on unclean
+  # disconnect, offline via shutdown_message on clean shutdown.
+  birth_message:
+    topic: ${site}/${station}/${slot}/status
+    payload: "online"
+    qos: 1
+    retain: true
+  will_message:
+    topic: ${site}/${station}/${slot}/status
+    payload: "offline"
+    qos: 1
+    retain: true
+  shutdown_message:
+    topic: ${site}/${station}/${slot}/status
+    payload: "offline"
+    qos: 1
+    retain: true
+
+  # On connect: publish the birth certificate (/meta), then /state.
+  on_connect:
+    - script.execute: publish_meta
+    - script.execute: publish_state
+
+  # /cmd — desired polarization. Retained steady-state intent (the actuator
+  # exception, model §8): re-applied on every reconnect so a power cycle
+  # converges back to the operator's last choice. Subscribed at QoS 0 per §8
+  # rule 2 (persistent session must not let the broker queue an offline
+  # backlog; retained delivery is independent of subscription QoS, so the
+  # self-heal still works).
+  on_json_message:
+    topic: ${site}/${station}/${slot}/cmd
+    qos: 0
+    then:
+      - lambda: |-
+          // Loud validation — never a silent drop. Every rejection is
+          // published into the retained /state `error` field and shown on
+          // the display (publish_error). This includes the m5stamp trap: a
+          // JSON boolean under `value` must be rejected loudly, not silently
+          // disarmed.
+          auto reject = [&](const std::string &m) { id(publish_error).execute(m); };
+          std::string act;
+          if (x["action"].is<std::string>()) act = x["action"].as<std::string>();
+          if (act != "set_pol") {
+            reject("cmd rejected: action '" + act + "' is not set_pol");
+            return;
+          }
+          if (x["value"].isNull()) {
+            reject("cmd rejected: set_pol missing value (expected h|v|cl|cr)");
+            return;
+          }
+          if (!x["value"].is<std::string>()) {
+            // JSON boolean / number under value — type error, reject loudly.
+            reject("cmd rejected: set_pol value must be a string h|v|cl|cr");
+            return;
+          }
+          std::string val = x["value"].as<std::string>();
+          std::string opt = "";
+          if      (val == "h")  opt = "Horizontal";
+          else if (val == "v")  opt = "Vertical";
+          else if (val == "cl") opt = "Circular Left";
+          else if (val == "cr") opt = "Circular Right";
+          if (opt == "") {
+            reject("cmd rejected: invalid pol '" + val + "' (expected h|v|cl|cr)");
+            return;
+          }
+          // Valid: drive the select — the single entry point (same path as
+          // Button A and any manual native-API/web selection).
+          auto call = id(polarization).make_call();
+          call.set_option(opt);
+          call.perform();
+
+# Freshness heartbeat: republish /state every 60 s so `device_online` (the
+# AW9523 expander health) and `ts` can never go silently stale between changes.
+interval:
+  - interval: 60s
+    then:
+      - script.execute: publish_state
+
+# --- Display ---
+color:
+  - id: col_active
+    red: 0%
+    green: 100%
+    blue: 30%
+  - id: col_active_blue
+    red: 0%
+    green: 30%
+    blue: 100%
+  - id: col_idle
+    red: 25%
+    green: 25%
+    blue: 25%
+  - id: col_error
+    red: 100%
+    green: 20%
+    blue: 20%
+
+font:
+  - file: "gfonts://Roboto"
+    id: font_big
+    size: 34
+  - file: "gfonts://Roboto"
+    id: font_small
+    size: 14
+
+# Panel: the StamPLC uses the same 1.14" ST7789V (135x240, offset 52/40, inverted)
+# as the LilyGO T-Display, so the built-in T-DISPLAY model preset matches it exactly.
+# rotation: 90 gives the 240x135 landscape orientation. (If text comes out mirrored
+# or upside-down on real hardware, try rotation: 270, or add a transform: block.)
+display:
+  - platform: mipi_spi
+    id: vdu
+    model: T-DISPLAY
+    dc_pin: GPIO6
+    cs_pin: GPIO12
+    rotation: 90
+    update_interval: never
+    lambda: |-
+      const int W = it.get_width();   // 240
+      it.fill(Color::BLACK);
+      auto p = id(polarization).current_option();
+      it.printf(W / 2, 40, id(font_big), TextAlign::CENTER, "%s", p.c_str());
+
+      // Per-state relay status row near the bottom.
+      auto dot = [&](int x, const char *label, bool on, Color active_color) {
+        it.filled_circle(x, 95, 16, on ? active_color : id(col_idle));
+        it.printf(x, 115, id(font_small), TextAlign::TOP_CENTER, "%s", label);
+      };
+      dot(24,  "H",  id(r_horizontal).state, id(col_active));
+      dot(72,  "CL", id(r_circ_left).state, id(col_active));
+      dot(120, "CR", id(r_circ_right).state, id(col_active));
+      bool vertical = !id(r_horizontal).state && !id(r_circ_left).state && !id(r_circ_right).state;
+      dot(168, "V",  vertical, id(col_active));
+      dot(216, "PWR", id(r_flexradio_pwr).state, id(col_active_blue));
+
+      // Rejected-command feedback: the last /cmd error line (on-device
+      // indication for the loud rejection path; cleared by the next valid
+      // state change).
+      if (!id(g_error).empty()) {
+        it.printf(W / 2, 8, id(font_small), id(col_error), TextAlign::TOP_CENTER, "%s", id(g_error).c_str());
+      }
