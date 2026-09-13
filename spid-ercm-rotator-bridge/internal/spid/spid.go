@@ -365,15 +365,13 @@ func (d *Driver) writeFrame(frame []byte) error {
 func (d *Driver) writeFrameIO(frame []byte) error {
 	d.mu.Lock()
 	down := d.lnk.snapshot() == nil || !d.online
+	due := d.reopenDueLocked()
+	errStr := d.errStr
 	d.mu.Unlock()
 	if down {
 		// Link down (never opened, or after a fault): heal on the caller's
 		// behalf, cooldown-gated so a flapping adapter cannot spin
 		// open/write/close (KTD7: indefinite, one attempt per window).
-		d.mu.Lock()
-		due := d.reopenDueLocked()
-		errStr := d.errStr
-		d.mu.Unlock()
 		if !due {
 			return fmt.Errorf("serial link down: %s", errStr)
 		}

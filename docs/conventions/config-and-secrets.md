@@ -184,4 +184,6 @@ command line):
   the values, so rotating a secret means a reflash, not a file edit on the device.
 
 Components using this pattern: `waveshare_relay-antswitch-bridge` (ESPHome),
-`m5stamp-pol-ctrl` (ESPHome), `m5stamp-hf-ctrl` (PlatformIO).
+`m5stamp-pol-ctrl` (ESPHome), `m5stamp-hf-ctrl` (PlatformIO),
+`m5dial-hf-rotctrl` (PlatformIO — its template is `secrets.example.h.x`, so the
+copy to the gitignored `src/secrets.h` is always a rename).
