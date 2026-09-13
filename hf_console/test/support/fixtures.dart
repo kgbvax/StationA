@@ -146,7 +146,7 @@ extension BusStoreFixtures on BusStore {
       'moving': moving,
       'link': 'serial',
       'device_online': deviceOnline,
-      'ts': '2026-08-20T14:30:00.000000',
+      'ts': '2026-09-13T12:34:56Z',
     };
     if (error.isNotEmpty) state['error'] = error;
     if (pos != null) state[axis] = pos;

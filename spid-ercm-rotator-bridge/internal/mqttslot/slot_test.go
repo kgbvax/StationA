@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -132,17 +133,21 @@ func (f *recordingPaho) recordedSubs() []recSub {
 }
 
 // fakeMount is the dispatch-façade stand-in: it records Goto/Stop intents and
-// serves canned Readback/Target/Online/Moving answers.
+// serves canned Readback/Target/Online/Moving answers. stopErrs is returned
+// by Stop (the fault arm); stopBlock delays Stop WITHOUT holding the mutex
+// (the wedged-stop seam for the per-call bound).
 type fakeMount struct {
-	mu     sync.Mutex
-	gotos  []mount.Target
-	stops  int
-	pos    float64
-	posOK  bool
-	tgt    float64
-	hasTgt bool
-	online bool
-	moving bool
+	mu        sync.Mutex
+	gotos     []mount.Target
+	stops     int
+	pos       float64
+	posOK     bool
+	tgt       float64
+	hasTgt    bool
+	online    bool
+	moving    bool
+	stopErrs  []mount.AxisError
+	stopBlock time.Duration
 }
 
 func (f *fakeMount) Goto(t mount.Target) []mount.Refusal {
@@ -159,10 +164,15 @@ func (f *fakeMount) Goto(t mount.Target) []mount.Refusal {
 
 func (f *fakeMount) Stop() []mount.AxisError {
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.stops++
 	f.hasTgt = false
-	return nil
+	errs := f.stopErrs
+	block := f.stopBlock
+	f.mu.Unlock()
+	if block > 0 {
+		time.Sleep(block) // outside the mutex: a blocked stop must not block reads
+	}
+	return errs
 }
 
 func (f *fakeMount) Readback(ax mount.Axis) (float64, bool) {
@@ -730,6 +740,150 @@ func TestStopDispatchesStopAndClears(t *testing.T) {
 	})
 }
 
+// TestOversizedCmdRejectedWithoutPayloadEcho pins the size gate (the KTD4 OOM
+// vector): a payload over cmdMaxBytes — even a structurally VALID one that
+// would dispatch — is rejected before Unmarshal, never parsed, never logged,
+// never echoed: the /state.error is the fixed string, no payload byte reaches
+// any publish, and the retained cmd is still cleared (one-shot).
+func TestOversizedCmdRejectedWithoutPayloadEcho(t *testing.T) {
+	o := testOptions(config.AxisAZ, "az-rotator")
+	fm := &fakeMount{online: true}
+	fake := &recordingPaho{}
+	s := newTestSlot(t, o, fm, fake)
+
+	// Valid stop JSON padded past the gate: proves the gate fires before
+	// parsing, not on the unmarshal-error path.
+	junk := strings.Repeat("x", 8*1024)
+	payload := `{"action":"stop","junk":"` + junk + `"}`
+	s.onCmd(nil, fakeMessage{topic: s.cmdTopic, payload: []byte(payload)})
+
+	waitFor(t, 2*time.Second, "retained cmd cleared despite oversized rejection", func() bool {
+		return cmdCleared(fake, s.cmdTopic)
+	})
+	pubs := statePubs(t, fake, s.stateTopic)
+	if len(pubs) == 0 {
+		t.Fatal("no /state publish for the oversized rejection")
+	}
+	errStr, _ := pubs[len(pubs)-1]["error"].(string)
+	if errStr != cmdErrMsgTooLarge {
+		t.Errorf("oversized /state.error = %q, want the fixed string %q", errStr, cmdErrMsgTooLarge)
+	}
+	// No payload bytes in ANY publish (state error, cmd clear, everything).
+	marker := strings.Repeat("x", 16)
+	for _, p := range fake.recorded() {
+		if strings.Contains(p.payload, marker) {
+			t.Errorf("attacker payload bytes reached a publish on %s: %.80q…", p.topic, p.payload)
+		}
+	}
+	// The oversized but valid stop was never dispatched.
+	fm.mu.Lock()
+	stops := fm.stops
+	fm.mu.Unlock()
+	if stops != 0 {
+		t.Errorf("oversized cmd dispatched %d stop(s), want 0 (gate precedes parsing)", stops)
+	}
+}
+
+// TestCmdRejectionMessageTruncated pins the choke-point clip: a long-but-valid
+// rejection (unknown action with a huge producer-chosen name, under the size
+// gate) surfaces in /state.error clipped to cmdErrMax runes — no unbounded
+// producer string reaches the retained publish.
+func TestCmdRejectionMessageTruncated(t *testing.T) {
+	o := testOptions(config.AxisAZ, "az-rotator")
+	fm := &fakeMount{online: true}
+	fake := &recordingPaho{}
+	s := newTestSlot(t, o, fm, fake)
+
+	longAction := strings.Repeat("a", 400)
+	payload := `{"action":"` + longAction + `"}`
+	s.onCmd(nil, fakeMessage{topic: s.cmdTopic, payload: []byte(payload)})
+
+	waitFor(t, 2*time.Second, "rejection surfaced in /state.error", func() bool {
+		pubs := statePubs(t, fake, s.stateTopic)
+		if len(pubs) == 0 {
+			return false
+		}
+		errStr, _ := pubs[len(pubs)-1]["error"].(string)
+		return errStr != ""
+	})
+	pubs := statePubs(t, fake, s.stateTopic)
+	errStr, _ := pubs[len(pubs)-1]["error"].(string)
+	if n := len([]rune(errStr)); n > cmdErrMax+1 {
+		t.Errorf("rejection message %d runes, want <= %d (+ellipsis): %.60q…", n, cmdErrMax, errStr)
+	}
+	if !strings.HasPrefix(errStr, `unknown cmd action "a`) {
+		t.Errorf("clipped rejection lost its diagnostic prefix: %.60q", errStr)
+	}
+	if !strings.HasSuffix(errStr, "…") {
+		t.Errorf("clipped rejection missing ellipsis marker: %q", errStr)
+	}
+}
+
+// TestStopFaultSurfacesErrorAndStillCleared pins the executeStop fault arm
+// (mirrors TestGotoLimitRefusalSurfacesErrorAndStillCleared): a mount Stop
+// that returns an AxisError surfaces in /state.error AND the retained cmd is
+// still cleared (one-shot: execute-or-reject, always clear).
+func TestStopFaultSurfacesErrorAndStillCleared(t *testing.T) {
+	o := testOptions(config.AxisAZ, "az-rotator")
+	fm := &fakeMount{online: true,
+		stopErrs: []mount.AxisError{{Axis: mount.AZ, Err: errors.New("serial write failed")}}}
+	fake := &recordingPaho{}
+	s := newTestSlot(t, o, fm, fake)
+
+	s.onCmd(nil, fakeMessage{topic: s.cmdTopic, payload: []byte(`{"action":"stop"}`)})
+
+	waitFor(t, 2*time.Second, "retained cmd cleared despite stop fault", func() bool {
+		return cmdCleared(fake, s.cmdTopic)
+	})
+	waitFor(t, 2*time.Second, "stop fault surfaced in /state.error", func() bool {
+		pubs := statePubs(t, fake, s.stateTopic)
+		if len(pubs) == 0 {
+			return false
+		}
+		errStr, _ := pubs[len(pubs)-1]["error"].(string)
+		return errStr != ""
+	})
+	pubs := statePubs(t, fake, s.stateTopic)
+	errStr, _ := pubs[len(pubs)-1]["error"].(string)
+	if !strings.Contains(errStr, "serial write failed") {
+		t.Errorf("stop-fault error = %q, want the mount AxisError string", errStr)
+	}
+}
+
+// TestStopTimeoutFreesWorkerAndSurfacesError pins the per-call bound on the
+// façade Stop inside executeStop: a wedged stop (slower than the 2 s bound)
+// does NOT hang the shared jobs worker — the timeout surfaces through the
+// stop-fault error path (Warn + /state.error), the retained cmd is still
+// cleared, and a subsequent job (a goto) executes.
+func TestStopTimeoutFreesWorkerAndSurfacesError(t *testing.T) {
+	o := testOptions(config.AxisAZ, "az-rotator")
+	fm := &fakeMount{online: true, stopBlock: 3 * time.Second} // > stopCallTimeout
+	fake := &recordingPaho{}
+	s := newTestSlot(t, o, fm, fake)
+
+	s.onCmd(nil, fakeMessage{topic: s.cmdTopic, payload: []byte(`{"action":"stop"}`)})
+
+	waitFor(t, 4*time.Second, "retained cmd cleared despite wedged stop (worker not hung)", func() bool {
+		return cmdCleared(fake, s.cmdTopic)
+	})
+	waitFor(t, 1*time.Second, "stop timeout surfaced in /state.error", func() bool {
+		pubs := statePubs(t, fake, s.stateTopic)
+		if len(pubs) == 0 {
+			return false
+		}
+		errStr, _ := pubs[len(pubs)-1]["error"].(string)
+		return strings.Contains(errStr, "timed out")
+	})
+
+	// The worker must be free: the next enqueued job executes promptly.
+	s.onCmd(nil, fakeMessage{topic: s.cmdTopic, payload: []byte(`{"action":"goto","value":"90"}`)})
+	waitFor(t, 1*time.Second, "worker free: subsequent goto dispatched", func() bool {
+		fm.mu.Lock()
+		defer fm.mu.Unlock()
+		return len(fm.gotos) == 1
+	})
+}
+
 // ---------------------------------------------------------------------------
 // /state cadence (KTD14)
 // ---------------------------------------------------------------------------
@@ -770,6 +924,56 @@ func TestStateDedupFreshTSOnChange(t *testing.T) {
 	}
 	if _, err := time.Parse(time.RFC3339, ts2); err != nil {
 		t.Errorf("state ts %q is not RFC3339: %v", ts2, err)
+	}
+}
+
+// TestIdleStateHeartbeatRepublishesFreshTS pins KTD14's "always-fresh ts"
+// branch: ts is stamped at publish time, NOT in the dedup-compared snapshot,
+// so the dedup alone would let the retained ts go stale while idle. The
+// freshness heartbeat closes the gap: an UNCHANGED snapshot republishes once
+// the last publish is older than 60 poll ticks — bounded (no per-tick
+// firehose within the window), with a fresh RFC3339 ts.
+func TestIdleStateHeartbeatRepublishesFreshTS(t *testing.T) {
+	o := testOptions(config.AxisAZ, "az-rotator")
+	o.PollInterval = 10 * time.Millisecond // heartbeat = 60 polls = 600 ms
+	fm := &fakeMount{online: true, pos: 10, posOK: true}
+	fake := &recordingPaho{}
+	s := newTestSlot(t, o, fm, fake)
+
+	s.publishState(false)
+	s.publishState(false) // unchanged, inside the window: deduped
+	if n := len(statePubs(t, fake, s.stateTopic)); n != 1 {
+		t.Fatalf("dedup broken inside the heartbeat window: %d pubs, want 1", n)
+	}
+
+	// Idle past the heartbeat window: the unchanged snapshot republishes.
+	time.Sleep(700 * time.Millisecond)
+	s.publishState(false)
+	pubs := statePubs(t, fake, s.stateTopic)
+	if len(pubs) != 2 {
+		t.Fatalf("idle heartbeat republish missing: %d pubs, want 2", len(pubs))
+	}
+	s.publishState(false) // unchanged again, inside the new window: deduped
+	if n := len(statePubs(t, fake, s.stateTopic)); n != 2 {
+		t.Fatalf("heartbeat turned into a firehose: %d pubs, want 2", n)
+	}
+
+	// The republished ts is fresh (RFC3339, not older than the first).
+	ts1, _ := pubs[0]["ts"].(string)
+	ts2, _ := pubs[1]["ts"].(string)
+	t1, err := time.Parse(time.RFC3339, ts1)
+	if err != nil {
+		t.Fatalf("first ts %q is not RFC3339: %v", ts1, err)
+	}
+	t2, err := time.Parse(time.RFC3339, ts2)
+	if err != nil {
+		t.Fatalf("heartbeat ts %q is not RFC3339: %v", ts2, err)
+	}
+	if t2.Before(t1) {
+		t.Errorf("heartbeat ts %q older than first %q — freshness must not regress", ts2, ts1)
+	}
+	if age := time.Since(t2); age > 5*time.Second {
+		t.Errorf("heartbeat ts is %s old — not fresh", age)
 	}
 }
 

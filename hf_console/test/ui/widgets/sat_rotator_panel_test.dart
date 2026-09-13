@@ -65,6 +65,41 @@ void main() {
       expect(find.text('—'), findsNWidgets(2));
       expect(find.text('45.5°'), findsNothing);
     });
+
+    testWidgets(
+        'a type-confused /state payload renders dashes, never a TypeError',
+        (tester) async {
+      final store = BusStore();
+      final mqtt = FakeMqttService(store);
+      // The readwrite hf account can publish `az` as a String (or the
+      // /meta limits as strings); a hard cast in build would throw on
+      // every rebuild — a UI DoS. The safe accessors must degrade to
+      // dashes / parse-only validation instead.
+      store.setOnline(azAddress);
+      store.applyMeta(azAddress, {
+        'schema': '1.0',
+        'role': 'rotator',
+        'capabilities': {
+          'axes': ['az'],
+          'limits': {'min': '0', 'max': '360'}, // type-confused too
+        },
+      });
+      store.applyState(azAddress, {
+        'az': '45',
+        'target': '90',
+        'moving': true,
+        'device_online': true,
+        'ts': '2026-09-13T12:34:56Z',
+      });
+
+      await pumpPanel(tester, store: store, mqtt: mqtt);
+
+      expect(tester.takeException(), isNull);
+      // az degraded to a dash (el absent) — never the string '45°'.
+      expect(find.text('—'), findsNWidgets(2));
+      expect(find.text('45°'), findsNothing);
+      expect(find.text('90°'), findsNothing);
+    });
   });
 
   group('gating (two-layer AND: slot.isOnline && store.linkUp)', () {
@@ -338,6 +373,39 @@ void main() {
       await pumpPanel(tester, store: store, mqtt: mqtt);
       expect(
           button(tester, find.byKey(const ValueKey('sat-stop'))).onPressed, isNull);
+    });
+  });
+
+  group('error surfacing (loud, never silent)', () {
+    testWidgets('a bridge refusal surfaces as an in-panel ERR tag + text',
+        (tester) async {
+      final store = BusStore();
+      final mqtt = FakeMqttService(store);
+      store.setSatRotator(azAddress,
+          axis: 'az', pos: 45, error: 'goto refused: target outside travel limits');
+
+      await pumpPanel(tester, store: store, mqtt: mqtt);
+
+      expect(find.text('ERR'), findsOneWidget);
+      expect(find.textContaining('target outside travel limits'), findsOneWidget);
+    });
+
+    testWidgets('an error-free republish clears the ERR indication',
+        (tester) async {
+      final store = BusStore();
+      final mqtt = FakeMqttService(store);
+      store.setSatRotator(azAddress,
+          axis: 'az', pos: 45, error: 'goto refused: target outside travel limits');
+
+      await pumpPanel(tester, store: store, mqtt: mqtt);
+      expect(find.text('ERR'), findsOneWidget);
+
+      // Next error-free /state republish drops the error field.
+      store.setSatRotator(azAddress, axis: 'az', pos: 60);
+      await tester.pumpAndSettle();
+
+      expect(find.text('ERR'), findsNothing);
+      expect(find.text('60°'), findsOneWidget);
     });
   });
 }

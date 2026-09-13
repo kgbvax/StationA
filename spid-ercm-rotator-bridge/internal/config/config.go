@@ -14,8 +14,10 @@
 package config
 
 import (
+	"errors"
 	"flag"
 	"fmt"
+	"io/fs"
 	"os"
 	"strings"
 	"time"
@@ -202,27 +204,59 @@ func Defaults() Config {
 type Flags struct {
 	ConfigPath string
 	LogLevel   string
+
+	// fs is the FlagSet the flags were registered on (set by RegisterFlags);
+	// Load uses it to tell an explicitly-passed -config from the registered
+	// default path. A hand-built Flags (tests) has no FlagSet and is never
+	// explicit.
+	fs *flag.FlagSet
 }
 
 // RegisterFlags wires spid-ercm-rotator-bridge's flags onto fs.
 func RegisterFlags(fs *flag.FlagSet) *Flags {
 	var f Flags
+	f.fs = fs
 	fs.StringVar(&f.ConfigPath, "config", "/etc/spid-ercm-rotator-bridge/config.toml", "path to config file")
 	fs.StringVar(&f.LogLevel, "log.level", "", "log level (debug|info|warn|error); overrides config")
 	return &f
 }
 
+// explicitConfig reports whether -config was actually passed on the command
+// line (flag.Visit — even -config set to its default value counts as
+// explicit). It drives the missing-file policy: an absent DEFAULT config path
+// runs on defaults; an absent EXPLICIT -config path is fatal — the operator
+// asked for that file, and silently running defaults would hide the typo
+// (docs/conventions/config-and-secrets.md §2).
+func (f *Flags) explicitConfig() bool {
+	if f.fs == nil {
+		return false
+	}
+	explicit := false
+	f.fs.Visit(func(fl *flag.Flag) {
+		if fl.Name == "config" {
+			explicit = true
+		}
+	})
+	return explicit
+}
+
 // Load reads the TOML config file (if present), applies defaults and env
-// overrides, and applies the flag overrides from f. An empty/missing config
-// file is not an error: defaults are used. A `password` key anywhere in the
+// overrides, and applies the flag overrides from f. A config file absent at
+// the DEFAULT path is not an error: defaults are used (the go-run/bench mock
+// mode keeps working without a seeded /etc file). An EXPLICITLY-passed
+// -config path that is missing or unreadable IS an error (wrapping
+// fs.ErrNotExist for a missing file; main exits non-zero) — see
+// docs/conventions/config-and-secrets.md §2. A `password` key anywhere in the
 // TOML is a hard error — the MQTT password is env-only.
 func Load(f *Flags) (Config, error) {
 	cfg := Defaults()
 
-	if data, err := os.ReadFile(f.ConfigPath); err == nil {
-		md, err := toml.Decode(string(data), &cfg)
-		if err != nil {
-			return Config{}, fmt.Errorf("decode %s: %w", f.ConfigPath, err)
+	data, err := os.ReadFile(f.ConfigPath)
+	switch {
+	case err == nil:
+		md, derr := toml.Decode(string(data), &cfg)
+		if derr != nil {
+			return Config{}, fmt.Errorf("decode %s: %w", f.ConfigPath, derr)
 		}
 		for _, key := range md.Undecoded() {
 			// The password must never sit in the TOML. It has no struct key,
@@ -234,7 +268,11 @@ func Load(f *Flags) (Config, error) {
 					f.ConfigPath, key, EnvPrefix)
 			}
 		}
-	} else if !os.IsNotExist(err) {
+	case errors.Is(err, fs.ErrNotExist) && !f.explicitConfig():
+		// Default path simply absent: run on the built-in defaults.
+	default:
+		// Missing-but-explicit, or unreadable for any other reason: fatal.
+		// errors.Is(err, fs.ErrNotExist) distinguishes the two for callers.
 		return Config{}, fmt.Errorf("read %s: %w", f.ConfigPath, err)
 	}
 

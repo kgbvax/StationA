@@ -35,6 +35,10 @@
 //	  - Refusals (R9 liveness, R10 limits) are LOGGED at Warn with the
 //	    axis/reason/target attrs — the PstRotator path has no reply contract
 //	    for refusals, so the log is the operator surface.
+//	  - Every façade call is bounded at 2 s (F12): handle() runs on the single
+//	    UDP read loop, so an unbounded call — a wedged serial write — would
+//	    freeze datagram processing, including subsequent STOP datagrams. On
+//	    expiry the timeout is Warn-logged, never swallowed silently.
 //	  - The parser is tag-tolerant: batched commands, case-insensitive tags,
 //	    stray spaces inside and around tags, unknown tags ignored.
 package pstrotator
@@ -48,6 +52,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"spid-ercm-rotator-bridge/internal/config"
 	"spid-ercm-rotator-bridge/internal/mount"
@@ -171,6 +176,8 @@ func parseDatagram(msg string) datagram {
 
 // handle applies one datagram's commands in the fixed precedence order:
 // query (reply, nothing else) → STOP → PARK → motion (present axes only).
+// Every façade call is bounded (F12) — handle runs on the single UDP read
+// loop, so a wedged call would starve every datagram behind it.
 func (s *Server) handle(pc net.PacketConn, src net.Addr, msg string) {
 	remote := src.String()
 	d := parseDatagram(msg)
@@ -193,11 +200,14 @@ func (s *Server) handle(pc net.PacketConn, src net.Addr, msg string) {
 
 	// STOP beats motion and park tags in the same datagram: a halt is the
 	// safe reading of an ambiguous batch (the manual's own example batches
-	// STOP with AZIMUTH).
+	// STOP with AZIMUTH). A bound expiry here Warns and leaves the
+	// operator's console /cmd e-stop as the fallback (F12) — never a silent
+	// swallow.
 	if d.stop {
 		s.log.Info("pstrotator cmd", "remote", remote, "cmd", "stop",
 			"precedes_motion", d.hasAZ || d.hasEL || d.park)
-		for _, ae := range s.m.Stop() {
+		errs, _ := callBounded(s.log, "stop", remote, s.m.Stop)
+		for _, ae := range errs {
 			s.log.Warn("pstrotator stop fault", "remote", remote,
 				"axis", string(ae.Axis), "err", ae.Err)
 		}
@@ -208,7 +218,8 @@ func (s *Server) handle(pc net.PacketConn, src net.Addr, msg string) {
 	// through the normal dispatch paths (KTD11).
 	if d.park {
 		s.log.Info("pstrotator cmd", "remote", remote, "cmd", "park")
-		s.logRefusals(remote, "park", s.m.Park())
+		refs, _ := callBounded(s.log, "park", remote, s.m.Park)
+		s.logRefusals(remote, "park", refs)
 		return
 	}
 
@@ -217,12 +228,50 @@ func (s *Server) handle(pc net.PacketConn, src net.Addr, msg string) {
 	if d.hasAZ || d.hasEL {
 		s.log.Info("pstrotator cmd", "remote", remote, "cmd", "goto",
 			"az", d.az, "el", d.el, "has_az", d.hasAZ, "has_el", d.hasEL)
-		s.logRefusals(remote, "goto", s.m.Goto(mount.Target{
-			AZ:    d.az,
-			EL:    d.el,
-			HasAZ: d.hasAZ,
-			HasEL: d.hasEL,
-		}))
+		refs, _ := callBounded(s.log, "goto", remote, func() []mount.Refusal {
+			return s.m.Goto(mount.Target{
+				AZ:    d.az,
+				EL:    d.el,
+				HasAZ: d.hasAZ,
+				HasEL: d.hasEL,
+			})
+		})
+		s.logRefusals(remote, "goto", refs)
+	}
+}
+
+// callTimeout is the per-call round-trip bound — rotctld parity (KTD10: 2 s,
+// the pelcobridge2 convention). Tests shrink it.
+var callTimeout = 2 * time.Second
+
+// readbackPair lets Readback's two results ride the generic bound.
+type readbackPair struct {
+	deg   float64
+	valid bool
+}
+
+// callBounded runs f on a fresh goroutine bounded by callTimeout — the same
+// shape as rotctld's per-call bound, implemented locally so the packages
+// stay independent (F12). ReadFrom always resumes within the bound, so a
+// wedged serial section can never starve a subsequent STOP datagram. On
+// expiry the timeout is Warn-logged (never swallowed silently); the abandoned
+// call is drained by a waiter that Warn-logs its late completion, so a result
+// that lands after the deadline is surfaced, not dropped (the F13 shape).
+func callBounded[T any](log *slog.Logger, what, remote string, f func() T) (v T, ok bool) {
+	done := make(chan T, 1)
+	go func() { done <- f() }()
+	select {
+	case v = <-done:
+		return v, true
+	case <-time.After(callTimeout):
+		log.Warn("pstrotator facade call exceeded the per-call bound; datagram dropped",
+			"remote", remote, "call", what)
+		go func() {
+			late := <-done
+			log.Warn("pstrotator timed-out call completed late; its result was already dropped",
+				"remote", remote, "call", what, "result", fmt.Sprintf("%+v", late))
+		}()
+		return v, false
 	}
 }
 
@@ -230,20 +279,24 @@ func (s *Server) handle(pc net.PacketConn, src net.Addr, msg string) {
 // the manual shape (KTD11): "AZ:xxx.x\r" / "EL:yy.y\r", one decimal, sent to
 // the source IP at listen-port+1.
 func (s *Server) answerQuery(src net.Addr, remote string, ax mount.Axis) {
-	deg, valid := s.m.Readback(ax)
-	if !valid {
+	r, _ := callBounded(s.log, "readback", remote, func() readbackPair {
+		deg, valid := s.m.Readback(ax)
+		return readbackPair{deg: deg, valid: valid}
+	})
+	if !r.valid {
 		// KTD9 no-fabrication on the query path: no valid cached readback
 		// means NO reply — the grammar documents no error reply for queries,
-		// and inventing a position is worse than silence. Bench
-		// reconciliation item: confirm the shack's PstRotator tolerates a
-		// missing reply pre-first-readback.
+		// and inventing a position is worse than silence. A timed-out read
+		// is no usable readback either (the bound already Warn-logged the
+		// expiry). Bench reconciliation item: confirm the shack's
+		// PstRotator tolerates a missing reply pre-first-readback.
 		s.log.Warn("pstrotator query without a valid readback; no reply sent",
 			"remote", remote, "axis", string(ax))
 		return
 	}
-	reply := fmt.Sprintf("AZ:%.1f\r", deg)
+	reply := fmt.Sprintf("AZ:%.1f\r", r.deg)
 	if ax == mount.EL {
-		reply = fmt.Sprintf("EL:%.1f\r", deg)
+		reply = fmt.Sprintf("EL:%.1f\r", r.deg)
 	}
 	s.log.Debug("pstrotator query reply", "remote", remote, "axis", string(ax), "reply", reply)
 	if err := s.replyTo(src, reply); err != nil {

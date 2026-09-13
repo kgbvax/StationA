@@ -15,6 +15,15 @@
 // unknown again until the first fresh status reply — Rot1Prog has no init
 // command sequence, so the status request on the next tick IS the re-init.
 //
+// A controller that stays SILENT is also a dead link: three consecutive poll
+// read timeouts take the axis down (the internal/ercm timeout contract — a
+// powered-off rotor behind a live USB adapter must not keep a frozen but
+// valid readback online forever). Writes are watchdog-bounded because
+// go.bug.st/serial exposes no write deadline: a stalled write has its handle
+// closed after Opts.WriteTimeout and feeds the same self-heal path. The
+// cached liveness state locks separately from port I/O, so Online/Readback
+// stay answerable even while a write is wedged on a dead fd.
+//
 // An empty configured serial path selects the in-process mock device (KTD7)
 // so the whole stack runs bench- and CI-side without hardware.
 package spid
@@ -53,11 +62,8 @@ type Axis interface {
 	Online() bool
 	// Err returns the last link error, "" while healthy (feeds /state.error).
 	Err() string
-}
-
-// PollRunner runs the readback poll until ctx is done. It is the driver's own
-// goroutine to spawn: the poll loop owns the self-heal cadence.
-type PollRunner interface {
+	// RunPoll runs the readback poll until ctx is done; the poll loop owns
+	// the self-heal cadence, so the consumer spawns it on its own goroutine.
 	RunPoll(ctx context.Context)
 }
 
@@ -75,6 +81,12 @@ type Opts struct {
 	// ReadTimeout bounds the wait for a status reply after the poll writes
 	// the request.
 	ReadTimeout time.Duration
+	// WriteTimeout bounds one port write. go.bug.st/serial exposes no write
+	// deadline (its unix Write is a plain blocking write), so a write stalled
+	// on a wedged fd is closed out by a watchdog after this long and feeds
+	// the reopen/self-heal path. Tests shrink it; real deployments take the
+	// 3 s default.
+	WriteTimeout time.Duration
 }
 
 func (o Opts) withDefaults() Opts {
@@ -90,8 +102,17 @@ func (o Opts) withDefaults() Opts {
 	if o.ReadTimeout <= 0 {
 		o.ReadTimeout = DefaultReadTimeout
 	}
+	if o.WriteTimeout <= 0 {
+		o.WriteTimeout = DefaultWriteTimeout
+	}
 	return o
 }
+
+// maxConsecutiveTimeouts is the poll read-timeout bound: a controller that
+// stays silent for this many consecutive ticks is a dead device behind a live
+// adapter (powered-off rotor), not a busy one, and the link must go down —
+// the internal/ercm exchange-timeout contract applied to the poll loop.
+const maxConsecutiveTimeouts = 3
 
 // readErr tags a transport read failure with the generation of the reader that
 // produced it, so an error from a reader already replaced by a reopen does
@@ -129,27 +150,34 @@ func (l *link) swap(rw io.ReadWriteCloser) {
 }
 
 // Driver talks Rot1Prog to one azimuth controller over a byte-oriented port.
-// All writes (goto, stop, status request) serialize on one mutex and respect
-// the write pace, so concurrent callers can never interleave bytes on the
-// wire.
+// All writes (goto, stop, status request) serialize on ioMu and respect the
+// write pace, so concurrent callers can never interleave bytes on the wire.
 type Driver struct {
 	opener func() (io.ReadWriteCloser, error)
 	opts   Opts
 	log    *slog.Logger
 
-	// mu guards the link, the reader generation, the cached readback and the
-	// liveness/error state. It is held across the write-pace sleep (bounded
-	// by WritePace) — that is what serializes writers with the poll loop.
+	// mu guards the cached readback, the reader generation and the
+	// liveness/error state — and NOTHING else. It is never held across port
+	// I/O, the write-pace sleep or the opener, so Online()/Readback() stay
+	// answerable even while a write is wedged on a dead fd.
 	mu        sync.Mutex
 	lnk       *link
 	gen       int
 	rxCh      chan []byte
 	readErrCh chan readErr
 
+	// ioMu serializes the port write path (writes, pacing, reopen): exactly
+	// one write path runs at a time. A write stalled in the kernel holds
+	// ioMu — the watchdog reclaims it by closing the handle through the
+	// link's own lock, never by taking ioMu.
+	ioMu sync.Mutex
+
 	az        float64
 	valid     bool
 	online    bool
 	errStr    string
+	timeouts  int  // consecutive poll read timeouts; any reply resets it
 	everUp    bool // a Warn on reopen is recovery news; the first open is Info
 	lastWrite time.Time
 	// lastFault is when the link was last observed going down (or when the
@@ -227,13 +255,13 @@ func (d *Driver) Err() string {
 // It never gives up: a link that is down is retried every ReopenCooldown,
 // indefinitely (KTD7). Returns when ctx is done, after closing the port.
 func (d *Driver) RunPoll(ctx context.Context) {
-	d.mu.Lock()
+	d.ioMu.Lock()
 	if d.lnk.snapshot() == nil {
 		// Initial open. A controller absent at boot must not wedge anything:
 		// the loop retries via writeFrame's reopen path.
-		_ = d.reopenLocked()
+		_ = d.reopenIO()
 	}
-	d.mu.Unlock()
+	d.ioMu.Unlock()
 
 	ticker := time.NewTicker(d.opts.PollInterval)
 	defer ticker.Stop()
@@ -252,10 +280,7 @@ func (d *Driver) RunPoll(ctx context.Context) {
 
 // pollOnce writes the status request and consumes one reply.
 func (d *Driver) pollOnce(ctx context.Context) {
-	d.mu.Lock()
-	err := d.writeFrameLocked(encodeStatus())
-	d.mu.Unlock()
-	if err != nil {
+	if err := d.writeFrame(encodeStatus()); err != nil {
 		return // writeFrame already marked the link down and logged
 	}
 
@@ -267,6 +292,9 @@ func (d *Driver) pollOnce(ctx context.Context) {
 			// a position — ASCII digits in a reply are the Rot1Prog desync
 			// trap and are rejected by the codec, not interpreted.
 			d.log.Warn("malformed status reply", "err", err, "frame", fmt.Sprintf("% X", frame))
+			d.mu.Lock()
+			d.timeouts = 0 // a reply, however malformed, proves a live device
+			d.mu.Unlock()
 			return
 		}
 		d.mu.Lock()
@@ -274,14 +302,35 @@ func (d *Driver) pollOnce(ctx context.Context) {
 		d.valid = true // KTD9: the first status reply clears the unknown flag
 		d.online = true
 		d.errStr = ""
+		d.timeouts = 0
 		d.mu.Unlock()
 	case re := <-d.readErrCh:
 		d.onReadErr(re)
 	case <-time.After(d.opts.ReadTimeout):
-		// No reply this tick: the controller may just be slow or busy. Keep
-		// the last cached state; port-level faults arrive via readErrCh.
+		// No reply this tick: the controller may just be slow or busy — one
+		// missed tick is not news. But a controller that stays silent for
+		// maxConsecutiveTimeouts ticks is a DEAD device behind a live
+		// adapter (powered-off rotor), and the cached state must not stay
+		// frozen-online forever: take the link down exactly as a port fault
+		// would (the internal/ercm exchange-timeout contract — device_online
+		// goes false and the deadband always writes again).
+		d.mu.Lock()
+		if d.noteReadTimeoutLocked() {
+			d.markDownLocked(fmt.Errorf(
+				"no status reply after %d consecutive polls (read timeout %s each)",
+				maxConsecutiveTimeouts, d.opts.ReadTimeout))
+		}
+		d.mu.Unlock()
 	case <-ctx.Done():
 	}
+}
+
+// noteReadTimeoutLocked counts one poll read timeout and reports whether the
+// maxConsecutiveTimeouts bound tripped — the caller must take the link down.
+// Any reply (or link transition) resets the count; requires d.mu held.
+func (d *Driver) noteReadTimeoutLocked() bool {
+	d.timeouts++
+	return d.timeouts >= maxConsecutiveTimeouts
 }
 
 // onReadErr handles a transport read failure: mark the link down (clearing the
@@ -299,54 +348,111 @@ func (d *Driver) onReadErr(re readErr) {
 // --- writes ---------------------------------------------------------------------
 
 // writeFrame puts one command packet on the wire, paced and self-healing.
+// The write path serializes on ioMu (never d.mu): a write wedged on a dead fd
+// blocks only other writers, the watchdog bounds even that, and the cached
+// liveness state stays answerable throughout.
 func (d *Driver) writeFrame(frame []byte) error {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	return d.writeFrameLocked(frame)
+	d.ioMu.Lock()
+	defer d.ioMu.Unlock()
+	return d.writeFrameIO(frame)
 }
 
-// writeFrameLocked requires d.mu held. The lock is held across the pace sleep
-// so concurrent writers and the poll loop serialize — a torn frame on a
-// Rot1Prog is indistinguishable from a position command.
-func (d *Driver) writeFrameLocked(frame []byte) error {
-	if d.lnk.snapshot() == nil || !d.online {
+// writeFrameIO requires d.ioMu held: exactly one write path at a time, so
+// concurrent callers can never tear a frame on the wire (a torn frame on a
+// Rot1Prog is indistinguishable from a position command). d.mu is taken only
+// around cached-state transitions — never across port I/O, the pace sleep or
+// the opener.
+func (d *Driver) writeFrameIO(frame []byte) error {
+	d.mu.Lock()
+	down := d.lnk.snapshot() == nil || !d.online
+	d.mu.Unlock()
+	if down {
 		// Link down (never opened, or after a fault): heal on the caller's
 		// behalf, cooldown-gated so a flapping adapter cannot spin
 		// open/write/close (KTD7: indefinite, one attempt per window).
-		if !d.reopenDueLocked() {
-			return fmt.Errorf("serial link down: %s", d.errStr)
+		d.mu.Lock()
+		due := d.reopenDueLocked()
+		errStr := d.errStr
+		d.mu.Unlock()
+		if !due {
+			return fmt.Errorf("serial link down: %s", errStr)
 		}
-		if err := d.reopenLocked(); err != nil {
+		if err := d.reopenIO(); err != nil {
 			return err
 		}
 	}
 
-	// Rot1Prog write pacing (Appendix A): ≥300 ms between any two writes.
+	// Rot1Prog write pacing (Appendix A): ≥300 ms between any two writes. The
+	// sleep runs under ioMu only — writers still serialize, but the cached
+	// state stays answerable.
+	d.mu.Lock()
+	var wait time.Duration
 	if !d.lastWrite.IsZero() {
-		if wait := d.opts.WritePace - time.Since(d.lastWrite); wait > 0 {
-			time.Sleep(wait)
+		if w := d.opts.WritePace - time.Since(d.lastWrite); w > 0 {
+			wait = w
 		}
 	}
+	d.mu.Unlock()
+	if wait > 0 {
+		time.Sleep(wait)
+	}
 
-	if _, err := d.lnk.snapshot().Write(frame); err != nil {
+	if err := d.writeWatchdog(frame); err != nil {
+		d.mu.Lock()
 		d.markDownLocked(err)
-		if !d.reopenDueLocked() {
+		due := d.reopenDueLocked()
+		d.mu.Unlock()
+		if !due {
 			return fmt.Errorf("write: %w", err)
 		}
 		// One reopen+retry per call (the ultrabridge model): the stale handle
 		// is replaced and the frame re-sent once; a persistently broken link
 		// surfaces the error and the next poll tick retries.
-		if rErr := d.reopenLocked(); rErr != nil {
+		if rErr := d.reopenIO(); rErr != nil {
 			return fmt.Errorf("write: %w (reopen: %v)", err, rErr)
 		}
 		d.log.Warn("serial write fault, port reopened", "err", err)
-		if _, err = d.lnk.snapshot().Write(frame); err != nil {
+		if err := d.writeWatchdog(frame); err != nil {
+			d.mu.Lock()
 			d.markDownLocked(err)
+			d.mu.Unlock()
 			return fmt.Errorf("write after reopen: %w", err)
 		}
 	}
+	d.mu.Lock()
 	d.lastWrite = time.Now()
+	d.mu.Unlock()
 	return nil
+}
+
+// writeWatchdog writes one frame through the current port handle, bounded by
+// Opts.WriteTimeout. go.bug.st/serial exposes no write deadline (its unix
+// Write is a plain blocking write), so a wedged tty fd would park here
+// forever holding ioMu; instead the watchdog closes the handle on stall —
+// closing the fd converts the parked Write into an error, which feeds the
+// existing markDown/reopen self-heal path (the USB-unplug rehearsal applied
+// to the write side). Requires d.ioMu held (single writer); the Close runs
+// through the link handle itself, deliberately NOT through ioMu — the stuck
+// writer still holds ioMu, which is exactly why it must be reclaimable.
+func (d *Driver) writeWatchdog(frame []byte) error {
+	rw := d.lnk.snapshot()
+	if rw == nil {
+		return io.ErrClosedPipe
+	}
+	done := make(chan error, 1) // buffered: a late parked Write never leaks its goroutine
+	go func() {
+		_, err := rw.Write(frame)
+		done <- err
+	}()
+	timer := time.NewTimer(d.opts.WriteTimeout)
+	defer timer.Stop()
+	select {
+	case err := <-done:
+		return err
+	case <-timer.C:
+		_ = rw.Close()
+		return fmt.Errorf("write stalled for %s — port handle closed by watchdog", d.opts.WriteTimeout)
+	}
 }
 
 // --- link state -------------------------------------------------------------------
@@ -361,6 +467,7 @@ func (d *Driver) markDownLocked(err error) {
 	d.online = false
 	d.valid = false
 	d.errStr = err.Error()
+	d.timeouts = 0 // any link transition restarts the consecutive-timeout count
 	if !wasDown {
 		d.lastFault = time.Now()
 		d.log.Warn("serial link down", "err", err)
@@ -374,31 +481,41 @@ func (d *Driver) reopenDueLocked() bool {
 	return time.Since(d.lastFault) >= d.opts.ReopenCooldown
 }
 
-// reopenLocked replaces the port handle: it closes the stale one (which also
+// reopenIO replaces the port handle: it closes the stale one (which also
 // unblocks the old reader — its late error is discarded by generation tag),
 // calls the opener (which re-resolves the by-id path), bumps the reader
 // generation, and re-initializes the axis state (KTD7). Reopening must be
 // preceded by reopenDueLocked; a failed attempt stamps lastFault so the next
 // retry waits out the cooldown — that is the indefinite, paced retry.
-func (d *Driver) reopenLocked() error {
+//
+// Requires d.ioMu held (the port lifecycle is io-owned); d.mu is taken only
+// around the cached-state transitions, so even a slow device-node open cannot
+// freeze Online()/Readback().
+func (d *Driver) reopenIO() error {
+	d.mu.Lock()
 	d.gen++
 	gen := d.gen
 	d.lnk.swap(nil)
+	d.mu.Unlock()
 	rw, err := d.opener()
 	if err != nil {
+		d.mu.Lock()
 		d.online = false
 		d.valid = false
 		d.errStr = "open serial: " + err.Error()
 		d.lastFault = time.Now()
+		d.mu.Unlock()
 		return err
 	}
 	d.lnk.swap(rw)
+	d.mu.Lock()
 	d.online = true
 	// Re-init after reopen (KTD7): Rot1Prog has no init command sequence —
 	// the status request on the next tick IS the re-init, and until its
 	// reply the readback is unknown, so the deadband always writes.
 	d.valid = false
 	d.errStr = ""
+	d.timeouts = 0
 	// Drop any frames the dead link staged before the fault: a stale
 	// pre-outage reply must never be consumed as a fresh readback.
 	for {
@@ -409,11 +526,15 @@ func (d *Driver) reopenLocked() error {
 		}
 		break
 	}
+	d.mu.Unlock()
 	d.startReader(gen)
-	if d.everUp {
+	d.mu.Lock()
+	wasUp := d.everUp
+	d.everUp = true
+	d.mu.Unlock()
+	if wasUp {
 		d.log.Warn("serial port reopened after fault", "gen", gen)
 	} else {
-		d.everUp = true
 		d.log.Info("serial port opened", "gen", gen)
 	}
 	return nil

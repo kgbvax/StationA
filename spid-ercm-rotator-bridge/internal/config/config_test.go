@@ -1,7 +1,9 @@
 package config
 
 import (
+	"errors"
 	"flag"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -127,13 +129,33 @@ func TestExampleConfigParses(t *testing.T) {
 	}
 }
 
-func TestLoadMissingFileUsesDefaults(t *testing.T) {
-	cfg, err := loadFile(t, "/nonexistent/spid-ercm-rotator-bridge.toml")
+func TestExplicitMissingConfigIsFatal(t *testing.T) {
+	// -config passed explicitly (loadFile parses "-config <path>") pointing at
+	// a file that does not exist: the operator asked for that file, so Load
+	// must fail instead of silently running defaults (config-and-secrets §2).
+	_, err := loadFile(t, "/nonexistent/spid-ercm-rotator-bridge.toml")
+	if err == nil {
+		t.Fatal("an explicitly-passed -config path that is missing must be an error — silence would hide the operator's typo")
+	}
+	if !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("missing explicit config must wrap fs.ErrNotExist, got: %v", err)
+	}
+}
+
+func TestAbsentDefaultConfigUsesDefaults(t *testing.T) {
+	// No FlagSet behind the flags (hand-built, like no -config passed) and the
+	// default path simply absent: run on the built-in defaults — the go-run
+	// bench mode with mock ports must keep working without a seeded /etc file.
+	flags := &Flags{ConfigPath: "/nonexistent/spid-ercm-rotator-bridge.toml"}
+	cfg, err := Load(flags)
 	if err != nil {
-		t.Fatalf("missing file should not error: %v", err)
+		t.Fatalf("absent default config must not error: %v", err)
 	}
 	if cfg.Control.AZ.Deadband != 1.0 {
 		t.Errorf("az deadband = %v, want default 1.0", cfg.Control.AZ.Deadband)
+	}
+	if cfg.MQTT.Broker != "tcp://127.0.0.1:1883" || cfg.Host != "shari" {
+		t.Errorf("defaults not applied: broker %q, host %q", cfg.MQTT.Broker, cfg.Host)
 	}
 }
 
@@ -450,9 +472,12 @@ func TestNoPasswordFlag(t *testing.T) {
 }
 
 func TestFlagLogLevelOverrides(t *testing.T) {
-	fs := flag.NewFlagSet("test", flag.ContinueOnError)
-	flags := RegisterFlags(fs)
-	_ = fs.Parse([]string{"-config", "/nonexistent.toml", "-log.level", "debug"})
+	// Hand-built Flags with an absent path (no -config flag): the level flag
+	// alone must override the config-derived level.
+	flags := &Flags{
+		ConfigPath: filepath.Join(t.TempDir(), "absent.toml"),
+		LogLevel:   "debug",
+	}
 	cfg, err := Load(flags)
 	if err != nil {
 		t.Fatalf("load: %v", err)

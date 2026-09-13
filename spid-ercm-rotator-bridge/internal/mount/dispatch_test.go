@@ -95,6 +95,14 @@ func (a *axis) pendingTarget() (float64, bool) {
 	return *a.pending, true
 }
 
+// claimedNow reports whether an intent is currently claimed by a worker —
+// past the pending slot, inside the serial section's reach.
+func (a *axis) claimedNow() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.inFlight > 0
+}
+
 // fakeCtrl is the scriptable per-axis fake: canned readback + validity, a
 // liveness switch, a SetTarget write log, a blocking gate for in-flight
 // choreography, and concurrency instrumentation.
@@ -105,6 +113,7 @@ type fakeCtrl struct {
 	valid       bool
 	targets     []float64
 	stops       int
+	events      []string // wire order: one "set"/"stop" entry per completed call
 	inFlight    int
 	maxInFlight int
 	gate        chan struct{} // non-nil: every SetTarget parks on it (close to release)
@@ -129,6 +138,7 @@ func (f *fakeCtrl) SetTarget(deg float64) error {
 	defer f.mu.Unlock()
 	f.inFlight--
 	f.targets = append(f.targets, deg)
+	f.events = append(f.events, "set")
 	return nil
 }
 
@@ -136,6 +146,7 @@ func (f *fakeCtrl) Stop() error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.stops++
+	f.events = append(f.events, "stop")
 	return nil
 }
 
@@ -181,6 +192,14 @@ func (f *fakeCtrl) stopCount() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.stops
+}
+
+func (f *fakeCtrl) eventLog() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]string, len(f.events))
+	copy(out, f.events)
+	return out
 }
 
 func (f *fakeCtrl) inFlightNow() int {
@@ -567,6 +586,221 @@ func TestStopClearsQueuedCancelsAndAdmitsPostStop(t *testing.T) {
 	if got := el.written(); len(got) != 2 || got[1] != 60 {
 		t.Errorf("el writes = %v, want [45 60] (post-stop intent admitted)", got)
 	}
+}
+
+// The claim-vs-halt race window (the yieldIfHalting true path): the worker
+// parks in a gated SetTarget holding writeMu, Stop raises halting and its
+// halt blocks on writeMu, and a post-stop intent is admitted into the
+// window before the gate releases. The stop frame must land exactly once
+// and the post-stop intent must follow it on the wire
+// (set-before-stop-before-next-set), whichever of the two contends writeMu
+// first — the pre-stop queued intent never dispatches.
+func TestStopYieldWindowOrdersWire(t *testing.T) {
+	az, el := newFake(), newFake()
+	az.setReadback(0, true)
+	el.setReadback(0, true)
+	m := newTestMount(t, testControl(), az, el)
+
+	gate := make(chan struct{})
+	az.setGate(gate)
+
+	m.Goto(Target{AZ: 10, HasAZ: true}) // in-flight, parked on the gate
+	waitFor(t, "az in-flight", func() bool { return az.inFlightNow() == 1 })
+	m.Goto(Target{AZ: 20, HasAZ: true}) // queued pre-stop
+	waitFor(t, "az target queued", func() bool {
+		deg, ok := m.axes[AZ].pendingTarget()
+		return ok && deg == 20
+	})
+
+	done := make(chan struct{})
+	go func() {
+		m.Stop()
+		close(done)
+	}()
+	waitFor(t, "stop epoch reached az", func() bool { return m.axes[AZ].haltingNow() })
+	// Admitted while the halt still owns the wire next: the worker's claim
+	// of it must either yield to the halt (re-queued with the new epoch) or
+	// lose the serial-section race — the wire order must come out the same.
+	if refs := m.Goto(Target{AZ: 30, HasAZ: true}); len(refs) != 0 {
+		t.Fatalf("post-stop intent refused: %v", refs)
+	}
+
+	close(gate) // the in-flight write finishes; stop frame and post-stop intent race
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("Stop did not return (halt stuck on writeMu)")
+	}
+	waitIdle(t, m, AZ)
+	waitIdle(t, m, EL)
+
+	// The pre-stop queued intent never dispatches; the post-stop intent is
+	// written exactly once, strictly after the stop frame.
+	if got := az.written(); len(got) != 2 || got[0] != 10 || got[1] != 30 {
+		t.Errorf("az writes = %v, want [10 30] (pre-stop 20 canceled, post-stop 30 once)", got)
+	}
+	if az.stopCount() != 1 || el.stopCount() != 1 {
+		t.Errorf("stop frames: az=%d el=%d, want 1 each", az.stopCount(), el.stopCount())
+	}
+	if got := az.eventLog(); len(got) != 3 || got[0] != "set" || got[1] != "stop" || got[2] != "set" {
+		t.Errorf("az wire order = %v, want [set stop set] (post-stop intent only after the stop frame)", got)
+	}
+}
+
+// The other half of the window: an intent claimed BEFORE the stop (a
+// pre-epoch seq) that reaches the serial section while halting is up. The
+// yield must release writeMu — a leaked lock deadlocks the same worker's
+// next drain and Stop's halt (the P0) — and the epoch check must discard
+// the re-queued intent, which was admitted before the stop. Driven
+// white-box without a running worker: the test holds the serial section to
+// park both the drain and Stop's halt behind it, then releases the two
+// contenders against each other.
+func TestYieldedPreEpochIntentDroppedWithoutDeadlock(t *testing.T) {
+	az, el := newFake(), newFake()
+	m := New(az, el, testControl(), nil)
+	a := m.axes[AZ]
+
+	// Admitted intent parked in the queue (no worker is running yet).
+	if refs := m.Goto(Target{AZ: 20, HasAZ: true}); len(refs) != 0 {
+		t.Fatalf("unexpected refusals: %v", refs)
+	}
+
+	// Hold the serial section, then start the "worker": it claims the
+	// pre-epoch intent and blocks on writeMu behind the test.
+	a.writeMu.Lock()
+	drainDone := make(chan struct{})
+	go func() {
+		a.drain()
+		close(drainDone)
+	}()
+	waitFor(t, "drain claimed the intent", func() bool { return a.claimedNow() })
+
+	// Open the halting window over the already-claimed intent; Stop's halt
+	// queues on writeMu behind the drain.
+	stopDone := make(chan struct{})
+	go func() {
+		m.Stop()
+		close(stopDone)
+	}()
+	waitFor(t, "stop epoch reached az", func() bool { return a.haltingNow() })
+	a.writeMu.Unlock() // the yielded claim and the halt now contend
+
+	select {
+	case <-stopDone:
+	case <-time.After(3 * time.Second):
+		t.Fatal("Stop deadlocked on writeMu (yield leaked the serial section)")
+	}
+	select {
+	case <-drainDone:
+	case <-time.After(3 * time.Second):
+		t.Fatal("drain deadlocked on writeMu (yield leaked the serial section)")
+	}
+
+	// The post-halt notify wake: flush the re-queue through the epoch
+	// check — a no-op when the halt won the race, the drop when the claim
+	// yielded. Either way the pre-epoch intent must not dispatch.
+	a.drain()
+	if a.busyNow() {
+		t.Error("pre-epoch intent survived the stop in the pending slot")
+	}
+	if a.claimedNow() {
+		t.Error("in-flight claim leaked across the yield")
+	}
+	if got := az.written(); len(got) != 0 {
+		t.Errorf("az writes = %v, want none (pre-epoch intent dropped)", got)
+	}
+	if az.stopCount() != 1 || el.stopCount() != 1 {
+		t.Errorf("stop frames: az=%d el=%d, want 1 each", az.stopCount(), el.stopCount())
+	}
+}
+
+// P0 regression stress: the leaked serial section in the yield path only
+// bites under concurrency — the same worker's next drain and Stop's halt
+// deadlock on it. Hammer several Goto callers against concurrent Stops
+// (run with -race); every Stop must return and the pipeline must still
+// dispatch afterwards. Bounded so CI stays fast.
+func TestStopGotoHammerDeadlockRegression(t *testing.T) {
+	az, el := newFake(), newFake()
+	m := newTestMount(t, testControl(), az, el)
+
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				m.Goto(Target{AZ: float64(20 + i), EL: float64(20+i) / 4, HasAZ: true, HasEL: true})
+				time.Sleep(time.Millisecond)
+			}
+		}(i)
+	}
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				m.Stop()
+				time.Sleep(2 * time.Millisecond)
+			}
+		}()
+	}
+
+	time.Sleep(250 * time.Millisecond)
+	close(stop)
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("hammer goroutines did not drain: a Goto or Stop never returned")
+	}
+
+	// The e-stop path survived: a final Stop returns with both axes halted.
+	stopDone := make(chan struct{})
+	go func() {
+		m.Stop()
+		close(stopDone)
+	}()
+	select {
+	case <-stopDone:
+	case <-time.After(3 * time.Second):
+		t.Fatal("post-hammer Stop never returned")
+	}
+
+	// A subsequent intent still reaches both controllers.
+	if refs := m.Goto(Target{AZ: 123, EL: 77, HasAZ: true, HasEL: true}); len(refs) != 0 {
+		t.Fatalf("post-hammer intent refused: %v", refs)
+	}
+	waitFor(t, "post-hammer az write", func() bool {
+		for _, w := range az.written() {
+			if w == 123 {
+				return true
+			}
+		}
+		return false
+	})
+	waitFor(t, "post-hammer el write", func() bool {
+		for _, w := range el.written() {
+			if w == 77 {
+				return true
+			}
+		}
+		return false
+	})
 }
 
 // --- park (R7, KTD11) -------------------------------------------------------------------

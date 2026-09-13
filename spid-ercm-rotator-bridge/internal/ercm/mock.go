@@ -27,6 +27,9 @@ import (
 //     before any computed reply — this is how a test pins an A-mode
 //     "+0aaa+0eee" or any odd vendor spelling.
 //   - FailWrites/FailReads inject scripted link faults for self-heal tests.
+//   - FailNextW fails the NEXT W goto write specifically — a command-
+//     selective dead-port seam (FailWrites eats the next write whatever it
+//     is, which a poll C2 would consume first).
 //
 // A W command moves both axes instantly (no slew model): position and target
 // converge at once, which is what the driver's next C2 observes. Mock parity
@@ -42,13 +45,14 @@ type MockDevice struct {
 	el       float64
 	firmware string
 
-	replies []string // staged reply lines, FIFO (scripted + computed)
-	writes  []string // every command line received, in order
-	stopN   int      // E/S commands seen
-	hold    bool     // suppress computed readback replies
-	failW   int      // remaining scripted write errors
-	failR   int      // remaining scripted read errors
-	closed  bool
+	replies   []string // staged reply lines, FIFO (scripted + computed)
+	writes    []string // every command line received, in order
+	stopN     int      // E/S commands seen
+	hold      bool     // suppress computed readback replies
+	failW     int      // remaining scripted write errors
+	failR     int      // remaining scripted read errors
+	failNextW bool     // script the next W goto write to fail
+	closed    bool
 }
 
 // NewMock returns a MockDevice in a plausible power-on state (az/el 0,
@@ -157,6 +161,17 @@ func (m *MockDevice) FailReads(n int) {
 	m.failR = n
 }
 
+// FailNextW scripts the NEXT W goto write to fail (a dead port mid-flush).
+// Unlike FailWrites, which consumes the fault on the next write whatever it
+// is, this survives intervening poll traffic — a test can stage a readback
+// that triggers a deferred-target flush and pin the flush itself as the
+// casualty. The failed command is not logged and does not move the axes.
+func (m *MockDevice) FailNextW() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.failNextW = true
+}
+
 // stageLocked appends one reply line. Must hold m.mu.
 func (m *MockDevice) stageLocked(line string) {
 	m.replies = append(m.replies, line)
@@ -174,10 +189,21 @@ func (m *MockDevice) Write(p []byte) (int, error) {
 		return 0, errors.New("scripted write error")
 	}
 	for _, line := range splitLines(p) {
+		if m.failNextW && isWCmd(line) {
+			m.failNextW = false
+			return 0, errors.New("scripted W write error")
+		}
 		m.writes = append(m.writes, line)
 		m.dispatchLocked(line)
 	}
 	return len(p), nil
+}
+
+// isWCmd reports whether the line is a W goto command — the only command in
+// this dialect spelled with a leading W (rFMW uppercases to RFMW, which
+// starts with R).
+func isWCmd(line string) bool {
+	return strings.HasPrefix(strings.ToUpper(strings.TrimSpace(line)), "W")
 }
 
 // reWCmd matches the W goto command — "Waaa eee" with the single-space

@@ -689,3 +689,75 @@ func TestMockModeEndToEnd(t *testing.T) {
 		return !azOK && !elOK
 	})
 }
+
+// --- flood/wedge resistance (F12) -------------------------------------------------
+
+// blockingMount wedges Goto/Park/Readback until released — the probe for a
+// wedged serial section — while Stop records and returns fast, so a STOP
+// datagram processed behind the wedge is observable.
+type blockingMount struct {
+	release chan struct{}
+	mu      sync.Mutex
+	stops   int
+}
+
+func (b *blockingMount) Goto(mount.Target) []mount.Refusal {
+	<-b.release
+	return nil
+}
+
+func (b *blockingMount) Park() []mount.Refusal {
+	<-b.release
+	return nil
+}
+
+func (b *blockingMount) Readback(mount.Axis) (float64, bool) {
+	<-b.release
+	return 0, false
+}
+
+func (b *blockingMount) Stop() []mount.AxisError {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.stops++
+	return nil
+}
+
+func (b *blockingMount) Stops() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.stops
+}
+
+// TestBlockingFacadeCallDoesNotStarveStopDatagram (F12): handle() runs on the
+// single UDP read loop, so a wedged Goto must be bounded, not inline — the
+// STOP datagram sent behind it is still dispatched once the bound expires,
+// and the expiry is Warn-logged, never swallowed silently.
+func TestBlockingFacadeCallDoesNotStarveStopDatagram(t *testing.T) {
+	oldTO := callTimeout
+	callTimeout = 150 * time.Millisecond
+	t.Cleanup(func() { callTimeout = oldTO })
+
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) }) // release the parked goroutines
+	bm := &blockingMount{release: release}
+
+	sink := &lockedBuffer{}
+	lg := slog.New(slog.NewTextHandler(sink, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	addr, _ := startTestServer(t, bm, lg)
+
+	// Wedge the read loop with a goto whose façade call never returns...
+	sendDatagram(t, addr, "<PST><AZIMUTH>180</AZIMUTH></PST>")
+	// ...then queue a STOP behind it: it must still be processed.
+	sendDatagram(t, addr, "<PST><STOP>1</STOP></PST>")
+
+	eventually(t, "stop dispatched behind the wedged goto", func() bool {
+		return bm.Stops() == 1
+	})
+
+	// The bound expiry surfaced — the operator signal that the goto was
+	// dropped (F12: never a silent swallow).
+	if out := sink.String(); !strings.Contains(out, "exceeded the per-call bound") {
+		t.Errorf("missing per-call bound expiry Warn:\n%s", out)
+	}
+}

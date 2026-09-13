@@ -7,6 +7,7 @@ import '../../store/bus_store.dart';
 import '../../store/wiring.dart';
 import '../theme.dart';
 import 'card_container.dart';
+import 'status_tag.dart';
 
 /// Sat-ops rotator surface (U8): per-axis readouts, goto, and the STOP
 /// button — the operator's e-stop for the spid/ercm mount.
@@ -146,22 +147,30 @@ class _AxisControlState extends State<_AxisControl> {
   @override
   Widget build(BuildContext context) {
     final mqtt = context.read<MqttService>();
+    final store = context.read<BusStore>();
+    final address = 'muehle/${widget.slotName}';
     final state = widget.slot?.state;
 
     // Position key is the axis name; an invalid readback omits it (KTD9's
-    // never-a-fabricated-position rule, bus side) — render a dash.
-    final position = (state?[widget.axis] as num?)?.toDouble();
-    final target = (state?['target'] as num?)?.toDouble();
+    // never-a-fabricated-position rule, bus side) — render a dash. The
+    // store's safe accessor (like pol_ctrl_panel) also degrades a
+    // type-confused payload (the readwrite hf account can publish `az` as a
+    // String) to a dash instead of throwing a TypeError out of build.
+    final position = store.stateValueAs<num>(address, widget.axis)?.toDouble();
+    final target = store.stateValueAs<num>(address, 'target')?.toDouble();
     final moving = state?['moving'] == true;
     final error = state?['error'];
     final errorText = error is String && error.isNotEmpty ? error : null;
 
     // Travel envelope from /meta capabilities — the same limits the bridge
     // refuses on (R10). Absent /meta ⇒ null limits ⇒ parse-only validation.
+    // Guarded with `is num` so a malformed /meta degrades the same way.
     final caps = widget.slot?.meta?['capabilities'];
     final limits = caps is Map ? caps['limits'] : null;
-    final minLimit = (limits is Map ? limits['min'] as num? : null)?.toDouble();
-    final maxLimit = (limits is Map ? limits['max'] as num? : null)?.toDouble();
+    final minRaw = limits is Map ? limits['min'] : null;
+    final maxRaw = limits is Map ? limits['max'] : null;
+    final minLimit = minRaw is num ? minRaw.toDouble() : null;
+    final maxLimit = maxRaw is num ? maxRaw.toDouble() : null;
 
     final text = _controller.text.trim();
     final parsed = text.isEmpty ? null : double.tryParse(text);
@@ -207,9 +216,9 @@ class _AxisControlState extends State<_AxisControl> {
                   color: AppTheme.txtMute),
             ),
             const SizedBox(width: 10),
-            if (moving) _tag('MOVING', AppTheme.amber),
+            if (moving) StatusTag(label: 'MOVING', color: AppTheme.amber),
             if (errorText != null) ...[
-              _tag('ERR', AppTheme.red),
+              StatusTag(label: 'ERR', color: AppTheme.red),
               const SizedBox(width: 4),
               Expanded(
                 child: Text(
@@ -221,7 +230,7 @@ class _AxisControlState extends State<_AxisControl> {
               ),
             ] else
               const Spacer(),
-            if (!widget.online) _tag('OFFLINE', AppTheme.txtMute),
+            if (!widget.online) StatusTag(label: 'OFFLINE', color: AppTheme.txtMute),
           ],
         ),
         const SizedBox(height: 6),
@@ -312,19 +321,6 @@ class _AxisControlState extends State<_AxisControl> {
           color: AppTheme.txt,
         ),
       ),
-    );
-  }
-
-  Widget _tag(String label, Color color) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-      decoration: BoxDecoration(
-        color: AppTheme.blend(color, 0.12),
-        border: Border.all(color: color),
-        borderRadius: BorderRadius.circular(4),
-      ),
-      child: Text(label,
-          style: AppTheme.mono(10, color: color, weight: FontWeight.w700)),
     );
   }
 }

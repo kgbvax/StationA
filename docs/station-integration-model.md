@@ -684,7 +684,10 @@ targets outside the configured travel limits are refused on every path before
 any serial write). The ports are deliberately distinct from the other rotator
 systems (pelcobridge2's rotctld `:4533` on shack-pc, wrc's PstRotator
 `:12040`) so a client pointed at "the rotator" cannot silently reach the wrong
-antenna system.
+antenna system. Refusals on these protocol paths (dead axis, out-of-limits
+target) are answered to the protocol client and logged (journald), never routed
+into `/state.error` — that channel carries `/cmd` rejections and serial link
+faults only.
 
 **`muehle/uhf/pol-ctrl`** — M5 Stamp PLC #2 with custom firmware. `capabilities:
 polarizations [h, v, cl, cr]`. Settable state, operator-driven; no automatic binding.

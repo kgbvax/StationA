@@ -207,6 +207,12 @@ switch:
 # optimistic restore claimed the last phase while the relays were all off —
 # the boot lie this config fixes. The retained /cmd re-applies the operator's
 # last intent after the MQTT reconnect (self-healing steady state, model §8).
+#
+# Local changes rewrite the retained /cmd (finding #10): every on_value pass
+# that actually changes the driven phase also publishes the new phase back as
+# the retained set_pol intent, so a local Button-A change survives the next
+# reconnect instead of being silently reverted by the stale console-era /cmd.
+# A change-gated publish keeps its own /cmd echo convergent (no loop).
 select:
   - platform: template
     id: polarization
@@ -234,6 +240,12 @@ select:
             if      (x == "Horizontal")          tgt = "h";
             else if (x == "Circular Left")       tgt = "cl";
             else if (x == "Circular Right")      tgt = "cr";
+            // Record whether this pass actually changed the driven phase:
+            // gates the retained /cmd rewrite below (finding #10). The
+            // template select re-fires on_value even for an unchanged value
+            // (control() publishes unconditionally), so the gate — not the
+            // on_value trigger itself — is what stops the echo cycle.
+            id(g_pol_changed) = (tgt != cur);
             if (tgt != cur) {
               // Interlock: break-before-make, all-off-then-one-on.
               id(r_horizontal).turn_off();
@@ -247,6 +259,37 @@ select:
             // A valid state change clears the last /cmd error.
             id(g_error) = "";
         - script.execute: publish_state
+        # Finding #10: a local change (Button A, web/native-API selection)
+        # must also become the RETAINED intent, or the next MQTT reconnect
+        # re-delivers the stale console-era set_pol and silently reverts the
+        # operator's local phase choice. Publish the new phase back as the
+        # retained /cmd, in the exact shape on_json_message validates:
+        # action "set_pol" with the argument as a JSON STRING under `value`
+        # (h|v|cl|cr) — never a JSON boolean/number.
+        #
+        # Echo-safety: publish ONLY on an actual phase change
+        # (g_pol_changed, set in the lambda above). The broker echoes this
+        # retained publish back to our own /cmd subscription →
+        # on_json_message → make_call(same option) → on_value re-fires even
+        # unchanged, so an unconditional publish here would loop forever.
+        # Gated on change, the echo pass rewrites the relays as a no-op
+        # (idempotency guard) and skips the publish — the cycle converges
+        # after exactly one echo, and reconnect redelivery of the now-
+        # matching intent stays a no-op too.
+        - if:
+            condition:
+              lambda: return id(g_pol_changed);
+            then:
+              - mqtt.publish:
+                  topic: ${site}/${station}/${slot}/cmd
+                  qos: 1
+                  retain: true
+                  payload: !lambda |-
+                    std::string code = "v";
+                    if      (x == "Horizontal")     code = "h";
+                    else if (x == "Circular Left")  code = "cl";
+                    else if (x == "Circular Right") code = "cr";
+                    return "{\"action\":\"set_pol\",\"value\":\"" + code + "\"}";
         - component.update: vdu
 
 # --- Globals ---
@@ -256,6 +299,14 @@ globals:
   - id: g_error
     type: std::string
     initial_value: '""'
+  # Set by the polarization select's on_value: true when that pass actually
+  # CHANGED the driven phase (target differed from the relay-derived current
+  # phase). Gates the retained /cmd rewrite in the select's on_value so the
+  # publish -> broker echo -> on_json_message -> on_value cycle converges
+  # after one echo instead of looping forever.
+  - id: g_pol_changed
+    type: bool
+    initial_value: 'false'
 
 # Holding Button A down for 4s reboots the device. The reboot is scheduled on
 # press and cancelled on release, so it never delays the immediate cycle action.

@@ -478,7 +478,11 @@ carry it); the mitigations that exist are magnitude (limits), liveness (refusal
 not queueing), wear (deadband), misdirection (distinct ports), and consequence
 (physical fallback). A future revision of this register is required if any
 listener moves off the shack LAN, if the shack LAN's trust model changes, or if
-the rotators gain a protocol with real auth.
+the rotators gain a protocol with real auth. The rotator `/cmd` grammar
+(`goto`/`stop`) is likewise intentionally docs-only — the read-only `expose`
+carries no command metadata (station-integration-model §7.2 +
+`spid-ercm-rotator-bridge/CLAUDE.md`) — so a future bus-native automation that
+needs self-describing motion metadata is a revision trigger of the same register.
 
 ## [decision] Phase-controller device surfaces — sixth vector, folded from U10 (plan KTD4)
 

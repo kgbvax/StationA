@@ -9,9 +9,10 @@ holds cross-cutting plumbing (`shared/mqtt`, `shared/schema`, later `shared/conf
 every Go component imports it via a `replace … => ../shared` so each stays self-building
 without the workspace. Bridges import `shared/` but never another bridge's `internal/`
 — enforced by Go's `internal/` visibility rule across separate modules, not just
-convention. Non-Go components (`waveshare_relay-antswitch-bridge` = ESPHome YAML,
-`m5stamp-hf-ctrl` and `m5dial-hf-rotctrl` = PlatformIO firmware) live alongside as plain
-subdirectories and are not in `go.work`.
+convention. Non-Go components (`waveshare_relay-antswitch-bridge` and
+`m5stamp-pol-ctrl` = ESPHome YAML, `m5stamp-hf-ctrl` and `m5dial-hf-rotctrl` =
+PlatformIO firmware) live alongside as plain subdirectories and are not in
+`go.work`.
 
 The projects below were previously standalone git repos nested here and gitignored;
 they have been folded into this repo with history (`git subtree`). There are no longer

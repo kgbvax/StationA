@@ -65,9 +65,11 @@ func newAxis(m *Mount, name Axis, ctrl Controller, ctl config.AxisControl) *axis
 // admit validates one target and admits it to the coalescer. Called with
 // m.mu held, so the epoch stamp is atomic with the pending slot: a concurrent
 // Stop either fully precedes this admission (the target survives with the new
-// epoch) or fully follows it (its clear phase drops the target). Returns the
-// refusal when the target is not admitted.
-func (a *axis) admit(deg float64, seq uint64) (Refusal, bool) {
+// epoch) or fully follows it (its clear phase drops the target). The online
+// flag is the R9 liveness view the caller sampled BEFORE m.mu was taken —
+// admit performs no controller call, keeping the m.mu section pure. Returns
+// the refusal when the target is not admitted.
+func (a *axis) admit(deg float64, seq uint64, online bool) (Refusal, bool) {
 	// R10: limit refusal before any serial write. Non-finite targets are
 	// limit refusals too — the comparison against a NaN is true for nothing.
 	if math.IsNaN(deg) || math.IsInf(deg, 0) || deg < a.ctl.Min || deg > a.ctl.Max {
@@ -80,7 +82,7 @@ func (a *axis) admit(deg float64, seq uint64) (Refusal, bool) {
 	}
 	// R9/KTD9: the local two-layer liveness view — a dead device link
 	// refuses the axis; the intent is never queued or dropped silently.
-	if !a.ctrl.Online() {
+	if !online {
 		return Refusal{
 			Axis:   a.name,
 			Reason: RefusalLiveness,
@@ -165,6 +167,10 @@ func (a *axis) drain() {
 
 		a.writeMu.Lock()
 		if a.yieldIfHalting(deg, seq) {
+			// The stop owns the wire next and the worker yielded — release
+			// the serial section too, or the worker's own next drain and
+			// Stop's halt deadlock on the leaked lock.
+			a.writeMu.Unlock()
 			return
 		}
 		if seq != a.mount.stopSeqNow() {
@@ -194,11 +200,13 @@ func (a *axis) drain() {
 
 // yieldIfHalting handles a claim that raced a stop: the stop owns the wire
 // next, so the claimed intent goes back to the pending slot (any newer
-// pending wins — latest-wins) and the worker yields. A re-queued pre-stop
-// intent carries its old epoch and is dropped at the next claim; a post-stop
-// intent carries the new epoch and writes after the stop frame, so the wire
-// order is always set-before-stop-before-next-set. Only called with writeMu
-// held; reports whether the worker yielded (drain returns).
+// pending wins — latest-wins) and the worker yields. The re-queue is
+// load-bearing, not a deferred no-op: a pre-stop intent carries its old
+// epoch and is dropped at the next claim, but a post-stop intent admitted
+// during the halt window carries the new epoch and survives it, writing
+// after the stop frame — so the wire order is always
+// set-before-stop-before-next-set. Only called with writeMu held; reports
+// whether the worker yielded (drain returns).
 func (a *axis) yieldIfHalting(deg float64, seq uint64) bool {
 	a.mu.Lock()
 	halting := a.halting

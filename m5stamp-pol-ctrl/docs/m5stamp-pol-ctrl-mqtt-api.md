@@ -285,6 +285,11 @@ device**, not inherited from framework behavior. First flash is physical USB
     clean shutdown (Button A 4 s hold reboot) publishes `offline` itself.
 11. **ts sanity**: with the native-API host connected, `ts` is current UTC
     (check the epoch caveat when it is not).
+12. **Local change survives reconnect**: cycle polarization locally via
+    Button A → the retained `/cmd` is rewritten to the new phase (watch it
+    with `mosquitto_sub -t muehle/uhf/pol-ctrl/cmd -v`); bounce the MQTT
+    connection → the local choice survives — no revert to the stale
+    retained intent.
 
 ---
 

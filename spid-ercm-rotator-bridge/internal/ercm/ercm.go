@@ -8,7 +8,9 @@
 //
 //	SetTarget(el)   elevation goto; DEFERRED (accepted, not written) while no
 //	                azimuth has been cached yet — see the deferral rule below
-//	Stop()          stop the elevation axis (E command); clears a deferred target
+//	Stop()          stop the elevation axis (E command); cancels a deferred
+//	                target EVEN while the link is down (offline stop ⇒
+//	                ErrOffline, but the parked intent is still cancelled)
 //	Readback()      (el, valid) — cached from the last C2 reply; valid is false
 //	                until the first C2 reply after start or after any Down
 //	                transition (KTD7 always-write rule)
@@ -31,14 +33,26 @@
 // The az-deferral rule (KTD6, distinct from U4's deadband skip): a W arriving
 // with NO cached az — post-start/post-reopen, pre-first-readback — is DEFERRED
 // until the next poll tick supplies one. Never is a W written with a
-// fabricated az operand. Stop clears a deferred target.
+// fabricated az operand. Stop cancels a deferred target — an OFFLINE stop
+// too: the cancel runs before the offline refusal, so a healed link never
+// moves the axis on an intent the operator stopped. A deferred target whose
+// flush write faults is re-deferred (it never hit the wire), not dropped.
 //
-// Concurrency model: one mutex (d.mu) guards the port handle, the reader
-// generation and the caches; the port WRITE phases of every path run under
-// it, so writes serialize. The reply WAIT of the poll exchange deliberately
-// runs WITHOUT d.mu — a slow or silent controller parks the poll loop, never
-// the control paths (SetTarget/Stop/Readback stay live). Only Run exchanges
-// (waits for replies), so reply lines have exactly one consumer.
+// Concurrency model: TWO mutexes, as in the SPID driver (internal/spid).
+// d.mu guards only cached state — the port handle, the reader generation,
+// online/readback caches, pendingEl, lastErr, closed — and is NEVER held
+// across port I/O or the opener, so Online/Readback/LastError stay
+// answerable. d.ioMu serializes the port WRITE phase of every path; a write
+// wedged on a dead fd parks only other writers. Each write runs under a
+// stall watchdog (go.bug.st/serial exposes no write deadline): a write that
+// has not returned within WriteTimeout has its port handle Closed — the
+// Close runs on the timer goroutine and takes NO driver lock, so a stalled
+// write cannot wedge the close path — converting the blocked write into an
+// error that feeds the existing link-Down/reopen self-heal (KTD7). The
+// reply WAIT of the poll exchange deliberately runs WITHOUT either lock — a
+// slow or silent controller parks the poll loop, never the control paths
+// (SetTarget/Stop/Readback stay live). Only Run exchanges (waits for
+// replies), so reply lines have exactly one consumer.
 //
 // Bench-only settings — NEVER issued at boot by this driver (the boot path
 // must not mutate or even probe controller configuration; these are recorded
@@ -116,6 +130,12 @@ type Config struct {
 	ReopenCooldown time.Duration
 	// ReplyTimeout bounds each exchange's wait for a reply line.
 	ReplyTimeout time.Duration
+	// WriteTimeout bounds one port write. go.bug.st/serial exposes no write
+	// deadline (its unix Write is a plain blocking write), so a write stalled
+	// on a wedged fd is closed out by a watchdog after this long and feeds
+	// the reopen/self-heal path. Tests shrink it; real deployments take the
+	// 3 s default.
+	WriteTimeout time.Duration
 	// Opener opens a fresh port handle. Tests (and any deployment needing
 	// real termios line-speed programming) inject their own; nil selects the
 	// default: mock for an empty Port, plain file I/O otherwise. Every
@@ -129,6 +149,7 @@ const (
 	defaultPollInterval   = time.Second
 	defaultReopenCooldown = 2 * time.Second
 	defaultReplyTimeout   = 2 * time.Second
+	defaultWriteTimeout   = 3 * time.Second
 )
 
 // genErr tags a reader-goroutine error with the generation of the reader that
@@ -148,6 +169,10 @@ type Driver struct {
 	log    *slog.Logger
 	opener func() (io.ReadWriteCloser, error)
 
+	// mu guards the cached liveness/readback state AND the port handle +
+	// reader generation — and NOTHING that does port I/O. It is never held
+	// across a port write or the opener, so Online/Readback/LastError stay
+	// answerable even while a write is wedged on a dead fd.
 	mu sync.Mutex
 
 	closed          bool
@@ -164,8 +189,15 @@ type Driver struct {
 	cachedEl float64
 
 	pendingEl *float64 // deferred target awaiting a first az (KTD6)
+	stopGen   uint64   // bumped by every Stop; a flush that raced a stop must not re-defer it
 	firmware  string   // rFMW reply, read once per (re)open
 	lastErr   string
+
+	// ioMu serializes the port WRITE phase of every path (goto, stop, poll
+	// exchange, init): writers queue here, never on mu. A write stalled in
+	// the kernel holds ioMu — the watchdog reclaims the link by closing the
+	// handle on stall, a Close that deliberately takes NO driver lock.
+	ioMu sync.Mutex
 
 	rx    chan string // reply lines from the current reader generation
 	rxErr chan genErr // reader errors, tagged with their generation
@@ -190,6 +222,9 @@ func New(cfg Config, log *slog.Logger) *Driver {
 	}
 	if cfg.ReplyTimeout <= 0 {
 		cfg.ReplyTimeout = defaultReplyTimeout
+	}
+	if cfg.WriteTimeout <= 0 {
+		cfg.WriteTimeout = defaultWriteTimeout
 	}
 	if log == nil {
 		log = slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -226,46 +261,59 @@ func New(cfg Config, log *slog.Logger) *Driver {
 // cached (post-start/post-reopen, pre-first-readback) the intent is DEFERRED:
 // it is accepted, stored, and written as a W carrying the az the next C2
 // reply supplies — never with a fabricated az operand (KTD6). A deferred
-// target is cleared by Stop and superseded by a later SetTarget.
+// target is cancelled by Stop (offline included) and superseded by a later
+// SetTarget.
 func (d *Driver) SetTarget(deg float64) error {
 	d.mu.Lock()
-	defer d.mu.Unlock()
 	if d.closed {
+		d.mu.Unlock()
 		return ErrClosed
 	}
 	if !d.online {
+		d.mu.Unlock()
 		return ErrOffline
 	}
 	if !inOperandRange(deg) {
+		d.mu.Unlock()
 		return ErrOutOfRange
 	}
 	if !d.haveAz {
 		el := deg
 		d.pendingEl = &el
 		d.log.Debug("elevation goto deferred until first readback supplies az", "el", deg)
+		d.mu.Unlock()
 		return nil
 	}
-	return d.writeGotoLocked(d.cachedAz, deg)
+	// Direct path: snapshot the az operand, release d.mu, then take the port
+	// — the write must never hold the state mutex (a wedged fd would freeze
+	// Online/Readback with it).
+	az := d.cachedAz
+	d.mu.Unlock()
+	return d.writeGoto(az, deg)
 }
 
-// Stop halts the elevation axis (E command) and clears any deferred target:
-// a stop must never be followed by a stale parked intent moving the axis
-// (KTD8's queue-cancel discipline, applied to this driver's deferral).
+// Stop halts the elevation axis (E command) and cancels any deferred target
+// REGARDLESS of link state: the pendingEl clear runs BEFORE the offline
+// guard, so an offline stop (ErrOffline) still cancels the intent — after
+// the link heals there must be no stale parked target left to move the axis
+// (KTD8's queue-cancel discipline, applied to this driver's deferral). When
+// the link is live the E command is written; a write fault takes the link
+// Down and the reopen self-heal engages.
 func (d *Driver) Stop() error {
 	d.mu.Lock()
-	defer d.mu.Unlock()
 	if d.closed {
+		d.mu.Unlock()
 		return ErrClosed
 	}
+	d.pendingEl = nil
+	d.stopGen++
 	if !d.online {
+		d.mu.Unlock()
 		return ErrOffline
 	}
-	d.pendingEl = nil
-	if _, err := io.WriteString(d.port, cmdStop+"\r"); err != nil {
-		d.linkDownLocked(fmt.Errorf("write stop: %w", err))
-		return fmt.Errorf("write stop: %w", err)
-	}
-	return nil
+	d.mu.Unlock()
+	_, err := d.portWrite(cmdStop)
+	return err
 }
 
 // Readback returns the cached elevation and whether it is valid. valid is
@@ -316,6 +364,7 @@ func (d *Driver) Close() {
 	d.online = false
 	d.valid = false
 	d.haveAz = false
+	d.pendingEl = nil // the session dies; no parked intent may outlive it
 }
 
 // Run drives the poll loop until ctx is cancelled or the driver is Closed:
@@ -366,7 +415,9 @@ func (d *Driver) Run(ctx context.Context) error {
 // tryOpen brings the link up: opener (cooldown-gated), a fresh reader
 // generation, then re-init (rFMW) — the controller may have power-cycled in
 // every gap the link was down, so the init re-runs after EVERY successful
-// (re)open, not just the first (KTD7).
+// (re)open, not just the first (KTD7). The opener itself runs under NO
+// driver lock: a wedged device enumeration must not freeze the mu-guarded
+// state reads either (the same discipline as the write path).
 func (d *Driver) tryOpen(ctx context.Context) error {
 	d.mu.Lock()
 	if d.closed {
@@ -378,12 +429,22 @@ func (d *Driver) tryOpen(ctx context.Context) error {
 		return fmt.Errorf("reopen cooldown (%s) not elapsed", d.cfg.ReopenCooldown)
 	}
 	d.lastOpenAttempt = time.Now()
+	d.mu.Unlock()
 
 	rw, err := d.opener()
 	if err != nil {
+		d.mu.Lock()
 		d.lastErr = fmt.Sprintf("open serial: %v", err)
 		d.mu.Unlock()
 		return fmt.Errorf("open serial: %w", err)
+	}
+
+	d.mu.Lock()
+	if d.closed {
+		// Close() raced the open: the driver is gone, drop the fresh handle.
+		d.mu.Unlock()
+		_ = rw.Close()
+		return ErrClosed
 	}
 	d.port = rw
 	d.online = true
@@ -413,10 +474,14 @@ func (d *Driver) tryOpen(ctx context.Context) error {
 }
 
 // applyReadback folds one C2 reply into the cache and — if a goto was
-// deferred for want of an az — writes it now with the az this reply supplied.
+// deferred for want of an az — writes it now with the az this reply supplied
+// (KTD6). The flush write runs WITHOUT d.mu (a wedged fd must not freeze the
+// state reads); a write fault does NOT silently drop the intent: the target
+// is re-deferred and the next healed poll flushes it again — /state keeps
+// reporting the target, so the driver must keep chasing it. A Stop or a
+// newer SetTarget landing in the unlocked window wins over the re-defer.
 func (d *Driver) applyReadback(line string) {
 	d.mu.Lock()
-	defer d.mu.Unlock()
 	az, el, hasAz, hasEl := parsePosition(line)
 	if hasAz {
 		d.cachedAz = az
@@ -426,55 +491,131 @@ func (d *Driver) applyReadback(line string) {
 		d.cachedEl = el
 		d.valid = true
 	}
-	if d.pendingEl != nil && d.haveAz {
-		pending := *d.pendingEl
-		d.pendingEl = nil
-		_ = d.writeGotoLocked(d.cachedAz, pending)
+	if d.pendingEl == nil || !d.haveAz {
+		d.mu.Unlock()
+		return
 	}
+	pending := *d.pendingEl
+	flushAz := d.cachedAz
+	stopGen := d.stopGen
+	d.pendingEl = nil
+	d.mu.Unlock()
+
+	err := d.writeGoto(flushAz, pending)
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if err == nil || errors.Is(err, ErrClosed) {
+		return // written, or the driver is closing and the intent dies with it
+	}
+	if errors.Is(err, ErrOutOfRange) {
+		// The az operand cannot be carried by the fixed-width W spelling;
+		// retrying can never succeed — report and drop rather than spin.
+		d.log.Warn("deferred elevation goto cannot be carried by the W operands, dropping it", "el", pending, "az", flushAz)
+		return
+	}
+	if d.pendingEl != nil || d.stopGen != stopGen {
+		// A newer SetTarget superseded it or a Stop raced the flush window —
+		// the newer intent (or the cancellation) wins; do not resurrect.
+		d.log.Debug("deferred elevation flush superseded while in flight", "el", pending)
+		return
+	}
+	d.pendingEl = &pending
+	d.log.Warn("deferred elevation goto lost to a write fault, re-deferred until the link heals", "el", pending, "err", err)
 }
 
-// writeGotoLocked puts one Waaa eee on the wire: the current az operand plus
-// the target el. A write fault takes the link Down; the intent is NOT retried
+// writeGoto puts one Waaa eee on the wire: the given az operand plus the
+// target el. A write fault takes the link Down; the intent is NOT retried
 // on reopen — re-sending a motion command with no operator behind it is the
-// ultrabridge stale-cmd pattern. The control path re-issues. Callers must
-// hold d.mu.
-func (d *Driver) writeGotoLocked(az, el float64) error {
+// ultrabridge stale-cmd pattern. The control path re-issues. (The KTD6
+// deferred-target flush is the exception: it re-defers on a fault and
+// retries under the same rule that admitted it.)
+func (d *Driver) writeGoto(az, el float64) error {
 	if !inOperandRange(az) || !inOperandRange(el) {
 		return ErrOutOfRange
 	}
-	cmd := fmt.Sprintf("%s%03d %03d\r", cmdGoto, roundDeg(az), roundDeg(el))
-	if _, err := io.WriteString(d.port, cmd); err != nil {
-		err = fmt.Errorf("write goto: %w", err)
-		d.linkDownLocked(err)
-		return err
-	}
-	return nil
+	_, err := d.portWrite(fmt.Sprintf("%s%03d %03d", cmdGoto, roundDeg(az), roundDeg(el)))
+	return err
 }
 
-// exchange writes one command (under d.mu, serializing with every other
-// port write) and waits for its reply line WITHOUT holding d.mu, bounded by
-// ReplyTimeout. Only Run exchanges, so reply lines have exactly one
-// consumer. A reader error or a timeout from the CURRENT generation is a
-// link fault: the link goes Down and self-heals on a later tick (KTD7).
-func (d *Driver) exchange(ctx context.Context, cmd string) (string, error) {
+// portWrite puts one CR-terminated command on the wire. It takes ioMu FIRST
+// (serializing every port write; a wedged fd parks only writers, never the
+// mu-guarded state reads), snapshots the live port + reader generation under
+// d.mu, and writes WITHOUT holding d.mu, bounded by the stall watchdog. A
+// write error on the still-current generation takes the link Down, feeding
+// the reopen self-heal (KTD7); an error from a port the link has already
+// replaced is reported but does not tear down the fresh link — the reader
+// goroutines' generation rule, applied to writes.
+func (d *Driver) portWrite(cmd string) (gen int, err error) {
+	d.ioMu.Lock()
+	defer d.ioMu.Unlock()
+
 	d.mu.Lock()
 	if d.closed {
 		d.mu.Unlock()
-		return "", ErrClosed
+		return 0, ErrClosed
 	}
 	if !d.online || d.port == nil {
 		d.mu.Unlock()
-		return "", ErrOffline
+		return 0, ErrOffline
 	}
 	port := d.port
-	gen := d.gen
-	if _, err := io.WriteString(port, cmd+"\r"); err != nil {
+	gen = d.gen
+	d.mu.Unlock()
+
+	if err = d.writeWatchdog(port, cmd+"\r"); err != nil {
 		err = fmt.Errorf("write %q: %w", cmd, err)
-		d.linkDownLocked(err)
+		d.mu.Lock()
+		if d.gen == gen {
+			d.linkDownLocked(err)
+		} else {
+			d.log.Debug("ercm write error from a replaced port ignored", "cmd", cmd, "err", err)
+		}
 		d.mu.Unlock()
+	}
+	return gen, err
+}
+
+// writeWatchdog writes one command through the given port handle, bounded by
+// cfg.WriteTimeout. go.bug.st/serial exposes no write deadline (its unix
+// Write is a plain blocking write), so a wedged tty fd would park here
+// forever holding ioMu; instead the watchdog closes the handle on stall —
+// closing the fd converts the parked Write into an error — which the caller
+// feeds into the existing link-Down/reopen self-heal path. The Close runs on
+// the timer goroutine through the handle itself, deliberately NOT through
+// ioMu (the stuck writer still holds ioMu, which is exactly why it must be
+// reclaimable). Requires d.ioMu held (single writer). If the timer fires as
+// the write completes, the successful write stands and the next exchange
+// faults on the closed port — one self-healed Down, never a frozen control
+// path; the late parked write drains into the buffered channel.
+func (d *Driver) writeWatchdog(port io.WriteCloser, cmd string) error {
+	done := make(chan error, 1) // buffered: a late parked Write never leaks its goroutine
+	go func() {
+		_, err := io.WriteString(port, cmd)
+		done <- err
+	}()
+	timer := time.NewTimer(d.cfg.WriteTimeout)
+	defer timer.Stop()
+	select {
+	case err := <-done:
+		return err
+	case <-timer.C:
+		_ = port.Close()
+		return fmt.Errorf("write stalled for %s — port handle closed by watchdog", d.cfg.WriteTimeout)
+	}
+}
+
+// exchange writes one command (serialized with every other port write on
+// ioMu, never under d.mu) and waits for its reply line WITHOUT holding
+// either lock, bounded by ReplyTimeout. Only Run exchanges, so reply lines
+// have exactly one consumer. A reader error or a timeout from the CURRENT
+// generation is a link fault: the link goes Down and self-heals on a later
+// tick (KTD7).
+func (d *Driver) exchange(ctx context.Context, cmd string) (string, error) {
+	gen, err := d.portWrite(cmd)
+	if err != nil {
 		return "", err
 	}
-	d.mu.Unlock()
 
 	timeout := time.NewTimer(d.cfg.ReplyTimeout)
 	defer timeout.Stop()

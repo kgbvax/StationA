@@ -129,7 +129,7 @@ func run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	// Driver self-heal poll loops (KTD7): each driver owns its goroutine and
 	// retries its by-id reopen indefinitely — a dead serial link degrades only
 	// its own slot's device_online, never the process.
-	go azAxis.(spid.PollRunner).RunPoll(ctx)
+	go azAxis.RunPoll(ctx)
 	go elDrv.Run(ctx)
 	go m.Run(ctx) // per-axis dispatch workers (latest-wins, bounded stop epoch)
 

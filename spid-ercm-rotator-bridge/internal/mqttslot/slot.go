@@ -19,10 +19,11 @@
 //
 // The /state cadence follows KTD14 (the ultrabridge pattern): a fixed
 // poll-tick reads the mount façade — Readback/Target/Moving/Online — dedups
-// the snapshot, and republishes on change or edge with a fresh ts. Because
-// every control path (MQTT /cmd, the U6 rotctld server, the U7 PstRotator
-// listener) funnels through the same façade, protocol-driven motion surfaces
-// in /state exactly like bus-driven motion (R4).
+// the snapshot, and republishes on change, edge, or the freshness heartbeat
+// (60 poll ticks) with a fresh ts. Because every control path (MQTT /cmd,
+// the U6 rotctld server, the U7 PstRotator listener) funnels through the
+// same façade, protocol-driven motion surfaces in /state exactly like
+// bus-driven motion (R4).
 //
 // Concurrency (runtime-library REQ-RT): paho handlers only Enqueue onto the
 // per-slot jobs channel; RunJobs (shared/mqtt) executes and publishes. The
@@ -129,13 +130,15 @@ type Slot struct {
 	cancel context.CancelFunc
 	jobs   chan func()
 
-	// mu guards the dedup snapshot, the rejection error and the firmware
-	// tracking. Held only briefly; never across a publish.
+	// mu guards the dedup snapshot, the dedup heartbeat clock, the rejection
+	// error and the firmware tracking. Held only briefly; never across a
+	// publish.
 	mu      sync.Mutex
 	hasLast bool
 	last    snap
-	cmdErr  string // last /cmd rejection, surfaced in /state.error; cleared by the next admitted intent
-	lastFw  string // last firmware string folded into /meta
+	lastPub time.Time // last /state publish time — the freshness heartbeat clock
+	cmdErr  string    // last /cmd rejection, surfaced in /state.error; cleared by the next admitted intent
+	lastFw  string    // last firmware string folded into /meta
 
 	statusTopic string
 	metaTopic   string
@@ -311,6 +314,34 @@ func (s *Slot) subscribeCmd(cl paho.Client) {
 // clear-after-execute defenses cover them.
 const cmdMaxAge = 30 * time.Second
 
+// cmdMaxBytes bounds the /cmd payload size, gated BEFORE Unmarshal (the KTD4
+// register's OOM vector): the parse-error path used to copy the raw payload
+// into journald and %q-embed it into the retained /state.error, so a
+// multi-MB payload held several concurrent copies against the unit's
+// MemoryMax — one publish away from an OOM kill that crash-loops the whole
+// compound bridge (both slots, rotctld, PstRotator, the /cmd e-stop). 4 KB is
+// an order of magnitude above the largest legitimate cmd.
+const cmdMaxBytes = 4 * 1024
+
+// cmdErrMsgTooLarge is the oversized-payload rejection: a FIXED string, so no
+// attacker-chosen bytes can ride into the retained /state.error.
+const cmdErrMsgTooLarge = "cmd payload too large"
+
+// cmdErrMax bounds every rejection message surfaced through /state.error.
+// Rejections are composed with %q-embedded producer bytes (payload, action,
+// value, ts), so the clip at setCmdErr — the single choke point every
+// rejection source flows through (unmarshal error, unknown action, bad value,
+// refusal echo, stop fault) — keeps producer-chosen strings out of the
+// retained publish and the logs.
+const cmdErrMax = 200
+
+// stateHeartbeatPolls bounds how stale the retained /state ts may get while
+// the snapshot is unchanged (KTD14's "always-fresh ts"): an idle axis still
+// republishes every 60 poll ticks — a bounded freshness heartbeat, never a
+// per-tick firehose. At the shipped 1 s poll interval this is the m5stamp
+// pol-ctrl 60 s freshness-heartbeat precedent.
+const stateHeartbeatPolls = 60
+
 // cmdMsg is the local /cmd payload extension (the ultrabridge precedent):
 // shared/schema.CmdPayload stays the Action/Value-only convention type; the
 // optional ts rides this struct so the gate never leaks into the shared shape.
@@ -336,10 +367,20 @@ func (s *Slot) onCmd(_ paho.Client, msg paho.Message) {
 		// (that would echo another empty payload and loop forever).
 		return
 	}
+	if len(msg.Payload()) > cmdMaxBytes {
+		// Size gate BEFORE Unmarshal: an oversized payload is never parsed,
+		// logged or echoed — only topic + length are recorded, and the
+		// rejection is a fixed string so no attacker bytes reach the retained
+		// /state.error. Still one-shot: the retained topic is cleared so
+		// nothing re-fires on the next reconnect.
+		s.log.Warn("rx oversized cmd", "topic", msg.Topic(), "bytes", len(msg.Payload()), "max", cmdMaxBytes)
+		s.rejectAsync(cmdErrMsgTooLarge)
+		return
+	}
 
 	var cmd cmdMsg
 	if err := json.Unmarshal(msg.Payload(), &cmd); err != nil || cmd.Action == "" {
-		s.log.Error("rx invalid cmd", "topic", msg.Topic(), "payload", string(msg.Payload()))
+		s.log.Error("rx invalid cmd", "topic", msg.Topic(), "payload", clipCmdErr(string(msg.Payload())))
 		s.rejectAsync(fmt.Sprintf("invalid /cmd payload: %q", string(msg.Payload())))
 		return
 	}
@@ -412,18 +453,43 @@ func (s *Slot) executeGoto(deg float64) {
 	s.clearCmd()
 }
 
+// stopCallTimeout bounds the façade Stop call on the jobs worker (rotctld's
+// callTimeout parity, KTD10): the 256-deep jobs queue is shared by BOTH slots,
+// so one wedged stop (a stop frame queued behind an in-flight serial write)
+// must not wedge every subsequent job for both slots. On expiry the call is
+// abandoned (the mount's own bounded stop epoch keeps halting axes
+// independently of this caller) and the timeout surfaces through the
+// stop-fault error path with a Warn — the worker is never hung.
+const stopCallTimeout = 2 * time.Second
+
 // executeStop runs on the jobs worker: the atomic all-stop (KTD8 — it halts
 // BOTH axes and clears every pending target on both, which is why a stop on
 // either slot's /cmd is a full-mount stop).
 func (s *Slot) executeStop() {
-	errs := s.mnt.Stop()
-	if len(errs) > 0 {
+	errs, timedOut := s.stopAxes()
+	switch {
+	case timedOut:
+		s.log.Warn("façade stop timed out", "bound", stopCallTimeout)
+		s.setCmdErr(fmt.Sprintf("stop timed out after %s", stopCallTimeout))
+	case len(errs) > 0:
 		s.setCmdErr(errs[0].Error())
-	} else {
+	default:
 		s.setCmdErr("")
 	}
 	s.publishState(false)
 	s.clearCmd()
+}
+
+// stopAxes runs the façade's atomic all-stop with the per-call bound.
+func (s *Slot) stopAxes() (errs []mount.AxisError, timedOut bool) {
+	done := make(chan []mount.AxisError, 1)
+	go func() { done <- s.mnt.Stop() }()
+	select {
+	case errs = <-done:
+	case <-time.After(stopCallTimeout):
+		timedOut = true
+	}
+	return errs, timedOut
 }
 
 // rejectAsync enqueues the rejection path onto the jobs worker: record the
@@ -445,10 +511,26 @@ func (s *Slot) clearCmd() {
 	s.publishBytesVia(s.client, s.cmdTopic, 1, true, []byte{})
 }
 
+// setCmdErr records the last /cmd rejection for /state.error (cleared by the
+// next admitted intent). It is the single choke point every rejection source
+// flows through, so it also clips the message to cmdErrMax runes — no
+// producer-chosen unbounded string (a %q-embedded payload, action or value)
+// can reach the retained /state.error publish or the logs.
 func (s *Slot) setCmdErr(msg string) {
+	msg = clipCmdErr(msg)
 	s.mu.Lock()
 	s.cmdErr = msg
 	s.mu.Unlock()
+}
+
+// clipCmdErr bounds a rejection message to cmdErrMax runes plus an ellipsis.
+// Rune-based so a multi-byte boundary never splits a UTF-8 sequence.
+func clipCmdErr(msg string) string {
+	rs := []rune(msg)
+	if len(rs) <= cmdErrMax {
+		return msg
+	}
+	return string(rs[:cmdErrMax]) + "…"
 }
 
 // ---------------------------------------------------------------------------
@@ -456,7 +538,9 @@ func (s *Slot) setCmdErr(msg string) {
 // ---------------------------------------------------------------------------
 
 // snap is the comparable /state snapshot: dedup compares this, never the
-// serialized form (ts is always fresh).
+// serialized form. ts is NOT part of it — it is stamped at publish time
+// (statePayload), so the freshness heartbeat in publishState is what keeps the
+// retained ts fresh while idle.
 type snap struct {
 	pos    float64
 	hasPos bool
@@ -520,17 +604,31 @@ func (s *Slot) snapshot() snap {
 
 // publishState dedups the snapshot (force bypasses the dedup for the
 // reconnect restore) and publishes the retained JSON with a fresh RFC3339 ts.
+// ts is stamped at publish time, NOT part of the compared snapshot — so the
+// dedup alone would let the retained ts go stale while idle. The freshness
+// heartbeat closes that gap (KTD14's always-fresh ts): an unchanged snapshot
+// still republishes once its last publish is older than 60 poll ticks — a
+// bounded heartbeat (the pol-ctrl 60 s precedent at the shipped 1 s poll),
+// never a per-tick firehose.
 func (s *Slot) publishState(force bool) {
 	sn := s.snapshot()
 	s.mu.Lock()
-	if !force && s.hasLast && s.last == sn {
+	if !force && s.hasLast && s.last == sn && time.Since(s.lastPub) < s.heartbeat() {
 		s.mu.Unlock()
 		return
 	}
 	s.last = sn
 	s.hasLast = true
+	s.lastPub = time.Now()
 	s.mu.Unlock()
 	s.publishJSONVia(s.client, s.stateTopic, s.statePayload(sn), 1, true)
+}
+
+// heartbeat is the freshness window: 60 poll ticks, so a configured poll
+// slower than 1 s stretches the heartbeat with it (never a per-tick
+// republish).
+func (s *Slot) heartbeat() time.Duration {
+	return stateHeartbeatPolls * s.opts.PollInterval
 }
 
 // resetDedup makes the next publishState republish regardless of change, so

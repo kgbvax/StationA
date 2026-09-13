@@ -194,16 +194,26 @@ func (m *Mount) stopSeqNow() uint64 {
 // cached readback, so a superseding burst can never be answered with a
 // position the axis has already left behind.
 func (m *Mount) Goto(t Target) []Refusal {
+	// R9 liveness is sampled before m.mu: ctrl.Online() is a controller
+	// call, and m.mu is never held across one — the SPID driver blocks in
+	// Online behind its driver mutex (held across paced writes and serial
+	// opens), so sampling under the lock would let one stalled SPID write
+	// freeze every Goto and Stop's clear phase with it. Sampling one
+	// admission-gap early only widens the liveness view; the next poll
+	// marks the link down and the control path re-issues.
+	azOnline := !t.HasAZ || m.axes[AZ].ctrl.Online()
+	elOnline := !t.HasEL || m.axes[EL].ctrl.Online()
+
 	var refs []Refusal
 	m.mu.Lock()
 	seq := m.stopSeq
 	if t.HasAZ {
-		if r, ok := m.axes[AZ].admit(t.AZ, seq); !ok {
+		if r, ok := m.axes[AZ].admit(t.AZ, seq, azOnline); !ok {
 			refs = append(refs, r)
 		}
 	}
 	if t.HasEL {
-		if r, ok := m.axes[EL].admit(t.EL, seq); !ok {
+		if r, ok := m.axes[EL].admit(t.EL, seq, elOnline); !ok {
 			refs = append(refs, r)
 		}
 	}

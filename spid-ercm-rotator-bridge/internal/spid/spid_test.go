@@ -3,6 +3,7 @@ package spid
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"math/rand"
 	"sync"
@@ -19,10 +20,8 @@ import (
 // with no adapter layer.
 
 var (
-	_ Axis       = (*Driver)(nil)
-	_ PollRunner = (*Driver)(nil)
-	_ Axis       = (*Mock)(nil)
-	_ PollRunner = (*Mock)(nil)
+	_ Axis = (*Driver)(nil)
+	_ Axis = (*Mock)(nil)
 )
 
 func TestMockAndDriverSatisfyAxis(t *testing.T) {
@@ -279,6 +278,225 @@ func TestWriteErrorReopenIgnoresStaleReader(t *testing.T) {
 	}
 }
 
+// --- silent-controller liveness (consecutive read timeouts) ----------------------
+
+// TestConsecutiveReadTimeoutsTakeLinkDown pins the powered-off-rotor case: a
+// live USB adapter whose controller never answers must NOT keep
+// device_online=true with a frozen-but-valid readback forever (the deadband
+// would then no-op real writes against the stale position). After
+// maxConsecutiveTimeouts silent ticks the link must go down and the readback
+// must be invalid — the internal/ercm exchange-timeout contract, applied to
+// the poll loop.
+func TestConsecutiveReadTimeoutsTakeLinkDown(t *testing.T) {
+	rw := newScriptedRW(200)
+	rw.setSwallow(1 << 30) // silent forever
+	opens := 0
+	opener := func() (io.ReadWriteCloser, error) {
+		if opens == 0 {
+			opens++
+			return rw, nil
+		}
+		return nil, errors.New("no such file or directory")
+	}
+	d := NewDriver(opener, fastOpts(), nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go d.RunPoll(ctx)
+
+	// Wait for the initial open, then for the bounded silence to take the
+	// link down.
+	if !waitCond(2*time.Second, func() bool { return d.Online() }) {
+		t.Fatal("initial open never came up")
+	}
+	if !waitCond(2*time.Second, func() bool { return !d.Online() }) {
+		t.Fatal("a permanently silent controller must take the link down after the consecutive-timeout bound — not stay online with a frozen readback")
+	}
+	if _, valid := d.Readback(); valid {
+		t.Fatal("the frozen cached readback must be invalid after the timeout-driven link-down (the deadband must always write again)")
+	}
+	if d.Err() == "" {
+		t.Error("the timeout-driven link-down must surface an error string (feeds /state.error)")
+	}
+}
+
+// TestPollTimeoutsBelowBoundKeepLinkUp proves the other side of the bound:
+// brief silence (maxConsecutiveTimeouts-1 missed replies) keeps the link up —
+// the count resets on every reply — and only a permanently silent controller
+// trips it afterwards.
+func TestPollTimeoutsBelowBoundKeepLinkUp(t *testing.T) {
+	rw := newScriptedRW(200)
+	rw.setSwallow(maxConsecutiveTimeouts - 1) // the first N-1 status polls go unanswered
+	opens := 0
+	opener := func() (io.ReadWriteCloser, error) {
+		if opens == 0 {
+			opens++
+			return rw, nil
+		}
+		return nil, errors.New("no such file or directory")
+	}
+	d := NewDriver(opener, fastOpts(), nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go d.RunPoll(ctx)
+
+	// The first maxConsecutiveTimeouts-1 polls time out without tripping the
+	// link, so the Nth reply must land while the axis is still online.
+	if !waitCond(2*time.Second, func() bool {
+		az, valid := d.Readback()
+		return valid && az == 200
+	}) {
+		az, valid := d.Readback()
+		t.Fatalf("brief silence below the bound must not take the link down: readback (%v, %v), online %v", az, valid, d.Online())
+	}
+
+	// Now silence the healthy controller for good: the count restarts from
+	// the last reply, trips after maxConsecutiveTimeouts more ticks, and the
+	// link goes down with the readback invalidated.
+	rw.setSwallow(1 << 30)
+	if !waitCond(2*time.Second, func() bool { return !d.Online() }) {
+		t.Fatal("a controller going permanently silent must take the link down after the bounded consecutive timeouts")
+	}
+	if _, valid := d.Readback(); valid {
+		t.Fatal("the timeout-driven link-down must clear readback validity (KTD7 deadband)")
+	}
+}
+
+// TestReadTimeoutCounterResets pins the counter logic deterministically, below
+// the timing of the poll loop: below the bound no trip, the bound-th
+// consecutive timeout trips, and any link transition restarts the count.
+func TestReadTimeoutCounterResets(t *testing.T) {
+	d := NewDriver(func() (io.ReadWriteCloser, error) {
+		return nil, errors.New("unopened")
+	}, fastOpts(), nil)
+
+	// note consumes one timeout and asserts whether the bound tripped.
+	note := func(wantTrip bool, label string) {
+		t.Helper()
+		if got := d.noteReadTimeoutLocked(); got != wantTrip {
+			t.Fatalf("%s: trip = %v, want %v", label, got, wantTrip)
+		}
+	}
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	// Timeouts 1..N-1 keep the link up; the Nth consecutive timeout trips.
+	for i := 1; i < maxConsecutiveTimeouts; i++ {
+		note(false, fmt.Sprintf("timeout %d of %d", i, maxConsecutiveTimeouts))
+	}
+	note(true, fmt.Sprintf("timeout %d of %d (the bound)", maxConsecutiveTimeouts, maxConsecutiveTimeouts))
+
+	// Any link transition (markDown/reopen) restarts the count.
+	d.markDownLocked(errors.New("test fault"))
+	note(false, "first timeout after the link transition")
+	for i := 2; i < maxConsecutiveTimeouts; i++ {
+		note(false, fmt.Sprintf("timeout %d of %d after the transition", i, maxConsecutiveTimeouts))
+	}
+	note(true, "the bound again after maxConsecutiveTimeouts fresh timeouts")
+}
+
+// --- write watchdog (wedged fd) ---------------------------------------------------
+
+// blockingRW is an io.ReadWriteCloser whose Write and Read park until Close —
+// the wedged tty fd the watchdog must convert into an error. Close unblocks
+// every parked call (what closing a serial fd does to a blocked write) and is
+// idempotent because the reopen path closes the same handle again.
+type blockingRW struct {
+	mu     sync.Mutex
+	closed bool
+	parked chan struct{}
+}
+
+func newBlockingRW() *blockingRW {
+	return &blockingRW{parked: make(chan struct{})}
+}
+
+func (w *blockingRW) Write(p []byte) (int, error) {
+	<-w.parked
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.closed {
+		return 0, io.ErrClosedPipe
+	}
+	return len(p), nil
+}
+
+func (w *blockingRW) Read(p []byte) (int, error) {
+	<-w.parked
+	return 0, io.ErrClosedPipe
+}
+
+func (w *blockingRW) Close() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.closed {
+		return nil
+	}
+	w.closed = true
+	close(w.parked)
+	return nil
+}
+
+// TestWriteStallWatchdogKeepsStateAnswerableAndHeals pins the wedged-fd case:
+// a status write parked inside a dead fd must not freeze Online()/Readback()
+// (the cached state lock is never held across port I/O), the watchdog must
+// close the stalled handle, and the existing self-heal path must reopen the
+// healthy port and recover the readback.
+func TestWriteStallWatchdogKeepsStateAnswerableAndHeals(t *testing.T) {
+	stuck := newBlockingRW()
+	healthy := newScriptedRW(200)
+	opens := 0
+	opener := func() (io.ReadWriteCloser, error) {
+		if opens == 0 {
+			opens++
+			return stuck, nil
+		}
+		return healthy, nil
+	}
+	opts := fastOpts()
+	opts.WriteTimeout = 30 * time.Millisecond
+	d := NewDriver(opener, opts, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go d.RunPoll(ctx)
+
+	// Wait for the initial open, then give the poll loop one tick to wedge
+	// its first status write inside the stuck fd (the watchdog arms for
+	// WriteTimeout, so the write is still parked at this point).
+	if !waitCond(2*time.Second, func() bool { return d.Online() }) {
+		t.Fatal("initial open never came up")
+	}
+	time.Sleep(10 * time.Millisecond)
+
+	// While the write is wedged, Online() must answer promptly: port I/O
+	// holds ioMu, never the state lock.
+	onlineCh := make(chan bool, 1)
+	go func() { onlineCh <- d.Online() }()
+	select {
+	case up := <-onlineCh:
+		if !up {
+			t.Fatal("the link must read online while the write is merely wedged")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Online() blocked while a port write was wedged — the cached state must not serialize behind port I/O")
+	}
+
+	// The watchdog fires: the stalled handle is closed, the link marked down,
+	// and the reopen path engages the healthy port — the poll recovers a
+	// fresh valid readback through it.
+	if !waitCond(2*time.Second, func() bool {
+		az, valid := d.Readback()
+		return valid && az == 200 && d.Online()
+	}) {
+		az, valid := d.Readback()
+		t.Fatalf("the watchdog never converted the stalled write into a heal: readback (%v, %v), online %v, err %q",
+			az, valid, d.Online(), d.Err())
+	}
+	if d.Err() != "" {
+		t.Errorf("recovered link still carries an error string: %q", d.Err())
+	}
+}
+
 // --- write pacing and serialization --------------------------------------------
 
 // TestWritePaceSeparatesWrites proves the ≥300 ms Rot1Prog write pacing (Appendix
@@ -399,7 +617,9 @@ func TestNewRejectsNonAzAxis(t *testing.T) {
 // (writeErr) or are recorded and answered like a Rot1Prog controller
 // (a status request stages the matching raw-digit reply); reads drain staged
 // replies or block until Close. It lets tests drive the driver's fault paths
-// directly, independent of the in-memory mock wire.
+// directly, independent of the in-memory mock wire. swallowStatus simulates a
+// SILENT controller (a powered-off rotor behind a live adapter): the first N
+// status requests get no reply at all.
 type scriptedRW struct {
 	mu       sync.Mutex
 	writeErr error
@@ -407,6 +627,19 @@ type scriptedRW struct {
 	closed   bool
 	replies  [][]byte
 	wake     chan struct{}
+
+	// swallowStatus: the first N status requests stay unanswered (0 = answer
+	// everything, the original behavior). setSwallow can raise it live.
+	swallowStatus int
+	statusCount   int // status requests seen so far
+}
+
+// setSwallow retargets the silence knob live (e.g. silence the controller
+// after a healthy phase to prove the consecutive-timeout trip).
+func (w *scriptedRW) setSwallow(n int) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.swallowStatus = n
 }
 
 func (w *scriptedRW) Write(p []byte) (int, error) {
@@ -416,8 +649,11 @@ func (w *scriptedRW) Write(p []byte) (int, error) {
 		return 0, w.writeErr
 	}
 	if len(p) == 13 && p[0] == 0x57 && p[11] == kStatus {
-		w.replies = append(w.replies, encodeStatusReply(w.az))
-		w.wakeReaders()
+		w.statusCount++
+		if w.statusCount > w.swallowStatus {
+			w.replies = append(w.replies, encodeStatusReply(w.az))
+			w.wakeReaders()
+		}
 	}
 	return len(p), nil
 }

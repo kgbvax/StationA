@@ -11,9 +11,14 @@ package rotctld
 import (
 	"bufio"
 	"context"
+	"errors"
 	"io"
+	"log/slog"
 	"net"
+	"os"
+	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -412,6 +417,87 @@ func TestPerCallTimeout(t *testing.T) {
 	}
 }
 
+// lockedBuffer is an io.Writer safe for the slog handler goroutine.
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf strings.Builder
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+// lateFacade is a façade whose Goto parks until released, then returns
+// refusals — the abandoned-call probe for the F13 late-completion pin.
+type lateFacade struct {
+	release chan struct{}
+	refs    []mount.Refusal
+}
+
+func (b *lateFacade) Goto(mount.Target) []mount.Refusal {
+	<-b.release
+	return b.refs
+}
+
+func (b *lateFacade) Stop() []mount.AxisError {
+	<-b.release
+	return nil
+}
+
+func (b *lateFacade) Readback(mount.Axis) (float64, bool) {
+	<-b.release
+	return 0, false
+}
+
+// TestLateGotoCompletionLogged (F13): when a Goto outlives the bound the
+// client is answered RPRT -6, but the abandoned call still completes and
+// admits the motion — its late completion AND its refusals must Warn-surface,
+// never be silently discarded.
+func TestLateGotoCompletionLogged(t *testing.T) {
+	b := &lateFacade{
+		release: make(chan struct{}),
+		refs: []mount.Refusal{{
+			Axis:   mount.AZ,
+			Reason: mount.RefusalLimit,
+			Target: 400,
+			Detail: "outside [0,360]",
+		}},
+	}
+	time.AfterFunc(callTimeout+250*time.Millisecond, func() { close(b.release) })
+
+	sink := &lockedBuffer{}
+	lg := slog.New(slog.NewTextHandler(sink, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	s := New(b, "late", LimitsFromControl(testControl()), lg)
+
+	if got, _ := s.Handle("P 180 45"); got != "RPRT -6\n" {
+		t.Fatalf("timed-out P = %q, want RPRT -6\n", got)
+	}
+
+	// The waiter drains the abandoned call and logs the late completion
+	// plus the refusal it carries. Wait for BOTH lines: the waiter emits
+	// them back-to-back, and stopping at the first would race the second.
+	waitFor(t, "late goto completion Warn with its refusal", func() bool {
+		out := sink.String()
+		return strings.Contains(out, "completed late") &&
+			strings.Contains(out, "late goto refusal")
+	})
+	out := sink.String()
+	if !strings.Contains(out, "late goto refusal") || !strings.Contains(out, "reason=limit") {
+		t.Errorf("late completion must surface its refusals, got:\n%s", out)
+	}
+	if !strings.Contains(out, "RPRT -6") || !strings.Contains(out, "admitted after RPRT -6") {
+		t.Errorf("late-completion Warn must tie back to the -6 already answered, got:\n%s", out)
+	}
+}
+
 // --- over-the-wire (listener) -------------------------------------------------------
 
 // serveTCP runs a server on an ephemeral loopback port and returns its address.
@@ -642,4 +728,183 @@ func TestGotoCommandedPositions(t *testing.T) {
 	if w := el.written(); w[0] != 12.25 {
 		t.Fatalf("el dispatch = %v, want [12.25]", w)
 	}
+}
+
+// --- flood resistance (F6) ----------------------------------------------------------
+
+// TestTransientAcceptErrorClassification pins the F6 accept-error split:
+// fd exhaustion and aborted handshakes are retryable, a closed or broken
+// listener is not.
+func TestTransientAcceptErrorClassification(t *testing.T) {
+	transient := []error{
+		&net.OpError{Op: "accept", Net: "tcp", Err: os.NewSyscallError("accept", syscall.EMFILE)},
+		&net.OpError{Op: "accept", Net: "tcp", Err: os.NewSyscallError("accept", syscall.ENFILE)},
+		&net.OpError{Op: "accept", Net: "tcp", Err: os.NewSyscallError("accept", syscall.ECONNABORTED)},
+	}
+	for _, err := range transient {
+		if !transientAcceptError(err) {
+			t.Errorf("transientAcceptError(%v) = false, want true", err)
+		}
+	}
+	permanent := []error{
+		errors.New("use of closed network connection"),
+		&net.OpError{Op: "accept", Net: "tcp", Err: os.NewSyscallError("accept", syscall.EINVAL)},
+	}
+	for _, err := range permanent {
+		if transientAcceptError(err) {
+			t.Errorf("transientAcceptError(%v) = true, want false", err)
+		}
+	}
+}
+
+// flakyListener scripts Accept for the retry test through the server's
+// listen seam: the queued transient errors first, then one real (pipe)
+// connection, then block until Close.
+type flakyListener struct {
+	mu     sync.Mutex
+	errs   []error
+	conn   net.Conn
+	block  chan struct{}
+	closed bool
+}
+
+func (l *flakyListener) Accept() (net.Conn, error) {
+	l.mu.Lock()
+	if len(l.errs) > 0 {
+		err := l.errs[0]
+		l.errs = l.errs[1:]
+		l.mu.Unlock()
+		return nil, err
+	}
+	if l.conn != nil {
+		c := l.conn
+		l.conn = nil
+		l.mu.Unlock()
+		return c, nil
+	}
+	l.mu.Unlock()
+	<-l.block
+	return nil, errors.New("flaky listener closed")
+}
+
+func (l *flakyListener) Close() error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if !l.closed {
+		l.closed = true
+		close(l.block)
+	}
+	return nil
+}
+
+func (l *flakyListener) Addr() net.Addr { return &net.TCPAddr{} }
+
+// TestAcceptRetriesTransientErrors (F6): two transient accept errors must
+// not kill ListenAndServe — the loop pauses, retries, and still serves the
+// next session; only ctx-done ends it.
+func TestAcceptRetriesTransientErrors(t *testing.T) {
+	serverEnd, clientEnd := net.Pipe()
+	t.Cleanup(func() { _ = clientEnd.Close() })
+	l := &flakyListener{
+		errs: []error{
+			&net.OpError{Op: "accept", Net: "tcp", Err: os.NewSyscallError("accept", syscall.EMFILE)},
+			&net.OpError{Op: "accept", Net: "tcp", Err: os.NewSyscallError("accept", syscall.ECONNABORTED)},
+		},
+		conn:  serverEnd,
+		block: make(chan struct{}),
+	}
+
+	s := newTestServer(t, testControl(), fakeAt(0), fakeAt(0))
+	s.listen = func(string, string) (net.Listener, error) { return l, nil }
+	s.acceptRetryPause = time.Millisecond
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	errCh := make(chan error, 1)
+	go func() { errCh <- s.ListenAndServe(ctx, "unused") }()
+
+	// The loop survived both transient errors and served the session anyway.
+	waitFor(t, "session served despite transient accept errors", func() bool {
+		return s.Clients() == 1
+	})
+
+	cancel()
+	select {
+	case err := <-errCh:
+		if err != nil && !errors.Is(err, context.Canceled) {
+			t.Fatalf("ListenAndServe returned %v, want the ctx error", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("ListenAndServe did not return after ctx cancel")
+	}
+}
+
+// TestSessionCapRefusesFlood (F6): past the session cap a new connection is
+// accepted then immediately closed, and neither the count nor the existing
+// sessions are disturbed.
+func TestSessionCapRefusesFlood(t *testing.T) {
+	s := newTestServer(t, testControl(), fakeAt(0), fakeAt(0))
+	addr := serveTCP(t, s)
+
+	var held []net.Conn
+	defer func() {
+		for _, c := range held {
+			_ = c.Close()
+		}
+	}()
+	for i := 0; i < s.maxClients; i++ {
+		c, err := net.Dial("tcp", addr)
+		if err != nil {
+			t.Fatalf("dial %d: %v", i, err)
+		}
+		held = append(held, c)
+	}
+	waitFor(t, "all session slots taken", func() bool {
+		return s.Clients() == s.maxClients
+	})
+
+	// The flood connection beyond the cap: the server closes it promptly.
+	extra, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatalf("dial extra: %v", err)
+	}
+	defer extra.Close()
+	_ = extra.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if _, err := io.ReadAll(extra); err != nil {
+		t.Fatalf("reading the refused connection: %v", err)
+	}
+	if got := s.Clients(); got != s.maxClients {
+		t.Fatalf("clients = %d after refusing the extra connection, want %d", got, s.maxClients)
+	}
+
+	// The held sessions are untouched: one still gets its replies.
+	if _, err := held[0].Write([]byte("_\n")); err != nil {
+		t.Fatalf("send on held session: %v", err)
+	}
+	sc := bufio.NewScanner(held[0])
+	if got := readLine(t, sc); got != "mockmount" {
+		t.Fatalf("held session reply = %q, want %q", got, "mockmount")
+	}
+}
+
+// TestIdleSessionReaped (F6): a connected client that never sends a command
+// line is closed by the per-command read deadline instead of squatting on a
+// session slot forever.
+func TestIdleSessionReaped(t *testing.T) {
+	s := newTestServer(t, testControl(), fakeAt(0), fakeAt(0))
+	s.readIdleTimeout = 250 * time.Millisecond
+	addr := serveTCP(t, s)
+
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+	waitFor(t, "idle client counted", func() bool { return s.Clients() == 1 })
+
+	// The server side must close within the shrunk idle grace.
+	_ = conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	if _, err := io.ReadAll(conn); err != nil {
+		t.Fatalf("idle session was not reaped: %v", err)
+	}
+	waitFor(t, "reaped client uncounted", func() bool { return s.Clients() == 0 })
 }

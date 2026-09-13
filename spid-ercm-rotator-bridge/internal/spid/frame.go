@@ -45,6 +45,13 @@ const (
 	// writes the request. At 1200 baud a 5-byte reply takes ~40 ms; a
 	// silent controller must not stall the poll tick.
 	DefaultReadTimeout = 500 * time.Millisecond
+
+	// DefaultWriteTimeout bounds one port write: go.bug.st/serial has no
+	// write deadline, so a write stalled on a wedged fd is closed out by the
+	// driver's watchdog after this long and feeds the reopen path. 13 bytes
+	// at 1200 baud take ~110 ms — anything near this bound is a dead fd, not
+	// a slow controller.
+	DefaultWriteTimeout = 3 * time.Second
 )
 
 // blankCommand builds the 13-byte packet with every digit field '0' (Rot1Prog
