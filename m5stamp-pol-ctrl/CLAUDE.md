@@ -103,8 +103,8 @@ rides under the stationa `value` key. `/cmd` is subscribed at QoS 0 (§8 rule
 2) and deliberately never cleared: it is desired steady state, re-applied on
 every reconnect (the contrast with the sat rotators' one-shot `goto`/`stop`).
 See `docs/m5stamp-pol-ctrl-mqtt-api.md` for the full on-the-wire contract,
-the KTD4 exposure-register extension (sixth vector — pending fold into
-`../docs/known-issues.md` by the docs unit), and the bench acceptance
+the KTD4 sixth-vector exposure decisions (recorded in
+`../docs/known-issues.md`), and the bench acceptance
 checklist.
 
 ---

@@ -23,7 +23,13 @@ power-distribution layer added — canonical roles `power`, `switch`, `sequencer
 site-level `power` path analogous to `host` (§2, §7.3); the compound-device pattern made
 explicit (§3); PA remote-on moved off the PA slot (`set_power`/RTS removed) onto the power
 layer; `pa-arm` realized by an M5 Stamp PLC (closing §11.3); and a `power-seq` sequencer
-owning the ordered, delay-and-confirmation startup/shutdown.
+owning the ordered, delay-and-confirmation startup/shutdown. In 0.9: the
+sat-ops rotator mount added — `uhf/az-rotator` (SPID) and `uhf/el-rotator`
+(GS-500 via ERC-M) as two honest per-axis slots from one compound bridge
+(`spid-ercm-rotator-bridge` on shari), free motion with no arming gate and the
+posture's exposure review recorded in `known-issues.md`; the stale PSTRotator
+host attributions corrected (shack-pc fronts pelcobridge2, the PTS-303Z/3050DZ
+pan/tilt head).
 
 The guiding idea: the live configuration is the documentation. A component, once
 connected, describes itself — who it is, what it can do, and what is currently true
@@ -637,6 +643,49 @@ use a verify-and-resend ladder (quiet-line window, one verification query, bound
 retries) instead of readback polling. The self-test (preset call 125) re-homes the
 head and can rip cables; it is disarmed-only and two-stage confirmed in the TUI.
 
+**`muehle/uhf/az-rotator`** and **`muehle/uhf/el-rotator`** — the sat-ops
+rotator mount (azimuth: SPID, Rot1Prog binary serial; elevation: GS-500 via the
+ERC-M controller, GS-232B dialect serial), carrying the co-mounted 2 m / 70 cm
+X-Quads. Fronted by one compound bridge (`spid-ercm-rotator-bridge` on host
+`shari` — the shelly-power-bridge shape: one process, two slots, two MQTT
+clients, each with its own LWT). Per slot:
+
+```
+role: rotator;  device: { model (SPID | ERC-M / GS-500), firmware (ERC-M rFMW; SPID omits it) };
+               link: serial;  host: shari
+capabilities: axes ["az"|"el"]; limits {min, max, park}; deadband (°)
+state:        az|el (position, ° — omitted while readback invalid, never fabricated);
+               target (omitempty, cleared by stop); moving (inferred:
+               |target − readback| > deadband); link; device_online (explicit bool);
+               error (omitempty)
+intent:       goto {degrees under value}; stop     # /cmd one-shot, NOT retained
+```
+
+**Two-layer liveness across two slots:** each slot's `/state.device_online` is
+its **own serial link** — a dead elevation port takes only `el-rotator`
+offline, never `az-rotator` — while `/status` is the shared bridge process
+(one LWT per slot, so process death flips both with no stale-online gap).
+
+Motion is **free with no arming gate** — deliberately unlike `uhf/rotator`'s
+manual-arming TUI: any connected client (rotctld, PstRotator, console) may move
+the mount. Safety is procedural (operator watching); the posture's exposure
+vectors are reviewed and recorded per-vector in `docs/known-issues.md` (the
+plan's KTD4 register). The slots publish **read-only** `expose` blocks —
+hadiscovery renders state but no HA motion widgets; the motion authority lives
+on `/cmd` and the protocol listeners.
+
+Beyond the bus, the same bridge runs the protocol endpoints on `shari`: a
+rotctld-compatible TCP server (`:4534`, the pelcobridge2-proven hamlib
+dialect, for gpredict-class and terrestrial az-only clients) and a PstRotator
+native UDP listener (`:12041`), both fed from the same dispatch core. Dispatch
+is purely by axis (az → SPID, el → GS-500; a wire message that structurally
+omits one axis leaves that axis parked; `stop` from any path halts both axes;
+targets outside the configured travel limits are refused on every path before
+any serial write). The ports are deliberately distinct from the other rotator
+systems (pelcobridge2's rotctld `:4533` on shack-pc, wrc's PstRotator
+`:12040`) so a client pointed at "the rotator" cannot silently reach the wrong
+antenna system.
+
 **`muehle/uhf/pol-ctrl`** — M5 Stamp PLC #2 with custom firmware. `capabilities:
 polarizations [h, v, cl, cr]`. Settable state, operator-driven; no automatic binding.
 
@@ -668,7 +717,8 @@ muehle/host/shack-pc    # shack PC
 | Tuner bridge | `hf/tuner` | `shari` |
 | HF rotator bridge (AF6SA WRC) | `hf/rotator` | `shari` |
 | Antenna controller bridge (Ultrabeam) | `hf/ant-ctrl` | `shari` |
-| PSTRotator (serial) | `uhf/rotator` (SPID) | `shack-pc` |
+| UHF pan/tilt head bridge (`pelcobridge2`) | `uhf/rotator` (PTS-303Z/3050DZ) | `shack-pc` |
+| Sat rotator bridge (`spid-ercm-rotator-bridge`) | `uhf/az-rotator`, `uhf/el-rotator` | `shari` |
 | FLEX bridge (flexbridge) | `hf/radio` | `shari` |
 | HF antenna-select reconciler | `hf/antenna-select` | `shari` |
 | Logging | subscriber, no slot | `shari` |
@@ -893,8 +943,11 @@ Stated plainly rather than left implied.
   `[tuner_follow]` block against the `hf/tuner` slot (the former "tuner is assumed but
   never driven" residual is closed).
 - **Hosts are now single points too.** `shari` fronts the HF PA, tuner, rotator, and
-  Ultrabeam, and also hosts the `antenna-select` reconciler and logging; `shack-pc`
-  fronts only the VHF rotator (PSTRotator). A host loss takes its whole cluster offline
+  Ultrabeam, the sat-ops az/el rotator mount (`spid-ercm-rotator-bridge`, whose
+  rotctld and PstRotator listeners also live there), and also hosts the
+  `antenna-select` reconciler and logging; `shack-pc` fronts only the UHF
+  pan/tilt head — `pelcobridge2`, the interactive PTS-303Z/3050DZ TUI with its
+  rotctld server. A host loss takes its whole cluster offline
   at once — correctly, via last-will, but simultaneously. Host liveness is load-bearing
   and worth monitoring; the reconciler running on `shari` compounds that host's
   coordination single point (see §11).
@@ -921,7 +974,11 @@ surfaced by those answers:
    160 m) fall back to the fan-dipole via the ATU (`band_policy.fallback` in
    `antenna-select`). Revisit if a resonant 160 m antenna is added.
 2. ~~**`shack-pc` roles.**~~ Resolved: shari hosts flexbridge (FLEX bridge), the reconciler,
-   and logging. shack-pc hosts PSTRotator only.
+   and logging. shack-pc hosts pelcobridge2 only — the interactive TUI + rotctld
+   server for the PTS-303Z/3050DZ pan/tilt head (`uhf/rotator`). (The former
+   PSTRotator/SPID attribution of shack-pc was stale: the SPID/GS-500 sat-ops
+   rotators are fronted by `spid-ercm-rotator-bridge` on shari, as
+   `uhf/az-rotator` / `uhf/el-rotator`.)
 3. ~~**`pa-arm` build.**~~ Resolved: realized as **M5 Stamp PLC #1** (`m5stamp-hf-ctrl`),
    a compound embedded node publishing both `hf/pa-arm` (arm relay 1) and `hf/switch`
    (remote-on relays 3 & 4). Formerly planned as a discrete M5Stack; the M5 Stamp PLC

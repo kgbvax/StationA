@@ -25,8 +25,8 @@ The AW9523 pin-3 **FlexRadio power** relay is deliberately local-only
 and no `/cmd` action reaches it.
 
 See `CLAUDE.md` for architecture and `docs/m5stamp-pol-ctrl-mqtt-api.md`
-for the on-the-wire contract, the KTD4 exposure-register extension (pending
-fold into `../docs/known-issues.md`), and the bench acceptance checklist.
+for the on-the-wire contract, the KTD4 sixth-vector exposure decisions
+(recorded in `../docs/known-issues.md`), and the bench acceptance checklist.
 Shared conventions live in `../docs/`.
 
 ---

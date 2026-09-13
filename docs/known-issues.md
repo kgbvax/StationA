@@ -397,3 +397,123 @@ PRD 00 §7 items later resolved in code, recorded so nobody re-opens them:
   `docs/conventions/naming.md` (legacy → target: `flexbridge` → `flex-radio-bridge`,
   `ultrabridge` → `ultrabeam-ant-ctrl-bridge`); rename deferred because it touches
   live service units. Slot addresses stay unchanged either way.
+
+---
+
+# Sat-ops rotators: pre-deploy exposure review (2026-09-13)
+
+> Not PRD salvage — this is the plan-mandated KTD4 exposure register for the
+> sat-ops rotator workstream
+> (`docs/plans/2026-09-12-001-feat-sat-ops-rotators-plan.md`, `spid-ercm-rotator-bridge`,
+> `m5stamp-pol-ctrl`). The **posture itself is settled and is not argued here**:
+> motion on the sat rotators is free with **no arming gate and no protocol-level
+> authentication** (plan Key Decisions, "No arming — free motion") — the rotctld
+> and PstRotator protocols carry no auth worth the name, so an auth requirement
+> would be fiction. This review judges the concrete vectors that posture exposes,
+> accepts or mitigates each, and records the boundings that keep the accepted
+> exposure fenced. The shari deploy of the rotator bridge is gated on this entry
+> existing (its component CLAUDE.md says so).
+
+## [decision] Sat-ops rotator motion authority — the five Tier-1 vectors (plan KTD4)
+
+Each vector states the surface, the exposure, and the decision:
+
+1. **rotctld TCP `:4534` on shari, unauthenticated (bind `0.0.0.0`).** Any shack-LAN
+   client that can reach shari can connect and issue `P`/`p`/`S` — full motion
+   authority, no handshake, no credentials. *Accepted.* Boundings that make the
+   acceptance fenceable: configured **travel limits are enforced on every command
+   path before any serial write** (plan R10 — the no-auth posture governs *who*
+   reaches the ports, not what magnitudes pass through); axis-liveness refusal
+   (motion toward a dead port is refused to the client, never queued, R9); the
+   ~1° deadband no-op skip keeps a misbehaving client from hammering the hardware
+   (R12); and the port is deliberately **distinct from pelcobridge2's rotctld
+   `:4533`** so a client pointed at "the rotator" cannot silently reach the wrong
+   antenna system. Revisit only if the shack LAN stops being a trusted segment.
+2. **PstRotator UDP `:12041` on shari, unauthenticated + source-spoofable.** UDP
+   has no connection state; the reply goes to the datagram's source IP at
+   listen-port+1, and the source IP is spoofable — a spoofed `AZ?`/`EL?` query
+   leaks readback to an attacker-chosen host, and a spoofed-motion *command*
+   cannot be acknowledged but also cannot be attributed. *Accepted.* The PstRotator
+   native protocol carries no auth at all; the same boundings as vector 1 apply
+   (limits, liveness refusal, deadband, distinct port from wrc's `:12040`), plus:
+   motion commands get no reply datagram, so spoofing buys motion but no feedback
+   channel. Accepted as the protocol's own ceiling — the alternative is not
+   running the protocol.
+3. **HA-bridge inbound `muehle/+/+/cmd` accepted as-is.** The shack↔HA mosquitto
+   bridge forwards any `muehle/+/+/cmd` published on the HA broker to the shack
+   broker, so **any house-network MQTT client can command rotator motion** (and
+   anything else with a `/cmd`). The rotator slots publish **read-only** `expose`
+   blocks, so hadiscovery renders no HA motion widgets — but the forwarding path
+   exists regardless of what HA's UI offers. *Accepted.* This is the reviewed
+   no-arming posture made concrete (plan KTD4); narrowing the bridge ACL was
+   rejected as inconsistent with that posture. The same limits/liveness boundings
+   as vector 1 fence what a forwarded command can do.
+4. **Console account scope.** The `console` MQTT account's write ACL is the narrow
+   pattern `muehle/+/+/cmd` — which necessarily includes both rotator slots'
+   `/cmd` topics: the tablet's designated e-stop (STOP publishes `stop` to **both**
+   rotator slots' `/cmd`) and its steering widgets ride the same authority as its
+   goto. Narrowing the console account to exclude rotator motion would also
+   exclude the e-stop. *Accepted* — the account is already the narrowest shape
+   that keeps the console functional, and the console account credential is the
+   only additional secret guarding it.
+5. **Console e-stop unavailability during a broker/console outage.** The protocol
+   listeners evaluate liveness **locally** (KTD9): a running bridge keeps full
+   motion authority through a shack-broker outage or a tablet `linkUp` loss, while
+   the console STOP — the operator's designated e-stop — is exactly what goes
+   down with the broker or the tablet. During that window the rotctld/PstRotator
+   listeners retain motion authority with no operator e-stop on the bus.
+   *Accepted, with a documented physical fallback:* the **station master mains**
+   (`muehle/power/master` / the physical breaker) is the sanctioned halt of last
+   resort — and closing the tracking client (gpredict/PstRotator) is the durable
+   halt for a runaway pass. Recorded consequence (KTD8): an operator STOP against
+   a live tracker is transient by design — free motion resumes on the client's
+   next update; the durable halt is the client or the breaker, never the STOP
+   button alone.
+
+**Register verdict:** all five vectors accepted, each with its boundings stated
+above. No vector is mitigated by adding protocol-level auth (the protocols cannot
+carry it); the mitigations that exist are magnitude (limits), liveness (refusal
+not queueing), wear (deadband), misdirection (distinct ports), and consequence
+(physical fallback). A future revision of this register is required if any
+listener moves off the shack LAN, if the shack LAN's trust model changes, or if
+the rotators gain a protocol with real auth.
+
+## [decision] Phase-controller device surfaces — sixth vector, folded from U10 (plan KTD4)
+
+**Status: decided now (2026-09-13); enforced at the PLC #2 flash.** The phase
+controller (`m5stamp-pol-ctrl`, M5 Stamp PLC #2) is not yet flashed — PLC #2 runs
+pre-OTA field firmware and the first flash must be physical USB (see the PLC #2
+firmware entry above, which stays open until the flash lands). The decisions
+below are baked into that first flash; nothing ships before they are enforced.
+Source: `m5stamp-pol-ctrl/docs/m5stamp-pol-ctrl-mqtt-api.md` §8.
+
+**Vector 6 — M5 Stamp PLC #2 device surfaces.** Unlike the rotator listeners the
+motion-authority analogue is modest (relay phase switching, no mechanical motion,
+no RF-relay sequencing), but the surface class is the same — a LAN endpoint that
+actuates real hardware:
+
+- **web_server (HTTP, port 80, LAN-reachable)** — *mitigated*: **digest** auth
+  (username/password via gitignored secrets; the ant-switch precedent of a bare
+  `web_server:` with no auth is deliberately not inherited). Digest is chosen
+  over basic so the password never crosses the LAN reversibly. The FlexRadio
+  power relay is not exposed here at all (`internal: true`).
+- **OTA (ESPHome OTA)** — *mitigated*: OTA password set via secrets; the first
+  flash is physical USB anyway (pre-OTA firmware), so the password gate exists
+  before OTA is ever reachable.
+- **Native API (ESPHome)** — *mitigated*: encrypted with an `api_key`; adoption
+  requires deliberate pairing. Manual bring-up surface only; nothing in the
+  station depends on it.
+- **MQTT `/cmd` via the shack broker (and the HA bridge's inbound
+  `muehle/+/+/cmd` forwarding)** — *accepted as-is* (same posture as the rotator
+  vectors 3/4 above): any broker account with `hf`-class write rights can set
+  polarization. Accepted because polarization switching is low-consequence
+  (relay phase, no mechanical motion) and operator-driven by design; the
+  interlock bounds any command's physical effect to one phase relay.
+- **captive_portal (fallback AP)** — *accepted*: engages only when the
+  configured WiFi fails (provisioning convenience). The fallback hotspot's
+  credentials are auto-generated by ESPHome from the device MAC, shown only at
+  boot on the serial console. On the shack LAN this window is transient. Revisit
+  only if the device is ever deployed off-site.
+- **FlexRadio power relay: no remote surface at all** — the strictest posture on
+  the device (local Button C only, excluded from web_server and native API),
+  chosen because that relay mains-switches a radio and has no bus-side consumer.

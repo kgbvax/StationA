@@ -21,12 +21,18 @@ Its name follows the stationa bridge-naming convention
 `<devtag>-<function>-bridge` (see `../docs/conventions/naming.md`) — the
 compound `spid-ercm` devtag covers both fronted device families.
 
-**Status (U1 scaffold):** config parsing, two-slot config shape, seed-once
-deploy, hardened systemd unit and startup logging are done. The serial drivers
-(U2 SPID, U3 ERC-M), mount dispatch core (U4), MQTT slot surface (U5) and the
-rotctld/PstRotator listeners (U6/U7) land in later units — see
-`../docs/plans/2026-09-12-001-feat-sat-ops-rotators-plan.md`. Until then the
-binary logs its configured mount and waits for shutdown.
+**Status (implemented):** the full stack is landed and unit-tested — SPID
+Rot1Prog driver (U2), ERC-M GS-232B driver (U3), mount dispatch façade (U4),
+two-slot MQTT surface (U5), rotctld TCP server (U6), PstRotator UDP listener
+(U7) — see `../docs/plans/2026-09-12-001-feat-sat-ops-rotators-plan.md`. An
+**empty configured serial port selects the in-process mock device per axis**
+(KTD7), so the whole stack — slots, both listeners, dispatch, self-heal — runs
+bench- and CI-side without hardware; the shipped `config.example.toml` defaults
+to mock until the bench bring-up pins the real by-id adapter identities. The
+pre-deploy exposure review (KTD4, U9) is recorded in
+`../docs/known-issues.md` ("Sat-ops rotators: pre-deploy exposure review") —
+that was the deploy gate; what remains before the first live shari deploy is
+the bench bring-up of the two serial adapters.
 
 ---
 
@@ -63,22 +69,36 @@ command line, and a `password` key in the TOML is a hard parse error.
 
 ## Architecture
 
-**Data flow (planned):** SPID serial + ERC-M serial → `internal/spid` +
-`internal/ercm` (drivers) → `internal/mount` (dispatch façade) →
-`internal/mqttslot` (two-slot MQTT surface); the protocol listeners
-`internal/rotctld` (TCP :4534) and `internal/pstrotator` (UDP :12041) also
-consume only the façade.
+**Data flow:** SPID serial + ERC-M serial → `internal/spid` +
+`internal/ercm` (drivers; empty port ⇒ in-process mock) → `internal/mount`
+(dispatch façade — the only cross-axis-semantics owner) → `internal/mqttslot`
+(two-slot MQTT surface); the protocol listeners `internal/rotctld`
+(TCP :4534) and `internal/pstrotator` (UDP :12041) also consume only the
+façade, so protocol-driven motion surfaces in `/state` exactly like bus-driven
+motion (R4).
 
 1. `cmd/spid-ercm-rotator-bridge/main.go` — flags, config load, signal ctx,
    root slog logger with the constant `component` attr, one child logger per
-   slot. `run()` is the seam where later units wire in.
+   slot; wires drivers → façade → both slots → both listeners. Initial MQTT
+   connect failure and a failed listener bind are both fatal (exit non-zero,
+   systemd restarts — §8.1 item 10).
 2. `internal/config` — TOML config (one `[[slot]]` per axis), flags,
    `SPID_ERCM_ROTATOR_BRIDGE_*` env overrides.
-3. Later units: `internal/spid` (Rot1Prog driver, U2), `internal/ercm`
-   (GS-232B driver, U3), `internal/mount` (per-axis Controller + mount façade:
-   latest-wins coalescing, bounded stop epoch, two-axis refusal aggregation,
-   park — U4), `internal/mqttslot` (two paho clients, one per slot — U5),
-   `internal/rotctld`, `internal/pstrotator` (U6/U7).
+3. `internal/spid` (Rot1Prog driver, 13-byte frames at 1200 baud 8N1, az-only),
+   `internal/ercm` (GS-232B driver: `W` goto, `C2`/`B` readback, `S`/`E` stop,
+   `rFMW` firmware; polls at `control.poll_interval`), `internal/mount`
+   (per-axis Controller + mount façade: latest-wins coalescing with one
+   in-flight per axis, bounded stop epoch that halts BOTH axes and cancels
+   pending targets, two-axis refusal aggregation into the single client reply,
+   park as an atomic mount-level intent), `internal/mqttslot` (two paho
+   clients, one per slot), `internal/rotctld` (`p`/`P`/`S`/`_`/`\dump_state`/`q`,
+   `RPRT 0/-1/-4/-6/-9/-11`), `internal/pstrotator` (`<PST>` datagrams, `AZ?`/
+   `EL?` replies to the source IP at listen-port+1, `<STOP>`, `<PARK>`).
+4. `internal/mount` self-heal: each driver re-resolves its stable
+   `/dev/serial/by-id/` path and retries its reopen indefinitely after a
+   serial error (`control.reopen_cooldown`); a `Down` transition clears that
+   axis's cached-readback validity and `moving`, so the deadband can never
+   no-op against a pre-outage stale position.
 
 **Key design pins (plan KTDs):**
 - **KTD2** one process, two slots, two MQTT clients (per-slot LWT).
@@ -95,19 +115,30 @@ consume only the façade.
 
 ## MQTT topics
 
-spid-ercm-rotator-bridge will publish to the station integration model topics,
+spid-ercm-rotator-bridge publishes the station integration model topics
 per axis (`<slot>` = `az-rotator` | `el-rotator`):
 
 ```
-muehle/uhf/<slot>/meta     retained  birth certificate (role `rotator`, capabilities: axes + travel limits)
-muehle/uhf/<slot>/state    retained  live rotator state JSON snapshot (position, target, moving, device_online, error)
+muehle/uhf/<slot>/meta     retained  birth certificate (role `rotator`, capabilities: axes + limits {min,max,park} + deadband)
+muehle/uhf/<slot>/state    retained  live rotator state JSON snapshot (see below)
 muehle/uhf/<slot>/status   retained  online | offline (LWT — the bridge, not the controller)
 muehle/uhf/<slot>/cmd      one-shot  goto | stop intent (bus → bridge), value-keyed args, non-retained
 ```
 
-`/state` is a single retained JSON document; `device_online` is always an
-explicit boolean (two-layer liveness: `/status` is the bridge, `/state.device_online`
-is the serial link). Rotator slots publish **read-only** `expose` blocks —
+`/state` is a single retained JSON document —
+`{ts, az|el (position °, omitted while readback invalid), target?, moving, link,
+device_online, error?}` — where `moving` is inferred
+(`|target − readback| > deadband`, false while readback validity is unknown),
+never wire-reported. `device_online` is always an explicit boolean (two-layer
+liveness: `/status` is the bridge process, `/state.device_online` is **this
+slot's own serial link** — a dead elevation port takes only `el-rotator`
+offline). `/cmd` payloads: `{"action":"goto","value":"45.0"}` /
+`{"action":"stop"}` — published non-retained, subscribed at QoS 0, cleared with
+an empty retained publish after execute-or-reject, `ts`-gated when stamped
+(KTD13; unstamped producers tolerated). The ERC-M's `rFMW` firmware string
+folds into `/meta.device.firmware` once the first link open reads it; the SPID
+Rot1Prog has none and omits the key. Rotator slots publish **read-only**
+`expose` blocks (state fields only — no writable setpoints, no actions) —
 hadiscovery renders state but no HA motion widgets (KTD4).
 
 ---
@@ -161,10 +192,15 @@ with `MemoryMax=256M`/`TasksMax=64`, and wrc's
 `SERIAL_USB_VENDORS` (space-separated; the single-vendor template would miss a
 second adapter family).
 
-**Deploy gate:** the shari deploy is gated on the Tier-1 exposure review being
-recorded (U9) — the listeners must not go live before the five-vector review
-lands. See `../docs/conventions/deployment.md` (serial addendum) for the
-underlying hardening requirements.
+**Deploy gate:** the shari deploy was gated on the Tier-1 exposure review being
+recorded (U9) — it now is (`../docs/known-issues.md`, "Sat-ops rotators:
+pre-deploy exposure review"; five rotator vectors + the phase-controller
+sixth). What still precedes the first live deploy is the bench bring-up:
+pinning the real `/dev/serial/by-id/` adapter identities (mock-mode ports must
+not reach a live deploy) and confirming the shack SPID controller is a
+Rot1Prog (not an MD-0x in ROT1 mode, plan KTD5). See
+`../docs/conventions/deployment.md` (serial addendum) for the underlying
+hardening requirements.
 
 ---
 
