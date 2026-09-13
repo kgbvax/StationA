@@ -11,6 +11,7 @@ use (
 	./powerseq
 	./shared
 	./shelly-power-bridge
+	./spid-ercm-rotator-bridge
 	./testui
 	./ultrabridge
 	./wrc-rotator-bridge
