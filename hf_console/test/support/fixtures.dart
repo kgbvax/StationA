@@ -117,6 +117,43 @@ extension BusStoreFixtures on BusStore {
     });
   }
 
+  /// Populate a sat-rotator axis slot (uhf/az-rotator / uhf/el-rotator) with
+  /// the wire shape spid-ercm-rotator-bridge publishes: retained /meta with
+  /// capabilities.axes + capabilities.limits, retained /state with
+  /// {ts, az|el, target, moving, link, device_online, error}. A null [pos] or
+  /// [target] omits the key (invalid readback / no target), like the bridge.
+  void setSatRotator(
+    String address, {
+    String axis = 'az',
+    double? pos,
+    double? target,
+    bool moving = false,
+    bool deviceOnline = true,
+    String error = '',
+    Map<String, dynamic>? limits,
+  }) {
+    applyStatus(address, 'online');
+    applyMeta(address, {
+      'schema': '1.0',
+      'role': 'rotator',
+      'capabilities': {
+        'axes': [axis],
+        'limits': limits ??
+            {'min': 0.0, 'max': axis == 'az' ? 360.0 : 90.0, 'park': 0.0},
+      },
+    });
+    final state = <String, dynamic>{
+      'moving': moving,
+      'link': 'serial',
+      'device_online': deviceOnline,
+      'ts': '2026-08-20T14:30:00.000000',
+    };
+    if (error.isNotEmpty) state['error'] = error;
+    if (pos != null) state[axis] = pos;
+    if (target != null) state['target'] = target;
+    applyState(address, state);
+  }
+
   /// Populate the tuner slot.
   void setTuner({bool inline = true, bool settling = false, String fault = '', double swr = 1.2}) {
     setOnline('muehle/hf/tuner');

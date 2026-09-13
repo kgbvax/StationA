@@ -25,6 +25,12 @@ const cmdRetain = {
   'muehle/hf/tuner': false,
   'muehle/hf/power-seq': false,
   'muehle/hf/radio': false, // DVK play/stop are one-shot
+  // Sat rotators (spid-ercm-rotator-bridge) — one-shot per KTD13: a stale
+  // retained or queued goto must never replay against real antennas.
+  'muehle/uhf/az-rotator': false,
+  'muehle/uhf/el-rotator': false,
+  // pol-ctrl (set_pol) is retained steady state — the ant-switch actuator
+  // exception; its entry lands with the Tier-2 polarization control.
 };
 
 String cmdTopic(String slot) => 'muehle/$slot/cmd';
@@ -51,6 +57,8 @@ const expectedSlots = [
   'muehle/hf/discovery',
   'muehle/uhf/rotator',
   'muehle/uhf/pol-ctrl',
+  'muehle/uhf/az-rotator',
+  'muehle/uhf/el-rotator',
 ];
 
 String cmdPayload(String action, dynamic value) =>
@@ -80,6 +88,17 @@ String rotatorAzPayload(double az) =>
 String rotatorStopPayload() => jsonEncode({'action': 'stop'});
 String rotatorFwdPayload() => jsonEncode({'action': 'fwd'});
 String rotatorRevPayload() => jsonEncode({'action': 'rev'});
+
+// --- Sat rotators (uhf/az-rotator + uhf/el-rotator) ---------------------------
+//
+// R3: goto takes degrees under `value` — the station /cmd value-key
+// convention, NOT the wrc hf/rotator set_az deviation above. The bridge
+// parses the string; both are one-shot (KTD13), so callers pass
+// cmdRetain[...]! which is false for both slots.
+
+String satRotatorGotoPayload(double deg) => cmdPayload('goto', deg.toString());
+
+String satRotatorStopPayload() => jsonEncode({'action': 'stop'});
 
 // --- Ultrabeam controller ----------------------------------------------------
 

@@ -12,6 +12,7 @@ import '../widgets/dvk_panel.dart';
 import '../widgets/antenna_panel.dart';
 import '../widgets/power_panel.dart';
 import '../widgets/rotator_presets_bar.dart';
+import '../widgets/sat_rotator_panel.dart';
 import '../widgets/climate_panel.dart';
 import '../widgets/faults_bar.dart';
 import '../widgets/dx_config_sheet.dart';
@@ -284,15 +285,22 @@ class _UhfPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Single vertically scrolled panel column on both tablet and phone
+    // layouts (U8): the sat-ops rotator surface replaces the former
+    // "not yet wired" placeholder. Tier 2 appends the polarization control
+    // below it.
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         _PageTopBar(page: 'uhf', onSelect: onSelect, onScheme: onScheme),
         Expanded(
-          child: Center(
-            child: Text(
-              'UHF controls are not yet wired.',
-              style: AppTheme.body(18, color: AppTheme.txtFaint, weight: FontWeight.w500),
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: const [
+                SatRotatorPanel(),
+                SizedBox(height: 40),
+              ],
             ),
           ),
         ),

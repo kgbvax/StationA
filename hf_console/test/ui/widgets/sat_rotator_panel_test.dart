@@ -1,0 +1,343 @@
+// sat_rotator_panel_test.dart — widget tests for the sat-ops rotator surface
+// (U8): per-axis readouts, goto, and the STOP e-stop on the two spid/ercm
+// slots muehle/uhf/az-rotator + muehle/uhf/el-rotator. Covers the plan's
+// scenarios: two-layer gating (slot.isOnline AND store.linkUp), client-side
+// travel-limit validation against /meta capabilities, the value-key goto
+// payload published non-retained, and the STOP that fires on both slots'
+// /cmd whenever any axis is operable.
+
+import 'dart:convert';
+
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:hf_console/store/bus_store.dart';
+import 'package:hf_console/ui/widgets/sat_rotator_panel.dart';
+import '../../support/fake_mqtt_service.dart';
+import '../../support/fixtures.dart';
+import '../../support/test_harness.dart';
+
+const azAddress = 'muehle/uhf/az-rotator';
+const elAddress = 'muehle/uhf/el-rotator';
+
+void main() {
+  Future<void> pumpPanel(
+    WidgetTester tester, {
+    required BusStore store,
+    required FakeMqttService mqtt,
+  }) async {
+    await tester.pumpWidget(
+        TestHarness(store: store, mqtt: mqtt, child: const SatRotatorPanel()));
+    await tester.pumpAndSettle();
+  }
+
+  ElevatedButton button(WidgetTester tester, Finder finder) =>
+      tester.widget<ElevatedButton>(finder);
+
+  group('readouts', () {
+    testWidgets('shows position, target and moving indicator per axis',
+        (tester) async {
+      final store = BusStore();
+      final mqtt = FakeMqttService(store);
+      store.setSatRotator(azAddress,
+          axis: 'az', pos: 45.5, target: 90, moving: true);
+      store.setSatRotator(elAddress, axis: 'el', pos: 12.0);
+
+      await pumpPanel(tester, store: store, mqtt: mqtt);
+
+      expect(find.text('AZIMUTH'), findsOneWidget);
+      expect(find.text('ELEVATION'), findsOneWidget);
+      expect(find.text('45.5°'), findsOneWidget);
+      expect(find.text('90°'), findsOneWidget);
+      expect(find.text('12°'), findsOneWidget);
+      expect(find.text('MOVING'), findsOneWidget); // az only
+    });
+
+    testWidgets('omitted readback renders a dash, not a fabricated position',
+        (tester) async {
+      final store = BusStore();
+      final mqtt = FakeMqttService(store);
+      store.setSatRotator(azAddress, axis: 'az'); // no pos, no target
+
+      await pumpPanel(tester, store: store, mqtt: mqtt);
+
+      // Both axis rows render unconditionally; with no readback anywhere
+      // each shows exactly one dash.
+      expect(find.text('—'), findsNWidgets(2));
+      expect(find.text('45.5°'), findsNothing);
+    });
+  });
+
+  group('gating (two-layer AND: slot.isOnline && store.linkUp)', () {
+    testWidgets('both axes online → controls enabled', (tester) async {
+      final store = BusStore();
+      final mqtt = FakeMqttService(store);
+      store.setSatRotator(azAddress, axis: 'az', pos: 45);
+      store.setSatRotator(elAddress, axis: 'el', pos: 10);
+
+      await pumpPanel(tester, store: store, mqtt: mqtt);
+      await tester.enterText(
+          find.byKey(const ValueKey('sat-az-input')), '120');
+      await tester.enterText(find.byKey(const ValueKey('sat-el-input')), '30');
+      await tester.pumpAndSettle();
+
+      expect(button(tester, find.byKey(const ValueKey('sat-az-goto'))).onPressed,
+          isNotNull);
+      expect(button(tester, find.byKey(const ValueKey('sat-el-goto'))).onPressed,
+          isNotNull);
+      expect(
+          button(tester, find.byKey(const ValueKey('sat-stop'))).onPressed, isNotNull);
+    });
+
+    testWidgets('el device_online false → el disabled, az still operable',
+        (tester) async {
+      final store = BusStore();
+      final mqtt = FakeMqttService(store);
+      store.setSatRotator(azAddress, axis: 'az', pos: 45);
+      store.setSatRotator(elAddress, axis: 'el', pos: 10);
+      store.setDeviceOffline(elAddress);
+
+      await pumpPanel(tester, store: store, mqtt: mqtt);
+      await tester.enterText(
+          find.byKey(const ValueKey('sat-az-input')), '120');
+      await tester.enterText(find.byKey(const ValueKey('sat-el-input')), '30');
+      await tester.pumpAndSettle();
+
+      expect(button(tester, find.byKey(const ValueKey('sat-az-goto'))).onPressed,
+          isNotNull);
+      expect(
+          button(tester, find.byKey(const ValueKey('sat-el-goto'))).onPressed, isNull);
+      // One live axis keeps the e-stop live.
+      expect(
+          button(tester, find.byKey(const ValueKey('sat-stop'))).onPressed, isNotNull);
+    });
+
+    testWidgets('az bridge offline → az disabled (bridge layer of the AND)',
+        (tester) async {
+      final store = BusStore();
+      final mqtt = FakeMqttService(store);
+      store.setSatRotator(azAddress, axis: 'az', pos: 45);
+      store.setBridgeOffline(azAddress);
+
+      await pumpPanel(tester, store: store, mqtt: mqtt);
+      await tester.enterText(
+          find.byKey(const ValueKey('sat-az-input')), '120');
+      await tester.pumpAndSettle();
+
+      expect(
+          button(tester, find.byKey(const ValueKey('sat-az-goto'))).onPressed, isNull);
+    });
+
+    testWidgets('linkUp false → whole panel inert (stale state not operable)',
+        (tester) async {
+      final store = BusStore();
+      final mqtt = FakeMqttService(store);
+      store.setSatRotator(azAddress, axis: 'az', pos: 45);
+      store.setSatRotator(elAddress, axis: 'el', pos: 10);
+
+      await pumpPanel(tester, store: store, mqtt: mqtt);
+      store.markDisconnected();
+      await tester.pumpAndSettle();
+
+      // Retained slot state is still present — that is exactly the trap: it
+      // must not render operable while the link is down.
+      expect(store.slots[azAddress]!.isOnline, isTrue);
+      expect(
+          button(tester, find.byKey(const ValueKey('sat-az-goto'))).onPressed, isNull);
+      expect(
+          button(tester, find.byKey(const ValueKey('sat-el-goto'))).onPressed, isNull);
+      expect(
+          button(tester, find.byKey(const ValueKey('sat-stop'))).onPressed, isNull);
+
+      await tester.tap(find.byKey(const ValueKey('sat-stop')));
+      await tester.pumpAndSettle();
+      expect(mqtt.publishes, isEmpty);
+    });
+  });
+
+  group('goto', () {
+    testWidgets('publishes the value-key payload non-retained', (tester) async {
+      final store = BusStore();
+      final mqtt = FakeMqttService(store);
+      store.setSatRotator(azAddress, axis: 'az', pos: 45);
+
+      await pumpPanel(tester, store: store, mqtt: mqtt);
+      await tester.enterText(find.byKey(const ValueKey('sat-az-input')), '45');
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('sat-az-goto')));
+      await tester.pumpAndSettle();
+
+      expect(mqtt.publishes.length, 1);
+      final rec = mqtt.publishes.first;
+      expect(rec.topic, 'muehle/uhf/az-rotator/cmd');
+      expect(rec.retain, isFalse,
+          reason: 'KTD13: rotator /cmd is one-shot, non-retained');
+      expect(jsonDecode(rec.payload), {'action': 'goto', 'value': '45.0'});
+    });
+
+    testWidgets('publishes on the el slot with el limits', (tester) async {
+      final store = BusStore();
+      final mqtt = FakeMqttService(store);
+      store.setSatRotator(elAddress, axis: 'el', pos: 10);
+
+      await pumpPanel(tester, store: store, mqtt: mqtt);
+      await tester.enterText(find.byKey(const ValueKey('sat-el-input')), '80');
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('sat-el-goto')));
+      await tester.pumpAndSettle();
+
+      expect(mqtt.publishes.single.topic, 'muehle/uhf/el-rotator/cmd');
+      expect(jsonDecode(mqtt.publishes.single.payload),
+          {'action': 'goto', 'value': '80.0'});
+    });
+
+    testWidgets('publish disabled while the input is empty', (tester) async {
+      final store = BusStore();
+      final mqtt = FakeMqttService(store);
+      store.setSatRotator(azAddress, axis: 'az', pos: 45);
+
+      await pumpPanel(tester, store: store, mqtt: mqtt);
+      // Input untouched (empty) — GOTO must be disabled.
+      expect(
+          button(tester, find.byKey(const ValueKey('sat-az-goto'))).onPressed, isNull);
+    });
+
+    testWidgets('publish disabled while out of limits; boundaries pass',
+        (tester) async {
+      final store = BusStore();
+      final mqtt = FakeMqttService(store);
+      store.setSatRotator(azAddress, axis: 'az', pos: 45); // limits 0..360
+
+      await pumpPanel(tester, store: store, mqtt: mqtt);
+
+      Future<bool> gotoEnabledFor(String text) async {
+        await tester.enterText(
+            find.byKey(const ValueKey('sat-az-input')), text);
+        await tester.pumpAndSettle();
+        return button(tester, find.byKey(const ValueKey('sat-az-goto'))).onPressed !=
+            null;
+      }
+
+      expect(await gotoEnabledFor('400'), isFalse, reason: 'above max');
+      expect(await gotoEnabledFor('-1'), isFalse, reason: 'below min');
+      expect(await gotoEnabledFor('abc'), isFalse, reason: 'not a number');
+      expect(await gotoEnabledFor('360'), isTrue, reason: 'max is inclusive');
+      expect(await gotoEnabledFor('0'), isTrue, reason: 'min is inclusive');
+      expect(await gotoEnabledFor('359.9'), isTrue);
+    });
+
+    testWidgets('no /meta limits → parse-only validation (bridge R10 backstop)',
+        (tester) async {
+      final store = BusStore();
+      final mqtt = FakeMqttService(store);
+      // Bridge up, state up, but no /meta yet — the panel cannot know the
+      // travel envelope; any finite value stays publishable and the bridge's
+      // R10 refusal surfaces via the faults bar.
+      store.setOnline(azAddress);
+      store.applyState(azAddress, {'az': 45, 'device_online': true});
+
+      await pumpPanel(tester, store: store, mqtt: mqtt);
+      await tester.enterText(find.byKey(const ValueKey('sat-az-input')), '999');
+      await tester.pumpAndSettle();
+
+      expect(button(tester, find.byKey(const ValueKey('sat-az-goto'))).onPressed,
+          isNotNull);
+    });
+
+    testWidgets('±1° steppers step from the current input and clamp',
+        (tester) async {
+      final store = BusStore();
+      final mqtt = FakeMqttService(store);
+      store.setSatRotator(azAddress, axis: 'az', pos: 45);
+      store.setSatRotator(elAddress, axis: 'el', pos: 10); // limits 0..90
+
+      await pumpPanel(tester, store: store, mqtt: mqtt);
+
+      String inputText(String axis) =>
+          tester.widget<TextField>(find.byKey(ValueKey('sat-$axis-input')))
+              .controller!
+              .text;
+
+      // Empty input + step → steps from the live position.
+      await tester.tap(find.byKey(const ValueKey('sat-az-step-up')));
+      await tester.pumpAndSettle();
+      expect(inputText('az'), '46');
+
+      // Steps from the typed value, not the position.
+      await tester.enterText(
+          find.byKey(const ValueKey('sat-az-input')), '100');
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('sat-az-step-down')));
+      await tester.pumpAndSettle();
+      expect(inputText('az'), '99');
+
+      // Fractional values keep their decimals.
+      await tester.enterText(
+          find.byKey(const ValueKey('sat-el-input')), '10.5');
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('sat-el-step-up')));
+      await tester.pumpAndSettle();
+      expect(inputText('el'), '11.5');
+
+      // Clamped at the el max (90): stepping up past it parks at 90.
+      await tester.enterText(find.byKey(const ValueKey('sat-el-input')), '90');
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('sat-el-step-up')));
+      await tester.pumpAndSettle();
+      expect(inputText('el'), '90');
+      // Clamped at the el min (0).
+      await tester.enterText(find.byKey(const ValueKey('sat-el-input')), '0');
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('sat-el-step-down')));
+      await tester.pumpAndSettle();
+      expect(inputText('el'), '0');
+    });
+  });
+
+  group('STOP (the operator e-stop)', () {
+    testWidgets('publishes stop to BOTH slots non-retained on every tap',
+        (tester) async {
+      final store = BusStore();
+      final mqtt = FakeMqttService(store);
+      store.setSatRotator(azAddress, axis: 'az', pos: 45, moving: true);
+      store.setSatRotator(elAddress, axis: 'el', pos: 10, moving: true);
+
+      await pumpPanel(tester, store: store, mqtt: mqtt);
+      await tester.tap(find.byKey(const ValueKey('sat-stop')));
+      await tester.pumpAndSettle();
+
+      expect(mqtt.publishes.length, 2);
+      expect(mqtt.publishes[0].topic, 'muehle/uhf/az-rotator/cmd');
+      expect(mqtt.publishes[1].topic, 'muehle/uhf/el-rotator/cmd');
+      for (final rec in mqtt.publishes) {
+        expect(jsonDecode(rec.payload), {'action': 'stop'});
+        expect(rec.retain, isFalse);
+      }
+    });
+
+    testWidgets('enabled while exactly one axis is online', (tester) async {
+      final store = BusStore();
+      final mqtt = FakeMqttService(store);
+      store.setSatRotator(azAddress, axis: 'az', pos: 45);
+      // el never heard from: bridge offline AND device offline.
+
+      await pumpPanel(tester, store: store, mqtt: mqtt);
+      expect(
+          button(tester, find.byKey(const ValueKey('sat-stop'))).onPressed, isNotNull);
+
+      // And the stop still dual-publishes (belt-and-braces against the dead
+      // slot path).
+      await tester.tap(find.byKey(const ValueKey('sat-stop')));
+      await tester.pumpAndSettle();
+      expect(mqtt.publishes.length, 2);
+    });
+
+    testWidgets('disabled when no axis is operable', (tester) async {
+      final store = BusStore();
+      final mqtt = FakeMqttService(store);
+
+      await pumpPanel(tester, store: store, mqtt: mqtt);
+      expect(
+          button(tester, find.byKey(const ValueKey('sat-stop'))).onPressed, isNull);
+    });
+  });
+}
