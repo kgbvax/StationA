@@ -25,10 +25,10 @@ import (
 	"io"
 	"log/slog"
 	"math"
-	"os"
 	"sync"
-	"syscall"
 	"time"
+
+	serial "go.bug.st/serial"
 
 	"spid-ercm-rotator-bridge/internal/config"
 )
@@ -480,22 +480,18 @@ func (d *Driver) emitFrames(pending []byte) []byte {
 	return pending
 }
 
-// --- serial port opener (plain file I/O, no third-party serial library) -----------
+// --- serial port opener --------------------------------------------------------
 
 // serialOpener returns the opener closure the driver self-heals through: it
 // re-resolves the stable /dev/serial/by-id/ symlink on every call, so a USB
 // re-enumeration heals instead of wedging on a deleted device node.
 func serialOpener(path string, baud int) func() (io.ReadWriteCloser, error) {
 	return func() (io.ReadWriteCloser, error) {
-		f, err := os.OpenFile(path, os.O_RDWR|syscall.O_NOCTTY, 0)
+		p, err := serial.Open(path, &serial.Mode{BaudRate: baud})
 		if err != nil {
-			return nil, fmt.Errorf("open serial %s: %w", path, err)
+			return nil, fmt.Errorf("open serial %s @ %d baud: %w", path, baud, err)
 		}
-		if err := configurePort(f, baud); err != nil {
-			_ = f.Close()
-			return nil, fmt.Errorf("configure serial %s @ %d baud: %w", path, baud, err)
-		}
-		return f, nil
+		return p, nil
 	}
 }
 

@@ -68,12 +68,13 @@ import (
 	"io"
 	"log/slog"
 	"math"
-	"os"
 	"regexp"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	serial "go.bug.st/serial"
 )
 
 // Errors surfaced by the driver contract.
@@ -201,8 +202,13 @@ func New(cfg Config, log *slog.Logger) *Driver {
 			opener = func() (io.ReadWriteCloser, error) { return NewMock().Port(), nil }
 		} else {
 			port := cfg.Port
+			baud := cfg.Baud
 			opener = func() (io.ReadWriteCloser, error) {
-				return os.OpenFile(port, os.O_RDWR, 0)
+				p, err := serial.Open(port, &serial.Mode{BaudRate: baud})
+				if err != nil {
+					return nil, fmt.Errorf("open serial %s @ %d baud: %w", port, baud, err)
+				}
+				return p, nil
 			}
 		}
 	}

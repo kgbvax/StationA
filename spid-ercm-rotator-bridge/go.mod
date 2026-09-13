@@ -9,4 +9,9 @@ require (
 	github.com/BurntSushi/toml v1.6.0
 )
 
+require (
+	go.bug.st/serial v1.8.0 // indirect
+	golang.org/x/sys v0.43.0 // indirect
+)
+
 replace codeberg.org/kgbvax/stationa/shared => ../shared
