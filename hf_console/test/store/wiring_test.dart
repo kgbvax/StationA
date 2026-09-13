@@ -1,7 +1,8 @@
 // wiring_test.dart — bus-wiring contract tests for the sat-rotator slots
-// (U8): the one-shot /cmd retention posture (KTD13) and the value-key
-// payload shapes (R3). Every panel consumer null-asserts on cmdRetain, so
-// a missing entry is a crash, not a soft failure — pinned here.
+// (U8) and the pol-ctrl slot (U11): the /cmd retention postures (KTD13 and
+// its retained-steady-state contrast) and the value-key payload shapes
+// (R3). Every panel consumer null-asserts on cmdRetain, so a missing entry
+// is a crash, not a soft failure — pinned here.
 
 import 'dart:convert';
 
@@ -16,11 +17,13 @@ void main() {
       expect(cmdRetain['muehle/uhf/el-rotator'], isFalse);
     });
 
-    test('pol-ctrl stays retained (the Tier-2 polarization control adds it)',
+    test('pol-ctrl is retained steady state (the Tier-2 polarization control)',
         () {
-      // Absent today is fine; it must never read false — polarization is a
-      // settable steady state (the ant-switch actuator exception).
-      expect(cmdRetain['muehle/uhf/pol-ctrl'] ?? true, isTrue);
+      // Polarization is a settable steady state — the ant-switch actuator
+      // exception, the deliberate contrast with the one-shot rotators
+      // (KTD13): a retained set_pol re-applies the last intent after a
+      // controller reboot or broker reconnect.
+      expect(cmdRetain['muehle/uhf/pol-ctrl'], isTrue);
     });
 
     test('hf slots keep their existing retention posture', () {
@@ -57,6 +60,23 @@ void main() {
     test('cmdTopic addresses the uhf slots', () {
       expect(cmdTopic('uhf/az-rotator'), 'muehle/uhf/az-rotator/cmd');
       expect(cmdTopic('uhf/el-rotator'), 'muehle/uhf/el-rotator/cmd');
+    });
+  });
+
+  group('pol-ctrl payload builders', () {
+    test('set_pol carries the phase under the value key', () {
+      final payload = jsonDecode(setPolPayload('cl')) as Map<String, dynamic>;
+      expect(payload, {'action': 'set_pol', 'value': 'cl'});
+    });
+
+    test('set_pol passes each vocabulary value through verbatim', () {
+      for (final pol in ['h', 'v', 'cl', 'cr']) {
+        expect(jsonDecode(setPolPayload(pol)), {'action': 'set_pol', 'value': pol});
+      }
+    });
+
+    test('cmdTopic addresses the pol-ctrl slot', () {
+      expect(cmdTopic('uhf/pol-ctrl'), 'muehle/uhf/pol-ctrl/cmd');
     });
   });
 }

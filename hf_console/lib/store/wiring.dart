@@ -29,8 +29,11 @@ const cmdRetain = {
   // retained or queued goto must never replay against real antennas.
   'muehle/uhf/az-rotator': false,
   'muehle/uhf/el-rotator': false,
-  // pol-ctrl (set_pol) is retained steady state — the ant-switch actuator
-  // exception; its entry lands with the Tier-2 polarization control.
+  // pol-ctrl (m5stamp-pol-ctrl) — retained steady state, the actuator
+  // exception (KTD13's deliberate contrast with the one-shot rotators
+  // above): a retained set_pol re-applies the operator's last intent after
+  // a controller reboot or broker reconnect.
+  'muehle/uhf/pol-ctrl': true,
 };
 
 String cmdTopic(String slot) => 'muehle/$slot/cmd';
@@ -99,6 +102,17 @@ String rotatorRevPayload() => jsonEncode({'action': 'rev'});
 String satRotatorGotoPayload(double deg) => cmdPayload('goto', deg.toString());
 
 String satRotatorStopPayload() => jsonEncode({'action': 'stop'});
+
+// --- X-Quad polarization (uhf/pol-ctrl) ---------------------------------------
+//
+// R14/m5stamp-pol-ctrl contract: set_pol takes the canonical phase under
+// `value` — the station /cmd value-key convention. The phase is one shared
+// setting for BOTH X-Quads; valid vocabulary is h|v|cl|cr. /cmd is RETAINED
+// (cmdRetain['muehle/uhf/pol-ctrl']! = true): desired steady state that
+// re-applies on reconnect, in deliberate contrast to the one-shot sat
+// rotators above (KTD13).
+
+String setPolPayload(String pol) => cmdPayload('set_pol', pol);
 
 // --- Ultrabeam controller ----------------------------------------------------
 

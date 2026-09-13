@@ -154,6 +154,42 @@ extension BusStoreFixtures on BusStore {
     applyState(address, state);
   }
 
+  /// Populate the pol-ctrl slot (m5stamp-pol-ctrl, M5 Stamp PLC #2) with the
+  /// wire shape the firmware publishes (docs/m5stamp-pol-ctrl-mqtt-api.md):
+  /// retained /meta with role pol-ctrl + capabilities.polarizations, retained
+  /// /state { ts, pol, device_online, error? } where `pol` is derived from
+  /// the AW9523 relay readback (KTD15), never from the select or /cmd echo.
+  void setPolCtrl({
+    String pol = 'v',
+    bool deviceOnline = true,
+    String error = '',
+  }) {
+    const address = 'muehle/uhf/pol-ctrl';
+    applyStatus(address, 'online');
+    applyMeta(address, {
+      'schema': '1.0',
+      'role': 'pol-ctrl',
+      'device': {
+        'model': 'M5 Stamp PLC #2 (StamPLC K141)',
+        'serial': 'xctrl',
+        'firmware': '1.0.0',
+      },
+      'capabilities': {
+        'polarizations': ['h', 'v', 'cl', 'cr'],
+        'exclusive': true,
+        'shared': true,
+        'vertical': 'all_relays_off',
+      },
+    });
+    final state = <String, dynamic>{
+      'pol': pol,
+      'device_online': deviceOnline,
+      'ts': '2026-09-13T12:34:56Z',
+    };
+    if (error.isNotEmpty) state['error'] = error;
+    applyState(address, state);
+  }
+
   /// Populate the tuner slot.
   void setTuner({bool inline = true, bool settling = false, String fault = '', double swr = 1.2}) {
     setOnline('muehle/hf/tuner');
