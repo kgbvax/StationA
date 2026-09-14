@@ -468,7 +468,7 @@ class _SchemePicker extends StatelessWidget {
     final schemes = [
       (AppColorScheme.dc, 'DC'),
       (AppColorScheme.paper, 'PA'),
-      (AppColorScheme.forest, 'FO'),
+      (AppColorScheme.aether, 'AE'),
     ];
     return Row(
       mainAxisSize: MainAxisSize.min,

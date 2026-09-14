@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 enum AppColorScheme {
   dc,
   paper,
-  forest,
+  aether,
 }
 
 class AppTheme extends ChangeNotifier {
@@ -49,22 +49,29 @@ class AppTheme extends ChangeNotifier {
       red: const Color(0xFFB52E1D),
       orange: const Color(0xFFC45F18),
     ),
-    AppColorScheme.forest: _Palette(
-      page: const Color(0xFF151A17),
-      pane: const Color(0xFF1C231E),
-      card: const Color(0xFF242C26),
-      land: const Color(0xFF34403A),
-      line: const Color(0xFF3D4740),
-      lineHi: const Color(0xFF515C54),
-      txt: const Color(0xFFDDE4DD),
-      txtMute: const Color(0xFF8D9A8D),
-      txtFaint: const Color(0xFF5E6B5E),
-      accent: const Color(0xFFC8A45C),
-      accentDim: const Color(0x1EC8A45C),
-      green: const Color(0xFF6DB88B),
-      amber: const Color(0xFFE0B35A),
-      red: const Color(0xFFD2786C),
-      orange: const Color(0xFFCF9A68),
+    /// AetherSDR "default dark" (FlexRadio-Maestro look) — values taken
+    /// from AetherSDR `resources/themes/default-dark.json` v1.5, mapped onto
+    /// this palette's slots: page = background.app, card = background.1,
+    /// pane = button.background, land = background.2, line = border.strong,
+    /// lineHi = gray.600, txt/txtMute/txtFaint = text.primary/secondary/
+    /// label, accent = accent (cyan), green/amber/red = accent.success/
+    /// warning/danger, orange = highlight.tx.
+    AppColorScheme.aether: _Palette(
+      page: const Color(0xFF0F0F1A),
+      pane: const Color(0xFF203040),
+      card: const Color(0xFF1A2A3A),
+      land: const Color(0xFF304050),
+      line: const Color(0xFF2A3A4D),
+      lineHi: const Color(0xFF3A4A5A),
+      txt: const Color(0xFFC8D8E8),
+      txtMute: const Color(0xFF8EA8C0),
+      txtFaint: const Color(0xFF506070),
+      accent: const Color(0xFF00B4D8),
+      accentDim: const Color(0x1E0070C0),
+      green: const Color(0xFF4DD87A),
+      amber: const Color(0xFFFFB84D),
+      red: const Color(0xFFFF4D4D),
+      orange: const Color(0xFFFC4500),
     ),
   };
 
