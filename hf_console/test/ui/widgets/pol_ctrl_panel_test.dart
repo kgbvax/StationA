@@ -272,7 +272,7 @@ void main() {
 
       await pumpPanel(tester, store: store, mqtt: mqtt);
 
-      expect(find.text('ERR'), findsOneWidget);
+      expect(find.textContaining('ERR'), findsOneWidget);
       expect(find.textContaining("invalid pol 'c1'"), findsOneWidget);
     });
 
@@ -301,13 +301,13 @@ void main() {
           pol: 'cl', error: "cmd rejected: invalid pol 'c1' (expected h|v|cl|cr)");
 
       await pumpPanel(tester, store: store, mqtt: mqtt);
-      expect(find.text('ERR'), findsOneWidget);
+      expect(find.textContaining('ERR'), findsOneWidget);
 
       // Next valid state change republishes /state without the error field.
       store.setPolCtrl(pol: 'cr');
       await tester.pumpAndSettle();
 
-      expect(find.text('ERR'), findsNothing);
+      expect(find.textContaining('ERR'), findsNothing);
       expect(find.text('CIRCULAR RIGHT'), findsOneWidget);
     });
 
@@ -331,7 +331,7 @@ void main() {
 
       // Gating disables the buttons, not the truth: the operator must still
       // see why the controller is complaining.
-      expect(find.text('ERR'), findsOneWidget);
+      expect(find.textContaining('ERR'), findsOneWidget);
       expect(button(tester, 'cl').onPressed, isNull);
     });
   });

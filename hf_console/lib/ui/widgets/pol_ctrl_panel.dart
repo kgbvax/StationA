@@ -6,7 +6,7 @@ import '../../store/bus_store.dart';
 import '../../store/wiring.dart';
 import '../theme.dart';
 import 'card_container.dart';
-import 'status_tag.dart';
+import 'status_pill.dart';
 
 /// X-Quad polarization surface (U11): the Tier-2 four-state control for the
 /// `muehle/uhf/pol-ctrl` slot published by m5stamp-pol-ctrl (M5 Stamp PLC #2).
@@ -92,15 +92,11 @@ class PolCtrlPanel extends StatelessWidget {
         children: [
           CardHeader(
             title: 'X-QUAD POLARIZATION',
-            trailing: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (errorText != null) ...[
-                  StatusTag(label: 'ERR', color: AppTheme.red),
-                  const SizedBox(width: 4),
-                ],
-                if (!online) StatusTag(label: 'OFFLINE', color: AppTheme.txtMute),
-              ],
+            trailing: StatusPill(
+              slots: const ['muehle/uhf/pol-ctrl'],
+              label: 'X-Quad',
+              suffix: errorText != null ? 'ERR' : null,
+              suffixColor: AppTheme.red,
             ),
           ),
           const SizedBox(height: 12),

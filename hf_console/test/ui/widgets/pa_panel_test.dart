@@ -14,12 +14,12 @@ void main() {
       await tester.pumpWidget(TestHarness(store: store, mqtt: mqtt, child: const PaPanel()));
       await tester.pumpAndSettle();
 
-      expect(find.text('OFFLINE'), findsOneWidget);
+      expect(find.textContaining('OFFLINE'), findsOneWidget);
       expect(find.text('OPERATE'), findsOneWidget);
       expect(find.widgetWithText(ElevatedButton, 'OPERATE'), findsOneWidget);
     });
 
-    testWidgets('shows OPERATE in green when healthy', (tester) async {
+    testWidgets('shows plain device name when healthy', (tester) async {
       final store = BusStore();
       final mqtt = FakeMqttService(store);
       store.setPaHealthy();
@@ -27,9 +27,9 @@ void main() {
       await tester.pumpWidget(TestHarness(store: store, mqtt: mqtt, child: const PaPanel()));
       await tester.pumpAndSettle();
 
-      // Tag shows OPERATE with temperature; button also says OPERATE.
-      expect(find.textContaining('OPERATE ·'), findsOneWidget);
-      expect(find.text('OFFLINE'), findsNothing);
+      // Regular operate/standby shows just the pill name — no suffix.
+      expect(find.text('ACOM 1200S'), findsOneWidget);
+      expect(find.textContaining('OFFLINE'), findsNothing);
     });
 
     testWidgets('shows human-readable PA error in tag', (tester) async {
@@ -40,7 +40,7 @@ void main() {
       await tester.pumpWidget(TestHarness(store: store, mqtt: mqtt, child: const PaPanel()));
       await tester.pumpAndSettle();
 
-      expect(find.text('HOT SWITCHING ATTEMPT'), findsOneWidget);
+      expect(find.textContaining('HOT SWITCHING ATTEMPT'), findsOneWidget);
     });
 
     testWidgets('publishes set_mode operate on OPERATE tap', (tester) async {
@@ -130,7 +130,7 @@ void main() {
       await tester.pumpWidget(TestHarness(store: store, mqtt: mqtt, child: const PaPanel()));
       await tester.pumpAndSettle();
 
-      expect(find.text('PA RELAY OFF'), findsOneWidget);
+      expect(find.textContaining('PA RELAY OFF'), findsOneWidget);
     });
 
     testWidgets('shows RELAY ? when the hf/switch state is unknown, not a fabricated OFF', (tester) async {
@@ -145,8 +145,8 @@ void main() {
       await tester.pumpWidget(TestHarness(store: store, mqtt: mqtt, child: const PaPanel()));
       await tester.pumpAndSettle();
 
-      expect(find.text('RELAY ?'), findsOneWidget);
-      expect(find.text('PA RELAY OFF'), findsNothing);
+      expect(find.textContaining('RELAY ?'), findsOneWidget);
+      expect(find.textContaining('PA RELAY OFF'), findsNothing);
     });
 
     testWidgets('peak markers decay slowly after unkeying', (tester) async {

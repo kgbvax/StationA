@@ -4,6 +4,7 @@ import '../../store/bus_store.dart';
 import '../../mqtt/mqtt_service.dart';
 import '../../store/wiring.dart';
 import '../theme.dart';
+import 'status_pill.dart';
 
 class PowerPanel extends StatelessWidget {
   const PowerPanel({super.key});
@@ -94,14 +95,40 @@ class PowerPanel extends StatelessWidget {
         ? 'FAULT'
         : const {'running': 'ON', 'starting': 'STARTING', 'stopping': 'STOPPING'}[seqPhase] ?? 'IDLE';
 
-    return Container(
-      decoration: BoxDecoration(
-        color: AppTheme.card,
-        border: Border.all(color: AppTheme.blend(AppTheme.purpleBorder, 0.45)),
-        borderRadius: BorderRadius.circular(6),
-      ),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      child: Row(
+    final (pillSuffix, pillColor) = seqFault.isNotEmpty
+        ? ('FAULT', AppTheme.red)
+        : const {'starting', 'stopping'}.contains(seqPhase)
+            ? (seqLabel, AppTheme.amber)
+            : ('', null);
+
+    return Stack(
+      children: [
+        Positioned(
+          top: 6,
+          right: 10,
+          // Worst case across everything this module switches and sequences.
+          child: StatusPill(
+            slots: const [
+              'muehle/power/master',
+              'muehle/power/psu-13v8',
+              'muehle/hf/switch',
+              'muehle/hf/power-seq',
+            ],
+            label: 'Power',
+            useMetaName: false,
+            suffix: pillSuffix.isEmpty ? null : pillSuffix,
+            suffixColor: pillColor,
+          ),
+        ),
+        Container(
+          decoration: BoxDecoration(
+            color: AppTheme.card,
+            border: Border.all(color: AppTheme.blend(AppTheme.purpleBorder, 0.45)),
+            borderRadius: BorderRadius.circular(6),
+          ),
+          // Top padding clears the corner-overlaid status pill.
+          padding: const EdgeInsets.fromLTRB(12, 26, 12, 10),
+          child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           ElevatedButton(
@@ -151,7 +178,9 @@ class PowerPanel extends StatelessWidget {
             ],
           ),
         ],
+        ),
       ),
+    ],
     );
   }
 }

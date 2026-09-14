@@ -5,6 +5,7 @@ import '../../store/bus_store.dart';
 import '../../store/wiring.dart';
 import '../theme.dart';
 import 'mic_profile_row.dart';
+import 'status_pill.dart';
 
 class DvkPanel extends StatelessWidget {
   static const String slot = 'hf/radio';
@@ -23,8 +24,24 @@ class DvkPanel extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text('TRX · FLEX-8400'.toUpperCase(),
-              style: AppTheme.mono(12, weight: FontWeight.w700, letterSpacing: 0.14, color: AppTheme.txtMute)),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text('TRX · FLEX-8400'.toUpperCase(),
+                  style: AppTheme.mono(12, weight: FontWeight.w700, letterSpacing: 0.14, color: AppTheme.txtMute)),
+              // A live transmit is the one TRX state that must surface even
+              // with the readout pill gone — the DVK buttons don't show it.
+              Consumer<BusStore>(builder: (context, store, _) {
+                final tx = store.stateValueAs<String>('muehle/$slot', 'tx');
+                return StatusPill(
+                  slots: const ['muehle/hf/radio'],
+                  label: 'FLEX-8400',
+                  suffix: tx == 'tx' ? 'TX' : null,
+                  suffixColor: AppTheme.red,
+                );
+              }),
+            ],
+          ),
           const SizedBox(height: 8),
           _buildBandRow(context),
           const SizedBox(height: 8),

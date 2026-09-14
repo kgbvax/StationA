@@ -4,6 +4,7 @@ import '../../store/bus_store.dart';
 import '../../mqtt/mqtt_service.dart';
 import '../../store/wiring.dart';
 import '../theme.dart';
+import 'status_pill.dart';
 
 class AntennaPanel extends StatelessWidget {
   const AntennaPanel({super.key});
@@ -22,6 +23,7 @@ class AntennaPanel extends StatelessWidget {
     // deliberate grounded-safety state. It renders as Unknown instead.
     final selectedRaw = store.stateValueAs<String>('muehle/hf/ant-switch', 'selected');
     final selected = selectedRaw ?? '?';
+    final settled = store.stateValueAs<bool>('muehle/hf/ant-switch', 'settled') ?? false;
 
     final selectSlot = store.slots['muehle/hf/antenna-select'];
     final selectOnline = (selectSlot?.isOnline ?? false) && store.linkUp;
@@ -39,6 +41,7 @@ class AntennaPanel extends StatelessWidget {
     final radioTuning = store.stateValueAs<bool>('muehle/hf/radio', 'tuning');
     final paKeyed = store.stateValueAs<String>('muehle/hf/pa', 'keyed');
     final rfSafe = radioOnline && radioTx == 'rx' && radioTuning != true && paKeyed != 'tx';
+    final rfOn = radioTx == 'tx' || radioTuning == true || paKeyed == 'tx';
     // No fabricated 'auto': with the reconciler offline or absent (it may not
     // even be deployed), the operator drives the switch directly and the
     // header must say so instead of asserting a policy nobody enforces.
@@ -89,13 +92,33 @@ class AntennaPanel extends StatelessWidget {
       );
     }
 
-    return Container(
-      decoration: BoxDecoration(
-        color: AppTheme.card,
-        border: Border(top: BorderSide(color: AppTheme.cardLine)),
-      ),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      child: Wrap(
+    final (suffix, suffixColor) = rfOn
+        ? ('RF ON', AppTheme.red)
+        : !settled
+            ? ('NO RF', AppTheme.amber)
+            : ('', null);
+
+    return Stack(
+      children: [
+        Positioned(
+          top: 6,
+          right: 10,
+          child: StatusPill(
+            slots: const ['muehle/hf/ant-switch', 'muehle/hf/antenna-select'],
+            label: 'Ant switch',
+            useMetaName: false,
+            suffix: suffix.isEmpty ? null : suffix,
+            suffixColor: suffixColor,
+          ),
+        ),
+        Container(
+          decoration: BoxDecoration(
+            color: AppTheme.card,
+            border: Border(top: BorderSide(color: AppTheme.cardLine)),
+          ),
+          // Top padding clears the corner-overlaid status pill.
+          padding: const EdgeInsets.fromLTRB(12, 26, 12, 10),
+          child: Wrap(
         spacing: 8,
         runSpacing: 8,
         children: [
@@ -130,7 +153,9 @@ class AntennaPanel extends StatelessWidget {
             child: const Text('MANUAL'),
           ),
         ],
+        ),
       ),
+    ],
     );
   }
 }

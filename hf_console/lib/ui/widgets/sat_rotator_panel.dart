@@ -7,6 +7,7 @@ import '../../store/bus_store.dart';
 import '../../store/wiring.dart';
 import '../theme.dart';
 import 'card_container.dart';
+import 'status_pill.dart';
 import 'status_tag.dart';
 
 /// Sat-ops rotator surface (U8): per-axis readouts, goto, and the STOP
@@ -40,6 +41,12 @@ class SatRotatorPanel extends StatelessWidget {
   static const _azAddress = 'muehle/uhf/az-rotator';
   static const _elAddress = 'muehle/uhf/el-rotator';
 
+  /// Worst case across the two axes: the pill goes red while either rotor
+  /// is in motion.
+  bool _anyMoving(BusStore store) =>
+      store.stateValueAs<bool>(_azAddress, 'moving') == true ||
+      store.stateValueAs<bool>(_elAddress, 'moving') == true;
+
   @override
   Widget build(BuildContext context) {
     final store = context.watch<BusStore>();
@@ -65,11 +72,24 @@ class SatRotatorPanel extends StatelessWidget {
       }
     }
 
+    final (pillSuffix, pillColor) = _anyMoving(store)
+        ? ('MOVING', AppTheme.red)
+        : ('', null);
+
     return CardContainer(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          CardHeader(title: 'SAT ROTATORS'),
+          CardHeader(
+            title: 'SAT ROTATORS',
+            trailing: StatusPill(
+              slots: const [_azAddress, _elAddress],
+              label: 'Rotators',
+              useMetaName: false,
+              suffix: pillSuffix.isEmpty ? null : pillSuffix,
+              suffixColor: pillColor,
+            ),
+          ),
           const SizedBox(height: 12),
           _AxisControl(
             axis: 'az',

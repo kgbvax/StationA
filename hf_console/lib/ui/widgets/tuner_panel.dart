@@ -5,6 +5,7 @@ import '../../mqtt/mqtt_service.dart';
 import '../../store/wiring.dart';
 import '../theme.dart';
 import 'card_container.dart';
+import 'status_pill.dart';
 
 class TunerPanel extends StatelessWidget {
   const TunerPanel({super.key});
@@ -21,16 +22,8 @@ class TunerPanel extends StatelessWidget {
     final fault = store.stateValueAs<String>('muehle/hf/tuner', 'fault') ?? '';
     final swr = store.stateValueAs<num>('muehle/hf/tuner', 'swr')?.toDouble() ?? 1.0;
 
-    final tagLabel = _tunerTag(inline, settling, fault, swr, online);
-    final tagColor = !online
-        ? AppTheme.txtMute
-        : fault.isNotEmpty
-            ? AppTheme.red
-            : settling
-                ? AppTheme.amber
-                : inline
-                    ? _swrColor(swr)
-                    : AppTheme.amber; // bypass: degraded TX path, not plain info
+    final (suffix, suffixColor) =
+        _tunerState(inline, settling, fault, swr) ?? ('', null);
 
     void setInline(bool value) {
       if (!online) return;
@@ -59,7 +52,12 @@ class TunerPanel extends StatelessWidget {
         children: [
           CardHeader(
             title: 'Tuner · ATR-1000',
-            trailing: _Tag(tagLabel, tagColor),
+            trailing: StatusPill(
+              slots: const ['muehle/hf/tuner'],
+              label: 'ATR-1000',
+              suffix: suffix.isEmpty ? null : suffix,
+              suffixColor: suffixColor,
+            ),
           ),
           const SizedBox(height: 10),
           Row(
@@ -88,38 +86,19 @@ class TunerPanel extends StatelessWidget {
     );
   }
 
-  /// SWR thresholds on the inline tag — 3.5:1 and 1.1:1 must not read alike.
+  /// Irregular states only — an in-line tuner with healthy SWR is the plain
+  /// green device name on the pill. Offline is the pill's own concern.
+  (String, Color)? _tunerState(bool inline, bool settling, String fault, double swr) {
+    if (fault.isNotEmpty) return (fault.toUpperCase(), AppTheme.red);
+    if (settling) return ('TUNING', AppTheme.amber);
+    if (!inline) return ('BYPASS', AppTheme.amber); // degraded TX path
+    if (swr >= 2.0) return ('SWR ${swr.toStringAsFixed(swr < 10 ? 1 : 0)}', _swrColor(swr));
+    return null;
+  }
+
+  /// SWR thresholds on the inline suffix — 3.5:1 and 1.1:1 must not read alike.
   Color _swrColor(double swr) {
     if (swr >= 3.0) return AppTheme.red;
-    if (swr >= 2.0) return AppTheme.amber;
-    return AppTheme.green;
-  }
-
-  String _tunerTag(bool inline, bool settling, String fault, double swr, bool online) {
-    if (!online) return 'OFFLINE';
-    if (fault.isNotEmpty) return fault.toUpperCase();
-    if (settling) return 'TUNING';
-    if (inline) return 'IN LINE · SWR ${swr.toStringAsFixed(swr < 10 ? 1 : 0)}';
-    return 'BYPASS';
-  }
-}
-
-class _Tag extends StatelessWidget {
-  final String label;
-  final Color color;
-
-  const _Tag(this.label, this.color);
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-      decoration: BoxDecoration(
-        color: AppTheme.blend(color, 0.12),
-        border: Border.all(color: color),
-        borderRadius: BorderRadius.circular(4),
-      ),
-      child: Text(label, style: AppTheme.mono(11, color: color, weight: FontWeight.w700)),
-    );
+    return AppTheme.amber;
   }
 }
