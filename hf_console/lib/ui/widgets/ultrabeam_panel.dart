@@ -6,36 +6,6 @@ import '../../store/wiring.dart';
 import '../theme.dart';
 import 'status_pill.dart';
 
-/// Horst-Kevin — band-heckling dragon. Bundled from horstreporter's
-/// `static/hk.jpg`; the PNG variant (`assets/img/hk-removebg.png`) is the
-/// same photo with its background removed so it composites cleanly against
-/// the card chrome. The 56 dp circle-clip + accent ring used in the first
-/// pass clipped the dragon's horns; the alpha-clean PNG lets us render him
-/// as-is, so the widget just paints the image with a tooltip.
-class HorstKevin extends StatelessWidget {
-  /// Target rendered height in logical pixels. Width is computed from the
-  /// source's 482:517 aspect ratio (≈ 0.93) so the dragon stays proportional.
-  static const double height = 64;
-
-  const HorstKevin({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return Tooltip(
-      message: 'Horst-Kevin — band-heckling dragon',
-      child: Image.asset(
-        'assets/img/hk-removebg.png',
-        height: height,
-        fit: BoxFit.contain,
-        // PaintingBinding's default image cache keeps the PNG in memory after
-        // first decode. `filterQuality: medium` (not high) is sufficient for
-        // this small fixed-size asset — high wastes CPU on every layout.
-        filterQuality: FilterQuality.medium,
-      ),
-    );
-  }
-}
-
 class UltrabeamPanel extends StatefulWidget {
   const UltrabeamPanel({super.key});
 
@@ -118,12 +88,6 @@ class _UltrabeamPanelState extends State<UltrabeamPanel> {
           Padding(
             // Top padding clears the corner-overlaid status pill.
             padding: const EdgeInsets.fromLTRB(12, 26, 12, 10),
-            // `Row` (not `Wrap`) so RETRACT stays on a single line and the
-            // dragon has a fixed slot to the right of it. `crossAxisAlignment:
-            // end` aligns the dragon's bottom edge with the RETRACT button's
-            // bottom edge — the bottom-of-module visual the user asked for.
-            // The `Expanded` spacer absorbs the gap; the dragon sits flush
-            // against the right padding edge.
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
@@ -157,9 +121,6 @@ class _UltrabeamPanelState extends State<UltrabeamPanel> {
                   style: AppTheme.actionButton(danger: true),
                   child: const Text('RETRACT'),
                 ),
-                const SizedBox(width: 12),
-                const Expanded(child: SizedBox.shrink()),
-                const HorstKevin(),
               ],
             ),
           ),
