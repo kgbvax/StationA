@@ -85,6 +85,8 @@ type fakeRadio struct {
 	clientSeq    uint16
 	clientSeen   map[uint16]bool
 
+	civResp func(frame []byte) [][]byte // scripted CI-V command responder
+
 	autoStop chan struct{}
 }
 
@@ -421,6 +423,11 @@ func (fr *fakeRadio) handle(sock string, src *net.UDPAddr, data []byte) {
 				fr.gotSubSeqs = append(fr.gotSubSeqs, binary.BigEndian.Uint16(data[civSendSeqOff:civSendSeqOff+2]))
 				// Tracked: the radio keeps it for retransmit answers.
 				fr.civTx[h.seq] = data
+				if fr.civResp != nil {
+					for _, rep := range fr.civResp(payload) {
+						fr.injectCIVLocked(rep)
+					}
+				}
 			}
 		}
 	}
@@ -590,6 +597,25 @@ func (fr *fakeRadio) injectPingRequest(seq uint16, uptimeMS uint32) {
 	p[replyOff] = 0x00
 	binary.LittleEndian.PutUint32(p[pingTimeOff:], uptimeMS)
 	fr.send(sockCtrl, p)
+}
+
+// respondCIV scripts the CI-V command responder: for every CI-V frame the
+// client sends on the data stream, fn returns the reply payloads to push
+// back (nil = stay silent). fn runs on the fake's serve goroutine with
+// fr.mu held — it must be pure and must not call the fake's locking methods.
+func (fr *fakeRadio) respondCIV(fn func(frame []byte) [][]byte) {
+	fr.mu.Lock()
+	defer fr.mu.Unlock()
+	fr.civResp = fn
+}
+
+// script runs fn under the fake's mutex — the same lock the CI-V responder
+// runs under — so test-side mutations of the responder's captured state are
+// properly synchronized with the serve goroutine.
+func (fr *fakeRadio) script(fn func()) {
+	fr.mu.Lock()
+	defer fr.mu.Unlock()
+	fn()
 }
 
 // reqBE16 reads a big-endian u16 out of a request packet (innerseq echo).
