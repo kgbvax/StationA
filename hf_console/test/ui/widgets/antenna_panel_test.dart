@@ -73,7 +73,7 @@ void main() {
       await tester.pumpWidget(TestHarness(store: store, mqtt: mqtt, child: const AntennaPanel()));
       await tester.pumpAndSettle();
 
-      await tester.tap(find.widgetWithText(ElevatedButton, 'FAN DIPOLE 80/40'));
+      await tester.tap(find.widgetWithText(ElevatedButton, 'FAN DIPOLE'));
       await tester.pumpAndSettle();
 
       expect(mqtt.publishes.length, 1);
@@ -105,7 +105,7 @@ void main() {
       expect(mqtt.publishes.first.payload, contains('port1'));
     });
 
-    testWidgets('grounded state renders the GROUNDED button in solid red', (tester) async {
+    testWidgets('grounded state renders the GND button in solid red', (tester) async {
       final store = BusStore();
       final mqtt = FakeMqttService(store);
       store.setAntenna(selected: 'off', settled: true, mode: 'auto');
@@ -113,7 +113,7 @@ void main() {
       await tester.pumpWidget(TestHarness(store: store, mqtt: mqtt, child: const AntennaPanel()));
       await tester.pumpAndSettle();
 
-      expect(buttonBg(tester, 'GROUNDED'), AppTheme.red);
+      expect(buttonBg(tester, 'GND'), AppTheme.red);
       // The other ports stay chrome-coloured.
       expect(buttonBg(tester, 'ULTRABEAM'), isNot(AppTheme.red));
     });
@@ -127,7 +127,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(buttonBg(tester, 'ULTRABEAM'), isNot(AppTheme.red));
-      expect(buttonBg(tester, 'GROUNDED'), isNot(AppTheme.red));
+      expect(buttonBg(tester, 'GND'), isNot(AppTheme.red));
     });
 
     testWidgets('manual mode renders the MANUAL button in solid red', (tester) async {
@@ -244,8 +244,8 @@ void main() {
       await tester.pumpAndSettle();
 
       // No header anymore: an unknown state must not paint Grounded red.
-      expect(find.textContaining('Grounded'), findsNothing);
-      expect(buttonBg(tester, 'GROUNDED'), isNot(AppTheme.red));
+      // No header anymore; unknown state must not paint the GND button red.
+      expect(buttonBg(tester, 'GND'), isNot(AppTheme.red));
     });
   });
 }

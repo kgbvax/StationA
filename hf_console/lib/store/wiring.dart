@@ -3,11 +3,11 @@ import 'dart:convert';
 // Port→name map. Source of truth is antennaselect/config.example.toml [wiring_map].
 // port2 and port3 are not wired at Mühle, so they are omitted from the UI.
 const antennaMap = {
-  'off': 'Grounded',
+  'off': 'GND',
   'port1': 'Dummy',
   'port4': 'Ultrabeam',
   'port5': 'Port 5',
-  'port6': 'Fan dipole 80/40',
+  'port6': 'Fan dipole',
 };
 
 // Which /cmd topics are retained per the real bus policy.

@@ -386,7 +386,7 @@ class _ZoomIconButton extends StatelessWidget {
         // stacked stepper stays compact under the preset rail at the card's
         // bottom-right corner.
         style: AppTheme.iconActionButton().copyWith(
-          minimumSize: const WidgetStatePropertyAll(Size(40, 28)),
+          minimumSize: const WidgetStatePropertyAll(Size(40, 31)),
         ),
         child: Icon(icon),
       ),

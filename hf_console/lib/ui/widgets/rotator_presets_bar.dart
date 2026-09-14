@@ -136,7 +136,7 @@ class _Preset extends StatelessWidget {
         padding: const WidgetStatePropertyAll(
           EdgeInsets.symmetric(horizontal: 12, vertical: 6),
         ),
-        minimumSize: const WidgetStatePropertyAll(Size(44, 32)),
+        minimumSize: const WidgetStatePropertyAll(Size(44, 35)),
       ),
       child: Text(label),
     );

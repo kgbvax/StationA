@@ -151,7 +151,7 @@ class _MicProfileRowState extends State<MicProfileRow> {
       onPressed: online ? () => _onTap(i, online, available) : null,
       onLongPress: online ? () => _onLongPress(i, available) : null,
       style: AppTheme.actionButton(active: isActive).copyWith(
-        minimumSize: const WidgetStatePropertyAll(Size(0, 44)),
+        minimumSize: const WidgetStatePropertyAll(Size(0, 48)),
         padding: const WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: 6, vertical: 6)),
       ),
       child: FittedBox(

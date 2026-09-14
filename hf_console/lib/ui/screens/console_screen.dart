@@ -402,7 +402,7 @@ class _Tab extends StatelessWidget {
         onPressed: () => onSelect(page),
         style: AppTheme.actionButton(active: active).copyWith(
           padding: const WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: 18, vertical: 8)),
-          minimumSize: const WidgetStatePropertyAll(Size(64, 40)),
+          minimumSize: const WidgetStatePropertyAll(Size(64, 44)),
         ),
         child: Text(label),
       ),
@@ -479,7 +479,7 @@ class _SchemePicker extends StatelessWidget {
           child: ElevatedButton(
             onPressed: () => onScheme(s.$1),
             style: AppTheme.actionButton(active: active).copyWith(
-              minimumSize: const WidgetStatePropertyAll(Size(40, 32)),
+              minimumSize: const WidgetStatePropertyAll(Size(40, 35)),
               padding: const WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: 8, vertical: 4)),
             ),
             child: Text(s.$2, style: AppTheme.mono(10, weight: FontWeight.w700)),

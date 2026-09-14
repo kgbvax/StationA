@@ -308,7 +308,7 @@ class _AxisControlState extends State<_AxisControl> {
   Widget _stepButton({required int dir, required VoidCallback onStep}) {
     return SizedBox(
       width: 44,
-      height: 48,
+      height: 53,
       child: ElevatedButton(
         key: ValueKey('sat-${widget.axis}-step-${dir > 0 ? 'up' : 'down'}'),
         onPressed: widget.online ? onStep : null,

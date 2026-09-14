@@ -54,7 +54,7 @@ class DvkPanel extends StatelessWidget {
             return ElevatedButton(
               onPressed: online ? () => mqtt.publish(topic, radioSetBandPayload(full), retain: false) : null,
               style: AppTheme.actionButton(active: active).copyWith(
-                minimumSize: const WidgetStatePropertyAll(Size(64, 44)),
+                minimumSize: const WidgetStatePropertyAll(Size(84, 48)),
                 padding: const WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: 12, vertical: 8)),
               ),
               child: Text(full),
@@ -85,7 +85,7 @@ class DvkPanel extends StatelessWidget {
                   child: ElevatedButton(
                     onPressed: online ? () => mqtt.publish(topic, dvkPlayPayload(i), retain: false) : null,
                     style: AppTheme.actionButton(active: online && isPlaying && activeId == i).copyWith(
-                      minimumSize: const WidgetStatePropertyAll(Size(0, 44)),
+                      minimumSize: const WidgetStatePropertyAll(Size(0, 48)),
                       padding: const WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: 8, vertical: 6)),
                     ),
                     child: Text('DVK$i'),
@@ -95,7 +95,7 @@ class DvkPanel extends StatelessWidget {
             ElevatedButton(
               onPressed: online ? () => mqtt.publish(topic, dvkStopPayload(), retain: false) : null,
               style: AppTheme.actionButton(danger: true).copyWith(
-                minimumSize: const WidgetStatePropertyAll(Size(64, 44)),
+                minimumSize: const WidgetStatePropertyAll(Size(64, 48)),
                 padding: const WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: 12, vertical: 6)),
               ),
               child: const Text('STOP'),

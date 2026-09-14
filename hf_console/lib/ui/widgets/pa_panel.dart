@@ -163,7 +163,7 @@ class _PaPanelState extends State<PaPanel> {
                   const SizedBox(width: 10),
                   SizedBox(
                     width: 96,
-                    height: 34,
+                    height: 37,
                     child: ElevatedButton(
                       onPressed: online ? () => setMode('operate') : null,
                       style: AppTheme.actionButton(active: mode == 'operate'),
@@ -189,7 +189,7 @@ class _PaPanelState extends State<PaPanel> {
                   const SizedBox(width: 10),
                   SizedBox(
                     width: 96,
-                    height: 34,
+                    height: 37,
                     child: ElevatedButton(
                       onPressed: online ? () => setMode('standby') : null,
                       style: AppTheme.actionButton(amber: true, active: mode == 'standby'),

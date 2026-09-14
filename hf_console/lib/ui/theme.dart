@@ -206,7 +206,7 @@ class AppTheme extends ChangeNotifier {
         shadowColor: const Color(0x40000000),
         elevation: 0,
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-        minimumSize: const Size(44, 40),
+        minimumSize: const Size(44, 44),
         textStyle: mono(13, weight: FontWeight.w600),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
       );
@@ -222,7 +222,7 @@ class AppTheme extends ChangeNotifier {
         shadowColor: const Color(0x40000000),
         elevation: 0,
         padding: EdgeInsets.zero,
-        minimumSize: const Size(48, 48),
+        minimumSize: const Size(48, 53),
         iconSize: 18,
         iconColor: txt,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),

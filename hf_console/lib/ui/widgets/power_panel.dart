@@ -110,7 +110,7 @@ class PowerPanel extends StatelessWidget {
               backgroundColor: const WidgetStatePropertyAll(Color(0x1E5CCB8A)),
               foregroundColor: WidgetStatePropertyAll(AppTheme.green),
               side: WidgetStatePropertyAll(BorderSide(color: AppTheme.green)),
-              minimumSize: const WidgetStatePropertyAll(Size(76, 52)),
+              minimumSize: const WidgetStatePropertyAll(Size(76, 57)),
               padding: const WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: 10, vertical: 10)),
             ),
             child: const Text('START\nSTATION'),
@@ -119,7 +119,7 @@ class PowerPanel extends StatelessWidget {
           ElevatedButton(
             onPressed: seqOnline ? stopStation : null,
             style: AppTheme.actionButton(danger: true).copyWith(
-              minimumSize: const WidgetStatePropertyAll(Size(76, 52)),
+              minimumSize: const WidgetStatePropertyAll(Size(76, 57)),
               padding: const WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: 10, vertical: 10)),
             ),
             child: const Text('STOP\nSTATION'),
