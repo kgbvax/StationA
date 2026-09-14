@@ -75,6 +75,16 @@ class _UltrabeamPanelState extends State<UltrabeamPanel> {
             ? ('BAND MISMATCH', AppTheme.red)
             : ('', null);
 
+    // The controller's tuned band, for the pill's regular (green) info
+    // segment. Out-of-allocation labels ('band-<n>', 'unknown') and a
+    // pre-first-state empty read as nothing rather than as noise.
+    final bandRegExp = RegExp(r'^\d+m$');
+    final pillBand = switch (ctrlBand) {
+      String b when bandRegExp.hasMatch(b) => b,
+      'gen' => 'gen',
+      _ => '',
+    };
+
     // The card is the outer Container so it always fills the layout width;
     // the pill floats over its top padding band. (A Stack whose children
     // are all Positioned cannot size itself inside a scroll view.)
@@ -131,6 +141,7 @@ class _UltrabeamPanelState extends State<UltrabeamPanel> {
             child: StatusPill(
               slots: const ['muehle/hf/ant-ctrl'],
               label: 'Ultrabeam',
+              info: pillBand.isEmpty ? null : pillBand,
               suffix: suffix.isEmpty ? null : suffix,
               suffixColor: suffixColor,
             ),

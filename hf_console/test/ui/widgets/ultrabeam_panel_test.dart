@@ -9,6 +9,29 @@ import '../../support/test_harness.dart';
 
 void main() {
   group('UltrabeamPanel', () {
+    testWidgets('shows the tuned band in the pill', (tester) async {
+      final store = BusStore();
+      final mqtt = FakeMqttService(store);
+      store.setUltrabeam(direction: 'forward', band: '20m');
+
+      await tester.pumpWidget(TestHarness(store: store, mqtt: mqtt, child: const UltrabeamPanel()));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Ultrabeam · 20M'), findsOneWidget);
+    });
+
+    testWidgets('out-of-allocation band labels do not render as the band', (tester) async {
+      final store = BusStore();
+      final mqtt = FakeMqttService(store);
+      store.setUltrabeam(direction: 'forward', band: 'band-2');
+
+      await tester.pumpWidget(TestHarness(store: store, mqtt: mqtt, child: const UltrabeamPanel()));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Ultrabeam'), findsOneWidget);
+      expect(find.textContaining('·'), findsNothing);
+    });
+
     testWidgets('shows direction and publishes forward command', (tester) async {
       final store = BusStore();
       final mqtt = FakeMqttService(store);

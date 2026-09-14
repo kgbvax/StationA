@@ -19,6 +19,10 @@ class StatusPill extends StatelessWidget {
   final List<String> slots;
   final String label;
   final bool useMetaName;
+
+  /// Regular-state info shown in green with the name (e.g. the Ultrabeam's
+  /// tuned band). An irregular [suffix] or the offline state outranks it.
+  final String? info;
   final String? suffix;
   final Color? suffixColor;
 
@@ -27,6 +31,7 @@ class StatusPill extends StatelessWidget {
     required this.slots,
     required this.label,
     this.useMetaName = true,
+    this.info,
     this.suffix,
     this.suffixColor,
   });
@@ -65,6 +70,9 @@ class StatusPill extends StatelessWidget {
     } else if (suffix != null && suffix!.isNotEmpty) {
       text = '$name · ${suffix!.toUpperCase()}';
       color = suffixColor ?? AppTheme.amber;
+    } else if (info != null && info!.isNotEmpty) {
+      text = '$name · ${info!.toUpperCase()}';
+      color = AppTheme.green;
     } else {
       text = name;
       color = AppTheme.green;

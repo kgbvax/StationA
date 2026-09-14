@@ -114,6 +114,48 @@ void main() {
       expect(pillColor(tester, 'TX'), AppTheme.red);
     });
 
+    testWidgets('regular info renders green with the name', (tester) async {
+      final store = BusStore();
+      final mqtt = FakeMqttService(store);
+      store.setOnline('muehle/hf/pa');
+
+      await tester.pumpWidget(TestHarness(
+        store: store,
+        mqtt: mqtt,
+        child: StatusPill(
+          slots: const ['muehle/hf/pa'],
+          label: 'ACOM 1200S',
+          info: '20m',
+        ),
+      ));
+      await tester.pump();
+
+      expect(find.text('ACOM 1200S · 20M'), findsOneWidget);
+      expect(pillColor(tester, '20M'), AppTheme.green);
+    });
+
+    testWidgets('an irregular suffix outranks the regular info', (tester) async {
+      final store = BusStore();
+      final mqtt = FakeMqttService(store);
+      store.setOnline('muehle/hf/pa');
+
+      await tester.pumpWidget(TestHarness(
+        store: store,
+        mqtt: mqtt,
+        child: StatusPill(
+          slots: const ['muehle/hf/pa'],
+          label: 'ACOM 1200S',
+          info: '20m',
+          suffix: 'TX',
+          suffixColor: AppTheme.red,
+        ),
+      ));
+      await tester.pump();
+
+      expect(find.text('ACOM 1200S · TX'), findsOneWidget);
+      expect(find.textContaining('20M'), findsNothing);
+    });
+
     testWidgets('every tracked slot must be present — missing counts as offline', (tester) async {
       final store = BusStore();
       final mqtt = FakeMqttService(store);
