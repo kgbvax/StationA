@@ -109,7 +109,7 @@ class _MicProfileRowState extends State<MicProfileRow> {
                 for (var i = 0; i < MicProfileRow.buttonCount; i++)
                   Expanded(
                     child: Padding(
-                      padding: EdgeInsets.only(right: i < MicProfileRow.buttonCount - 1 ? 4 : 0),
+                      padding: EdgeInsets.only(right: i < MicProfileRow.buttonCount - 1 ? 8 : 0),
                       child: _buildButton(context, i, online, active, available),
                     ),
                   ),

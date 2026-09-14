@@ -111,19 +111,19 @@ class _UltrabeamPanelState extends State<UltrabeamPanel> {
             // the same lockout ultrabridge's own web UI applies.
             onPressed: (online && !moving) ? () => send(antCtrlDirectionPayload('forward')) : null,
           ),
-          const SizedBox(width: 4),
+          const SizedBox(width: 8),
           _DirectionButton(
             label: '180°',
             active: direction == 'reverse',
             onPressed: (online && !moving && !on6m) ? () => send(antCtrlDirectionPayload('reverse')) : null,
           ),
-          const SizedBox(width: 4),
+          const SizedBox(width: 8),
           _DirectionButton(
             label: 'BI-DIR',
             active: direction == 'bidirectional',
             onPressed: (online && !moving && !on6m) ? () => send(antCtrlDirectionPayload('bidirectional')) : null,
           ),
-          const SizedBox(width: 4),
+          const SizedBox(width: 8),
           ElevatedButton(
             // RETRACT stays pressable while moving — it is the emergency
             // action for an unexpected or stuck direction state, and
@@ -133,7 +133,7 @@ class _UltrabeamPanelState extends State<UltrabeamPanel> {
             style: AppTheme.actionButton(danger: true),
             child: const Text('RETRACT'),
           ),
-          const SizedBox(width: 8),
+          const SizedBox(width: 12),
           const Expanded(child: SizedBox.shrink()),
           const HorstKevin(),
         ],

@@ -69,13 +69,13 @@ class TunerPanel extends StatelessWidget {
                 style: AppTheme.actionButton(amber: true, active: !inline),
                 child: const Text('BYPASS'),
               )),
-              const SizedBox(width: 5),
+              const SizedBox(width: 8),
               Expanded(child: ElevatedButton(
                 onPressed: online && !settling ? () => tune('mem') : null,
                 style: AppTheme.actionButton(),
                 child: Text(settling ? 'TUNING…' : 'TUNE MEM'),
               )),
-              const SizedBox(width: 5),
+              const SizedBox(width: 8),
               Expanded(child: ElevatedButton(
                 onPressed: online && !settling ? () => tune('full') : null,
                 style: AppTheme.actionButton(),

@@ -96,8 +96,8 @@ class AntennaPanel extends StatelessWidget {
       ),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       child: Wrap(
-        spacing: 4,
-        runSpacing: 4,
+        spacing: 8,
+        runSpacing: 8,
         children: [
           ..._ports.map((port) {
             final label = antennaMap[port] ?? port;
@@ -116,7 +116,7 @@ class AntennaPanel extends StatelessWidget {
               child: Text(label.toUpperCase()),
             );
           }),
-          const SizedBox(width: 16),
+          const SizedBox(width: 20),
           ElevatedButton(
             onPressed: selectOnline ? () => setMode('auto') : null,
             style: AppTheme.actionButton(active: managed && mode == 'auto'),

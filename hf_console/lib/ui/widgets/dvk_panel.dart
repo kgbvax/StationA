@@ -46,8 +46,8 @@ class DvkPanel extends StatelessWidget {
 
         const bands = ['80', '40', '20', '17', '15', '12', '10'];
         return Wrap(
-          spacing: 4,
-          runSpacing: 4,
+          spacing: 8,
+          runSpacing: 8,
           children: bands.map((band) {
             final full = '${band}m';
             final active = currentBand == full;
@@ -81,7 +81,7 @@ class DvkPanel extends StatelessWidget {
             for (var i = 1; i <= 4; i++)
               Expanded(
                 child: Padding(
-                  padding: const EdgeInsets.only(right: 4),
+                  padding: const EdgeInsets.only(right: 8),
                   child: ElevatedButton(
                     onPressed: online ? () => mqtt.publish(topic, dvkPlayPayload(i), retain: false) : null,
                     style: AppTheme.actionButton(active: online && isPlaying && activeId == i).copyWith(
