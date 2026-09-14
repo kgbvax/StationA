@@ -4,7 +4,7 @@ import 'dart:convert';
 // port2 and port3 are not wired at Mühle, so they are omitted from the UI.
 const antennaMap = {
   'off': 'Grounded',
-  'port1': 'Dummy load',
+  'port1': 'Dummy',
   'port4': 'Ultrabeam',
   'port5': 'Port 5',
   'port6': 'Fan dipole 80/40',

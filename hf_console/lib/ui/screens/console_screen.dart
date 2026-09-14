@@ -5,7 +5,6 @@ import '../../mqtt/mqtt_service.dart';
 import '../theme.dart';
 import '../widgets/dx_map_container.dart';
 import '../widgets/pa_panel.dart';
-import '../widgets/pa_arm_panel.dart';
 import '../widgets/tuner_panel.dart';
 import '../widgets/ultrabeam_panel.dart';
 import '../widgets/dvk_panel.dart';
@@ -156,7 +155,6 @@ class _HfPage extends StatelessWidget {
                         AntennaPanel(),
                         RotatorPresetsBar(),
                         PaPanel(),
-                        PaArmPanel(),
                         TunerPanel(),
                         DvkPanel(),
                         FaultsBar(),
@@ -222,7 +220,6 @@ class _HfPage extends StatelessWidget {
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: const [
                             PaPanel(),
-                            PaArmPanel(),
                             TunerPanel(),
                             DvkPanel(),
                           ],

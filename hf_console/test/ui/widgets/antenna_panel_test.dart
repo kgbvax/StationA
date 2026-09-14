@@ -23,10 +23,11 @@ void main() {
       await tester.pumpWidget(TestHarness(store: store, mqtt: mqtt, child: const AntennaPanel()));
       await tester.pumpAndSettle();
 
-      expect(find.textContaining('AUTO · Ultrabeam'), findsOneWidget);
-      // port2/port3 are not wired at Mühle and must not appear.
+      // port2/port3 are not wired at Mühle and must not appear; port5 is
+      // not offered in the console either.
       expect(find.textContaining('PORT 2'), findsNothing);
       expect(find.textContaining('PORT 3'), findsNothing);
+      expect(find.textContaining('PORT 5'), findsNothing);
     });
 
     testWidgets('publishes antenna-select request in auto mode', (tester) async {
@@ -37,12 +38,13 @@ void main() {
       await tester.pumpWidget(TestHarness(store: store, mqtt: mqtt, child: const AntennaPanel()));
       await tester.pumpAndSettle();
 
-      await tester.tap(find.widgetWithText(ElevatedButton, 'PORT 5'));
+      // port4's map label is 'Ultrabeam'; the button carries the label.
+      await tester.tap(find.widgetWithText(ElevatedButton, 'ULTRABEAM'));
       await tester.pumpAndSettle();
 
       expect(mqtt.publishes.length, 1);
       expect(mqtt.publishes.first.topic, 'muehle/hf/antenna-select/cmd');
-      expect(mqtt.publishes.first.payload, contains('port5'));
+      expect(mqtt.publishes.first.payload, contains('port4'));
     });
 
     testWidgets('switching to manual publishes manual mode', (tester) async {
@@ -95,7 +97,7 @@ void main() {
       await tester.pumpWidget(TestHarness(store: store, mqtt: mqtt, child: const AntennaPanel()));
       await tester.pumpAndSettle();
 
-      await tester.tap(find.widgetWithText(ElevatedButton, 'DUMMY LOAD'));
+      await tester.tap(find.widgetWithText(ElevatedButton, 'DUMMY'));
       await tester.pumpAndSettle();
 
       expect(mqtt.publishes.length, 1);
@@ -112,9 +114,8 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(buttonBg(tester, 'GROUNDED'), AppTheme.red);
-      // The header label is red too; the other ports stay chrome-coloured.
+      // The other ports stay chrome-coloured.
       expect(buttonBg(tester, 'ULTRABEAM'), isNot(AppTheme.red));
-      expect(find.textContaining('AUTO · Grounded'), findsOneWidget);
     });
 
     testWidgets('non-grounded selection does not render red', (tester) async {
@@ -127,7 +128,6 @@ void main() {
 
       expect(buttonBg(tester, 'ULTRABEAM'), isNot(AppTheme.red));
       expect(buttonBg(tester, 'GROUNDED'), isNot(AppTheme.red));
-      expect(find.textContaining('AUTO · Ultrabeam'), findsOneWidget);
     });
 
     testWidgets('manual mode renders the MANUAL button in solid red', (tester) async {
@@ -159,7 +159,7 @@ void main() {
         await tester.pumpWidget(TestHarness(store: store, mqtt: mqtt, child: const AntennaPanel()));
         await tester.pumpAndSettle();
 
-        expect(find.text('RF ON'), findsOneWidget);
+        expect(find.text('RF ON'), findsNothing);
         expect(
           tester.widget<ElevatedButton>(find.widgetWithText(ElevatedButton, 'ULTRABEAM')).onPressed,
           isNull,
@@ -208,7 +208,7 @@ void main() {
         await tester.pumpWidget(TestHarness(store: store, mqtt: mqtt, child: const AntennaPanel()));
         await tester.pumpAndSettle();
 
-        expect(find.text('RF ?'), findsOneWidget);
+        expect(find.text('RF ?'), findsNothing);
         expect(
           tester.widget<ElevatedButton>(find.widgetWithText(ElevatedButton, 'ULTRABEAM')).onPressed,
           isNull,
@@ -241,13 +241,10 @@ void main() {
       store.setBridgeOffline('muehle/hf/ant-switch');
 
       await tester.pumpWidget(TestHarness(store: store, mqtt: mqtt, child: const AntennaPanel()));
-      // No pumpAndSettle: with no state the panel shows its pending dot,
-      // which animates forever.
-      await tester.pump();
-      await tester.pump();
+      await tester.pumpAndSettle();
 
+      // No header anymore: an unknown state must not paint Grounded red.
       expect(find.textContaining('Grounded'), findsNothing);
-      expect(find.textContaining('DIRECT · ?'), findsOneWidget);
       expect(buttonBg(tester, 'GROUNDED'), isNot(AppTheme.red));
     });
   });

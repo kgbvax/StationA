@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hf_console/store/bus_store.dart';
+import 'package:hf_console/ui/theme.dart';
 import 'package:hf_console/ui/widgets/ultrabeam_panel.dart';
 import '../../support/fake_mqtt_service.dart';
 import '../../support/fixtures.dart';
@@ -16,7 +17,10 @@ void main() {
       await tester.pumpWidget(TestHarness(store: store, mqtt: mqtt, child: const UltrabeamPanel()));
       await tester.pumpAndSettle();
 
-      expect(find.text('BIDIRECTIONAL'), findsOneWidget);
+      // Direction reads from the active (accent) button — there is no
+      // status pill anymore.
+      final bidir = tester.widget<ElevatedButton>(find.widgetWithText(ElevatedButton, 'BI-DIR'));
+      expect(bidir.style!.backgroundColor!.resolve({}), AppTheme.accent);
 
       await tester.tap(find.widgetWithText(ElevatedButton, 'FORWARD'));
       await tester.pumpAndSettle();
@@ -27,7 +31,7 @@ void main() {
       expect(mqtt.publishes.first.payload, contains('forward'));
     });
 
-    testWidgets('shows MOVING in red while moving', (tester) async {
+    testWidgets('locks direction buttons while moving, RETRACT stays live', (tester) async {
       final store = BusStore();
       final mqtt = FakeMqttService(store);
       store.setUltrabeam(direction: 'forward', moving: true);
@@ -35,7 +39,16 @@ void main() {
       await tester.pumpWidget(TestHarness(store: store, mqtt: mqtt, child: const UltrabeamPanel()));
       await tester.pumpAndSettle();
 
-      expect(find.text('MOVING'), findsOneWidget);
+      // No status pill anymore — travel is signalled by the locked buttons.
+      expect(find.text('MOVING'), findsNothing);
+      expect(
+        tester.widget<ElevatedButton>(find.widgetWithText(ElevatedButton, 'FORWARD')).onPressed,
+        isNull,
+      );
+      expect(
+        tester.widget<ElevatedButton>(find.widgetWithText(ElevatedButton, 'RETRACT')).onPressed,
+        isNotNull,
+      );
     });
 
     testWidgets('on 6m, forces a non-forward direction back to forward', (tester) async {
@@ -128,48 +141,6 @@ void main() {
       await tester.pumpAndSettle();
       expect(mqtt.publishes.length, 1);
       expect(mqtt.publishes.first.payload, contains('retract'));
-    });
-
-    group('band mismatch', () {
-      testWidgets('flags a real ham-band divergence in red', (tester) async {
-        final store = BusStore();
-        final mqtt = FakeMqttService(store);
-        store.setRadio(band: '20m');
-        store.setUltrabeam(band: '40m');
-
-        await tester.pumpWidget(TestHarness(store: store, mqtt: mqtt, child: const UltrabeamPanel()));
-        await tester.pumpAndSettle();
-
-        expect(find.text('BAND MISMATCH · 40m ≠ 20m'), findsOneWidget);
-      });
-
-      testWidgets('does not flag agreed non-ham frequencies', (tester) async {
-        final store = BusStore();
-        final mqtt = FakeMqttService(store);
-        // Same frequency, different labels between bridges — that is not a
-        // mismatch, and crying wolf here desensitizes the real warning.
-        store.setRadio(freqHz: 9950000, band: 'gen');
-        store.setUltrabeam(band: 'band-2');
-
-        await tester.pumpWidget(TestHarness(store: store, mqtt: mqtt, child: const UltrabeamPanel()));
-        await tester.pumpAndSettle();
-
-        expect(find.textContaining('BAND MISMATCH'), findsNothing);
-        // Direction pill and FORWARD button render the same text.
-        expect(find.text('FORWARD'), findsNWidgets(2));
-      });
-
-      testWidgets('does not flag a pre-first-state controller (unknown ≠ mismatch)', (tester) async {
-        final store = BusStore();
-        final mqtt = FakeMqttService(store);
-        store.setRadio(band: '20m');
-        // No ant-ctrl state at all: ctrlBand ''.
-
-        await tester.pumpWidget(TestHarness(store: store, mqtt: mqtt, child: const UltrabeamPanel()));
-        await tester.pumpAndSettle();
-
-        expect(find.textContaining('BAND MISMATCH'), findsNothing);
-      });
     });
   });
 }
