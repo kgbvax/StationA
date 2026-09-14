@@ -67,9 +67,12 @@ class _DxMapContainerState extends State<DxMapContainer> {
         _projection == DxProjection.azimuth
             ? CompassPanel(showPresets: widget.showPresets)
             : MercatorMapPanel(showPresets: widget.showPresets),
+        // Top-left: the compass panel's own chrome (zoom badge, azimuth
+        // chip) owns the top-right corner — overlaying the filter/projection
+        // chrome there drew one on top of the other.
         Positioned(
           top: 8,
-          right: 8,
+          left: 8,
           child: _MapChrome(
             projection: _projection,
             filter: dx.filter,

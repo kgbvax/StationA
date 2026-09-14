@@ -112,16 +112,6 @@ class _CompassBody extends StatelessWidget {
     final targetDiff = (targetAz - az).abs();
     final targetVisible = targetDiff > 5.0;
 
-    // DX-overlay status line for the card header: off entirely when no station
-    // locator is set; otherwise show spot count / connecting / feed-down.
-    final dxTitle = !dx.active
-        ? ''
-        : (dx.error != null
-            ? 'DX ✗'
-            : dx.connected
-                ? 'DX ${dx.spots.length}'
-                : 'DX …');
-
     final azimuthParts = <String>[
       '${az.round()}°',
       if (rotatorOnline && targetVisible) '→ ${targetAz.round()}°',
@@ -257,14 +247,11 @@ class _CompassBody extends StatelessWidget {
             // Layer 2: top-row chrome, small margin from the card edge.
             Positioned(
               top: 4,
-              left: 8,
               right: 8,
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  if (dxTitle.isNotEmpty)
-                    IgnorePointer(child: _DxTitleBadge(label: dxTitle)),
-                  const Spacer(),
                   _ZoomBadge(zoom: zoom),
                   const SizedBox(width: 6),
                   IgnorePointer(
@@ -506,30 +493,6 @@ class _ZoomBadge extends StatelessWidget {
           label,
           style: AppTheme.mono(11, color: AppTheme.txtMute, weight: FontWeight.w700),
         ),
-      ),
-    );
-  }
-}
-
-/// Small badge in the top-left of the module showing the DX-overlay status
-/// (`"DX 80"`, `"DX …"`, `"DX ✗"`). Hidden when the overlay is off entirely
-/// so the chrome doesn't claim any left-edge space for beam-only operation.
-class _DxTitleBadge extends StatelessWidget {
-  final String label;
-  const _DxTitleBadge({required this.label});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-      decoration: BoxDecoration(
-        color: AppTheme.pane,
-        border: Border.all(color: AppTheme.cardLineHi),
-        borderRadius: BorderRadius.circular(4),
-      ),
-      child: Text(
-        label,
-        style: AppTheme.mono(11, weight: FontWeight.w700, color: AppTheme.txt),
       ),
     );
   }
