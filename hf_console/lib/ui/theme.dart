@@ -205,6 +205,12 @@ class AppTheme extends ChangeNotifier {
         ),
         shadowColor: const Color(0x40000000),
         elevation: 0,
+        // Disabled colors must be explicit: styleFrom otherwise defers the
+        // disabled state to the ThemeData defaults, and the app theme is
+        // ThemeData.dark() in every scheme — its white38 disabled text is
+        // unreadable on the light Paper surfaces.
+        disabledBackgroundColor: pane,
+        disabledForegroundColor: txtFaint,
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
         minimumSize: const Size(44, 44),
         textStyle: mono(13, weight: FontWeight.w600),
@@ -221,6 +227,9 @@ class AppTheme extends ChangeNotifier {
         side: BorderSide(color: active ? accent : cardLineHi),
         shadowColor: const Color(0x40000000),
         elevation: 0,
+        // Same disabled-state reasoning as actionButton above.
+        disabledBackgroundColor: pane,
+        disabledForegroundColor: txtFaint,
         padding: EdgeInsets.zero,
         minimumSize: const Size(48, 53),
         iconSize: 18,
