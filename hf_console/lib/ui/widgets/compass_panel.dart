@@ -608,6 +608,7 @@ class _CompassPainter extends CustomPainter {
     }
 
     for (final b in beams) {
+      if (!b.arrow) continue;
       final p1 = _pt(cx, cy, b.ang, 28);
       final p2 = _pt(cx, cy, b.ang, r - 14);
       canvas.drawLine(p1, p2, Paint()..color = b.color..strokeWidth = 3.5..strokeCap = StrokeCap.round);
@@ -644,8 +645,11 @@ class _CompassPainter extends CustomPainter {
         : direction == 'reverse'
             ? [_Beam((az + 180) % 360, half['reverse']!, AppTheme.amber, true)]
             : [
+                // Bi-dir: one arrowed line, in the direction the antenna is
+                // pointed. The reverse lobe renders as its cone only — two
+                // arrowheads read as two antennas.
                 _Beam(az, half['bidirectional']!, AppTheme.accent, false),
-                _Beam((az + 180) % 360, half['bidirectional']!, AppTheme.amber, true),
+                _Beam((az + 180) % 360, half['bidirectional']!, AppTheme.amber, true, arrow: false),
               ];
   }
 
@@ -802,5 +806,9 @@ class _Beam {
   final double half;
   final Color color;
   final bool glow;
-  _Beam(this.ang, this.half, this.color, this.glow);
+
+  /// Whether the beam carries a centre line + arrowhead. False for the
+  /// bi-dir reverse lobe: the cone alone is the honest rendering there.
+  final bool arrow;
+  _Beam(this.ang, this.half, this.color, this.glow, {this.arrow = true});
 }
