@@ -38,6 +38,7 @@ idle_timeout    = "120s"            # drop the session after this much idle
 tx_watchdog     = "180s"            # keyed-PTT bound while a session is live (KTD-5)
 max_attempts    = 3                 # login attempts per connect demand
 attempt_spacing = "30s"             # min spacing between attempts (lockout pin pending)
+error_decay     = "60s"             # error -> idle decay in the session state machine (R3)
 
 [radio]
 poll_interval = "1s"                # /state refresh cadence while a session is live (KTD-8)
