@@ -105,71 +105,77 @@ class _UltrabeamPanelState extends State<UltrabeamPanel> {
             ? ('BAND MISMATCH', AppTheme.red)
             : ('', null);
 
-    return Stack(
-      children: [
-        Positioned(
-          top: 6,
-          right: 10,
-          child: StatusPill(
-            slots: const ['muehle/hf/ant-ctrl'],
-            label: 'Ultrabeam',
-            suffix: suffix.isEmpty ? null : suffix,
-            suffixColor: suffixColor,
-          ),
-        ),
-        Container(
-          decoration: BoxDecoration(
-            color: AppTheme.card,
-            border: Border(top: BorderSide(color: AppTheme.cardLine), bottom: BorderSide(color: AppTheme.cardLine)),
-          ),
-          // Top padding clears the corner-overlaid status pill.
-          padding: const EdgeInsets.fromLTRB(12, 26, 12, 10),
-          // `Row` (not `Wrap`) so RETRACT stays on a single line and the
-          // dragon has a fixed slot to the right of it. `crossAxisAlignment:
-          // end` aligns the dragon's bottom edge with the RETRACT button's
-          // bottom edge — the bottom-of-module visual the user asked for.
-          // The `Expanded` spacer absorbs the gap; the dragon sits flush
-          // against the right padding edge.
-          child: Row(
-        crossAxisAlignment: CrossAxisAlignment.end,
-        children: [
-          _DirectionButton(
-            label: 'FORWARD',
-            active: direction == 'forward',
-            // Elements moving: lock taps so rapid presses can't queue
-            // competing direction cmds against mid-travel motors —
-            // the same lockout ultrabridge's own web UI applies.
-            onPressed: (online && !moving) ? () => send(antCtrlDirectionPayload('forward')) : null,
-          ),
-          const SizedBox(width: 8),
-          _DirectionButton(
-            label: '180°',
-            active: direction == 'reverse',
-            onPressed: (online && !moving && !on6m) ? () => send(antCtrlDirectionPayload('reverse')) : null,
-          ),
-          const SizedBox(width: 8),
-          _DirectionButton(
-            label: 'BI-DIR',
-            active: direction == 'bidirectional',
-            onPressed: (online && !moving && !on6m) ? () => send(antCtrlDirectionPayload('bidirectional')) : null,
-          ),
-          const SizedBox(width: 8),
-          ElevatedButton(
-            // RETRACT stays pressable while moving — it is the emergency
-            // action for an unexpected or stuck direction state, and
-            // ultrabridge (web UI and handlers alike) keeps it available
-            // during travel deliberately.
-            onPressed: online ? () => send(antCtrlRetractPayload()) : null,
-            style: AppTheme.actionButton(danger: true),
-            child: const Text('RETRACT'),
-          ),
-          const SizedBox(width: 12),
-          const Expanded(child: SizedBox.shrink()),
-          const HorstKevin(),
-        ],
-        ),
+    // The card is the outer Container so it always fills the layout width;
+    // the pill floats over its top padding band. (A Stack whose children
+    // are all Positioned cannot size itself inside a scroll view.)
+    return Container(
+      decoration: BoxDecoration(
+        color: AppTheme.card,
+        border: Border(top: BorderSide(color: AppTheme.cardLine), bottom: BorderSide(color: AppTheme.cardLine)),
       ),
-    ],
+      child: Stack(
+        children: [
+          Padding(
+            // Top padding clears the corner-overlaid status pill.
+            padding: const EdgeInsets.fromLTRB(12, 26, 12, 10),
+            // `Row` (not `Wrap`) so RETRACT stays on a single line and the
+            // dragon has a fixed slot to the right of it. `crossAxisAlignment:
+            // end` aligns the dragon's bottom edge with the RETRACT button's
+            // bottom edge — the bottom-of-module visual the user asked for.
+            // The `Expanded` spacer absorbs the gap; the dragon sits flush
+            // against the right padding edge.
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                _DirectionButton(
+                  label: 'FORWARD',
+                  active: direction == 'forward',
+                  // Elements moving: lock taps so rapid presses can't queue
+                  // competing direction cmds against mid-travel motors —
+                  // the same lockout ultrabridge's own web UI applies.
+                  onPressed: (online && !moving) ? () => send(antCtrlDirectionPayload('forward')) : null,
+                ),
+                const SizedBox(width: 8),
+                _DirectionButton(
+                  label: '180°',
+                  active: direction == 'reverse',
+                  onPressed: (online && !moving && !on6m) ? () => send(antCtrlDirectionPayload('reverse')) : null,
+                ),
+                const SizedBox(width: 8),
+                _DirectionButton(
+                  label: 'BI-DIR',
+                  active: direction == 'bidirectional',
+                  onPressed: (online && !moving && !on6m) ? () => send(antCtrlDirectionPayload('bidirectional')) : null,
+                ),
+                const SizedBox(width: 8),
+                ElevatedButton(
+                  // RETRACT stays pressable while moving — it is the emergency
+                  // action for an unexpected or stuck direction state, and
+                  // ultrabridge (web UI and handlers alike) keeps it available
+                  // during travel deliberately.
+                  onPressed: online ? () => send(antCtrlRetractPayload()) : null,
+                  style: AppTheme.actionButton(danger: true),
+                  child: const Text('RETRACT'),
+                ),
+                const SizedBox(width: 12),
+                const Expanded(child: SizedBox.shrink()),
+                const HorstKevin(),
+              ],
+            ),
+          ),
+          // The pill paints last so it sits on top of the card.
+          Positioned(
+            top: 6,
+            right: 10,
+            child: StatusPill(
+              slots: const ['muehle/hf/ant-ctrl'],
+              label: 'Ultrabeam',
+              suffix: suffix.isEmpty ? null : suffix,
+              suffixColor: suffixColor,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

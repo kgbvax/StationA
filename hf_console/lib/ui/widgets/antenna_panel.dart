@@ -98,64 +98,70 @@ class AntennaPanel extends StatelessWidget {
             ? ('NO RF', AppTheme.amber)
             : ('', null);
 
-    return Stack(
-      children: [
-        Positioned(
-          top: 6,
-          right: 10,
-          child: StatusPill(
-            slots: const ['muehle/hf/ant-switch', 'muehle/hf/antenna-select'],
-            label: 'Ant switch',
-            useMetaName: false,
-            suffix: suffix.isEmpty ? null : suffix,
-            suffixColor: suffixColor,
-          ),
-        ),
-        Container(
-          decoration: BoxDecoration(
-            color: AppTheme.card,
-            border: Border(top: BorderSide(color: AppTheme.cardLine)),
-          ),
-          // Top padding clears the corner-overlaid status pill.
-          padding: const EdgeInsets.fromLTRB(12, 26, 12, 10),
-          child: Wrap(
-        spacing: 8,
-        runSpacing: 8,
+    // The card is the outer Container so it always fills the layout width;
+    // the pill floats over its top padding band. (A Stack whose children
+    // are all Positioned cannot size itself inside a scroll view.)
+    return Container(
+      decoration: BoxDecoration(
+        color: AppTheme.card,
+        border: Border(top: BorderSide(color: AppTheme.cardLine)),
+      ),
+      child: Stack(
         children: [
-          ..._ports.map((port) {
-            final label = antennaMap[port] ?? port;
-            final isActive = port == selected;
-            final direct = isManual || !selectOnline;
-            return ElevatedButton(
-              // Exactly selectPort's guard: direct-drive moves the port
-              // only with RF inhibited and RX confirmed (fail closed).
-              onPressed: switchOnline && (!direct || rfSafe) ? () => selectPort(port) : null,
-              // Grounded is the one selection that prevents operation,
-              // so even while active it renders in solid red, not accent.
-              style: AppTheme.actionButton(
-                dangerActive: isActive && grounded,
-                active: isActive && !grounded,
-              ),
-              child: Text(label.toUpperCase()),
-            );
-          }),
-          const SizedBox(width: 20),
-          ElevatedButton(
-            onPressed: selectOnline ? () => setMode('auto') : null,
-            style: AppTheme.actionButton(active: managed && mode == 'auto'),
-            child: const Text('AUTO'),
+          Padding(
+            // Top padding clears the corner-overlaid status pill.
+            padding: const EdgeInsets.fromLTRB(12, 26, 12, 10),
+            child: Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                ..._ports.map((port) {
+                  final label = antennaMap[port] ?? port;
+                  final isActive = port == selected;
+                  final direct = isManual || !selectOnline;
+                  return ElevatedButton(
+                    // Exactly selectPort's guard: direct-drive moves the port
+                    // only with RF inhibited and RX confirmed (fail closed).
+                    onPressed: switchOnline && (!direct || rfSafe) ? () => selectPort(port) : null,
+                    // Grounded is the one selection that prevents operation,
+                    // so even while active it renders in solid red, not accent.
+                    style: AppTheme.actionButton(
+                      dangerActive: isActive && grounded,
+                      active: isActive && !grounded,
+                    ),
+                    child: Text(label.toUpperCase()),
+                  );
+                }),
+                const SizedBox(width: 20),
+                ElevatedButton(
+                  onPressed: selectOnline ? () => setMode('auto') : null,
+                  style: AppTheme.actionButton(active: managed && mode == 'auto'),
+                  child: const Text('AUTO'),
+                ),
+                ElevatedButton(
+                  onPressed: selectOnline ? () => setMode('manual') : null,
+                  // Manual routing overrides the reconciler — shown in solid
+                  // red while engaged, like the grounded state.
+                  style: AppTheme.actionButton(dangerActive: isManual),
+                  child: const Text('MANUAL'),
+                ),
+              ],
+            ),
           ),
-          ElevatedButton(
-            onPressed: selectOnline ? () => setMode('manual') : null,
-            // Manual routing overrides the reconciler — shown in solid
-            // red while engaged, like the grounded state.
-            style: AppTheme.actionButton(dangerActive: isManual),
-            child: const Text('MANUAL'),
+          // The pill paints last so it sits on top of the card.
+          Positioned(
+            top: 6,
+            right: 10,
+            child: StatusPill(
+              slots: const ['muehle/hf/ant-switch', 'muehle/hf/antenna-select'],
+              label: 'Ant switch',
+              useMetaName: false,
+              suffix: suffix.isEmpty ? null : suffix,
+              suffixColor: suffixColor,
+            ),
           ),
         ],
-        ),
       ),
-    ],
     );
   }
 }
