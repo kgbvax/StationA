@@ -87,7 +87,6 @@ class DvkPanel extends StatelessWidget {
                     style: AppTheme.actionButton(active: online && isPlaying && activeId == i).copyWith(
                       minimumSize: const WidgetStatePropertyAll(Size(0, 44)),
                       padding: const WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: 8, vertical: 6)),
-                      textStyle: WidgetStatePropertyAll(AppTheme.mono(12, weight: FontWeight.w600)),
                     ),
                     child: Text('DVK$i'),
                   ),

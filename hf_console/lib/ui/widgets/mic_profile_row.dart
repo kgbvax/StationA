@@ -159,7 +159,7 @@ class _MicProfileRowState extends State<MicProfileRow> {
         child: Text(
           bound ? name : '—',
           maxLines: 1,
-          style: AppTheme.mono(12, weight: FontWeight.w600),
+          style: AppTheme.mono(13, weight: FontWeight.w600),
         ),
       ),
     );
