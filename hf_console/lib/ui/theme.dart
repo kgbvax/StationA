@@ -193,6 +193,7 @@ class AppTheme extends ChangeNotifier {
                     ? red
                     : txt,
         side: BorderSide(
+          width: 1.4,
           color: dangerActive
               ? red
               : active
@@ -218,7 +219,7 @@ class AppTheme extends ChangeNotifier {
       ElevatedButton.styleFrom(
         backgroundColor: active ? blend(accent, 0.18) : pane,
         foregroundColor: danger ? red : txt,
-        side: BorderSide(color: active ? accent : cardLineHi),
+        side: BorderSide(width: 1.4, color: active ? accent : cardLineHi),
         shadowColor: const Color(0x40000000),
         elevation: 0,
         padding: EdgeInsets.zero,
