@@ -40,7 +40,7 @@ consumer, not a privileged one" (§9).
 
 | Client | Broker address | Why |
 |--------|---------------|-----|
-| Go services on shari | `tcp://127.0.0.1:1883` | co-located with the broker; loopback |
+| Go services on shari | `tcp://127.0.0.1:1883` | co-located with the broker; loopback. **One exception:** `icom9700-radio-bridge` uses `tcp://bwbroker:1883` — see the bwbroker note below |
 | Shelly plugs, M5 PLC, ant-switch ESP, console tablet | `192.168.1.139:1883` | remote from shari; use its LAN address |
 | Workstation (dev `go run`, `mosquitto_sub`) | `192.168.1.139:1883` | LAN-reachable shack broker |
 | HA's MQTT integration | `192.168.1.50:1883` | HA's own broker, unchanged |
@@ -49,6 +49,19 @@ consumer, not a privileged one" (§9).
 workstation) use `192.168.1.139:1883`. The on-shari config defaults
 (`config.example.toml`, `deploy.sh`, Go `Default()`) use `127.0.0.1`; docs and
 remote-device configs use `192.168.1.139`.
+
+**The `bwbroker` indirection (`icom9700-radio-bridge`).** This shari-hosted service
+is a deliberate exception to the loopback rule above: its config default is
+`tcp://bwbroker:1883` (plan KTD-7), a DNS name the user maintains so the bridge
+follows whichever broker is active for bauwagen business without a config change.
+The constraint that makes it safe: **`bwbroker` may resolve only to the
+`muehle/#`-authoritative (shack) broker.** Replication is split-direction
+(state/meta/status shack→HA, `/cmd` HA→shack only), so a resolution to the HA
+consumer broker (`.50`) would strand the slot from shari-local consumers and deafen
+it to console cmds — a silently half-connected slot. Deploy verifies resolution
+(`getent hosts bwbroker`) before config is seeded. The same hop is also the first
+shari-hosted non-loopback plaintext `tcp://` broker path — reviewed and accepted in
+`docs/known-issues.md` (the IC-9700 exposure review, vector 7).
 
 ## Bridge topic directions
 
