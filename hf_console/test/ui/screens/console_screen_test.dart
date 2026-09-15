@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hf_console/store/bus_store.dart';
 import 'package:hf_console/ui/screens/console_screen.dart';
+import 'package:hf_console/ui/widgets/dx_map_container.dart';
 import '../../support/fake_mqtt_service.dart';
 import '../../support/fixtures.dart';
 import '../../support/test_harness.dart';
@@ -107,6 +108,40 @@ void main() {
       // Tier 2: the polarization panel is on the phone reflow too.
       expect(find.textContaining('X-QUAD POLARIZATION'), findsOneWidget);
       expect(find.byKey(const ValueKey('pol-btn-cl')), findsOneWidget);
+    });
+
+    testWidgets('page switches keep the top-bar toggles at the same position',
+        (tester) async {
+      final store = BusStore();
+      final mqtt = FakeMqttService(store);
+      store.setPower();
+      store.setSatRotator('muehle/uhf/az-rotator', axis: 'az', pos: 45);
+      store.setSatRotator('muehle/uhf/el-rotator', axis: 'el', pos: 10);
+
+      // Tablet branch (see the UHF tablet test for the dpr arithmetic).
+      await tester.binding.setSurfaceSize(const Size(3600, 2400));
+      await tester.pumpWidget(TestHarness(store: store, mqtt: mqtt, child: const ConsoleScreen()));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // All three pages share the _TabletShell: the toggle rail sits in the
+      // right column at one fixed spot, the map rail stays left, and the
+      // faults bar renders exactly once per page (inside the rail).
+      Offset uhfTab() => tester.getTopLeft(find.text('UHF'));
+      final onHf = uhfTab();
+      expect(find.byType(DxMapContainer), findsOneWidget);
+      expect(find.text('FAULTS'), findsOneWidget);
+
+      await tester.tap(find.text('UHF'));
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(uhfTab(), onHf);
+      expect(find.byType(DxMapContainer), findsOneWidget);
+      expect(find.text('FAULTS'), findsOneWidget);
+
+      await tester.tap(find.text('Station'));
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(uhfTab(), onHf);
+      expect(find.byType(DxMapContainer), findsOneWidget);
+      expect(find.text('FAULTS'), findsOneWidget);
     });
   });
 }

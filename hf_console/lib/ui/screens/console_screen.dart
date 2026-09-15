@@ -48,7 +48,6 @@ class _ConsoleScreenState extends State<ConsoleScreen> {
               onScheme: _setScheme,
             ),
           ),
-          if (_page != 'hf') const FaultsBar(),
         ],
       ),
     );
@@ -123,53 +122,96 @@ class _HfPage extends StatelessWidget {
   Widget build(BuildContext context) {
     // Canonical iOS tablet/phone split: phones (shortestSide < 600) get a
     // single vertical scroll of every panel for full feature parity on a
-    // small screen; tablets keep the side-by-side map + controls layout.
+    // small screen; tablets share the two-column shell with the UHF and
+    // Station pages (see _TabletShell) so nothing moves on a page switch.
     final isPhone = MediaQuery.of(context).size.shortestSide < 600;
 
+    if (isPhone) {
+      return Container(
+        color: AppTheme.page,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _PageTopBar(page: 'hf', onSelect: onSelect, onScheme: onScheme),
+            Expanded(
+              flex: 5,
+              child: Container(
+                decoration: BoxDecoration(
+                  color: AppTheme.pane,
+                  border: Border(bottom: BorderSide(color: AppTheme.cardLine)),
+                ),
+                // Presets stay in the scroll column on phones — the map
+                // is too small to overlay the five-button rail.
+                child: const DxMapContainer(showPresets: false),
+              ),
+            ),
+            Expanded(
+              flex: 6,
+              child: SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: const [
+                    UltrabeamPanel(),
+                    AntennaPanel(),
+                    RotatorPresetsBar(),
+                    PaPanel(),
+                    PaArmPanel(),
+                    TunerPanel(),
+                    DvkPanel(),
+                    FaultsBar(),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return _TabletShell(
+      page: 'hf',
+      onSelect: onSelect,
+      onScheme: onScheme,
+      leftUnderMap: const [UltrabeamPanel(), AntennaPanel()],
+      rightChildren: const [
+        PaPanel(),
+        PaArmPanel(),
+        TunerPanel(),
+        DvkPanel(),
+      ],
+    );
+  }
+}
+
+/// Shared tablet skeleton for all three pages: left pane = the DX map with
+/// optional panels pinned below it, right rail = top bar (page/scheme
+/// toggles), a scrolling panel column, and the faults bar — identical
+/// geometry on every page. Deliberate: a page switch must not move the
+/// toggles under the operator's hand, so the shell — not the page — owns the
+/// split (same compact-breakpoint fractions the HF page used to compute).
+class _TabletShell extends StatelessWidget {
+  final String page;
+  final ValueChanged<String> onSelect;
+  final ValueChanged<AppColorScheme> onScheme;
+
+  /// Panels pinned under the map in the left pane (HF: ultrabeam + antenna).
+  final List<Widget> leftUnderMap;
+
+  /// Panels scrolled in the right rail below the top bar.
+  final List<Widget> rightChildren;
+
+  const _TabletShell({
+    required this.page,
+    required this.onSelect,
+    required this.onScheme,
+    this.leftUnderMap = const [],
+    required this.rightChildren,
+  });
+
+  @override
+  Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        if (isPhone) {
-          return Container(
-            color: AppTheme.page,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                _PageTopBar(page: 'hf', onSelect: onSelect, onScheme: onScheme),
-                Expanded(
-                  flex: 5,
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: AppTheme.pane,
-                      border: Border(bottom: BorderSide(color: AppTheme.cardLine)),
-                    ),
-                    // Presets stay in the scroll column on phones — the map
-                    // is too small to overlay the five-button rail.
-                    child: const DxMapContainer(showPresets: false),
-                  ),
-                ),
-                Expanded(
-                  flex: 6,
-                  child: SingleChildScrollView(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: const [
-                        UltrabeamPanel(),
-                        AntennaPanel(),
-                        RotatorPresetsBar(),
-                        PaPanel(),
-                        PaArmPanel(),
-                        TunerPanel(),
-                        DvkPanel(),
-                        FaultsBar(),
-                      ],
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          );
-        }
-
         final isCompact = constraints.maxWidth < 1200 || constraints.maxHeight < 720;
         final rightFraction = isCompact ? 0.48 : 0.44;
         final rightMinWidth = isCompact ? 320.0 : 420.0;
@@ -195,8 +237,7 @@ class _HfPage extends StatelessWidget {
                         child: const DxMapContainer(),
                       ),
                     ),
-                    const UltrabeamPanel(),
-                    const AntennaPanel(),
+                    ...leftUnderMap,
                   ],
                 ),
               ),
@@ -212,21 +253,12 @@ class _HfPage extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    _PageTopBar(
-                      page: 'hf',
-                      onSelect: onSelect,
-                      onScheme: onScheme,
-                    ),
+                    _PageTopBar(page: page, onSelect: onSelect, onScheme: onScheme),
                     Expanded(
                       child: SingleChildScrollView(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: const [
-                            PaPanel(),
-                            PaArmPanel(),
-                            TunerPanel(),
-                            DvkPanel(),
-                          ],
+                          children: rightChildren,
                         ),
                       ),
                     ),
@@ -254,22 +286,42 @@ class _StationPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        _PageTopBar(page: 'station', onSelect: onSelect, onScheme: onScheme),
-        Expanded(
-          child: SingleChildScrollView(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: const [
-                PowerPanel(),
-                ClimatePanel(),
-                SizedBox(height: 40),
-              ],
+    // Phones scroll a single column (same as HF); tablets share the
+    // two-column shell so the top bar never moves between pages.
+    final isPhone = MediaQuery.of(context).size.shortestSide < 600;
+
+    if (isPhone) {
+      return Container(
+        color: AppTheme.page,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _PageTopBar(page: 'station', onSelect: onSelect, onScheme: onScheme),
+            Expanded(
+              child: SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: const [
+                    PowerPanel(),
+                    ClimatePanel(),
+                    SizedBox(height: 40),
+                    FaultsBar(),
+                  ],
+                ),
+              ),
             ),
-          ),
+          ],
         ),
+      );
+    }
+
+    return _TabletShell(
+      page: 'station',
+      onSelect: onSelect,
+      onScheme: onScheme,
+      rightChildren: const [
+        PowerPanel(),
+        ClimatePanel(),
       ],
     );
   }
@@ -287,29 +339,50 @@ class _UhfPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Single vertically scrolled panel column on both tablet and phone
-    // layouts (U8): the IC-9700 radio (U7) leads — the operating object the
-    // rotators and polarization exist to serve — with the sat-ops rotator
-    // surface (U8) and the Tier-2 X-Quad polarization control (U11) below.
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        _PageTopBar(page: 'uhf', onSelect: onSelect, onScheme: onScheme),
-        Expanded(
-          child: SingleChildScrollView(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: const [
-                UhfRadioPanel(),
-                SizedBox(height: 12),
-                SatRotatorPanel(),
-                SizedBox(height: 12),
-                PolCtrlPanel(),
-                SizedBox(height: 40),
-              ],
+    // Panel order follows the slot docs (U8): the IC-9700 radio (U7) leads —
+    // the operating object the rotators and polarization exist to serve —
+    // with the sat-ops rotator surface (U8) and the Tier-2 X-Quad
+    // polarization control (U11) below. Phones scroll that single column;
+    // tablets share the two-column shell (map left, panels right) so the
+    // top bar never moves between pages.
+    final isPhone = MediaQuery.of(context).size.shortestSide < 600;
+
+    if (isPhone) {
+      return Container(
+        color: AppTheme.page,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _PageTopBar(page: 'uhf', onSelect: onSelect, onScheme: onScheme),
+            Expanded(
+              child: SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: const [
+                    UhfRadioPanel(),
+                    SizedBox(height: 12),
+                    SatRotatorPanel(),
+                    SizedBox(height: 12),
+                    PolCtrlPanel(),
+                    SizedBox(height: 40),
+                    FaultsBar(),
+                  ],
+                ),
+              ),
             ),
-          ),
+          ],
         ),
+      );
+    }
+
+    return _TabletShell(
+      page: 'uhf',
+      onSelect: onSelect,
+      onScheme: onScheme,
+      rightChildren: const [
+        UhfRadioPanel(),
+        SatRotatorPanel(),
+        PolCtrlPanel(),
       ],
     );
   }
