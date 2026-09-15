@@ -9,13 +9,12 @@
 // bridge exists for.
 //
 // The packet layout is NOT documented in either Log4OM guide (the advanced
-// guide only spells out the RemoteControl request/response XML and the
-// N1MM-shaped RadioInfo status message). This decoder is therefore TOLERANT:
-// it accepts any XML root and pulls the callsign out of the common element
-// names, rather than pinning a shape nobody has published. The first live
-// packet capture should let this collapse into a strict struct — the bridge
-// logs the root element name of every unmatched datagram at debug for
-// exactly that purpose.
+// guide only names the service). PINNED BY LIVE CAPTURE 2026-09-15: the
+// CALLSIGN datagram is the bare callsign as a plain ASCII string ("VU2ATN")
+// — nothing else: no XML, no frequency, no locator. DecodeCallsign therefore
+// takes the plain-text path first and keeps an XML probe as a robustness
+// fallback for other/older shapes. Unmatched datagrams log their raw content
+// at debug so any future format drift is visible.
 package log4om
 
 import (
@@ -85,22 +84,62 @@ func RootName(data []byte) string {
 	}
 }
 
-// DecodeCallsign extracts the operator-entered callsign (and whatever
-// location context the datagram carries) from a Log4OM outbound CALLSIGN
-// datagram. Returns an error when the datagram has no XML or carries no
-// callsign-like element — the caller logs those at debug and moves on.
+// DecodeCallsign extracts the operator-entered callsign from a Log4OM
+// outbound CALLSIGN datagram. Returns an error when the datagram carries no
+// callsign — the caller logs those at debug (with the raw payload) and moves
+// on.
 //
-// The datagram is collected in ONE pass into a name→text map (first
-// occurrence wins, names lowercased), then probed by the element-name lists
-// below. A sequential probe would consume the token stream field by field
-// and silently lose everything after the first match. DecodeElement flattens
-// nested subtrees into their text content — fine for the flat datagrams a
-// callsign broadcast is expected to be.
+// Live capture (2026-09-15, the first packet this service ever revealed):
+// the CALLSIGN service sends THE BARE CALLSIGN as a plain ASCII string —
+// no XML, no fields, no frequency or locator. The XML path is kept as a
+// robustness fallback for other shapes (the map-collection probe), but the
+// primary decoder is the plain-text path.
 func DecodeCallsign(data []byte) (Callsign, error) {
-	rootName := RootName(data)
-	if rootName == "" {
-		return Callsign{}, fmt.Errorf("not XML")
+	if RootName(data) == "" {
+		return decodePlainCallsign(data)
 	}
+	return decodeXMLCallsign(data)
+}
+
+// decodePlainCallsign handles the bare-callsign form. The validity bar is
+// deliberately low — 3..14 characters of [A-Z0-9/-] with at least one letter
+// — so special-event calls without digits (RAEM) pass while stray text,
+// frequencies, and empty datagrams don't.
+func decodePlainCallsign(data []byte) (Callsign, error) {
+	call := strings.ToUpper(strings.TrimSpace(string(data)))
+	if !looksLikeCallsign(call) {
+		return Callsign{}, fmt.Errorf("payload is neither XML nor a callsign (%q)", call)
+	}
+	return Callsign{Call: call, Raw: string(data)}, nil
+}
+
+func looksLikeCallsign(s string) bool {
+	if len(s) < 3 || len(s) > 14 {
+		return false
+	}
+	letters, digits := 0, 0
+	for _, r := range s {
+		switch {
+		case r >= 'A' && r <= 'Z':
+			letters++
+		case r >= '0' && r <= '9':
+			digits++
+		case r == '-' || r == '/':
+		default:
+			return false
+		}
+	}
+	return letters > 0 && (digits > 0 || letters >= 3)
+}
+
+// decodeXMLCallsign handles XML-shaped datagrams: collected in ONE pass into
+// a name→text map (first occurrence wins, names lowercased), then probed by
+// the element-name lists. A sequential probe would consume the token stream
+// field by field and silently lose everything after the first match.
+// DecodeElement flattens nested subtrees into their text content — fine for
+// the flat datagrams a callsign broadcast is expected to be.
+func decodeXMLCallsign(data []byte) (Callsign, error) {
+	rootName := RootName(data)
 
 	dec := xml.NewDecoder(bytes.NewReader(data))
 	fields := map[string]string{}

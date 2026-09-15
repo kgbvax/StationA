@@ -40,11 +40,12 @@ is Windows, no `/etc`), `-log.level` (overrides config).
      DXLog's wiki examples and Log4OM's manual agree; every ×10 conversion
      lives in `Resolver.FromN1MM`.
    - Log4OM's outbound service type **CALLSIGN** ("call signs entered into the
-     input field … are broadcasted") is documented by *name only* — the packet
-     layout appears in neither guide. `internal/log4om` is a deliberate
-     tolerant decoder (any XML root, common element names); unmatched
-     datagrams log their root at debug. **First live capture should pin the
-     struct and retire the tolerance.**
+     input field … are broadcasted") is documented by *name only*. **PINNED BY
+     LIVE CAPTURE 2026-09-15: the datagram IS the bare callsign as plain
+     ASCII text ("VU2ATN") — no XML, no frequency, no locator.** Consequence:
+     a Log4OM selection carries only `call` (+`source`) on the bus — no pin,
+     no bearing — because there is nothing to resolve from. The XML probe in
+     `internal/log4om` remains as a robustness fallback.
    - Log4OM has NO N1MM-style spot/lookup UDP out (forum t=9359: requested,
      not implemented); its documented N1MM-shaped output is the RemoteControl
      RADIO STATUS (unsolicited RadioInfo). We ignore it: radio context is

@@ -282,7 +282,7 @@ func (a *app) handleDatagram(lc config.ListenerConfig, data []byte) {
 		root := n1mm.RootName(data)
 		if got := n1mm.Classify(root); got != n1mm.KindLookupInfo {
 			if got == n1mm.KindOther {
-				a.log.Debug("unrecognized datagram", "listener", lc.Name, "root", root)
+				a.log.Debug("unrecognized datagram", "listener", lc.Name, "root", root, "raw", string(data))
 			}
 			return
 		}
@@ -298,10 +298,11 @@ func (a *app) handleDatagram(lc config.ListenerConfig, data []byte) {
 	case "log4om":
 		c, err := log4om.DecodeCallsign(data)
 		if err != nil {
-			// Tolerant decoder: log the root at debug so the first live
-			// capture pins the real format without spamming warn.
+			// Tolerant decoder: log the raw datagram at debug so an unknown
+			// shape can be pinned from the log alone (the format is
+			// undocumented; first captures showed it is NOT XML).
 			a.log.Debug("log4om datagram not decoded", "listener", lc.Name,
-				"root", log4om.RootName(data), "err", err)
+				"root", log4om.RootName(data), "err", err, "raw", string(data))
 			return
 		}
 		a.log.Debug("callsign", "listener", lc.Name, "call", c.Call)

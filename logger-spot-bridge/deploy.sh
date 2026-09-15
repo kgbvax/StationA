@@ -23,8 +23,14 @@ echo "==> copying binary to ${USER}@${HOST}:${DEST}/"
 # with forward-slash paths trips its parser. An explicit `cmd /c` with
 # backslash paths works — same finding as pelcobridge2 (2026-08-30).
 WDEST=$(printf '%s' "$DEST" | tr '/' '\\')
+# Windows locks a running exe: stop the task BEFORE scp, restart after.
+ssh "${USER}@${HOST}" "schtasks /end /tn logger-spot-bridge" >/dev/null 2>&1 || true
+ssh "${USER}@${HOST}" "taskkill /f /im logger-spot-bridge.exe" >/dev/null 2>&1 || true
 ssh "${USER}@${HOST}" "cmd /c \"if not exist ${WDEST} mkdir ${WDEST}\""
-scp dist/logger-spot-bridge-windows-amd64.exe "${USER}@${HOST}:${DEST}/logger-spot-bridge.exe"
+scp dist/logger-spot-bridge-windows-amd64.exe "${USER}@${HOST}:${DEST}/logger-spot-bridge.exe" || {
+    echo "!! scp failed — is the exe still running/locked on the shack PC?"
+    exit 1
+}
 
 echo "==> seeding config (once; an existing config.toml is never touched)"
 if [ ! -f .deploy-seed.toml ]; then
@@ -36,6 +42,9 @@ fi
 ssh "${USER}@${HOST}" "cmd /c \"if not exist ${WDEST}\\config.toml (echo seed) else (echo exists)\"" | grep -q seed &&
     scp .deploy-seed.toml "${USER}@${HOST}:${DEST}/config.toml" ||
     echo "    config.toml already present — left alone (seed-once)"
+
+echo "==> restarting the logon task"
+ssh "${USER}@${HOST}" "schtasks /run /tn logger-spot-bridge" || true
 
 echo "==> done. On the shack PC, set the broker password and start it:"
 echo "    cd ${DEST}"

@@ -58,6 +58,35 @@ func TestDecodeCallsignTolerantShapes(t *testing.T) {
 	}
 }
 
+func TestDecodeCallsignPlainText(t *testing.T) {
+	// The LIVE format (captured 2026-09-15): the datagram IS the callsign.
+	got, err := DecodeCallsign([]byte("VU2ATN"))
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.Call != "VU2ATN" || got.Raw != "VU2ATN" {
+		t.Fatalf("got %+v", got)
+	}
+
+	// Whitespace padding tolerated; case normalized.
+	got, err = DecodeCallsign([]byte(" dl1abc \r\n"))
+	if err != nil || got.Call != "DL1ABC" {
+		t.Fatalf("padded: %+v err=%v", got, err)
+	}
+
+	// Special-event call without digits passes.
+	if _, err = DecodeCallsign([]byte("RAEM")); err != nil {
+		t.Fatalf("RAEM rejected: %v", err)
+	}
+
+	// Rejects: empty, garbage, too short, frequency-like digits-only.
+	for _, bad := range []string{"", "  ", "AB", "DL-1ABC-with-a-long-suffix", "14025000"} {
+		if _, err := DecodeCallsign([]byte(bad)); err == nil {
+			t.Errorf("payload %q accepted as a callsign", bad)
+		}
+	}
+}
+
 func TestDecodeCallsignSubKHzScaling(t *testing.T) {
 	// A count that is absurd as Hz but sane as 10 Hz units is scaled
 	// (RadioInfo dialect leakage into the callsign service port).

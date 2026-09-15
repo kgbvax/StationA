@@ -81,8 +81,9 @@ Field notes:
   N1MM+ external-UDP appendix). `contactinfo`/`RadioInfo`/`spot` roots are
   recognized and ignored (radio context lives on `muehle/hf/radio`; the spot
   stream has no consumer yet — `…/spots/event` is a future add).
-- `log4om` — outbound CALLSIGN service. **The packet layout is undocumented**
-  (Log4OM advanced guide names the service but publishes no format); the
-  decoder is tolerant (any XML root, common element names). Unmatched
-  datagrams are logged at debug with their root element — capture one and
-  pin the struct.
+- `log4om` — outbound CALLSIGN service. **The datagram is the bare callsign
+  as plain ASCII text** (pinned by live capture 2026-09-15 — the guides name
+  the service but publish no format). A Log4OM selection therefore carries
+  only `call` + `source`; bearing/distance are unavailable from this source.
+  An XML probe remains as a robustness fallback; unmatched datagrams log
+  their raw content at debug.
