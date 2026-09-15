@@ -37,7 +37,7 @@ port = 12060
 stale_after = "10m"
 
 [mqtt]
-broker    = "tcp://192.168.1.139:1883"   # shack-local Mosquitto on shari
+broker    = "tcp://hassio.kgbvax.net:1883"   # station broker (hassio — the HA box; bwbroker is NXDOMAIN)
 client_id = ""                           # default: muehle-hf-spots
 user      = "hf"
 password  = ""                           # unused; env LOGGER_SPOT_BRIDGE_MQTT_PASSWORD wins

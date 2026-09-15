@@ -45,4 +45,4 @@ echo
 echo "    Optional autostart at logon (schtasks):"
 echo "    schtasks /create /tn logger-spot-bridge /tr \"${DEST}\\logger-spot-bridge.exe\" /sc onlogon /rl limited"
 echo
-echo "    Watch the bus from anywhere: mosquitto_sub -h 192.168.1.139 -u hf -P ... -t 'muehle/hf/spots/#' -v"
+echo "    Watch the bus from anywhere: mosquitto_sub -h hassio.kgbvax.net -u hf -P ... -t 'muehle/hf/spots/#' -v"

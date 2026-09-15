@@ -73,13 +73,21 @@ is Windows, no `/etc`), `-log.level` (overrides config).
    LWT covers that) and NOT "logger process alive" (UDP broadcast is
    connectionless; RadioInfo would be the only periodic proof and we don't
    decode it). False from start until the first datagram.
-6. **The shack PC is Windows** (192.168.1.197, user `iotte`, German cmd.exe
-   behind sshd — backslash paths + `cmd /c`, per pelcobridge2's deploy
-   findings). Interactive host: no systemd, seed-once `config.toml` next to
-   the exe, password via `LOGGER_SPOT_BRIDGE_MQTT_PASSWORD` env. Deploy
-   prints the schtasks logon-autostart one-liner; starting it is the
-   operator's step.
-7. **`lookupinfo` with an empty call = the clear signal** (operator wiped the
+6. **The shack PC is Windows** (192.168.1.197, host `BWPC`, user `iotte`,
+   German cmd.exe behind sshd — backslash paths + `cmd /c`, per
+   pelcobridge2's deploy findings). Interactive host: no systemd; the bridge
+   runs as the schtasks logon task `logger-spot-bridge` → `start-bridge.cmd`
+   next to the exe (holds the MQTT password as env — the Windows env-file
+   equivalent; `@echo off` first or cmd echoes the batch line, password and
+   all). Bridge stderr lands in `bridge.log`.
+7. **DEPLOYED 2026-09-15** — live config: broker `tcp://hassio.kgbvax.net:1883`
+   (the HA box at 192.168.1.50, which serves `muehle/#`; the shari mosquitto
+   is inactive and the two-broker migration undeployed). `bwbroker` is
+   NXDOMAIN on the unifi DNS and its stale record (192.168.0.50) is a dead
+   host — the user chose hassio when offered. Logon-task gotcha: schtasks
+   runs with CWD = System32, so the wrapper MUST `cd /d %~dp0` before the
+   relative exe path.
+8. **`lookupinfo` with an empty call = the clear signal** (operator wiped the
    entry window). `contactinfo` (QSO logged) is deliberately NOT a clear —
    operators stay on the call after logging it.
 

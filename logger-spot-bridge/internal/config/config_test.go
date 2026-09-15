@@ -21,7 +21,7 @@ func TestDefaults(t *testing.T) {
 	if len(cfg.Listeners) != 1 || cfg.Listeners[0].Kind != "n1mm" || cfg.Listeners[0].Port != 12060 {
 		t.Fatalf("listener defaults: %+v", cfg.Listeners)
 	}
-	if cfg.MQTT.Broker != "tcp://192.168.1.139:1883" || cfg.MQTT.User != "hf" || cfg.MQTT.Site != "muehle" {
+	if cfg.MQTT.Broker != "tcp://hassio.kgbvax.net:1883" || cfg.MQTT.User != "hf" || cfg.MQTT.Site != "muehle" {
 		t.Fatalf("mqtt defaults: %+v", cfg.MQTT)
 	}
 }
@@ -49,7 +49,7 @@ kind = "log4om"
 port = 2249
 
 [mqtt]
-broker = "tcp://192.168.1.139:1883"
+broker = "tcp://hassio.kgbvax.net:1883"
 user   = "hf"
 site   = "muehle"
 `
