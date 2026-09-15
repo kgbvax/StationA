@@ -585,8 +585,23 @@ func TestCloseCleanDisconnect(t *testing.T) {
 		t.Fatalf("Close: %v", err)
 	}
 	waitFor(t, time.Second, "clean-disconnect packets at the radio", func() bool {
+		// All four courtesy packets, on both sockets — the civ-socket pair
+		// and the ctrl-socket pair arrive on different UDP sockets, so their
+		// relative order genuinely races.
 		_, logout, _, closes := fr.counts()
-		return logout >= 1 && closes >= 1
+		if logout < 1 || closes < 1 {
+			return false
+		}
+		foundCtrlLogout, foundTokenRemoval := false, false
+		for _, p := range fr.recvOn(sockCtrl) {
+			if len(p.data) == ctrlLen && p.data[typeOff] == ptLogout {
+				foundCtrlLogout = true
+			}
+			if len(p.data) == tokenLen && p.data[typeOff] == ptIdle && p.data[reqTypeOff] == 0x01 {
+				foundTokenRemoval = true
+			}
+		}
+		return foundCtrlLogout && foundTokenRemoval
 	})
 	// CI-V stream: close (openclose magic 0x00) plus a control 0x05 there;
 	// control stream: token removal (0x40 requesttype 0x01) plus a 0x05.
