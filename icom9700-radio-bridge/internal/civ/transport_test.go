@@ -240,13 +240,15 @@ func TestCIVRoundTrip(t *testing.T) {
 	// fake acks our cmd-03 probes first, so read past those.
 	f.SendCIVFrame([]byte{0xfe, 0xfe, 0xa2, 0xe0, 0x15, 0x02, 0xfd}, false)
 	want := []byte{0xfe, 0xfe, 0xa2, 0xe0, 0x15, 0x02, 0xfd}
-	ack := []byte{0xfe, 0xfe, 0xe0, 0xa2, 0x03, 0xfb, 0xfd}
 	dl := time.After(3 * time.Second)
 	for {
 		select {
 		case got := <-cli.Frames():
-			if string(got) == string(ack) {
-				continue // the fake's ack for our probe
+			// Skip the fake's replies to our cmd-03 probes (radio ->
+			// controller, FB-terminated); take the first non-reply frame.
+			if len(got) >= 7 && got[0] == 0xfe && got[1] == 0xfe &&
+				got[3] == 0xa2 && got[4] == 0x03 && got[len(got)-2] == 0xfb {
+				continue
 			}
 			if string(got) != string(want) {
 				t.Fatalf("frame = % x, want % x", got, want)

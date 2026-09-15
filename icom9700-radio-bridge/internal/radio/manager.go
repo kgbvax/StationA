@@ -23,7 +23,16 @@ type Config struct {
 	AttemptSpacing time.Duration
 	DecayTimeout   time.Duration // 0 = the idle timeout
 	CmdWait        time.Duration // per-command reply wait
-	Logger         *slog.Logger
+
+	// Transport passthroughs (production leaves them zero for the civ
+	// defaults; tests point the session at a fake radio).
+	ControlPort     int
+	CIVPort         int
+	AreYouThere     time.Duration
+	HandshakeBudget time.Duration
+	LossWatchdog    time.Duration
+
+	Logger *slog.Logger
 }
 
 // Manager is the radio-side surface main.go and the bridge slot (U5) drive:
@@ -45,15 +54,20 @@ func NewManager(cfg Config) *Manager {
 		cfg.CmdWait = 2 * time.Second
 	}
 	sess := NewSession(SessionOptions{
-		Host:           cfg.Host,
-		Username:       cfg.Username,
-		Password:       cfg.Password,
-		IdleTimeout:    cfg.IdleTimeout,
-		MaxAttempts:    cfg.MaxAttempts,
-		AttemptSpacing: cfg.AttemptSpacing,
-		DecayTimeout:   cfg.DecayTimeout,
-		HandshakeTO:    cfg.CmdWait,
-		Logger:         cfg.Logger,
+		Host:            cfg.Host,
+		Username:        cfg.Username,
+		Password:        cfg.Password,
+		IdleTimeout:     cfg.IdleTimeout,
+		MaxAttempts:     cfg.MaxAttempts,
+		AttemptSpacing:  cfg.AttemptSpacing,
+		DecayTimeout:    cfg.DecayTimeout,
+		HandshakeTO:     cfg.CmdWait,
+		ControlPort:     cfg.ControlPort,
+		CIVPort:         cfg.CIVPort,
+		AreYouThere:     cfg.AreYouThere,
+		HandshakeBudget: cfg.HandshakeBudget,
+		LossWatchdog:    cfg.LossWatchdog,
+		Logger:          cfg.Logger,
 	})
 	return &Manager{sess: sess, cfg: cfg, log: cfg.Logger.With("component", "radio-manager")}
 }

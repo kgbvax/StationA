@@ -50,6 +50,19 @@ type FakeRadio struct {
 	// the client's civ-stream localSID, learned from its datagrams [8:12]
 	cliRemoteSIDCiv uint32
 
+	// CI-V device state the bridge's reads poll (U5): per-VFO frequency and
+	// mode, selected VFO, satellite mode, PTT, and the meters. SetFoo lets
+	// tests move the "front panel"; the CI-V command handler mutates it.
+	radioMu     sync.Mutex
+	freq        map[string]uint64 // "main"/"sub" -> Hz
+	mode        map[string]string
+	selectedVFO string
+	satMode     bool
+	ptt         bool
+	sMeterVal   byte
+	swrVal      byte
+	alcVal      byte
+
 	ctrlPackets [][]byte // every control datagram the client sent
 	civPackets  [][]byte // every civ datagram the client sent
 
@@ -63,6 +76,9 @@ func NewFakeRadio(t testing.TB) *FakeRadio {
 		radioSID:     0x11223344,
 		civTx:        map[uint16][]byte{},
 		civAddrKnown: make(chan struct{}, 1),
+		freq:         map[string]uint64{"main": 432_100_000, "sub": 145_800_000},
+		mode:         map[string]string{"main": "usb", "sub": "fm"},
+		selectedVFO:  "sub",
 	}
 	copy(f.authID[:], []byte{0xde, 0xad, 0xbe, 0xef, 0x01, 0x02})
 
@@ -288,18 +304,12 @@ func (f *FakeRadio) handle(stream string, conn *net.UDPConn, from *net.UDPAddr, 
 			return
 		}
 	case stream == "civ" && isData(pkt):
-		// Tracked client CI-V data — recorded (the caller asserts payloads)
-		// and answered like the radio would: an FB ack (or a data reply for
-		// the ID probe). Bare acks suffice for the lifecycle tests.
+		// Tracked client CI-V data — recorded, then answered like the radio:
+		// the fake carries a small device state (per-VFO freq/mode, selected
+		// VFO, satellite mode, PTT, meters) so the bridge's reads observe
+		// the sets.
 		f.mu.Unlock()
-		if f.cliCiv != nil {
-			frame := dataPayload(pkt)
-			if len(frame) >= 6 && frame[0] == 0xFE && frame[1] == 0xFE {
-				cmd := frame[4]
-				ans := []byte{0xFE, 0xFE, 0xE0, 0xA2, cmd, 0xFB, 0xFD}
-				f.SendCIVFrame(ans, false)
-			}
-		}
+		f.handleCIV(pkt)
 		return
 	}
 	f.mu.Unlock()
@@ -343,6 +353,137 @@ func (f *FakeRadio) SendCIVFrame(payload []byte, drop bool) {
 	if !drop && !silent {
 		_ = f.sendTo(f.civ, to, pkt)
 	}
+}
+
+// handleCIV executes one CI-V frame against the fake's device state and
+// answers like the radio (FB ack, or a data reply for reads).
+func (f *FakeRadio) handleCIV(pkt []byte) {
+	frame := dataPayload(pkt)
+	if len(frame) < 6 || frame[0] != 0xFE || frame[1] != 0xFE {
+		return
+	}
+	cmd := frame[4]
+	sub := frame[5 : len(frame)-1] // between cmd and FD
+
+	radioMu := &f.radioMu
+	reply := func(data ...byte) {
+		ans := append([]byte{0xFE, 0xFE, 0xE0, 0xA2, cmd}, data...)
+		ans = append(ans, 0xFB, 0xFD)
+		f.SendCIVFrame(ans, false)
+	}
+	ng := func() {
+		ans := []byte{0xFE, 0xFE, 0xE0, 0xA2, cmd, 0xFA, 0xFD}
+		f.SendCIVFrame(ans, false)
+	}
+
+	radioMu.Lock()
+	defer radioMu.Unlock()
+	switch {
+	case cmd == 0x03: // read freq (selected VFO)
+		bcd, err := BCD10Encode(f.freq[f.selectedVFO])
+		if err != nil {
+			ng()
+			return
+		}
+		reply(bcd...)
+	case cmd == 0x05 && len(sub) == 5: // set freq (selected VFO)
+		hz, err := BCD10Decode(sub)
+		if err != nil {
+			ng()
+			return
+		}
+		f.freq[f.selectedVFO] = hz
+		reply()
+	case cmd == 0x04 && len(sub) == 0: // read mode (selected VFO)
+		reply(modeByte(f.mode[f.selectedVFO]), 0x01)
+	case cmd == 0x06 && len(sub) == 2: // set mode+filter (or data-mode modifier)
+		if m, ok := modeFromByteKnown(sub[0]); ok {
+			f.mode[f.selectedVFO] = m
+		}
+		reply()
+	case cmd == 0x07 && len(sub) == 1 && (sub[0] == 0xD0 || sub[0] == 0xD1):
+		if sub[0] == 0xD0 {
+			f.selectedVFO = "main"
+		} else {
+			f.selectedVFO = "sub"
+		}
+		reply()
+	case cmd == 0x07 && len(sub) == 2 && sub[0] == 0xD2:
+		if f.selectedVFO == "main" {
+			reply(0x00)
+		} else {
+			reply(0x01)
+		}
+	case cmd == 0x16 && len(sub) >= 1 && sub[0] == 0x5A:
+		if len(sub) == 2 {
+			f.satMode = sub[1] == 0x01
+			reply()
+		} else {
+			if f.satMode {
+				reply(0x01)
+			} else {
+				reply(0x00)
+			}
+		}
+	case cmd == 0x1C && len(sub) == 2 && sub[0] == 0x00: // PTT set
+		f.ptt = sub[1] == 0x01
+		reply()
+	case cmd == 0x1C && len(sub) == 1 && sub[0] == 0x00: // PTT read
+		if f.ptt {
+			reply(0x01)
+		} else {
+			reply(0x00)
+		}
+	case cmd == 0x15 && len(sub) == 1 && sub[0] == 0x02:
+		reply(f.sMeterVal)
+	case cmd == 0x15 && len(sub) == 1 && sub[0] == 0x12:
+		reply(f.swrVal)
+	case cmd == 0x15 && len(sub) == 1 && sub[0] == 0x13:
+		reply(f.alcVal)
+	case cmd == 0x19: // transceiver ID
+		reply(0x98) // the 9700's CI-V address
+	case cmd == 0x14 || cmd == 0x06 || cmd == 0x1A:
+		reply()
+	default:
+		ng()
+	}
+}
+
+// Front-panel setters for tests: move the radio under the bridge's feet.
+func (f *FakeRadio) SetSMeter(v byte) { f.radioMu.Lock(); f.sMeterVal = v; f.radioMu.Unlock() }
+func (f *FakeRadio) SetSWR(v byte)    { f.radioMu.Lock(); f.swrVal = v; f.radioMu.Unlock() }
+func (f *FakeRadio) SetALC(v byte)    { f.radioMu.Lock(); f.alcVal = v; f.radioMu.Unlock() }
+
+// PTT reads the fake's keyed state.
+func (f *FakeRadio) PTT() bool { f.radioMu.Lock(); defer f.radioMu.Unlock(); return f.ptt }
+
+// SelectedVFO reads the fake's selected VFO.
+func (f *FakeRadio) SelectedVFO() string {
+	f.radioMu.Lock()
+	defer f.radioMu.Unlock()
+	return f.selectedVFO
+}
+
+func modeByte(m string) byte {
+	switch m {
+	case "lsb":
+		return 0x00
+	case "usb":
+		return 0x01
+	case "am":
+		return 0x02
+	case "cw":
+		return 0x03
+	case "fm":
+		return 0x05
+	default:
+		return 0x01
+	}
+}
+
+func modeFromByteKnown(b byte) (string, bool) {
+	m, ok := ModeFromByte(b)
+	return m, ok
 }
 
 // SetRefuseLogin scripts the credential rejection (ff ff ff fe login
