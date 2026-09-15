@@ -118,14 +118,20 @@ Symptom: step 5 succeeds, but the log shows
 `setKeyguardDisabled(true) -> false` and the lock screen still appears on wake.
 A PIN / pattern / password is set on the device; Android refuses to disable the
 keyguard while a secure credential exists. Fix: Settings → Security → Screen
-lock → **None**, then force-stop and relaunch the app (`enable()` runs on every
-`onCreate`):
+lock → **None**, then restart the app so `enable()` runs again — `enable()`
+runs on every `onCreate`:
 
 ```bash
-adb shell am force-stop codeberg.kgbvax.hf_console
+adb reboot   # see note below — am force-stop does not stop the device owner
+adb wait-for-device
 adb shell am start -n codeberg.kgbvax.hf_console/.MainActivity
 adb logcat -s KioskPolicy
 ```
+
+> **Note:** once the app is device owner, `adb shell am force-stop` silently
+> does nothing (Android protects the owner app against adb; observed on
+> Android 16). A reboot is the reliable restart — with device owner +
+> persistent home set, the console comes back up on its own after boot.
 
 If `dpm set-device-owner` itself refuses because of an existing credential,
 factory-reset and redo the wizard without setting one.
