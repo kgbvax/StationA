@@ -34,6 +34,12 @@ const cmdRetain = {
   // above): a retained set_pol re-applies the operator's last intent after
   // a controller reboot or broker reconnect.
   'muehle/uhf/pol-ctrl': true,
+  // uhf/radio (icom9700-radio-bridge) — one-shot across the whole action set:
+  // `arm` is a session-hold permit that must never re-apply after a bridge
+  // or broker restart (fail-disarmed, R11), and a stale queued ptt/set_freq
+  // must never replay into a fresh session. The bridge clears the topic
+  // after every execute-or-reject.
+  'muehle/uhf/radio': false,
 };
 
 String cmdTopic(String slot) => 'muehle/$slot/cmd';
@@ -62,6 +68,7 @@ const expectedSlots = [
   'muehle/uhf/pol-ctrl',
   'muehle/uhf/az-rotator',
   'muehle/uhf/el-rotator',
+  'muehle/uhf/radio',
 ];
 
 String cmdPayload(String action, dynamic value) =>
@@ -113,6 +120,28 @@ String satRotatorStopPayload() => jsonEncode({'action': 'stop'});
 // rotators above (KTD13).
 
 String setPolPayload(String pol) => cmdPayload('set_pol', pol);
+
+// --- UHF radio (muehle/uhf/radio, icom9700-radio-bridge) ----------------------
+//
+// R9/R14 contract (icom9700-radio-bridge/docs/mqtt-api.md): per-VFO actions
+// carry `vfo`:"main"|"sub" and take the argument under `value` — the station
+// value-key convention. The bridge's cmd struct decodes `value` as a JSON
+// **string** (strconv/on-off parsed Go-side), so these builders stringify;
+// a JSON number fails to unmarshal and lands in /state.error. All are
+// published with cmdRetain['muehle/uhf/radio']! = false (one-shot — see the
+// cmdRetain comment above).
+
+String uhfRadioSetFreqPayload(int freqHz, String vfo) =>
+    jsonEncode({'action': 'set_freq', 'value': '$freqHz', 'vfo': vfo});
+
+String uhfRadioSetModePayload(String mode, String vfo) =>
+    jsonEncode({'action': 'set_mode', 'value': mode, 'vfo': vfo});
+
+String uhfRadioArmPayload() => jsonEncode({'action': 'arm'});
+
+String uhfRadioDisarmPayload() => jsonEncode({'action': 'disarm'});
+
+String uhfRadioPttPayload(String onOff) => cmdPayload('ptt', onOff);
 
 // --- Ultrabeam controller ----------------------------------------------------
 

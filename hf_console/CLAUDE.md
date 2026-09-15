@@ -54,13 +54,14 @@ Retained cmd slots (self-healing steady state): `power/master`, `power/psu-13v8`
 
 Retained but one-shot (consumer clears the topic after every execution — a command does NOT re-apply if the bridge restarts): `hf/ant-ctrl`.
 
-Non-retained (one-shot): `hf/pa`, `hf/rotator`, `hf/tuner`, `hf/power-seq`, `hf/radio` (DVK `play`/`stop`), `uhf/az-rotator`, `uhf/el-rotator` (sat `goto`/`stop` — a stale retained or queued motion must never replay against real antennas).
+Non-retained (one-shot): `hf/pa`, `hf/rotator`, `hf/tuner`, `hf/power-seq`, `hf/radio` (DVK `play`/`stop`), `uhf/az-rotator`, `uhf/el-rotator` (sat `goto`/`stop` — a stale retained or queued motion must never replay against real antennas), `uhf/radio` (icom9700-radio-bridge: the whole action set incl. `arm`/`disarm`/`ptt` — the arm permit must never re-apply after a restart, fail-disarmed, and a stale queued PTT must never replay into a fresh session).
 
 The machine-readable source of truth is `cmdRetain` in `lib/store/wiring.dart`; keep this list in sync with it.
 
 ## Value-key deviations
 
 - `ant-switch` / `antenna-select`: value-key-only, no `action`
+- `uhf/radio` per-VFO actions (`set_freq`, `set_mode`, …): argument under `value` as a **string** (the bridge parses it Go-side; a JSON number fails to unmarshal) plus a `vfo` key `"main"|"sub"`
 - `pa-arm.set_enabled`: value is a **string** `"true"` / `"false"`
 - `tuner.set_inline`: value is a real JSON **bool**
 - `tuner.tune`: value is a **string** `"mem"` / `"full"`

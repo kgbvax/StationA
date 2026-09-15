@@ -14,6 +14,7 @@ import '../widgets/power_panel.dart';
 import '../widgets/rotator_presets_bar.dart';
 import '../widgets/sat_rotator_panel.dart';
 import '../widgets/pol_ctrl_panel.dart';
+import '../widgets/uhf_radio_panel.dart';
 import '../widgets/climate_panel.dart';
 import '../widgets/faults_bar.dart';
 import '../widgets/dx_config_sheet.dart';
@@ -287,8 +288,8 @@ class _UhfPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     // Single vertically scrolled panel column on both tablet and phone
-    // layouts (U8): the sat-ops rotator surface, with the Tier-2 X-Quad
-    // polarization control appended below it (U11).
+    // layouts (U8): the sat-ops rotator surface, the Tier-2 X-Quad
+    // polarization control (U11), and the IC-9700 radio surface (U7).
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -301,6 +302,8 @@ class _UhfPage extends StatelessWidget {
                 SatRotatorPanel(),
                 SizedBox(height: 12),
                 PolCtrlPanel(),
+                SizedBox(height: 12),
+                UhfRadioPanel(),
                 SizedBox(height: 40),
               ],
             ),
