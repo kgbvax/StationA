@@ -18,7 +18,6 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
 	pahomqtt "github.com/eclipse/paho.mqtt.golang"
 
@@ -65,8 +64,18 @@ func main() {
 func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 	// Construct the radio manager BEFORE connecting MQTT so the /cmd handler
 	// exists when OnConnect fires (OnConnect subscribes to /cmd and dispatches
-	// into the manager). U1: this is the stub; U4/U5 replace it.
-	mgr := &radio.Stub{Log: log}
+	// into the manager). U4: the on-demand session manager — Run owns the
+	// lifecycle (idle/connecting/live/error), the bus drives it through
+	// Execute/SetHold.
+	mgr := radio.NewManager(radio.Config{
+		Host:           cfg.RadioHost,
+		Username:       cfg.CIV.Username,
+		Password:       cfg.CIV.Password,
+		IdleTimeout:    cfg.Session.IdleTimeoutDur,
+		MaxAttempts:    cfg.Session.MaxAttempts,
+		AttemptSpacing: cfg.Session.AttemptSpacingDur,
+		Logger:         log,
+	})
 
 	// /cmd dispatch: paho runs message handlers on its own goroutine, and a
 	// radio command is a network round-trip on the CI-V stream, so the handler
@@ -88,15 +97,15 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 	defer mqttClient.Disconnect(500)
 	log.Info("MQTT connected", "broker", cfg.MQTT.Broker)
 
-	// 2. Run the radio-session loop until ctx is cancelled. U1 stub: every
-	// Connect attempt fails with ErrNotImplemented and the loop backs off
-	// 2 s -> 60 s, so a deployed scaffold sits politely idle on the bus.
-	return radioLoop(ctx, cfg, mgr, log)
+	// 2. Run the session state machine until ctx is cancelled: it sits
+	// politely idle on the bus until a /cmd demand or the armed hold
+	// connects it (KTD-2 on-demand, the radio stays free for wfview).
+	return mgr.Run(ctx)
 }
 
 // connectMQTT establishes the MQTT connection with a Last Will that marks the
 // bridge offline.
-func connectMQTT(ctx context.Context, cfg config.Config, mgr radio.Manager, jobs chan func(), log *slog.Logger) (pahomqtt.Client, error) {
+func connectMQTT(ctx context.Context, cfg config.Config, mgr *radio.Manager, jobs chan func(), log *slog.Logger) (pahomqtt.Client, error) {
 	opts := pahomqtt.NewClientOptions()
 	opts.AddBroker(cfg.MQTT.Broker)
 	clientID := cfg.MQTT.ClientID
@@ -152,76 +161,6 @@ func connectMQTT(ctx context.Context, cfg config.Config, mgr radio.Manager, jobs
 		return nil, err
 	}
 	return client, nil
-}
-
-// radioLoop drives the on-demand session manager: connect, hold the session
-// (poll tick) until it drops, then back off and retry until ctx is
-// cancelled. Backoff starts at 2 s, scales x1.5, caps at 60 s (flexbridge
-// shape). U4 wraps this with the session policy (idle timeout, wfview
-// contention, safety-driven reconnects); U6 adds the loss-of-control rules.
-func radioLoop(ctx context.Context, cfg config.Config, mgr radio.Manager, log *slog.Logger) error {
-	const maxBackoff = 60 * time.Second
-	backoff := 2 * time.Second
-
-	for {
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-
-		err := mgr.Connect(ctx)
-		if err == nil {
-			// Session live: tick Poll at the configured cadence until the
-			// session drops or ctx is cancelled. (The U1 stub never gets
-			// here; U4/U5 fill the poll body and the safety core lives
-			// around it.)
-			err = pollLoop(ctx, mgr, cfg.Radio.PollIntervalDur)
-		}
-		mgr.Disconnect()
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-		log.Warn("radio session ended", "err", err)
-		if !sleepCtx(ctx, backoff) {
-			return ctx.Err()
-		}
-		backoff = scaleBackoff(backoff, maxBackoff)
-	}
-}
-
-// pollLoop ticks the manager at the configured poll interval until the
-// session drops or ctx is cancelled.
-func pollLoop(ctx context.Context, mgr radio.Manager, every time.Duration) error {
-	t := time.NewTicker(every)
-	defer t.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-t.C:
-			if err := mgr.Poll(ctx); err != nil {
-				return err
-			}
-		}
-	}
-}
-
-func sleepCtx(ctx context.Context, d time.Duration) bool {
-	t := time.NewTimer(d)
-	defer t.Stop()
-	select {
-	case <-ctx.Done():
-		return false
-	case <-t.C:
-		return true
-	}
-}
-
-func scaleBackoff(cur, max time.Duration) time.Duration {
-	next := time.Duration(float64(cur) * 1.5)
-	if next > max {
-		next = max
-	}
-	return next
 }
 
 func newLogger(level string) *slog.Logger {

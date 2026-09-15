@@ -11,11 +11,11 @@ import (
 )
 
 // fastOptions builds Options against the fake radio with test-scale timers.
-func fastOptions(f *fakeRadio) Options {
+func fastOptions(f *FakeRadio) Options {
 	return Options{
 		Host:            "127.0.0.1",
-		ControlPort:     f.addr().Port,
-		CIVPort:         f.civPort(),
+		ControlPort:     f.Addr().Port,
+		CIVPort:         f.CIVPort(),
 		Username:        "bridge",
 		Password:        "hunter2",
 		PingInterval:    50 * time.Millisecond,
@@ -32,7 +32,7 @@ func fastOptions(f *fakeRadio) Options {
 	}
 }
 
-func dialFake(t *testing.T, f *fakeRadio, o Options) *Client {
+func dialFake(t *testing.T, f *FakeRadio, o Options) *Client {
 	t.Helper()
 	ctx := context.Background()
 	cli, err := Dial(ctx, o)
@@ -63,7 +63,7 @@ func waitFrames(t *testing.T, cli *Client, n int, d time.Duration) [][]byte {
 // CI-V-stream-open (the plan's U2 verification: a wfview log can be diffed
 // against this).
 func TestHandshakeHappyPath(t *testing.T) {
-	f := newFakeRadio(t)
+	f := NewFakeRadio(t)
 	cli := dialFake(t, f, fastOptions(f))
 
 	if got := cli.RadioName(); got != "IC-9700" {
@@ -134,7 +134,7 @@ func TestHandshakeHappyPath(t *testing.T) {
 // fails with ErrHandshakeTimeout and makes no login attempt (R2: no
 // session attempts except after the handshake answers).
 func TestHandshakeRadioSilent(t *testing.T) {
-	f := newFakeRadio(t)
+	f := NewFakeRadio(t)
 	f.mu.Lock()
 	f.silent = true
 	f.mu.Unlock()
@@ -159,7 +159,7 @@ func TestHandshakeRadioSilent(t *testing.T) {
 // TestLoginRejected: wrong credentials are surfaced verbatim and never
 // retried (the operator fixes them, the bridge reports).
 func TestLoginRejected(t *testing.T) {
-	f := newFakeRadio(t)
+	f := NewFakeRadio(t)
 	f.mu.Lock()
 	f.refuseLogin = true
 	f.mu.Unlock()
@@ -181,7 +181,7 @@ func TestLoginRejected(t *testing.T) {
 // TestSessionRefused: another client holds the session — the 0x50 ff ff ff
 // answer surfaces as ErrConnectionRefused.
 func TestSessionRefused(t *testing.T) {
-	f := newFakeRadio(t)
+	f := NewFakeRadio(t)
 	f.mu.Lock()
 	f.refuseSess = true
 	f.mu.Unlock()
@@ -199,7 +199,7 @@ func TestSessionRefused(t *testing.T) {
 // TestCIVRoundTrip: SendCIV reaches the fake with intact framing; inbound
 // frames arrive ordered, payload-stripped.
 func TestCIVRoundTrip(t *testing.T) {
-	f := newFakeRadio(t)
+	f := NewFakeRadio(t)
 	cli := dialFake(t, f, fastOptions(f))
 
 	// Outbound: 5 frames, strictly increasing inner sequence.
@@ -236,12 +236,25 @@ func TestCIVRoundTrip(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 
-	// Inbound: the payload arrives stripped of header + sub-header.
-	f.sendCIVFrame([]byte{0xfe, 0xfe, 0xa2, 0xe0, 0x15, 0x02, 0xfd}, false)
-	frames := waitFrames(t, cli, 1, 2*time.Second)
+	// Inbound: the payload arrives stripped of header + sub-header. The
+	// fake acks our cmd-03 probes first, so read past those.
+	f.SendCIVFrame([]byte{0xfe, 0xfe, 0xa2, 0xe0, 0x15, 0x02, 0xfd}, false)
 	want := []byte{0xfe, 0xfe, 0xa2, 0xe0, 0x15, 0x02, 0xfd}
-	if string(frames[0]) != string(want) {
-		t.Errorf("frame = % x, want % x", frames[0], want)
+	ack := []byte{0xfe, 0xfe, 0xe0, 0xa2, 0x03, 0xfb, 0xfd}
+	dl := time.After(3 * time.Second)
+	for {
+		select {
+		case got := <-cli.Frames():
+			if string(got) == string(ack) {
+				continue // the fake's ack for our probe
+			}
+			if string(got) != string(want) {
+				t.Fatalf("frame = % x, want % x", got, want)
+			}
+			return
+		case <-dl:
+			t.Fatal("timed out waiting for the inbound frame")
+		}
 	}
 }
 
@@ -249,12 +262,12 @@ func TestCIVRoundTrip(t *testing.T) {
 // gap and request retransmission, after which frames arrive in order (the
 // plan's packet-loss scenario, rx side).
 func TestRxGapHealed(t *testing.T) {
-	f := newFakeRadio(t)
+	f := NewFakeRadio(t)
 	cli := dialFake(t, f, fastOptions(f))
 
-	f.sendCIVFrame([]byte{0x01}, false)
-	f.sendCIVFrame([]byte{0x02}, true) // withheld — creates the gap
-	f.sendCIVFrame([]byte{0x03}, false)
+	f.SendCIVFrame([]byte{0x01}, false)
+	f.SendCIVFrame([]byte{0x02}, true) // withheld — creates the gap
+	f.SendCIVFrame([]byte{0x03}, false)
 
 	// The fake serves the retransmit request from its tx log; the client
 	// must deliver all three in order.
@@ -291,7 +304,7 @@ func TestRxGapHealed(t *testing.T) {
 // again; the client must resend the identical tracked datagram (twice, like
 // the reference client).
 func TestTxRetransmitServed(t *testing.T) {
-	f := newFakeRadio(t)
+	f := NewFakeRadio(t)
 	cli := dialFake(t, f, fastOptions(f))
 
 	payload := []byte{0xfe, 0xfe, 0xa2, 0xe0, 0x05, 0x00, 0x00, 0x50, 0x41, 0x01, 0xfd}
@@ -351,7 +364,7 @@ func TestTxRetransmitServed(t *testing.T) {
 // TestTokenRenewal: renewals flow at the configured cadence while live and
 // the session stays up (KTD: token renewal every 60 s — shrunk here).
 func TestTokenRenewal(t *testing.T) {
-	f := newFakeRadio(t)
+	f := NewFakeRadio(t)
 	o := fastOptions(f)
 	o.ReauthInterval = 80 * time.Millisecond
 	cli := dialFake(t, f, o)
@@ -371,7 +384,7 @@ func TestTokenRenewal(t *testing.T) {
 // TestCIVSilenceWatchdog: with no frames flowing the client re-opens the
 // data stream at the configured cadence (the brief's 2 s watchdog, shrunk).
 func TestCIVSilenceWatchdog(t *testing.T) {
-	f := newFakeRadio(t)
+	f := NewFakeRadio(t)
 	o := fastOptions(f)
 	o.CIVSilence = 100 * time.Millisecond
 	cli := dialFake(t, f, o)
@@ -387,10 +400,10 @@ func TestCIVSilenceWatchdog(t *testing.T) {
 // TestSessionLossOnSilence: the radio stops answering entirely — the loss
 // watchdog must end the session (R3's session-loss detection).
 func TestSessionLossOnSilence(t *testing.T) {
-	f := newFakeRadio(t)
+	f := NewFakeRadio(t)
 	cli := dialFake(t, f, fastOptions(f))
 
-	f.setSilent(true)
+	f.SetSilent(true)
 	select {
 	case err := <-cli.Lost:
 		if err == nil {
@@ -405,14 +418,14 @@ func TestSessionLossOnSilence(t *testing.T) {
 // queues unboundedly — after the flood the client still delivers fresh
 // frames and stays live.
 func TestFloodBounded(t *testing.T) {
-	f := newFakeRadio(t)
+	f := NewFakeRadio(t)
 	cli := dialFake(t, f, fastOptions(f))
 
 	for i := 0; i < 3000; i++ {
-		f.sendCIVFrame([]byte{byte(i), 0x42}, false)
+		f.SendCIVFrame([]byte{byte(i), 0x42}, false)
 	}
 	// The stream still works: a fresh frame arrives despite the flood.
-	f.sendCIVFrame([]byte{0xfe, 0xfe, 0xa2, 0xe0, 0x19, 0xfd}, false)
+	f.SendCIVFrame([]byte{0xfe, 0xfe, 0xa2, 0xe0, 0x19, 0xfd}, false)
 	waitFrames(t, cli, 1, 3*time.Second)
 
 	select {
@@ -425,7 +438,7 @@ func TestFloodBounded(t *testing.T) {
 // TestConcurrentSendsSerialize: concurrent SendCIV callers must not tear
 // the wire — every frame arrives, inner sequences strictly increasing.
 func TestConcurrentSendsSerialize(t *testing.T) {
-	f := newFakeRadio(t)
+	f := NewFakeRadio(t)
 	cli := dialFake(t, f, fastOptions(f))
 
 	const n = 20
@@ -472,7 +485,7 @@ func TestConcurrentSendsSerialize(t *testing.T) {
 // TestCloseClean: Close sends the close + disconnect packets and does not
 // deliver a loss.
 func TestCloseClean(t *testing.T) {
-	f := newFakeRadio(t)
+	f := NewFakeRadio(t)
 	cli := dialFake(t, f, fastOptions(f))
 
 	cli.Close()

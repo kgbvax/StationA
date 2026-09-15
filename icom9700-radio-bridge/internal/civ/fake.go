@@ -5,14 +5,20 @@ import (
 	"net"
 	"sync"
 	"testing"
+	"time"
 )
 
-// fakeRadio is an in-process UDP server speaking the same packet grammar as
+// FakeRadio is an in-process UDP server speaking the same packet grammar as
 // the IC-9700 (kappanhang's controlstream/serialstream from the radio side),
 // scripted per test: drop datagrams, refuse logins, stop answering, flood.
 // It records every received packet for byte-exact wire assertions.
-type fakeRadio struct {
-	t *testing.T
+//
+// It lives in the production package (not a _test file) so the radio
+// session's tests (internal/radio) drive the same grammar — the spid
+// package's in-package Mock is the stationa precedent. Nothing in the
+// bridge references it; the linker drops it from release binaries.
+type FakeRadio struct {
+	t testing.TB
 
 	ctrl *net.UDPConn
 	civ  *net.UDPConn
@@ -23,6 +29,7 @@ type fakeRadio struct {
 	radioSID    uint32
 	authID      [6]byte
 	loginCount  int
+	loginTimes  []time.Time
 	auth05Count int
 	requested   bool
 	civOpened   int
@@ -49,9 +56,9 @@ type fakeRadio struct {
 	civAddrKnown chan struct{}
 }
 
-func newFakeRadio(t *testing.T) *fakeRadio {
+func NewFakeRadio(t testing.TB) *FakeRadio {
 	t.Helper()
-	f := &fakeRadio{
+	f := &FakeRadio{
 		t:            t,
 		radioSID:     0x11223344,
 		civTx:        map[uint16][]byte{},
@@ -78,12 +85,12 @@ func newFakeRadio(t *testing.T) *fakeRadio {
 }
 
 // addr returns the fake's control address for Dial.
-func (f *fakeRadio) addr() *net.UDPAddr { return f.ctrl.LocalAddr().(*net.UDPAddr) }
+func (f *FakeRadio) Addr() *net.UDPAddr { return f.ctrl.LocalAddr().(*net.UDPAddr) }
 
 // civAddr returns the fake's CI-V port.
-func (f *fakeRadio) civPort() int { return f.civ.LocalAddr().(*net.UDPAddr).Port }
+func (f *FakeRadio) CIVPort() int { return f.civ.LocalAddr().(*net.UDPAddr).Port }
 
-func (f *fakeRadio) serve(conn *net.UDPConn, stream string) {
+func (f *FakeRadio) serve(conn *net.UDPConn, stream string) {
 	buf := make([]byte, 2048)
 	for {
 		n, from, err := conn.ReadFromUDP(buf)
@@ -96,7 +103,7 @@ func (f *fakeRadio) serve(conn *net.UDPConn, stream string) {
 	}
 }
 
-func (f *fakeRadio) record(stream string, pkt []byte) {
+func (f *FakeRadio) record(stream string, pkt []byte) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if stream == "control" {
@@ -106,13 +113,13 @@ func (f *fakeRadio) record(stream string, pkt []byte) {
 	}
 }
 
-func (f *fakeRadio) counts() (logins, auth05, opens, closes, renewals int) {
+func (f *FakeRadio) counts() (logins, auth05, opens, closes, renewals int) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.loginCount, f.auth05Count, f.civOpened, f.civClosed, f.renewed
 }
 
-func (f *fakeRadio) ctrlLog() [][]byte {
+func (f *FakeRadio) ctrlLog() [][]byte {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	out := make([][]byte, len(f.ctrlPackets))
@@ -120,7 +127,7 @@ func (f *fakeRadio) ctrlLog() [][]byte {
 	return out
 }
 
-func (f *fakeRadio) civLog() [][]byte {
+func (f *FakeRadio) civLog() [][]byte {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	out := make([][]byte, len(f.civPackets))
@@ -128,13 +135,32 @@ func (f *fakeRadio) civLog() [][]byte {
 	return out
 }
 
-func (f *fakeRadio) setSilent(v bool) {
+func (f *FakeRadio) SetSilent(v bool) {
 	f.mu.Lock()
 	f.silent = v
 	f.mu.Unlock()
 }
 
-func (f *fakeRadio) handle(stream string, conn *net.UDPConn, from *net.UDPAddr, pkt []byte) {
+// setRadioSID changes the fake's session ID — the "radio rebooted" script
+// (a fresh full re-login must succeed against the new identity).
+func (f *FakeRadio) SetRadioSID(sid uint32) {
+	f.mu.Lock()
+	f.radioSID = sid
+	f.mu.Unlock()
+}
+
+// loginSpacings returns the gaps between successive login attempts.
+func (f *FakeRadio) LoginSpacings() []time.Duration {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]time.Duration, 0, len(f.loginTimes))
+	for i := 1; i < len(f.loginTimes); i++ {
+		out = append(out, f.loginTimes[i].Sub(f.loginTimes[i-1]))
+	}
+	return out
+}
+
+func (f *FakeRadio) handle(stream string, conn *net.UDPConn, from *net.UDPAddr, pkt []byte) {
 	f.record(stream, pkt)
 
 	f.mu.Lock()
@@ -178,6 +204,7 @@ func (f *fakeRadio) handle(stream string, conn *net.UDPConn, from *net.UDPAddr, 
 		// Login answer: 96 bytes with the session auth ID (or the explicit
 		// ff ff ff fe credential rejection).
 		f.loginCount++
+		f.loginTimes = append(f.loginTimes, time.Now())
 		ans := make([]byte, 96)
 		copy(ans, sigLoginAnswer)
 		binary.BigEndian.PutUint32(ans[8:12], radioSID)
@@ -261,7 +288,19 @@ func (f *fakeRadio) handle(stream string, conn *net.UDPConn, from *net.UDPAddr, 
 			return
 		}
 	case stream == "civ" && isData(pkt):
-		// Tracked client CI-V data — recorded (the caller asserts payloads).
+		// Tracked client CI-V data — recorded (the caller asserts payloads)
+		// and answered like the radio would: an FB ack (or a data reply for
+		// the ID probe). Bare acks suffice for the lifecycle tests.
+		f.mu.Unlock()
+		if f.cliCiv != nil {
+			frame := dataPayload(pkt)
+			if len(frame) >= 6 && frame[0] == 0xFE && frame[1] == 0xFE {
+				cmd := frame[4]
+				ans := []byte{0xFE, 0xFE, 0xE0, 0xA2, cmd, 0xFB, 0xFD}
+				f.SendCIVFrame(ans, false)
+			}
+		}
+		return
 	}
 	f.mu.Unlock()
 
@@ -270,7 +309,7 @@ func (f *fakeRadio) handle(stream string, conn *net.UDPConn, from *net.UDPAddr, 
 	}
 }
 
-func (f *fakeRadio) sendTo(conn *net.UDPConn, to *net.UDPAddr, pkt []byte) error {
+func (f *FakeRadio) sendTo(conn *net.UDPConn, to *net.UDPAddr, pkt []byte) error {
 	if to == nil {
 		return nil
 	}
@@ -282,7 +321,7 @@ func (f *fakeRadio) sendTo(conn *net.UDPConn, to *net.UDPAddr, pkt []byte) error
 // logging it for retransmit serving. With drop set, the frame is withheld
 // until the client's retransmit request arrives (the fake serves its tx log
 // on request — the rx-gap rehearsal).
-func (f *fakeRadio) sendCIVFrame(payload []byte, drop bool) {
+func (f *FakeRadio) SendCIVFrame(payload []byte, drop bool) {
 	f.mu.Lock()
 	f.civSendSeq++
 	seq := f.civSendSeq
@@ -305,3 +344,31 @@ func (f *fakeRadio) sendCIVFrame(payload []byte, drop bool) {
 		_ = f.sendTo(f.civ, to, pkt)
 	}
 }
+
+// SetRefuseLogin scripts the credential rejection (ff ff ff fe login
+// answer) — the wfview-holds / wrong-password rehearsal.
+func (f *FakeRadio) SetRefuseLogin(v bool) {
+	f.mu.Lock()
+	f.refuseLogin = v
+	f.mu.Unlock()
+}
+
+// SetRefuseSess scripts the 0x50 ff ff ff stream-request refusal — the
+// another-client-holds-the-session rehearsal.
+func (f *FakeRadio) SetRefuseSess(v bool) {
+	f.mu.Lock()
+	f.refuseSess = v
+	f.mu.Unlock()
+}
+
+// Counts returns the scripted-traffic tallies (logins, 0x05 auths, civ
+// opens/closes, renewals).
+func (f *FakeRadio) Counts() (logins, auth05, opens, closes, renewals int) {
+	return f.counts()
+}
+
+// CtrlLog returns every control datagram the client sent, in order.
+func (f *FakeRadio) CtrlLog() [][]byte { return f.ctrlLog() }
+
+// CivLog returns every civ datagram the client sent, in order.
+func (f *FakeRadio) CivLog() [][]byte { return f.civLog() }
