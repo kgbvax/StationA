@@ -26,6 +26,13 @@ class StatusPill extends StatelessWidget {
   final String? suffix;
   final Color? suffixColor;
 
+  /// Whether the [suffix] still means anything once the slot drops offline.
+  /// Device-reported diagnoses (FAULT, ERR) stick — the fault may be why the
+  /// device is unreachable. Motion/mismatch transients (MOVING, TX) do not:
+  /// a dead device is not moving, and showing "MOVING · OFFLINE" contradicts
+  /// itself.
+  final bool stickySuffix;
+
   const StatusPill({
     super.key,
     required this.slots,
@@ -34,6 +41,7 @@ class StatusPill extends StatelessWidget {
     this.info,
     this.suffix,
     this.suffixColor,
+    this.stickySuffix = false,
   });
 
   /// Friendly device name from the slot's `/meta` HA-discovery block
@@ -60,12 +68,11 @@ class StatusPill extends StatelessWidget {
     final String text;
     final Color color;
     if (!online) {
-      // A red diagnosis (FAULT, ERR) must survive the link dying — the
-      // reason the device is unreachable may be the fault itself. Amber
-      // transient suffixes (TUNING, NO RF) are meaningless without a link.
-      final redSuffix =
-          suffix != null && suffix!.isNotEmpty && suffixColor == AppTheme.red;
-      text = '$name${redSuffix ? ' · ${suffix!.toUpperCase()}' : ''} · OFFLINE';
+      final sticky = stickySuffix &&
+          suffix != null &&
+          suffix!.isNotEmpty &&
+          suffixColor == AppTheme.red;
+      text = '$name${sticky ? ' · ${suffix!.toUpperCase()}' : ''} · OFFLINE';
       color = AppTheme.red;
     } else if (suffix != null && suffix!.isNotEmpty) {
       text = '$name · ${suffix!.toUpperCase()}';

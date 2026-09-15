@@ -97,6 +97,7 @@ class PolCtrlPanel extends StatelessWidget {
               label: 'X-Quad',
               suffix: errorText != null ? 'ERR' : null,
               suffixColor: AppTheme.red,
+              stickySuffix: true, // ERR survives a dead link
             ),
           ),
           const SizedBox(height: 12),

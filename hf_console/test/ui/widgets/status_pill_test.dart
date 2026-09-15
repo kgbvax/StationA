@@ -156,6 +156,49 @@ void main() {
       expect(find.textContaining('20M'), findsNothing);
     });
 
+    testWidgets('non-sticky suffix drops when offline — MOVING · OFFLINE is absurd', (tester) async {
+      final store = BusStore();
+      final mqtt = FakeMqttService(store);
+      store.setOnline('muehle/hf/pa');
+      store.setBridgeOffline('muehle/hf/pa');
+
+      await tester.pumpWidget(TestHarness(
+        store: store,
+        mqtt: mqtt,
+        child: StatusPill(
+          slots: const ['muehle/hf/pa'],
+          label: 'ACOM 1200S',
+          suffix: 'MOVING',
+          suffixColor: AppTheme.red,
+        ),
+      ));
+      await tester.pump();
+
+      expect(find.text('ACOM 1200S · OFFLINE'), findsOneWidget);
+    });
+
+    testWidgets('sticky suffix (FAULT) survives offline', (tester) async {
+      final store = BusStore();
+      final mqtt = FakeMqttService(store);
+      store.setOnline('muehle/hf/pa');
+      store.setBridgeOffline('muehle/hf/pa');
+
+      await tester.pumpWidget(TestHarness(
+        store: store,
+        mqtt: mqtt,
+        child: StatusPill(
+          slots: const ['muehle/hf/pa'],
+          label: 'ACOM 1200S',
+          suffix: 'FAULT',
+          suffixColor: AppTheme.red,
+          stickySuffix: true,
+        ),
+      ));
+      await tester.pump();
+
+      expect(find.text('ACOM 1200S · FAULT · OFFLINE'), findsOneWidget);
+    });
+
     testWidgets('every tracked slot must be present — missing counts as offline', (tester) async {
       final store = BusStore();
       final mqtt = FakeMqttService(store);

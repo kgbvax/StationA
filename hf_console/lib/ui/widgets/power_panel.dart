@@ -183,6 +183,7 @@ class PowerPanel extends StatelessWidget {
               useMetaName: false,
               suffix: pillSuffix.isEmpty ? null : pillSuffix,
               suffixColor: pillColor,
+              stickySuffix: true, // sequencer FAULT survives a dead link
             ),
           ),
         ],

@@ -158,6 +158,7 @@ class AntennaPanel extends StatelessWidget {
               useMetaName: false,
               suffix: suffix.isEmpty ? null : suffix,
               suffixColor: suffixColor,
+              stickySuffix: true, // RF ON is true regardless of the switch link
             ),
           ),
         ],

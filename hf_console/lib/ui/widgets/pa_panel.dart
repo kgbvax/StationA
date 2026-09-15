@@ -143,6 +143,7 @@ class _PaPanelState extends State<PaPanel> {
               label: 'ACOM 1200S',
               suffix: suffix.isEmpty ? null : suffix,
               suffixColor: suffixColor,
+              stickySuffix: true, // FAULT diagnoses survive a dead link
             ),
           ),
           Column(

@@ -57,6 +57,7 @@ class TunerPanel extends StatelessWidget {
               label: 'ATR-1000',
               suffix: suffix.isEmpty ? null : suffix,
               suffixColor: suffixColor,
+              stickySuffix: true, // FAULT survives a dead link
             ),
           ),
           const SizedBox(height: 10),
