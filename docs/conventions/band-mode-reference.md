@@ -45,7 +45,10 @@ label, not a synthesized one:
 | `70cm` | 430,000,000 | 440,000,000 |
 | `23cm` | 1,240,000,000 | 1,300,000,000 |
 
-23 cm is currently out of scope for automation.
+23 cm **is** automated: the IC-9700 bridge (`icom9700-radio-bridge`, slot
+`muehle/uhf/radio`) publishes and sets all three VHF/UHF bands above. 23 cm exists
+on the radio's MAIN VFO only — SUB has no 23 cm — so the bridge rejects a `set_freq`
+that would land 23 cm on SUB (see `icom9700-radio-bridge/docs/mqtt-api.md`).
 
 ---
 

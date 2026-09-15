@@ -29,16 +29,17 @@ const cmdRetain = {
   // retained or queued goto must never replay against real antennas.
   'muehle/uhf/az-rotator': false,
   'muehle/uhf/el-rotator': false,
-  // IC-9700 radio (icom9700-radio-bridge) — all one-shot per KTD6: a
-  // retained arm permit would re-arm after every bridge restart and defeat
-  // the settled fail-disarm (R11). arm/ptt/set_freq/set_mode are
-  // tap-executed toggles and sets, never desired steady state.
-  'muehle/uhf/radio': false,
   // pol-ctrl (m5stamp-pol-ctrl) — retained steady state, the actuator
   // exception (KTD13's deliberate contrast with the one-shot rotators
   // above): a retained set_pol re-applies the operator's last intent after
   // a controller reboot or broker reconnect.
   'muehle/uhf/pol-ctrl': true,
+  // uhf/radio (icom9700-radio-bridge) — one-shot across the whole action set:
+  // `arm` is a session-hold permit that must never re-apply after a bridge
+  // or broker restart (fail-disarmed, R11), and a stale queued ptt/set_freq
+  // must never replay into a fresh session. The bridge clears the topic
+  // after every execute-or-reject.
+  'muehle/uhf/radio': false,
 };
 
 String cmdTopic(String slot) => 'muehle/$slot/cmd';
@@ -125,32 +126,26 @@ String setPolPayload(String pol) => cmdPayload('set_pol', pol);
 
 // --- UHF radio (muehle/uhf/radio, icom9700-radio-bridge) ----------------------
 //
-// All one-shot (KTD6): cmdRetain['muehle/uhf/radio']! = false. The arm
-// permit is bridge-held and must never re-apply after a bridge restart
-// (fail-disarm, R11), so — unlike pol-ctrl above — nothing on this slot is
-// retained steady state.
+// R9/R14 contract (icom9700-radio-bridge/docs/mqtt-api.md): per-VFO actions
+// carry `vfo`:"main"|"sub" and take the argument under `value` — the station
+// value-key convention. The bridge's cmd struct decodes `value` as a JSON
+// **string** (strconv/on-off parsed Go-side), so these builders stringify;
+// a JSON number fails to unmarshal and lands in /state.error. All are
+// published with cmdRetain['muehle/uhf/radio']! = false (one-shot — see the
+// cmdRetain comment above; the arm permit must never re-apply after a
+// bridge restart — fail-disarmed, R11).
 
-/// Arm the TX gate. Arm-while-idle is the on-demand session's connect
-/// trigger (R1/R14): the panel publishes this with only the bus link up.
+String uhfRadioSetFreqPayload(int freqHz, String vfo) =>
+    jsonEncode({'action': 'set_freq', 'value': '$freqHz', 'vfo': vfo});
+
+String uhfRadioSetModePayload(String mode, String vfo) =>
+    jsonEncode({'action': 'set_mode', 'value': mode, 'vfo': vfo});
+
 String uhfRadioArmPayload() => jsonEncode({'action': 'arm'});
 
-/// Drop the TX permit. The permit also self-drops on session loss,
-/// watchdog trip, and bridge restart (R11) — this is the operator's
-/// explicit counterpart.
 String uhfRadioDisarmPayload() => jsonEncode({'action': 'disarm'});
 
-/// PTT is an on/off toggle, not hold-to-talk; the bridge rejects it unless
-/// `armed` ∧ `session_state=live` (R10).
-String uhfRadioPttPayload(bool on) => cmdPayload('ptt', on ? 'on' : 'off');
-
-/// Per-VFO tuning: there is no select-VFO action, so the cmd carries the
-/// target VFO alongside the value (station value-key convention — the
-/// bridge parses the string form).
-String uhfRadioSetFreqPayload(String vfo, int freqHz) =>
-    jsonEncode({'action': 'set_freq', 'value': freqHz.toString(), 'vfo': vfo});
-
-String uhfRadioSetModePayload(String vfo, String mode) =>
-    jsonEncode({'action': 'set_mode', 'value': mode, 'vfo': vfo});
+String uhfRadioPttPayload(String onOff) => cmdPayload('ptt', onOff);
 
 // --- Ultrabeam controller ----------------------------------------------------
 

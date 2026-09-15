@@ -622,11 +622,71 @@ sits in it (the arm relay ANDs with the hardware key line), fail-safe-open.
 
 Leaner — most of the HF machinery is absent, which is the model collapsing correctly.
 
-**`muehle/uhf/radio`** — IC-9700. Declares `bias_t: true` (switched, per band). The
+**`muehle/uhf/radio`** — Icom IC-9700, LAN (RS-BA1-style CI-V over UDP: control
+:50001, CI-V data :50002; the :50003 audio stream is out of scope in v1), fronted by
+**icom9700-radio-bridge** on host `shari`.
+```
+capabilities: bands [2m,70cm,23cm]; modes [cw,usb,lsb,am,fm,data];
+              bias_t true (informational); satellite true; vfos [main,sub]
+state:        ts; freq_hz (Hz int); band (derived); mode (canonical); tx {rx|tx}
+              — the top-level active-TX fields mirror the **TX VFO** (the selected
+              VFO, forced to **SUB in satellite mode**, where SUB is the uplink/TX
+              side); main/sub (per-VFO detail objects: band, freq_hz, mode,
+              data_mode, preamp 0–3, attenuator — present only when known
+              (preamp/attenuator are cmd echoes, never polled in v1), omitted with
+              the radio-measured fields whenever no session is live); selected_vfo (bridge-held, survives session
+              loss); satellite (bool, live only); session_state
+              {idle|connecting|live|error}; device_online (bool); armed (bool);
+              s_meter, tx_power, swr, alc (raw 0–255, ≤1 Hz dedup); error
+              (observed facts only)
+intent:       set_freq; set_mode; set_data; set_preamp; set_attenuator; set_power;
+              sat_mode; arm; disarm; ptt {on|off}    # /cmd NOT retained (one-shot)
+```
+**Hybrid VFO shape.** One device is one slot, so the slot's flat active-TX document is
+retained and **extended** with `main`/`sub` detail objects — a deliberate, pinned
+deviation from the single-active-TX rule the generic radio example shows: the top-level
+fields always answer "what is the TX side doing" without consumers digging into VFO
+objects. The field-for-field wire contract for this slot is
+`icom9700-radio-bridge/docs/mqtt-api.md`; where that document and this model's generic
+radio example (Appendix A) differ, the module contract wins. 23 cm exists on MAIN only
+(SUB has no 23 cm), so the bridge rejects an out-of-band `set_freq` locally; non-canonical
+radio modes (RTTY, DV, DD) are never published — the `mode` field is omitted instead.
+
+**On-demand session.** The radio's single LAN session stays freely available for manual
+wfview operating: the bridge is a polite on-demand client, not a permanent session
+holder. It connects only when a `/cmd` arrives, an armed permit is set, or an
+outstanding PTT-off must be delivered, never auto-steals the session, and disconnects
+after an idle timeout. While disconnected, radio-measured `/state` fields are
+**omitted** (never zeroed, never frozen); `ts`, `selected_vfo`, `armed`,
+`session_state`, and `error` remain. Contention policy: never steal — a refused connect
+surfaces as an observed fact in `/state.error`, and whether the radio distinguishes
+refusal from eviction is pinned at the bench.
+
+**`device_online` override for this slot.** Here `device_online` means **CI-V
+control-session liveness**, not the generic device-reachability of §3: it reads `true`
+only while the control session is live, and a **healthy idle reads `false`** —
+network-standby reachability is not reported. `session_state` is the idle-vs-fault
+discriminator: `idle` with `/status` online is a healthy parked slot, not a fault, and
+consumers must render it so.
+
+**`bias_t`, preamps, satellite mode.** `bias_t: true` is **informational** — the bias
+voltage is set in the radio's menu (per deploy gate); no bus action exists in v1. The
 masthead preamps are enabled manually by the operator via the radio's bias voltage and
 dropped automatically on TX when the radio removes the bias — so preamp protection is
 internal to the radio and needs no slot and no external sequencer. Preamp is a
-*capability* plus a passive LNA, not an active slot.
+*capability* plus a passive LNA, not an active slot. (The radio's *own* P.AMP/ATT stage
+is bus-settable: `set_preamp`/`set_attenuator`.) `sat_mode` toggles the radio's native
+satellite split (MAIN downlink / SUB uplink) and is rejected while `tx == "tx"` or
+`armed` is set.
+
+**Safety posture.** PTT sits behind a **bridge-held software arm gate** (`armed`); the
+IC-9700 has no external TX-inhibit path here, so the gate is software-only — an
+accepted, recorded posture. `armed` drops on session loss and bridge restart
+(fail-disarmed); `ptt` is rejected unless `armed` is set AND `session_state=live`; a
+max-TX watchdog (default 180 s) force-releases a keyed PTT. The remote-PTT exposure
+vectors are reviewed per-vector in `docs/known-issues.md`. `/meta` declares a
+**read-only** `expose` block — no PTT/arm widgets in HA (the sat-rotator posture; the
+action set lives on `/cmd` and in the wire contract).
 
 **`muehle/uhf/rotator`** — PTS-303Z/3050DZ pan/tilt head (Pelco-D/P over RS-485),
 driven by **pelcobridge2** on host `shack-pc` — an interactive TUI that doubles as a
@@ -722,6 +782,7 @@ muehle/host/shack-pc    # shack PC
 | Antenna controller bridge (Ultrabeam) | `hf/ant-ctrl` | `shari` |
 | UHF pan/tilt head bridge (`pelcobridge2`) | `uhf/rotator` (PTS-303Z/3050DZ) | `shack-pc` |
 | Sat rotator bridge (`spid-ercm-rotator-bridge`) | `uhf/az-rotator`, `uhf/el-rotator` | `shari` |
+| IC-9700 radio bridge (`icom9700-radio-bridge`) | `uhf/radio` (Icom IC-9700) | `shari` |
 | FLEX bridge (flexbridge) | `hf/radio` | `shari` |
 | HF antenna-select reconciler | `hf/antenna-select` | `shari` |
 | Logging | subscriber, no slot | `shari` |
@@ -784,7 +845,11 @@ Four topic suffixes per slot — one per plane, plus liveness:
   *desired steady state* (a power `set_power`, an arm permit, an idempotent mode) is
   governed by the exception's own precondition above and by rule 2 only: its retained
   value is *supposed to* survive and be re-applied on reconnect, so rules 1 and 3
-  must not be applied to it.
+  must not be applied to it. One guard: the `muehle/uhf/radio` arm permit is
+  deliberately **not** that case — re-applying it after a bridge restart is exactly
+  the hazard, and the permit must fail-disarm on restart (fail-disarmed, plan R11) —
+  so the retained steady-state exception must never be applied to it; its
+  `arm`/`disarm` `/cmd` is a one-shot topic under rules 1–3.
 
   1. **One-shot commands clear the retained topic.** After the consumer has acted on
      a one-shot command (executed *or* rejected), it publishes an empty payload to
@@ -969,7 +1034,8 @@ Stated plainly rather than left implied.
 ## 11. Open items to confirm
 
 All seven v0.1 items are resolved and folded in (hierarchy confirmed as stations; 23 cm
-out of scope; UHF polarization and preamps operator-only; devices identified; `pa-arm`
+out of scope — superseded 2026-09-15, the IC-9700 bridge automates 23 cm, see §7.2 and
+the band/mode reference; UHF polarization and preamps operator-only; devices identified; `pa-arm`
 an embedded M5 Stamp PLC; band policy set; tune routing through the automation). Residuals
 surfaced by those answers:
 
@@ -993,7 +1059,9 @@ surfaced by those answers:
 
 The reconciler's internal implementation; horstprop Layer-3 modelling; multi-multi
 arbitration beyond the single-station ladder; and the mechanical field layouts for the
-slots still marked TBD in §7 (`rx-loop-ctrl`, `uhf/radio`, the host-liveness nodes).
+slots still marked TBD in §7 (`rx-loop-ctrl`, the host-liveness nodes). (`uhf/radio`
+left this list 2026-09-15: the IC-9700 slot carries a full §7.2 entry and a committed
+wire contract, `icom9700-radio-bridge/docs/mqtt-api.md`.)
 None of these change the shapes above.
 
 **Live meter data (VITA-49).** The real-time meter stream from the radio (S-meter, SWR,
@@ -1007,7 +1075,9 @@ consistent with the plane discipline (high-rate telemetry ≠ state).
 
 ## Appendix A — worked example: the `radio` slot on the wire
 
-Concrete payloads for `muehle/hf/radio`, the reference a new adapter copies. All JSON is
+Concrete payloads for `muehle/hf/radio`, the reference a new adapter copies — and,
+further down, the `muehle/uhf/radio` instance of the same role (the hybrid dual-VFO
+variant). All JSON is
 UTF-8. `meta`, `state`, and `status` are retained; `cmd` is not. QoS 1 throughout.
 
 `radio/state` always represents the **active TX receiver**. For a single-receiver radio
@@ -1092,6 +1162,116 @@ Encoding decisions worth copying:
   `select_rx`, `set_band`) is a direct intent. `set_band` is the band-stacking convenience
   (§radio slot): it changes the band and lets the radio pick the frequency, so `/state`
   stays frequency-derived rather than carrying a band setpoint.
+
+### The same role, hybrid dual-VFO variant: `muehle/uhf/radio` (IC-9700)
+
+The UHF station's `radio` slot instantiates the role with the deliberate deviations
+pinned in §7.2: a **hybrid state shape** (top-level active-TX fields plus `main`/`sub`
+detail objects), an **on-demand session** (radio-measured fields are omitted whenever
+the bridge holds no live CI-V session), and `device_online` meaning **CI-V
+control-session liveness** with healthy idle `false`. The field-for-field contract is
+`icom9700-radio-bridge/docs/mqtt-api.md` — where it and this appendix's generic example
+above differ, that document wins for this slot.
+
+`muehle/uhf/radio/meta` — retained (capabilities + **read-only** `expose`; no PTT/arm widgets)
+```json
+{
+  "schema": "1.0",
+  "role": "radio",
+  "device": { "model": "Icom IC-9700" },
+  "link": "ethernet",
+  "location": "bauwagen",
+  "capabilities": {
+    "bands": ["2m", "70cm", "23cm"],
+    "modes": ["cw", "usb", "lsb", "am", "fm", "data"],
+    "bias_t": true,
+    "satellite": true,
+    "vfos": ["main", "sub"]
+  },
+  "expose": {
+    "device": { "name": "muehle/uhf/radio", "model": "Icom IC-9700" },
+    "fields": [
+      { "key": "freq_hz",       "name": "Frequency",       "type": "number", "unit": "Hz", "class": "frequency", "state_class": "measurement" },
+      { "key": "band",          "name": "Band",            "type": "enum",   "options_ref": "bands" },
+      { "key": "mode",          "name": "Mode",            "type": "enum",   "options_ref": "modes" },
+      { "key": "tx",            "name": "Transmitting",    "type": "boolean", "on": "tx", "off": "rx" },
+      { "key": "selected_vfo",  "name": "Selected VFO",    "type": "string" },
+      { "key": "satellite",     "name": "Satellite mode",  "type": "boolean" },
+      { "key": "session_state", "name": "Session state",   "type": "string" },
+      { "key": "device_online", "name": "Device online",   "type": "boolean" },
+      { "key": "armed",         "name": "Armed",           "type": "boolean" },
+      { "key": "s_meter",       "name": "S-meter",         "type": "number", "state_class": "measurement" },
+      { "key": "tx_power",      "name": "TX power",        "type": "number", "state_class": "measurement" },
+      { "key": "swr",           "name": "SWR",             "type": "number", "state_class": "measurement" },
+      { "key": "alc",           "name": "ALC",             "type": "number", "state_class": "measurement" },
+      { "key": "error",         "name": "Last error",      "type": "string" }
+    ]
+  }
+}
+```
+
+`muehle/uhf/radio/state` — retained, live session (all known fields present):
+top-level `freq_hz`/`band`/`mode`/`tx` mirror the **TX VFO** — here `main`; in
+satellite mode they would mirror **SUB** (the uplink/TX side)
+```json
+{
+  "ts": "2026-09-15T12:34:56Z",
+  "freq_hz": 432100000,
+  "band": "70cm",
+  "mode": "fm",
+  "tx": "rx",
+  "main": {
+    "band": "70cm",
+    "freq_hz": 432100000,
+    "mode": "fm",
+    "data_mode": false,
+    "preamp": 0,
+    "attenuator": false
+  },
+  "sub": {
+    "band": "2m",
+    "freq_hz": 145200000,
+    "mode": "fm"
+  },
+  "selected_vfo": "main",
+  "satellite": false,
+  "session_state": "live",
+  "device_online": true,
+  "armed": true,
+  "s_meter": 34,
+  "tx_power": 100,
+  "swr": 12,
+  "alc": 0
+}
+```
+
+`muehle/uhf/radio/state` — retained, **healthy idle** (`device_online:false` is not a
+fault here; radio-measured fields are omitted, never zeroed or frozen)
+```json
+{
+  "ts": "2026-09-15T12:36:20Z",
+  "selected_vfo": "main",
+  "session_state": "idle",
+  "device_online": false,
+  "armed": false
+}
+```
+
+`muehle/uhf/radio/status` — retained, and the Last Will
+```
+online
+```
+
+`muehle/uhf/radio/cmd` — not retained (one-shot; cleared with an empty retained
+payload after every execute-or-reject)
+```json
+{ "action": "set_freq", "value": "432100000", "vfo": "main" }
+{ "action": "ptt", "value": "on" }
+```
+(Per-VFO actions take the optional `vfo` selector under the station's `value`-key
+convention. `ptt` is rejected unless `armed` is set AND `session_state=live`. 23 cm is
+MAIN-only — the SUB VFO has no 23 cm. The full action table lives in
+`icom9700-radio-bridge/docs/mqtt-api.md`.)
 
 ---
 

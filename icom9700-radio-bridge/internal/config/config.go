@@ -94,10 +94,15 @@ type SessionConfig struct {
 	// duration string, "30s" — pending the login-lockout bench pin, plan
 	// deploy gate 5). Parsed into AttemptSpacingDur at load.
 	AttemptSpacing string `toml:"attempt_spacing"`
+	// ErrorDecay is how long the session state machine holds `error` before
+	// decaying to `idle` (a duration string, "60s"; plan R3). Parsed into
+	// ErrorDecayDur at load.
+	ErrorDecay string `toml:"error_decay"`
 
 	IdleTimeoutDur    time.Duration `toml:"-"`
 	TXWatchdogDur     time.Duration `toml:"-"`
 	AttemptSpacingDur time.Duration `toml:"-"`
+	ErrorDecayDur     time.Duration `toml:"-"`
 }
 
 // RadioConfig holds the live-session telemetry cadence.
@@ -137,9 +142,11 @@ func Defaults() Config {
 			TXWatchdog:        "180s",
 			MaxAttempts:       3,
 			AttemptSpacing:    "30s",
+			ErrorDecay:        "60s",
 			IdleTimeoutDur:    120 * time.Second,
 			TXWatchdogDur:     180 * time.Second,
 			AttemptSpacingDur: 30 * time.Second,
+			ErrorDecayDur:     60 * time.Second,
 		},
 		Radio: RadioConfig{
 			PollInterval:    "1s",
@@ -253,6 +260,11 @@ func Load(f *Flags) (Config, error) {
 		return Config{}, fmt.Errorf("session.attempt_spacing %q: %w", cfg.Session.AttemptSpacing, err)
 	}
 	cfg.Session.AttemptSpacingDur = d
+	d, err = time.ParseDuration(cfg.Session.ErrorDecay)
+	if err != nil {
+		return Config{}, fmt.Errorf("session.error_decay %q: %w", cfg.Session.ErrorDecay, err)
+	}
+	cfg.Session.ErrorDecayDur = d
 	d, err = time.ParseDuration(cfg.Radio.PollInterval)
 	if err != nil {
 		return Config{}, fmt.Errorf("radio.poll_interval %q: %w", cfg.Radio.PollInterval, err)
@@ -274,6 +286,16 @@ func (c Config) Validate() error {
 	if c.MQTT.Broker == "" {
 		return fmt.Errorf("mqtt broker must be configured")
 	}
+	// The login credentials ride the RS-BA1 substitution table, whose domain
+	// is printable ASCII (32..126); bytes outside it index out of range in
+	// passcode() and crash the process at first dial (review finding).
+	for name, v := range map[string]string{"civ.username": c.CIV.Username, "civ.password": c.CIV.Password} {
+		for _, b := range []byte(v) {
+			if b < 32 || b > 126 {
+				return fmt.Errorf("%s contains a byte outside the printable ASCII range the RS-BA1 login encoding supports (0x%02x)", name, b)
+			}
+		}
+	}
 	if c.Session.IdleTimeoutDur <= 0 {
 		return fmt.Errorf("session.idle_timeout must be > 0 (got %s)", c.Session.IdleTimeoutDur)
 	}
@@ -285,6 +307,9 @@ func (c Config) Validate() error {
 	}
 	if c.Session.AttemptSpacingDur <= 0 {
 		return fmt.Errorf("session.attempt_spacing must be > 0 (got %s)", c.Session.AttemptSpacingDur)
+	}
+	if c.Session.ErrorDecayDur <= 0 {
+		return fmt.Errorf("session.error_decay must be > 0 (got %s)", c.Session.ErrorDecayDur)
 	}
 	if c.Radio.PollIntervalDur <= 0 {
 		return fmt.Errorf("radio.poll_interval must be > 0 (got %s)", c.Radio.PollIntervalDur)

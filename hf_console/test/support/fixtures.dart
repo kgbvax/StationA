@@ -190,90 +190,84 @@ extension BusStoreFixtures on BusStore {
     applyState(address, state);
   }
 
-  /// Populate the UHF radio slot (muehle/uhf/radio,
-  /// icom9700-radio-bridge) with the hybrid wire shape (plan R5/R6):
-  /// retained /state with top-level active-TX fields (freq_hz/band/mode, the
-  /// canonical `tx` string enum), `main`/`sub` detail objects,
-  /// `selected_vfo`, `satellite`, `session_state`, `armed`, and meter fields.
-  ///
-  /// Per-state payload rules (R6): only the `live` snapshot carries the
-  /// radio-measured fields (VFO details, meters, satellite, tx); idle/
-  /// connecting/error snapshots omit them and stamp
-  /// `device_online:false` — CI-V session liveness, not device reachability
-  /// (R16). `ts` defaults to a fresh RFC3339 stamp per call so PTT
-  /// pending resolution ("first /state newer than the tap") can be driven
-  /// by applying a second fixture.
+  /// Populate the uhf/radio slot (icom9700-radio-bridge, Icom IC-9700) with
+  /// the wire shape icom9700-radio-bridge/docs/mqtt-api.md publishes: always
+  /// {ts, selected_vfo, session_state, device_online, armed} (+ error when a
+  /// fact is held); when live, additionally the top-level active-TX mirror
+  /// {freq_hz, band, mode, tx (string enum)}, the main/sub VFO detail
+  /// objects, satellite and the raw 0-255 meters. `device_online` is CI-V
+  /// session liveness: healthy idle reads false (R16) — the default derives
+  /// it from the session state. Radio-measured fields are OMITTED (never
+  /// zeroed) when not live, exactly like the bridge.
   void setUhfRadio({
     String sessionState = 'live',
+    bool? deviceOnline,
     bool armed = false,
     String tx = 'rx',
-    String selectedVfo = 'sub',
+    String selectedVfo = 'main',
+    bool satellite = false,
     int mainFreqHz = 432100000,
     String mainBand = '70cm',
-    String mainMode = 'usb',
-    int subFreqHz = 145800000,
+    String mainMode = 'fm',
+    int subFreqHz = 145200000,
     String subBand = '2m',
     String subMode = 'fm',
-    bool satellite = false,
-    num? sMeter = 120,
-    num? txPower,
-    num? swr,
-    num? alc,
+    int sMeter = 34,
+    int txPower = 100,
+    int swr = 12,
+    int alc = 0,
     String error = '',
-    String? ts,
+    String ts = '2026-09-15T12:34:56Z',
   }) {
     const address = 'muehle/uhf/radio';
     applyStatus(address, 'online');
     applyMeta(address, {
       'schema': '1.0',
       'role': 'radio',
-      'device': {
-        'model': 'Icom IC-9700',
-        'serial': '9700',
-        'firmware': '1.50',
-      },
+      'device': {'model': 'Icom IC-9700'},
+      'link': 'ethernet',
       'capabilities': {
         'bands': ['2m', '70cm', '23cm'],
         'modes': ['cw', 'usb', 'lsb', 'am', 'fm', 'data'],
-        'bias_t': true,
         'satellite': true,
         'vfos': ['main', 'sub'],
       },
     });
+    final deviceOnlineValue = deviceOnline ?? (sessionState == 'live');
     final state = <String, dynamic>{
-      'session_state': sessionState,
-      'armed': armed,
+      'ts': ts,
       'selected_vfo': selectedVfo,
-      // Healthy idle is CI-V-session-closed, not a device fault (R16).
-      'device_online': sessionState == 'live',
-      'ts': ts ?? DateTime.now().toUtc().toIso8601String(),
+      'session_state': sessionState,
+      'device_online': deviceOnlineValue,
+      'armed': armed,
     };
     if (sessionState == 'live') {
-      state['freq_hz'] = selectedVfo == 'sub' ? subFreqHz : mainFreqHz;
-      state['band'] = selectedVfo == 'sub' ? subBand : mainBand;
-      state['mode'] = selectedVfo == 'sub' ? subMode : mainMode;
+      // The top-level fields mirror the TX VFO: selected EXCEPT satellite
+      // mode forces SUB (the uplink) — matching the bridge's state assembly.
+      final txVfo = satellite ? 'sub' : selectedVfo;
+      final mainActive = txVfo == 'main';
+      state['freq_hz'] = mainActive ? mainFreqHz : subFreqHz;
+      state['band'] = mainActive ? mainBand : subBand;
+      state['mode'] = mainActive ? mainMode : subMode;
       state['tx'] = tx;
       state['main'] = {
         'band': mainBand,
         'freq_hz': mainFreqHz,
         'mode': mainMode,
         'data_mode': false,
-        'preamp': true,
+        'preamp': 0,
         'attenuator': false,
       };
       state['sub'] = {
         'band': subBand,
         'freq_hz': subFreqHz,
         'mode': subMode,
-        'data_mode': false,
-        'preamp': false,
-        'attenuator': false,
       };
       state['satellite'] = satellite;
-      if (sMeter != null) state['s_meter'] = sMeter;
-      if (txPower != null) state['tx_power'] = txPower;
-      if (swr != null) state['swr'] = swr;
-      if (alc != null) state['alc'] = alc;
+      state['s_meter'] = sMeter;
+      state['tx_power'] = txPower;
+      state['swr'] = swr;
+      state['alc'] = alc;
     }
     if (error.isNotEmpty) state['error'] = error;
     applyState(address, state);

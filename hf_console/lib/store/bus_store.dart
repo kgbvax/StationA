@@ -45,7 +45,16 @@ class Slot {
     return state!['device_online'] == true;
   }
 
-  bool get isOnline => bridgeOnline && deviceOnline;
+  /// On-demand-session slots (state carries `session_state`, e.g.
+  /// muehle/uhf/radio from icom9700-radio-bridge): there `device_online` is
+  /// CI-V control-SESSION liveness and `false` is the healthy idle (R16
+  /// carve-out), so folding it into liveness here would flag a healthy idle
+  /// radio as a station fault and lock its arm loop away. These slots key
+  /// [isOnline] and the offline listing on /status (bridge process liveness)
+  /// alone; session trouble still surfaces via /state.error → fault history.
+  bool get sessionSlot => state?.containsKey('session_state') ?? false;
+
+  bool get isOnline => bridgeOnline && (sessionSlot || deviceOnline);
 }
 
 /// One recorded fault or error seen on the bus.
@@ -261,7 +270,9 @@ class BusStore extends ChangeNotifier {
     for (final s in _slots.values) {
       if (s.status != 'online') {
         out.add('${s.address}: bridge down');
-      } else if (!s.deviceOnline) {
+      } else if (!s.sessionSlot && !s.deviceOnline) {
+        // sessionSlot devices are exempt: device_online:false is their
+        // healthy idle (see [Slot.sessionSlot]).
         out.add('${s.address}: device unreachable');
       }
     }
@@ -288,7 +299,7 @@ class BusStore extends ChangeNotifier {
     for (final s in _slots.values) {
       if (s.status != 'online') {
         since[s.address] = s.statusChangedAt;
-      } else if (!s.deviceOnline) {
+      } else if (!s.sessionSlot && !s.deviceOnline) {
         since[s.address] = s.deviceChangedAt ?? s.statusChangedAt;
       }
     }

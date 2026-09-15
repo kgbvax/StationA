@@ -523,3 +523,121 @@ actuates real hardware:
 - **FlexRadio power relay: no remote surface at all** — the strictest posture on
   the device (local Button C only, excluded from web_server and native API),
   chosen because that relay mains-switches a radio and has no bus-side consumer.
+
+## [decision] IC-9700 remote-PTT exposure review — the `uhf/radio` vectors (plan: docs/plans/2026-09-14-001-feat-icom9700-radio-bridge-plan.md)
+
+The IC-9700 bridge puts a **remotely keyable transmitter** on the bus — the radio
+slot `muehle/uhf/radio` is not a telemetry consumer like `hf/pa` and not an
+external-amplifier relay like `hf/pa-arm`: `ptt` keys the transceiver itself. This
+block is the plan's R17 gate, landed before any deploy step (its gate 1). The KTD
+numbers cited below are THIS plan's (KTD-4, KTD-5, KTD-7); the register has no KTD
+series of its own — plan-scoped citations are the established pattern here.
+
+Each vector states the surface, the exposure, and the decision:
+
+1. **Remotely keyable transmitter behind a software-only arm gate.** Surface:
+   `/cmd` `arm` + `ptt`; `armed` is a bridge-held software permit. Exposure: nothing
+   hardware gates TX — the IC-9700 has no external TX-inhibit path here, so the gate
+   is one boolean in one process, and a human at the radio can always key the mic
+   regardless of bus `armed` (the gate is not a radio-wide TX inhibit, KTD-4).
+   *Accepted.* Boundings: fail-disarm on session loss and bridge restart (plan R11);
+   PTT requires `armed ∧ session_state=live` (R10); the max-TX watchdog (R12); and
+   the posture is recorded here rather than hidden (R13).
+2. **PTT over a lossy MQTT bus, with session-scoped watchdog bounds.** Surface: the
+   key path *and* the unkey path both cross the bus. Exposure: a lost or delayed
+   message can leave the radio keyed, and the 180 s TX watchdog is NOT a universal
+   bound — its force-release is itself a PTT-off frame, so it bounds only the
+   **live-session** stuck-keyed case (KTD-5). While disconnected, the remaining
+   bounds are the safety-driven PTT-off reconnect (3 attempts ≥30 s, plan R2) plus
+   the radio's own unkey-on-session-loss behavior — unverified until deploy Go/No-Go
+   gate 5. *Accepted, with the scoping stated honestly:* a keyed carrier with a dead
+   session and a blocked reconnect is not a 180-s-bounded state; a failed unkey pin
+   trips the plan's stop condition for remote PTT (control-only deploy).
+3. **The inbound HA-bridge `/cmd` path.** Surface: the shack↔HA mosquitto bridge
+   forwards `muehle/+/+/cmd` HA→shack. Exposure: **any house-LAN MQTT client can
+   publish `arm` then `ptt`** — the full key-the-radio sequence needs no console
+   account. *Accepted* — the same reviewed posture as the sat-ops vectors 3/4 above:
+   the slot's read-only `expose` means HA renders no PTT/arm widgets, but the
+   forwarding path exists regardless of what HA's UI offers; narrowing the bridge
+   ACL was rejected as inconsistent with the house-LAN trust posture. The watchdog
+   (vector 2) fences what a forwarded command can hold.
+4. **Bridge-process death while keyed — and the alive-but-session-blocked case.**
+   Surface: the bridge process itself. Exposure: no bridge-held bound survives
+   SIGKILL — a kill while keyed takes the permit, the watchdog, and the pending
+   PTT-off all down with the process; the alive-but-session-blocked case (keyed,
+   session dead, reconnect refused) is nearly as hard. In both states the only
+   remaining bound is the radio's unkey-on-session-loss behavior — unverified until
+   the bench pin proves it. *Accepted for deploy conditionally:* the plan makes
+   unkey-on-session-loss a Go/No-Go gate (gate 5), not a non-blocking pin; a failed
+   pin removes remote PTT (control-only deploy), which is the recorded fallback.
+5. **The accepted no-alerting posture.** Surface: the safety-class error facts
+   (watchdog trip, `ptt-off undeliverable`). Exposure: a trip surfaces only via the
+   console ERR tag, an HA sensor, and a journald `Warn` — nobody is paged; an
+   unmanned shack learns of a stuck transmitter on the air. *Accepted for v1:* the
+   compensation is the never-dismiss persistence posture (safety-class facts survive
+   the `error`→`idle` decay in `/state.error` until operator ack) — it keeps the
+   fact on the bus, but it does not fetch a human. Revision trigger: remote PTT
+   entering unattended operation (automated passes) requires alerting first.
+6. **The CI-V credential vector.** Surface: the RS-BA1 login on radio UDP :50001.
+   Exposure: login credentials cross the LAN as substitution-table-obfuscated UDP
+   payloads — trivially reversible — so a passive capture recovers them. *Accepted
+   as the protocol's ceiling* (the PstRotator no-auth class of acceptance: the
+   alternative is not running the protocol). Boundings: 0600 env-file-only storage
+   (never in the TOML, never on a command line), the never-log pin with its
+   regression test (credential-derived bytes, pre- and post-substitution-table,
+   never appear in slog output at any level), and the radio-side password change as
+   the rotation path. The vector assumes a passive listener on the shack LAN — the
+   radio ports must stay un-forwarded off-LAN (checked at deploy gate 2).
+7. **The bridge's own MQTT credential hop.** Surface: the bridge's broker
+   connection, `tcp://bwbroker:1883`. Exposure: this is the **first shari-hosted
+   service on a non-loopback plaintext `tcp://` broker path** (every other shari
+   service uses `127.0.0.1`); a passive capture on that hop recovers the broker
+   account password, whose publish reach includes `arm` then `ptt`. *Accepted under
+   the house-LAN trust posture* (the LAN already carries the Shelly plugs'
+   plaintext MQTT). Boundings: broker-account scoping and a future `tls://` path;
+   the deviation from the topology doc's loopback rule is annotated in the
+   addressing table (see `docs/conventions/mqtt-topology.md`, vector 11's gate).
+8. **The standing-armed-permit exposure.** Surface: the `armed` flag. Exposure:
+   armed is the only session-hold primitive — while armed, the bridge holds the
+   radio's single LAN session open and blocks idle-disconnect, so a forgotten arm
+   toggle holds the radio's session **indefinitely** (no TTL in v1) and starves
+   manual wfview use. *Accepted for v1.* Recovery: console `disarm` drops the
+   permit; if the session is wedged, the stale-session wait / radio reboot path
+   reclaims it. A permit TTL is the named future mitigation if this bites.
+9. **Single-session contention policy.** Surface: the radio's single LAN session,
+   shared with manual wfview. Exposure: a bridge connect while wfview holds the
+   session either refuses (the bridge locked out of its own slot) or evicts the
+   human mid-operating. *Accepted:* the bridge never steals — connects are
+   cmd-driven, armed-held, or safety-driven only (plan R2), and it disconnects after
+   the idle timeout. Whether the radio refuses or evicts a second client is pinned
+   at the bench, at the deploy gate BEFORE the retry parameters finalize.
+10. **HA read-only expose posture.** Surface: `/meta.expose`. Exposure: an
+    accidentally writable expose would put one-tap PTT/arm buttons on a wall
+    dashboard. *Accepted posture:* the expose block is read-only (plan R8) — no
+    writable fields, no `command` objects, no `actions[]` — so hadiscovery renders
+    sensors only; the action set lives on `/cmd` and in the wire contract
+    (`icom9700-radio-bridge/docs/mqtt-api.md`). A future expose `actions[]` is
+    additive and is a revision trigger of this register.
+11. **`bwbroker` DNS indirection.** Surface: the bridge's broker address is a DNS
+    name (KTD-7), not an IP. Exposure: `bwbroker` may resolve **only to the
+    `muehle/#`-authoritative broker** — replication is split-direction (state/meta/
+    status shack→HA, `/cmd` HA→shack), so a resolution to the HA consumer broker
+    (.50) strands the slot from shari-local consumers and deafens it to console
+    cmds: a silently half-connected slot. *Accepted* as the user-maintained
+    indirection (the DNS entry points at whichever broker is active for bauwagen
+    business). Bound: deploy gate 2 verifies resolution (`getent hosts bwbroker`)
+    before config is seeded; the exception to the topology addressing rule is
+    annotated in `docs/conventions/mqtt-topology.md`.
+
+**Register verdict:** all eleven vectors accepted under the house-LAN trust posture,
+each with its boundings stated above — and vectors 2, 4, and 9 are conditional on the
+plan's deploy gates: gate 1 (this review landed first), gate 2 (`bwbroker` resolution
+to the muehle/#-authoritative broker + radio ports :50001–:50003 not reachable
+off-LAN), and gate 5 (unkey-on-session-loss proven with a dummy load BEFORE arm is
+used for real operations — a failed pin removes remote PTT, control-only deploy).
+Revision of this register is required if: the shack LAN's trust model changes
+(vectors 3, 6, 7); the radio gains real credential protection or an external
+TX-inhibit path (vectors 1, 6); remote PTT enters unattended operation (vector 5); a
+permit TTL or a second session primitive lands (vectors 8, 9); or the bench pin
+answers refusal-vs-eviction differently than the never-steal policy assumes
+(vector 9).

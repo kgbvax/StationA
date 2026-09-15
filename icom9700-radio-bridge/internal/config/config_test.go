@@ -320,3 +320,50 @@ func TestValidateRejectsEmptyAddressing(t *testing.T) {
 		t.Error("empty radio_host must be rejected — the protocol has no discovery")
 	}
 }
+
+// The RS-BA1 substitution table's domain is printable ASCII; a byte outside
+// 32..126 must be rejected at load, not crash passcode() at first dial
+// (review fix).
+func TestValidateRejectsNonASCIICredentials(t *testing.T) {
+	cfg := Defaults()
+	cfg.CIV.Username = "operator1"
+	cfg.CIV.Password = "s3crét" // é = 0xC3 0xA9, outside 32..126
+	if err := cfg.Validate(); err == nil {
+		t.Error("non-ASCII civ password must be rejected — it would panic the substitution table")
+	}
+	cfg = Defaults()
+	cfg.CIV.Username = "operátor"
+	cfg.CIV.Password = "s3cret"
+	if err := cfg.Validate(); err == nil {
+		t.Error("non-ASCII civ username must be rejected")
+	}
+}
+
+// Validate guards every positive-duration key (a zero max_attempts would
+// break the retry series; review finding on the config coverage).
+func TestValidateRejectsNonPositiveDurations(t *testing.T) {
+	cases := []struct {
+		name string
+		bad  func(c Config) Config
+		want string
+	}{
+		{"idle_timeout", func(c Config) Config { c.Session.IdleTimeoutDur = 0; return c }, "session.idle_timeout"},
+		{"tx_watchdog", func(c Config) Config { c.Session.TXWatchdogDur = 0; return c }, "session.tx_watchdog"},
+		{"max_attempts", func(c Config) Config { c.Session.MaxAttempts = 0; return c }, "session.max_attempts"},
+		{"attempt_spacing", func(c Config) Config { c.Session.AttemptSpacingDur = 0; return c }, "session.attempt_spacing"},
+		{"error_decay", func(c Config) Config { c.Session.ErrorDecayDur = 0; return c }, "session.error_decay"},
+		{"poll_interval", func(c Config) Config { c.Radio.PollIntervalDur = 0; return c }, "radio.poll_interval"},
+	}
+	for _, tc := range cases {
+		cfg := Defaults()
+		cfg = tc.bad(cfg)
+		err := cfg.Validate()
+		if err == nil {
+			t.Errorf("%s = 0 must be rejected", tc.name)
+			continue
+		}
+		if !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: error %q does not name the key %q", tc.name, err, tc.want)
+		}
+	}
+}
