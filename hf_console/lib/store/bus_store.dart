@@ -33,6 +33,14 @@ class Slot {
     // link and therefore omit the key; treat them as online once their state
     // snapshot has arrived.
     if (state == null) return false;
+    // Session-bearing slots (muehle/uhf/radio, icom9700-radio-bridge)
+    // repurpose device_online as CI-V control-session liveness: a healthy
+    // idle session publishes false BY DESIGN (R16), and session_state is the
+    // idle-vs-fault discriminator. Reading false as "device unreachable"
+    // here would put the healthy radio on the faults bar around the clock,
+    // so its presence means bridge-reachable — a dead session surfaces as
+    // the slot's error, not as an unreachable-device row.
+    if (state!.containsKey('session_state')) return true;
     if (!state!.containsKey('device_online')) return true;
     return state!['device_online'] == true;
   }

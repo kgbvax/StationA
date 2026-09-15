@@ -190,6 +190,95 @@ extension BusStoreFixtures on BusStore {
     applyState(address, state);
   }
 
+  /// Populate the UHF radio slot (muehle/uhf/radio,
+  /// icom9700-radio-bridge) with the hybrid wire shape (plan R5/R6):
+  /// retained /state with top-level active-TX fields (freq_hz/band/mode, the
+  /// canonical `tx` string enum), `main`/`sub` detail objects,
+  /// `selected_vfo`, `satellite`, `session_state`, `armed`, and meter fields.
+  ///
+  /// Per-state payload rules (R6): only the `live` snapshot carries the
+  /// radio-measured fields (VFO details, meters, satellite, tx); idle/
+  /// connecting/error snapshots omit them and stamp
+  /// `device_online:false` — CI-V session liveness, not device reachability
+  /// (R16). `ts` defaults to a fresh RFC3339 stamp per call so PTT
+  /// pending resolution ("first /state newer than the tap") can be driven
+  /// by applying a second fixture.
+  void setUhfRadio({
+    String sessionState = 'live',
+    bool armed = false,
+    String tx = 'rx',
+    String selectedVfo = 'sub',
+    int mainFreqHz = 432100000,
+    String mainBand = '70cm',
+    String mainMode = 'usb',
+    int subFreqHz = 145800000,
+    String subBand = '2m',
+    String subMode = 'fm',
+    bool satellite = false,
+    num? sMeter = 120,
+    num? txPower,
+    num? swr,
+    num? alc,
+    String error = '',
+    String? ts,
+  }) {
+    const address = 'muehle/uhf/radio';
+    applyStatus(address, 'online');
+    applyMeta(address, {
+      'schema': '1.0',
+      'role': 'radio',
+      'device': {
+        'model': 'Icom IC-9700',
+        'serial': '9700',
+        'firmware': '1.50',
+      },
+      'capabilities': {
+        'bands': ['2m', '70cm', '23cm'],
+        'modes': ['cw', 'usb', 'lsb', 'am', 'fm', 'data'],
+        'bias_t': true,
+        'satellite': true,
+        'vfos': ['main', 'sub'],
+      },
+    });
+    final state = <String, dynamic>{
+      'session_state': sessionState,
+      'armed': armed,
+      'selected_vfo': selectedVfo,
+      // Healthy idle is CI-V-session-closed, not a device fault (R16).
+      'device_online': sessionState == 'live',
+      'ts': ts ?? DateTime.now().toUtc().toIso8601String(),
+    };
+    if (sessionState == 'live') {
+      state['freq_hz'] = selectedVfo == 'sub' ? subFreqHz : mainFreqHz;
+      state['band'] = selectedVfo == 'sub' ? subBand : mainBand;
+      state['mode'] = selectedVfo == 'sub' ? subMode : mainMode;
+      state['tx'] = tx;
+      state['main'] = {
+        'band': mainBand,
+        'freq_hz': mainFreqHz,
+        'mode': mainMode,
+        'data_mode': false,
+        'preamp': true,
+        'attenuator': false,
+      };
+      state['sub'] = {
+        'band': subBand,
+        'freq_hz': subFreqHz,
+        'mode': subMode,
+        'data_mode': false,
+        'preamp': false,
+        'attenuator': false,
+      };
+      state['satellite'] = satellite;
+      if (sMeter != null) state['s_meter'] = sMeter;
+      if (txPower != null) state['tx_power'] = txPower;
+      if (swr != null) state['swr'] = swr;
+      if (alc != null) state['alc'] = alc;
+    }
+    if (error.isNotEmpty) state['error'] = error;
+    applyState(address, state);
+  }
+
   /// Populate the tuner slot.
   void setTuner({bool inline = true, bool settling = false, String fault = '', double swr = 1.2}) {
     setOnline('muehle/hf/tuner');
