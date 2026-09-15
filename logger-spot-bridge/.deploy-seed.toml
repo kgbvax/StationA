@@ -1,0 +1,40 @@
+# logger-spot-bridge — seeded 2026-09-15 (deploy.sh, seed-once).
+# The MQTT password is NOT here: start-bridge.cmd sets
+# LOGGER_SPOT_BRIDGE_MQTT_PASSWORD before launching the exe.
+
+host            = "shack-pc"
+
+# The shack QTH — anchors DXLog's azimuth/distance to map coordinates.
+station_locator = "JO32WE"
+
+[slot]
+station = "hf"
+slot    = "spots"
+
+# DXLog: N1MM-family XML broadcast (Options|Broadcast; ports under
+# Options|Network configuration, N1MM default 12060).
+[[listener]]
+name = "dxlog"
+kind = "n1mm"
+port = 12060
+
+# Log4OM: outbound CALLSIGN service (Software integration → Connections,
+# outbound, service type CALLSIGN → point at this PC, port 2249).
+# Format still unpinned — first live packet finalizes the decoder.
+[[listener]]
+name = "log4om"
+kind = "log4om"
+port = 2249
+
+# Loggers only broadcast when the operator types; keep generous.
+stale_after = "10m"
+
+[mqtt]
+broker    = "tcp://hassio.kgbvax.net:1883"
+client_id = ""
+user      = "hf"
+password  = ""
+site      = "muehle"
+
+[log]
+level = "info"

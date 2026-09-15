@@ -40,6 +40,7 @@ separate per-component remotes to push to.
 | spid-ercm-rotator-bridge | `spid-ercm-rotator-bridge/` | Sat-ops az/el rotator bridge → `uhf/az-rotator` (SPID) + `uhf/el-rotator` (GS-500 via ERC-M); rotctld :4534 + PstRotator UDP :12041 listeners (free motion, no arming gate) |
 | icom9700-radio-bridge | `icom9700-radio-bridge/` | IC-9700 UHF radio bridge → `muehle/uhf/radio` (RS-BA1 CI-V over LAN; on-demand session, PTT behind arm gate) |
 | m5dial-hf-rotctrl | `m5dial-hf-rotctrl/` | M5Stack Dial firmware — HF rotator control head (analog meter face + knob; not a slot; consumer + /cmd stimulator) |
+| logger-spot-bridge | `logger-spot-bridge/` | Shack-logger bridge (DXLog/Log4OM) → `hf/spots` — the operator-keyed station (call, position, beam bearing) |
 | testui | `testui/` | MQTT relay + schema-aware browser UI for the bus (not a slot; passive consumer + /cmd stimulator) |
 | mqtt-broker | `mqtt-broker/` | Shack-local Mosquitto broker on shari, bridged to the HA broker (infra — not a slot, not Go) |
 
@@ -65,6 +66,7 @@ and `go work sync` operate over the whole workspace at once.
 | `muehle/hf/pa` | acom1200s-pa-bridge | ACOM 1200S, serial (`set_power`/RTS removed; `power` is telemetry only) |
 | `muehle/hf/rotator` | wrc-rotator-bridge | Yaesu G-450DC via AF6SA WRC, websocket |
 | `muehle/hf/tuner` | atr1k-tuner-bridge | ATR-1000 ATU, wifi (binary WebSocket) |
+| `muehle/hf/spots` | logger-spot-bridge | DXLog/Log4OM on shack-pc — operator-keyed station feed (role `bandmap`; Windows host, interactive — no systemd) |
 | `muehle/hf/power-seq` | powerseq | logic slot — no device (runs on shari); startup/shutdown sequencer |
 | `muehle/uhf/pol-ctrl` | m5stamp-pol-ctrl | M5 Stamp PLC #2 — X-Quad polarization (ESPHome), wifi |
 | `muehle/uhf/radio` | icom9700-radio-bridge | Icom IC-9700, LAN (RS-BA1 CI-V over UDP) — on-demand session, PTT behind arm gate |

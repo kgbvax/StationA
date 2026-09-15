@@ -79,4 +79,44 @@ void main() {
       expect(cmdTopic('uhf/pol-ctrl'), 'muehle/uhf/pol-ctrl/cmd');
     });
   });
+
+  group('cmdRetain — UHF radio slot (R15/KTD6)', () {
+    test('muehle/uhf/radio is one-shot (non-retained)', () {
+      expect(cmdRetain['muehle/uhf/radio'], isFalse,
+          reason: 'KTD6: a retained arm permit would re-arm after every '
+              'bridge restart and defeat the settled fail-disarm (R11)');
+    });
+
+    test('the radio slot is expected (monitored when silent)', () {
+      expect(expectedSlots, contains('muehle/uhf/radio'));
+    });
+  });
+
+  group('UHF radio payload builders', () {
+    test('arm/disarm carry no value', () {
+      expect(jsonDecode(uhfRadioArmPayload()), {'action': 'arm'});
+      expect(jsonDecode(uhfRadioDisarmPayload()), {'action': 'disarm'});
+    });
+
+    test('ptt is an on/off toggle under the value key', () {
+      expect(jsonDecode(uhfRadioPttPayload('on')),
+          {'action': 'ptt', 'value': 'on'});
+      expect(jsonDecode(uhfRadioPttPayload('off')),
+          {'action': 'ptt', 'value': 'off'});
+    });
+
+    test('set_freq carries the Hz string and the target VFO', () {
+      expect(jsonDecode(uhfRadioSetFreqPayload(432100000, 'sub')),
+          {'action': 'set_freq', 'value': '432100000', 'vfo': 'sub'});
+    });
+
+    test('set_mode carries the canonical mode and the target VFO', () {
+      expect(jsonDecode(uhfRadioSetModePayload('usb', 'main')),
+          {'action': 'set_mode', 'value': 'usb', 'vfo': 'main'});
+    });
+
+    test('cmdTopic addresses the radio slot', () {
+      expect(cmdTopic('uhf/radio'), 'muehle/uhf/radio/cmd');
+    });
+  });
 }

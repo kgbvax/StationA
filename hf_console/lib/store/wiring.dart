@@ -87,6 +87,9 @@ String switchSetPaPayload(String onOff) => cmdPayload('set_pa', onOff);
 String switchSetTrxPayload(String onOff) => cmdPayload('set_trx', onOff);
 
 // pa-arm.set_enabled value is a **string** "true" / "false".
+// No console UI publishes this today (the PA ARM panel was removed — arm
+// stays sequencer/automation-owned), but the payload contract is kept here
+// with the rest of the slot vocabulary.
 String paArmPayload(bool enabled) =>
     cmdPayload('set_enabled', enabled ? 'true' : 'false');
 
@@ -129,7 +132,8 @@ String setPolPayload(String pol) => cmdPayload('set_pol', pol);
 // **string** (strconv/on-off parsed Go-side), so these builders stringify;
 // a JSON number fails to unmarshal and lands in /state.error. All are
 // published with cmdRetain['muehle/uhf/radio']! = false (one-shot — see the
-// cmdRetain comment above).
+// cmdRetain comment above; the arm permit must never re-apply after a
+// bridge restart — fail-disarmed, R11).
 
 String uhfRadioSetFreqPayload(int freqHz, String vfo) =>
     jsonEncode({'action': 'set_freq', 'value': '$freqHz', 'vfo': vfo});

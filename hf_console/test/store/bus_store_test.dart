@@ -63,6 +63,39 @@ void main() {
       // no state at all yet
       expect(store.slots['muehle/hf/pa']!.isOnline, isFalse);
     });
+
+    test('session-bearing slot: healthy idle (device_online false) stays online', () {
+      // muehle/uhf/radio (icom9700-radio-bridge) repurposes device_online as
+      // CI-V control-session liveness — a healthy idle session publishes
+      // false BY DESIGN (R16), and session_state is the idle-vs-fault
+      // discriminator. It must never read as an unreachable device.
+      final store = BusStore();
+      store.apply('muehle/uhf/radio/status', 'online', true);
+      store.apply('muehle/uhf/radio/state', jsonEncode({
+        'session_state': 'idle',
+        'armed': false,
+        'device_online': false,
+        'ts': '2026-09-14T12:00:00Z',
+      }), true);
+      expect(store.slots['muehle/uhf/radio']!.isOnline, isTrue);
+      expect(store.offlineList.where((e) => e.startsWith('muehle/uhf/radio')),
+          isEmpty);
+
+      // A faulting session keeps the BRIDGE reachable — the fault surfaces
+      // as the slot's error, not as a device-unreachable row.
+      store.apply('muehle/uhf/radio/state', jsonEncode({
+        'session_state': 'error',
+        'error': 'radio: login refused',
+        'device_online': false,
+        'ts': '2026-09-14T12:00:01Z',
+      }), true);
+      expect(store.slots['muehle/uhf/radio']!.isOnline, isTrue);
+      expect(store.offlineList.where((e) => e.contains('unreachable') && e.contains('uhf/radio')),
+          isEmpty);
+      // ...while the error still reaches the fault history.
+      expect(store.faultHistory.where((r) => r.address == 'muehle/uhf/radio'),
+          isNotEmpty);
+    });
   });
 
   group('BusStore.offlineList', () {
