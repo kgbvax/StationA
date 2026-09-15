@@ -38,6 +38,7 @@ separate per-component remotes to push to.
 | hadiscovery | `hadiscovery/` | Home Assistant discovery consumer (reads `/meta` `expose`, renders HA discovery) |
 | pelcobridge2 | `pelcobridge2/` | UHF rotator TUI + rotctld server (Pelco-D/P pan/tilt head over RS-485) |
 | spid-ercm-rotator-bridge | `spid-ercm-rotator-bridge/` | Sat-ops az/el rotator bridge → `uhf/az-rotator` (SPID) + `uhf/el-rotator` (GS-500 via ERC-M); rotctld :4534 + PstRotator UDP :12041 listeners (free motion, no arming gate) |
+| icom9700-radio-bridge | `icom9700-radio-bridge/` | IC-9700 UHF radio bridge → `muehle/uhf/radio` (RS-BA1 CI-V over LAN; on-demand session, PTT behind arm gate) |
 | m5dial-hf-rotctrl | `m5dial-hf-rotctrl/` | M5Stack Dial firmware — HF rotator control head (analog meter face + knob; not a slot; consumer + /cmd stimulator) |
 | logger-spot-bridge | `logger-spot-bridge/` | Shack-logger bridge (DXLog/Log4OM) → `hf/spots` — the operator-keyed station (call, position, beam bearing) |
 | testui | `testui/` | MQTT relay + schema-aware browser UI for the bus (not a slot; passive consumer + /cmd stimulator) |
@@ -68,6 +69,7 @@ and `go work sync` operate over the whole workspace at once.
 | `muehle/hf/spots` | logger-spot-bridge | DXLog/Log4OM on shack-pc — operator-keyed station feed (role `bandmap`; Windows host, interactive — no systemd) |
 | `muehle/hf/power-seq` | powerseq | logic slot — no device (runs on shari); startup/shutdown sequencer |
 | `muehle/uhf/pol-ctrl` | m5stamp-pol-ctrl | M5 Stamp PLC #2 — X-Quad polarization (ESPHome), wifi |
+| `muehle/uhf/radio` | icom9700-radio-bridge | Icom IC-9700, LAN (RS-BA1 CI-V over UDP) — on-demand session, PTT behind arm gate |
 | `muehle/uhf/az-rotator` | spid-ercm-rotator-bridge | SPID azimuth rotator, serial (Rot1Prog) — runs on shari with rotctld :4534 + PstRotator :12041; free motion, no arming gate |
 | `muehle/uhf/el-rotator` | spid-ercm-rotator-bridge | GS-500 elevation via ERC-M controller, serial (GS-232B) — same compound bridge as az-rotator (one process, two slots, per-axis device_online) |
 | `muehle/uhf/rotator` | pelcobridge2 | PTS-303Z/3050DZ pan/tilt head, RS-485 — interactive TUI on shack-pc (arming is manual, never remote) |

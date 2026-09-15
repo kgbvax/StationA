@@ -99,19 +99,19 @@ void main() {
     });
 
     test('ptt is an on/off toggle under the value key', () {
-      expect(jsonDecode(uhfRadioPttPayload(true)),
+      expect(jsonDecode(uhfRadioPttPayload('on')),
           {'action': 'ptt', 'value': 'on'});
-      expect(jsonDecode(uhfRadioPttPayload(false)),
+      expect(jsonDecode(uhfRadioPttPayload('off')),
           {'action': 'ptt', 'value': 'off'});
     });
 
     test('set_freq carries the Hz string and the target VFO', () {
-      expect(jsonDecode(uhfRadioSetFreqPayload('sub', 432100000)),
+      expect(jsonDecode(uhfRadioSetFreqPayload(432100000, 'sub')),
           {'action': 'set_freq', 'value': '432100000', 'vfo': 'sub'});
     });
 
     test('set_mode carries the canonical mode and the target VFO', () {
-      expect(jsonDecode(uhfRadioSetModePayload('main', 'usb')),
+      expect(jsonDecode(uhfRadioSetModePayload('usb', 'main')),
           {'action': 'set_mode', 'value': 'usb', 'vfo': 'main'});
     });
 

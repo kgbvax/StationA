@@ -3,9 +3,7 @@
 // via Icom's RS-BA1-style LAN protocol. The radio's single LAN session is
 // shared with manual wfview use by connecting only on demand (KTD-2).
 //
-// U1 scaffold: the MQTT plane, /cmd dispatch wiring and the radio reconnect
-// loop are real; the radio side is the internal/radio stub (U2-U5 land the
-// transport, codec, session manager and bus surface). See the feature plan
+// See the feature plan
 // (../docs/plans/2026-09-14-001-feat-icom9700-radio-bridge-plan.md) and the
 // protocol brief (docs/civ-research-brief.md in this module).
 package main
@@ -25,6 +23,7 @@ import (
 	sharedmqtt "codeberg.org/kgbvax/stationa/shared/mqtt"
 	schema "codeberg.org/kgbvax/stationa/shared/schema"
 
+	"icom9700-radio-bridge/internal/bridge"
 	"icom9700-radio-bridge/internal/config"
 	"icom9700-radio-bridge/internal/radio"
 )
@@ -48,7 +47,7 @@ func main() {
 	slog.SetDefault(logger)
 	// One slot (muehle/uhf/radio): stamp it as a child logger so every line
 	// carries `slot` (logging convention §2).
-	log := logger.With("slot", cfg.MQTT.Site+"/"+cfg.MQTT.Station+"/"+cfg.MQTT.Slot)
+	log := logger.With("slot", schema.SlotBase(cfg.MQTT.Site, cfg.MQTT.Station, cfg.MQTT.Slot))
 	log.Info("icom9700-radio-bridge starting",
 		"radio_host", cfg.RadioHost, "broker", cfg.MQTT.Broker)
 
@@ -63,40 +62,76 @@ func main() {
 }
 
 func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
-	// Construct the radio manager BEFORE connecting MQTT so the /cmd handler
-	// exists when OnConnect fires (OnConnect subscribes to /cmd and dispatches
-	// into the manager). U1: this is the stub; U4/U5 replace it.
-	mgr := &radio.Stub{Log: log}
+	// Construct the bridge (and with it the on-demand radio session) BEFORE
+	// connecting MQTT so the /cmd handler exists when OnConnect fires. The
+	// session is on-demand (KTD-2/R2): the process itself never dials —
+	// login attempts happen only cmd-driven, arm-driven or safety-driven,
+	// so there is deliberately no connect/backoff loop here (the U1 loop is
+	// gone; the session manager owns its retry series internally).
+	br := bridge.New(ctx, bridgeOptions(cfg, log))
+	defer br.Close()
+	mgr := br.Manager()
 
 	// /cmd dispatch: paho runs message handlers on its own goroutine, and a
 	// radio command is a network round-trip on the CI-V stream, so the handler
-	// must not call the manager inline. Funnel commands through a bounded
-	// channel to a single sharedmqtt.RunJobs worker: the handler Enqueues
-	// non-blocking, the worker runs Execute serially. (See the stationa memory
-	// on paho handlers: never do blocking work in the message callback.)
-	jobs := make(chan func(), 32)
-	go sharedmqtt.RunJobs(ctx, jobs)
+	// must not call the manager inline. Funnel commands through the bridge's
+	// bounded jobs channel to its single sharedmqtt.RunJobs worker: the
+	// handler Enqueues non-blocking, the worker runs Execute serially (the
+	// same worker serializes every /state publish — one writer to the slot
+	// state). (See the stationa memory on paho handlers: never do blocking
+	// work in the message callback.)
 
 	// 1. Connect MQTT with LWT and a /cmd subscription. Fatal on failure:
 	// never run the bridge with its MQTT plane silently dead (ultrabridge
 	// convention, model §8.1 item 10) — systemd's Restart=on-failure
 	// crash-loops the unit until the broker answers.
-	mqttClient, err := connectMQTT(ctx, cfg, mgr, jobs, log)
+	mqttClient, err := connectMQTT(ctx, cfg, mgr, br, log)
 	if err != nil {
 		return fmt.Errorf("mqtt connect: %w", err)
 	}
 	defer mqttClient.Disconnect(500)
 	log.Info("MQTT connected", "broker", cfg.MQTT.Broker)
 
-	// 2. Run the radio-session loop until ctx is cancelled. U1 stub: every
-	// Connect attempt fails with ErrNotImplemented and the loop backs off
-	// 2 s -> 60 s, so a deployed scaffold sits politely idle on the bus.
-	return radioLoop(ctx, cfg, mgr, log)
+	// 2. Run the telemetry/heartbeat tick until ctx is cancelled: poll reads
+	// while a session is live (R6 reconciliation + KTD-8 meters), the dedup/
+	// freshness heartbeat in every state (R6).
+	return telemetryLoop(ctx, mgr, cfg.Radio.PollIntervalDur, log)
+}
+
+// bridgeOptions maps the loaded config onto the bridge wiring (a straight
+// field copy; no bridge policy figure is decided here). The arm timeout is
+// the session series bound plus handshake margin — the widest legitimate
+// blocking SetArmed.
+func bridgeOptions(cfg config.Config, log *slog.Logger) bridge.Options {
+	return bridge.Options{
+		Site:     cfg.MQTT.Site,
+		Station:  cfg.MQTT.Station,
+		Slot:     cfg.MQTT.Slot,
+		Location: cfg.MQTT.Location,
+
+		PollInterval: cfg.Radio.PollIntervalDur,
+		ArmTimeout:   cfg.Session.AttemptSpacingDur*time.Duration(cfg.Session.MaxAttempts) + 30*time.Second,
+
+		RadioHost:      cfg.RadioHost,
+		Username:       cfg.CIV.Username,
+		Password:       cfg.CIV.Password,
+		IdleTimeout:    cfg.Session.IdleTimeoutDur,
+		MaxAttempts:    cfg.Session.MaxAttempts,
+		AttemptSpacing: cfg.Session.AttemptSpacingDur,
+		ErrorDecay:     cfg.Session.ErrorDecayDur,
+		TXWatchdog:     cfg.Session.TXWatchdogDur,
+
+		// U6 SEAMS (KTD-4/KTD-5): installed inside bridge.New — the safety
+		// core replaces the v1 arm gate (Options.ArmGate) and arms its TX
+		// watchdog on every PTT-on (Options.OnPTTOn). The MQTT-plane-loss
+		// rule (R4) is wired at OnConnectionLost below.
+		Log: log,
+	}
 }
 
 // connectMQTT establishes the MQTT connection with a Last Will that marks the
 // bridge offline.
-func connectMQTT(ctx context.Context, cfg config.Config, mgr radio.Manager, jobs chan func(), log *slog.Logger) (pahomqtt.Client, error) {
+func connectMQTT(ctx context.Context, cfg config.Config, mgr radio.Manager, br *bridge.Bridge, log *slog.Logger) (pahomqtt.Client, error) {
 	opts := pahomqtt.NewClientOptions()
 	opts.AddBroker(cfg.MQTT.Broker)
 	clientID := cfg.MQTT.ClientID
@@ -123,13 +158,16 @@ func connectMQTT(ctx context.Context, cfg config.Config, mgr radio.Manager, jobs
 	opts.OnConnect = func(c pahomqtt.Client) {
 		c.Publish(avail, 1, true, []byte("online"))
 		log.Info("MQTT (re)connected, published online LWT")
+		// The bridge's connect ritual: retained /meta and a forced /state
+		// restore (a broker wipe must not leave the slot stateless).
+		br.OnMQTTConnect(c)
 		// /cmd is one-shot class (R9/KTD-6): subscribe at QoS 0 so a
 		// persistent-session backlog cannot replay stale commands over a
 		// fresh connection, and resubscribe on every reconnect.
 		if tok := c.Subscribe(cmd, 0, func(_ pahomqtt.Client, m pahomqtt.Message) {
 			// paho reuses the message buffer after the handler returns; copy it.
 			p := append([]byte(nil), m.Payload()...)
-			sharedmqtt.Enqueue(jobs, func() {
+			sharedmqtt.Enqueue(br.Jobs(), func() {
 				if err := mgr.Execute(ctx, p); err != nil {
 					log.Warn("cmd execution failed", "err", err)
 				}
@@ -140,6 +178,11 @@ func connectMQTT(ctx context.Context, cfg config.Config, mgr radio.Manager, jobs
 	}
 	opts.OnConnectionLost = func(_ pahomqtt.Client, err error) {
 		log.Warn("MQTT connection lost", "err", err)
+		// U6 (R4/KTD-5): the loss-of-plane rule — unkey over the radio plane
+		// (RequestPTTOff, UDP, independent of the lost broker link) and
+		// disarm. Enqueue-only: the paho goroutine must not block; the worker
+		// applies the rule and records the loss fact in /state.error.
+		br.OnMQTTConnectionLost(err)
 	}
 
 	client := pahomqtt.NewClient(opts)
@@ -154,43 +197,11 @@ func connectMQTT(ctx context.Context, cfg config.Config, mgr radio.Manager, jobs
 	return client, nil
 }
 
-// radioLoop drives the on-demand session manager: connect, hold the session
-// (poll tick) until it drops, then back off and retry until ctx is
-// cancelled. Backoff starts at 2 s, scales x1.5, caps at 60 s (flexbridge
-// shape). U4 wraps this with the session policy (idle timeout, wfview
-// contention, safety-driven reconnects); U6 adds the loss-of-control rules.
-func radioLoop(ctx context.Context, cfg config.Config, mgr radio.Manager, log *slog.Logger) error {
-	const maxBackoff = 60 * time.Second
-	backoff := 2 * time.Second
-
-	for {
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-
-		err := mgr.Connect(ctx)
-		if err == nil {
-			// Session live: tick Poll at the configured cadence until the
-			// session drops or ctx is cancelled. (The U1 stub never gets
-			// here; U4/U5 fill the poll body and the safety core lives
-			// around it.)
-			err = pollLoop(ctx, mgr, cfg.Radio.PollIntervalDur)
-		}
-		mgr.Disconnect()
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-		log.Warn("radio session ended", "err", err)
-		if !sleepCtx(ctx, backoff) {
-			return ctx.Err()
-		}
-		backoff = scaleBackoff(backoff, maxBackoff)
-	}
-}
-
-// pollLoop ticks the manager at the configured poll interval until the
-// session drops or ctx is cancelled.
-func pollLoop(ctx context.Context, mgr radio.Manager, every time.Duration) error {
+// telemetryLoop ticks the bridge's telemetry read at the configured poll
+// interval until ctx is cancelled. Poll is quiet while no session is held
+// (on-demand model) and drives the freshness heartbeat in every state, so
+// the retained /state ts never goes stale — including at healthy idle (R6).
+func telemetryLoop(ctx context.Context, mgr radio.Manager, every time.Duration, log *slog.Logger) error {
 	t := time.NewTicker(every)
 	defer t.Stop()
 	for {
@@ -199,29 +210,13 @@ func pollLoop(ctx context.Context, mgr radio.Manager, every time.Duration) error
 			return ctx.Err()
 		case <-t.C:
 			if err := mgr.Poll(ctx); err != nil {
-				return err
+				// A telemetry failure never takes the loop down: the next
+				// tick re-reads, and session-level faults surface through
+				// the session's own state machine into /state.
+				log.Warn("telemetry tick failed", "err", err)
 			}
 		}
 	}
-}
-
-func sleepCtx(ctx context.Context, d time.Duration) bool {
-	t := time.NewTimer(d)
-	defer t.Stop()
-	select {
-	case <-ctx.Done():
-		return false
-	case <-t.C:
-		return true
-	}
-}
-
-func scaleBackoff(cur, max time.Duration) time.Duration {
-	next := time.Duration(float64(cur) * 1.5)
-	if next > max {
-		next = max
-	}
-	return next
 }
 
 func newLogger(level string) *slog.Logger {

@@ -19,13 +19,13 @@ that drops on session loss and restart (fail-disarmed); a max-TX watchdog bounds
 a keyed PTT (KTD-5). The gate is software-only — the IC-9700 has no external
 TX-inhibit path here; that accepted posture is recorded in the exposure review.
 
-**Status: in progress — U1 scaffold (this), U2-U7 pending** (see
-`../docs/plans/2026-09-14-001-feat-icom9700-radio-bridge-plan.md`). The MQTT
-plane, config, deploy shell and the `internal/radio.Manager` seam are landed;
-`internal/radio` is an obviously-marked stub (every connect fails with
-`ErrNotImplemented` and the loop backs off 2 s → 60 s), so a deployed scaffold
-sits politely idle on the bus. Protocol constants live in
-`docs/civ-research-brief.md`.
+**Status: implementation complete (U1–U8 landed)** — see
+`../docs/plans/2026-09-14-001-feat-icom9700-radio-bridge-plan.md`. The full
+stack is in place: RS-BA1 transport + CI-V codec (`internal/civ`), the
+on-demand session manager (`internal/radio`), the bus surface and safety core
+(`internal/bridge`), the console panel (`hf_console`), and the station docs.
+Bench bring-up and the deploy gates are the remaining operational steps.
+Protocol constants live in `docs/civ-research-brief.md`.
 
 ---
 
@@ -74,20 +74,22 @@ convention, model §8.1 item 10 — systemd crash-loops until the broker answers
 shelly/powerseq/antennaselect use the same shape). `sharedmqtt.Connect` is
 ctx-aware so a SIGTERM during connect is honored.
 
-**Radio loop** (`radioLoop`): `Manager.Connect` → on success a poll tick at
-`radio.poll_interval` → on any failure `Disconnect` + backoff (2 s, x1.5, cap
-60 s) → retry until ctx is cancelled. U4 wraps this loop with the on-demand
-session policy (idle timeout, never-steal contention, safety-driven reconnects);
-U6 adds the loss-of-control rules (TX watchdog, MQTT-loss PTT-off, disarm on
-session loss).
+**Telemetry loop** (`telemetryLoop`): a poll tick at `radio.poll_interval`
+drives `Manager.Poll`; the session itself is on-demand — Connect is a
+deliberate no-op (R2: no autonomous dials), idle timeouts and safety-driven
+reconnects live in `internal/radio` (U4) and the loss-of-control rules in
+`internal/bridge` safety core (U6: TX watchdog, MQTT-loss PTT-off,
+session-loss disarm).
 
-**Seam:** `internal/radio.Manager` — `Connect(ctx) error`, `Disconnect()`,
-`Execute(ctx, payload []byte) error`, `Poll(ctx) error`. U2-U5 fill it; the U1
-`Stub` rejects everything with `radio.ErrNotImplemented`.
+**Seam:** `internal/radio.Manager` — `Connect(ctx) error` (no-op, KTD-2),
+`Disconnect()`, `Execute(ctx, payload []byte) error`, `Poll(ctx) error`.
+`internal/bridge.Bridge.Manager()` adapts the bridge onto it.
 
 | Package | Role |
 |---|---|
-| `internal/radio` | Manager seam + U1 stub (U2 transport, U3 CI-V codec, U4 session manager land here) |
+| `internal/civ` | RS-BA1 UDP transport + CI-V codec + the scripted fake radio |
+| `internal/radio` | on-demand session manager (idle/connecting/live/error) |
+| `internal/bridge` | bus surface (meta/state/cmd/status) + safety core |
 | `internal/config` | TOML config, flags, `ICOM9700_*` env overrides |
 | `docs/civ-research-brief.md` | Committed protocol constants (ports, handshake, packet layer, CI-V command table) |
 

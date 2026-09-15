@@ -47,6 +47,14 @@ A bridge that fronts one specific piece of hardware is named
 | Shelly smart-plug family (HTTP/MQTT API) | `shelly` | `shelly-power-bridge` |
 | M5Stamp PLC family (embedded relay/DI controller, custom firmware) | `m5stamp` | `m5stamp-hf-ctrl` (firmware) |
 | M5Stack Dial family (round-face ESP32-S3 control knob, custom firmware) | `m5dial` | `m5dial-hf-rotctrl` (firmware) |
+| Icom CI-V / RS-BA1 LAN-controlled rigs (IC-9700 today; the same protocol family covers other RS-BA1 Icoms) | `icom9700` | `icom9700-radio-bridge` |
+
+> **Deviation — `icom9700` env prefix:** the env-overload prefix is `ICOM9700_`
+> rather than the dir-derived `ICOM9700_RADIO_BRIDGE_`. The longer form is
+> unwieldy on a single-purpose module and the model digit is the identity that
+> matters (a future IC-9100 or IC-905 bridge would be its own module with its
+> own prefix, per this table's family rule). Plan-pinned (KTD record); every
+> other overload prefix in the repo follows the derived form.
 
 > **Embedded firmware is not a Go bridge.** The M5Stamp PLC row names the *firmware*
 > project, not a `-bridge` binary — like the ant-switch, the M5 Stamp's custom firmware
@@ -120,4 +128,4 @@ number) per the rule above.
 | _(renamed)_ `antswitchbridge` | `waveshare_relay-antswitch-bridge` | device (formerly contract-first exception; **renamed 2026-07** to follow the family-tag pattern; `_` in `waveshare_relay` is a recorded deviation, see §1) |
 | _(new)_ `shelly-power-bridge` | `shelly-power-bridge` | device (convention; Shelly family; fronts `power/master` + `power/psu-13v8`) |
 | _(new)_ `m5stamp-hf-ctrl` | `m5stamp-hf-ctrl` | embedded firmware (M5Stamp family; fronts `hf/pa-arm` + `hf/switch`) |
-| _(new)_ `powerseq` | — | logic slot (exception; the `hf/power-seq` sequencer) |
+| _(new)_ `powerseq` | — | logic slot (exception; the `hf/power-seq` sequencer) || _(new)_ `icom9700-radio-bridge` | `icom9700-radio-bridge` | device (convention; Icom CI-V/RS-BA1 family; fronts `muehle/uhf/radio`; `ICOM9700_` env prefix is a recorded deviation, see §1) |

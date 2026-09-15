@@ -11,756 +11,487 @@ import (
 	"time"
 )
 
-// Tuning defaults. Values follow kappanhang unless the research brief pins
-// something else; deviations carry a comment.
-const (
-	defaultPingInterval = time.Second // brief says 500 ms, kappanhang 3 s ("only a ping-line packet") — midpoint; the radio's own ~100 ms pings carry the liveness load
-	defaultLossWatchdog = 3 * time.Second
-	defaultReauthEvery  = time.Minute     // token renewal (both references)
-	defaultReauthWait   = 3 * time.Second // kappanhang reauthTimeout
-	defaultHandshakeTO  = time.Second     // per-step expect (kappanhang expectTimeoutDuration)
-	defaultAreYouThere  = 500 * time.Millisecond
-	defaultCIVSilence   = 2 * time.Second // brief: re-open the data stream after 2 s of CI-V silence
-	defaultTxRetention  = 3 * time.Second // 10× the 300 ms buffer announced to the radio
-	defaultRxBuffer     = 100 * time.Millisecond
-	announcedTxBufferMs = 300
+// Transport is one live RS-BA1 session to the radio: the control stream and
+// the CI-V data stream plus their timers. Build with Dial; send CI-V frames
+// with SendCIV; consume radio CI-V traffic through Opts.OnCIVFrame; react to
+// involuntary session end through Opts.OnSessionLoss (R3: session loss is a
+// full re-login path — there is no resume, so the owner discards the
+// transport and Dials again). Close disconnects cleanly.
+type Transport struct {
+	o          Opts
+	log        *slog.Logger
+	ctx        context.Context
+	cancel     context.CancelFunc
+	cancelOnce sync.Once
 
-	// readQueueLen bounds each stream's datagram queue (overflow drops the
-	// newest datagram; the rx reorder buffer heals the gap by requesting
-	// retransmission).
-	readQueueLen = 256
+	ctrl  *stream // control stream, set by Dial before any reader runs
+	civMu sync.Mutex
+	civSt *stream // CI-V data stream, nil until the status packet
 
-	// maxRetransmitRequestPackets bounds a single retransmit request; larger
-	// gaps are skipped by the rx buffer's lock-timeout flush instead
-	// (kappanhang maxRetransmitRequestPacketCount).
-	maxRetransmitRequestPackets = 10
-)
+	hsCtrl chan []byte // handshake-phase datagrams (bounded, drops on flood)
+	hsCiv  chan []byte
 
-// Options configures a client. Zero durations take the defaults; tests
-// shrink the timers against a fake radio on localhost.
-type Options struct {
-	Host     string
-	Username string
-	Password string
+	live   atomic.Bool
+	lost   atomic.Bool
+	closed atomic.Bool
 
-	// RigName is echoed to the radio in the request-stream packet; the
-	// radio's answer carries the authoritative self-description.
-	RigName string
-
-	// Radio-side ports; defaults ControlPort/CIVDataPort.
-	ControlPort int
-	CIVPort     int
-
-	// Local bind ports; 0 (default) binds an ephemeral port.
-	BindControl int
-	BindCIV     int
-
-	PingInterval    time.Duration
-	LossWatchdog    time.Duration // control-stream silence that ends the session
-	ReauthInterval  time.Duration
-	ReauthTimeout   time.Duration
-	HandshakeTO     time.Duration
-	AreYouThere     time.Duration
-	CIVSilence      time.Duration
-	TxRetention     time.Duration
-	RxBuffer        time.Duration
-	HandshakeBudget time.Duration // overall bound on Dial
-
-	Logger *slog.Logger
+	mu        sync.Mutex // guards the renewal state
+	renewal   renewalState
+	malformed atomic.Uint64
 }
 
-func (o *Options) fillDefaults() error {
-	if o.Host == "" {
-		return errors.New("civ: host required — the protocol has no discovery")
-	}
-	if o.Username == "" {
-		return errors.New("civ: username required")
-	}
+// Opts configures the transport. The period fields carry the protocol
+// brief's cadences as defaults; tests shrink them. Host, credentials and
+// callbacks are mandatory in practice.
+type Opts struct {
+	// Host is the radio's LAN address (no discovery exists in the protocol).
+	Host string
+	// ControlPort is the radio's control port (50001; the CI-V data port is
+	// assigned by the radio in the status packet, normally 50002).
+	ControlPort int
+	// Username and Password are the radio's remote-control login. They are
+	// substitution-obfuscated onto the wire; they are never logged (never-log
+	// pin, package doc).
+	Username string
+	Password string
+	// ClientName rides the login packet's plain client-name field.
+	ClientName string
+	// Log receives lifecycle and error lines (no packet content, ever).
+	Log *slog.Logger
+	// OnCIVFrame receives raw CI-V chunks from the radio as they arrive, in
+	// sequence order. Called on the read goroutine: it must not block and
+	// must not call back into the transport (dispatch to a worker instead —
+	// the stationa paho-handler rule).
+	OnCIVFrame func(chunk []byte)
+	// OnSessionLoss fires once when an established session dies (radio
+	// silence past SessionTimeout, renewal rejection/timeout, radio
+	// disconnect status, socket death). Called on its own goroutine.
+	OnSessionLoss func(err error)
+
+	// Cadence knobs (brief values as defaults).
+	AreYouTherePeriod time.Duration // probe repeat while waiting for I-am-here (500 ms)
+	HandshakeTimeout  time.Duration // bound for the whole connect (wfview: 20 probes)
+	IdlePeriod        time.Duration // tracked idle keepalive (100 ms)
+	PingPeriod        time.Duration // ping (500 ms)
+	RetransmitPeriod  time.Duration // retransmit-request tick (100 ms)
+	RetransmitTries   int           // give up on a hole after this many requests (4)
+	MaxMissing        int           // flush the rx window beyond this many holes (50)
+	TokenRenewal      time.Duration // renewal cycle (60 s)
+	RenewalTimeout    time.Duration // bound for one renewal answer (3 s)
+	CivSilence        time.Duration // CI-V watchdog: re-open after this much silence (2 s)
+	StartDataPeriod   time.Duration // start-data (re-)send cadence (100 ms)
+	SessionTimeout    time.Duration // no radio traffic at all -> session loss (10 s)
+}
+
+// fill applies the protocol-brief defaults to unset fields.
+func (o *Opts) fill() {
 	if o.ControlPort == 0 {
 		o.ControlPort = ControlPort
 	}
-	if o.CIVPort == 0 {
-		o.CIVPort = CIVDataPort
+	if o.ClientName == "" {
+		o.ClientName = "icom9700-radio-bridge"
 	}
-	if o.RigName == "" {
-		o.RigName = "IC-9700"
+	if o.AreYouTherePeriod == 0 {
+		o.AreYouTherePeriod = 500 * time.Millisecond
 	}
-	if o.PingInterval == 0 {
-		o.PingInterval = defaultPingInterval
+	if o.HandshakeTimeout == 0 {
+		o.HandshakeTimeout = 10 * time.Second
 	}
-	if o.LossWatchdog == 0 {
-		o.LossWatchdog = defaultLossWatchdog
+	if o.IdlePeriod == 0 {
+		o.IdlePeriod = 100 * time.Millisecond
 	}
-	if o.ReauthInterval == 0 {
-		o.ReauthInterval = defaultReauthEvery
+	if o.PingPeriod == 0 {
+		o.PingPeriod = 500 * time.Millisecond
 	}
-	if o.ReauthTimeout == 0 {
-		o.ReauthTimeout = defaultReauthWait
+	if o.RetransmitPeriod == 0 {
+		o.RetransmitPeriod = 100 * time.Millisecond
 	}
-	if o.HandshakeTO == 0 {
-		o.HandshakeTO = defaultHandshakeTO
+	if o.RetransmitTries == 0 {
+		o.RetransmitTries = 4
 	}
-	if o.AreYouThere == 0 {
-		o.AreYouThere = defaultAreYouThere
+	if o.MaxMissing == 0 {
+		o.MaxMissing = maxMissingCap
 	}
-	if o.CIVSilence == 0 {
-		o.CIVSilence = defaultCIVSilence
+	if o.TokenRenewal == 0 {
+		o.TokenRenewal = 60 * time.Second
 	}
-	if o.TxRetention == 0 {
-		o.TxRetention = defaultTxRetention
+	if o.RenewalTimeout == 0 {
+		o.RenewalTimeout = 3 * time.Second
 	}
-	if o.RxBuffer == 0 {
-		o.RxBuffer = defaultRxBuffer
+	if o.CivSilence == 0 {
+		o.CivSilence = 2 * time.Second
 	}
-	if o.HandshakeBudget == 0 {
-		o.HandshakeBudget = 15 * time.Second
+	if o.StartDataPeriod == 0 {
+		o.StartDataPeriod = 100 * time.Millisecond
 	}
-	if o.Logger == nil {
-		o.Logger = slog.Default()
+	if o.SessionTimeout == 0 {
+		o.SessionTimeout = 10 * time.Second
 	}
+}
+
+// Session outcome errors (errors.Is-able; R2/R3 surface these as facts).
+var (
+	// ErrTimeout: the radio did not answer a handshake phase in time.
+	ErrTimeout = errors.New("civ handshake timeout")
+	// ErrAuthFailed: the radio rejected the login credentials (0xfffffffe).
+	ErrAuthFailed = errors.New("civ login rejected: invalid username/password")
+	// ErrRefused: the radio refused the session (status 0xffffffff — stale or
+	// other client holds it).
+	ErrRefused = errors.New("civ connection refused by radio")
+	// ErrSessionLost: an established session died involuntarily.
+	ErrSessionLost = errors.New("civ session lost")
+	// ErrClosed: the transport is closed (or was never dialed).
+	ErrClosed = errors.New("civ transport closed")
+)
+
+// hsQueueCap bounds the handshake-phase datagram queues (bounded buffer
+// rule; overflow drops — handshake steps match specific packets anyway).
+const hsQueueCap = 64
+
+// Live reports whether a session is established.
+func (t *Transport) Live() bool { return t.live.Load() }
+
+// SendCIV sends one raw CI-V frame to the radio on the data stream. Safe for
+// concurrent use — sends serialize on the stream (the stationa /cmd worker
+// contract: one wire, one writer at a time).
+func (t *Transport) SendCIV(frame []byte) error {
+	if t.closed.Load() {
+		return ErrClosed
+	}
+	if !t.live.Load() {
+		if t.lost.Load() {
+			return fmt.Errorf("%w: SendCIV after session loss", ErrSessionLost)
+		}
+		return ErrClosed
+	}
+	s := t.civStream()
+	if s == nil {
+		return ErrClosed
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.civOut(frame, time.Now())
+}
+
+// Close disconnects cleanly: CI-V stream close (openclose magic 0x00), token
+// removal (0x40 requesttype 0x01) and control type-0x05 disconnects on both
+// streams (the wfview teardown order), then sockets close. Idempotent; a
+// lost session skips the courtesy packets — there is nobody to send to.
+func (t *Transport) Close() error {
+	if !t.closed.CompareAndSwap(false, true) {
+		return nil
+	}
+	if t.live.CompareAndSwap(true, false) {
+		now := time.Now()
+		if s := t.civStream(); s != nil {
+			s.mu.Lock()
+			_ = s.sendTracked(openclosePacket(true, s.nextSubSeq(), s.myID, s.remoteID), now)
+			_ = s.sendUntracked(controlPacket(ptLogout, 0, s.myID, s.remoteID))
+			s.mu.Unlock()
+		}
+		t.ctrl.mu.Lock()
+		t.ctrl.sendToken(reqTypeRemoval, now)
+		_ = t.ctrl.sendUntracked(controlPacket(ptLogout, 0, t.ctrl.myID, t.ctrl.remoteID))
+		t.ctrl.mu.Unlock()
+	}
+	t.shutdownSockets()
 	return nil
 }
 
-// Client is a live protocol session against one radio: control stream,
-// CI-V data stream, keepalives, token renewal and session-loss detection.
-// Create with Dial; a Client that has reported loss must be discarded —
-// reconnect is always a fresh Dial (R3: no resume, full re-login).
-type Client struct {
-	opts Options
-	log  *slog.Logger
-
-	control *udpStream
-	civ     *udpStream
-	auth    authState
-
-	wmu sync.Mutex // serializes all tracked sends + inner/outer seq bookkeeping
-
-	done     chan struct{} // closed on loss or Close; stops all timers/pumps
-	loseOnce sync.Once
-	loseErr  error
-	Lost     chan error // exactly one delivery
-
-	frames chan []byte // ordered inbound CI-V frames
-
-	// handshake-phase events (reader goroutine → Dial)
-	authAck chan struct{}
-	a8Got   chan struct{}
-
-	// liveness bookkeeping
-	mu            sync.Mutex // lastControlRx
-	lastControlRx time.Time
-
-	smu        sync.Mutex // timers + reauthDead
-	civSilent  *time.Timer
-	reauthDead *time.Timer
-
-	closeOnce sync.Once
-	clean     atomic.Bool // Close/abort ran — teardown errors are not losses
-
-	rigName string
+// Stats exposes the window sizes for bound verification (tests and ops
+// probing; the MemoryMax rule makes growth observable).
+func (t *Transport) Stats() map[string]int {
+	m := map[string]int{
+		"malformed": int(t.malformed.Load()),
+	}
+	t.ctrl.mu.Lock()
+	m["ctrl_tx"] = t.ctrl.tx.size()
+	m["ctrl_pending"] = t.ctrl.rx.pendingCount()
+	m["ctrl_missing"] = t.ctrl.rx.missingCount()
+	m["ctrl_skip"] = t.ctrl.rx.skipCount()
+	t.ctrl.mu.Unlock()
+	if s := t.civStream(); s != nil {
+		s.mu.Lock()
+		m["civ_tx"] = s.tx.size()
+		m["civ_pending"] = s.rx.pendingCount()
+		m["civ_missing"] = s.rx.missingCount()
+		m["civ_skip"] = s.rx.skipCount()
+		s.mu.Unlock()
+	}
+	return m
 }
 
-// Dial performs the full handshake (are-you-there → ready → login → token →
-// auth → stream request → CI-V stream open) and returns a live client. It
-// never steals a session held by another client: a radio-side refusal
-// surfaces as ErrConnectionRefused, a wrong password as ErrLoginRejected
-// (R2).
-func Dial(ctx context.Context, opts Options) (c *Client, err error) {
-	if err := opts.fillDefaults(); err != nil {
-		return nil, err
-	}
-	c = &Client{
-		opts:    opts,
-		log:     opts.Logger.With("component", "civ"),
-		done:    make(chan struct{}),
-		Lost:    make(chan error, 1),
-		frames:  make(chan []byte, 128),
-		authAck: make(chan struct{}, 1),
-		a8Got:   make(chan struct{}, 1),
-	}
-	// Credentials never reach the log: host/ports/username only.
-	c.log.Info("dialing radio", "host", opts.Host,
-		"control_port", opts.ControlPort, "civ_port", opts.CIVPort,
-		"username", opts.Username)
+// setCiv installs the CI-V stream (Dial only).
+func (t *Transport) setCiv(s *stream) {
+	t.civMu.Lock()
+	t.civSt = s
+	t.civMu.Unlock()
+}
 
-	// The whole handshake is bounded by HandshakeBudget (the are-you-there
-	// retry loop would otherwise spin forever against a silent radio).
-	ctx, cancel := context.WithTimeout(ctx, opts.HandshakeBudget)
-	defer cancel()
+func (t *Transport) civStream() *stream {
+	t.civMu.Lock()
+	defer t.civMu.Unlock()
+	return t.civSt
+}
 
-	if c.control, err = c.dialStream("control", opts.ControlPort, opts.BindControl); err != nil {
-		return nil, err
-	}
-	defer func() {
-		// `return nil, err` paths nil the named return — only abort when a
-		// client was actually constructed.
-		if err != nil && c != nil {
-			c.abort()
+// shutdownSockets cancels the loops and closes both sockets (idempotent).
+func (t *Transport) shutdownSockets() {
+	t.cancelOnce.Do(func() {
+		if t.cancel != nil {
+			t.cancel()
 		}
-	}()
-	c.control.startReader()
-
-	// 1-2. are-you-there / ready exchange (pkt3/pkt4/pkt6).
-	if err = c.control.start(ctx); err != nil {
-		return nil, c.hsErr(err)
+	})
+	if t.ctrl != nil {
+		t.ctrl.conn.Close()
 	}
-
-	// 3. Login. The radio answers 0x60; ff ff ff fe there is a rejected
-	// credential — surfaced verbatim, never retried silently.
-	login, err := c.auth.buildLogin(c.control.localSID, c.control.remoteSID, opts.Username, opts.Password)
-	if err != nil {
-		return nil, err
-	}
-	if err = c.sendTracked(c.control, login); err != nil {
-		return nil, c.hsErr(err)
-	}
-	r, ok := c.expect(c.control, ctx, opts.HandshakeTO, sigLoginAnswer)
-	if !ok {
-		return nil, c.hsErr(ErrHandshakeTimeout)
-	}
-	if err = c.auth.parseLoginAnswer(r); err != nil {
-		return nil, err
-	}
-
-	// 4. First auth (0x02), then the periodic keepalives start, then the
-	// second auth (0x05) — kappanhang's order. The radio also volunteers an
-	// 0xa8 packet in this window, whose 16-byte ID the request-stream
-	// packet echoes (kappanhang gates the request on having received it).
-	if err = c.sendTracked(c.control, c.auth.buildAuth(c.control.localSID, c.control.remoteSID, 0x02)); err != nil {
-		return nil, c.hsErr(err)
-	}
-	c.startKeepalives(c.control)
-	if err = c.sendTracked(c.control, c.auth.buildAuth(c.control.localSID, c.control.remoteSID, 0x05)); err != nil {
-		return nil, c.hsErr(err)
-	}
-	if err = c.awaitAuthAck(ctx); err != nil {
-		return nil, c.hsErr(err)
-	}
-
-	// 5. Request the CI-V data stream; the answer refreshes SIDs and the
-	// auth token and carries the radio's self-description.
-	req := c.auth.buildRequestStream(c.control.localSID, c.control.remoteSID,
-		opts.Username, opts.RigName, opts.CIVPort, AudioPort, announcedTxBufferMs)
-	if err = c.sendTracked(c.control, req); err != nil {
-		return nil, c.hsErr(err)
-	}
-	ans, ok := c.expectAny(c.control, ctx, opts.HandshakeTO, sigRequestAnswer, sigAuthFail)
-	if !ok {
-		return nil, c.hsErr(ErrHandshakeTimeout)
-	}
-	if prefixEqual(ans, sigAuthFail) {
-		return nil, ErrConnectionRefused
-	}
-	remoteSID, devName, ok := c.auth.parseRequestAnswer(ans)
-	if !ok {
-		return nil, fmt.Errorf("civ: stream request not acknowledged")
-	}
-	// The answer may refresh the control stream's remote SID (a prior
-	// login can have changed it — kappanhang handleRead); readers snapshot
-	// SIDs under wmu.
-	c.wmu.Lock()
-	c.control.remoteSID = remoteSID
-	c.wmu.Unlock()
-	c.rigName = devName
-	c.log.Info("ci-v stream granted", "radio", devName)
-
-	// 6. Open the CI-V data socket, run its pkt3/4/6 start, and send the
-	// open packet. The stream carries its own session IDs (derived from its
-	// own socket, exchanged with its own handshake).
-	if c.civ, err = c.dialStream("civ", opts.CIVPort, opts.BindCIV); err != nil {
-		return nil, err
-	}
-	c.civ.startReader()
-	if err = c.civ.start(ctx); err != nil {
-		return nil, c.hsErr(err)
-	}
-	c.startKeepalives(c.civ)
-	if err = c.sendTracked(c.civ, c.buildOpenClose(false)); err != nil {
-		return nil, c.hsErr(err)
-	}
-
-	// Ordered CI-V delivery + the session/stream watchdogs.
-	c.civ.rx = newRxSeqBuf(opts.RxBuffer, readQueueLen, c.civ.requestRetransmit)
-	go c.civPump()
-	c.startWatchdogs()
-	return c, nil
-}
-
-// hsErr prefers a session-ending fact the reader already recorded (e.g. the
-// radio refusing during login) over the generic timeout.
-func (c *Client) hsErr(err error) error {
-	if c.loseErr != nil {
-		return c.loseErr
-	}
-	return err
-}
-
-// awaitAuthAck waits for the 0x05-magic auth answer AND the radio's
-// volunteered 0xa8 ID (kappanhang gates the stream request on both).
-func (c *Client) awaitAuthAck(ctx context.Context) error {
-	deadline := time.After(c.opts.HandshakeBudget)
-	needAuth, needA8 := true, true
-	for needAuth || needA8 {
-		select {
-		case <-c.authAck:
-			needAuth = false
-		case <-c.a8Got:
-			needA8 = false
-		case <-deadline:
-			return ErrHandshakeTimeout
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-	}
-	return nil
-}
-
-// expectAny scans for any of the given prefixes.
-func (c *Client) expectAny(s *udpStream, ctx context.Context, wait time.Duration, prefixes ...[]byte) ([]byte, bool) {
-	timer := time.NewTimer(wait)
-	defer timer.Stop()
-	for {
-		select {
-		case r := <-s.readCh:
-			for _, p := range prefixes {
-				if prefixEqual(r, p) {
-					return r, true
-				}
-			}
-		case <-timer.C:
-			return nil, false
-		case <-ctx.Done():
-			return nil, false
-		case <-c.done:
-			return nil, false
-		}
+	if s := t.civStream(); s != nil {
+		s.conn.Close()
 	}
 }
 
-// buildOpenClose assembles the data-stream open/close packet (kappanhang
-// serialStream.sendOpenClose): sub-header flag 0xc0, one data byte — 0x05
-// opens, 0x00 closes. (The research brief's "magic 0x04" follows wfview's
-// older variant; kappanhang's 0x05/0x00 is what current firmware answers.)
-// Caller holds wmu.
-func (c *Client) buildOpenClose(close bool) []byte {
-	magic := byte(0x05)
-	if close {
-		magic = 0x00
-	}
-	p := header([]byte{0x16, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
-		c.civ.localSID, c.civ.remoteSID)
-	p = append(p, 0xc0, 0x01, 0x00,
-		byte(c.civ.innerSeq>>8), byte(c.civ.innerSeq), magic)
-	c.civ.innerSeq++
-	return p
-}
-
-// startKeepalives launches the stream's idle-packet sender (the reference
-// client idles every 100 ms under load, decaying to 1 s when quiet; this
-// client has no traffic of its own beyond cmds, so a fixed 1 s idle keeps
-// the radio's liveness picture) and the ping ticker.
-func (c *Client) startKeepalives(s *udpStream) {
-	go func() {
-		t := time.NewTicker(c.opts.PingInterval)
-		defer t.Stop()
-		for {
-			select {
-			case <-c.done:
-				return
-			case <-t.C:
-				// Snapshot SIDs under wmu — Dial refreshes the control
-				// stream's remote SID from the request answer while this
-				// loop is already running.
-				c.wmu.Lock()
-				l, r := s.localSID, s.remoteSID
-				c.wmu.Unlock()
-				_ = s.send(header(sigIdle, l, r))
-			}
-		}
-	}()
-	go func() {
-		var pingID [4]byte
-		pingID[3] = 0x06 // kappanhang's ping-ID family tag
-		inner := uint16(0x8304)
-		seq := uint16(1)
-		t := time.NewTicker(c.opts.PingInterval)
-		defer t.Stop()
-		for {
-			select {
-			case <-c.done:
-				return
-			case <-t.C:
-				c.wmu.Lock()
-				p := make([]byte, pingLen)
-				copy(p, []byte{0x15, 0x00, 0x00, 0x00, pingFamily, 0x00})
-				binary.BigEndian.PutUint32(p[8:12], s.localSID)
-				binary.BigEndian.PutUint32(p[12:16], s.remoteSID)
-				binary.LittleEndian.PutUint16(p[6:8], seq)
-				p[16] = pingRequest
-				pingID[1] = byte(inner)
-				pingID[2] = byte(inner >> 8)
-				copy(p[17:21], pingID[:])
-				c.wmu.Unlock()
-				inner++
-				_ = s.send(p)
-				seq++
-			}
-		}
-	}()
-}
-
-// handlePing replies to radio ping requests (mandatory — the radio pings
-// constantly) and ignores replies to our own.
-func (c *Client) handlePing(s *udpStream, r []byte) {
-	if r[16] != pingRequest {
+// sessionLoss ends an established session involuntarily (R3): no courtesy
+// packets, sockets closed, one OnSessionLoss on its own goroutine.
+func (t *Transport) sessionLoss(err error) {
+	if t.closed.Load() {
 		return
 	}
-	seq, replyID := parsePingRequest(r)
-	c.wmu.Lock()
-	defer c.wmu.Unlock()
-	p := make([]byte, pingLen)
-	copy(p, []byte{0x15, 0x00, 0x00, 0x00, pingFamily, 0x00})
-	binary.BigEndian.PutUint32(p[8:12], s.localSID)
-	binary.BigEndian.PutUint32(p[12:16], s.remoteSID)
-	binary.LittleEndian.PutUint16(p[6:8], seq)
-	p[16] = pingReplyFlg
-	copy(p[17:21], replyID)
-	_ = s.send(p)
-}
-
-// handleControlPacket dispatches control-stream-only packet families once
-// the handshake is over. Returns true when the packet was consumed.
-func (c *Client) handleControlPacket(r []byte) bool {
-	switch {
-	case prefixEqual(r, sigAuthAnswer):
-		if authMagicRenewal(r) {
-			select {
-			case c.authAck <- struct{}{}:
-			default:
-			}
-			c.smu.Lock()
-			if c.reauthDead != nil {
-				c.reauthDead.Stop()
-				c.reauthDead = nil
-			}
-			c.smu.Unlock()
-		}
-		return true
-	case prefixEqual(r, sigA8Reply):
-		c.auth.parseA8(r)
-		select {
-		case c.a8Got <- struct{}{}:
-		default:
-		}
-		return true
-	case prefixEqual(r, sigAuthFail):
-		switch authFailKind(r) {
-		case 1:
-			c.lose(ErrConnectionRefused)
-		case 2:
-			c.lose(errors.New("civ: radio reported disconnect"))
-		}
-		return true
+	if !t.live.CompareAndSwap(true, false) {
+		return
 	}
-	return false
+	t.lost.Store(true)
+	t.log.Warn("radio session lost", "err", err)
+	t.shutdownSockets()
+	if t.o.OnSessionLoss != nil {
+		go t.o.OnSessionLoss(err)
+	}
 }
 
-// civPump feeds data-stream datagrams into the reorder buffer and delivers
-// ordered CI-V frames to Frames.
-func (c *Client) civPump() {
+// --- readers ---------------------------------------------------------------------------
+
+// readLoop drains one stream socket: sequence-tracking bookkeeping and
+// retransmit/ping service happen in every phase; handshake-phase datagrams
+// feed the bounded queue, live datagrams go to dispatch.
+func (t *Transport) readLoop(s *stream, hs chan []byte) {
+	buf := make([]byte, 2048)
 	for {
-		e, retryIn, err := c.civ.rx.next()
-		switch {
-		case err == nil && retryIn == 0:
-			// Idles occupy sequence space but carry no CI-V payload —
-			// consume them without delivering (and without feeding the
-			// silence watchdog, which tracks CI-V frames only).
-			if isData(e.data) {
-				c.resetCIVSilence()
-				frame := dataPayload(e.data)
-				select {
-				case c.frames <- frame:
-				default:
-					// Newest-wins: a full queue drops the OLDEST frame so
-					// state assembly always sees the freshest radio truth.
-					select {
-					case <-c.frames:
-					default:
-					}
-					select {
-					case c.frames <- frame:
-					default:
-					}
-				}
-			}
-			continue
-		case errors.Is(err, errRxOutOfOrder):
-			continue
-		}
-		// Buffer empty or locked waiting for a retransmit: wait for new
-		// data, the lock retry, or shutdown.
-		var lock *time.Timer
-		if retryIn > 0 {
-			lock = time.NewTimer(retryIn)
-		}
-		if lock != nil {
-			select {
-			case pkt := <-c.civ.readCh:
-				lock.Stop()
-				c.feedRx(pkt)
-			case <-lock.C:
-			case <-c.done:
-				return
-			}
-			continue
-		}
-		select {
-		case pkt := <-c.civ.readCh:
-			c.feedRx(pkt)
-		case <-c.done:
+		n, _, err := s.conn.ReadFromUDP(buf)
+		if err != nil {
+			// Socket closed: intentional Close/teardown never reports loss.
 			return
 		}
-	}
-}
-
-// feedRx adds one data-stream datagram to the reorder buffer. Idles occupy
-// sequence space too, so both families enter (kappanhang handleRead);
-// anything else the radio put on this socket is dropped.
-func (c *Client) feedRx(pkt []byte) {
-	if isIdle(pkt) || isData(pkt) {
-		c.civ.rx.add(dataSeq(pkt), pkt)
-	}
-}
-
-// startWatchdogs arms the session-loss and stream-health timers.
-func (c *Client) startWatchdogs() {
-	c.mu.Lock()
-	c.lastControlRx = time.Now()
-	c.mu.Unlock()
-	// Control-stream silence: the radio pings/idles constantly; a quiet
-	// control stream for LossWatchdog means the session is gone (R3).
-	go func() {
-		t := time.NewTicker(c.opts.LossWatchdog / 3)
-		defer t.Stop()
-		for {
-			select {
-			case <-c.done:
-				return
-			case <-t.C:
-				c.mu.Lock()
-				idle := time.Since(c.lastControlRx)
-				c.mu.Unlock()
-				if idle > c.opts.LossWatchdog {
-					c.lose(fmt.Errorf("civ: control stream silent for %s", idle.Truncate(time.Millisecond)))
-					return
-				}
-			}
+		if n < headerLen {
+			continue
 		}
-	}()
+		d := make([]byte, n)
+		copy(d, buf[:n])
+		h := parseHeader(d)
+		// The claimed length must equal the datagram: every legitimate
+		// packet type carries h.len == exact wire size (that is what the
+		// per-type dispatch matches on). A short datagram with an inflated
+		// h.len would pass the dispatch and panic the fixed-offset reads
+		// below — the sockets are LAN-reachable, so treat the mismatch as
+		// garbage and drop it (review: trust n, never the claim alone).
+		if int(h.len) != n {
+			continue
+		}
+		s.mu.Lock()
+		s.lastRx = time.Now()
+		s.mu.Unlock()
 
-	// Token renewal every ReauthInterval, bounded by ReauthTimeout: an
-	// unanswered renewal is session loss (R3; kappanhang reauth).
-	c.smu.Lock()
-	c.reauthDead = nil
-	c.smu.Unlock()
-	time.AfterFunc(c.opts.ReauthInterval, c.renewToken)
-
-	// CI-V silence: re-send the open packet after CIVSilence without a
-	// frame (the research brief's 2 s watchdog) — NOT session loss.
-	c.resetCIVSilence()
-}
-
-// renewToken sends the 0x05 auth renewal and arms the renewal deadline;
-// re-arms itself while the session lives.
-func (c *Client) renewToken() {
-	if c.isDone() {
-		return
-	}
-	c.wmu.Lock()
-	p := c.auth.buildAuth(c.control.localSID, c.control.remoteSID, 0x05)
-	err := c.sendTrackedLocked(c.control, p)
-	c.wmu.Unlock()
-	if err == nil {
-		c.smu.Lock()
-		c.reauthDead = time.AfterFunc(c.opts.ReauthTimeout, func() {
-			c.lose(errors.New("civ: token renewal unanswered"))
-		})
-		c.smu.Unlock()
-	}
-	if !c.isDone() {
-		time.AfterFunc(c.opts.ReauthInterval, c.renewToken)
-	}
-}
-
-// resetCIVSilence re-arms the CI-V silence watchdog: 2 s without a frame
-// re-sends the open packet (the research brief's watchdog) — NOT session
-// loss.
-func (c *Client) resetCIVSilence() {
-	c.smu.Lock()
-	defer c.smu.Unlock()
-	if c.isDone() {
-		return
-	}
-	if c.civSilent == nil {
-		c.civSilent = time.AfterFunc(c.opts.CIVSilence, func() {
-			c.wmu.Lock()
-			err := c.sendTrackedLocked(c.civ, c.buildOpenClose(false))
-			c.wmu.Unlock()
-			if err == nil {
-				c.log.Info("ci-v silence watchdog re-opened the data stream")
-			}
-			// Re-arm: with no frames flowing the watchdog keeps re-opening
-			// the stream at the configured cadence until delivery resumes.
-			c.smu.Lock()
-			c.civSilent = nil
-			c.smu.Unlock()
-			if !c.isDone() {
-				c.resetCIVSilence()
-			}
-		})
-		return
-	}
-	c.civSilent.Reset(c.opts.CIVSilence)
-}
-
-// rxSeen stamps control-stream liveness (called from reader goroutines).
-func (c *Client) rxSeen(stream string) {
-	if stream == "control" {
-		c.mu.Lock()
-		c.lastControlRx = time.Now()
-		c.mu.Unlock()
-	}
-}
-
-// lose records the first session-ending fact exactly once. Safe from any
-// goroutine. Suppressed after a clean Close: teardown errors are not
-// session losses.
-func (c *Client) lose(err error) {
-	if c.clean.Load() {
-		return
-	}
-	c.loseOnce.Do(func() {
-		c.loseErr = err
-		c.log.Warn("ci-v session lost", "err", err)
+		if h.typ == ptRetransmit {
+			s.mu.Lock()
+			s.answerRetransmit(retxRequestSeqs(d, h))
+			s.mu.Unlock()
+			continue
+		}
+		if h.len == pingLen && h.typ == ptPing {
+			t.handlePing(s, d, h)
+			continue
+		}
+		if t.live.Load() {
+			t.dispatch(s, d, h)
+			continue
+		}
 		select {
-		case c.Lost <- err:
-		default:
+		case hs <- d:
+		default: // bounded: drop junk floods during handshake
 		}
-		c.shutdown()
-	})
+	}
 }
 
-// sendTracked is the mutex-guarded tracked send.
-func (c *Client) sendTracked(s *udpStream, p []byte) error {
-	c.wmu.Lock()
-	defer c.wmu.Unlock()
-	return c.sendTrackedLocked(s, p)
+// handlePing answers a radio ping request (echo seq and uptime with the
+// reply flag set, wfview icomudpbase) and ignores replies to our own.
+func (t *Transport) handlePing(s *stream, d []byte, h header) {
+	if d[replyOff] != 0x00 {
+		return
+	}
+	uptime := binary.LittleEndian.Uint32(d[pingTimeOff:])
+	_ = s.sendUntracked(pingPacket(1, h.seq, uptime, s.myID, s.remoteID))
 }
 
-func (c *Client) sendTrackedLocked(s *udpStream, p []byte) error {
-	return s.sendTracked(p)
-}
-
-// SendCIV writes one raw CI-V frame (`FE FE ... FD`) to the data stream as
-// a tracked packet. Callers must hold a live session.
-func (c *Client) SendCIV(payload []byte) error {
-	c.wmu.Lock()
-	defer c.wmu.Unlock()
-	return c.civ.sendTrackedData(payload)
-}
-
-// Frames returns the ordered inbound CI-V frames from the radio (replies
-// and transceive broadcasts).
-func (c *Client) Frames() <-chan []byte { return c.frames }
-
-// RadioName returns the radio's self-description from the stream-request
-// answer (e.g. "IC-9700").
-func (c *Client) RadioName() string { return c.rigName }
-
-// Close tears the session down cleanly: close the data stream, deauth,
-// brief grace for the radio's retransmit requests, then disconnect both
-// streams (kappanhang deinit order). Idempotent. done closes FIRST so the
-// reader goroutines exit quietly while the teardown packets are still
-// being sent.
-func (c *Client) Close() {
-	c.closeOnce.Do(func() {
-		c.clean.Store(true)
-		c.stopTimers()
-		c.markDone()
-		// Data stream first: close packet, then its disconnect one-shot.
-		if c.civ != nil && c.civ.conn != nil {
-			_ = c.sendTracked(c.civ, c.buildOpenClose(true))
-			c.civ.disconnect()
-			_ = c.civ.conn.Close()
-		}
-		// Deauth (0x01), then give the radio ~500 ms to ask for
-		// retransmits before the control socket disappears.
-		if c.control != nil && c.control.conn != nil {
-			if c.auth.gotAuthID {
-				_ = c.sendTracked(c.control, c.auth.buildAuth(c.control.localSID, c.control.remoteSID, 0x01))
-				time.Sleep(500 * time.Millisecond)
+// dispatch routes live-phase datagrams per stream.
+func (t *Transport) dispatch(s *stream, d []byte, h header) {
+	switch {
+	case s.name == "civ" && h.typ == ptIdle && h.len > civHeaderLen:
+		t.handleCivData(s, d, h)
+	case h.len == tokenLen && h.typ == ptIdle:
+		if resp, ok := parseTokenResponse(d); ok {
+			switch resp {
+			case respOK:
+				t.mu.Lock()
+				t.renewalOK(time.Now())
+				t.mu.Unlock()
+				t.log.Debug("token renewal accepted")
+			case errRefused:
+				t.sessionLoss(fmt.Errorf("%w: radio rejected token renewal (0xffffffff)", ErrSessionLost))
+			default:
+				t.log.Warn("unexpected token renewal response", "response", fmt.Sprintf("0x%08x", resp))
 			}
-			c.control.disconnect()
-			_ = c.control.conn.Close()
 		}
-	})
-}
-
-// abort tears down after a failed handshake (no clean disconnect is
-// possible — the radio never granted the session).
-func (c *Client) abort() {
-	c.closeOnce.Do(func() {
-		c.clean.Store(true)
-		c.stopTimers()
-		if c.civ != nil && c.civ.conn != nil {
-			_ = c.civ.conn.Close()
+	case h.len == statusLen && h.typ == ptIdle:
+		st := parseStatus(d)
+		if st.disc || st.err == errRefused {
+			t.sessionLoss(fmt.Errorf("%w: radio disconnected (status packet)", ErrSessionLost))
 		}
-		if c.control != nil && c.control.conn != nil {
-			_ = c.control.conn.Close()
+	}
+}
+
+// handleCivData frames one CI-V data packet by its sub-header datalen (never
+// by scanning for FD), feeds the receive window and delivers in-order,
+// duplicate-free payloads to OnCIVFrame.
+func (t *Transport) handleCivData(s *stream, d []byte, h header) {
+	datalen := int(binary.LittleEndian.Uint16(d[civDatalenOff:]))
+	if datalen == 0 || civHeaderLen+datalen != int(h.len) {
+		// Malformed length: counted and dropped, never parsed further.
+		t.malformed.Add(1)
+		return
+	}
+	payload := append([]byte(nil), d[civHeaderLen:civHeaderLen+datalen]...)
+	s.mu.Lock()
+	s.lastCivRx = time.Now()
+	s.openDue = time.Time{} // data flowing: watchdog disarmed
+	deliver := s.rx.offer(h.seq, payload, t.o.MaxMissing)
+	s.mu.Unlock()
+	t.deliverCIV(deliver)
+}
+
+func (t *Transport) deliverCIV(frames [][]byte) {
+	if t.o.OnCIVFrame == nil {
+		return
+	}
+	for _, f := range frames {
+		t.o.OnCIVFrame(f)
+	}
+}
+
+// --- maintenance -----------------------------------------------------------------------
+
+// maintain runs the periodic jobs of both streams plus the token renewal and
+// session-staleness checks until the context dies. One goroutine, one tick;
+// every job keeps its own deadline.
+func (t *Transport) maintain() {
+	interval := t.o.IdlePeriod / 4
+	for _, d := range []time.Duration{t.o.PingPeriod, t.o.RetransmitPeriod,
+		t.o.StartDataPeriod, t.o.RenewalTimeout, t.o.CivSilence, t.o.SessionTimeout} {
+		if d > 0 && d/4 < interval {
+			interval = d / 4
 		}
-		c.shutdown()
-	})
-}
-
-func (c *Client) stopTimers() {
-	c.smu.Lock()
-	if c.civSilent != nil {
-		c.civSilent.Stop()
-		c.civSilent = nil
 	}
-	if c.reauthDead != nil {
-		c.reauthDead.Stop()
-		c.reauthDead = nil
+	if min := 5 * time.Millisecond; interval < min {
+		interval = min
 	}
-	c.smu.Unlock()
-}
-
-// markDone closes done exactly once, stopping every timer/pump and waking
-// all readers.
-func (c *Client) markDone() {
-	c.smu.Lock()
-	defer c.smu.Unlock()
-	if !c.isDone() {
-		close(c.done)
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-t.ctx.Done():
+			return
+		case now := <-ticker.C:
+			if t.live.Load() {
+				t.tick(now)
+			}
+		}
 	}
 }
 
-// shutdown closes done and the sockets, waking all readers.
-func (c *Client) shutdown() {
-	c.markDone()
-	if c.civ != nil && c.civ.conn != nil {
-		_ = c.civ.conn.Close()
+// tick runs one maintenance pass.
+func (t *Transport) tick(now time.Time) {
+	// Renewal: send when due, die when an outstanding renewal times out.
+	t.mu.Lock()
+	switch {
+	case t.renewal.outstanding && now.After(t.renewal.deadline):
+		t.renewal.outstanding = false
+		t.mu.Unlock()
+		t.sessionLoss(fmt.Errorf("%w: token renewal timed out after %s", ErrSessionLost, t.o.RenewalTimeout))
+		return
+	case !t.renewal.outstanding && now.After(t.renewal.nextDue):
+		t.renewNow(now)
 	}
-	if c.control != nil && c.control.conn != nil {
-		_ = c.control.conn.Close()
+	t.mu.Unlock()
+
+	for _, s := range []*stream{t.ctrl, t.civStream()} {
+		if s == nil {
+			continue
+		}
+		if deliver := t.tickStream(s, now); len(deliver) > 0 {
+			t.deliverCIV(deliver)
+		}
+		if s.name == "civ" {
+			t.tickCivWatchdog(s, now)
+		}
+	}
+
+	// Staleness: a radio that stops answering ANYTHING is gone (keepalive
+	// silence session loss; wfview STALE_CONNECTION posture).
+	t.ctrl.mu.Lock()
+	silentFor := now.Sub(t.ctrl.lastRx)
+	t.ctrl.mu.Unlock()
+	if silentFor > t.o.SessionTimeout {
+		t.sessionLoss(fmt.Errorf("%w: no radio traffic for %s", ErrSessionLost, silentFor.Round(time.Millisecond)))
 	}
 }
 
-func (c *Client) isDone() bool {
-	select {
-	case <-c.done:
-		return true
-	default:
-		return false
+// tickStream services one stream's idle keepalive, ping and retransmit
+// request deadlines. Delivered payloads return to the caller so callbacks
+// run without any lock held.
+func (t *Transport) tickStream(s *stream, now time.Time) (deliver [][]byte) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if now.After(s.nextIdle) {
+		_ = s.sendIdle(now) // tracked; also re-arms nextIdle
+	}
+	if now.After(s.nextPing) {
+		_ = s.sendPing(now)
+		s.nextPing = now.Add(t.o.PingPeriod)
+	}
+	if now.After(s.nextRetx) {
+		s.nextRetx = now.Add(t.o.RetransmitPeriod)
+		var reqs [][]byte
+		deliver, reqs = s.rx.retxTick(t.o.RetransmitTries, t.o.MaxMissing, s.myID, s.remoteID)
+		for _, r := range reqs {
+			_ = s.sendRaw(r)
+		}
+	}
+	return deliver
+}
+
+// tickCivWatchdog re-opens the CI-V data stream after CivSilence of no data
+// (brief: "no CI-V data for 2 s -> re-send the start-data packet"), repeating
+// at the start-data period until data flows again. Arming logs once at Warn;
+// the repeat resends stay at Debug so a silent stream cannot flood the
+// journal.
+func (t *Transport) tickCivWatchdog(s *stream, now time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	silent := now.Sub(s.lastCivRx) > t.o.CivSilence
+	if silent && s.openDue.IsZero() {
+		s.openDue = now // watchdog arms the start-data resend loop
+		t.log.Warn("CI-V watchdog: no CI-V data, re-opening the data stream",
+			"stream", s.name, "silence", now.Sub(s.lastCivRx).Round(time.Millisecond))
+	}
+	if !s.openDue.IsZero() && now.After(s.openDue) {
+		s.openDue = now.Add(t.o.StartDataPeriod)
+		t.log.Debug("CI-V watchdog start-data resend", "stream", s.name)
+		_ = s.sendTracked(openclosePacket(false, s.nextSubSeq(), s.myID, s.remoteID), now)
 	}
 }

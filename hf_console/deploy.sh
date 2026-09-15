@@ -6,32 +6,32 @@
 # installs them on the Raspberry Pi as a hardened systemd service.
 #
 # The browser cannot open raw TCP sockets, so the web build connects to the
-# Go bridge via WebSocket (/mqtt); the bridge forwards bytes to the shack
-# MQTT broker on shari (192.168.1.139:1883).
+# Go bridge via WebSocket (/mqtt); the bridge forwards bytes to the station
+# MQTT broker (192.168.1.50:1883).
 #
 # Usage:
-#   ./deploy.sh                       # deploy to default host 192.168.1.139
+#   ./deploy.sh                       # deploy to default host 192.168.1.140
 #   SSH_HOST=pi@shari.local ./deploy.sh
 #
 # Configurable via environment variables (with defaults):
-#   SSH_HOST        SSH target            (default: 192.168.1.139)
+#   SSH_HOST        SSH target            (default: 192.168.1.140)
 #   SSH_USER        SSH user              (default: io)  [used only if SSH_HOST has no user@]
 #   SERVICE_NAME    systemd service name  (default: hf-console-web)
 #   SERVICE_USER    system user to run as (default: hfconsoleweb)
 #   INSTALL_DIR     remote install dir    (default: /opt/hf-console-web)
 #   HTTP_PORT       HTTP/WebSocket port   (default: 8091)
-#   MQTT_BROKER     MQTT broker TCP addr  (default: 192.168.1.139:1883, the shack broker)
+#   MQTT_BROKER     MQTT broker TCP addr  (default: 192.168.1.50:1883, the station broker)
 #
 set -euo pipefail
 
 # --- configuration ----------------------------------------------------------
-SSH_HOST="${SSH_HOST:-192.168.1.139}"
+SSH_HOST="${SSH_HOST:-192.168.1.140}"
 SSH_USER="${SSH_USER:-io}"
 SERVICE_NAME="${SERVICE_NAME:-hf-console-web}"
 SERVICE_USER="${SERVICE_USER:-hfconsoleweb}"
 INSTALL_DIR="${INSTALL_DIR:-/opt/hf-console-web}"
 HTTP_PORT="${HTTP_PORT:-8091}"
-MQTT_BROKER="${MQTT_BROKER:-192.168.1.139:1883}"
+MQTT_BROKER="${MQTT_BROKER:-192.168.1.50:1883}"
 
 # Allow "user@host" in SSH_HOST; otherwise prepend SSH_USER.
 if [[ "$SSH_HOST" == *"@"* ]]; then

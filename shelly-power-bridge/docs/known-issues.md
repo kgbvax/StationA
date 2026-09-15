@@ -102,12 +102,13 @@ artifact (so it is deliberate, not a typo), while the slot registry contradicted
 it.
 
 Update since the PRD was written: `docs/station-integration-model.md` now declares
-`muehle/uhf/radio` — an **IC-9700** — but still marks it TBD (listed among slots
-whose hardware is unresolved), and no bridge fronts it; the monorepo CLAUDE.md
-slot table still omits it. The open question is therefore narrowed, not closed:
-the operator must confirm at the device that the 13.8 V rail physically feeds the
-IC-9700 (and that a UHF radio slot/bridge will exist). Until then the seeded list
-stays as-is for parity.
+`muehle/uhf/radio` — an **IC-9700** — with a full §7.2 entry, and the slot has an
+owner: **`icom9700-radio-bridge`** (RS-BA1 CI-V over LAN, on-demand session, PTT
+behind an arm gate); the monorepo CLAUDE.md slot table lists it. Update
+(2026-09-15, IC-9700 plan U8): the mystery is resolved to ownership — variant (a)
+was right. What remains open is only the physical confirmation: the operator must
+verify at the device that the 13.8 V rail physically feeds the IC-9700. Until then
+the seeded list stays as-is for parity.
 
 ## [decision] Feeds list omissions: `uhf/pol-ctrl` and `hf/pa`
 

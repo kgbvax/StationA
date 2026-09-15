@@ -1,509 +1,739 @@
 package civ
 
+// Live-session tests: sequence tracking and retransmit, keepalives, ping,
+// token renewal, the CI-V data watchdog, session loss, serialized sends,
+// bounded buffers and the never-log pin for credential-derived bytes.
+
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"log/slog"
-	"net"
+	"os"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
 
-// fastOptions builds Options against the fake radio with test-scale timers.
-func fastOptions(f *fakeRadio) Options {
-	return Options{
-		Host:            "127.0.0.1",
-		ControlPort:     f.addr().Port,
-		CIVPort:         f.civPort(),
-		Username:        "bridge",
-		Password:        "hunter2",
-		PingInterval:    50 * time.Millisecond,
-		LossWatchdog:    300 * time.Millisecond,
-		ReauthInterval:  200 * time.Millisecond,
-		ReauthTimeout:   300 * time.Millisecond,
-		HandshakeTO:     400 * time.Millisecond,
-		AreYouThere:     25 * time.Millisecond,
-		CIVSilence:      150 * time.Millisecond,
-		TxRetention:     2 * time.Second,
-		RxBuffer:        30 * time.Millisecond,
-		HandshakeBudget: 2 * time.Second,
-		Logger:          slog.Default(),
-	}
+// bufLogger is a slog logger capturing every line at every level — the
+// never-log assertions read the raw buffer bytes.
+type bufLogger struct {
+	buf bytes.Buffer
+	mu  sync.Mutex
+	l   *slog.Logger
 }
 
-func dialFake(t *testing.T, f *fakeRadio, o Options) *Client {
-	t.Helper()
-	ctx := context.Background()
-	cli, err := Dial(ctx, o)
-	if err != nil {
-		t.Fatalf("Dial: %v", err)
-	}
-	t.Cleanup(cli.Close)
-	return cli
+func newBufLogger() *bufLogger {
+	bl := &bufLogger{}
+	bl.l = slog.New(slog.NewTextHandler(bl, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	return bl
 }
 
-// waitFrames reads n frames from the client or fails after d.
-func waitFrames(t *testing.T, cli *Client, n int, d time.Duration) [][]byte {
-	t.Helper()
-	var out [][]byte
-	deadline := time.After(d)
-	for len(out) < n {
-		select {
-		case f := <-cli.Frames():
-			out = append(out, f)
-		case <-deadline:
-			t.Fatalf("timed out waiting for %d frames, got %d", n, len(out))
-		}
-	}
+func (bl *bufLogger) Write(p []byte) (int, error) {
+	bl.mu.Lock()
+	defer bl.mu.Unlock()
+	return bl.buf.Write(p)
+}
+
+func testLogger(*testing.T) *slog.Logger {
+	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+}
+
+func (bl *bufLogger) String() string {
+	bl.mu.Lock()
+	defer bl.mu.Unlock()
+	return bl.buf.String()
+}
+
+func (bl *bufLogger) Bytes() []byte {
+	bl.mu.Lock()
+	defer bl.mu.Unlock()
+	return append([]byte(nil), bl.buf.Bytes()...)
+}
+
+// frameCollector gathers CI-V chunks delivered through OnCIVFrame.
+type frameCollector struct {
+	mu     sync.Mutex
+	frames [][]byte
+}
+
+func (fc *frameCollector) add(chunk []byte) {
+	fc.mu.Lock()
+	defer fc.mu.Unlock()
+	fc.frames = append(fc.frames, append([]byte(nil), chunk...))
+}
+
+func (fc *frameCollector) all() [][]byte {
+	fc.mu.Lock()
+	defer fc.mu.Unlock()
+	out := make([][]byte, len(fc.frames))
+	copy(out, fc.frames)
 	return out
 }
 
-// TestHandshakeHappyPath pins the exact packet sequence from connect to
-// CI-V-stream-open (the plan's U2 verification: a wfview log can be diffed
-// against this).
-func TestHandshakeHappyPath(t *testing.T) {
-	f := newFakeRadio(t)
-	cli := dialFake(t, f, fastOptions(f))
-
-	if got := cli.RadioName(); got != "IC-9700" {
-		t.Errorf("RadioName = %q, want IC-9700", got)
-	}
-
-	// The control stream must show the full handshake in order.
-	var fams []string
-	var auth05, requested int
-	f.mu.Lock()
-	for _, p := range f.ctrlPackets {
-		switch {
-		case prefixEqual(p, sigAreYouThere):
-			fams = append(fams, "pkt3")
-		case prefixEqual(p, sigReady):
-			fams = append(fams, "pkt6")
-		case len(p) == 128 && p[0] == 0x80:
-			fams = append(fams, "login")
-		case len(p) == 64 && p[0] == 0x40:
-			fams = append(fams, "auth")
-		case prefixEqual(p, sigRequestAnswer):
-			fams = append(fams, "request")
-			requested++
-		}
-	}
-	auth05 = f.auth05Count
-	f.mu.Unlock()
-
-	want := []string{
-		"pkt3", "pkt3", "pkt6", "pkt6", // are-you-there / ready exchange
-		"login", "auth", "auth", // login, first auth 0x02, second auth 0x05
-		"request",
-	}
-	if len(fams) < len(want) {
-		t.Fatalf("handshake sequence too short: %v", fams)
-	}
-	for i, w := range want {
-		if fams[i] != w {
-			t.Fatalf("handshake sequence at %d = %s, want %s (full: %v)", i, fams[i], w, fams)
-		}
-	}
-	// The auth pair brackets the login: 0x02 then 0x05.
-	if auth05 < 1 {
-		t.Errorf("second auth (0x05) never sent")
-	}
-	if requested == 0 {
-		t.Errorf("stream request never sent")
-	}
-
-	// And the CI-V stream was opened with the open packet. (The datagram is
-	// in flight the moment Dial returns — poll for the fake to log it.)
-	deadline := time.Now().Add(time.Second)
-	for {
-		f.mu.Lock()
-		opens := f.civOpened
-		f.mu.Unlock()
-		if opens >= 1 {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("civ open packets = %d, want 1", opens)
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
+func (fc *frameCollector) count() int {
+	fc.mu.Lock()
+	defer fc.mu.Unlock()
+	return len(fc.frames)
 }
 
-// TestHandshakeRadioSilent: the radio never answers are-you-there — Dial
-// fails with ErrHandshakeTimeout and makes no login attempt (R2: no
-// session attempts except after the handshake answers).
-func TestHandshakeRadioSilent(t *testing.T) {
-	f := newFakeRadio(t)
-	f.mu.Lock()
-	f.silent = true
-	f.mu.Unlock()
-
-	o := fastOptions(f)
-	o.HandshakeBudget = 200 * time.Millisecond
-	ctx := context.Background()
-	cli, err := Dial(ctx, o)
-	if err == nil {
-		cli.Close()
-		t.Fatal("Dial succeeded against a silent radio")
+// dialLive performs a full handshake against fr with the test cadences plus
+// per-test overrides, and registers cleanup.
+func dialLive(t *testing.T, fr *fakeRadio, mut func(*Opts)) *Transport {
+	t.Helper()
+	o := testOpts(fr, testLogger(t))
+	if mut != nil {
+		mut(&o)
 	}
-	if !errors.Is(err, ErrHandshakeTimeout) {
-		t.Fatalf("err = %v, want ErrHandshakeTimeout", err)
+	tr, err := Dial(context.Background(), o)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
 	}
-	logins, _, _, _, _ := f.counts()
-	if logins != 0 {
-		t.Errorf("login attempts = %d, want 0 (no login without are-you-there)", logins)
+	t.Cleanup(func() { tr.Close() })
+	if !tr.Live() {
+		t.Fatal("transport not live after dial")
 	}
+	return tr
 }
 
-// TestLoginRejected: wrong credentials are surfaced verbatim and never
-// retried (the operator fixes them, the bridge reports).
-func TestLoginRejected(t *testing.T) {
-	f := newFakeRadio(t)
-	f.mu.Lock()
-	f.refuseLogin = true
-	f.mu.Unlock()
+func TestCIVSendReceiveRoundTrip(t *testing.T) {
+	fr := newFakeRadio(t)
+	fc := &frameCollector{}
+	tr := dialLive(t, fr, func(o *Opts) { o.OnCIVFrame = fc.add })
 
-	cli, err := Dial(context.Background(), fastOptions(f))
-	if err == nil {
-		cli.Close()
-		t.Fatal("Dial succeeded with refused login")
-	}
-	if !errors.Is(err, ErrLoginRejected) {
-		t.Fatalf("err = %v, want ErrLoginRejected", err)
-	}
-	logins, _, _, _, _ := f.counts()
-	if logins != 1 {
-		t.Errorf("login attempts = %d, want exactly 1", logins)
-	}
-}
-
-// TestSessionRefused: another client holds the session — the 0x50 ff ff ff
-// answer surfaces as ErrConnectionRefused.
-func TestSessionRefused(t *testing.T) {
-	f := newFakeRadio(t)
-	f.mu.Lock()
-	f.refuseSess = true
-	f.mu.Unlock()
-
-	cli, err := Dial(context.Background(), fastOptions(f))
-	if err == nil {
-		cli.Close()
-		t.Fatal("Dial succeeded against a refused session")
-	}
-	if !errors.Is(err, ErrConnectionRefused) {
-		t.Fatalf("err = %v, want ErrConnectionRefused", err)
-	}
-}
-
-// TestCIVRoundTrip: SendCIV reaches the fake with intact framing; inbound
-// frames arrive ordered, payload-stripped.
-func TestCIVRoundTrip(t *testing.T) {
-	f := newFakeRadio(t)
-	cli := dialFake(t, f, fastOptions(f))
-
-	// Outbound: 5 frames, strictly increasing inner sequence.
-	for i := 0; i < 5; i++ {
-		if err := cli.SendCIV([]byte{0xfe, 0xfe, 0xa2, 0xe0, 0x03, byte(i), 0xfd}); err != nil {
-			t.Fatalf("SendCIV %d: %v", i, err)
-		}
-	}
-	deadline := time.Now().Add(2 * time.Second)
-	for {
-		log := f.civLog()
-		got := 0
-		inner := -1
-		increasing := true
-		for _, p := range log {
-			if isData(p) {
-				got++
-				seq := int(binary.BigEndian.Uint16(p[19:21]))
-				if seq <= inner {
-					increasing = false
-				}
-				inner = seq
-			}
-		}
-		if got == 5 {
-			if !increasing {
-				t.Error("inner data sequence not strictly increasing under concurrent sends")
-			}
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("got %d/5 data packets", got)
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-
-	// Inbound: the payload arrives stripped of header + sub-header.
-	f.sendCIVFrame([]byte{0xfe, 0xfe, 0xa2, 0xe0, 0x15, 0x02, 0xfd}, false)
-	frames := waitFrames(t, cli, 1, 2*time.Second)
-	want := []byte{0xfe, 0xfe, 0xa2, 0xe0, 0x15, 0x02, 0xfd}
-	if string(frames[0]) != string(want) {
-		t.Errorf("frame = % x, want % x", frames[0], want)
-	}
-}
-
-// TestRxGapHealed: the fake withholds a frame; the client must detect the
-// gap and request retransmission, after which frames arrive in order (the
-// plan's packet-loss scenario, rx side).
-func TestRxGapHealed(t *testing.T) {
-	f := newFakeRadio(t)
-	cli := dialFake(t, f, fastOptions(f))
-
-	f.sendCIVFrame([]byte{0x01}, false)
-	f.sendCIVFrame([]byte{0x02}, true) // withheld — creates the gap
-	f.sendCIVFrame([]byte{0x03}, false)
-
-	// The fake serves the retransmit request from its tx log; the client
-	// must deliver all three in order.
-	var frames [][]byte
-	func() {
-		defer func() {
-			if t.Failed() {
-				var fams []string
-				for _, p := range f.civLog() {
-					switch {
-					case prefixEqual(p, sigRetransmitSingle):
-						fams = append(fams, "retx-req")
-					case isData(p):
-						fams = append(fams, "data")
-					case isIdle(p):
-						fams = append(fams, "idle")
-					default:
-						fams = append(fams, "other")
-					}
-				}
-				t.Logf("civ log: %v", fams)
-			}
-		}()
-		frames = waitFrames(t, cli, 3, 3*time.Second)
-	}()
-	for i, want := range [][]byte{{0x01}, {0x02}, {0x03}} {
-		if string(frames[i]) != string(want) {
-			t.Errorf("frame %d = % x, want % x (retransmit did not heal the gap in order)", i, frames[i], want)
-		}
-	}
-}
-
-// TestTxRetransmitServed: the radio loses a client packet and asks for it
-// again; the client must resend the identical tracked datagram (twice, like
-// the reference client).
-func TestTxRetransmitServed(t *testing.T) {
-	f := newFakeRadio(t)
-	cli := dialFake(t, f, fastOptions(f))
-
-	payload := []byte{0xfe, 0xfe, 0xa2, 0xe0, 0x05, 0x00, 0x00, 0x50, 0x41, 0x01, 0xfd}
-	if err := cli.SendCIV(payload); err != nil {
+	// Client -> radio: one frame, arriving byte-intact after the sub-header.
+	frame := []byte{0xfe, 0xfe, 0xa2, 0xe0, 0x03, 0xfd}
+	if err := tr.SendCIV(frame); err != nil {
 		t.Fatalf("SendCIV: %v", err)
 	}
-
-	// Learn the client's outer sequence for the packet from the fake's
-	// receive log.
-	deadline := time.Now().Add(2 * time.Second)
-	var seq uint16
-	found := false
-	for time.Now().Before(deadline) {
-		for _, p := range f.civLog() {
-			if isData(p) {
-				seq = dataSeq(p)
-				found = true
-			}
-		}
-		if found {
-			break
-		}
-		time.Sleep(5 * time.Millisecond)
+	waitFor(t, time.Second, "frame at the fake radio", func() bool {
+		return len(fr.civFramesReceived()) == 1
+	})
+	if got := fr.civFramesReceived()[0]; !bytes.Equal(got, frame) {
+		t.Errorf("radio got % x, want % x", got, frame)
 	}
-	if !found {
-		t.Fatal("the client's data packet never reached the fake")
-	}
-	f.mu.Lock()
-	to := f.cliCiv
-	f.mu.Unlock()
 
-	req := header(sigRetransmitSingle, 0, 0)
-	binary.LittleEndian.PutUint16(req[6:8], seq)
-	_, _ = f.civ.WriteToUDP(req, to)
-	_, _ = f.civ.WriteToUDP(req, to)
-
-	deadline = time.Now().Add(2 * time.Second)
-	count := 0
-	for count < 3 {
-		log := f.civLog()
-		count = 0
-		for _, p := range log {
-			if isData(p) && dataSeq(p) == seq {
-				count++
-			}
-		}
-		if time.Now().After(deadline) {
-			break
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	if count < 3 {
-		t.Errorf("data packet seen %d times after retransmit request, want >= 3 (1 + two resent copies)", count)
+	// Radio -> client: datalen-based parse. The fake may put arbitrary bytes
+	// (0xFD included) anywhere in the payload — framing never scans for FD,
+	// so the chunk must arrive exactly as sent, datalen bytes of it.
+	padded := []byte{0xfe, 0xfe, 0xa2, 0xe0, 0x19, 0x01, 0xfd, 0xfd, 0xfd}
+	fr.injectCIV(padded)
+	waitFor(t, time.Second, "chunk delivered", func() bool { return fc.count() >= 1 })
+	if got := fc.all()[0]; !bytes.Equal(got, padded) {
+		t.Errorf("chunk = % x, want the exact datalen payload % x", got, padded)
 	}
 }
 
-// TestTokenRenewal: renewals flow at the configured cadence while live and
-// the session stays up (KTD: token renewal every 60 s — shrunk here).
-func TestTokenRenewal(t *testing.T) {
-	f := newFakeRadio(t)
-	o := fastOptions(f)
-	o.ReauthInterval = 80 * time.Millisecond
-	cli := dialFake(t, f, o)
+func TestPacketLossRetransmitRecoversWithoutDuplicates(t *testing.T) {
+	fr := newFakeRadio(t)
+	fc := &frameCollector{}
+	dialLive(t, fr, func(o *Opts) { o.OnCIVFrame = fc.add })
 
-	time.Sleep(400 * time.Millisecond)
-	_, _, _, _, renewals := f.counts()
-	if renewals < 2 {
-		t.Errorf("renewals = %d in 400ms at an 80ms cadence, want >= 2", renewals)
-	}
-	select {
-	case err := <-cli.Lost:
-		t.Fatalf("session lost during renewals: %v", err)
-	default:
-	}
-}
-
-// TestCIVSilenceWatchdog: with no frames flowing the client re-opens the
-// data stream at the configured cadence (the brief's 2 s watchdog, shrunk).
-func TestCIVSilenceWatchdog(t *testing.T) {
-	f := newFakeRadio(t)
-	o := fastOptions(f)
-	o.CIVSilence = 100 * time.Millisecond
-	cli := dialFake(t, f, o)
-	_ = cli
-
-	time.Sleep(450 * time.Millisecond)
-	_, _, opens, _, _ := f.counts()
-	if opens < 2 {
-		t.Errorf("civ opens = %d after 450ms with a 100ms silence watchdog, want >= 2", opens)
-	}
-}
-
-// TestSessionLossOnSilence: the radio stops answering entirely — the loss
-// watchdog must end the session (R3's session-loss detection).
-func TestSessionLossOnSilence(t *testing.T) {
-	f := newFakeRadio(t)
-	cli := dialFake(t, f, fastOptions(f))
-
-	f.setSilent(true)
-	select {
-	case err := <-cli.Lost:
-		if err == nil {
-			t.Fatal("loss delivered nil error")
+	const total = 30
+	// The radio "loses" 5 of its outgoing data packets (spread out); the
+	// client must detect the sequence gaps, request retransmission and
+	// deliver every frame exactly once, in order.
+	lost := map[int]bool{3: true, 9: true, 14: true, 22: true, 27: true}
+	for i := 0; i < total; i++ {
+		if lost[i] {
+			fr.mu.Lock()
+			fr.dropOut[sockCiv]++
+			fr.mu.Unlock()
 		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("session loss not detected within 2s of radio silence")
+		fr.injectCIV([]byte{0xfe, 0xfe, 0xa2, 0xe0, 0x00, byte(i), 0xfd})
+	}
+
+	waitFor(t, 3*time.Second, "all 30 frames delivered exactly once after retransmit", func() bool {
+		return fc.count() == total
+	})
+	got := fc.all()
+	seen := map[string]int{}
+	for i, f := range got {
+		key := fmt.Sprintf("%x", f)
+		seen[key]++
+		if f[5] != byte(i) {
+			t.Fatalf("frame %d carries marker %d — frames must deliver in sequence order", i, f[5])
+		}
+	}
+	for key, n := range seen {
+		if n != 1 {
+			t.Fatalf("frame %s delivered %d times, duplicates are forbidden", key, n)
+		}
 	}
 }
 
-// TestFloodBounded: a datagram flood must not wedge delivery or grow the
-// queues unboundedly — after the flood the client still delivers fresh
-// frames and stays live.
-func TestFloodBounded(t *testing.T) {
-	f := newFakeRadio(t)
-	cli := dialFake(t, f, fastOptions(f))
+func TestRadioRetransmitRequestRecoversClientPackets(t *testing.T) {
+	fr := newFakeRadio(t)
+	tr := dialLive(t, fr, nil)
 
-	for i := 0; i < 3000; i++ {
-		f.sendCIVFrame([]byte{byte(i), 0x42}, false)
-	}
-	// The stream still works: a fresh frame arrives despite the flood.
-	f.sendCIVFrame([]byte{0xfe, 0xfe, 0xa2, 0xe0, 0x19, 0xfd}, false)
-	waitFrames(t, cli, 1, 3*time.Second)
-
-	select {
-	case err := <-cli.Lost:
-		t.Fatalf("session lost under flood: %v", err)
-	default:
-	}
-}
-
-// TestConcurrentSendsSerialize: concurrent SendCIV callers must not tear
-// the wire — every frame arrives, inner sequences strictly increasing.
-func TestConcurrentSendsSerialize(t *testing.T) {
-	f := newFakeRadio(t)
-	cli := dialFake(t, f, fastOptions(f))
-
-	const n = 20
-	errs := make(chan error, n)
-	for i := 0; i < n; i++ {
-		go func(i int) {
-			errs <- cli.SendCIV([]byte{0xfe, 0xfe, 0xa2, 0xe0, 0x1c, 0x00, byte(i), 0xfd})
-		}(i)
-	}
-	for i := 0; i < n; i++ {
-		if err := <-errs; err != nil {
+	// The client's first three CI-V data datagrams are lost on the way to
+	// the radio; the radio notices the sequence gap, requests retransmission
+	// and the client must re-send from its tx window.
+	fr.dropIncomingData(sockCiv, 3)
+	for i := 0; i < 6; i++ {
+		if err := tr.SendCIV([]byte{0xfe, 0xfe, 0xa2, 0xe0, 0x05, byte(i), 0xfd}); err != nil {
 			t.Fatalf("SendCIV: %v", err)
 		}
 	}
-	deadline := time.Now().Add(2 * time.Second)
-	for {
-		log := f.civLog()
-		seen := 0
-		inner := -1
-		ok := true
-		for _, p := range log {
-			if isData(p) {
-				seen++
-				s := int(binary.BigEndian.Uint16(p[19:21]))
-				if s <= inner {
-					ok = false
+	waitFor(t, 3*time.Second, "all 6 frames at the radio after retransmit", func() bool {
+		return len(fr.civFramesReceived()) == 6
+	})
+	// Every frame is at the radio exactly once. The re-sent frames
+	// legitimately arrive after the live ones (retransmit is late by
+	// nature), so this is a completeness/dedup check, not an order check.
+	seen := map[byte]int{}
+	for _, f := range fr.civFramesReceived() {
+		seen[f[5]]++
+	}
+	for i := 0; i < 6; i++ {
+		if seen[byte(i)] != 1 {
+			t.Errorf("frame marker %d at the radio %d times, want exactly once", i, seen[byte(i)])
+		}
+	}
+	reqs := 0
+	for _, p := range fr.sentOn(sockCiv) {
+		if len(p.data) >= ctrlLen && p.data[typeOff] == ptRetransmit {
+			reqs++
+		}
+	}
+	if reqs == 0 {
+		t.Error("the radio issued no retransmit requests — the fake's loss script did not engage")
+	}
+}
+
+func TestClientAnswersRadioRetransmitWithIdle(t *testing.T) {
+	fr := newFakeRadio(t)
+	dialLive(t, fr, nil)
+
+	// A radio retransmit request for a seq the client never sent (nothing in
+	// the client tx window) must be answered with a 16-byte idle carrying
+	// that seq — the wfview behavior that keeps the radio's own retransmit
+	// loop from spinning on an answer it can use.
+	fr.mu.Lock()
+	req := make([]byte, ctrlLen)
+	putHeader(req, header{len: ctrlLen, typ: ptRetransmit, seq: 4242, sentID: fakeRadioID})
+	fr.send(sockCiv, req) // radio -> client single-packet retransmit request
+	fr.mu.Unlock()
+
+	waitFor(t, time.Second, "16-byte idle answer for the unknown seq", func() bool {
+		for _, p := range fr.recvOn(sockCiv) {
+			if len(p.data) == ctrlLen && p.data[typeOff] == ptIdle {
+				if h := parseHeader(p.data); h.seq == 4242 {
+					return true
 				}
-				inner = s
 			}
 		}
-		if seen == n {
-			if !ok {
-				t.Error("inner sequence not strictly increasing under concurrency")
-			}
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("got %d/%d data packets", seen, n)
-		}
-		time.Sleep(5 * time.Millisecond)
+		return false
+	})
+}
+
+func TestTokenRenewalFiresWhileLive(t *testing.T) {
+	fr := newFakeRadio(t)
+	tr := dialLive(t, fr, nil) // TokenRenewal shrunk to 150ms
+
+	// The handshake itself sends one renewal (requesttype 0x05); the live
+	// renewal loop must keep firing within the configured window.
+	waitFor(t, 2*time.Second, "at least 3 token renewals at the fake", func() bool {
+		renew, _, _, _ := fr.counts()
+		return renew >= 3
+	})
+	if !tr.Live() {
+		t.Fatal("transport must stay live across successful renewals")
 	}
 }
 
-// TestCloseClean: Close sends the close + disconnect packets and does not
-// deliver a loss.
-func TestCloseClean(t *testing.T) {
-	f := newFakeRadio(t)
-	cli := dialFake(t, f, fastOptions(f))
+func TestCivWatchdogReopensSilentStream(t *testing.T) {
+	fr := newFakeRadio(t)
+	dialLive(t, fr, nil) // CivSilence 200ms, StartDataPeriod 60ms
 
-	cli.Close()
-	cli.Close() // idempotent
+	// No CI-V data flows: after the silence bound the watchdog must re-send
+	// the start-data (open) packet, repeating at the start-data period.
+	waitFor(t, 2*time.Second, "watchdog re-open packets", func() bool {
+		_, _, opens, _ := fr.counts()
+		return opens >= 3 // initial open + at least 2 watchdog re-opens
+	})
 
-	deadline := time.Now().Add(time.Second)
-	for time.Now().Before(deadline) {
-		_, _, _, closes, _ := f.counts()
-		if closes >= 1 {
-			break
+	// Data arriving disarms the watchdog: open count freezes while frames flow.
+	fr.startAutoCiv(40 * time.Millisecond)
+	waitFor(t, 2*time.Second, "auto civ frames flowing", func() bool {
+		return fr.framesSentCount() >= 3
+	})
+	_, _, opensBefore, _ := fr.counts()
+	time.Sleep(400 * time.Millisecond)
+	_, _, opensAfter, _ := fr.counts()
+	if opensAfter != opensBefore {
+		t.Errorf("open packets while data flowing: %d -> %d — watchdog must disarm on data", opensBefore, opensAfter)
+	}
+	fr.stopAutoCiv()
+}
+
+func TestSessionLossOnKeepaliveSilence(t *testing.T) {
+	fr := newFakeRadio(t)
+	var lost atomic.Value // error
+	ready := make(chan struct{}, 1)
+	tr := dialLive(t, fr, func(o *Opts) {
+		o.OnSessionLoss = func(err error) {
+			lost.Store(err)
+			select {
+			case ready <- struct{}{}:
+			default:
+			}
 		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	_, _, _, closes, _ := f.counts()
-	if closes == 0 {
-		t.Error("close packet never sent")
-	}
+	})
+
+	fr.stopAnswering()
 	select {
-	case err := <-cli.Lost:
-		t.Fatalf("clean close delivered a loss: %v", err)
-	default:
+	case <-ready:
+	case <-time.After(3 * time.Second):
+		t.Fatal("session-loss callback never fired after the radio went silent")
+	}
+	if err, _ := lost.Load().(error); !errors.Is(err, ErrSessionLost) {
+		t.Fatalf("session-loss error = %v, want ErrSessionLost", err)
+	}
+	if tr.Live() {
+		t.Error("transport must report not-live after session loss")
+	}
+	if err := tr.SendCIV([]byte{0xfe, 0xfd}); !errors.Is(err, ErrSessionLost) {
+		t.Errorf("SendCIV after session loss = %v, want ErrSessionLost", err)
 	}
 }
 
-// TestLocalSIDDerivation checks the derived session-ID formula
-// (IPv4 bytes << 16 | port) on a known address.
-func TestLocalSIDDerivation(t *testing.T) {
-	ip := net.IPv4(192, 168, 1, 20).To4()
-	want := uint64(0xc0a80114)<<16 | 50002
-	sid := uint64(binary.BigEndian.Uint32(ip))<<16 | uint64(50002&0xffff)
-	if sid != want {
-		t.Fatalf("sid = %012x, want %012x", sid, want)
+func TestSessionLossOnRenewalRejection(t *testing.T) {
+	fr := newFakeRadio(t)
+	lost := make(chan error, 1)
+	tr := dialLive(t, fr, func(o *Opts) {
+		o.OnSessionLoss = func(err error) { lost <- err }
+	})
+
+	// The radio rejects the next renewal with response 0xffffffff (session
+	// taken over / gone stale) — that must surface as session loss (R3: a
+	// full re-login path, never a resume).
+	fr.mu.Lock()
+	p := make([]byte, tokenLen)
+	putHeader(p, header{len: tokenLen, sentID: fakeRadioID, rcvdID: tr.ctrl.myID})
+	p[reqReplyOff] = 0x02
+	p[reqTypeOff] = 0x05
+	putLE32(p, errOff, 0xffffffff)
+	fr.send(sockCtrl, p)
+	fr.mu.Unlock()
+
+	select {
+	case err := <-lost:
+		if !errors.Is(err, ErrSessionLost) {
+			t.Fatalf("session-loss error = %v, want ErrSessionLost", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("renewal rejection must surface as session loss")
 	}
+}
+
+func TestConcurrentSendsSerialize(t *testing.T) {
+	fr := newFakeRadio(t)
+	tr := dialLive(t, fr, nil)
+
+	const n = 8
+	var wg sync.WaitGroup
+	errs := make(chan error, n)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i byte) {
+			defer wg.Done()
+			if err := tr.SendCIV([]byte{0xfe, 0xfe, 0xa2, 0xe0, 0x1c, 0x00, i, 0xfd}); err != nil {
+				errs <- err
+			}
+		}(byte(i))
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Fatalf("concurrent SendCIV: %v", err)
+	}
+
+	waitFor(t, 2*time.Second, "all 8 frames at the radio", func() bool {
+		return len(fr.civFramesReceived()) == n
+	})
+	// Serialization: the sub-header sendseq counter is assigned under the
+	// send lock, so the seqs the radio saw must be strictly increasing in
+	// arrival order and all distinct.
+	seqs := fr.civSubSeqsReceived()
+	seen := map[uint16]bool{}
+	for i, s := range seqs {
+		if seen[s] {
+			t.Fatalf("sub-header sendseq %d reused — concurrent sends did not serialize", s)
+		}
+		seen[s] = true
+		if i > 0 && s <= seqs[i-1] {
+			t.Fatalf("sendseqs not strictly increasing at %d: %v", i, seqs)
+		}
+	}
+	// Every frame arrived intact (no interleaved corruption).
+	for _, f := range fr.civFramesReceived() {
+		if len(f) != 8 || f[0] != 0xfe || f[7] != 0xfd {
+			t.Fatalf("corrupted frame % x — concurrent sends interleaved", f)
+		}
+	}
+}
+
+func TestBuffersBoundedUnderFlood(t *testing.T) {
+	fr := newFakeRadio(t)
+	fc := &frameCollector{}
+	tr := dialLive(t, fr, func(o *Opts) { o.OnCIVFrame = fc.add })
+
+	// Flood: 2000 sequential frames in paced batches — fast enough that the
+	// reader runs behind the writer and loss + retransmit recovery runs
+	// mid-test, paced enough that the loopback kernel buffer never drops a
+	// whole window at once (a burst loss beyond the protocol's own >50-missing
+	// flush bound is unrecoverable BY DESIGN — wfview flushes and resyncs).
+	// The plan's assertion is bounded growth: every buffer stays capped
+	// throughout and delivery is exactly-once.
+	const total = 2000
+	const batch = 100
+	for sent := 0; sent < total; sent += batch {
+		for i := sent; i < sent+batch && i < total; i++ {
+			fr.injectCIV([]byte{0xfe, 0xfe, 0xa2, 0xe0, 0x00, byte(i), byte(i >> 8), 0xfd})
+		}
+		// Let the reader drain before deepening the queue.
+		waitFor(t, 5*time.Second, "reader to drain the batch", func() bool {
+			return fc.count() >= sent+batch-10 || fc.count() >= total-10
+		})
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < 20; i++ {
+			time.Sleep(50 * time.Millisecond)
+			s := tr.Stats()
+			for k, v := range s {
+				if v > txWindowCap {
+					t.Errorf("during flood: stats[%s] = %d exceeds the tx-window cap %d", k, v, txWindowCap)
+				}
+			}
+			if s["civ_pending"] > maxMissingCap || s["civ_missing"] > maxMissingCap {
+				t.Errorf("during flood: rx window unbounded: %v", s)
+			}
+		}
+	}()
+
+	waitFor(t, 30*time.Second, "delivery converges (loss recovery included)", func() bool {
+		return fc.count() >= 98*total/100
+	})
+	<-done
+	// Delivery must be exactly-once (no duplicates — that is the invariant
+	// the retransmit machinery owes the consumer) and monotonic within the
+	// pre-flush and post-flush runs.
+	frames := fc.all()
+	seen := map[int]bool{}
+	prev, runs := -1, 1
+	for _, f := range frames {
+		got := int(f[5]) | int(f[6])<<8
+		if seen[got] {
+			t.Fatalf("frame %d delivered twice under flood", got)
+		}
+		seen[got] = true
+		if got < prev {
+			runs++ // a flush resync starts a new monotonic run
+		}
+		prev = got
+	}
+	if runs > 3 {
+		t.Errorf("%d separate delivery runs — the stream should not resync repeatedly", runs)
+	}
+	s := tr.Stats()
+	for k, v := range s {
+		if v > txWindowCap {
+			t.Fatalf("after flood: stats[%s] = %d exceeds the tx-window cap %d", k, v, txWindowCap)
+		}
+	}
+	if s["civ_pending"] > maxMissingCap || s["civ_missing"] > maxMissingCap {
+		t.Fatalf("after flood: rx window unbounded: %v", s)
+	}
+}
+
+func TestSeqGapBeyondFlushThresholdResyncs(t *testing.T) {
+	fr := newFakeRadio(t)
+	fc := &frameCollector{}
+	tr := dialLive(t, fr, func(o *Opts) {
+		o.OnCIVFrame = fc.add
+		o.MaxMissing = 10 // shrink the flush bound for the test
+	})
+
+	// Frames 1..5, then a jump straight to seq 100: the 94-packet hole
+	// exceeds the flush threshold, buffers must flush and the stream must
+	// resync on the new seq instead of buffering 94 missing entries forever.
+	for s := uint16(1); s <= 5; s++ {
+		fr.injectCIVAt(s, []byte{0xfd, byte(s)})
+	}
+	fr.injectCIVAt(100, []byte{0xfd, 100})
+	fr.injectCIVAt(101, []byte{0xfd, 101})
+
+	waitFor(t, 2*time.Second, "post-flush frames delivered", func() bool {
+		return fc.count() >= 7
+	})
+	frames := fc.all()
+	// First five in order, then the resync pair; the hole never emitted.
+	for i := 0; i < 5; i++ {
+		if frames[i][1] != byte(i+1) {
+			t.Fatalf("frame %d = %d, want %d", i, frames[i][1], i+1)
+		}
+	}
+	if frames[5][1] != 100 || frames[6][1] != 101 {
+		t.Fatalf("after flush expected 100,101, got %d,%d", frames[5][1], frames[6][1])
+	}
+	if s := tr.Stats(); s["civ_pending"] > 10 || s["civ_missing"] > 10 {
+		t.Fatalf("rx buffers exceeded the shrunk flush bound after resync: %+v", s)
+	}
+}
+
+func TestLostFrameGiveUpAdvancesStream(t *testing.T) {
+	fr := newFakeRadio(t)
+	fc := &frameCollector{}
+	tr := dialLive(t, fr, func(o *Opts) {
+		o.OnCIVFrame = fc.add
+		o.RetransmitTries = 2
+	})
+
+	// The radio permanently loses one of its packets (unreachable by
+	// retransmit). After the give-up bound the client must advance past the
+	// hole and keep delivering later frames instead of stalling.
+	fr.injectCIV([]byte{0xfd, 1})
+	fr.mu.Lock()
+	fr.dropOut[sockCiv]++ // the NEXT radio datagram is dropped in transit
+	fr.injectCIVLocked([]byte{0xfd, 2})
+	lostSeq := fr.civSeq // the just-tracked seq is the dropped one
+	fr.lostCiv[lostSeq] = true
+	fr.mu.Unlock()
+	fr.injectCIV([]byte{0xfd, 3})
+	fr.injectCIV([]byte{0xfd, 4})
+
+	waitFor(t, 3*time.Second, "frames beyond the permanent hole (1,3,4)", func() bool {
+		return fc.count() >= 3
+	})
+	got := map[byte]bool{}
+	var delivered [][]byte
+	for _, f := range fc.all() {
+		got[f[1]] = true
+		delivered = append(delivered, f)
+	}
+	for _, want := range []byte{1, 3, 4} {
+		if !got[want] {
+			t.Errorf("frame %d missing after give-up: delivered %v", want, delivered)
+		}
+	}
+	if got[2] {
+		t.Error("the permanently lost frame must not appear")
+	}
+	if s := tr.Stats(); s["civ_pending"] > 4 || s["civ_missing"] > 4 {
+		t.Fatalf("rx buffers grew past the hole: %+v", s)
+	}
+}
+
+func TestCredentialsNeverLogged(t *testing.T) {
+	fr := newFakeRadio(t)
+	bl := newBufLogger()
+	o := testOpts(fr, bl.l)
+	tr, err := Dial(context.Background(), o)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer tr.Close()
+
+	// Run a renewal and traffic through the session so every code path that
+	// could conceivably log has run at debug level.
+	waitFor(t, 2*time.Second, "renewal fired", func() bool {
+		renew, _, _, _ := fr.counts()
+		return renew >= 2
+	})
+	if err := tr.SendCIV([]byte{0xfe, 0xfe, 0xa2, 0xe0, 0x19, 0xfd}); err != nil {
+		t.Fatalf("SendCIV: %v", err)
+	}
+	time.Sleep(100 * time.Millisecond)
+
+	out := bl.Bytes()
+	for _, secret := range []string{"operator1", "s3cret!"} {
+		if bytes.Contains(out, []byte(secret)) {
+			t.Errorf("credential %q appears in slog output — credential-bearing packets are never logged", secret)
+		}
+	}
+	// The substituted (wire) forms of both secrets must not leak either —
+	// the substitution table is public, so captured bytes ARE the password.
+	encUser, encPass := passcode("operator1"), passcode("s3cret!")
+	for _, enc := range [][]byte{encUser[:], encPass[:]} {
+		if bytes.Contains(out, enc) {
+			t.Errorf("substituted credential bytes % x appear in slog output", enc)
+		}
+	}
+	// The session token must not leak either.
+	var tok [4]byte
+	binary.LittleEndian.PutUint32(tok[:], fakeToken)
+	if bytes.Contains(out, tok[:]) {
+		t.Error("session token bytes appear in slog output")
+	}
+	if len(out) == 0 {
+		t.Fatal("debug logging produced no output — the capture is not exercising the log paths")
+	}
+}
+
+func TestCloseCleanDisconnect(t *testing.T) {
+	fr := newFakeRadio(t)
+	tr := dialLive(t, fr, nil)
+
+	if err := tr.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	waitFor(t, time.Second, "clean-disconnect packets at the radio", func() bool {
+		// All four courtesy packets, on both sockets — the civ-socket pair
+		// and the ctrl-socket pair arrive on different UDP sockets, so their
+		// relative order genuinely races.
+		_, logout, _, closes := fr.counts()
+		if logout < 1 || closes < 1 {
+			return false
+		}
+		foundCtrlLogout, foundTokenRemoval := false, false
+		for _, p := range fr.recvOn(sockCtrl) {
+			if len(p.data) == ctrlLen && p.data[typeOff] == ptLogout {
+				foundCtrlLogout = true
+			}
+			if len(p.data) == tokenLen && p.data[typeOff] == ptIdle && p.data[reqTypeOff] == 0x01 {
+				foundTokenRemoval = true
+			}
+		}
+		return foundCtrlLogout && foundTokenRemoval
+	})
+	// CI-V stream: close (openclose magic 0x00) plus a control 0x05 there;
+	// control stream: token removal (0x40 requesttype 0x01) plus a 0x05.
+	foundCivClose, foundCivLogout := false, false
+	for _, p := range fr.recvOn(sockCiv) {
+		if len(p.data) == openCloseLen && p.data[magicOff] == 0x00 {
+			foundCivClose = true
+		}
+		if len(p.data) == ctrlLen && p.data[typeOff] == ptLogout {
+			foundCivLogout = true
+		}
+	}
+	if !foundCivClose {
+		t.Error("no openclose-close (magic 0x00) on the civ socket")
+	}
+	if !foundCivLogout {
+		t.Error("no control disconnect (type 0x05) on the civ socket")
+	}
+	foundCtrlLogout, foundTokenRemoval := false, false
+	for _, p := range fr.recvOn(sockCtrl) {
+		if len(p.data) == ctrlLen && p.data[typeOff] == ptLogout {
+			foundCtrlLogout = true
+		}
+		if len(p.data) == tokenLen && p.data[typeOff] == ptIdle && p.data[reqTypeOff] == 0x01 {
+			foundTokenRemoval = true
+		}
+	}
+	if !foundCtrlLogout {
+		t.Error("no control disconnect (type 0x05) on the control socket")
+	}
+	if !foundTokenRemoval {
+		t.Error("no token-removal packet (0x40 requesttype 0x01) on the control socket")
+	}
+	if tr.Live() {
+		t.Error("Live() must be false after Close")
+	}
+	if err := tr.SendCIV([]byte{0xfe, 0xfd}); !errors.Is(err, ErrClosed) {
+		t.Errorf("SendCIV after Close = %v, want ErrClosed", err)
+	}
+	// Idempotent.
+	if err := tr.Close(); err != nil {
+		t.Errorf("second Close = %v, want nil", err)
+	}
+}
+
+func TestPingRequestAnswered(t *testing.T) {
+	fr := newFakeRadio(t)
+	dialLive(t, fr, nil)
+
+	// Unsolicited ping request from the radio: the client answers with the
+	// reply flag set, echoing seq and uptime (wfview icomudpbase).
+	fr.injectPingRequest(0x37, 0x11223344)
+	waitFor(t, time.Second, "ping reply", func() bool {
+		for _, p := range fr.recvOn(sockCtrl) {
+			if len(p.data) == pingLen && p.data[typeOff] == ptPing && p.data[replyOff] == 0x01 {
+				h := parseHeader(p.data)
+				uptime := binary.LittleEndian.Uint32(p.data[pingTimeOff:])
+				return h.seq == 0x37 && uptime == 0x11223344
+			}
+		}
+		return false
+	})
+}
+
+func TestIdleKeepaliveFlows(t *testing.T) {
+	fr := newFakeRadio(t)
+	dialLive(t, fr, nil) // IdlePeriod shrunk to 25ms
+
+	// The client keeps the session warm with tracked idle packets on both
+	// streams even with no work to send (the radio drops us without them).
+	idles := func(sock string) int {
+		n := 0
+		for _, p := range fr.recvOn(sock) {
+			if len(p.data) == ctrlLen && p.data[typeOff] == ptIdle && parseHeader(p.data).seq != 0 {
+				n++
+			}
+		}
+		return n
+	}
+	waitFor(t, 2*time.Second, "idles on the control stream", func() bool { return idles(sockCtrl) >= 3 })
+	waitFor(t, 2*time.Second, "idles on the civ stream", func() bool { return idles(sockCiv) >= 3 })
+}
+
+func TestPingsRepeatAtPeriod(t *testing.T) {
+	fr := newFakeRadio(t)
+	dialLive(t, fr, nil) // PingPeriod shrunk to 60ms
+
+	waitFor(t, 2*time.Second, "several client pings on the control stream", func() bool {
+		n := 0
+		for _, p := range fr.recvOn(sockCtrl) {
+			if len(p.data) == pingLen && p.data[typeOff] == ptPing && p.data[replyOff] == 0x00 {
+				n++
+			}
+		}
+		return n >= 3
+	})
+}
+
+// Malformed datagrams with lying header lengths must be dropped, never
+// panicked on — the control/CI-V sockets are LAN-reachable (review fix).
+func TestReadLoopDropsMalformedLengthDatagrams(t *testing.T) {
+	fr := newFakeRadio(t)
+	tr := dialLive(t, fr, nil)
+
+	// 16 bytes claiming the 21-byte ping size; 20 bytes claiming the
+	// 0x40-byte token reply; a 30-byte civ frame claiming 40. Pre-gate,
+	// each passes dispatch on the CLAIMED h.len and reads past the slice.
+	short := func(total int, claimed uint32, typ byte) []byte {
+		b := make([]byte, total)
+		binary.LittleEndian.PutUint32(b[0:], claimed)
+		b[4] = typ
+		return b
+	}
+	fr.InjectDatagram(sockCtrl, short(16, uint32(pingLen), ptPing))
+	fr.InjectDatagram(sockCtrl, short(20, 0x40, ptIdle))
+	fr.InjectDatagram(sockCiv, short(30, 40, ptIdle))
+
+	// The transport rides through it: pings keep flowing both ways.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if tr.Live() {
+			alive := false
+			for _, p := range fr.sentOn(sockCtrl) {
+				if len(p.data) == pingLen && p.data[typeOff] == ptPing && p.data[replyOff] == 0x01 {
+					alive = true
+				}
+			}
+			if alive {
+				return // a ping reply after the garbage: loop alive, no panic
+			}
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("no ping reply after malformed datagrams — read loop died or wedged")
 }
