@@ -333,7 +333,9 @@ class _UhfRadioPanelState extends State<UhfRadioPanel> {
     return Row(
       children: [
         if (bridgeUp) StatusTag(label: tag, color: color),
-        if (live) ...[
+        if (bridgeUp && live) ...[
+          // Dead-bridge retained snapshots must not read as current TX/RX
+          // state — the whole row gates on bridge liveness (review finding).
           const SizedBox(width: 6),
           StatusTag(
             label: tx == 'tx' ? 'TX' : 'RX',

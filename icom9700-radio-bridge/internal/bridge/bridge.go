@@ -268,7 +268,12 @@ func (b *Bridge) Poll(ctx context.Context) {
 		// must never become a connect demand (R2 — no login attempts except
 		// cmd/arm/safety-driven). Do's closure re-checks the transport and
 		// bails without sending if the session died in between.
-		_ = b.sess.Do(ctx, b.sendPollReads)
+		if err := b.sess.Do(ctx, b.sendPollReads); err != nil {
+			// Visible at the station's journalctl -p warning filter: a
+			// persistently failing poll is otherwise silent (the dedup
+			// heartbeat keeps the retained snapshot fresh either way).
+			b.log.Warn("telemetry poll failed", "err", err)
+		}
 	}
 	sharedmqtt.Enqueue(b.jobs, func() { b.publishState(false) })
 }

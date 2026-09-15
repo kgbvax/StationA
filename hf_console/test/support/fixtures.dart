@@ -242,7 +242,10 @@ extension BusStoreFixtures on BusStore {
       'armed': armed,
     };
     if (sessionState == 'live') {
-      final mainActive = selectedVfo == 'main';
+      // The top-level fields mirror the TX VFO: selected EXCEPT satellite
+      // mode forces SUB (the uplink) — matching the bridge's state assembly.
+      final txVfo = satellite ? 'sub' : selectedVfo;
+      final mainActive = txVfo == 'main';
       state['freq_hz'] = mainActive ? mainFreqHz : subFreqHz;
       state['band'] = mainActive ? mainBand : subBand;
       state['mode'] = mainActive ? mainMode : subMode;

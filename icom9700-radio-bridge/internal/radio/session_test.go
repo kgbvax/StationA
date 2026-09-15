@@ -580,3 +580,34 @@ func TestDemandSpacingAcrossStates(t *testing.T) {
 		t.Fatal("failed arm demand must fail-disarm")
 	}
 }
+
+// Disconnect is the polite-teardown seam (managerAdapter.Poll drives it in
+// production): courtesy logout + live→idle only, permit untouched.
+func TestDisconnectTearsDownPolitely(t *testing.T) {
+	fr := newFake(t)
+	s := NewSession(sessionCfg(fr, testLogger()), Hooks{})
+	defer s.Close()
+
+	if err := s.SetArmed(context.Background(), true); err != nil {
+		t.Fatalf("arm: %v", err)
+	}
+	waitForState(t, s, 2*time.Second, StateLive)
+	_, logoutBefore, _, _ := fr.Counts()
+
+	s.Disconnect()
+
+	waitForState(t, s, 2*time.Second, StateIdle)
+	if !s.Armed() {
+		t.Fatal("Disconnect must not touch the arm permit (R11: only session loss/restart drop it)")
+	}
+	// The fake's counters lag the client-side teardown (UDP arrival + serve
+	// goroutine) — poll for the courtesy packets rather than reading once.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, logoutAfter, _, closes := fr.Counts(); logoutAfter >= logoutBefore+1 && closes > 0 {
+			return
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	t.Fatal("polite teardown packets never reached the radio (logout / openclose-close)")
+}

@@ -218,8 +218,9 @@ func (c *Codec) BuildReadPTT() []byte {
 }
 
 // BuildReadID builds the transceiver-ID probe (19 00; the official table
-// documents the sub command). The live handshake uses it as the identity
-// probe after the stream opens.
+// documents the sub command). BENCH-ONLY today: the live handshake does NOT
+// send it — radio identity is not verified at connect (a bench pin, see
+// docs/civ-research-brief.md).
 func (c *Codec) BuildReadID() []byte {
 	return c.frame(CmdTransceiverID, 0x00)
 }

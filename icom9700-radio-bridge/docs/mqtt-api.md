@@ -157,7 +157,7 @@ fact surviving the decay — see below):
 | `device_online` | boolean | always | **CI-V control-session liveness** — `true` only while `live`; healthy idle reads `false` (R16); `session_state` is the idle-vs-fault discriminator |
 | `armed` | boolean | always | the bridge-held PTT permit (KTD-4); drops on session loss and restart (fail-disarmed, R11) |
 | `s_meter` | integer 0–255 | live only, when read | raw S-meter level (S0=0, S9=120); ≤1 Hz, dedup-suppressed (KTD-8) |
-| `tx_power` | integer 0–255 | live only, when read | RF output power (14 0A) of the selected band's VFO |
+| `tx_power` | integer 0–255 | live only, when read | RF output power (14 0A) of the active-TX VFO — mirrors `main`/`sub` like `freq_hz` (the radio applies 14 0A to the currently selected band's VFO) |
 | `swr`, `alc` | integer 0–255 | live only, when read | raw SWR / ALC meter levels |
 | `error` | string | when a fact is held | observed failure facts only — see taxonomy below; cleared by the next successful operator activity (arm/cmd) or the error-decay for non-safety facts |
 

@@ -292,6 +292,10 @@ void main() {
       // read as a current IDLE, and nothing may be operable.
       expect(find.text('OFFLINE'), findsOneWidget);
       expect(find.text('IDLE'), findsNothing);
+      // The RX/TX chip rides the same liveness gate: a retained live
+      // snapshot must not read as current radio state (review finding).
+      expect(find.text('RX'), findsNothing);
+      expect(find.text('TX'), findsNothing);
       expect(btn(tester, 'uhf-arm-btn').onPressed, isNull);
       expect(btn(tester, 'uhf-ptt-btn').onPressed, isNull);
       expect(btn(tester, 'uhf-main-mode-fm').onPressed, isNull);
