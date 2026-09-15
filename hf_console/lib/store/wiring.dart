@@ -86,6 +86,9 @@ String switchSetPaPayload(String onOff) => cmdPayload('set_pa', onOff);
 String switchSetTrxPayload(String onOff) => cmdPayload('set_trx', onOff);
 
 // pa-arm.set_enabled value is a **string** "true" / "false".
+// No console UI publishes this today (the PA ARM panel was removed — arm
+// stays sequencer/automation-owned), but the payload contract is kept here
+// with the rest of the slot vocabulary.
 String paArmPayload(bool enabled) =>
     cmdPayload('set_enabled', enabled ? 'true' : 'false');
 
