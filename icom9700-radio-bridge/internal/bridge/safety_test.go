@@ -490,3 +490,41 @@ func TestRestartFailsDisarmedAndRejectsPTT(t *testing.T) {
 		t.Errorf("radio received %d PTT-on frames, want only the pre-restart one", n)
 	}
 }
+
+// A completed bridge key-down ends the watchdog window (review fix): after
+// ptt off (still armed) and a later disarm, exactly ONE PTT-off frame exists
+// and no watchdog trip fires over the expired bound.
+func TestPTTOffEndsTheWatchdogWindow(t *testing.T) {
+	fr := mustFakeRadio(t)
+	model := newRadioModel()
+	b, fake := newSafetyBridgeBound(t, fr, model, nil, 150*time.Millisecond)
+	defer b.Close()
+	st := topicState(b.opts)
+
+	keyUp(t, b, fake, fr)
+	deliverCmd(b, `{"action":"ptt","value":"off"}`)
+	waitFor(t, 2*time.Second, "tx back to rx", func() bool {
+		return lastState(t, fake, st)["tx"] == "rx"
+	})
+	// Still armed: the permit stands, only the key-up is resolved.
+	deliverCmd(b, `{"action":"disarm"}`)
+	waitFor(t, 2*time.Second, "disarmed published", func() bool {
+		return lastState(t, fake, st)["armed"] == false
+	})
+
+	// Well past the 150 ms bound: no watchdog frame, no trip fact.
+	time.Sleep(400 * time.Millisecond)
+	off := b.codec.BuildPTT(false)
+	n := 0
+	for _, f := range fr.CivFramesReceived() {
+		if string(f) == string(off) {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("PTT-off frames = %d, want exactly 1 (the cmd's own)", n)
+	}
+	if got := lastError(t, fake, st); got != "" {
+		t.Fatalf("error = %q — a completed cycle must not trip", got)
+	}
+}

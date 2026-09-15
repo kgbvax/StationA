@@ -134,13 +134,18 @@ func (b *Bridge) reject(msg string) {
 
 // admit clears the previous rejection (the next admitted intent acks it —
 // the spid cmdErr pattern), then dispatches the frame sequence; a send
-// failure rejects with the observed fact.
-func (b *Bridge) admit(ctx context.Context, frames [][]byte) {
+// failure rejects with the observed fact. Returns the send outcome so
+// callers can skip echo-recording on a failed set; the retained /cmd is
+// cleared on BOTH paths (execute-or-reject, KTD-6).
+func (b *Bridge) admit(ctx context.Context, frames [][]byte) error {
 	b.setCmdErr("")
 	b.publishState(false)
 	if err := b.send(ctx, frames); err != nil {
 		b.reject(err.Error())
+		return err
 	}
+	b.clearCmd()
+	return nil
 }
 
 // send runs the frame sequence through the session. A cmd-driven connect is
@@ -150,9 +155,9 @@ func (b *Bridge) send(ctx context.Context, frames [][]byte) error {
 	dctx, cancel := context.WithTimeout(ctx, doTimeout)
 	defer cancel()
 	return b.sess.Do(dctx, func(tr *civ.Transport) error {
-		if !tr.Live() {
-			return nil // session died between connect and dispatch: nothing to send
-		}
+		// No liveness guard: a transport that died between connect and
+		// dispatch makes SendCIV fail, and the error becomes the rejection —
+		// a queued cmd is never silently dropped (plan U4 pin).
 		return sendFrames(tr, frames)
 	})
 }
@@ -322,8 +327,13 @@ func (b *Bridge) cmdSetPreamp(ctx context.Context, cmd cmdMsg) {
 		return
 	}
 	lvl := int(lvl64)
-	b.admit(ctx, vfoScopedFrames(b.codec, vfo, b.selectedVFO(), [][]byte{frames}))
-	b.rememberVFOInt(vfo, func(v *vfoCache) { v.preamp = &lvl })
+	// The echo is recorded only on a delivered set — a failed admit leaves
+	// the cache untouched (v1 never polls these fields; a recorded failure
+	// would persist as wrong state).
+	if err := b.admit(ctx, vfoScopedFrames(b.codec, vfo, b.selectedVFO(), [][]byte{frames})); err != nil {
+		return
+	}
+	b.rememberVFO(vfo, func(v *vfoCache) { v.preamp = &lvl })
 }
 
 // cmdSetAttenuator: on|off (11 00 off / 11 10 = 10 dB).
@@ -338,8 +348,10 @@ func (b *Bridge) cmdSetAttenuator(ctx context.Context, cmd cmdMsg) {
 		b.reject(fmt.Sprintf("attenuator rejected: invalid value %q (want on|off)", cmd.Value))
 		return
 	}
-	b.admit(ctx, vfoScopedFrames(b.codec, vfo, b.selectedVFO(), [][]byte{b.codec.BuildSetAttenuator(on)}))
-	b.rememberVFOBool(vfo, func(v *vfoCache) { v.attenuator = &on })
+	if err := b.admit(ctx, vfoScopedFrames(b.codec, vfo, b.selectedVFO(), [][]byte{b.codec.BuildSetAttenuator(on)})); err != nil {
+		return
+	}
+	b.rememberVFO(vfo, func(v *vfoCache) { v.attenuator = &on })
 }
 
 // cmdSetPower: RF output power 0-255, applied to the target VFO's band
@@ -430,19 +442,18 @@ func (b *Bridge) cmdPTT(ctx context.Context, cmd cmdMsg) {
 	if on && b.opts.OnPTTOn != nil {
 		b.opts.OnPTTOn()
 	}
+	if !on {
+		// A completed key-down ends the watchdog window: keyed that outlives
+		// its cause makes a later permit drop force-unkey an unrelated
+		// carrier (and dial while down) — review finding, U6 lifecycle.
+		b.safety.pttOff()
+	}
 	b.clearCmd()
 }
 
-// rememberVFOInt / rememberVFOBool fold a cmd echo into the per-VFO cache
-// (the "where known" preamp/attenuator detail fields).
-func (b *Bridge) rememberVFOInt(vfo civ.VFO, f func(*vfoCache)) {
-	b.mu.Lock()
-	f(&b.radio.vfo[vfo])
-	b.mu.Unlock()
-	b.publishState(false)
-}
-
-func (b *Bridge) rememberVFOBool(vfo civ.VFO, f func(*vfoCache)) {
+// rememberVFO folds a cmd echo into the per-VFO cache (the "where known"
+// preamp/attenuator detail fields).
+func (b *Bridge) rememberVFO(vfo civ.VFO, f func(*vfoCache)) {
 	b.mu.Lock()
 	f(&b.radio.vfo[vfo])
 	b.mu.Unlock()

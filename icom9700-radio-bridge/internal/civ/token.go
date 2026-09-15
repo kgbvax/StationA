@@ -106,14 +106,6 @@ func (t *Transport) renewalOK(now time.Time) {
 	t.renewal.nextDue = now.Add(t.o.TokenRenewal)
 }
 
-// maintainRenewal is the maintenance tick for the renewal cycle.
-// Caller holds the transport mutex.
-func (t *Transport) maintainRenewal(now time.Time) {
-	if !t.renewal.outstanding && now.After(t.renewal.nextDue) {
-		t.renewNow(now)
-	}
-}
-
 // authBytes assembles the credential packet fields once per dial. The
 // username rides substituted in both the login and the stream request (wfview
 // substitutes it in both); the client name travels plain.

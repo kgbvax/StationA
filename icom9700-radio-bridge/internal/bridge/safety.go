@@ -88,7 +88,9 @@ func (s *safetyCore) gate(armed, live bool) error {
 
 // pttOn arms (or re-arms) the watchdog — the Options.OnPTTOn seam, fired on
 // the jobs worker after a PTT-on dispatch left for the radio. One bound per
-// key-up: a re-key restarts the window.
+// key-up: a re-key restarts the window. The fired callback captures its own
+// timer so a stale fire can never consume a newer key-up's window (review:
+// generation check).
 func (s *safetyCore) pttOn() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -96,25 +98,33 @@ func (s *safetyCore) pttOn() {
 		s.timer.Stop()
 	}
 	s.keyed = true
-	s.timer = time.AfterFunc(s.bound, s.watchdogFired)
+	var t *time.Timer
+	t = time.AfterFunc(s.bound, func() {
+		sharedmqtt.Enqueue(s.b.jobs, func() { s.trip(t) })
+	})
+	s.timer = t
 }
 
-// watchdogFired runs on the timer goroutine: it may only enqueue (the worker
-// owns every decision and publish). A drop here would leave the carrier
-// keyed past the bound — the queue cap (256) and the fast-draining worker
-// make that unreachable in practice; recorded as a residual risk of the
-// bounded-queue posture (R18).
-func (s *safetyCore) watchdogFired() {
-	sharedmqtt.Enqueue(s.b.jobs, s.trip)
+// pttOff resolves the key-up state on a successful bridge PTT-off dispatch —
+// keyed means "the bridge keyed up and nothing resolved it"; a completed
+// key-down IS that resolution. Without it, a later permit drop force-unkeys
+// an unrelated carrier and, while the session is down, dials the radio for a
+// PTT-off nobody owes (review finding: the safety lifecycle must track its
+// cause, not just its onset).
+func (s *safetyCore) pttOff() {
+	s.resolveKeyed()
 }
 
-// trip is the watchdog expiry, on the jobs worker. Consumes the armed timer
-// exactly once; a stale fire (cancelled or already consumed by a permit
-// drop — the KTD-5 rule) is a no-op, so a session loss mid-PTT can never
-// produce a spurious watchdog error after the fact.
-func (s *safetyCore) trip() {
+// trip is the watchdog expiry, on the jobs worker. The timer argument is the
+// generation check: a fire whose timer was replaced by a re-key (or consumed
+// by a permit drop / PTT-off) is stale and a no-op, so a queued fire can
+// never trip a fresh key-up at ~0 elapsed. When it does stand, the force is
+// UNCONDITIONAL: keyed means the bridge dispatched a PTT-on and nothing
+// resolved it — a stale rx cache must not skip the unkey (a redundant
+// PTT-off is harmless; a missed one leaves the carrier up with no permit).
+func (s *safetyCore) trip(t *time.Timer) {
 	s.mu.Lock()
-	if s.timer == nil {
+	if s.timer == nil || s.timer != t {
 		s.mu.Unlock()
 		return
 	}
@@ -124,14 +134,6 @@ func (s *safetyCore) trip() {
 	s.keyed = false
 	s.mu.Unlock()
 	if !keyed {
-		return
-	}
-
-	// The radio may have unkeyed since the key-up (operator ptt-off cmd, the
-	// readback loop refreshed the cache): a bound expiry over RX is not a
-	// safety event — resolve silently, never disarm a legitimate permit.
-	if !s.b.radioTXOn() {
-		s.b.log.Info("tx watchdog expired after TX already ended — no trip")
 		return
 	}
 
@@ -217,15 +219,7 @@ func (s *safetyCore) onSnapshot(snap radio.Snapshot) {
 	if snap.Armed {
 		return
 	}
-	s.mu.Lock()
-	if s.timer != nil {
-		s.timer.Stop()
-		s.timer = nil
-	}
-	keyed := s.keyed
-	s.keyed = false
-	s.mu.Unlock()
-	if !keyed {
+	if !s.resolveKeyed() {
 		return
 	}
 	// Unconditional on the TX cache on purpose: `keyed` means the bridge

@@ -37,7 +37,7 @@ substitutions:
   # Firmware version — bumped per released flash; carried in /meta.device.firmware
   fw_version: "1.0.0"
 
-  # --- Station MQTT bus — the shack broker on shari (see ../mqtt-broker/) ---
+  # --- Station MQTT bus — the station broker, hassio.kgbvax.net (192.168.1.50); inert until the next USB re-flash ---
   mqtt_broker: "192.168.1.50"
   mqtt_port: "1883"
   mqtt_user: "hf"

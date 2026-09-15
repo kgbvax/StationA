@@ -9,7 +9,10 @@ package civ
 // codec's; the derived band name below is the canonical band OF THE
 // FREQUENCY, not the VFO it belongs to.
 
-import "fmt"
+import (
+	"errors"
+	"fmt"
+)
 
 // TransceiveKind selects which payload a Transceive carries.
 type TransceiveKind uint8
@@ -50,7 +53,7 @@ type Transceive struct {
 }
 
 // ErrNotTransceive: the reply is not a transceive-capable frame.
-var errNotTransceive = fmt.Errorf("frame is not a transceive broadcast")
+var errNotTransceive = errors.New("frame is not a transceive broadcast")
 
 // ParseTransceive converts a KindData reply carrying command 00, 01 or
 // 1C 00 into a Transceive event. The same frame shapes serve as solicited

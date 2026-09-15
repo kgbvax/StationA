@@ -89,22 +89,18 @@ class _UhfRadioPanelState extends State<UhfRadioPanel> {
   @override
   void initState() {
     super.initState();
+    // The store reference the timer callback needs (build uses context.watch;
+    // no listener — _settle runs at the top of build instead).
     _store = context.read<BusStore>();
-    _store!.addListener(_onStoreChanged);
   }
 
   @override
   void dispose() {
-    _store?.removeListener(_onStoreChanged);
     _confirmTimer?.cancel();
     for (final c in _freqControllers.values) {
       c.dispose();
     }
     super.dispose();
-  }
-
-  void _onStoreChanged() {
-    if (_settle()) setState(() {});
   }
 
   /// A pending clears on the first /state newer than the tap (a different
@@ -202,6 +198,7 @@ class _UhfRadioPanelState extends State<UhfRadioPanel> {
   Widget build(BuildContext context) {
     final store = context.watch<BusStore>();
     final mqtt = context.read<MqttService>();
+    _settle(); // pending/timeout bookkeeping against the fresh snapshot
 
     const address = UhfRadioPanel._address;
     final slot = store.slots[address];
@@ -247,7 +244,6 @@ class _UhfRadioPanelState extends State<UhfRadioPanel> {
           _sessionRow(
             bridgeUp: bridgeUp,
             sessionState: sessionState,
-            live: live,
             armed: armed,
             tx: tx,
             satellite: satellite,
@@ -322,11 +318,11 @@ class _UhfRadioPanelState extends State<UhfRadioPanel> {
   Widget _sessionRow({
     required bool bridgeUp,
     required String? sessionState,
-    required bool live,
     required bool armed,
     required String tx,
     required bool satellite,
   }) {
+    final live = sessionState == 'live';
     final (tag, color) = switch (sessionState) {
       'live' => ('LIVE', AppTheme.green),
       'connecting' => ('CONNECTING', AppTheme.amber),
@@ -449,7 +445,7 @@ class _UhfRadioPanelState extends State<UhfRadioPanel> {
         const SizedBox(height: 8),
         Row(
           children: [
-            _stepButton(vfo: vfo, dir: -1, enabled: enabled, onStep: () => step(-1)),
+            _stepButton(vfo: vfo, dir: -1, enabled: enabled, onStep: step),
             const SizedBox(width: 6),
             SizedBox(
               width: 130,
@@ -478,7 +474,7 @@ class _UhfRadioPanelState extends State<UhfRadioPanel> {
               ),
             ),
             const SizedBox(width: 6),
-            _stepButton(vfo: vfo, dir: 1, enabled: enabled, onStep: () => step(1)),
+            _stepButton(vfo: vfo, dir: 1, enabled: enabled, onStep: step),
             const Spacer(),
             ElevatedButton(
               key: ValueKey('uhf-$vfo-freq-set'),
@@ -508,14 +504,14 @@ class _UhfRadioPanelState extends State<UhfRadioPanel> {
     required String vfo,
     required int dir,
     required bool enabled,
-    required VoidCallback onStep,
+    required void Function(int) onStep,
   }) {
     return SizedBox(
       width: 44,
       height: 48,
       child: ElevatedButton(
         key: ValueKey('uhf-$vfo-step-${dir > 0 ? 'up' : 'down'}'),
-        onPressed: enabled ? onStep : null,
+        onPressed: enabled ? () => onStep(dir) : null,
         style: AppTheme.actionButton().copyWith(
           padding: const WidgetStatePropertyAll(EdgeInsets.zero),
         ),

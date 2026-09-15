@@ -168,7 +168,6 @@ const (
 type waiter struct {
 	fn    func(*civ.Transport) error
 	reply chan error
-	kind  demandKind
 }
 
 // eventQueueCap bounds the session event queue (R18: no unbounded growth).
@@ -317,7 +316,7 @@ func (s *Session) SetArmed(ctx context.Context, on bool) error {
 		}
 	}
 
-	w := &waiter{reply: make(chan error, 1), kind: demandArm}
+	w := &waiter{reply: make(chan error, 1)}
 	ok := s.post(func() { s.armLocked(w) })
 	if !ok {
 		return ErrEventQueueFull

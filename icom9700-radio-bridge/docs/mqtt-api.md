@@ -190,8 +190,14 @@ session re-reads both VFOs on its first poll tick).
 | `cmd payload too large` | cmd rejection | FIXED string — oversized payloads are never parsed or echoed |
 | `stale cmd (age ..., bound ...)` | cmd rejection | ts-gate drop (stamped cmds older/younger than ±30 s) |
 | `cmd ts unparseable: ...` | cmd rejection | non-RFC3339 ts |
-| `radio: login refused` / `radio: connection refused` / `radio: handshake timeout` / `radio: session lost` / `radio: connect failed` | session fact | the on-demand connect series / session loss (R2/R3) |
-| `radio rejected: civ: radio answered NG to <command>` | session fact | the radio refused a command frame |
+| `login refused` / `connection refused` / `handshake timeout` / `session lost` / `connect failed` / `connect cancelled` | session fact | the on-demand connect series / session loss (R2/R3) — the wire carries the BARE fact, no prefix |
+| `radio rejected: civ: radio rejected the command (NG)` | bridge fact | the radio refused a command frame (the FA frame carries no command echo, so the text is a fixed sentinel) |
+| `watchdog trip: tx exceeded <bound>` | safety fact | the TX watchdog force-released a keyed PTT; `<bound>` is the configured `session.tx_watchdog` (persists until the next admitted arm/cmd) |
+| `mqtt connection lost` | safety fact | the MQTT-plane loss rule (R4): unkey + disarm (persists until the next admitted arm/cmd) |
+| `ptt rejected: not armed` / `ptt rejected: session not live` | rejection | PTT admission (armed checked first) |
+| `freq rejected: out of band for <main|sub>` | rejection | per-VFO band validation (SUB has no 23cm) |
+| `invalid /cmd payload: <clipped>` / `stale cmd (age …)` | rejection | shape/ts-gate rejections |
+| `mode rejected: "data" is set via the set_data action` | rejection | canonical-mode guard |
 | `ptt-off undeliverable: session unavailable` | **safety** | the outstanding PTT-off could not be delivered (R2/KTD-5) |
 
 Safety-class facts (the watchdog trip and `ptt-off undeliverable`,
@@ -252,4 +258,7 @@ PTT dispatch passes through a settable `ArmGate func(armed, live bool) error`
 (default: the R10 strings above) and a successful PTT-on fires an
 `OnPTTOn` hook — the TX-watchdog seam (KTD-5). The watchdog, the MQTT-loss
 PTT-off + disarm rule (R4), and the session-loss reissue land in
-`internal/bridge/safety.go` without changing anything in this contract.
+`internal/bridge/safety.go` without changing the state/meta shapes — it adds
+the safety-class `/state.error` facts tabled above (`watchdog trip: tx
+exceeded <bound>`, `mqtt connection lost`) and `ptt-off undeliverable:
+session unavailable`.

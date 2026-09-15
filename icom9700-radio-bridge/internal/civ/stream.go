@@ -377,8 +377,7 @@ func (s *stream) sendPing(now time.Time) error {
 // civOut wraps one CI-V payload into a tracked data packet with the next
 // big-endian sub-header sequence and sends it.
 func (s *stream) civOut(payload []byte, now time.Time) error {
-	s.subSeq++
-	return s.sendTracked(civDataPacket(payload, s.subSeq, s.myID, s.remoteID), now)
+	return s.sendTracked(civDataPacket(payload, s.nextSubSeq(), s.myID, s.remoteID), now)
 }
 
 // answerRetransmit replies to a radio retransmit request: packets still in

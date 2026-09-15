@@ -285,6 +285,15 @@ func (t *Transport) readLoop(s *stream, hs chan []byte) {
 		d := make([]byte, n)
 		copy(d, buf[:n])
 		h := parseHeader(d)
+		// The claimed length must equal the datagram: every legitimate
+		// packet type carries h.len == exact wire size (that is what the
+		// per-type dispatch matches on). A short datagram with an inflated
+		// h.len would pass the dispatch and panic the fixed-offset reads
+		// below — the sockets are LAN-reachable, so treat the mismatch as
+		// garbage and drop it (review: trust n, never the claim alone).
+		if int(h.len) != n {
+			continue
+		}
 		s.mu.Lock()
 		s.lastRx = time.Now()
 		s.mu.Unlock()

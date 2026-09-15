@@ -376,11 +376,12 @@ func newTestBridge(t *testing.T, fr *civ.FakeRadio, model *radioModel) (*Bridge,
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-	b := New(ctx, testOpts(fr))
+	opts := testOpts(fr)
+	b := New(ctx, opts)
 	t.Cleanup(b.Close)
 	// The telemetry ticker, exactly as main.go's pollLoop drives it.
 	go func() {
-		tick := time.NewTicker(testOpts(fr).PollInterval)
+		tick := time.NewTicker(opts.PollInterval)
 		defer tick.Stop()
 		for {
 			select {
@@ -709,6 +710,10 @@ func TestSetFreqMainUpdatesState(t *testing.T) {
 	if !frameSent(fr, set) {
 		t.Error("radio never received the 05 set-frequency frame")
 	}
+	// The retained /cmd is cleared on the SUCCESS path too (KTD-6 one-shot).
+	waitFor(t, 2*time.Second, "retained cmd cleared after successful admit", func() bool {
+		return cmdCleared(fake, topicCmd(b.opts))
+	})
 }
 
 // ---------------------------------------------------------------------------
@@ -1210,5 +1215,32 @@ func TestSetDataPreampAttenuator(t *testing.T) {
 		m := lastState(t, fake, st)
 		main, _ := m["main"].(map[string]any)
 		return main != nil && main["attenuator"] == true
+	})
+}
+
+// A failed admit must leave the per-VFO echo cache untouched (review fix):
+// v1 never polls preamp/attenuator, so an echo recorded on a failed set
+// would persist as wrong state.
+func TestPreampEchoOnlyOnDeliveredSet(t *testing.T) {
+	fr := mustFakeRadio(t)
+	fr.StopAnswering()
+	model := newRadioModel()
+	b, fake := newTestBridge(t, fr, model)
+	st := topicState(b.opts)
+
+	deliverCmd(b, `{"action":"set_preamp","vfo":"main","value":"1"}`)
+	waitFor(t, 3*time.Second, "the set_preamp rejection", func() bool {
+		return lastError(t, fake, st) != ""
+	})
+	m := lastState(t, fake, st)
+	main, _ := m["main"].(map[string]any)
+	if main != nil {
+		if _, ok := main["preamp"]; ok {
+			t.Fatalf("preamp echo recorded on a failed set: %v", main)
+		}
+	}
+	// The retained /cmd is cleared on the rejection path too.
+	waitFor(t, 2*time.Second, "retained cmd cleared after reject", func() bool {
+		return cmdCleared(fake, topicCmd(b.opts))
 	})
 }

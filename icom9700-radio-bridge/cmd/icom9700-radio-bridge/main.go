@@ -3,9 +3,7 @@
 // via Icom's RS-BA1-style LAN protocol. The radio's single LAN session is
 // shared with manual wfview use by connecting only on demand (KTD-2).
 //
-// U1 scaffold: the MQTT plane, /cmd dispatch wiring and the radio reconnect
-// loop are real; the radio side is the internal/radio stub (U2-U5 land the
-// transport, codec, session manager and bus surface). See the feature plan
+// See the feature plan
 // (../docs/plans/2026-09-14-001-feat-icom9700-radio-bridge-plan.md) and the
 // protocol brief (docs/civ-research-brief.md in this module).
 package main
@@ -49,7 +47,7 @@ func main() {
 	slog.SetDefault(logger)
 	// One slot (muehle/uhf/radio): stamp it as a child logger so every line
 	// carries `slot` (logging convention §2).
-	log := logger.With("slot", cfg.MQTT.Site+"/"+cfg.MQTT.Station+"/"+cfg.MQTT.Slot)
+	log := logger.With("slot", schema.SlotBase(cfg.MQTT.Site, cfg.MQTT.Station, cfg.MQTT.Slot))
 	log.Info("icom9700-radio-bridge starting",
 		"radio_host", cfg.RadioHost, "broker", cfg.MQTT.Broker)
 

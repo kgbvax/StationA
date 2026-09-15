@@ -699,3 +699,41 @@ func TestPingsRepeatAtPeriod(t *testing.T) {
 		return n >= 3
 	})
 }
+
+// Malformed datagrams with lying header lengths must be dropped, never
+// panicked on — the control/CI-V sockets are LAN-reachable (review fix).
+func TestReadLoopDropsMalformedLengthDatagrams(t *testing.T) {
+	fr := newFakeRadio(t)
+	tr := dialLive(t, fr, nil)
+
+	// 16 bytes claiming the 21-byte ping size; 20 bytes claiming the
+	// 0x40-byte token reply; a 30-byte civ frame claiming 40. Pre-gate,
+	// each passes dispatch on the CLAIMED h.len and reads past the slice.
+	short := func(total int, claimed uint32, typ byte) []byte {
+		b := make([]byte, total)
+		binary.LittleEndian.PutUint32(b[0:], claimed)
+		b[4] = typ
+		return b
+	}
+	fr.InjectDatagram(sockCtrl, short(16, uint32(pingLen), ptPing))
+	fr.InjectDatagram(sockCtrl, short(20, 0x40, ptIdle))
+	fr.InjectDatagram(sockCiv, short(30, 40, ptIdle))
+
+	// The transport rides through it: pings keep flowing both ways.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if tr.Live() {
+			alive := false
+			for _, p := range fr.sentOn(sockCtrl) {
+				if len(p.data) == pingLen && p.data[typeOff] == ptPing && p.data[replyOff] == 0x01 {
+					alive = true
+				}
+			}
+			if alive {
+				return // a ping reply after the garbage: loop alive, no panic
+			}
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("no ping reply after malformed datagrams — read loop died or wedged")
+}

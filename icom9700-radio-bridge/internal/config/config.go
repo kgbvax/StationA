@@ -286,6 +286,16 @@ func (c Config) Validate() error {
 	if c.MQTT.Broker == "" {
 		return fmt.Errorf("mqtt broker must be configured")
 	}
+	// The login credentials ride the RS-BA1 substitution table, whose domain
+	// is printable ASCII (32..126); bytes outside it index out of range in
+	// passcode() and crash the process at first dial (review finding).
+	for name, v := range map[string]string{"civ.username": c.CIV.Username, "civ.password": c.CIV.Password} {
+		for _, b := range []byte(v) {
+			if b < 32 || b > 126 {
+				return fmt.Errorf("%s contains a byte outside the printable ASCII range the RS-BA1 login encoding supports (0x%02x)", name, b)
+			}
+		}
+	}
 	if c.Session.IdleTimeoutDur <= 0 {
 		return fmt.Errorf("session.idle_timeout must be > 0 (got %s)", c.Session.IdleTimeoutDur)
 	}

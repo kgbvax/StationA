@@ -320,3 +320,21 @@ func TestValidateRejectsEmptyAddressing(t *testing.T) {
 		t.Error("empty radio_host must be rejected — the protocol has no discovery")
 	}
 }
+
+// The RS-BA1 substitution table's domain is printable ASCII; a byte outside
+// 32..126 must be rejected at load, not crash passcode() at first dial
+// (review fix).
+func TestValidateRejectsNonASCIICredentials(t *testing.T) {
+	cfg := Defaults()
+	cfg.CIV.Username = "operator1"
+	cfg.CIV.Password = "s3crét" // é = 0xC3 0xA9, outside 32..126
+	if err := cfg.Validate(); err == nil {
+		t.Error("non-ASCII civ password must be rejected — it would panic the substitution table")
+	}
+	cfg = Defaults()
+	cfg.CIV.Username = "operátor"
+	cfg.CIV.Password = "s3cret"
+	if err := cfg.Validate(); err == nil {
+		t.Error("non-ASCII civ username must be rejected")
+	}
+}

@@ -39,8 +39,9 @@ func nowRFC3339() string { return time.Now().UTC().Format(time.RFC3339) }
 // jobs worker only. force bypasses the dedup (reconnect restore).
 func (b *Bridge) publishState(force bool) {
 	b.mu.Lock()
-	live := b.sess.SessionState() == radio.StateLive
-	snap := b.buildSnapshot(b.sess.Snapshot(), live)
+	sessSnap := b.sess.Snapshot()
+	live := sessSnap.State == radio.StateLive
+	snap := b.buildSnapshot(sessSnap, live)
 	cl := b.client
 	if !force && b.hasLast && b.last.equal(snap) && time.Since(b.lastPub) < b.heartbeat() {
 		b.mu.Unlock()
@@ -112,12 +113,12 @@ func (b *Bridge) sendPollReads(tr *civ.Transport) error {
 	}
 	frames = append(frames,
 		c.BuildReadSatellite(),
-		c.BuildReadMeter(civ.MeterS), c.BuildReadMeter(civ.MeterSWR), c.BuildReadMeter(civ.MeterALC), c.BuildReadMeter(civ.MeterCOMP),
+		c.BuildReadMeter(civ.MeterS), c.BuildReadMeter(civ.MeterSWR), c.BuildReadMeter(civ.MeterALC),
 		c.BuildReadPTT(),
 	)
 	// RF power (14 0A) applies to the currently selected band's VFO; the read
 	// lands attributed to the selection the leading 07 D2 answer named.
-	frames = append(frames, buildReadPower(c))
+	frames = append(frames, buildReadPower())
 	return sendFrames(tr, frames)
 }
 
@@ -142,7 +143,7 @@ func sendFrames(tr *civ.Transport, frames [][]byte) error {
 // closed to additions, so the six framing bytes are composed here from the
 // exported constants — the exact FE FE A2 E0 14 0A FD shape the reply specs
 // in commands.go accept as the read form.
-func buildReadPower(*civ.Codec) []byte {
+func buildReadPower() []byte {
 	return []byte{civ.Preamble, civ.Preamble, civ.AddrRadio, civ.AddrCtrl, civ.CmdRFPower, civ.PowerRF, civ.Postamble}
 }
 
@@ -251,7 +252,8 @@ func (b *Bridge) applyReplyLocked(rep civ.Reply) bool {
 		hz, err := rep.FreqHz()
 		if err == nil {
 			v := &b.radio.vfo[b.radio.selected]
-			setVFOFreq(v, civ.Transceive{FreqHz: hz, Band: bandName(hz), BandOK: bandOK(hz)})
+			bandName, bandOK := civ.BandForFreq(hz)
+			setVFOFreq(v, civ.Transceive{FreqHz: hz, Band: bandName, BandOK: bandOK})
 			b.mu.Unlock()
 			return true
 		}
@@ -304,16 +306,6 @@ func (b *Bridge) applyReplyLocked(rep civ.Reply) bool {
 	}
 	b.mu.Unlock()
 	return false
-}
-
-func bandName(hz uint32) string {
-	n, _ := civ.BandForFreq(hz)
-	return n
-}
-
-func bandOK(hz uint32) bool {
-	_, ok := civ.BandForFreq(hz)
-	return ok
 }
 
 // --- publish helpers ----------------------------------------------------------

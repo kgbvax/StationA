@@ -55,18 +55,17 @@ type FakeRadio struct {
 	ctrlConn *net.UDPConn
 	civConn  *net.UDPConn
 
-	mu           sync.Mutex
-	radioID      uint32          // sentid the fake presents (Reboot rotates)
-	silent       bool            // never answer are-you-there
-	noReady      bool            // answer I-am-here but never I-am-ready
-	stopped      bool            // answer nothing at all (keepalive silence)
-	dropIn       map[string]int  // remaining client datagrams to drop per sock
-	dropInData   map[string]int  // remaining client CI-V data datagrams to drop per sock
-	dropOut      map[string]int  // remaining radio datagrams to drop per sock
-	lostCiv      map[uint16]bool // radio "lost" these own packets permanently
-	loginErr     uint32
-	statusErr    uint32
-	autoCivEvery time.Duration // 0 = no automatic CI-V data
+	mu         sync.Mutex
+	radioID    uint32          // sentid the fake presents (Reboot rotates)
+	silent     bool            // never answer are-you-there
+	noReady    bool            // answer I-am-here but never I-am-ready
+	stopped    bool            // answer nothing at all (keepalive silence)
+	dropIn     map[string]int  // remaining client datagrams to drop per sock
+	dropInData map[string]int  // remaining client CI-V data datagrams to drop per sock
+	dropOut    map[string]int  // remaining radio datagrams to drop per sock
+	lostCiv    map[uint16]bool // radio "lost" these own packets permanently
+	loginErr   uint32
+	statusErr  uint32
 
 	sent      []recPkt
 	recv      []recPkt
@@ -220,13 +219,7 @@ func (fr *FakeRadio) LoginAttempts() []time.Time {
 // CivFramesReceived returns the CI-V payloads that reached the radio, in
 // arrival order — the frame-order assertion primitive (e.g. PTT-off sent
 // first on a safety reconnect).
-func (fr *FakeRadio) CivFramesReceived() [][]byte {
-	fr.mu.Lock()
-	defer fr.mu.Unlock()
-	out := make([][]byte, len(fr.gotFrames))
-	copy(out, fr.gotFrames)
-	return out
-}
+func (fr *FakeRadio) CivFramesReceived() [][]byte { return fr.civFramesReceived() }
 
 // Counts returns how many token renewals, token removals (clean
 // disconnects), CI-V stream opens and closes the fake has seen.
@@ -243,6 +236,15 @@ func (fr *FakeRadio) RespondCIV(fn func(frame []byte) [][]byte) { fr.respondCIV(
 // InjectCIV pushes one CI-V payload to the client as a tracked data packet
 // (a transceive broadcast simulation).
 func (fr *FakeRadio) InjectCIV(payload []byte) { fr.injectCIV(payload) }
+
+// InjectDatagram sends raw bytes to the client on the named socket — the
+// malformed/lying-length input the transport hardening tests need (it
+// bypasses the packet builders on purpose).
+func (fr *FakeRadio) InjectDatagram(sock string, data []byte) {
+	fr.mu.Lock()
+	defer fr.mu.Unlock()
+	fr.send(sock, data)
+}
 
 // StartAutoCiv makes the fake emit a small CI-V frame every interval once
 // the data stream is open, until StopAutoCiv.
@@ -272,13 +274,6 @@ func (fr *FakeRadio) stopAnswering() {
 	fr.stopped = true
 }
 
-// dropIncoming drops the next n client datagrams on the named socket.
-func (fr *FakeRadio) dropIncoming(sock string, n int) {
-	fr.mu.Lock()
-	defer fr.mu.Unlock()
-	fr.dropIn[sock] += n
-}
-
 // dropIncomingData drops the next n client CI-V DATA datagrams on the named
 // socket (keepalives and control packets pass — the loss hits exactly the
 // test's data frames).
@@ -286,23 +281,6 @@ func (fr *FakeRadio) dropIncomingData(sock string, n int) {
 	fr.mu.Lock()
 	defer fr.mu.Unlock()
 	fr.dropInData[sock] += n
-}
-
-// dropOutgoing drops the next n radio->client datagrams on the named socket
-// (radio-side transmission loss).
-func (fr *FakeRadio) dropOutgoing(sock string, n int) {
-	fr.mu.Lock()
-	defer fr.mu.Unlock()
-	fr.dropOut[sock] += n
-}
-
-// loseCivSeq marks one of the radio's own civ packets as permanently lost —
-// retransmit requests for it go unanswered, like a datagram that never made
-// it onto the wire in either direction.
-func (fr *FakeRadio) loseCivSeq(seq uint16) {
-	fr.mu.Lock()
-	defer fr.mu.Unlock()
-	fr.lostCiv[seq] = true
 }
 
 func (fr *FakeRadio) setLoginErr(err uint32) {
@@ -320,9 +298,6 @@ func (fr *FakeRadio) setRefused() {
 // startAutoCiv makes the fake emit a small CI-V frame every interval once
 // the data stream is open, until stopAutoCiv.
 func (fr *FakeRadio) startAutoCiv(every time.Duration) {
-	fr.mu.Lock()
-	fr.autoCivEvery = every
-	fr.mu.Unlock()
 	go func() {
 		t := time.NewTicker(every)
 		defer t.Stop()
@@ -346,9 +321,7 @@ func (fr *FakeRadio) startAutoCiv(every time.Duration) {
 }
 
 func (fr *FakeRadio) stopAutoCiv() {
-	fr.mu.Lock()
-	fr.autoCivEvery = 0
-	fr.mu.Unlock()
+	fr.closeOnce.Do(func() { close(fr.autoStop) })
 }
 
 // --- observation surface ---------------------------------------------------
@@ -472,25 +445,12 @@ func (fr *FakeRadio) handle(sock string, src *net.UDPAddr, data []byte) {
 		}
 	case h.typ == ptRetransmit && h.len > ctrlLen:
 		// Bulk (range) retransmit request: (start,end) u16 LE pairs at 0x10.
-		var seqs []uint16
-		for off := headerLen; off+4 <= len(data); off += 4 {
-			start := binary.LittleEndian.Uint16(data[off : off+2])
-			end := binary.LittleEndian.Uint16(data[off+2 : off+4])
-			for s := start; ; s++ {
-				seqs = append(seqs, s)
-				if s == end || len(seqs) >= 128 {
-					break
-				}
-			}
-		}
-		fr.answerRetransmit(sock, seqs)
+		fr.answerRetransmit(sock, retxRequestSeqs(data, h))
 	case h.len == pingLen && h.typ == ptPing:
 		if data[replyOff] == 0x00 && !fr.stopped {
 			// Ping request: echo seq and uptime with reply flag set.
-			p := make([]byte, pingLen)
-			putHeader(p, header{len: pingLen, typ: ptPing, seq: h.seq, sentID: fr.radioID, rcvdID: h.sentID})
-			p[replyOff] = 0x01
-			copy(p[pingTimeOff:], data[pingTimeOff:pingTimeOff+4])
+			p := pingPacket(0x01, h.seq,
+				binary.LittleEndian.Uint32(data[pingTimeOff:pingTimeOff+4]), fr.radioID, h.sentID)
 			fr.send(sock, p)
 		}
 	case h.len == loginLen:
@@ -668,7 +628,7 @@ func (fr *FakeRadio) replyStreamReq(sock string, h header, req []byte) {
 	p[discOff] = 0x00
 	if fr.statusErr == 0 {
 		binary.BigEndian.PutUint16(p[civPortOff:], uint16(fr.civPort()))
-		binary.BigEndian.PutUint16(p[audioPortOff:], 50003)
+		binary.BigEndian.PutUint16(p[audioPortOff:], AudioPort)
 	}
 	fr.sendTracked(sock, p)
 }
@@ -684,12 +644,7 @@ func (fr *FakeRadio) injectCIVLocked(payload []byte) {
 	fr.civSeq++
 	seq := fr.civSeq
 	fr.civSubSeq++
-	p := make([]byte, civHeaderLen+len(payload))
-	putHeader(p, header{len: uint32(len(p)), sentID: fr.radioID})
-	p[civReplyOff] = 0xc1
-	binary.LittleEndian.PutUint16(p[civDatalenOff:], uint16(len(payload)))
-	binary.BigEndian.PutUint16(p[civSendSeqOff:], fr.civSubSeq)
-	copy(p[civHeaderLen:], payload)
+	p := civDataPacket(payload, fr.civSubSeq, fr.radioID, 0)
 	p[seqOff] = byte(seq)
 	p[seqOff+1] = byte(seq >> 8)
 	// The radio HAS this packet even if the transmission drops — register it
@@ -703,12 +658,8 @@ func (fr *FakeRadio) injectCIVAt(seq uint16, payload []byte) {
 	fr.mu.Lock()
 	defer fr.mu.Unlock()
 	fr.civSubSeq++
-	p := make([]byte, civHeaderLen+len(payload))
+	p := civDataPacket(payload, fr.civSubSeq, fr.radioID, 0)
 	putHeader(p, header{len: uint32(len(p)), sentID: fr.radioID, seq: seq})
-	p[civReplyOff] = 0xc1
-	binary.LittleEndian.PutUint16(p[civDatalenOff:], uint16(len(payload)))
-	binary.BigEndian.PutUint16(p[civSendSeqOff:], fr.civSubSeq)
-	copy(p[civHeaderLen:], payload)
 	fr.civTx[seq] = p
 	fr.send(sockCiv, p)
 }
@@ -717,11 +668,7 @@ func (fr *FakeRadio) injectCIVAt(seq uint16, payload []byte) {
 func (fr *FakeRadio) injectPingRequest(seq uint16, uptimeMS uint32) {
 	fr.mu.Lock()
 	defer fr.mu.Unlock()
-	p := make([]byte, pingLen)
-	putHeader(p, header{len: pingLen, typ: ptPing, seq: seq, sentID: fr.radioID})
-	p[replyOff] = 0x00
-	binary.LittleEndian.PutUint32(p[pingTimeOff:], uptimeMS)
-	fr.send(sockCtrl, p)
+	fr.send(sockCtrl, pingPacket(0x00, seq, uptimeMS, fr.radioID, 0))
 }
 
 // respondCIV scripts the CI-V command responder: for every CI-V frame the
@@ -745,7 +692,7 @@ func (fr *FakeRadio) script(fn func()) {
 
 // reqBE16 reads a big-endian u16 out of a request packet (innerseq echo).
 func reqBE16(req []byte, off int) uint16 {
-	return uint16(req[off])<<8 | uint16(req[off+1])
+	return binary.BigEndian.Uint16(req[off:])
 }
 
 // trackClientSeq follows the client's tracked-sequence space on the civ

@@ -139,7 +139,7 @@ func (s stateSnapshot) equal(o stateSnapshot) bool {
 		s.band == o.band && s.mode == o.mode && s.hasMode == o.hasMode &&
 		s.tx == o.tx && s.hasTX == o.hasTX &&
 		s.satellite == o.satellite && s.hasSat == o.hasSat &&
-		s.main == o.main && s.sub == o.sub && s.selected == o.selected &&
+		s.main.equal(o.main) && s.sub.equal(o.sub) && s.selected == o.selected &&
 		intPtrEqual(s.sMeter, o.sMeter) && intPtrEqual(s.swr, o.swr) &&
 		intPtrEqual(s.alc, o.alc) && intPtrEqual(s.power, o.power)
 }
@@ -149,6 +149,24 @@ func intPtrEqual(a, b *int) bool {
 		return a == b
 	}
 	return *a == *b
+}
+
+func boolPtrEqual(a, b *bool) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
+}
+
+// equal compares two vfoSnapshot values by value — the echo stores allocate
+// fresh pointers per cmd, so == (pointer identity) would report spurious
+// changes for unchanged preamp/attenuator.
+func (v vfoSnapshot) equal(o vfoSnapshot) bool {
+	return v.band == o.band &&
+		v.freqHz == o.freqHz && v.hasFreq == o.hasFreq &&
+		v.mode == o.mode && v.hasMode == o.hasMode &&
+		v.data == o.data && v.hasData == o.hasData &&
+		intPtrEqual(v.preamp, o.preamp) && boolPtrEqual(v.att, o.att)
 }
 
 // statePayload is the wire shape of /state. The JSON keys here are the U7
