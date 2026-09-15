@@ -25,6 +25,20 @@ const cmdRetain = {
   'muehle/hf/tuner': false,
   'muehle/hf/power-seq': false,
   'muehle/hf/radio': false, // DVK play/stop are one-shot
+  // Sat rotators (spid-ercm-rotator-bridge) — one-shot per KTD13: a stale
+  // retained or queued goto must never replay against real antennas.
+  'muehle/uhf/az-rotator': false,
+  'muehle/uhf/el-rotator': false,
+  // IC-9700 radio (icom9700-radio-bridge) — all one-shot per KTD6: a
+  // retained arm permit would re-arm after every bridge restart and defeat
+  // the settled fail-disarm (R11). arm/ptt/set_freq/set_mode are
+  // tap-executed toggles and sets, never desired steady state.
+  'muehle/uhf/radio': false,
+  // pol-ctrl (m5stamp-pol-ctrl) — retained steady state, the actuator
+  // exception (KTD13's deliberate contrast with the one-shot rotators
+  // above): a retained set_pol re-applies the operator's last intent after
+  // a controller reboot or broker reconnect.
+  'muehle/uhf/pol-ctrl': true,
 };
 
 String cmdTopic(String slot) => 'muehle/$slot/cmd';
@@ -51,6 +65,9 @@ const expectedSlots = [
   'muehle/hf/discovery',
   'muehle/uhf/rotator',
   'muehle/uhf/pol-ctrl',
+  'muehle/uhf/az-rotator',
+  'muehle/uhf/el-rotator',
+  'muehle/uhf/radio',
 ];
 
 String cmdPayload(String action, dynamic value) =>
@@ -69,6 +86,9 @@ String switchSetPaPayload(String onOff) => cmdPayload('set_pa', onOff);
 String switchSetTrxPayload(String onOff) => cmdPayload('set_trx', onOff);
 
 // pa-arm.set_enabled value is a **string** "true" / "false".
+// No console UI publishes this today (the PA ARM panel was removed — arm
+// stays sequencer/automation-owned), but the payload contract is kept here
+// with the rest of the slot vocabulary.
 String paArmPayload(bool enabled) =>
     cmdPayload('set_enabled', enabled ? 'true' : 'false');
 
@@ -80,6 +100,57 @@ String rotatorAzPayload(double az) =>
 String rotatorStopPayload() => jsonEncode({'action': 'stop'});
 String rotatorFwdPayload() => jsonEncode({'action': 'fwd'});
 String rotatorRevPayload() => jsonEncode({'action': 'rev'});
+
+// --- Sat rotators (uhf/az-rotator + uhf/el-rotator) ---------------------------
+//
+// R3: goto takes degrees under `value` — the station /cmd value-key
+// convention, NOT the wrc hf/rotator set_az deviation above. The bridge
+// parses the string; both are one-shot (KTD13), so callers pass
+// cmdRetain[...]! which is false for both slots.
+
+String satRotatorGotoPayload(double deg) => cmdPayload('goto', deg.toString());
+
+String satRotatorStopPayload() => jsonEncode({'action': 'stop'});
+
+// --- X-Quad polarization (uhf/pol-ctrl) ---------------------------------------
+//
+// R14/m5stamp-pol-ctrl contract: set_pol takes the canonical phase under
+// `value` — the station /cmd value-key convention. The phase is one shared
+// setting for BOTH X-Quads; valid vocabulary is h|v|cl|cr. /cmd is RETAINED
+// (cmdRetain['muehle/uhf/pol-ctrl']! = true): desired steady state that
+// re-applies on reconnect, in deliberate contrast to the one-shot sat
+// rotators above (KTD13).
+
+String setPolPayload(String pol) => cmdPayload('set_pol', pol);
+
+// --- UHF radio (muehle/uhf/radio, icom9700-radio-bridge) ----------------------
+//
+// All one-shot (KTD6): cmdRetain['muehle/uhf/radio']! = false. The arm
+// permit is bridge-held and must never re-apply after a bridge restart
+// (fail-disarm, R11), so — unlike pol-ctrl above — nothing on this slot is
+// retained steady state.
+
+/// Arm the TX gate. Arm-while-idle is the on-demand session's connect
+/// trigger (R1/R14): the panel publishes this with only the bus link up.
+String uhfRadioArmPayload() => jsonEncode({'action': 'arm'});
+
+/// Drop the TX permit. The permit also self-drops on session loss,
+/// watchdog trip, and bridge restart (R11) — this is the operator's
+/// explicit counterpart.
+String uhfRadioDisarmPayload() => jsonEncode({'action': 'disarm'});
+
+/// PTT is an on/off toggle, not hold-to-talk; the bridge rejects it unless
+/// `armed` ∧ `session_state=live` (R10).
+String uhfRadioPttPayload(bool on) => cmdPayload('ptt', on ? 'on' : 'off');
+
+/// Per-VFO tuning: there is no select-VFO action, so the cmd carries the
+/// target VFO alongside the value (station value-key convention — the
+/// bridge parses the string form).
+String uhfRadioSetFreqPayload(String vfo, int freqHz) =>
+    jsonEncode({'action': 'set_freq', 'value': freqHz.toString(), 'vfo': vfo});
+
+String uhfRadioSetModePayload(String vfo, String mode) =>
+    jsonEncode({'action': 'set_mode', 'value': mode, 'vfo': vfo});
 
 // --- Ultrabeam controller ----------------------------------------------------
 

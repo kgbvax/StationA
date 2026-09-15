@@ -15,19 +15,19 @@ class PowerPanel extends StatelessWidget {
 
     final master = store.slots['muehle/power/master'];
     final masterOn = (store.stateValueAs<String>('muehle/power/master', 'power') ?? 'off') == 'on';
-    final masterOnline = master?.isOnline ?? false;
+    final masterOnline = (master?.isOnline ?? false) && store.linkUp;
 
     final psu = store.slots['muehle/power/psu-13v8'];
     final psuOn = (store.stateValueAs<String>('muehle/power/psu-13v8', 'power') ?? 'off') == 'on';
-    final psuOnline = psu?.isOnline ?? false;
+    final psuOnline = (psu?.isOnline ?? false) && store.linkUp;
 
     final sw = store.slots['muehle/hf/switch'];
     final paOn = (store.stateValueAs<String>('muehle/hf/switch', 'pa') ?? 'off') == 'on';
     final trxOn = (store.stateValueAs<String>('muehle/hf/switch', 'trx') ?? 'off') == 'on';
-    final switchOnline = sw?.isOnline ?? false;
+    final switchOnline = (sw?.isOnline ?? false) && store.linkUp;
 
     final seq = store.slots['muehle/hf/power-seq'];
-    final seqOnline = seq?.isOnline ?? false;
+    final seqOnline = (seq?.isOnline ?? false) && store.linkUp;
     final seqPhase = store.stateValueAs<String>('muehle/hf/power-seq', 'phase') ?? 'idle';
     final seqFault = store.stateValueAs<String>('muehle/hf/power-seq', 'fault') ?? '';
 

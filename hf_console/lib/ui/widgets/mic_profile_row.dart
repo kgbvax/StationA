@@ -87,7 +87,7 @@ class _MicProfileRowState extends State<MicProfileRow> {
     return Consumer<BusStore>(
       builder: (context, store, _) {
         final slotState = store.slots[MicProfileRow.address];
-        final online = slotState?.isOnline ?? false;
+        final online = (slotState?.isOnline ?? false) && store.linkUp;
         final active =
             store.stateValueAs<String>(MicProfileRow.address, 'mic_profile') ?? '';
         final availableRaw = store.stateValue(MicProfileRow.address, 'mic_profiles');

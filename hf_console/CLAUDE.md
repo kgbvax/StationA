@@ -50,11 +50,13 @@ is the source of truth; this app's palette must be kept in sync with it.
 
 ## Retained /cmd policy
 
-Retained cmd slots (self-healing steady state): `power/master`, `power/psu-13v8`, `hf/switch`, `hf/pa-arm`, `hf/ant-switch`, `hf/antenna-select`.
+Retained cmd slots (self-healing steady state): `power/master`, `power/psu-13v8`, `hf/switch`, `hf/pa-arm`, `hf/ant-switch`, `hf/antenna-select`, `uhf/pol-ctrl` (`set_pol` — desired phase re-applies after a controller reboot or broker reconnect, KTD13's deliberate contrast with the one-shot sat rotators).
 
 Retained but one-shot (consumer clears the topic after every execution — a command does NOT re-apply if the bridge restarts): `hf/ant-ctrl`.
 
-Non-retained (one-shot): `hf/pa`, `hf/rotator`, `hf/tuner`, `hf/power-seq`.
+Non-retained (one-shot): `hf/pa`, `hf/rotator`, `hf/tuner`, `hf/power-seq`, `hf/radio` (DVK `play`/`stop`), `uhf/az-rotator`, `uhf/el-rotator` (sat `goto`/`stop` — a stale retained or queued motion must never replay against real antennas), `uhf/radio` (IC-9700 `arm`/`ptt`/tuning — a retained arm permit would re-arm after every bridge restart and defeat the settled fail-disarm).
+
+The machine-readable source of truth is `cmdRetain` in `lib/store/wiring.dart`; keep this list in sync with it.
 
 ## Value-key deviations
 

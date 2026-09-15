@@ -17,7 +17,7 @@ class AntennaPanel extends StatelessWidget {
     final mqtt = context.read<MqttService>();
 
     final switchSlot = store.slots['muehle/hf/ant-switch'];
-    final switchOnline = switchSlot?.isOnline ?? false;
+    final switchOnline = (switchSlot?.isOnline ?? false) && store.linkUp;
     // No state (or a state without 'selected') must not masquerade as a
     // port — least of all 'off', which would paint a dead bridge as a
     // deliberate grounded-safety state. It renders as Unknown instead.
@@ -26,7 +26,7 @@ class AntennaPanel extends StatelessWidget {
     final settled = store.stateValueAs<bool>('muehle/hf/ant-switch', 'settled') ?? false;
 
     final selectSlot = store.slots['muehle/hf/antenna-select'];
-    final selectOnline = selectSlot?.isOnline ?? false;
+    final selectOnline = (selectSlot?.isOnline ?? false) && store.linkUp;
     // Cold-switch guard (model §6): a port moves only with RF inhibited AND
     // RX *confirmed* — unknown radio state must block, not allow. RF is
     // reported on three independent paths — the radio's tx bit, its tune
@@ -35,7 +35,7 @@ class AntennaPanel extends StatelessWidget {
     // reconciler path is exempt: with antenna-select online it arbitrates
     // the RF-inhibit ordering itself.
     final radioSlot = store.slots['muehle/hf/radio'];
-    final radioOnline = (radioSlot?.isOnline ?? false) &&
+    final radioOnline = store.linkUp && (radioSlot?.isOnline ?? false) &&
         (store.stateValueAs<bool>('muehle/hf/radio', 'device_online') ?? true);
     final radioTx = store.stateValueAs<String>('muehle/hf/radio', 'tx');
     final radioTuning = store.stateValueAs<bool>('muehle/hf/radio', 'tuning');

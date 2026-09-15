@@ -7,11 +7,13 @@ use (
 	./flexbridge
 	./hadiscovery
 	./hf-mqtt-capture
+	./icom9700-radio-bridge
 	./logger-spot-bridge
 	./pelcobridge2
 	./powerseq
 	./shared
 	./shelly-power-bridge
+	./spid-ercm-rotator-bridge
 	./testui
 	./ultrabridge
 	./wrc-rotator-bridge

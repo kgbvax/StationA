@@ -91,6 +91,29 @@ Shack broker (`mqtt-broker/acl.conf.example`):
 - **`console`** is the `hf_console` tablet. Configure the tablet with this
   account, not `hf` (see `hf_console/CLAUDE.md`).
 
+**Sat-ops rotator slots** (`muehle/uhf/az-rotator`, `muehle/uhf/el-rotator`,
+`spid-ercm-rotator-bridge`). Their `/cmd` acceptance follows the same two
+accounts as every other slot — and that is the reviewed no-arming free-motion
+posture made concrete, not an oversight (the per-vector decisions are in
+`docs/known-issues.md`, "Sat-ops rotators: pre-deploy exposure review"):
+
+- the `console` account's narrow `muehle/+/+/cmd` write pattern necessarily
+  includes both rotator slots' `/cmd` — the tablet's steering widgets and its
+  designated e-stop (STOP publishes `stop` to both rotator slots) ride the same
+  authority, so narrowing the account would also remove the e-stop;
+- the **HA bridge's inbound `muehle/+/+/cmd`** forwarding delivers motion
+  commands to the rotator slots like any other slot — any house-network MQTT
+  client can move the sat rotators. The slots publish read-only `expose` blocks
+  (no HA motion widgets), but the forwarding path itself is accepted as-is.
+
+Topic directions for the two slots are the standard per-slot planes: `/state`,
+`/meta`, `/status` flow out over the bridge to HA (retained); `/cmd` flows in
+(bridged from HA, published locally by the console) and is **one-shot** —
+published non-retained and cleared with an empty retained publish after
+execute-or-reject, so no stale motion intent can replay on a reconnect
+(integration model §8 rules 1–3; the pol-ctrl slot next to them is the
+contrast: its `set_pol` is retained self-healing steady state).
+
 HA broker (`.50`, configured in the HA Mosquitto add-on — **outside the repo**):
 a `stationa-bridge` account with read `homeassistant/status` +
 `muehle/+/+/cmd` and write `muehle/+/+/state|meta|status` +

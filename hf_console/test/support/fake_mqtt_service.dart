@@ -1,3 +1,4 @@
+import 'package:mqtt_client/mqtt_client.dart';
 import 'package:hf_console/mqtt/mqtt_service.dart';
 import 'package:hf_console/store/bus_store.dart';
 
@@ -17,8 +18,10 @@ class FakeMqttService extends MqttService {
   }) async {}
 
   @override
-  void publish(String topic, String payload, {required bool retain, dynamic qos}) {
+  bool publish(String topic, String payload,
+      {required bool retain, MqttQos qos = MqttQos.atLeastOnce}) {
     publishes.add(PublishRecord(topic, payload, retain));
+    return true;
   }
 
   @override

@@ -97,7 +97,7 @@ class _PaPanelState extends State<PaPanel> {
     final mqtt = context.read<MqttService>();
 
     final slot = store.slots['muehle/hf/pa'];
-    final online = slot?.isOnline ?? false;
+    final online = (slot?.isOnline ?? false) && store.linkUp;
     final mode = store.stateValueAs<String>('muehle/hf/pa', 'mode') ?? 'standby';
     final keyed = store.stateValueAs<String>('muehle/hf/pa', 'keyed') ?? 'rx';
     final fault = store.stateValueAs<String>('muehle/hf/pa', 'fault') ?? 'none';

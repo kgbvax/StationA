@@ -117,7 +117,7 @@ class _CompassBody extends StatelessWidget {
     final dx = context.watch<DxSpotService>();
 
     final rotator = store.slots['muehle/hf/rotator'];
-    final rotatorOnline = rotator?.isOnline ?? false;
+    final rotatorOnline = (rotator?.isOnline ?? false) && store.linkUp;
     final az = store.stateValueAs<num>('muehle/hf/rotator', 'az')?.toDouble() ?? 0.0;
     final targetAz = store.stateValueAs<num>('muehle/hf/rotator', 'target_az')?.toDouble() ?? az;
     final moving = store.stateValueAs<bool>('muehle/hf/rotator', 'moving') ?? false;

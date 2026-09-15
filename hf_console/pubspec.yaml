@@ -30,6 +30,7 @@ flutter:
     - assets/fonts/
     - assets/geo/
     - assets/img/
+    - assets/Gemini_Generated_Image_n0qlmmn0qlmmn0ql.jpg
 
 flutter_launcher_icons:
   android: true

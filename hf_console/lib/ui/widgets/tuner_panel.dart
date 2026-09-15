@@ -15,7 +15,7 @@ class TunerPanel extends StatelessWidget {
     final mqtt = context.read<MqttService>();
 
     final slot = store.slots['muehle/hf/tuner'];
-    final online = slot?.isOnline ?? false;
+    final online = (slot?.isOnline ?? false) && store.linkUp;
     final inline = store.stateValueAs<bool>('muehle/hf/tuner', 'inline') ?? false;
     final settling = store.stateValueAs<bool>('muehle/hf/tuner', 'settling') ?? false;
     final fault = store.stateValueAs<String>('muehle/hf/tuner', 'fault') ?? '';

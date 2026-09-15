@@ -1,0 +1,59 @@
+# icom9700-radio-bridge example configuration.
+# Copy to /etc/icom9700-radio-bridge/config.toml and edit. Sensitive values
+# (the MQTT password and the CI-V login password) are NEVER here — both are
+# loaded from the environment (EnvironmentFile); see deploy.sh.
+
+# The radio's LAN address. The RS-BA1-style CI-V-over-LAN protocol has no
+# broadcast/discovery — the client must know the address (protocol brief).
+radio_host = "9700.kgbvax.net"
+
+[mqtt]
+# KTD-7: the broker is addressed via the bwbroker DNS indirection, not a
+# hardcoded LAN address — the DNS entry is repointed as the station's broker
+# migrates. It must resolve to the muehle/#-authoritative broker (never the
+# HA consumer broker — replication is split-direction).
+broker           = "tcp://bwbroker:1883"
+client_id        = ""                 # default: "<site>-<station>-<slot>" (model §8)
+user             = "hf"
+# password = ...                  # FORBIDDEN: loaded from ICOM9700_MQTT_PASSWORD
+discovery_prefix = "homeassistant"
+
+# Station-model slot addressing: topics publish to <site>/<station>/<slot>/*
+# The slot address must match the station-integration-model (§7.2).
+site     = "muehle"                  # physical site name
+station  = "uhf"                     # transmitting entity (hf | uhf)
+slot     = "radio"                   # canonical role
+location = "bauwagen"                # physical location label, included in /meta
+
+[civ]
+# The radio's remote-control login (SET > Network > Remote Control; enabling
+# it restarts the radio). Seeded by deploy.sh; the password is never here.
+username = ""
+# civ_password = ...              # FORBIDDEN: loaded from ICOM9700_CIV_PASSWORD
+
+[session]
+# On-demand session policy (KTD-2: the bridge never auto-steals the radio's
+# single LAN session; wfview keeps priority).
+idle_timeout    = "120s"            # drop the session after this much idle
+tx_watchdog     = "180s"            # keyed-PTT bound while a session is live (KTD-5)
+max_attempts    = 3                 # login attempts per connect demand
+attempt_spacing = "30s"             # min spacing between attempts (lockout pin pending)
+
+[radio]
+poll_interval = "1s"                # /state refresh cadence while a session is live (KTD-8)
+
+[log]
+level = "info"                      # debug | info | warn | error
+
+# Environment variable overrides (systemd reads
+# /etc/icom9700-radio-bridge/icom9700-radio-bridge.env):
+#   ICOM9700_MQTT_PASSWORD   (the MQTT password — env-only)
+#   ICOM9700_CIV_PASSWORD    (the radio login password — env-only)
+#   ICOM9700_MQTT_BROKER
+#   ICOM9700_MQTT_CLIENT_ID
+#   ICOM9700_MQTT_USER
+#   ICOM9700_CIV_USERNAME
+#   ICOM9700_RADIO_HOST
+#   ICOM9700_SITE
+#   ICOM9700_STATION
+#   ICOM9700_SLOT

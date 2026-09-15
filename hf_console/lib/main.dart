@@ -9,6 +9,12 @@ import 'dxspot/dxspot_service.dart';
 import 'ui/theme.dart';
 import 'ui/screens/console_screen.dart';
 import 'ui/screens/setup_screen.dart';
+import 'ui/screens/startup_splash.dart';
+
+/// Bound on the first broker-connect wait shown on the splash. After it
+/// expires the console takes over with its offline indicator; the MQTT
+/// service keeps retrying in the background regardless.
+const _connectWaitBudget = Duration(seconds: 20);
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -38,21 +44,43 @@ class _AppRoot extends StatefulWidget {
   State<_AppRoot> createState() => _AppRootState();
 }
 
-class _AppRootState extends State<_AppRoot> {
+class _AppRootState extends State<_AppRoot> with WidgetsBindingObserver {
   final _storage = CredentialStore();
   final _store = BusStore();
   late final MqttService _mqtt;
   final _dxSpot = DxSpotService();
   bool _ready = false;
   bool _showConsole = false;
+  String? _bootHost;
+  int? _bootPort;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _mqtt = MqttService(_store);
     _store.addListener(_onBusStoreUpdate);
     _enforceFullScreen();
     _tryAutoConnect();
+  }
+
+  // MQTT-session recovery. Display-off/doze freezes Dart timers and kills
+  // the broker-side session, but the app-side socket can survive half-open
+  // still reporting 'connected' — so resume must actively probe/rebuild the
+  // link, and pause should tear it down cleanly. inactive/hidden are
+  // transient (notification shade, app switcher) and ignored.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    switch (state) {
+      case AppLifecycleState.resumed:
+        _mqtt.onAppResumed();
+      case AppLifecycleState.paused:
+        _mqtt.onAppPaused();
+      case AppLifecycleState.inactive:
+      case AppLifecycleState.hidden:
+      case AppLifecycleState.detached:
+        break;
+    }
   }
 
   void _onBusStoreUpdate() {
@@ -84,8 +112,10 @@ class _AppRootState extends State<_AppRoot> {
     );
     _dxSpot.start();
     if (host != null && port != null && user != null && pass != null && pass.isNotEmpty) {
+      _bootHost = host;
+      _bootPort = port;
       try {
-        await _connect(host, port, user, pass);
+        await _connect(host, port, user, pass).timeout(_connectWaitBudget);
       } catch (_) {
         // offline start is allowed; the indicator and faults bar show the state
       }
@@ -110,6 +140,7 @@ class _AppRootState extends State<_AppRoot> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _store.removeListener(_onBusStoreUpdate);
     _dxSpot.dispose();
     _mqtt.dispose();
@@ -169,7 +200,24 @@ class _AppRootState extends State<_AppRoot> {
                           },
                         ),
                       ))
-                : Scaffold(body: Center(child: CircularProgressIndicator(color: AppTheme.accent))),
+                : StartupSplash(
+                    host: _bootHost,
+                    port: _bootPort,
+                    waitSeconds: _bootHost == null ? null : _connectWaitBudget.inSeconds,
+                    onWaitExpired: () {
+                      // The countdown only runs when broker credentials exist,
+                      // so expiry means "show the console with its offline
+                      // indicator" — set both flags in one pass so the splash
+                      // expiry timer racing the connect timeout cannot flash
+                      // the setup screen.
+                      if (mounted && !_ready) {
+                        setState(() {
+                          _ready = true;
+                          _showConsole = true;
+                        });
+                      }
+                    },
+                  ),
           );
         },
       ),

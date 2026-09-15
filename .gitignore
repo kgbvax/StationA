@@ -1,3 +1,5 @@
 # macOS / local tooling noise
 .DS_Store
 .claude/
+# local model-provider env scratch
+/claude_code_zai_env.sh

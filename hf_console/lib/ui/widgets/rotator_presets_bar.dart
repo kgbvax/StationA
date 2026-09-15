@@ -93,7 +93,7 @@ class _PresetAction {
 List<_PresetAction> _presetActions(BuildContext context) {
   final store = context.watch<BusStore>();
   final mqtt = context.read<MqttService>();
-  final rotatorOnline = store.slots['muehle/hf/rotator']?.isOnline ?? false;
+  final rotatorOnline = (store.slots['muehle/hf/rotator']?.isOnline ?? false) && store.linkUp;
 
   void sendAz(double value) {
     mqtt.publish(

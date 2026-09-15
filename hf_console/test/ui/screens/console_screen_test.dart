@@ -51,5 +51,62 @@ void main() {
       expect(find.text('STOP\nSTATION'), findsOneWidget);
       expect(find.text('MAINS'), findsOneWidget);
     });
+
+    testWidgets('UHF page renders the sat rotator panel (tablet layout)',
+        (tester) async {
+      final store = BusStore();
+      final mqtt = FakeMqttService(store);
+      store.setSatRotator('muehle/uhf/az-rotator', axis: 'az', pos: 45, target: 90);
+      store.setSatRotator('muehle/uhf/el-rotator', axis: 'el', pos: 10);
+      store.setPolCtrl(pol: 'cl');
+
+      // setSurfaceSize is in physical pixels (test dpr 3.0): 3600x2400 →
+      // logical 1200x800, shortestSide 800 → the tablet branch.
+      await tester.binding.setSurfaceSize(const Size(3600, 2400));
+      await tester.pumpWidget(TestHarness(store: store, mqtt: mqtt, child: const ConsoleScreen()));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      await tester.tap(find.text('UHF'));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.textContaining('SAT ROTATORS'), findsOneWidget);
+      expect(find.text('AZIMUTH'), findsOneWidget);
+      expect(find.text('ELEVATION'), findsOneWidget);
+      expect(find.byKey(const ValueKey('sat-stop')), findsOneWidget);
+      // The placeholder is gone.
+      expect(find.text('UHF controls are not yet wired.'), findsNothing);
+      // Tier 2: the polarization control renders below the sat-ops panel,
+      // with the current phase from /state readback.
+      expect(find.textContaining('X-QUAD POLARIZATION'), findsOneWidget);
+      expect(find.text('CIRCULAR LEFT'), findsOneWidget);
+      for (final pol in ['h', 'v', 'cl', 'cr']) {
+        expect(find.byKey(ValueKey('pol-btn-$pol')), findsOneWidget);
+      }
+    });
+
+    testWidgets('UHF page renders the sat rotator panel (phone layout)',
+        (tester) async {
+      final store = BusStore();
+      final mqtt = FakeMqttService(store);
+      store.setSatRotator('muehle/uhf/az-rotator', axis: 'az', pos: 45);
+      store.setSatRotator('muehle/uhf/el-rotator', axis: 'el', pos: 10);
+
+      // 1650x2640 physical → logical 550x880, shortestSide 550 < 600 → the
+      // phone reflow branch. (Real-iPhone widths are not usable here: below
+      // roughly 450 logical the HF page — pumped before the UHF tab can be
+      // opened — trips a pre-existing DVK-panel overflow unrelated to U8.)
+      await tester.binding.setSurfaceSize(const Size(1650, 2640));
+      await tester.pumpWidget(TestHarness(store: store, mqtt: mqtt, child: const ConsoleScreen()));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      await tester.tap(find.text('UHF'));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.textContaining('SAT ROTATORS'), findsOneWidget);
+      expect(find.byKey(const ValueKey('sat-stop')), findsOneWidget);
+      // Tier 2: the polarization panel is on the phone reflow too.
+      expect(find.textContaining('X-QUAD POLARIZATION'), findsOneWidget);
+      expect(find.byKey(const ValueKey('pol-btn-cl')), findsOneWidget);
+    });
   });
 }

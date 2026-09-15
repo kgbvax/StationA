@@ -5,13 +5,15 @@ import '../../mqtt/mqtt_service.dart';
 import '../theme.dart';
 import '../widgets/dx_map_container.dart';
 import '../widgets/pa_panel.dart';
-import '../widgets/pa_arm_panel.dart';
 import '../widgets/tuner_panel.dart';
 import '../widgets/ultrabeam_panel.dart';
 import '../widgets/dvk_panel.dart';
 import '../widgets/antenna_panel.dart';
 import '../widgets/power_panel.dart';
 import '../widgets/rotator_presets_bar.dart';
+import '../widgets/sat_rotator_panel.dart';
+import '../widgets/uhf_radio_panel.dart';
+import '../widgets/pol_ctrl_panel.dart';
 import '../widgets/climate_panel.dart';
 import '../widgets/faults_bar.dart';
 import '../widgets/dx_config_sheet.dart';
@@ -154,7 +156,6 @@ class _HfPage extends StatelessWidget {
                         AntennaPanel(),
                         RotatorPresetsBar(),
                         PaPanel(),
-                        PaArmPanel(),
                         TunerPanel(),
                         DvkPanel(),
                         FaultsBar(),
@@ -220,7 +221,6 @@ class _HfPage extends StatelessWidget {
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: const [
                             PaPanel(),
-                            PaArmPanel(),
                             TunerPanel(),
                             DvkPanel(),
                           ],
@@ -284,15 +284,26 @@ class _UhfPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Single vertically scrolled panel column on both tablet and phone
+    // layouts (U8): the IC-9700 radio (U7) leads — the operating object the
+    // rotators and polarization exist to serve — with the sat-ops rotator
+    // surface (U8) and the Tier-2 X-Quad polarization control (U11) below.
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         _PageTopBar(page: 'uhf', onSelect: onSelect, onScheme: onScheme),
         Expanded(
-          child: Center(
-            child: Text(
-              'UHF controls are not yet wired.',
-              style: AppTheme.body(18, color: AppTheme.txtFaint, weight: FontWeight.w500),
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: const [
+                UhfRadioPanel(),
+                SizedBox(height: 12),
+                SatRotatorPanel(),
+                SizedBox(height: 12),
+                PolCtrlPanel(),
+                SizedBox(height: 40),
+              ],
             ),
           ),
         ),

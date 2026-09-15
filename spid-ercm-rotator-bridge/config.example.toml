@@ -1,0 +1,131 @@
+# config.example.toml — configuration for spid-ercm-rotator-bridge
+# (SPID azimuth + ERC-M/GS-500 elevation rotators → station integration model
+# `rotator` slots). Default location: /etc/spid-ercm-rotator-bridge/config.toml
+# Override with: spid-ercm-rotator-bridge -config /path/to/config.toml
+#
+# spid-ercm-rotator-bridge is a compound bridge: one process fronts TWO rotator
+# slots — muehle/uhf/az-rotator (SPID, Rot1Prog binary protocol, 1200 baud) and
+# muehle/uhf/el-rotator (GS-500 elevation via the ERC-M controller, GS-232B
+# dialect, 9600 baud) — each with its own paho client and LWT, plus a rotctld
+# TCP server (:4534) and a PstRotator UDP listener (:12041) fed from the same
+# dispatch core.
+#
+# All values shown are the built-in defaults used when this file is absent.
+# Only include the keys you want to change.
+#
+# The MQTT password is NOT kept here — it is loaded from the
+# SPID_ERCM_ROTATOR_BRIDGE_MQTT_PASSWORD environment variable (systemd
+# EnvironmentFile /etc/spid-ercm-rotator-bridge/spid-ercm-rotator-bridge.env,
+# 0600), so it never appears in the TOML, the unit file, or the process
+# command line. A `password` key in this file is a hard parse error.
+# See ../docs/conventions/config-and-secrets.md.
+
+# host is the compute node this adapter runs on (published in /meta, model §8.1).
+host = "shari"
+
+[mqtt]
+broker   = "tcp://127.0.0.1:1883"
+# client_id defaults to "<site>-<station>-<slot>" PER slot (each [[slot]] gets
+# its own client) when empty.
+client_id = ""
+# Station-model addressing: <site>/<station>/<slot>/{meta,state,status,cmd}.
+# The site and station prefix every slot address; each [[slot]] below carries
+# only its own slot name.
+site     = "muehle"
+station  = "uhf"
+location = "bauwagen"   # physical location label, published in /meta
+user     = "hf"
+# password is loaded from SPID_ERCM_ROTATOR_BRIDGE_MQTT_PASSWORD (EnvironmentFile), not here.
+
+[log]
+# debug | info | warn | error
+level = "info"
+
+[rotctld]
+# rotctld-compatible TCP server (pelcobridge2 dialect, KTD10). Binds the LAN so
+# gpredict / hamlib clients on the shack PCs can reach it; the no-auth posture
+# is the reviewed station decision (KTD4).
+bind = "0.0.0.0"
+port = 4534
+
+[pstrotator]
+# PstRotator native UDP listener (KTD11). Replies go to the source IP at
+# listen-port+1. Same no-auth LAN posture as rotctld.
+bind = "0.0.0.0"
+port = 12041
+
+# --- slots -------------------------------------------------------------------
+# One [[slot]] per rotator axis. Each becomes one canonical `rotator` slot with
+# its own /meta /state /status /cmd and its own paho client + LWT, so a dead
+# serial port degrades only its own slot (KTD2).
+#
+# axis        = "az" | "el" — which mount axis this slot drives
+# slot        = the slot address segment (site/station come from [mqtt])
+# device_model / link = the identity published in /meta
+# [slot.serial]:
+#   port = the stable /dev/serial/by-id/... symlink. An EMPTY port selects the
+#          in-process mock device so the whole stack runs bench- and CI-side
+#          without hardware (KTD7). The by-id path (never /dev/ttyUSB*) is what
+#          the self-heal reopen re-resolves after a USB re-enumeration.
+#   baud = Rot1Prog is fixed 1200 (KTD5); ERC-M GS-232B is typically 9600
+#          (KTD6, bench-probe rBAU).
+
+[[slot]]
+axis         = "az"
+slot         = "az-rotator"
+device_model = "SPID Rotor (Rot1Prog)"
+link         = "serial"
+  [slot.serial]
+  # Empty = mock mode until the bench bring-up pins the real adapter identity.
+  # Real shape, for example:
+  #   port = "/dev/serial/by-id/usb-FTDI_FT232R_USB_UART_A50285BI-if00-port0"
+  port = ""
+  baud = 1200
+
+[[slot]]
+axis         = "el"
+slot         = "el-rotator"
+device_model = "ERC-M / GS-500"
+link         = "serial"
+  [slot.serial]
+  # Empty = mock mode until the bench bring-up pins the real adapter identity.
+  port = ""
+  baud = 9600
+
+# --- control -----------------------------------------------------------------
+# Mount-wide cadence plus per-axis travel envelope, deadband and park.
+#
+# poll_interval   = readback poll period per axis (plan: ~1 s, config-bounded)
+# reopen_cooldown = wait before re-resolving the by-id path after a serial error
+#                   (self-heal, KTD7)
+# <axis>.min/max  = configured travel limits — enforced on EVERY control path
+#                   before any serial write (R10). Set to the real mechanical
+#                   range; SPID models vary (360/450).
+# <axis>.deadband = a target within this distance of the cached readback skips
+#                   the serial write (R12; ~1° default — the elevation deadband
+#                   is expected to need bench loosening, KTD14)
+# <axis>.park     = park position for the PstRotator PARK command (R7)
+
+[control]
+poll_interval   = "1s"
+reopen_cooldown = "2s"
+
+[control.az]
+min      = 0.0
+max      = 360.0
+deadband = 1.0
+park     = 0.0
+
+[control.el]
+min      = 0.0
+max      = 90.0
+deadband = 1.0
+park     = 0.0
+
+# --- env overrides (systemd EnvironmentFile) ---------------------------------
+# These SPID_ERCM_ROTATOR_BRIDGE_* env vars overlay the [mqtt] section above and
+# are used by deploy.sh so the secret never sits in the TOML:
+#   SPID_ERCM_ROTATOR_BRIDGE_MQTT_BROKER      SPID_ERCM_ROTATOR_BRIDGE_MQTT_CLIENT_ID
+#   SPID_ERCM_ROTATOR_BRIDGE_MQTT_USER         SPID_ERCM_ROTATOR_BRIDGE_MQTT_PASSWORD  (EnvironmentFile)
+#   SPID_ERCM_ROTATOR_BRIDGE_MQTT_SITE         SPID_ERCM_ROTATOR_BRIDGE_MQTT_STATION
+# Per-slot values (axis/slot/device_*/serial) and [control] come from the TOML only.

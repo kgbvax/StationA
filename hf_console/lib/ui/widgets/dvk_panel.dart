@@ -39,7 +39,7 @@ class DvkPanel extends StatelessWidget {
     return Consumer<BusStore>(
       builder: (context, store, _) {
         final slotState = store.slots['muehle/$slot'];
-        final online = slotState?.isOnline ?? false;
+        final online = (slotState?.isOnline ?? false) && store.linkUp;
 
         final freqHz = store.stateValueAs<int>('muehle/$slot', 'freq_hz') ?? 0;
         final band = store.stateValueAs<String>('muehle/$slot', 'band') ?? '';
@@ -75,7 +75,7 @@ class DvkPanel extends StatelessWidget {
     return Consumer<BusStore>(
       builder: (context, store, _) {
         final slotState = store.slots['muehle/$slot'];
-        final online = slotState?.isOnline ?? false;
+        final online = (slotState?.isOnline ?? false) && store.linkUp;
         final currentBand = store.stateValueAs<String>('muehle/$slot', 'band') ?? '';
         final mqtt = context.read<MqttService>();
 
@@ -104,7 +104,7 @@ class DvkPanel extends StatelessWidget {
     return Consumer<BusStore>(
       builder: (context, store, _) {
         final slotState = store.slots['muehle/$slot'];
-        final online = slotState?.isOnline ?? false;
+        final online = (slotState?.isOnline ?? false) && store.linkUp;
         final status = store.stateValueAs<String>('muehle/$slot', 'dvk_status') ?? 'idle';
         final activeId = store.stateValueAs<int>('muehle/$slot', 'dvk_id') ?? 0;
         final isPlaying = status == 'playback';

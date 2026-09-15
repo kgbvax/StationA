@@ -163,3 +163,27 @@ password = "s3cr3t"   # never reaches ExecStart or ps
 The password is plaintext at `0600`. Encrypted-at-rest secrets (`systemd-creds` /
 `LoadCredential`, TPM-bound) are the stronger option if this threat model tightens, at
 the cost of systemd ≥ 250 and more moving parts.
+
+---
+
+## Embedded-firmware secrets pattern
+
+Everything above governs the systemd-deployed Go services on shari. The station's
+embedded firmware — flashed onto a device, not systemd-managed — uses a different
+pattern with the same goal (the real secret never sits in a checked-in file or on a
+command line):
+
+- **Secrets live in a gitignored file next to the firmware config**, resolved at
+  compile/flash time. ESPHome resolves `!secret` substitutions from a `secrets.yaml`
+  sitting next to the device YAML; PlatformIO firmware includes a `secrets.h` from
+  `src/`.
+- **A checked-in example template documents the required keys** —
+  `secrets.example.yaml` (ESPHome) / `secrets.example.h` (PlatformIO): copy it to
+  the gitignored location, fill in real values, never commit the filled copy.
+- **No `0600` TOML and no systemd `EnvironmentFile`** — the baked firmware carries
+  the values, so rotating a secret means a reflash, not a file edit on the device.
+
+Components using this pattern: `waveshare_relay-antswitch-bridge` (ESPHome),
+`m5stamp-pol-ctrl` (ESPHome), `m5stamp-hf-ctrl` (PlatformIO),
+`m5dial-hf-rotctrl` (PlatformIO — its template is `secrets.example.h.x`, so the
+copy to the gitignored `src/secrets.h` is always a rename).
