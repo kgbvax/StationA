@@ -29,6 +29,14 @@ port = 2249
 # Loggers only broadcast when the operator types; keep generous.
 stale_after = "10m"
 
+# QRZ.com callsign→position lookup: Log4OM's CALLSIGN broadcast is the bare
+# callsign, so the bridge resolves the position here. Needs a QRZ XML
+# subscription; the password arrives via LOGGER_SPOT_BRIDGE_QRZ_PASSWORD
+# (set it alongside LOGGER_SPOT_BRIDGE_MQTT_PASSWORD in start-bridge.cmd).
+#[qrz]
+#enabled  = true
+#username = "YOUR-QRZ-CALL"
+
 [mqtt]
 broker    = "tcp://hassio.kgbvax.net:1883"
 client_id = ""

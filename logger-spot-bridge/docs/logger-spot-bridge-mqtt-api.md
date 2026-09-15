@@ -29,6 +29,8 @@ following the logging-integration draft `../logging-integration-model.md` §3
     "azimuth": 62.4,
     "distance_km": 15420.3,
     "country_prefix": "VK9",
+    "country": "Australia",
+    "qth": "Cairns",
     "source": "dxlog",
     "ts": "2026-09-15T14:03:12Z"
   }
@@ -52,13 +54,19 @@ Field notes:
 - Position: `lat`/`lng` come from a logger-provided locator (N1MM `gridsquare`,
   Log4OM locator) or — DXLog path — the great-circle direct problem from the
   bridge's `station_locator` using the logger's `azimuth`+`distance` (DXLog
-  computes those from its CTY database relative to the logging PC). Both
-  omitted when nothing derivable.
+  computes those from its CTY database relative to the logging PC). **When
+  nothing is derivable from the logger and the QRZ lookup is configured, the
+  call is resolved via the QRZ.com XML API** (grid → coordinates; else QRZ's
+  lat/lon) and the position is filled from that answer. Both omitted when
+  nothing derivable (QRZ disabled and failed/unknown lookups included).
 - `azimuth` (degrees true) and `distance_km`: logger-provided, or the inverse
-  problem from `station_locator` when only coordinates are known. Either may
-  be omitted alone.
-- `locator` (the raw logger locator) is carried when that was the position
-  source.
+  problem from `station_locator` when only coordinates are known — QRZ-derived
+  coordinates included. Either may be omitted alone.
+- `locator` (the raw locator) is carried when that was the position source —
+  a logger grid, or the QRZ grid on the QRZ path.
+- `country` / `qth` come only from the QRZ gap-fill (the loggers don't send
+  them): the QRZ record's `country` and `addr2` (city). Context for the
+  console's read-out; both omitted on the logger-only path.
 - `source` is the listener `name` config ("dxlog", "log4om", …).
 - `device_online` is the **logger feed** liveness (two-layer liveness model):
   true while any UDP datagram arrived within `stale_after` (default 10 min).
@@ -84,6 +92,20 @@ Field notes:
 - `log4om` — outbound CALLSIGN service. **The datagram is the bare callsign
   as plain ASCII text** (pinned by live capture 2026-09-15 — the guides name
   the service but publish no format). A Log4OM selection therefore carries
-  only `call` + `source`; bearing/distance are unavailable from this source.
-  An XML probe remains as a robustness fallback; unmatched datagrams log
-  their raw content at debug.
+  only `call` + `source` from the logger itself; position and beam answer
+  come from the QRZ gap-fill when configured (see Position above). An XML
+  probe remains as a robustness fallback; unmatched datagrams log their raw
+  content at debug.
+
+## QRZ lookup (optional, `[qrz]` config)
+
+Log4OM never sends a position, so the bridge resolves the keyed call itself:
+QRZ.com XML API (`xmldata.qrz.com`, requires a paid XML-access subscription),
+session-key login with one re-login+retry on session timeout, disk cache next
+to the config (`qrz-cache.json`, 30 d positive / 10 min negative TTL, 2000
+entries). Logger-provided positions always win — DXLog's azimuth+distance is
+station-relative and live, a QRZ grid can be stale. Failures (timeout, not
+found, auth) publish the record call+RF-only, exactly as with the lookup
+disabled. `/meta.capabilities` carries `"lookup": "qrz"` when enabled. The
+QRZ password is env-only (`LOGGER_SPOT_BRIDGE_QRZ_PASSWORD`), like the MQTT
+password.

@@ -91,6 +91,23 @@ is Windows, no `/etc`), `-log.level` (overrides config).
 8. **`lookupinfo` with an empty call = the clear signal** (operator wiped the
    entry window). `contactinfo` (QSO logged) is deliberately NOT a clear —
    operators stay on the call after logging it.
+9. **The QRZ gap-fill lives in the bridge, not the console** (user decision,
+   2026-09-15: "we don't want to rely on Log4OM during runtime") — Log4OM's
+   broadcast is the bare call, so `muehle/hf/spots` resolves the position via
+   the QRZ XML API (`internal/qrz`, needs a paid XML-access subscription).
+   Bridge-side because: one disk cache serves every console platform, QRZ
+   credentials stay off the app (the web build couldn't reach
+   xmldata.qrz.com anyway — CORS), and the resolver already owned position
+   resolution. Position priority is logger-first (DXLog az+dist is
+   station-relative and live; a QRZ grid can be stale): `Resolver.Enrich`
+   runs only when the record has no locator/coords/bearing. Lookup runs on
+   the jobs worker — the one place a ~2×5 s HTTP stall is acceptable; ctx
+   dies with run so shutdown never waits on QRZ. QRZ errors never block
+   publication (call+RF-only record, pre-QRZ shape). Session key is
+   in-memory (re-login on restart is one request); cache TTL 30 d positive /
+   10 min negative, cap 2000, corrupt file = cold start. Not yet deployed —
+   enabling needs QRZ username + `LOGGER_SPOT_BRIDGE_QRZ_PASSWORD` in
+   `start-bridge.cmd` and `[qrz] enabled = true` in the live config.
 
 ## Testing patterns
 
@@ -101,3 +118,7 @@ is Windows, no `/etc`), `-log.level` (overrides config).
   neither, station set vs unset) and the clear-on-empty-call rule.
 - `SlotBridge` tests pin dedup: same call re-keyed republishes; identical
   snapshot doesn't; birth via `LastJSON()` round-trips.
+- `qrz` tests run against `httptest` servers with golden XML from the QRZ
+  spec (login / lookup / session-timeout / not-found / auth-fail); the
+  resolution-matrix additions live at the resolver (Enrich fills/skips/
+  passes-through), not the client.

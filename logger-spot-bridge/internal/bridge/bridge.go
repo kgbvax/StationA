@@ -11,6 +11,7 @@
 package bridge
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -21,6 +22,7 @@ import (
 	"logger-spot-bridge/internal/geo"
 	"logger-spot-bridge/internal/log4om"
 	"logger-spot-bridge/internal/n1mm"
+	"logger-spot-bridge/internal/qrz"
 )
 
 // Selected is one operator-keyed station, fully resolved for the console:
@@ -43,6 +45,11 @@ type Selected struct {
 
 	CountryPrefix string `json:"country_prefix,omitempty"`
 	WPXPrefix     string `json:"wpx_prefix,omitempty"`
+
+	// Country/QTH come only from the QRZ gap-fill (the loggers don't send
+	// them) — context for the console's read-out.
+	Country string `json:"country,omitempty"`
+	QTH     string `json:"qth,omitempty"`
 
 	// Source names the logger the selection came from (the listener's name
 	// config: "dxlog", "log4om", …) and TS is when the selection arrived.
@@ -85,6 +92,12 @@ func TopicsFor(site, station, slot string) Topics {
 	}
 }
 
+// CallLookup is the optional position gap-filler seam (filled by the QRZ
+// service in internal/qrz; a nil QRZ field keeps the resolver pure).
+type CallLookup interface {
+	Lookup(ctx context.Context, call string) (qrz.Record, error)
+}
+
 // Resolver turns decoder output into Selected records. Station is the shack
 // QTH — the same QTH the loggers are configured with, which is what makes
 // DXLog's azimuth/distance (computed from the logging PC) reusable for the
@@ -92,6 +105,7 @@ func TopicsFor(site, station, slot string) Topics {
 type Resolver struct {
 	Station    geo.LatLng
 	HasStation bool
+	QRZ        CallLookup // optional; nil when the lookup is disabled
 }
 
 // FromN1MM resolves an N1MM/DXLog lookupinfo datagram. Returns nil for an
@@ -171,6 +185,42 @@ func (r Resolver) finish(sel *Selected, locator string) {
 	}
 	// Both present: keep the logger's azimuth/distance, coordinates stand.
 	// Neither present: the record stays call+RF only.
+}
+
+// Enrich runs the QRZ gap-fill on a fresh selection: when the logger gave no
+// position at all (Log4OM's CALLSIGN broadcast is the bare call), the QRZ
+// lookup provides locator/coordinates and country/city, and finish computes
+// the beam answer from them exactly as it would for logger-provided data.
+//
+// Logger-provided positions never trigger a lookup: DXLog's azimuth+distance
+// is station-relative and live, while a QRZ grid can be stale. On lookup
+// error the selection is returned unchanged — it publishes call+RF only,
+// exactly as with the lookup disabled. Runs on the jobs worker; ctx bounds
+// the HTTP work.
+func (r Resolver) Enrich(ctx context.Context, sel *Selected) (*Selected, error) {
+	if sel == nil || r.QRZ == nil {
+		return sel, nil
+	}
+	// Already placeable (locator, coordinates, or a bearing ray): skip.
+	if sel.Locator != "" || sel.Lat != 0 || sel.Lng != 0 || sel.Azimuth > 0 || sel.DistanceKm > 0 {
+		return sel, nil
+	}
+
+	rec, err := r.QRZ.Lookup(ctx, sel.Call)
+	if err != nil {
+		return sel, err
+	}
+	sel.Country = rec.Country
+	sel.QTH = rec.Qth
+	switch {
+	case rec.Grid != "":
+		r.finish(sel, rec.Grid)
+	case rec.Lat != 0 || rec.Lon != 0:
+		// QRZ without a grid but with coordinates: place directly.
+		sel.Lat, sel.Lng = rec.Lat, rec.Lon
+		r.finish(sel, "")
+	}
+	return sel, nil
 }
 
 // bandFor trusts a canonical-looking band label ("20m"), else derives from

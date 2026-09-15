@@ -11,9 +11,17 @@ Not a spot feed: a call typed into the logger by hand behaves exactly like one
 picked from the spot list — the signal is the **entry-window selection**
 (N1MM-family `lookupinfo`, Log4OM outbound CALLSIGN), not the cluster stream.
 
+**Position without a locator**: Log4OM's CALLSIGN broadcast is the bare call,
+so the bridge optionally resolves it itself via the QRZ.com XML API —
+`[qrz]` in the config, needs a paid QRZ XML subscription, password via
+`LOGGER_SPOT_BRIDGE_QRZ_PASSWORD`. Logger-provided positions (DXLog
+azimuth+distance, N1MM grid) always win; the lookup only fills the gap, from
+a disk cache so QRZ is hit at most once per call per month.
+
 ```
 DXLog ──UDP lookupinfo──┐
 Log4OM ──UDP callsign───┤  logger-spot-bridge (shack PC)
+                        │   └─ QRZ lookup for bare calls (optional)
                         └──► muehle/hf/spots/state (retained, MQTT)
                                    │
                                    ▼

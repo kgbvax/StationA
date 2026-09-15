@@ -119,3 +119,75 @@ func TestEnvPasswordOverride(t *testing.T) {
 		t.Fatalf("password env not applied: %q", cfg.MQTT.Password)
 	}
 }
+
+func TestQRZDisabledByDefault(t *testing.T) {
+	cfg, err := Load(&Flags{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.QRZ.Enabled {
+		t.Fatal("qrz enabled by default")
+	}
+	if cfg.QRZ.CacheDays != 30 || cfg.QRZ.NegativeMinutes != 10 {
+		t.Fatalf("qrz TTL defaults: %+v", cfg.QRZ)
+	}
+}
+
+const qrzTOML = `
+[qrz]
+enabled  = true
+username = "DL1ABC"
+`
+
+func TestQRZEnabledRequiresCredentials(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	if err := os.WriteFile(path, []byte(qrzTOML), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// No username/env password: a fatal config, not runtime auth spam.
+	if _, err := Load(&Flags{ConfigPath: path}); err == nil {
+		t.Fatal("qrz.enabled accepted without credentials")
+	}
+
+	// Username set, password env missing: still fatal.
+	t.Setenv("LOGGER_SPOT_BRIDGE_QRZ_PASSWORD", "")
+	if _, err := Load(&Flags{ConfigPath: path}); err == nil {
+		t.Fatal("qrz.enabled accepted without the password env")
+	}
+}
+
+func TestQRZCredentialsAndCachePath(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	if err := os.WriteFile(path, []byte(qrzTOML), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("LOGGER_SPOT_BRIDGE_QRZ_PASSWORD", "sekret")
+
+	cfg, err := Load(&Flags{ConfigPath: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.QRZ.Enabled || cfg.QRZ.Username != "DL1ABC" || cfg.QRZ.Password != "sekret" {
+		t.Fatalf("qrz creds: %+v", cfg.QRZ)
+	}
+	// Cache default lives next to the config file (seed-once directory).
+	if cfg.QRZ.CachePath != filepath.Join(dir, "qrz-cache.json") {
+		t.Fatalf("cache_path = %q", cfg.QRZ.CachePath)
+	}
+}
+
+func TestQRZTOMLPasswordIgnored(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	// A password in the TOML must not count: it is env-only by convention.
+	toml := qrzTOML + "password = \"oops\"\n"
+	if err := os.WriteFile(path, []byte(toml), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(&Flags{ConfigPath: path}); err == nil {
+		t.Fatal("TOML qrz.password satisfied the credential check — must be env-only")
+	}
+}

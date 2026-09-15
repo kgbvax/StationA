@@ -31,6 +31,7 @@ import (
 	"logger-spot-bridge/internal/geo"
 	"logger-spot-bridge/internal/log4om"
 	"logger-spot-bridge/internal/n1mm"
+	"logger-spot-bridge/internal/qrz"
 )
 
 func main() {
@@ -76,6 +77,7 @@ type app struct {
 	clock      *livenessClock
 	pub        *pahoPublisher
 	stateTopic string
+	slotCtx    context.Context // bounds QRZ lookups on the worker; dies with run
 }
 
 // pahoPublisher is the MQTT write path. Set on every (re)connect; a nil
@@ -122,6 +124,13 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 	a := &app{cfg: cfg, log: log, stateTopic: topics.State}
 	a.clock = &livenessClock{staleAfter: cfg.StaleAfter}
 	a.pub = &pahoPublisher{log: log}
+	caps := map[string]any{
+		"source":  cfg.Listeners[0].Name,
+		"actions": []string{"selected"},
+	}
+	if cfg.QRZ.Enabled {
+		caps["lookup"] = "qrz"
+	}
 	a.b = bridge.New(bridge.Meta{
 		Schema: "1.0",
 		Role:   "bandmap",
@@ -130,10 +139,7 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 			"name": "Shack logger (DXLog/Log4OM)",
 			"link": "udp-broadcast",
 		},
-		Caps: map[string]any{
-			"source":  cfg.Listeners[0].Name,
-			"actions": []string{"selected"},
-		},
+		Caps: caps,
 	})
 
 	if ll, ok := geo.LocatorToLatLng(cfg.StationLocator); ok {
@@ -144,6 +150,16 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 		// logger-provided azimuth/distance.
 		log.Warn("no station_locator configured — logger azimuth/distance will not resolve to map coordinates")
 	}
+	if cfg.QRZ.Enabled {
+		// Gap-fill for loggers that broadcast only the call (Log4OM). The
+		// cache lives next to the config file (seed-once dir); a corrupt
+		// cache file is a cold start, never a refusal to run.
+		cache := qrz.OpenCache(cfg.QRZ.CachePath,
+			time.Duration(cfg.QRZ.CacheDays)*24*time.Hour,
+			time.Duration(cfg.QRZ.NegativeMinutes)*time.Minute, 0)
+		a.r.QRZ = qrz.NewService(qrz.New(cfg.QRZ.Username, cfg.QRZ.Password), cache)
+		log.Info("qrz lookup enabled", "user", cfg.QRZ.Username, "cache", cfg.QRZ.CachePath)
+	}
 
 	// Single worker goroutine for all slot-state mutation + publishing (the
 	// UDP reader goroutines and paho callbacks must never publish inline —
@@ -152,6 +168,7 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 	// parent ctx is cancelled, and cancelling slotCtx stops the worker cleanly.
 	slotCtx, slotCancel := context.WithCancel(ctx)
 	defer slotCancel()
+	a.slotCtx = slotCtx
 	a.jobs = make(chan func(), 32)
 	go sharedmqtt.RunJobs(slotCtx, a.jobs)
 
@@ -293,7 +310,7 @@ func (a *app) handleDatagram(lc config.ListenerConfig, data []byte) {
 		}
 		a.log.Debug("lookupinfo", "listener", lc.Name, "call", li.Call,
 			"reason", li.Reason, "az", li.Azimuth, "dist_km", li.DistanceKm)
-		sharedmqtt.Enqueue(a.jobs, func() { a.apply(a.r.FromN1MM(li, lc.Name)) })
+		sharedmqtt.Enqueue(a.jobs, func() { a.apply(a.enrich(a.r.FromN1MM(li, lc.Name))) })
 
 	case "log4om":
 		c, err := log4om.DecodeCallsign(data)
@@ -306,8 +323,35 @@ func (a *app) handleDatagram(lc config.ListenerConfig, data []byte) {
 			return
 		}
 		a.log.Debug("callsign", "listener", lc.Name, "call", c.Call)
-		sharedmqtt.Enqueue(a.jobs, func() { a.apply(a.r.FromLog4OM(c, lc.Name)) })
+		sharedmqtt.Enqueue(a.jobs, func() { a.apply(a.enrich(a.r.FromLog4OM(c, lc.Name))) })
 	}
+}
+
+// enrich runs the optional QRZ gap-fill on the jobs worker — the one place a
+// multi-second HTTP stall is acceptable, since the datagram that caused it is
+// the operator's current keystroke and the previous /state is already on the
+// broker. The ctx dies with run, so shutdown never waits on QRZ.
+func (a *app) enrich(sel *bridge.Selected) *bridge.Selected {
+	if sel == nil || a.r.QRZ == nil {
+		return sel
+	}
+	ctx, cancel := context.WithTimeout(a.slotCtx, 3*qrz.RequestTimeout)
+	defer cancel()
+
+	sel, err := a.r.Enrich(ctx, sel)
+	switch {
+	case err == nil && sel.Country != "":
+		a.log.Debug("qrz lookup", "call", sel.Call, "country", sel.Country, "grid", sel.Locator)
+	case errors.Is(err, qrz.ErrNotFound):
+		a.log.Debug("qrz lookup: call unknown", "call", sel.Call)
+	case errors.Is(err, qrz.ErrAuth):
+		a.log.Warn("qrz lookup: authentication failed — check subscription, username and LOGGER_SPOT_BRIDGE_QRZ_PASSWORD")
+	default:
+		if err != nil {
+			a.log.Warn("qrz lookup failed", "call", sel.Call, "err", err)
+		}
+	}
+	return sel
 }
 
 // apply publishes a new selection (nil = cleared). Jobs worker only.

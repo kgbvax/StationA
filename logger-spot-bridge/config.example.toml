@@ -36,6 +36,17 @@ port = 12060
 # so keep this generous.
 stale_after = "10m"
 
+# QRZ.com callsign→position lookup — fills the selected-station record when
+# the logger sends no location (Log4OM's CALLSIGN broadcast is the bare
+# callsign). Requires a paid QRZ subscription with XML access.
+# The password is NOT here: set LOGGER_SPOT_BRIDGE_QRZ_PASSWORD instead.
+#[qrz]
+#enabled          = true
+#username         = "DL1ABC"     # your QRZ.com login (not secret)
+#cache_path       = ""           # default: qrz-cache.json next to this file
+#cache_days       = 30           # positive TTL; QRZ data moves slowly
+#negative_minutes = 10           # "not found" TTL — absorbs typos
+
 [mqtt]
 broker    = "tcp://hassio.kgbvax.net:1883"   # station broker (hassio — the HA box; bwbroker is NXDOMAIN)
 client_id = ""                           # default: muehle-hf-spots

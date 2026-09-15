@@ -1,12 +1,14 @@
 package bridge
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 
 	"logger-spot-bridge/internal/geo"
 	"logger-spot-bridge/internal/log4om"
 	"logger-spot-bridge/internal/n1mm"
+	"logger-spot-bridge/internal/qrz"
 )
 
 func stationResolver() Resolver {
@@ -181,5 +183,151 @@ func TestMetaPayload(t *testing.T) {
 	}
 	if m.Role != "bandmap" || m.Host != "shack-pc" {
 		t.Fatalf("meta mismatch: %+v", m)
+	}
+}
+
+// fakeLookup scripts one answer and records every call it sees.
+type fakeLookup struct {
+	rec   qrz.Record
+	err   error
+	calls []string
+}
+
+func (f *fakeLookup) Lookup(_ context.Context, call string) (qrz.Record, error) {
+	f.calls = append(f.calls, call)
+	return f.rec, f.err
+}
+
+// A Log4OM selection (bare call, no position) is the QRZ gap-fill's whole
+// reason: the grid places the pin, finish answers the beam, country/qth ride
+// along.
+func TestEnrichFillsMissingPosition(t *testing.T) {
+	r := stationResolver()
+	lk := &fakeLookup{rec: qrz.Record{
+		Call: "VK9XY", Grid: "QH42wp", Country: "Australia", Qth: "Cairns",
+	}}
+	r.QRZ = lk
+
+	sel := r.FromLog4OM(log4om.Callsign{Call: "VK9XY"}, "log4om")
+	sel, err := r.Enrich(context.Background(), sel)
+	if err != nil {
+		t.Fatalf("enrich: %v", err)
+	}
+	if len(lk.calls) != 1 || lk.calls[0] != "VK9XY" {
+		t.Fatalf("lookups = %v, want [VK9XY]", lk.calls)
+	}
+	if sel.Locator != "QH42wp" {
+		t.Errorf("locator = %q, want the QRZ grid", sel.Locator)
+	}
+	if sel.Lat == 0 && sel.Lng == 0 {
+		t.Error("QRZ grid did not resolve to coordinates")
+	}
+	if sel.Azimuth <= 0 || sel.DistanceKm <= 0 {
+		t.Errorf("beam answer not derived: az=%v dist=%v", sel.Azimuth, sel.DistanceKm)
+	}
+	if sel.Country != "Australia" || sel.QTH != "Cairns" {
+		t.Errorf("country/qth = %q/%q", sel.Country, sel.QTH)
+	}
+}
+
+// QRZ without a grid but with coordinates still places the pin (finish's
+// inverse problem answers the beam from raw lat/lng).
+func TestEnrichFromCoordinatesWithoutGrid(t *testing.T) {
+	r := stationResolver()
+	r.QRZ = &fakeLookup{rec: qrz.Record{Call: "VK9XY", Lat: -16.92, Lon: 145.77}}
+
+	sel := r.FromLog4OM(log4om.Callsign{Call: "VK9XY"}, "log4om")
+	sel, _ = r.Enrich(context.Background(), sel)
+	if sel.Locator != "" {
+		t.Errorf("locator = %q, want empty (no grid in the record)", sel.Locator)
+	}
+	if sel.Lat == 0 || sel.Lng == 0 {
+		t.Error("coordinates not applied")
+	}
+	if sel.Azimuth <= 0 || sel.DistanceKm <= 0 {
+		t.Errorf("beam answer not derived from coordinates: az=%v dist=%v", sel.Azimuth, sel.DistanceKm)
+	}
+}
+
+// Logger-provided positions are authoritative: no lookup, no QRZ fields.
+func TestEnrichSkipsWhenLoggerPlacedTheStation(t *testing.T) {
+	r := stationResolver()
+	lk := &fakeLookup{rec: qrz.Record{Call: "VK9XY", Grid: "QH42wp"}}
+	r.QRZ = lk
+
+	// DXLog az+dist → direct problem, no grid.
+	sel := r.FromN1MM(n1mmDXLog("VK9XY"), "dxlog")
+	if _, err := r.Enrich(context.Background(), sel); err != nil {
+		t.Fatalf("enrich: %v", err)
+	}
+	if len(lk.calls) != 0 {
+		t.Fatalf("lookups = %v, want none", lk.calls)
+	}
+	if sel.Country != "" {
+		t.Error("QRZ fields leaked into a logger-placed record")
+	}
+
+	// N1MM grid → locator path, also no lookup.
+	gridSel := r.FromN1MM(n1mm.LookupInfo{
+		Call: "VK9XY", FreqTx10: 1402476, Band: "20", Mode: "CW", Grid: "QH42",
+	}, "n1mm")
+	if _, err := r.Enrich(context.Background(), gridSel); err != nil {
+		t.Fatalf("enrich: %v", err)
+	}
+	if len(lk.calls) != 0 {
+		t.Fatalf("lookups = %v, want none", lk.calls)
+	}
+	if gridSel.Country != "" {
+		t.Error("QRZ fields leaked into a logger-located record")
+	}
+}
+
+func TestEnrichNilLookupAndNilSelection(t *testing.T) {
+	r := stationResolver() // QRZ nil → disabled
+
+	sel := r.FromLog4OM(log4om.Callsign{Call: "VK9XY"}, "log4om")
+	got, err := r.Enrich(context.Background(), sel)
+	if err != nil || got != sel {
+		t.Fatalf("disabled enrich changed behavior: %+v, %v", got, err)
+	}
+	if got, err := r.Enrich(context.Background(), nil); got != nil || err != nil {
+		t.Fatalf("nil selection not passed through: %+v, %v", got, err)
+	}
+}
+
+// A failed lookup publishes the record as-is (call+RF only) — the same
+// shape the bridge produced before QRZ existed.
+func TestEnrichLookupErrorLeavesSelectionUnchanged(t *testing.T) {
+	r := stationResolver()
+	r.QRZ = &fakeLookup{err: qrz.ErrNotFound}
+
+	sel := r.FromLog4OM(log4om.Callsign{Call: "XX9XX"}, "log4om")
+	before := *sel
+	got, err := r.Enrich(context.Background(), sel)
+	if err == nil {
+		t.Fatal("expected the lookup error to surface")
+	}
+	if got != sel || *got != before {
+		t.Errorf("selection changed on error: %+v → %+v", &before, got)
+	}
+}
+
+// Without a configured station_locator the QRZ position still places the
+// pin; only the beam answer stays absent.
+func TestEnrichWithoutStationLocator(t *testing.T) {
+	r := Resolver{} // no station
+	lk := &fakeLookup{rec: qrz.Record{Call: "VK9XY", Grid: "QH42wp", Country: "Australia"}}
+	r.QRZ = lk
+
+	sel := r.FromLog4OM(log4om.Callsign{Call: "VK9XY"}, "log4om")
+	sel, err := r.Enrich(context.Background(), sel)
+	if err != nil {
+		t.Fatalf("enrich: %v", err)
+	}
+	if sel.Lat == 0 && sel.Lng == 0 {
+		t.Error("QRZ grid did not resolve to coordinates")
+	}
+	if sel.Azimuth != 0 || sel.DistanceKm != 0 {
+		t.Errorf("beam answer computed without a station: az=%v dist=%v", sel.Azimuth, sel.DistanceKm)
 	}
 }
