@@ -7,6 +7,7 @@ use (
 	./flexbridge
 	./hadiscovery
 	./hf-mqtt-capture
+	./logger-spot-bridge
 	./pelcobridge2
 	./powerseq
 	./shared

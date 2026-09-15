@@ -5,6 +5,7 @@
 // (`static/map.js`): pan/zoom canvas, country landmass fills + coastline outlines,
 // grid-square fills by dominant band + SNR opacity, and FT8/FT4 spot dots.
 
+import 'dart:async';
 import 'dart:ui' as ui;
 import 'dart:math' as math;
 
@@ -17,6 +18,8 @@ import '../../dxspot/mercator_projection.dart';
 import '../../dxspot/projection.dart';
 import '../../dxspot/ring_subpaths.dart';
 import '../../dxspot/world_geometry.dart';
+import '../../store/bus_store.dart';
+import '../../store/selected_spot.dart';
 import '../theme.dart';
 import 'rotator_presets_bar.dart';
 
@@ -42,11 +45,24 @@ class _MercatorMapPanelState extends State<MercatorMapPanel> {
   double? _centerLat;
   double? _centerLng;
   List<List<LatLng>>? _rings;
+  // Aging tick for the selected-station marker (dim/hide as the keyed call
+  // grows old) — a quiet band produces no other rebuilds, so keep a slow
+  // one alive.
+  Timer? _ageTick;
 
   @override
   void initState() {
     super.initState();
     _loadGeometry();
+    _ageTick = Timer.periodic(const Duration(seconds: 30), (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _ageTick?.cancel();
+    super.dispose();
   }
 
   Future<void> _loadGeometry() async {
@@ -82,8 +98,17 @@ class _MercatorMapPanelState extends State<MercatorMapPanel> {
   @override
   Widget build(BuildContext context) {
     final dx = context.watch<DxSpotService>();
+    final store = context.watch<BusStore>();
     final qthLat = dx.centerLat;
     final qthLng = dx.centerLng;
+
+    // The station the operator keyed in the shack logger (muehle/hf/spots,
+    // published by logger-spot-bridge). Pin + callsign when the bridge
+    // resolved coordinates; nothing here needs the azimuth.
+    final selected = SelectedSpot.fromSelected(store.stateValue('muehle/hf/spots', 'selected'));
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    final selectedAge = selected?.ageSecondsAt(nowMs) ?? 0;
+    final selectedLive = selected != null && stalenessFor(selectedAge) != SelectedStaleness.expired;
 
     // Keep the panel centred on the QTH until the user pans it.
     if (qthLat != null && qthLng != null && _centerLat == null) {
@@ -129,6 +154,8 @@ class _MercatorMapPanelState extends State<MercatorMapPanel> {
                       filter: dx.filter,
                       qthLat: qthLat,
                       qthLng: qthLng,
+                      selected: selectedLive ? selected : null,
+                      selectedAgeSeconds: selectedAge,
                     ),
                     child: SizedBox.expand(),
                   ),
@@ -238,6 +265,8 @@ class _MercatorPainter extends CustomPainter {
   final DxSpotFilter filter;
   final double? qthLat;
   final double? qthLng;
+  final SelectedSpot? selected;
+  final int selectedAgeSeconds;
 
   _MercatorPainter({
     required this.projection,
@@ -248,6 +277,8 @@ class _MercatorPainter extends CustomPainter {
     required this.filter,
     required this.qthLat,
     required this.qthLng,
+    this.selected,
+    this.selectedAgeSeconds = 0,
   });
 
   @override
@@ -310,6 +341,42 @@ class _MercatorPainter extends CustomPainter {
         );
       }
     }
+
+    // 6. Selected station (the operator-keyed call from the shack logger):
+    // amber pin + callsign label, dimmed when stale. Only drawable with
+    // coordinates — the azimuth-only case is the compass ray's job.
+    final sel = selected;
+    if (sel != null && sel.hasPosition) {
+      final p = projection.project(sel.lat!, sel.lng!);
+      if (p != null) {
+        final stale = stalenessFor(selectedAgeSeconds) == SelectedStaleness.stale;
+        final color = AppTheme.amber.withValues(alpha: stale ? 0.45 : 1.0);
+        canvas.drawCircle(Offset(p.x, p.y), 5, Paint()..color = color);
+        canvas.drawCircle(
+          Offset(p.x, p.y),
+          9,
+          Paint()
+            ..color = color
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 2,
+        );
+        _drawLabel(canvas, sel.call, p.x + 12, p.y - 12, color);
+      }
+    }
+  }
+
+  /// Callsign label on a small dark pill so it reads on any land fill.
+  void _drawLabel(Canvas canvas, String text, double x, double y, Color color) {
+    final tp = TextPainter(
+      text: TextSpan(text: text, style: AppTheme.mono(11, weight: FontWeight.w700, color: color)),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    final rect = Rect.fromLTWH(x, y - tp.height / 2, tp.width + 8, tp.height + 4);
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(rect, const Radius.circular(3)),
+      Paint()..color = AppTheme.page.withValues(alpha: 0.82),
+    );
+    tp.paint(canvas, Offset(x + 4, y - tp.height / 2 + 2));
   }
 
   void _drawGridSquare(Canvas canvas, GridSquare sq) {
@@ -439,6 +506,15 @@ class _MercatorPainter extends CustomPainter {
         oldDelegate.rings != rings ||
         oldDelegate.gridSquares.length != gridSquares.length ||
         oldDelegate.spots.length != spots.length ||
-        oldDelegate.filter != filter;
+        oldDelegate.filter != filter ||
+        // Selected-station marker: identity change (new call/source) or a
+        // half-minute age bucket (the dim-out).
+        _selectedKey(oldDelegate.selected, oldDelegate.selectedAgeSeconds) !=
+            _selectedKey(selected, selectedAgeSeconds);
+  }
+
+  String _selectedKey(SelectedSpot? sel, int ageSeconds) {
+    if (sel == null) return '';
+    return '${sel.call}|${sel.source}|${sel.tsMs}|${ageSeconds ~/ 30}';
   }
 }

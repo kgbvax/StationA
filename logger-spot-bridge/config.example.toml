@@ -1,0 +1,47 @@
+# logger-spot-bridge configuration — seed-once, keep 0600.
+# The MQTT password is NOT here: set LOGGER_SPOT_BRIDGE_MQTT_PASSWORD instead.
+
+host            = "shack-pc"
+
+# The shack QTH (Maidenhead locator) — the same QTH the loggers are configured
+# with. DXLog's azimuth/distance are computed from the logging PC's position;
+# this locator turns them into map coordinates (the direct problem). Leave
+# empty to rely wholly on logger-provided bearings (compass ray only, no pin).
+station_locator = "JO31"
+
+[slot]
+station = "hf"
+slot    = "spots"
+
+# One [[listener]] per logger broadcast stream.
+#   kind = "n1mm"  — DXLog / N1MM-family XML (lookupinfo). Enable under
+#                    DXLog Options|Broadcast (ports in Options|Network
+#                    configuration; N1MM default 12060).
+#   kind = "log4om" — Log4OM outbound CALLSIGN service (Settings → Program
+#                    configuration → Software integration → Connections,
+#                    outbound, service type CALLSIGN; point it at this PC's
+#                    IP and the port below).
+[[listener]]
+name = "dxlog"
+kind = "n1mm"
+port = 12060
+
+# [[listener]]
+# name = "log4om"
+# kind = "log4om"
+# port = 2249
+
+# UDP-silence window after which device_online drops ("logger feed quiet").
+# Loggers only broadcast when the operator types (or Radio broadcast is on),
+# so keep this generous.
+stale_after = "10m"
+
+[mqtt]
+broker    = "tcp://192.168.1.139:1883"   # shack-local Mosquitto on shari
+client_id = ""                           # default: muehle-hf-spots
+user      = "hf"
+password  = ""                           # unused; env LOGGER_SPOT_BRIDGE_MQTT_PASSWORD wins
+site      = "muehle"
+
+[log]
+level = "info"
