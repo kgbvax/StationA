@@ -132,6 +132,10 @@ class _CompassBody extends StatelessWidget {
     final nowMs = DateTime.now().millisecondsSinceEpoch;
     final selectedAge = selected?.ageSecondsAt(nowMs) ?? 0;
     final selectedLive = selected != null && stalenessFor(selectedAge) != SelectedStaleness.expired;
+    // Tap-to-aim on the chip is offered only when it can actually work:
+    // rotor online and a bearing derived (a pin from coordinates has its
+    // beam answer filled by the bridge; a logger azimuth counts too).
+    final selectedAimable = selectedLive && rotatorOnline && selected.azimuth != null;
 
     final targetDiff = (targetAz - az).abs();
     final targetVisible = targetDiff > 5.0;
@@ -330,17 +334,19 @@ class _CompassBody extends StatelessWidget {
             ),
             // Layer 4b: selected-station read-out, bottom-left. Shows what
             // the operator keyed in the logger and the beam answer — the
-            // "worth turning?" decision aid. Hidden when nothing is keyed
+            // "worth turning?" decision aid, and the actuator: tapping the
+            // chip aims the rotor at the keyed station (the same set_az the
+            // disc's tap-to-aim publishes). Inert when the rotor is offline
+            // or the bridge derived no bearing. Hidden when nothing is keyed
             // (or the marker aged out).
             if (selectedLive)
               Positioned(
                 left: 8,
                 bottom: 4,
-                child: IgnorePointer(
-                  child: _SelectedChip(
-                    parts: _selectedChipParts(selected, selectedAge),
-                    stale: stalenessFor(selectedAge) == SelectedStaleness.stale,
-                  ),
+                child: _SelectedChip(
+                  parts: _selectedChipParts(selected, selectedAge, aimable: selectedAimable),
+                  stale: stalenessFor(selectedAge) == SelectedStaleness.stale,
+                  onTap: selectedAimable ? () => sendAz(selected.azimuth!) : null,
                 ),
               ),
             // Layer 5: direction presets, stacked directly above the zoom
@@ -604,11 +610,16 @@ class _AzimuthChip extends StatelessWidget {
 
 /// Read-out parts for the selected-station chip: `CALL · az° · dist`, each
 /// segment only when the bridge derived it. Distance rounds to whole km —
-/// beam-assessment precision, not pileup precision.
-List<String> _selectedChipParts(SelectedSpot sel, int ageSeconds) {
+/// beam-assessment precision, not pileup precision. With `aimable` the
+/// bearing segment carries the `→` target marker (the same convention as
+/// the azimuth pill's target read-out) because a tap on the chip will turn
+/// the rotor onto that bearing.
+List<String> _selectedChipParts(SelectedSpot sel, int ageSeconds, {bool aimable = false}) {
   final stale = stalenessFor(ageSeconds) != SelectedStaleness.fresh;
   String? azText;
-  if (sel.azimuth != null) azText = '${sel.azimuth!.round()}°';
+  if (sel.azimuth != null) {
+    azText = aimable ? '→ ${sel.azimuth!.round()}°' : '${sel.azimuth!.round()}°';
+  }
   String? distText;
   if (sel.distanceKm != null) distText = '${sel.distanceKm!.round()} km';
   return [
@@ -623,25 +634,37 @@ List<String> _selectedChipParts(SelectedSpot sel, int ageSeconds) {
 /// Bottom-left chip naming the keyed station with the beam answer. Amber —
 /// the theme's "attention, not alarm" color — and grey when the selection
 /// is stale. Mirror of [_AzimuthChip] so the two read-outs read as one
-/// family.
+/// family. It is also the actuator: a tap aims the rotor at the keyed
+/// station. [onTap] is null when that can't work (no bearing, rotor
+/// offline) and the chip stays a plain read-out.
 class _SelectedChip extends StatelessWidget {
   final List<String> parts;
   final bool stale;
-  const _SelectedChip({required this.parts, required this.stale});
+  final VoidCallback? onTap;
+  const _SelectedChip({required this.parts, required this.stale, this.onTap});
 
   @override
   Widget build(BuildContext context) {
     final color = stale ? AppTheme.txtMute : AppTheme.amber;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-      decoration: BoxDecoration(
-        color: AppTheme.blend(color, 0.12),
-        border: Border.all(color: color),
-        borderRadius: BorderRadius.circular(4),
-      ),
-      child: Text(
-        parts.join(' · '),
-        style: AppTheme.mono(12, weight: FontWeight.w700, color: color),
+    return GestureDetector(
+      onTap: onTap,
+      behavior: HitTestBehavior.opaque,
+      child: Container(
+        // Control first, read-out second: one-tap contract means a real
+        // touch target — 48 dp tall with wide padding, not the ~20 dp the
+        // 12 px text alone would make.
+        constraints: const BoxConstraints(minHeight: 48),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: AppTheme.blend(color, 0.12),
+          border: Border.all(color: color),
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: Text(
+          parts.join(' · '),
+          style: AppTheme.mono(12, weight: FontWeight.w700, color: color),
+        ),
       ),
     );
   }
