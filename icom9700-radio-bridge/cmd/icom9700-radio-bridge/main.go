@@ -121,11 +121,12 @@ func bridgeOptions(cfg config.Config, log *slog.Logger) bridge.Options {
 		MaxAttempts:    cfg.Session.MaxAttempts,
 		AttemptSpacing: cfg.Session.AttemptSpacingDur,
 		ErrorDecay:     cfg.Session.ErrorDecayDur,
+		TXWatchdog:     cfg.Session.TXWatchdogDur,
 
-		// U6 SEAMS (KTD-4/KTD-5): the safety core replaces the v1 arm gate
-		// (Options.ArmGate) and arms its TX watchdog here (Options.OnPTTOn).
-		// Both are nil for v1: the default gate is armed AND live, and the
-		// watchdog hook is a no-op.
+		// U6 SEAMS (KTD-4/KTD-5): installed inside bridge.New — the safety
+		// core replaces the v1 arm gate (Options.ArmGate) and arms its TX
+		// watchdog on every PTT-on (Options.OnPTTOn). The MQTT-plane-loss
+		// rule (R4) is wired at OnConnectionLost below.
 		Log: log,
 	}
 }
@@ -179,9 +180,11 @@ func connectMQTT(ctx context.Context, cfg config.Config, mgr radio.Manager, br *
 	}
 	opts.OnConnectionLost = func(_ pahomqtt.Client, err error) {
 		log.Warn("MQTT connection lost", "err", err)
-		// U6 SEAM (R4/KTD-5): the MQTT-plane-loss rule lands here — force
-		// PTT-off (br.Session().RequestPTTOff()) and disarm within the bound,
-		// before paho's auto-reconnect re-opens the cmd plane.
+		// U6 (R4/KTD-5): the loss-of-plane rule — unkey over the radio plane
+		// (RequestPTTOff, UDP, independent of the lost broker link) and
+		// disarm. Enqueue-only: the paho goroutine must not block; the worker
+		// applies the rule and records the loss fact in /state.error.
+		br.OnMQTTConnectionLost(err)
 	}
 
 	client := pahomqtt.NewClient(opts)

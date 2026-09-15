@@ -62,6 +62,10 @@ type Options struct {
 	MaxAttempts    int
 	AttemptSpacing time.Duration
 	ErrorDecay     time.Duration
+	// TXWatchdog is the max-TX bound (config [session].tx_watchdog); the U6
+	// safety core arms one window per PTT-on. <=0 falls back to the 180 s
+	// default (KTD-5) — the bound is never disabled.
+	TXWatchdog time.Duration
 	// TransportOpts mutates the civ transport options per dial (test
 	// cadences). Production wiring leaves it nil.
 	TransportOpts func(*civ.Opts)
@@ -108,10 +112,11 @@ func defaultArmGate(armed, live bool) error {
 
 // Bridge is the slot surface. Build with New; Close on shutdown.
 type Bridge struct {
-	opts  Options
-	log   *slog.Logger
-	codec *civ.Codec
-	sess  *radio.Session
+	opts   Options
+	log    *slog.Logger
+	codec  *civ.Codec
+	sess   *radio.Session
+	safety *safetyCore // the U6 TX safety machinery (nil only before New finishes)
 
 	jobs chan func()
 
@@ -171,8 +176,11 @@ func New(ctx context.Context, o Options) *Bridge {
 				b.publishState(false)
 			})
 		},
-		OnArmDrop: func(string) {
-			sharedmqtt.Enqueue(b.jobs, func() { b.onSessionEvent(radio.Snapshot{}) })
+		OnArmDrop: func(reason string) {
+			sharedmqtt.Enqueue(b.jobs, func() {
+				b.safety.onArmDrop(reason) // U6: the KTD-5 watchdog cancel on a self-dropped permit
+				b.onSessionEvent(radio.Snapshot{})
+			})
 		},
 		OnCIVFrame: func(chunk []byte) {
 			// Transport read goroutine: copy and hand off — never parse or
@@ -182,6 +190,12 @@ func New(ctx context.Context, o Options) *Bridge {
 			sharedmqtt.Enqueue(b.jobs, func() { b.onCIVFrame(c) })
 		},
 	})
+	// U6: the safety core fills the two seams — PTT admission and the
+	// watchdog re-arm point — before the worker starts, so no closure can
+	// observe the nil core (the hooks above reach it only through the worker).
+	b.safety = newSafetyCore(b, o.TXWatchdog)
+	b.opts.ArmGate = b.safety.gate
+	b.opts.OnPTTOn = b.safety.pttOn
 	go sharedmqtt.RunJobs(ctx, b.jobs)
 	return b
 }
@@ -292,6 +306,10 @@ func (b *Bridge) OnMQTTConnect(cl paho.Client) {
 // follows. snap is the state change that scheduled this run; the publish
 // itself re-reads the current snapshot. Runs on the jobs worker.
 func (b *Bridge) onSessionEvent(snap radio.Snapshot) {
+	// U6: the safety core consumes every snapshot edge — the unified
+	// permit-drop rule (force PTT-off whenever the permit reads false while a
+	// bridge key-up is unresolved) keys off the published armed:false.
+	b.safety.onSnapshot(snap)
 	b.mu.Lock()
 	if snap.State != radio.StateLive {
 		b.notLiveSeen = true
