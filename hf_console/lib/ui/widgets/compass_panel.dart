@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'dart:async';
 import 'dart:math' as math;
 import '../../store/bus_store.dart';
 import '../../mqtt/mqtt_service.dart';
+import '../../store/selected_spot.dart';
 import '../../store/wiring.dart';
 import '../../dxspot/dxspot_service.dart';
 import '../../dxspot/projection.dart';
@@ -69,9 +71,22 @@ class _CompassPanelState extends State<CompassPanel> {
   // here (not on the painter) because the painter is reconstructed every
   // frame. Disposed in `dispose()`.
   final WorldLayerCache _world = WorldLayerCache();
+  // Aging tick for the selected-station marker: the marker dims/greys out as
+  // the keyed call grows old, which only repaints if something rebuilds the
+  // panel. A quiet band produces no other rebuilds, so keep a slow tick.
+  Timer? _ageTick;
+
+  @override
+  void initState() {
+    super.initState();
+    _ageTick = Timer.periodic(const Duration(seconds: 30), (_) {
+      if (mounted) setState(() {});
+    });
+  }
 
   @override
   void dispose() {
+    _ageTick?.cancel();
     _world.dispose();
     super.dispose();
   }
@@ -108,6 +123,19 @@ class _CompassBody extends StatelessWidget {
     final moving = store.stateValueAs<bool>('muehle/hf/rotator', 'moving') ?? false;
 
     final direction = store.stateValueAs<String>('muehle/hf/ant-ctrl', 'direction') ?? 'forward';
+
+    // The station the operator keyed in the shack logger (DXLog/Log4OM),
+    // published by logger-spot-bridge on muehle/hf/spots. Rendered as a pin
+    // (coordinates) or a bearing ray (azimuth only) plus a bottom-left
+    // read-out chip — the "is turning the beam worth it" aid.
+    final selected = SelectedSpot.fromSelected(store.stateValue('muehle/hf/spots', 'selected'));
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    final selectedAge = selected?.ageSecondsAt(nowMs) ?? 0;
+    final selectedLive = selected != null && stalenessFor(selectedAge) != SelectedStaleness.expired;
+    // Tap-to-aim on the chip is offered only when it can actually work:
+    // rotor online and a bearing derived (a pin from coordinates has its
+    // beam answer filled by the bridge; a logger azimuth counts too).
+    final selectedAimable = selectedLive && rotatorOnline && selected.azimuth != null;
 
     final targetDiff = (targetAz - az).abs();
     final targetVisible = targetDiff > 5.0;
@@ -230,6 +258,8 @@ class _CompassBody extends StatelessWidget {
                       worldRings: snap.data,
                       zoom: zoom,
                       world: world,
+                      selected: selectedLive ? selected : null,
+                      selectedAgeSeconds: selectedAge,
                     ),
                   ),
                 );
@@ -302,6 +332,23 @@ class _CompassBody extends StatelessWidget {
                 onZoomChanged: onZoomChanged,
               ),
             ),
+            // Layer 4b: selected-station read-out, bottom-left. Shows what
+            // the operator keyed in the logger and the beam answer — the
+            // "worth turning?" decision aid, and the actuator: tapping the
+            // chip aims the rotor at the keyed station (the same set_az the
+            // disc's tap-to-aim publishes). Inert when the rotor is offline
+            // or the bridge derived no bearing. Hidden when nothing is keyed
+            // (or the marker aged out).
+            if (selectedLive)
+              Positioned(
+                left: 8,
+                bottom: 4,
+                child: _SelectedChip(
+                  parts: _selectedChipParts(selected, selectedAge, aimable: selectedAimable),
+                  stale: stalenessFor(selectedAge) == SelectedStaleness.stale,
+                  onTap: selectedAimable ? () => sendAz(selected.azimuth!) : null,
+                ),
+              ),
             // Layer 5: direction presets, stacked directly above the zoom
             // stepper on the right card edge (moved off the map column's
             // footer row so the disc gets the full card height).
@@ -561,6 +608,68 @@ class _AzimuthChip extends StatelessWidget {
   }
 }
 
+/// Read-out parts for the selected-station chip: `CALL · az° · dist`, each
+/// segment only when the bridge derived it. Distance rounds to whole km —
+/// beam-assessment precision, not pileup precision. With `aimable` the
+/// bearing segment carries the `→` target marker (the same convention as
+/// the azimuth pill's target read-out) because a tap on the chip will turn
+/// the rotor onto that bearing.
+List<String> _selectedChipParts(SelectedSpot sel, int ageSeconds, {bool aimable = false}) {
+  final stale = stalenessFor(ageSeconds) != SelectedStaleness.fresh;
+  String? azText;
+  if (sel.azimuth != null) {
+    azText = aimable ? '→ ${sel.azimuth!.round()}°' : '${sel.azimuth!.round()}°';
+  }
+  String? distText;
+  if (sel.distanceKm != null) distText = '${sel.distanceKm!.round()} km';
+  return [
+    sel.call,
+    if (sel.band.isNotEmpty) sel.band,
+    if (azText != null) azText,
+    if (distText != null) distText,
+    if (stale) 'old',
+  ];
+}
+
+/// Bottom-left chip naming the keyed station with the beam answer. Amber —
+/// the theme's "attention, not alarm" color — and grey when the selection
+/// is stale. Mirror of [_AzimuthChip] so the two read-outs read as one
+/// family. It is also the actuator: a tap aims the rotor at the keyed
+/// station. [onTap] is null when that can't work (no bearing, rotor
+/// offline) and the chip stays a plain read-out.
+class _SelectedChip extends StatelessWidget {
+  final List<String> parts;
+  final bool stale;
+  final VoidCallback? onTap;
+  const _SelectedChip({required this.parts, required this.stale, this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final color = stale ? AppTheme.txtMute : AppTheme.amber;
+    return GestureDetector(
+      onTap: onTap,
+      behavior: HitTestBehavior.opaque,
+      child: Container(
+        // Control first, read-out second: one-tap contract means a real
+        // touch target — 48 dp tall with wide padding, not the ~20 dp the
+        // 12 px text alone would make.
+        constraints: const BoxConstraints(minHeight: 48),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: AppTheme.blend(color, 0.12),
+          border: Border.all(color: color),
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: Text(
+          parts.join(' · '),
+          style: AppTheme.mono(12, weight: FontWeight.w700, color: color),
+        ),
+      ),
+    );
+  }
+}
+
 class _CompassPainter extends CustomPainter {
   final double az;
   final String direction;
@@ -571,6 +680,8 @@ class _CompassPainter extends CustomPainter {
   final List<List<LatLng>>? worldRings;
   final double zoom;
   final WorldLayerCache world;
+  final SelectedSpot? selected;
+  final int selectedAgeSeconds;
 
   _CompassPainter({
     required this.az,
@@ -582,6 +693,8 @@ class _CompassPainter extends CustomPainter {
     this.worldRings,
     this.zoom = 1.0,
     required this.world,
+    this.selected,
+    this.selectedAgeSeconds = 0,
   });
 
   @override
@@ -671,6 +784,64 @@ class _CompassPainter extends CustomPainter {
           ..strokeWidth = 1.5
           ..strokeCap = StrokeCap.round,
       );
+    }
+
+    _drawSelected(canvas, cx, cy, r);
+  }
+
+  /// The station the operator keyed in the logger: a pin at its AEQD
+  /// position when the bridge resolved coordinates, else a bearing ray at
+  /// the logger-reported azimuth; callsign label next to either. Dimmed
+  /// when stale (the operator probably moved on). Drawn last, above the
+  /// beam fans and the boom, so it never hides under them.
+  void _drawSelected(Canvas canvas, double cx, double cy, double r) {
+    final sel = selected;
+    if (sel == null) return;
+
+    final stale = stalenessFor(selectedAgeSeconds) == SelectedStaleness.stale;
+    final alpha = stale ? 0.45 : 1.0;
+    final color = AppTheme.amber.withValues(alpha: alpha);
+    final scale = r * zoom / math.pi;
+
+    if (sel.hasPosition && centerLat != null && centerLng != null) {
+      final aeqd = Aeqd(centerLat!, centerLng!);
+      final n = aeqd.normalized(sel.lat!, sel.lng!);
+      if (n != null) {
+        final px = cx + n.x * scale;
+        final py = cy - n.y * scale;
+        // Pin: amber dot inside an open ring — distinct from the anonymous
+        // band-colored spot squares and from the solid QTH dot.
+        canvas.drawCircle(Offset(px, py), 6, Paint()..color = color);
+        canvas.drawCircle(
+          Offset(px, py),
+          10,
+          Paint()
+            ..color = color
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 2,
+        );
+        _label(canvas, sel.call, px, py, 0, -16, color, 12, FontWeight.w700);
+        return;
+      }
+      // Coordinates exist but sit past the projection horizon (near-antipode
+      // clip): fall through to the azimuth ray so the bearing answer — the
+      // whole point — still shows.
+    }
+
+    if (sel.hasBearing) {
+      // Ray from center to the rim at the reported bearing; the label rides
+      // just under the rim tick so it stays readable at any zoom.
+      final start = _pt(cx, cy, sel.azimuth!, 16);
+      final end = _pt(cx, cy, sel.azimuth!, r - 2);
+      canvas.drawLine(
+        start,
+        end,
+        Paint()
+          ..color = color
+          ..strokeWidth = 2.5
+          ..strokeCap = StrokeCap.round,
+      );
+      _label(canvas, sel.call, cx, cy, sel.azimuth!, r - 30, color, 12, FontWeight.w700);
     }
   }
 
@@ -831,7 +1002,15 @@ class _CompassPainter extends CustomPainter {
       old.centerLng != centerLng ||
       old.gridSquares.length != gridSquares.length ||
       !identical(old.gridSquares, gridSquares) ||
-      (old.worldRings?.length ?? 0) != (worldRings?.length ?? 0);
+      (old.worldRings?.length ?? 0) != (worldRings?.length ?? 0) ||
+      // Selected-station marker: repaint on identity change (new call/source)
+      // and on half-minute age buckets (the dim-out), not per second.
+      _selectedKey(old.selected, old.selectedAgeSeconds) != _selectedKey(selected, selectedAgeSeconds);
+
+  String _selectedKey(SelectedSpot? sel, int ageSeconds) {
+    if (sel == null) return '';
+    return '${sel.call}|${sel.source}|${sel.tsMs}|${ageSeconds ~/ 30}';
+  }
 }
 
 class _Beam {

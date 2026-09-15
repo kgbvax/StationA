@@ -8,6 +8,7 @@ use (
 	./hadiscovery
 	./hf-mqtt-capture
 	./icom9700-radio-bridge
+	./logger-spot-bridge
 	./pelcobridge2
 	./powerseq
 	./shared

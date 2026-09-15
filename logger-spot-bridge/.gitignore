@@ -1,0 +1,3 @@
+dist/
+.deploy-seed.toml
+bridge.log
