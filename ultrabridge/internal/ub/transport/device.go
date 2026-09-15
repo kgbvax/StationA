@@ -46,6 +46,12 @@ type Client interface {
 // writing to a deleted device node ("write request: Input/output error") until
 // a manual restart. opener may be nil for transports that never need to
 // reopen (e.g. the in-process mock).
+//
+// Device silence is handled separately from port faults: reads are bounded
+// (the serial opener sets a per-Read window), and a deadline hit surfaces a
+// timeout error without reopening — a live port must not be cycled every poll
+// tick while the controller is merely unresponsive. The caller (poll loop)
+// marks the device offline and keeps polling; the first answer clears it.
 type Device struct {
 	rw     byteReadWriteCloser
 	opener func() (byteReadWriteCloser, error)
@@ -161,11 +167,20 @@ func (d *Device) Exchange(ctx context.Context, com byte, data []byte, timeout ti
 				return pkt, nil
 			}
 
-			// A non-nil read error is a port-level fault, not a timeout:
-			// the serial port is opened without a read timeout, so Read
-			// blocks until data arrives or the link drops. Reopen and retry
-			// the exchange once; if the link is still gone, surface the
-			// error so the next poll tick retries rather than spinning.
+			// Device silence — the port answered within its read window but
+			// the controller sent nothing (wedged firmware, powered off
+			// head). This is NOT a port fault: reopening a healthy port on
+			// every silent poll would churn the handle every 2 s. Surface
+			// the error so the poll loop marks the device offline and keeps
+			// polling — the first answer flips it back online.
+			if errors.Is(err, errReadTimeout) {
+				return protocol.Packet{}, fmt.Errorf("no response from device: %w", err)
+			}
+
+			// A non-nil other read error is a port-level fault: the link
+			// dropped under the handle. Reopen and retry the exchange once;
+			// if the link is still gone, surface the error so the next poll
+			// tick retries rather than spinning.
 			if !retried && d.reopen() == nil {
 				log.Warn("serial read fault, port reopened", "err", err)
 				retried = true
@@ -187,7 +202,7 @@ func readOnePacket(r io.Reader, deadline time.Time) (protocol.Packet, error) {
 
 	for {
 		if time.Now().After(deadline) {
-			return protocol.Packet{}, fmt.Errorf("read timeout")
+			return protocol.Packet{}, errReadTimeout
 		}
 
 		n, err := r.Read(buf)
