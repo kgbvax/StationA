@@ -80,7 +80,13 @@ is Windows, no `/etc`), `-log.level` (overrides config).
    runs as the schtasks logon task `logger-spot-bridge` → `start-bridge.cmd`
    next to the exe (holds the MQTT password as env — the Windows env-file
    equivalent; `@echo off` first or cmd echoes the batch line, password and
-   all). Bridge stderr lands in `bridge.log`.
+   all). Bridge stderr lands in `bridge.log`. deploy.sh seeds the wrapper
+   once from `start-bridge.cmd.example` and re-registers the task against it
+   on every deploy (`/create /f`) — a task pointing at the bare exe starts
+   the bridge without the password env (2026-09-16 outage). Config.toml and
+   start-bridge.cmd are seed-once HOST STATE: updates never overwrite them,
+   and every deploy runs `logger-spot-bridge.exe -check` (effective config,
+   redacted; broker DNS + password presence) before restarting the task.
 7. **DEPLOYED 2026-09-15** — live config: broker `tcp://hassio.kgbvax.net:1883`
    (the HA box at 192.168.1.50, which serves `muehle/#`; the shari mosquitto
    is inactive and the two-broker migration undeployed). `bwbroker` is
