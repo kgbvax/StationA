@@ -101,25 +101,33 @@ class _UltrabeamPanelState extends State<UltrabeamPanel> {
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
-                _DirectionButton(
-                  label: 'FORWARD',
-                  active: direction == 'forward',
-                  // Elements moving: lock taps so rapid presses can't queue
-                  // competing direction cmds against mid-travel motors —
-                  // the same lockout ultrabridge's own web UI applies.
-                  onPressed: (online && !moving) ? () => send(antCtrlDirectionPayload('forward')) : null,
+                // The three direction buttons share the free width equally —
+                // intrinsic sizing made '180°' a sliver next to 'FORWARD'.
+                Expanded(
+                  child: _DirectionButton(
+                    label: 'FORWARD',
+                    active: direction == 'forward',
+                    // Elements moving: lock taps so rapid presses can't queue
+                    // competing direction cmds against mid-travel motors —
+                    // the same lockout ultrabridge's own web UI applies.
+                    onPressed: (online && !moving) ? () => send(antCtrlDirectionPayload('forward')) : null,
+                  ),
                 ),
                 const SizedBox(width: 8),
-                _DirectionButton(
-                  label: '180°',
-                  active: direction == 'reverse',
-                  onPressed: (online && !moving && !on6m) ? () => send(antCtrlDirectionPayload('reverse')) : null,
+                Expanded(
+                  child: _DirectionButton(
+                    label: '180°',
+                    active: direction == 'reverse',
+                    onPressed: (online && !moving && !on6m) ? () => send(antCtrlDirectionPayload('reverse')) : null,
+                  ),
                 ),
                 const SizedBox(width: 8),
-                _DirectionButton(
-                  label: 'BI-DIR',
-                  active: direction == 'bidirectional',
-                  onPressed: (online && !moving && !on6m) ? () => send(antCtrlDirectionPayload('bidirectional')) : null,
+                Expanded(
+                  child: _DirectionButton(
+                    label: 'BI-DIR',
+                    active: direction == 'bidirectional',
+                    onPressed: (online && !moving && !on6m) ? () => send(antCtrlDirectionPayload('bidirectional')) : null,
+                  ),
                 ),
                 const SizedBox(width: 8),
                 ElevatedButton(

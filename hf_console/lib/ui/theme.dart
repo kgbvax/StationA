@@ -57,7 +57,7 @@ class AppTheme extends ChangeNotifier {
     /// label, accent = accent (cyan), green/amber/red = accent.success/
     /// warning/danger, orange = highlight.tx.
     AppColorScheme.aether: _Palette(
-      page: const Color(0xFF0F0F1A),
+      page: const Color(0xFF000000),
       pane: const Color(0xFF203040),
       card: const Color(0xFF1A2A3A),
       land: const Color(0xFF304050),
