@@ -15,7 +15,7 @@ void main() {
       await tester.pumpWidget(TestHarness(store: store, mqtt: mqtt, child: const TunerPanel()));
       await tester.pumpAndSettle();
 
-      expect(find.text('OFFLINE'), findsOneWidget);
+      expect(find.textContaining('OFFLINE'), findsOneWidget);
     });
 
     testWidgets('shows fault in red', (tester) async {
@@ -26,7 +26,7 @@ void main() {
       await tester.pumpWidget(TestHarness(store: store, mqtt: mqtt, child: const TunerPanel()));
       await tester.pumpAndSettle();
 
-      expect(find.text('HIGH SWR'), findsOneWidget);
+      expect(find.textContaining('HIGH SWR'), findsOneWidget);
     });
 
     testWidgets('publishes set_inline on BYPASS tap', (tester) async {

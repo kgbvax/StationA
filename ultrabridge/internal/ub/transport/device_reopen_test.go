@@ -15,10 +15,11 @@ import (
 // scripted, so a test can simulate a USB-serial adapter that drops mid-exchange
 // and recovers on reopen.
 type errRW struct {
-	mu      sync.Mutex
-	writeFn func(p []byte) (int, error)
-	readFn  func(p []byte) (int, error)
-	closeFn func() error
+	mu       sync.Mutex
+	writeFn  func(p []byte) (int, error)
+	readFn   func(p []byte) (int, error)
+	closeFn  func() error
+	replyBuf []byte // staged reply bytes, drained by reads (for silent→healthy transitions)
 }
 
 func (w *errRW) Write(p []byte) (int, error) { return w.writeFn(p) }
@@ -133,5 +134,92 @@ func TestExchangeFailsWhenReopenFails(t *testing.T) {
 	}
 	if d.rw != nil {
 		t.Fatalf("expected d.rw nil after failed reopen, got %T", d.rw)
+	}
+}
+
+// TestExchangeTimesOutOnSilentDevice covers the 2026-09-14 incident: the
+// controller goes silent (wedged firmware, powered off head) while the USB
+// adapter stays healthy. Every Read returns the read-window timeout, and the
+// exchange must surface a timeout error WITHOUT reopening — cycling a healthy
+// port on every silent poll tick would churn the handle forever — so the poll
+// loop can mark the device offline and keep trying.
+func TestExchangeTimesOutOnSilentDevice(t *testing.T) {
+	var reopenCalls int
+	silent := &errRW{
+		writeFn: func(p []byte) (int, error) { return len(p), nil },
+		readFn:  func(p []byte) (int, error) { return 0, errReadTimeout },
+	}
+	opener := func() (byteReadWriteCloser, error) {
+		reopenCalls++
+		return silent, nil
+	}
+
+	d := NewDevice(silent, opener)
+	start := time.Now()
+	_, err := d.Exchange(context.Background(), protocol.CmdStatusQuery, nil, 150*time.Millisecond)
+	elapsed := time.Since(start)
+	if err == nil {
+		t.Fatal("expected timeout error on silent device, got nil")
+	}
+	if !errors.Is(err, errReadTimeout) {
+		t.Fatalf("expected errReadTimeout in chain, got: %v", err)
+	}
+	if elapsed > time.Second {
+		t.Fatalf("exchange took %v — read not bounded by the deadline", elapsed)
+	}
+	if reopenCalls != 0 {
+		t.Fatalf("expected no reopen on silence (not a port fault), got %d calls", reopenCalls)
+	}
+}
+
+// TestExchangeRecoversAfterSilence simulates the outage ending: the controller
+// is silent through one exchange (device marked offline), then answers again.
+// The very next exchange must succeed without any reopen — the poll loop's
+// own retry is the recovery, and Refresh rebuilds the state wholesale.
+func TestExchangeRecoversAfterSilence(t *testing.T) {
+	rw := &errRW{
+		writeFn: func(p []byte) (int, error) { return len(p), nil },
+		readFn:  func(p []byte) (int, error) { return 0, errReadTimeout },
+	}
+
+	openerCalls := 0
+	opener := func() (byteReadWriteCloser, error) {
+		openerCalls++
+		return rw, nil
+	}
+
+	d := NewDevice(rw, opener)
+	if _, err := d.Exchange(context.Background(), protocol.CmdStatusQuery, nil, 100*time.Millisecond); err == nil {
+		t.Fatal("expected timeout while device silent, got nil")
+	}
+
+	// Controller comes back (power-cycled): writes stage a reply, reads
+	// deliver it — same mechanics as replyRW, on the same handle the device
+	// already holds, mirroring a resync without any reopen.
+	rw.writeFn = func(p []byte) (int, error) {
+		pkt, err := protocol.DecodeFramedBytes(p[1 : len(p)-1])
+		if err == nil {
+			rw.replyBuf = protocol.EncodePacket(protocol.Packet{Seq: pkt.Seq, Com: protocol.ReplyOK})
+		}
+		return len(p), nil
+	}
+	rw.readFn = func(p []byte) (int, error) {
+		if len(rw.replyBuf) == 0 {
+			return 0, errReadTimeout
+		}
+		n := copy(p, rw.replyBuf)
+		rw.replyBuf = rw.replyBuf[n:]
+		return n, nil
+	}
+
+	pkt, err := d.Exchange(context.Background(), protocol.CmdStatusQuery, nil, time.Second)
+	if err != nil {
+		t.Fatalf("expected recovery on next poll after device returns, got: %v", err)
+	}
+	if pkt.Com != protocol.ReplyOK {
+		t.Fatalf("expected ReplyOK after recovery, got com=%d", pkt.Com)
+	}
+	if openerCalls != 0 {
+		t.Fatalf("expected no reopen across the outage (silence is not a port fault), got %d calls", openerCalls)
 	}
 }

@@ -31,7 +31,9 @@ void main() {
       expect(find.textContaining('TUNER · ATR-1000'), findsWidgets);
       expect(find.textContaining('TRX · FLEX-8400'), findsWidgets);
       expect(find.textContaining('ULTRABEAM'), findsWidgets);
-      expect(find.textContaining('ROUTING'), findsWidgets);
+      // The routing panel has no header row anymore; its GND port
+      // button is the module's marker.
+      expect(find.text('GND'), findsOneWidget);
       // Faults bar is shown on the HF page.
       expect(find.text('FAULTS'), findsOneWidget);
     });

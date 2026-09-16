@@ -11,6 +11,37 @@ import 'mercator_map_panel.dart';
 
 enum DxProjection { azimuth, mercator }
 
+/// Horst-Kevin — band-heckling dragon, lower-left corner of the map card on
+/// both projections. Bundled from horstreporter's `static/hk.jpg`; the PNG
+/// variant (`assets/img/hk-removebg.png`) is the same photo with its
+/// background removed so it composites cleanly against the map. The 56 dp
+/// circle-clip + accent ring used in the first pass clipped the dragon's
+/// horns; the alpha-clean PNG lets us render him as-is, so the widget just
+/// paints the image with a tooltip.
+class HorstKevin extends StatelessWidget {
+  /// Target rendered height in logical pixels. Width is computed from the
+  /// source's 482:517 aspect ratio (≈ 0.93) so the dragon stays proportional.
+  static const double height = 64;
+
+  const HorstKevin({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: 'Horst-Kevin — band-heckling dragon',
+      child: Image.asset(
+        'assets/img/hk-removebg.png',
+        height: height,
+        fit: BoxFit.contain,
+        // PaintingBinding's default image cache keeps the PNG in memory after
+        // first decode. `filterQuality: medium` (not high) is sufficient for
+        // this small fixed-size asset — high wastes CPU on every layout.
+        filterQuality: FilterQuality.medium,
+      ),
+    );
+  }
+}
+
 class DxMapContainer extends StatefulWidget {
   /// Whether the map panels overlay the direction-preset rail on their right
   /// edge (tablet). Phones pass false and keep the horizontal presets bar in
@@ -36,14 +67,24 @@ class _DxMapContainerState extends State<DxMapContainer> {
         _projection == DxProjection.azimuth
             ? CompassPanel(showPresets: widget.showPresets)
             : MercatorMapPanel(showPresets: widget.showPresets),
+        // Top-left: the compass panel's own chrome (zoom badge, azimuth
+        // chip) owns the top-right corner — overlaying the filter/projection
+        // chrome there drew one on top of the other.
         Positioned(
           top: 8,
-          right: 8,
+          left: 8,
           child: _MapChrome(
             projection: _projection,
             filter: dx.filter,
             onProjectionChanged: (p) => setState(() => _projection = p),
           ),
+        ),
+        // Lower-left corner resident. Taps and drags must reach the map —
+        // the dragon is decoration, not a control.
+        Positioned(
+          left: 8,
+          bottom: 4,
+          child: IgnorePointer(child: const HorstKevin()),
         ),
       ],
     );

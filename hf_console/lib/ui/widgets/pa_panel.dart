@@ -9,6 +9,7 @@ import '../../mqtt/mqtt_service.dart';
 import '../../store/wiring.dart';
 import '../theme.dart';
 import 'card_container.dart';
+import 'status_pill.dart';
 
 class PaPanel extends StatefulWidget {
   const PaPanel({super.key});
@@ -102,7 +103,6 @@ class _PaPanelState extends State<PaPanel> {
     final keyed = store.stateValueAs<String>('muehle/hf/pa', 'keyed') ?? 'rx';
     final fault = store.stateValueAs<String>('muehle/hf/pa', 'fault') ?? 'none';
     final error = store.stateValueAs<String>('muehle/hf/pa', 'error') ?? '';
-    final temp = store.stateValueAs<num>('muehle/hf/pa', 'temp_c')?.toDouble() ?? 0.0;
     final fwd = store.stateValueAs<num>('muehle/hf/pa', 'fwd_power_w')?.toDouble() ?? 0.0;
     final swr = store.stateValueAs<num>('muehle/hf/pa', 'swr')?.toDouble() ?? 1.0;
 
@@ -119,7 +119,8 @@ class _PaPanelState extends State<PaPanel> {
     final maxFwd = _peakHold;
     final p95Fwd = _p95Hold;
 
-    final (tagLabel, tagColor) = _paTag(mode, keyed, fault, error, temp, paRelayState, paPower, online);
+    final (suffix, suffixColor) =
+        _paState(keyed, fault, error, paRelayState, paPower) ?? ('', null);
 
     void setMode(String value) {
       if (!online) return;
@@ -137,7 +138,13 @@ class _PaPanelState extends State<PaPanel> {
         children: [
           CardHeader(
             title: 'PA · ACOM 1200S',
-            trailing: _Tag(tagLabel, tagColor),
+            trailing: StatusPill(
+              slots: const ['muehle/hf/pa'],
+              label: 'ACOM 1200S',
+              suffix: suffix.isEmpty ? null : suffix,
+              suffixColor: suffixColor,
+              stickySuffix: true, // FAULT diagnoses survive a dead link
+            ),
           ),
           Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -163,7 +170,7 @@ class _PaPanelState extends State<PaPanel> {
                   const SizedBox(width: 10),
                   SizedBox(
                     width: 96,
-                    height: 34,
+                    height: 37,
                     child: ElevatedButton(
                       onPressed: online ? () => setMode('operate') : null,
                       style: AppTheme.actionButton(active: mode == 'operate'),
@@ -189,7 +196,7 @@ class _PaPanelState extends State<PaPanel> {
                   const SizedBox(width: 10),
                   SizedBox(
                     width: 96,
-                    height: 34,
+                    height: 37,
                     child: ElevatedButton(
                       onPressed: online ? () => setMode('standby') : null,
                       style: AppTheme.actionButton(amber: true, active: mode == 'standby'),
@@ -205,24 +212,23 @@ class _PaPanelState extends State<PaPanel> {
     );
   }
 
-  (String, Color) _paTag(
-      String mode, String keyed, String fault, String error, double temp, String? paRelayState, String? paPower, bool online) {
-    if (!online) return ('OFFLINE', AppTheme.txtMute);
+  /// Irregular states only — the pill shows the plain green device name
+  /// while the amp is online and unremarkable (operate or standby), so
+  /// regular states return null. Offline is the pill's own concern.
+  (String, Color)? _paState(String keyed, String fault, String error, String? paRelayState, String? paPower) {
     if (fault.isNotEmpty && fault != 'none') {
       final label = error.isNotEmpty ? error.toUpperCase() : fault.toUpperCase();
       return (label, AppTheme.red);
     }
     // A live transmit outranks relay/power plumbing: an amber 'relay off'
-    // tag must never sit where red 'TX' belongs — the relay bookkeeping is
+    // suffix must never sit where red 'TX' belongs — the relay bookkeeping is
     // the subordinate fact of the two.
-    if (keyed == 'tx') return ('● TX', AppTheme.red);
+    if (keyed == 'tx') return ('TX', AppTheme.red);
     if (paRelayState == null) return ('RELAY ?', AppTheme.amber);
     if (paRelayState == 'off') return ('PA RELAY OFF', AppTheme.amber);
     if (paPower == 'off') return ('PA OFF', AppTheme.amber);
     if (keyed == 'inhibited') return ('INHIBITED', AppTheme.amber);
-    final tempLabel = temp > 0 ? ' · ${temp.round()} °C' : '';
-    if (mode == 'operate') return ('OPERATE$tempLabel', AppTheme.green);
-    return ('STANDBY$tempLabel', AppTheme.amber);
+    return null;
   }
 }
 
@@ -408,24 +414,4 @@ class _TrianglePainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant _TrianglePainter oldDelegate) =>
       oldDelegate.color != color || oldDelegate.pointDown != pointDown;
-}
-
-class _Tag extends StatelessWidget {
-  final String label;
-  final Color color;
-
-  const _Tag(this.label, this.color);
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-      decoration: BoxDecoration(
-        color: AppTheme.blend(color, 0.12),
-        border: Border.all(color: color),
-        borderRadius: BorderRadius.circular(4),
-      ),
-      child: Text(label, style: AppTheme.mono(11, color: color, weight: FontWeight.w700)),
-    );
-  }
 }

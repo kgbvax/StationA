@@ -140,16 +140,6 @@ class _CompassBody extends StatelessWidget {
     final targetDiff = (targetAz - az).abs();
     final targetVisible = targetDiff > 5.0;
 
-    // DX-overlay status line for the card header: off entirely when no station
-    // locator is set; otherwise show spot count / connecting / feed-down.
-    final dxTitle = !dx.active
-        ? ''
-        : (dx.error != null
-            ? 'DX ✗'
-            : dx.connected
-                ? 'DX ${dx.spots.length}'
-                : 'DX …');
-
     final azimuthParts = <String>[
       '${az.round()}°',
       if (rotatorOnline && targetVisible) '→ ${targetAz.round()}°',
@@ -287,14 +277,11 @@ class _CompassBody extends StatelessWidget {
             // Layer 2: top-row chrome, small margin from the card edge.
             Positioned(
               top: 4,
-              left: 8,
               right: 8,
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  if (dxTitle.isNotEmpty)
-                    IgnorePointer(child: _DxTitleBadge(label: dxTitle)),
-                  const Spacer(),
                   _ZoomBadge(zoom: zoom),
                   const SizedBox(width: 6),
                   IgnorePointer(
@@ -433,7 +420,7 @@ class _ZoomIconButton extends StatelessWidget {
         // stacked stepper stays compact under the preset rail at the card's
         // bottom-right corner.
         style: AppTheme.iconActionButton().copyWith(
-          minimumSize: const WidgetStatePropertyAll(Size(40, 28)),
+          minimumSize: const WidgetStatePropertyAll(Size(40, 31)),
         ),
         child: Icon(icon),
       ),
@@ -553,30 +540,6 @@ class _ZoomBadge extends StatelessWidget {
           label,
           style: AppTheme.mono(11, color: AppTheme.txtMute, weight: FontWeight.w700),
         ),
-      ),
-    );
-  }
-}
-
-/// Small badge in the top-left of the module showing the DX-overlay status
-/// (`"DX 80"`, `"DX …"`, `"DX ✗"`). Hidden when the overlay is off entirely
-/// so the chrome doesn't claim any left-edge space for beam-only operation.
-class _DxTitleBadge extends StatelessWidget {
-  final String label;
-  const _DxTitleBadge({required this.label});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-      decoration: BoxDecoration(
-        color: AppTheme.pane,
-        border: Border.all(color: AppTheme.cardLineHi),
-        borderRadius: BorderRadius.circular(4),
-      ),
-      child: Text(
-        label,
-        style: AppTheme.mono(11, weight: FontWeight.w700, color: AppTheme.txt),
       ),
     );
   }
@@ -757,12 +720,13 @@ class _CompassPainter extends CustomPainter {
       );
     }
 
-    for (final b in beams) {
-      final p1 = _pt(cx, cy, b.ang, 28);
-      final p2 = _pt(cx, cy, b.ang, r - 14);
-      canvas.drawLine(p1, p2, Paint()..color = b.color..strokeWidth = 3.5..strokeCap = StrokeCap.round);
-      _drawArrow(canvas, cx, cy, b.ang, r - 10, b.color);
-    }
+    // The pointing indicator: one line + arrowhead, always on the boom
+    // azimuth — where the antenna is pointed. Radiation is what the cones
+    // show; they never carry lines or arrows of their own.
+    final p1 = _pt(cx, cy, az, 28);
+    final p2 = _pt(cx, cy, az, r - 14);
+    canvas.drawLine(p1, p2, Paint()..color = AppTheme.accent..strokeWidth = 3.5..strokeCap = StrokeCap.round);
+    _drawArrow(canvas, cx, cy, az, r - 10, AppTheme.accent);
 
     _drawGridSquares(canvas, cx, cy, r);
 
@@ -845,6 +809,8 @@ class _CompassPainter extends CustomPainter {
     }
   }
 
+  /// Radiation cones only — where the elements radiate per direction mode.
+  /// The pointing line + arrowhead is drawn separately at the boom azimuth.
   List<_Beam> _beams() {
     const half = {'forward': 30.0, 'reverse': 30.0, 'bidirectional': 45.0};
     return direction == 'forward'

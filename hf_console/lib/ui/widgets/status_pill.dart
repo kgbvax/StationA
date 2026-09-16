@@ -1,0 +1,101 @@
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import '../../store/bus_store.dart';
+import '../theme.dart';
+
+/// Uniform module status pill, top-right on every card: the device name in
+/// green while everything is online and connected, the name plus an
+/// irregular-state suffix (TX, TUNING, MOVING, FAULT, …) in that state's
+/// severity colour, or the name plus OFFLINE in red when any tracked slot
+/// is down.
+///
+/// [slots] is the set of bus addresses the module depends on — worst case
+/// wins, so a module spanning az + el rotators shows OFFLINE as soon as
+/// either axis drops. With [useMetaName] the displayed name comes live from
+/// the first slot's `/meta.device` (the station convention: the device name
+/// lives on the bus, not in the UI); [label] is the fallback and the
+/// always-used name for multi-device modules.
+class StatusPill extends StatelessWidget {
+  final List<String> slots;
+  final String label;
+  final bool useMetaName;
+
+  /// Regular-state info shown in green with the name (e.g. the Ultrabeam's
+  /// tuned band). An irregular [suffix] or the offline state outranks it.
+  final String? info;
+  final String? suffix;
+  final Color? suffixColor;
+
+  /// Whether the [suffix] still means anything once the slot drops offline.
+  /// Device-reported diagnoses (FAULT, ERR) stick — the fault may be why the
+  /// device is unreachable. Motion/mismatch transients (MOVING, TX) do not:
+  /// a dead device is not moving, and showing "MOVING · OFFLINE" contradicts
+  /// itself.
+  final bool stickySuffix;
+
+  const StatusPill({
+    super.key,
+    required this.slots,
+    required this.label,
+    this.useMetaName = true,
+    this.info,
+    this.suffix,
+    this.suffixColor,
+    this.stickySuffix = false,
+  });
+
+  /// Friendly device name from the slot's `/meta` HA-discovery block
+  /// (`expose.device.name` per the schema template) — the top-level
+  /// `device` object carries only model/serial/firmware, no name.
+  static String? _metaName(BusStore store, String slot) {
+    final expose = store.slots[slot]?.meta?['expose'];
+    if (expose is! Map) return null;
+    final dev = expose['device'];
+    if (dev is! Map) return null;
+    final name = dev['name'];
+    return name is String && name.isNotEmpty ? name : null;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final store = context.watch<BusStore>();
+    final online = store.linkUp &&
+        slots.every((s) => store.slots[s]?.isOnline ?? false);
+    final name = useMetaName
+        ? (_metaName(store, slots.first) ?? label)
+        : label;
+
+    final String text;
+    final Color color;
+    if (!online) {
+      final sticky = stickySuffix &&
+          suffix != null &&
+          suffix!.isNotEmpty &&
+          suffixColor == AppTheme.red;
+      text = '$name${sticky ? ' · ${suffix!.toUpperCase()}' : ''} · OFFLINE';
+      color = AppTheme.red;
+    } else if (suffix != null && suffix!.isNotEmpty) {
+      text = '$name · ${suffix!.toUpperCase()}';
+      color = suffixColor ?? AppTheme.amber;
+    } else if (info != null && info!.isNotEmpty) {
+      text = '$name · ${info!.toUpperCase()}';
+      color = AppTheme.green;
+    } else {
+      text = name;
+      color = AppTheme.green;
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+      decoration: BoxDecoration(
+        color: AppTheme.blend(color, 0.12),
+        border: Border.all(color: color),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Text(
+        text,
+        style: AppTheme.mono(11, color: color, weight: FontWeight.w700),
+      ),
+    );
+  }
+}

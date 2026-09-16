@@ -109,7 +109,7 @@ class _MicProfileRowState extends State<MicProfileRow> {
                 for (var i = 0; i < MicProfileRow.buttonCount; i++)
                   Expanded(
                     child: Padding(
-                      padding: EdgeInsets.only(right: i < MicProfileRow.buttonCount - 1 ? 4 : 0),
+                      padding: EdgeInsets.only(right: i < MicProfileRow.buttonCount - 1 ? 8 : 0),
                       child: _buildButton(context, i, online, active, available),
                     ),
                   ),
@@ -151,7 +151,7 @@ class _MicProfileRowState extends State<MicProfileRow> {
       onPressed: online ? () => _onTap(i, online, available) : null,
       onLongPress: online ? () => _onLongPress(i, available) : null,
       style: AppTheme.actionButton(active: isActive).copyWith(
-        minimumSize: const WidgetStatePropertyAll(Size(0, 44)),
+        minimumSize: const WidgetStatePropertyAll(Size(0, 48)),
         padding: const WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: 6, vertical: 6)),
       ),
       child: FittedBox(
@@ -159,7 +159,7 @@ class _MicProfileRowState extends State<MicProfileRow> {
         child: Text(
           bound ? name : '—',
           maxLines: 1,
-          style: AppTheme.mono(12, weight: FontWeight.w600),
+          style: AppTheme.mono(13, weight: FontWeight.w600),
         ),
       ),
     );

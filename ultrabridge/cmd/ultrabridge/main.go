@@ -186,7 +186,7 @@ func loadConfig(path string, explicit bool) config.Config {
 		return config.Default()
 	}
 	slog.Error("config load failed", "path", path, "err", err)
-	os.Exit(2) // config errors exit 2, connect/run errors exit 1 (logging convention §3)
+	os.Exit(2)              // config errors exit 2, connect/run errors exit 1 (logging convention §3)
 	return config.Default() // unreachable
 }
 
