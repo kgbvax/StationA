@@ -54,14 +54,23 @@ class DxMapContainer extends StatefulWidget {
   /// with no rotator needle or aim affordances (Station page).
   final RotatorSurface? rotator;
 
-  const DxMapContainer({super.key, this.showPresets = true, this.rotator = hfRotator});
+  /// Projection the map opens with. The UHF page passes [DxProjection.mercator]
+  /// — VHF DX is read on the pannable world map, not the QTH-centred dial.
+  final DxProjection initialProjection;
+
+  const DxMapContainer({
+    super.key,
+    this.showPresets = true,
+    this.rotator = hfRotator,
+    this.initialProjection = DxProjection.azimuth,
+  });
 
   @override
   State<DxMapContainer> createState() => _DxMapContainerState();
 }
 
 class _DxMapContainerState extends State<DxMapContainer> {
-  DxProjection _projection = DxProjection.azimuth;
+  late DxProjection _projection = widget.initialProjection;
 
   @override
   Widget build(BuildContext context) {

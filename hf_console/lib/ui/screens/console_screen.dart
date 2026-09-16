@@ -197,6 +197,9 @@ class _TabletShell extends StatelessWidget {
   /// HF page, the VHF az-rotator on the UHF page, none on Station.
   final RotatorSurface? rotator;
 
+  /// Projection the left pane's map opens with (UHF: Mercator).
+  final DxProjection initialMapProjection;
+
   /// Panels pinned under the map in the left pane (HF: ultrabeam + antenna).
   final List<Widget> leftUnderMap;
 
@@ -208,6 +211,7 @@ class _TabletShell extends StatelessWidget {
     required this.onSelect,
     required this.onScheme,
     required this.rotator,
+    this.initialMapProjection = DxProjection.azimuth,
     this.leftUnderMap = const [],
     required this.rightChildren,
   });
@@ -238,7 +242,10 @@ class _TabletShell extends StatelessWidget {
                         // Tablet: direction presets live on the map's right
                         // edge (above the +/- zoom stepper) — the column no
                         // longer spends a footer row on them.
-                        child: DxMapContainer(rotator: rotator),
+                        child: DxMapContainer(
+                          rotator: rotator,
+                          initialProjection: initialMapProjection,
+                        ),
                       ),
                     ),
                     ...leftUnderMap,
@@ -389,6 +396,7 @@ class _UhfPage extends StatelessWidget {
       onSelect: onSelect,
       onScheme: onScheme,
       rotator: vhfRotator,
+      initialMapProjection: DxProjection.mercator,
       rightChildren: const [
         UhfRadioPanel(),
         SatRotatorPanel(),
