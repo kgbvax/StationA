@@ -51,9 +51,20 @@ or a factory reset, so read this once before starting.
    while no accounts and no lock credential exist, and only immediately after
    setup (no other users/profiles on the device).
 
+   Also set the console as the explicit default home — the device-owner
+   persistent-preferred activity alone does **not** win at boot on this
+   device (Android 16 / Lenovo ZUI: the stock launcher greets you after
+   reboot until the user-level default is set):
+
+   ```bash
+   adb shell cmd package set-home-activity codeberg.kgbvax.hf_console/.MainActivity
+   ```
+
 6. **Launch the app once** and confirm keyguard disabling, and set the screen
-   timeout to 1 h of no touch input (raw setting; survives reboots, survives
-   the Settings UI capping at 30 min):
+   timeout to 1 h of no touch input (raw setting; survives reboots, and is not
+   limited by the Settings UI capping at 30 min). Without this the tablet
+   would either never sleep (old builds kept the screen on) or sleep after the
+   stock 30 s – 30 min timeout:
 
    ```bash
    adb shell am start -n codeberg.kgbvax.hf_console/.MainActivity
