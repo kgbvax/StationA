@@ -39,6 +39,14 @@ func Check(cfg Config, resolve bool) ([]string, error) {
 			"no MQTT password — set LOGGER_SPOT_BRIDGE_MQTT_PASSWORD in start-bridge.cmd")
 	}
 
+	// The seed-once wrapper ships with this placeholder; env beats TOML in
+	// applyEnv, so an unedited wrapper would silently replace a real config
+	// password with garbage that fails at broker auth, not at check time.
+	if os.Getenv("LOGGER_SPOT_BRIDGE_MQTT_PASSWORD") == mqttPasswordPlaceholder {
+		problems = append(problems,
+			"start-bridge.cmd still carries the PASTE_MQTT_PASSWORD_HERE placeholder — paste the real password")
+	}
+
 	host, err := brokerHost(cfg.MQTT.Broker)
 	if err != nil {
 		problems = append(problems, err.Error())
@@ -57,6 +65,10 @@ func Check(cfg Config, resolve bool) ([]string, error) {
 }
 
 type passwordSourceKind int
+
+// mqttPasswordPlaceholder is the literal in start-bridge.cmd.example; Check
+// treats it as "not actually set".
+const mqttPasswordPlaceholder = "PASTE_MQTT_PASSWORD_HERE"
 
 const (
 	passwordMissing passwordSourceKind = iota

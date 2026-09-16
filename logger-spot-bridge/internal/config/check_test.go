@@ -99,3 +99,18 @@ func hasLine(lines []string, substr string) bool {
 	}
 	return false
 }
+
+func TestCheckPlaceholderPasswordRejected(t *testing.T) {
+	// The seeded-but-unedited wrapper: env present, so a naive check would
+	// pass — but env beats TOML in applyEnv, and this value is garbage.
+	t.Setenv("LOGGER_SPOT_BRIDGE_MQTT_PASSWORD", mqttPasswordPlaceholder)
+	cfg := okConfig()
+	cfg.MQTT.Password = "real-one-in-toml"
+	_, err := Check(cfg, false)
+	if err == nil {
+		t.Fatal("expected failure while the wrapper placeholder is in the environment")
+	}
+	if !strings.Contains(err.Error(), "PASTE_MQTT_PASSWORD_HERE") {
+		t.Fatalf("placeholder not named as the problem: %v", err)
+	}
+}
