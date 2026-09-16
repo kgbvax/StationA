@@ -28,13 +28,18 @@ class _PaPanelState extends State<PaPanel> {
   // and then decay linearly at a rate that drains a full-scale (1200 W) peak
   // in ~5 s, instead of vanishing the moment the sample window rolls over.
   static const double _meterFullScale = 1200;
-  static const double _peakDecayPerTick = _meterFullScale / 50; // W per 100 ms
-  static const Duration _decayInterval = Duration(milliseconds: 100);
+  static const double _peakDecayPerSecond = _meterFullScale / 5; // 240 W/s
+  // ~30 fps: the markers glide down instead of stepping. Only runs while a
+  // marker stands above the live reading, so the cost is bounded to decays.
+  static const Duration _decayInterval = Duration(milliseconds: 33);
 
   double _lastFwd = 0;
   double _peakHold = 0;
   double _p95Hold = 0;
   Timer? _decayTimer;
+  // Anchor for elapsed-time decay: the step is derived from how long the
+  // last tick actually took, so timer jitter never changes the drain rate.
+  DateTime? _lastDecayAt;
 
   void _recordFwd(double fwd) {
     final now = clock.now();
@@ -68,20 +73,28 @@ class _PaPanelState extends State<PaPanel> {
   /// the timer stops until the next burst.
   void _syncDecayTimer() {
     if (_peakHold > _lastFwd || _p95Hold > _lastFwd) {
-      _decayTimer ??= Timer.periodic(_decayInterval, (_) => _decayTick());
+      if (_decayTimer == null) {
+        _lastDecayAt = clock.now();
+        _decayTimer = Timer.periodic(_decayInterval, (_) => _decayTick());
+      }
     } else {
       _decayTimer?.cancel();
       _decayTimer = null;
+      _lastDecayAt = null;
     }
   }
 
   void _decayTick() {
     if (!mounted) return;
+    final now = clock.now();
+    final last = _lastDecayAt ?? now;
+    _lastDecayAt = now;
+    final dt = now.difference(last).inMicroseconds / 1e6;
     setState(() {
       // Decay toward the live reading, never below it — a new transmission
       // takes the marker over immediately.
-      _peakHold = math.max(_lastFwd, _peakHold - _peakDecayPerTick);
-      _p95Hold = math.max(_lastFwd, _p95Hold - _peakDecayPerTick);
+      _peakHold = math.max(_lastFwd, _peakHold - _peakDecayPerSecond * dt);
+      _p95Hold = math.max(_lastFwd, _p95Hold - _peakDecayPerSecond * dt);
     });
     _syncDecayTimer();
   }
