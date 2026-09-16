@@ -23,8 +23,11 @@ go vet ./... && gofmt -s -w .
 ./deploy.sh          # cross-compile windows/amd64 → shack PC (pelcobridge2 pattern)
 ```
 
-Flags: `-config <path>` (default: `config.toml` next to the exe — the shack PC
-is Windows, no `/etc`), `-log.level` (overrides config).
+Flags: `-config <path>` (default: `config.toml` next to the exe; the service
+passes `/etc/logger-spot-bridge/config.toml` explicitly), `-log.level`
+(overrides config), `-check` (validate the effective config, print it
+redacted — broker host DNS + password presence — and exit without touching
+MQTT or UDP; deploy.sh runs it before restarting the service).
 
 ## Facts that are NOT derivable from the code
 
@@ -74,26 +77,32 @@ is Windows, no `/etc`), `-log.level` (overrides config).
    LWT covers that) and NOT "logger process alive" (UDP broadcast is
    connectionless; RadioInfo would be the only periodic proof and we don't
    decode it). False from start until the first datagram.
-6. **The shack PC is Windows** (192.168.1.197, host `BWPC`, user `iotte`,
-   German cmd.exe behind sshd — backslash paths + `cmd /c`, per
-   pelcobridge2's deploy findings). Interactive host: no systemd; the bridge
-   runs as the schtasks logon task `logger-spot-bridge` → `start-bridge.cmd`
-   next to the exe (holds the MQTT password as env — the Windows env-file
-   equivalent; `@echo off` first or cmd echoes the batch line, password and
-   all). Bridge stderr lands in `bridge.log`. deploy.sh seeds the wrapper
-   once from `start-bridge.cmd.example` and re-registers the task against it
-   on every deploy (`/create /f`) — a task pointing at the bare exe starts
-   the bridge without the password env (2026-09-16 outage). Config.toml and
-   start-bridge.cmd are seed-once HOST STATE: updates never overwrite them,
-   and every deploy runs `logger-spot-bridge.exe -check` (effective config,
-   redacted; broker DNS + password presence) before restarting the task.
-7. **DEPLOYED 2026-09-15** — live config: broker `tcp://hassio.kgbvax.net:1883`
-   (the HA box at 192.168.1.50, which serves `muehle/#`; the shari mosquitto
-   is inactive and the two-broker migration undeployed). `bwbroker` is
-   NXDOMAIN on the unifi DNS and its stale record (192.168.0.50) is a dead
-   host — the user chose hassio when offered. Logon-task gotcha: schtasks
-   runs with CWD = System32, so the wrapper MUST `cd /d %~dp0` before the
-   relative exe path.
+6. **DEPLOYED 2026-09-16 on shari as a systemd service** (`logger-spot-bridge.service`,
+   `/opt/logger-spot-bridge`, config `/etc/logger-spot-bridge/config.toml` 0600,
+   secrets `/etc/logger-spot-bridge/logger-spot-bridge.env` 0600 —
+   LOGGER_SPOT_BRIDGE_MQTT_PASSWORD + LOGGER_SPOT_BRIDGE_QRZ_PASSWORD; QRZ
+   cache under `/var/lib/logger-spot-bridge/`, the only writable path in the
+   hardened unit). Both files are seed-once HOST STATE: deploys never
+   overwrite them, and every deploy runs `-check` (effective config, redacted;
+   broker DNS + password presence) before restarting. UDP broadcast is
+   LAN-wide, so the bridge never needed to sit next to the loggers — the
+   original shack-PC placement was a mis-fit (schtasks interactive task, no
+   restart supervision, secrets in a start-bridge.cmd wrapper; a redeploy
+   there on 2026-09-16 broke the feed — stale task registration without the
+   wrapper's env). The Windows copy (BWPC 192.168.1.197, task
+   `logger-spot-bridge`, files under C:/Users/iotte/logger-spot-bridge/) is
+   DISABLED, kept as documented fallback: re-enabling needs Log4OM repointed
+   back to the PC and the task re-enabled at its desktop.
+7. **Live config** (seeded on the shari first deploy): broker
+   `tcp://192.168.1.50:1883` (the HA box, which serves `muehle/#`; the shari
+   mosquitto is inactive and the two-broker migration undeployed; hassio
+   addresses are ALSO reachable as `hassio.kgbvax.net` but the config uses the
+   raw IP — `bwbroker` is NXDOMAIN on the unifi DNS). locator JO32WE, QRZ
+   user dl9et, listeners dxlog/n1mm:12060 + log4om:2249. **Log4OM's outbound
+   CALLSIGN target must point at shari:2249** (GUI setting on the logging PC —
+   user action during the 2026-09-16 migration); DXLog's broadcast needs no
+   target. Until repointed, the service is healthy but hears nothing
+   (device_online=false).
 8. **`lookupinfo` with an empty call = the clear signal** (operator wiped the
    entry window). `contactinfo` (QSO logged) is deliberately NOT a clear —
    operators stay on the call after logging it.
