@@ -29,6 +29,18 @@ Log4OM ──UDP callsign───┤  logger-spot-bridge (shack PC)
                         (pin + callsign + bearing/distance chip)
 ```
 
-Run `./deploy.sh` (Windows shack PC, seed-once config) — see the script header.
+Run `./deploy.sh` (Windows shack PC) — see the script header. Config and
+secrets are host state and survive every update:
+
+- `config.toml` and `start-bridge.cmd` (the Windows env-file holding the MQTT
+  password) are **seed-once**: an existing file is never overwritten.
+- The schtasks logon task runs `start-bridge.cmd`, never the bare exe — the
+  wrapper carries the password; `/create /f` on every deploy repairs stale
+  registrations that pointed at the exe (the 2026-09-16 outage: bridge up,
+  but no password and a stale broker after a redeploy).
+- Every deploy ends with `logger-spot-bridge.exe -check` on the shack PC: the
+  effective config is printed redacted and the broker DNS + password presence
+  are verified *before* the task restarts. `-check` also runs standalone.
+
 Wire contract: `docs/logger-spot-bridge-mqtt-api.md`. Engineering notes:
 `CLAUDE.md`.

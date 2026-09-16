@@ -37,12 +37,26 @@ import (
 func main() {
 	fs := flag.NewFlagSet("logger-spot-bridge", flag.ExitOnError)
 	flags := config.RegisterFlags(fs)
+	check := fs.Bool("check", false, "validate the effective config, print it redacted, exit without touching MQTT or UDP")
 	_ = fs.Parse(os.Args[1:])
 
 	cfg, err := config.Load(flags)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "logger-spot-bridge: %v\n", err)
 		os.Exit(2)
+	}
+
+	if *check {
+		lines, err := config.Check(cfg, true)
+		for _, l := range lines {
+			fmt.Println(l)
+		}
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "logger-spot-bridge: config check FAILED:", err)
+			os.Exit(1)
+		}
+		fmt.Println("config check OK")
+		return
 	}
 
 	logger := newLogger(cfg.Log.Level)

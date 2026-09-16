@@ -260,7 +260,7 @@ func TestServiceNegativeResultCached(t *testing.T) {
 func TestServiceAuthFailureNotCached(t *testing.T) {
 	f := newFakeQRZ(t,
 		sessionErrXML("Username/password incorrect"), // login fails
-		loginXML,                                     // login succeeds after "fix"
+		loginXML, // login succeeds after "fix"
 		dl1abcXML,
 	)
 	cache := OpenCache(t.TempDir()+"/qrz.json", DefaultCacheDays, DefaultNegativeMinutes, 10)
