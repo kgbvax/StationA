@@ -51,10 +51,13 @@ or a factory reset, so read this once before starting.
    while no accounts and no lock credential exist, and only immediately after
    setup (no other users/profiles on the device).
 
-6. **Launch the app once** and confirm keyguard disabling:
+6. **Launch the app once** and confirm keyguard disabling, and set the screen
+   timeout to 1 h of no touch input (raw setting; survives reboots, survives
+   the Settings UI capping at 30 min):
 
    ```bash
    adb shell am start -n codeberg.kgbvax.hf_console/.MainActivity
+   adb shell settings put system screen_off_timeout 3600000
    adb logcat -s KioskPolicy Kiosk
    ```
 
@@ -75,8 +78,8 @@ or a factory reset, so read this once before starting.
 7. **Verify**: press the power button to lock the screen, press it again to
    wake. The console must be visible immediately, with no keyguard step. Also
    press the home gesture/button: the console must come back (it is now the
-   home activity). The screen no longer sleeps while the app is foreground
-   (`FLAG_KEEP_SCREEN_ON`).
+   home activity). After 1 h without touch input the display turns off; a
+   power-button press wakes straight back into the console.
 
 The device now boots straight into the console, in lock task, keyguard off.
 

@@ -9,7 +9,6 @@ import android.text.Editable
 import android.text.TextWatcher
 import android.util.Log
 import android.view.MotionEvent
-import android.view.WindowManager
 import android.widget.EditText
 import io.flutter.embedding.android.FlutterActivity
 
@@ -53,7 +52,9 @@ class MainActivity : FlutterActivity() {
         kiosk = KioskPolicy(this)
         super.onCreate(savedInstanceState)
 
-        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        // No FLAG_KEEP_SCREEN_ON: the display should sleep after the system
+        // screen-off timeout (1 h, set at provisioning — see PROVISIONING.md).
+        // Keyguard is disabled, so waking goes straight back to the console.
 
         if (kiosk.isDeviceOwner()) {
             kiosk.enable()
