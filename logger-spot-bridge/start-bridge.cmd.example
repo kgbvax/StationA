@@ -1,8 +1,0 @@
-@echo off
-rem logger-spot-bridge launcher — the Windows env-file: the MQTT password
-rem lives here as an environment variable so it never sits in config.toml or
-rem on a command line. Seed-once: deploy.sh creates this file only when it is
-rem missing; edits here survive every redeploy.
-cd /d %~dp0
-set LOGGER_SPOT_BRIDGE_MQTT_PASSWORD=PASTE_MQTT_PASSWORD_HERE
-logger-spot-bridge.exe >> bridge.log 2>&1

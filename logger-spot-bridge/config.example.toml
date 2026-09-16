@@ -1,7 +1,8 @@
 # logger-spot-bridge configuration — seed-once, keep 0600.
-# The MQTT password is NOT here: set LOGGER_SPOT_BRIDGE_MQTT_PASSWORD instead.
+# The MQTT password is NOT here: set LOGGER_SPOT_BRIDGE_MQTT_PASSWORD instead
+# (on shari: /etc/logger-spot-bridge/logger-spot-bridge.env, read by the unit).
 
-host            = "shack-pc"
+host            = "shari"
 
 # The shack QTH (Maidenhead locator) — the same QTH the loggers are configured
 # with. DXLog's azimuth/distance are computed from the logging PC's position;

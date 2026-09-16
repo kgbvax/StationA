@@ -66,7 +66,7 @@ and `go work sync` operate over the whole workspace at once.
 | `muehle/hf/pa` | acom1200s-pa-bridge | ACOM 1200S, serial (`set_power`/RTS removed; `power` is telemetry only) |
 | `muehle/hf/rotator` | wrc-rotator-bridge | Yaesu G-450DC via AF6SA WRC, websocket |
 | `muehle/hf/tuner` | atr1k-tuner-bridge | ATR-1000 ATU, wifi (binary WebSocket) |
-| `muehle/hf/spots` | logger-spot-bridge | DXLog/Log4OM on shack-pc — operator-keyed station feed (role `bandmap`; Windows host, interactive — no systemd) |
+| `muehle/hf/spots` | logger-spot-bridge | DXLog/Log4OM broadcasts (LAN-wide UDP) → operator-keyed station feed (role `bandmap`; systemd service on shari since 2026-09-16) |
 | `muehle/hf/power-seq` | powerseq | logic slot — no device (runs on shari); startup/shutdown sequencer |
 | `muehle/uhf/pol-ctrl` | m5stamp-pol-ctrl | M5 Stamp PLC #2 — X-Quad polarization (ESPHome), wifi |
 | `muehle/uhf/radio` | icom9700-radio-bridge | Icom IC-9700, LAN (RS-BA1 CI-V over UDP) — on-demand session, PTT behind arm gate |
