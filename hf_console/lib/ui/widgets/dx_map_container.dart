@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../dxspot/dxspot_service.dart';
+import '../../store/wiring.dart';
 import '../theme.dart';
 import 'compass_panel.dart';
 import 'mercator_map_panel.dart';
@@ -49,14 +50,27 @@ class DxMapContainer extends StatefulWidget {
   /// carry a five-button rail.
   final bool showPresets;
 
-  const DxMapContainer({super.key, this.showPresets = true});
+  /// Which rotator the compass dial reads — `null` renders the bare DX map
+  /// with no rotator needle or aim affordances (Station page).
+  final RotatorSurface? rotator;
+
+  /// Projection the map opens with. The UHF page passes [DxProjection.mercator]
+  /// — VHF DX is read on the pannable world map, not the QTH-centred dial.
+  final DxProjection initialProjection;
+
+  const DxMapContainer({
+    super.key,
+    this.showPresets = true,
+    this.rotator = hfRotator,
+    this.initialProjection = DxProjection.azimuth,
+  });
 
   @override
   State<DxMapContainer> createState() => _DxMapContainerState();
 }
 
 class _DxMapContainerState extends State<DxMapContainer> {
-  DxProjection _projection = DxProjection.azimuth;
+  late DxProjection _projection = widget.initialProjection;
 
   @override
   Widget build(BuildContext context) {
@@ -65,8 +79,8 @@ class _DxMapContainerState extends State<DxMapContainer> {
       fit: StackFit.expand,
       children: [
         _projection == DxProjection.azimuth
-            ? CompassPanel(showPresets: widget.showPresets)
-            : MercatorMapPanel(showPresets: widget.showPresets),
+            ? CompassPanel(showPresets: widget.showPresets, rotator: widget.rotator)
+            : MercatorMapPanel(showPresets: widget.showPresets, rotator: widget.rotator),
         // Top-left: the compass panel's own chrome (zoom badge, azimuth
         // chip) owns the top-right corner — overlaying the filter/projection
         // chrome there drew one on top of the other.

@@ -20,6 +20,7 @@ import '../../dxspot/ring_subpaths.dart';
 import '../../dxspot/world_geometry.dart';
 import '../../store/bus_store.dart';
 import '../../store/selected_spot.dart';
+import '../../store/wiring.dart';
 import '../theme.dart';
 import 'rotator_presets_bar.dart';
 
@@ -34,7 +35,12 @@ class MercatorMapPanel extends StatefulWidget {
   /// scroll column). Mirrors `CompassPanel.showPresets`.
   final bool showPresets;
 
-  const MercatorMapPanel({super.key, this.showPresets = true});
+  /// Which rotator the page's compass dial reads — the Mercator view draws
+  /// no dial itself, but the preset rail is an HF-rotator affordance, so it
+  /// only shows when this surface carries the preset rail.
+  final RotatorSurface? rotator;
+
+  const MercatorMapPanel({super.key, this.showPresets = true, this.rotator = hfRotator});
 
   @override
   State<MercatorMapPanel> createState() => _MercatorMapPanelState();
@@ -178,8 +184,9 @@ class _MercatorMapPanelState extends State<MercatorMapPanel> {
                     ),
                   ),
                   // Direction presets, stacked directly above the zoom row
-                  // on the right map edge (tablet layout only).
-                  if (widget.showPresets)
+                  // on the right map edge (tablet layout only, HF rotator
+                  // only — the headings are HF big-DX targets).
+                  if (widget.showPresets && (widget.rotator?.showPresets ?? false))
                     Positioned(
                       right: 12,
                       // Clears the zoom row: bottom 12 + ~32-high row + 4 gap.

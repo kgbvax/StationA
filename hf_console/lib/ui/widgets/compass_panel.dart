@@ -18,7 +18,12 @@ class CompassPanel extends StatefulWidget {
   /// (tablet layout; phones keep the horizontal bar in their scroll column).
   final bool showPresets;
 
-  const CompassPanel({super.key, this.showPresets = true});
+  /// Which rotator the dial reads. `null` renders the bare DX compass —
+  /// spots, world, band key, zoom — with no needle, azimuth chip, presets
+  /// or aim affordances (Station page).
+  final RotatorSurface? rotator;
+
+  const CompassPanel({super.key, this.showPresets = true, this.rotator = hfRotator});
 
   @override
   State<CompassPanel> createState() => _CompassPanelState();
@@ -99,7 +104,13 @@ class _CompassPanelState extends State<CompassPanel> {
 
   @override
   Widget build(BuildContext context) {
-    return _CompassBody(zoom: _zoom, onZoomChanged: _setZoom, world: _world, showPresets: widget.showPresets);
+    return _CompassBody(
+      zoom: _zoom,
+      onZoomChanged: _setZoom,
+      world: _world,
+      showPresets: widget.showPresets,
+      rotator: widget.rotator,
+    );
   }
 }
 
@@ -108,7 +119,14 @@ class _CompassBody extends StatelessWidget {
   final ValueChanged<double> onZoomChanged;
   final WorldLayerCache world;
   final bool showPresets;
-  const _CompassBody({required this.zoom, required this.onZoomChanged, required this.world, required this.showPresets});
+  final RotatorSurface? rotator;
+  const _CompassBody({
+    required this.zoom,
+    required this.onZoomChanged,
+    required this.world,
+    required this.showPresets,
+    required this.rotator,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -116,13 +134,24 @@ class _CompassBody extends StatelessWidget {
     final mqtt = context.read<MqttService>();
     final dx = context.watch<DxSpotService>();
 
-    final rotator = store.slots['muehle/hf/rotator'];
-    final rotatorOnline = (rotator?.isOnline ?? false) && store.linkUp;
-    final az = store.stateValueAs<num>('muehle/hf/rotator', 'az')?.toDouble() ?? 0.0;
-    final targetAz = store.stateValueAs<num>('muehle/hf/rotator', 'target_az')?.toDouble() ?? az;
-    final moving = store.stateValueAs<bool>('muehle/hf/rotator', 'moving') ?? false;
+    final surface = rotator;
+    final rotatorSlot = surface?.stateSlot;
+    final rotatorBridge = rotatorSlot == null ? null : store.slots[rotatorSlot];
+    final rotatorOnline = surface != null && (rotatorBridge?.isOnline ?? false) && store.linkUp;
+    final az = rotatorSlot == null
+        ? 0.0
+        : store.stateValueAs<num>(rotatorSlot, 'az')?.toDouble() ?? 0.0;
+    final targetAz = rotatorSlot == null
+        ? az
+        : store.stateValueAs<num>(rotatorSlot, surface!.targetKey)?.toDouble() ?? az;
+    final moving = rotatorSlot != null &&
+        (store.stateValueAs<bool>(rotatorSlot, 'moving') ?? false);
 
-    final direction = store.stateValueAs<String>('muehle/hf/ant-ctrl', 'direction') ?? 'forward';
+    // ant-ctrl's forward/reverse beam flip is an HF-stack concept; the VHF
+    // dial has no counterpart and always reads forward.
+    final direction = surface?.stateSlot == hfRotator.stateSlot
+        ? store.stateValueAs<String>('muehle/hf/ant-ctrl', 'direction') ?? 'forward'
+        : 'forward';
 
     // The station the operator keyed in the shack logger (DXLog/Log4OM),
     // published by logger-spot-bridge on muehle/hf/spots. Rendered as a pin
@@ -153,7 +182,13 @@ class _CompassBody extends StatelessWidget {
             : AppTheme.accent;
 
     void sendAz(double value) {
-      mqtt.publish(cmdTopic('hf/rotator'), rotatorAzPayload(value), retain: cmdRetain['muehle/hf/rotator']!);
+      final surface = rotator;
+      if (surface == null) return;
+      mqtt.publish(
+        cmdTopic(surface.cmdSlot),
+        surface.aimPayload(value),
+        retain: cmdRetain[surface.stateSlot]!,
+      );
     }
 
     // The disc itself keeps a small symmetric inset from the card edges so
@@ -242,6 +277,7 @@ class _CompassBody extends StatelessWidget {
                       az: az,
                       direction: direction,
                       targetAz: targetAz,
+                      showBeam: rotator != null,
                       gridSquares: dx.gridSquares,
                       centerLat: dx.centerLat,
                       centerLng: dx.centerLng,
@@ -283,13 +319,17 @@ class _CompassBody extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   _ZoomBadge(zoom: zoom),
-                  const SizedBox(width: 6),
-                  IgnorePointer(
-                    child: _AzimuthChip(
-                      parts: azimuthParts,
-                      color: azimuthColor,
+                  // No rotator surface (Station page): no azimuth read-out —
+                  // the compass is a plain DX map there.
+                  if (rotator != null) ...[
+                    const SizedBox(width: 6),
+                    IgnorePointer(
+                      child: _AzimuthChip(
+                        parts: azimuthParts,
+                        color: azimuthColor,
+                      ),
                     ),
-                  ),
+                  ],
                 ],
               ),
             ),
@@ -338,8 +378,10 @@ class _CompassBody extends StatelessWidget {
               ),
             // Layer 5: direction presets, stacked directly above the zoom
             // stepper on the right card edge (moved off the map column's
-            // footer row so the disc gets the full card height).
-            if (showPresets)
+            // footer row so the disc gets the full card height). HF-only —
+            // the headings are big-DX HF targets, so the VHF dial (and the
+            // bare Station-page compass) never shows the rail.
+            if (showPresets && (rotator?.showPresets ?? false))
               Positioned(
                 right: 4,
                 // Clears the stacked +/- stepper. The stepper buttons come
@@ -637,6 +679,10 @@ class _CompassPainter extends CustomPainter {
   final double az;
   final String direction;
   final double targetAz;
+
+  /// False on pages without a rotator: skip the beam fan, boom and target
+  /// ray — the dial is a plain azimuthal DX map there.
+  final bool showBeam;
   final List<GridSquare> gridSquares;
   final double? centerLat;
   final double? centerLng;
@@ -650,6 +696,7 @@ class _CompassPainter extends CustomPainter {
     required this.az,
     required this.direction,
     required this.targetAz,
+    this.showBeam = true,
     this.gridSquares = const [],
     this.centerLat,
     this.centerLng,
@@ -699,7 +746,7 @@ class _CompassPainter extends CustomPainter {
     _label(canvas, 'S', cx, cy, 180.0, r - 20, AppTheme.txtFaint, 12, FontWeight.w500);
     _label(canvas, 'W', cx, cy, 270.0, r - 20, AppTheme.txtFaint, 12, FontWeight.w500);
 
-    final beams = _beams();
+    final beams = showBeam ? _beams() : const <_Beam>[];
     for (final b in beams) {
       final path = Path();
       path.moveTo(cx, cy);
@@ -723,32 +770,38 @@ class _CompassPainter extends CustomPainter {
     // The pointing indicator: one line + arrowhead, always on the boom
     // azimuth — where the antenna is pointed. Radiation is what the cones
     // show; they never carry lines or arrows of their own.
-    final p1 = _pt(cx, cy, az, 28);
-    final p2 = _pt(cx, cy, az, r - 14);
-    canvas.drawLine(p1, p2, Paint()..color = AppTheme.accent..strokeWidth = 3.5..strokeCap = StrokeCap.round);
-    _drawArrow(canvas, cx, cy, az, r - 10, AppTheme.accent);
+    if (showBeam) {
+      final p1 = _pt(cx, cy, az, 28);
+      final p2 = _pt(cx, cy, az, r - 14);
+      canvas.drawLine(p1, p2, Paint()..color = AppTheme.accent..strokeWidth = 3.5..strokeCap = StrokeCap.round);
+      _drawArrow(canvas, cx, cy, az, r - 10, AppTheme.accent);
+    }
 
     _drawGridSquares(canvas, cx, cy, r);
 
-    final boomStart = _pt(cx, cy, az, 16);
-    final boomEnd = _pt(cx, cy, az, r - 2);
-    canvas.drawLine(boomStart, boomEnd, Paint()..color = AppTheme.txt..strokeWidth = 2..strokeCap = StrokeCap.round);
+    if (showBeam) {
+      final boomStart = _pt(cx, cy, az, 16);
+      final boomEnd = _pt(cx, cy, az, r - 2);
+      canvas.drawLine(boomStart, boomEnd, Paint()..color = AppTheme.txt..strokeWidth = 2..strokeCap = StrokeCap.round);
 
-    canvas.drawCircle(Offset(cx, cy), 5, Paint()..color = AppTheme.accent);
-
-    final targetDiff = (targetAz - az).abs();
-    if (targetDiff > 5.0) {
-      final targetStart = _pt(cx, cy, targetAz, 16);
-      final targetEnd = _pt(cx, cy, targetAz, r - 6);
-      canvas.drawLine(
-        targetStart,
-        targetEnd,
-        Paint()
-          ..color = AppTheme.blend(AppTheme.accent, 0.55)
-          ..strokeWidth = 1.5
-          ..strokeCap = StrokeCap.round,
-      );
+      final targetDiff = (targetAz - az).abs();
+      if (targetDiff > 5.0) {
+        final targetStart = _pt(cx, cy, targetAz, 16);
+        final targetEnd = _pt(cx, cy, targetAz, r - 6);
+        canvas.drawLine(
+          targetStart,
+          targetEnd,
+          Paint()
+            ..color = AppTheme.blend(AppTheme.accent, 0.55)
+            ..strokeWidth = 1.5
+            ..strokeCap = StrokeCap.round,
+        );
+      }
     }
+
+    // The QTH dot stays even without a rotator — it marks the station on
+    // the bare DX map.
+    canvas.drawCircle(Offset(cx, cy), 5, Paint()..color = AppTheme.accent);
 
     _drawSelected(canvas, cx, cy, r);
   }
