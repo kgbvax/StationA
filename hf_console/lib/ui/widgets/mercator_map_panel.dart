@@ -40,14 +40,25 @@ class MercatorMapPanel extends StatefulWidget {
   /// only shows when this surface carries the preset rail.
   final RotatorSurface? rotator;
 
-  const MercatorMapPanel({super.key, this.showPresets = true, this.rotator = hfRotator});
+  /// Zoom the map opens with; `null` falls back to [_kMercatorZoomDefault].
+  final double? initialZoom;
+
+  const MercatorMapPanel({
+    super.key,
+    this.showPresets = true,
+    this.rotator = hfRotator,
+    this.initialZoom,
+  });
 
   @override
   State<MercatorMapPanel> createState() => _MercatorMapPanelState();
 }
 
 class _MercatorMapPanelState extends State<MercatorMapPanel> {
-  double _zoom = _kMercatorZoomDefault;
+  late double _zoom = widget.initialZoom ?? _kMercatorZoomDefault;
+  // "Reset" returns to the page's opening zoom, not the global default —
+  // the UHF page opens at 4× and reset should stay there.
+  late final double _zoomDefault = widget.initialZoom ?? _kMercatorZoomDefault;
   double? _centerLat;
   double? _centerLng;
   List<List<LatLng>>? _rings;
@@ -173,7 +184,7 @@ class _MercatorMapPanelState extends State<MercatorMapPanel> {
                       onZoomIn: () => _setZoom(_zoom + _kMercatorZoomStep),
                       onZoomOut: () => _setZoom(_zoom - _kMercatorZoomStep),
                       onReset: () {
-                        _setZoom(_kMercatorZoomDefault);
+                        _setZoom(_zoomDefault);
                         if (qthLat != null && qthLng != null) {
                           setState(() {
                             _centerLat = qthLat;
