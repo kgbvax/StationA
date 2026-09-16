@@ -58,11 +58,15 @@ class DxMapContainer extends StatefulWidget {
   /// — VHF DX is read on the pannable world map, not the QTH-centred dial.
   final DxProjection initialProjection;
 
+  /// Zoom the Mercator view opens with; `null` uses the panel default.
+  final double? initialMercatorZoom;
+
   const DxMapContainer({
     super.key,
     this.showPresets = true,
     this.rotator = hfRotator,
     this.initialProjection = DxProjection.azimuth,
+    this.initialMercatorZoom,
   });
 
   @override
@@ -80,7 +84,11 @@ class _DxMapContainerState extends State<DxMapContainer> {
       children: [
         _projection == DxProjection.azimuth
             ? CompassPanel(showPresets: widget.showPresets, rotator: widget.rotator)
-            : MercatorMapPanel(showPresets: widget.showPresets, rotator: widget.rotator),
+            : MercatorMapPanel(
+                showPresets: widget.showPresets,
+                rotator: widget.rotator,
+                initialZoom: widget.initialMercatorZoom,
+              ),
         // Top-left: the compass panel's own chrome (zoom badge, azimuth
         // chip) owns the top-right corner — overlaying the filter/projection
         // chrome there drew one on top of the other.

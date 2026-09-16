@@ -200,6 +200,9 @@ class _TabletShell extends StatelessWidget {
   /// Projection the left pane's map opens with (UHF: Mercator).
   final DxProjection initialMapProjection;
 
+  /// Zoom the Mercator map opens with (UHF: 4×).
+  final double? initialMapZoom;
+
   /// Panels pinned under the map in the left pane (HF: ultrabeam + antenna).
   final List<Widget> leftUnderMap;
 
@@ -212,6 +215,7 @@ class _TabletShell extends StatelessWidget {
     required this.onScheme,
     required this.rotator,
     this.initialMapProjection = DxProjection.azimuth,
+    this.initialMapZoom,
     this.leftUnderMap = const [],
     required this.rightChildren,
   });
@@ -245,6 +249,7 @@ class _TabletShell extends StatelessWidget {
                         child: DxMapContainer(
                           rotator: rotator,
                           initialProjection: initialMapProjection,
+                          initialMercatorZoom: initialMapZoom,
                         ),
                       ),
                     ),
@@ -397,6 +402,7 @@ class _UhfPage extends StatelessWidget {
       onScheme: onScheme,
       rotator: vhfRotator,
       initialMapProjection: DxProjection.mercator,
+      initialMapZoom: 4.0,
       rightChildren: const [
         UhfRadioPanel(),
         SatRotatorPanel(),
