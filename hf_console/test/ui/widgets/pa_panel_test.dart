@@ -180,9 +180,15 @@ void main() {
       expect(find.byKey(const ValueKey('pa-fwd-peak')), findsOneWidget);
 
       // A full-scale peak would take ~5 s; 800 W is gone well before that.
+      // At zero the markers park at the origin instead of disappearing —
+      // removing them would drop their reserved rows and jump the layout.
       await tester.pump(const Duration(seconds: 4));
-      expect(find.byKey(const ValueKey('pa-fwd-peak')), findsNothing);
-      expect(find.byKey(const ValueKey('pa-fwd-p95')), findsNothing);
+      expect(find.byKey(const ValueKey('pa-fwd-peak')), findsOneWidget);
+      expect(find.byKey(const ValueKey('pa-fwd-p95')), findsOneWidget);
+      // The meter's bar+marker stack keeps its full height at zero
+      // (compact bar 8 + two 7 px marker rows with 1 px gaps).
+      final stackSize = tester.getSize(find.byKey(const ValueKey('pa-meter-stack')).first);
+      expect(stackSize.height, 8.0 + 2 * (7.0 + 1.0));
     });
   });
 }

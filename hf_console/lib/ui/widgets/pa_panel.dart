@@ -161,8 +161,11 @@ class _PaPanelState extends State<PaPanel> {
                       labels: const ['0', '500', '1000', '1200'],
                       fillColor: AppTheme.green,
                       compact: true,
-                      markerTop: maxFwd > 0 ? maxFwd / 1200 : null,
-                      markerBottom: p95Fwd > 0 ? p95Fwd / 1200 : null,
+                      // Always non-null: a marker that vanished at zero would
+                      // remove its reserved row and jump the layout. At zero
+                      // the triangle parks at the origin instead.
+                      markerTop: maxFwd / 1200,
+                      markerBottom: p95Fwd / 1200,
                       markerTopColor: AppTheme.txt,
                       markerBottomColor: AppTheme.accent,
                     ),
@@ -261,7 +264,9 @@ class _Meter extends StatelessWidget {
 
   /// Optional peak/percentile markers, as fractions of [max] (0..1). A non-null
   /// [markerTop] draws a downward triangle above the bar; [markerBottom] draws
-  /// an upward triangle below it.
+  /// an upward triangle below it. Marker rows are reserved only while a
+  /// marker is non-null, so a meter whose markers toggle to null at zero
+  /// would jump its layout — pass 0 there and the marker parks at the origin.
   final double? markerTop;
   final double? markerBottom;
   final Color? markerTopColor;
@@ -308,6 +313,7 @@ class _Meter extends StatelessWidget {
         ),
         SizedBox(height: compact ? 2 : 3),
         SizedBox(
+          key: const ValueKey('pa-meter-stack'),
           height: stackHeight,
           child: LayoutBuilder(
             builder: (context, constraints) {
