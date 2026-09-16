@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../store/bus_store.dart';
 import '../../mqtt/mqtt_service.dart';
+import '../../store/wiring.dart';
 import '../theme.dart';
 import '../widgets/dx_map_container.dart';
 import '../widgets/pa_panel.dart';
@@ -170,6 +171,7 @@ class _HfPage extends StatelessWidget {
       page: 'hf',
       onSelect: onSelect,
       onScheme: onScheme,
+      rotator: hfRotator,
       leftUnderMap: const [UltrabeamPanel(), AntennaPanel()],
       rightChildren: const [
         PaPanel(),
@@ -191,6 +193,10 @@ class _TabletShell extends StatelessWidget {
   final ValueChanged<String> onSelect;
   final ValueChanged<AppColorScheme> onScheme;
 
+  /// Which rotator the left pane's compass dial reads: the HF rotator on the
+  /// HF page, the VHF az-rotator on the UHF page, none on Station.
+  final RotatorSurface? rotator;
+
   /// Panels pinned under the map in the left pane (HF: ultrabeam + antenna).
   final List<Widget> leftUnderMap;
 
@@ -201,6 +207,7 @@ class _TabletShell extends StatelessWidget {
     required this.page,
     required this.onSelect,
     required this.onScheme,
+    required this.rotator,
     this.leftUnderMap = const [],
     required this.rightChildren,
   });
@@ -231,7 +238,7 @@ class _TabletShell extends StatelessWidget {
                         // Tablet: direction presets live on the map's right
                         // edge (above the +/- zoom stepper) — the column no
                         // longer spends a footer row on them.
-                        child: const DxMapContainer(),
+                        child: DxMapContainer(rotator: rotator),
                       ),
                     ),
                     ...leftUnderMap,
@@ -316,6 +323,9 @@ class _StationPage extends StatelessWidget {
       page: 'station',
       onSelect: onSelect,
       onScheme: onScheme,
+      // Station infrastructure page: the map is a bare DX compass — no
+      // rotator needle, azimuth chip, presets or aim affordances.
+      rotator: null,
       rightChildren: const [
         PowerPanel(),
         ClimatePanel(),
@@ -339,7 +349,9 @@ class _UhfPage extends StatelessWidget {
     // Panel order follows the slot docs (U8): the IC-9700 radio (U7) leads —
     // the operating object the rotators and polarization exist to serve —
     // with the sat-ops rotator surface (U8) and the Tier-2 X-Quad
-    // polarization control (U11) below. Phones scroll that single column;
+    // polarization control (U11) below. The map dial reads the VHF array
+    // azimuth (muehle/uhf/az-rotator) here, not the HF rotator; aims go out
+    // as goto on the sat-bridge contract. Phones scroll that single column;
     // tablets share the two-column shell (map left, panels right) so the
     // top bar never moves between pages.
     final isPhone = MediaQuery.of(context).size.shortestSide < 600;
@@ -376,6 +388,7 @@ class _UhfPage extends StatelessWidget {
       page: 'uhf',
       onSelect: onSelect,
       onScheme: onScheme,
+      rotator: vhfRotator,
       rightChildren: const [
         UhfRadioPanel(),
         SatRotatorPanel(),

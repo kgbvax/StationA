@@ -98,6 +98,56 @@ String paArmPayload(bool enabled) =>
 String rotatorAzPayload(double az) =>
     jsonEncode({'action': 'set_az', 'az': az});
 
+/// Which rotator a map dial reads, per page. The wrc HF rotator speaks
+/// `set_az` with a numeric `az`; the VHF sat az-rotator (spid-ercm-rotator-
+/// bridge) speaks the station value-key convention — `goto` with a string
+/// degree under `value` (R3). Both are one-shot (KTD13), so every aim
+/// publish goes out unretained.
+class RotatorSurface {
+  /// Full state slot address, e.g. `muehle/hf/rotator`.
+  final String stateSlot;
+
+  /// Segment passed to [cmdTopic], e.g. `hf/rotator`.
+  final String cmdSlot;
+
+  /// /state key of the commanded azimuth: `target_az` (wrc bridge) vs
+  /// `target` (sat bridge).
+  final String targetKey;
+
+  /// Whether the direction-preset rail (HF big-DX headings) makes sense for
+  /// this rotator. The VHF dial aims by tap only.
+  final bool showPresets;
+
+  /// The /cmd payload that aims this rotator at [deg].
+  final String Function(double deg) aimPayload;
+
+  const RotatorSurface(
+    this.stateSlot,
+    this.cmdSlot, {
+    required this.targetKey,
+    required this.showPresets,
+    required this.aimPayload,
+  });
+}
+
+const RotatorSurface hfRotator = RotatorSurface(
+  'muehle/hf/rotator',
+  'hf/rotator',
+  targetKey: 'target_az',
+  showPresets: true,
+  aimPayload: rotatorAzPayload,
+);
+
+/// The VHF array azimuth: `muehle/uhf/az-rotator` /state keys `az` / `target`
+/// / `moving` (el lives on its own slot and is the SatRotatorPanel's business).
+const RotatorSurface vhfRotator = RotatorSurface(
+  'muehle/uhf/az-rotator',
+  'uhf/az-rotator',
+  targetKey: 'target',
+  showPresets: false,
+  aimPayload: satRotatorGotoPayload,
+);
+
 String rotatorStopPayload() => jsonEncode({'action': 'stop'});
 String rotatorFwdPayload() => jsonEncode({'action': 'fwd'});
 String rotatorRevPayload() => jsonEncode({'action': 'rev'});
