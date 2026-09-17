@@ -98,10 +98,18 @@ class _UltrabeamPanelState extends State<UltrabeamPanel> {
           Padding(
             // Top padding clears the corner-overlaid status pill.
             padding: const EdgeInsets.fromLTRB(12, 26, 12, 10),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.end,
+            child: Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              crossAxisAlignment: WrapCrossAlignment.end,
               children: [
+                // The three direction buttons share one width — sized for
+                // 'FORWARD' at the action-button style with the tablet's
+                // system font scale (88 dp wrapped at >1.0 scale). Wrap so
+                // RETRACT drops to a second line on phone widths instead of
+                // overflowing the row.
                 _DirectionButton(
+                  width: 112,
                   label: 'FORWARD',
                   active: direction == 'forward',
                   // Elements moving: lock taps so rapid presses can't queue
@@ -109,19 +117,18 @@ class _UltrabeamPanelState extends State<UltrabeamPanel> {
                   // the same lockout ultrabridge's own web UI applies.
                   onPressed: (online && !moving) ? () => send(antCtrlDirectionPayload('forward')) : null,
                 ),
-                const SizedBox(width: 8),
                 _DirectionButton(
+                  width: 112,
                   label: '180°',
                   active: direction == 'reverse',
                   onPressed: (online && !moving && !on6m) ? () => send(antCtrlDirectionPayload('reverse')) : null,
                 ),
-                const SizedBox(width: 8),
                 _DirectionButton(
+                  width: 112,
                   label: 'BI-DIR',
                   active: direction == 'bidirectional',
                   onPressed: (online && !moving && !on6m) ? () => send(antCtrlDirectionPayload('bidirectional')) : null,
                 ),
-                const SizedBox(width: 8),
                 ElevatedButton(
                   // RETRACT stays pressable while moving — it is the emergency
                   // action for an unexpected or stuck direction state, and
@@ -154,17 +161,21 @@ class _UltrabeamPanelState extends State<UltrabeamPanel> {
 
 class _DirectionButton extends StatelessWidget {
   final String label;
+  final double width;
   final bool active;
   final VoidCallback? onPressed;
 
-  const _DirectionButton({required this.label, required this.active, this.onPressed});
+  const _DirectionButton({required this.label, required this.width, required this.active, this.onPressed});
 
   @override
   Widget build(BuildContext context) {
-    return ElevatedButton(
-      onPressed: onPressed,
-      style: AppTheme.actionButton(active: active),
-      child: Text(label),
+    return SizedBox(
+      width: width,
+      child: ElevatedButton(
+        onPressed: onPressed,
+        style: AppTheme.actionButton(active: active),
+        child: Text(label, maxLines: 1, softWrap: false),
+      ),
     );
   }
 }
