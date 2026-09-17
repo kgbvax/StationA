@@ -25,6 +25,7 @@ import (
 
 	"spid-ercm-rotator-bridge/internal/config"
 	"spid-ercm-rotator-bridge/internal/ercm"
+	"spid-ercm-rotator-bridge/internal/gs232"
 	"spid-ercm-rotator-bridge/internal/mount"
 	"spid-ercm-rotator-bridge/internal/mqttslot"
 	"spid-ercm-rotator-bridge/internal/pstrotator"
@@ -205,13 +206,14 @@ func run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	go azSlot.Run()
 	go elSlot.Run()
 
-	// --- protocol servers (U6 rotctld :4534, U7 PstRotator :12041/UDP) -----
-	// Both consume ONLY the mount façade m — the same pipeline /cmd feeds —
+	// --- protocol servers (U6 rotctld :4534, U7 PstRotator :12041/UDP,
+	// gs232 :4533/TCP — the PstRotator/N1MM legacy integration path) --------
+	// All consume ONLY the mount façade m — the same pipeline /cmd feeds —
 	// so a server-driven move surfaces in /state exactly like a bus-driven
 	// one (R4). A failed listener is fatal for a headless bridge: exit
 	// non-zero and let systemd restart (unlike pelcobridge2's TUI, which
 	// must survive a lost listener).
-	errCh := make(chan error, 2)
+	errCh := make(chan error, 3)
 	rcSrv := rotctld.New(m,
 		component+" · "+azSlotCfg.DeviceModel+"/"+elSlotCfg.DeviceModel,
 		rotctld.LimitsFromControl(cfg.Control), logger)
@@ -227,6 +229,14 @@ func run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 			errCh <- fmt.Errorf("pstrotator listen: %w", err)
 		}
 	}()
+	if cfg.GS232.Enabled {
+		gsSrv := gs232.New(cfg.GS232, m, logger)
+		go func() {
+			if err := gsSrv.Run(ctx); err != nil && ctx.Err() == nil {
+				errCh <- fmt.Errorf("gs232 listen: %w", err)
+			}
+		}()
+	}
 
 	select {
 	case err := <-errCh:

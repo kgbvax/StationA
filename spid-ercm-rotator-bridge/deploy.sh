@@ -44,6 +44,8 @@
 #
 #   ROTCTLD_PORT    rotctld TCP port      (default: 4534)
 #   PSTROTATOR_PORT pstrotator UDP port   (default: 12041)
+#   GS232_PORT      gs232 TCP port        (default: 4533 — the PstRotator/N1MM
+#                   legacy GS-232B integration path; seeded enabled)
 #   POLL_INTERVAL   control.poll_interval    (default: 1s)
 #   REOPEN_COOLDOWN control.reopen_cooldown (default: 2s)
 #   AZ_MIN/AZ_MAX   az travel limits      (defaults: 0 / 360 — set the real
@@ -101,6 +103,7 @@ EL_DEVICE_MODEL="${EL_DEVICE_MODEL:-ERC-M / GS-500}"
 
 ROTCTLD_PORT="${ROTCTLD_PORT:-4534}"
 PSTROTATOR_PORT="${PSTROTATOR_PORT:-12041}"
+GS232_PORT="${GS232_PORT:-4533}"
 POLL_INTERVAL="${POLL_INTERVAL:-1s}"
 REOPEN_COOLDOWN="${REOPEN_COOLDOWN:-2s}"
 AZ_MIN="${AZ_MIN:-0}"
@@ -177,6 +180,12 @@ trap 'rm -f "$SEED_CONFIG" "$SEED_ENV" "${UNIT_FILE:-}" "${UDEV_FILE:-}"' EXIT
   echo "# listen-port+1."
   echo "bind = \"0.0.0.0\""
   echo "port = ${PSTROTATOR_PORT}"
+  echo ""
+  echo "[gs232]"
+  echo "# Legacy GS-232B TCP server — the PstRotator/N1MM integration path."
+  echo "enabled = true"
+  echo "bind = \"0.0.0.0\""
+  echo "port = ${GS232_PORT}"
   echo ""
   echo "[[slot]]"
   echo "axis         = \"az\""

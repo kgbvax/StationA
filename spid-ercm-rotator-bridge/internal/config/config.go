@@ -54,6 +54,10 @@ type Config struct {
 	Rotctld RotctldConfig `toml:"rotctld"`
 	// PstRotator is the PstRotator native UDP listener endpoint (KTD11).
 	PstRotator PstRotatorConfig `toml:"pstrotator"`
+	// GS232 is the legacy GS-232B TCP server endpoint (the PstRotator
+	// integration path — PstRotator's own UDP control makes IT the listener,
+	// so a networked PstRotator speaks GS-232 to us instead).
+	GS232 GS232Config `toml:"gs232"`
 	// Control holds the mount-wide cadence and per-axis travel envelope,
 	// deadband and park positions.
 	Control ControlConfig `toml:"control"`
@@ -94,6 +98,16 @@ type RotctldConfig struct {
 type PstRotatorConfig struct {
 	Bind string `toml:"bind"`
 	Port int    `toml:"port"`
+}
+
+// GS232Config is the legacy GS-232B TCP server endpoint. Optional control
+// path for rotator-control software such as PSTRotator/N1MM: it drives the
+// same mount façade the bus does, and the resulting motion still surfaces in
+// /state (the wrc-rotator-bridge precedent, with elevation added).
+type GS232Config struct {
+	Enabled bool   `toml:"enabled"`
+	Bind    string `toml:"bind"` // bind address, e.g. "0.0.0.0"
+	Port    int    `toml:"port"` // listen port, e.g. 4533
 }
 
 // SlotConfig describes one rotator axis → one canonical `rotator` slot.
@@ -186,6 +200,11 @@ func Defaults() Config {
 		PstRotator: PstRotatorConfig{
 			Bind: "0.0.0.0",
 			Port: 12041,
+		},
+		GS232: GS232Config{
+			Enabled: true,
+			Bind:    "0.0.0.0",
+			Port:    4533,
 		},
 		Control: ControlConfig{
 			PollInterval:      "1s",

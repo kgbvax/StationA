@@ -14,10 +14,14 @@ shape): each slot gets its own paho client and LWT so a dead serial port
 degrades only its own slot while a process death takes both offline with no
 stale-online gap.
 
-Beyond the bus surface it runs two protocol listeners fed from the same
+Beyond the bus surface it runs three protocol listeners fed from the same
 dispatch core: a **rotctld**-compatible TCP server (:4534, the
-pelcobridge2-proven hamlib dialect, for gpredict and hamlib clients) and a
-**PstRotator** native UDP listener (:12041). Motion is **free with no arming
+pelcobridge2-proven hamlib dialect, for gpredict and hamlib clients), a
+**PstRotator** native UDP listener (:12041), and a **GS-232B** TCP server
+(:4533 — the PstRotator/N1MM integration path: PstRotator's own UDP control
+makes IT the listener, so a networked PstRotator connects here as a GS-232
+TCP client; the wrc-rotator-bridge precedent with elevation added). Motion is
+**free with no arming
 gate** — the reviewed no-auth station posture (plan KTD4); the exposure
 register records the accepted vectors.
 

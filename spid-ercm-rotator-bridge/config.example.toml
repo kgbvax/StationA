@@ -54,6 +54,16 @@ port = 4534
 bind = "0.0.0.0"
 port = 12041
 
+[gs232]
+# Legacy GS-232B TCP server — the PstRotator/N1MM integration path: those
+# programs speak GS-232 over TCP to a networked rotator (PstRotator's own
+# UDP control makes IT the listener, so a networked PstRotator connects here
+# as a GS-232 TCP client instead). Same no-auth LAN posture; drives the same
+# mount façade, motion surfaces in /state.
+enabled = true
+bind = "0.0.0.0"
+port = 4533
+
 # --- slots -------------------------------------------------------------------
 # One [[slot]] per rotator axis. Each becomes one canonical `rotator` slot with
 # its own /meta /state /status /cmd and its own paho client + LWT, so a dead
