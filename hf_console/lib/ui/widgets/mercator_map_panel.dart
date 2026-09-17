@@ -19,6 +19,7 @@ import '../../dxspot/projection.dart';
 import '../../dxspot/ring_subpaths.dart';
 import '../../dxspot/world_geometry.dart';
 import '../../store/bus_store.dart';
+import 'band_legend.dart';
 import '../../store/selected_spot.dart';
 import '../../store/wiring.dart';
 import '../theme.dart';
@@ -126,6 +127,7 @@ class _MercatorMapPanelState extends State<MercatorMapPanel> {
     final nowMs = DateTime.now().millisecondsSinceEpoch;
     final selectedAge = selected?.ageSecondsAt(nowMs) ?? 0;
     final selectedLive = selected != null && stalenessFor(selectedAge) != SelectedStaleness.expired;
+    final bands = visibleBands(dx.spots);
 
     // Keep the panel centred on the QTH until the user pans it.
     if (qthLat != null && qthLng != null && _centerLat == null) {
@@ -203,6 +205,25 @@ class _MercatorMapPanelState extends State<MercatorMapPanel> {
                       // Clears the zoom row: bottom 12 + ~32-high row + 4 gap.
                       bottom: 48,
                       child: const RotatorPresetsRail(),
+                    ),
+                  // Band key, left rail — same geometry as the compass panel's.
+                  // Makes the band contract visible: on the UHF page the feed
+                  // arrives pre-narrowed to 2m/70cm and the key shows exactly
+                  // that.
+                  if (bands.isNotEmpty)
+                    Positioned(
+                      left: 8,
+                      top: 40,
+                      bottom: 40,
+                      child: IgnorePointer(
+                        child: Align(
+                          alignment: Alignment.centerLeft,
+                          child: BandLegend(
+                            visible: bands,
+                            vertical: true,
+                          ),
+                        ),
+                      ),
                     ),
                 ],
               ),

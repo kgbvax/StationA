@@ -10,6 +10,7 @@ import '../../dxspot/dxspot_service.dart';
 import '../../dxspot/projection.dart';
 import '../../dxspot/world_geometry.dart';
 import '../theme.dart';
+import 'band_legend.dart';
 import 'rotator_presets_bar.dart';
 import 'world_layer_cache.dart';
 
@@ -302,7 +303,7 @@ class _CompassBody extends StatelessWidget {
           ),
         );
 
-        final visibleBands = _BandLegend.visibleBands(dx.spots);
+        final bands = visibleBands(dx.spots);
 
         return Stack(
           fit: StackFit.expand,
@@ -343,7 +344,7 @@ class _CompassBody extends StatelessWidget {
             ),
             // Layer 3: left band-key rail, hugging the left card edge and
             // vertically centered on the module.
-            if (visibleBands.isNotEmpty)
+            if (bands.isNotEmpty)
               Positioned(
                 left: 8,
                 top: 40,
@@ -351,8 +352,8 @@ class _CompassBody extends StatelessWidget {
                 child: IgnorePointer(
                   child: Align(
                     alignment: Alignment.centerLeft,
-                    child: _BandLegend(
-                      visible: visibleBands,
+                    child: BandLegend(
+                      visible: bands,
                       vertical: true,
                     ),
                   ),
@@ -474,94 +475,6 @@ class _ZoomIconButton extends StatelessWidget {
           minimumSize: const WidgetStatePropertyAll(Size(40, 31)),
         ),
         child: Icon(icon),
-      ),
-    );
-  }
-}
-
-/// Chip rail on the *left* of the compass module showing only the bands
-/// currently in use, ordered by canonical HF band (lowest freq first →
-/// highest). Each chip uses the matching horstreporter band color (see
-/// `AppTheme.bandColor` + `docs/conventions/band-mode-reference.md`). Fades
-/// in when banded spots arrive, out when they leave.
-class _BandLegend extends StatelessWidget {
-  static const List<String> _bandOrder = [
-    '160m', '80m', '60m', '40m', '30m', '20m', '17m', '15m', '12m', '10m', '6m',
-  ];
-
-  /// Canonical band filter — same logic the web tool uses for its grid-square
-  /// dominant-band palette (just the band labels that exist in
-  /// `AppTheme.bandColor`).
-  static List<String> visibleBands(List<DxSpot> spots) {
-    final set = <String>{};
-    for (final s in spots) {
-      if (s.band.isNotEmpty) set.add(s.band);
-    }
-    return _bandOrder.where(set.contains).toList(growable: false);
-  }
-
-  final List<String> visible;
-  final bool vertical;
-  const _BandLegend({required this.visible, this.vertical = false});
-
-  @override
-  Widget build(BuildContext context) {
-    return AnimatedSwitcher(
-      duration: const Duration(milliseconds: 180),
-      switchInCurve: Curves.easeOut,
-      switchOutCurve: Curves.easeIn,
-      transitionBuilder: (child, anim) =>
-          FadeTransition(opacity: anim, child: child),
-      child: visible.isEmpty
-          ? const SizedBox.shrink(key: ValueKey('band-legend-empty'))
-          : Padding(
-              key: ValueKey('band-legend-${visible.join('-')}-$vertical'),
-              padding: const EdgeInsets.only(right: 6),
-              child: vertical
-                  ? Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        for (final b in visible) Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 2),
-                          child: _BandChip(b),
-                        ),
-                      ],
-                    )
-                  : Wrap(
-                      spacing: 4,
-                      runSpacing: 4,
-                      alignment: WrapAlignment.center,
-                      children: [
-                        for (final b in visible) _BandChip(b),
-                      ],
-                    ),
-            ),
-    );
-  }
-}
-
-class _BandChip extends StatelessWidget {
-  final String band;
-  const _BandChip(this.band);
-
-  @override
-  Widget build(BuildContext context) {
-    final color = AppTheme.bandColor(band);
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-      decoration: BoxDecoration(
-        color: AppTheme.pane,
-        border: Border.all(color: AppTheme.cardLineHi),
-        borderRadius: BorderRadius.circular(4),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(width: 7, height: 7, decoration: BoxDecoration(color: color, shape: BoxShape.rectangle)),
-          const SizedBox(width: 5),
-          Text(band, style: AppTheme.mono(10, weight: FontWeight.w700)),
-        ],
       ),
     );
   }

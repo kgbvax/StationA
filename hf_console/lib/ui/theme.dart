@@ -153,6 +153,7 @@ class AppTheme extends ChangeNotifier {
       '6m':   Color(0xFFFF00FF), // magenta
       '4m':   Color(0xFFFF1493), // deep pink
       '2m':   Color(0xFF008080), // dark teal
+      '70cm': Color(0xFFFFFFFF), // white — stationa extension, not in horstreporter's table
     };
     final c = palette[band];
     return c ?? const Color(0xFF555555); // matches horstreporter's bandColors.all

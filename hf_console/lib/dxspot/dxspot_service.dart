@@ -229,11 +229,16 @@ class DxSpotService extends ChangeNotifier {
   /// parameter drops non-matching spots before serialization, so the device
   /// never downloads or parses them. A change re-dials immediately — the SSE
   /// URL is wrong until it does — and the minutes-window replay refills the
-  /// map from the narrowed feed.
+  /// map from the narrowed feed. The store is purged with it: without the
+  /// purge, spots from the previous band set would linger until the 10-minute
+  /// age-out (the feed replay only ADDS spots, it never removes old ones).
   void setBands(Set<String>? bands) {
     final next = (bands == null || bands.isEmpty) ? null : Set.unmodifiable(bands);
     if (_bandsEqual(next, _enabledBands)) return;
     _enabledBands = next;
+    _byKey.clear();
+    _spots = const [];
+    _gridSquares = const [];
     notifyListeners();
     if (_running) _connect();
   }

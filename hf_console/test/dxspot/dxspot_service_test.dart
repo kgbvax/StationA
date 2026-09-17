@@ -213,6 +213,26 @@ void main() {
       expect(startedUrls, hasLength(3));
       expect(startedUrls.last, isNot(contains('enabled_bands')));
     });
+
+    test('setBands purges spots from the previous band set immediately', () {
+      service.start();
+      service.ingest(jsonEncode({
+        'lat': 51.0,
+        'lng': 7.0,
+        'snr': 10,
+        'ageSeconds': 0,
+        'locator': 'JO31',
+        'band': '40m',
+        'sourceType': 'mqtt',
+      }));
+      expect(service.spots, isNotEmpty);
+
+      // Without this purge the 40m dot would linger up to the 10-minute
+      // age-out on the narrowed feed — the replay only adds, never removes.
+      service.setBands(const {'2m', '70cm'});
+      expect(service.spots, isEmpty);
+      expect(service.gridSquares, isEmpty);
+    });
   });
 }
 

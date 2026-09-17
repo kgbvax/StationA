@@ -79,7 +79,14 @@ The palette:
 | `6m`   | `#FF00FF` | (255, 0, 255)   | magenta     |
 | `4m`   | `#FF1493` | (255, 20, 147)  | deep pink   |
 | `2m`   | `#008080` | (0, 128, 128)   | dark teal   |
+| `70cm` | `#FFFFFF` | (255, 255, 255) | white       |
 | (unknown) | `#555555` | (85, 85, 85) | grey fallback |
+
+The `70cm` row is a **stationa extension**: horstreporter's `bandColors`
+table stops at `2m`, but the Mühle station spots 70cm, so the console band
+key needs a stable color for it. horstreporter carries the same white
+(`static/utils.js bandColors` + `BAND_RANGES_HZ`) once its 70cm support
+lands.
 
 These are **fixed hex values**, not theme tokens. A consumer that maps bands
 to colors should expose a `bandColor(String band)` function with a grey
