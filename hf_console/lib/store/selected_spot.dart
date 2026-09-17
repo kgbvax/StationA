@@ -53,6 +53,7 @@ class SelectedSpot {
   final double? azimuth; // degrees true, 0..360
   final double? distanceKm;
   final String countryPrefix;
+  final String name; // QRZ operator name (bridge gap-fill); '' when absent
   final String source; // "dxlog" | "log4om" | … (listener name)
   final int tsMs; // selection wall-clock (UTC), for age-out
 
@@ -67,6 +68,7 @@ class SelectedSpot {
     this.azimuth,
     this.distanceKm,
     this.countryPrefix = '',
+    this.name = '',
     this.source = '',
     required this.tsMs,
   });
@@ -92,6 +94,7 @@ class SelectedSpot {
       azimuth: (raw['azimuth'] as num?)?.toDouble(),
       distanceKm: (raw['distance_km'] as num?)?.toDouble(),
       countryPrefix: ((raw['country_prefix'] as String?) ?? '').toUpperCase(),
+      name: ((raw['name'] as String?) ?? '').trim(),
       source: (raw['source'] as String?) ?? '',
       tsMs: ts?.millisecondsSinceEpoch ?? 0,
     );

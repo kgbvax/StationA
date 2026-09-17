@@ -15,6 +15,7 @@ void main() {
       'azimuth': 62.4,
       'distance_km': 15420.3,
       'country_prefix': 'VK9',
+      'name': 'Fred Nerk',
       'source': 'dxlog',
       'ts': '2026-09-15T14:03:12Z',
     },
@@ -32,6 +33,7 @@ void main() {
     expect(sel.azimuth, 62.4);
     expect(sel.distanceKm, 15420.3);
     expect(sel.countryPrefix, 'VK9');
+    expect(sel.name, 'Fred Nerk');
     expect(sel.source, 'dxlog');
     expect(sel.hasPosition, isTrue);
     expect(sel.hasBearing, isTrue);
@@ -64,6 +66,11 @@ void main() {
       stalenessFor(sel!.ageSecondsAt(DateTime.now().millisecondsSinceEpoch)),
       SelectedStaleness.expired,
     );
+  });
+
+  test('name absent or blank parses to empty', () {
+    expect(SelectedSpot.fromSelected({'call': 'AB1CDE'})!.name, '');
+    expect(SelectedSpot.fromSelected({'call': 'AB1CDE', 'name': '   '})!.name, '');
   });
 
   test('age buckets: fresh, stale, expired', () {

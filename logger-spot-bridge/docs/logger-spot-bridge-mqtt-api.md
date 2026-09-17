@@ -29,6 +29,7 @@ following the logging-integration draft `../logging-integration-model.md` §3
     "azimuth": 62.4,
     "distance_km": 15420.3,
     "country_prefix": "VK9",
+    "name": "Fred Nerk",
     "country": "Australia",
     "qth": "Cairns",
     "source": "dxlog",
@@ -64,9 +65,11 @@ Field notes:
   coordinates included. Either may be omitted alone.
 - `locator` (the raw locator) is carried when that was the position source —
   a logger grid, or the QRZ grid on the QRZ path.
-- `country` / `qth` come only from the QRZ gap-fill (the loggers don't send
-  them): the QRZ record's `country` and `addr2` (city). Context for the
-  console's read-out; both omitted on the logger-only path.
+- `name` / `country` / `qth` come only from the QRZ enrichment (the loggers
+  don't send them): the QRZ record's `fname` + `name` (the operator), `country`
+  and `addr2` (city). Context for the console's read-out. Filled for every
+  keyed call when QRZ is enabled (disk cache makes repeats free); omitted when
+  the lookup is disabled or failed.
 - `source` is the listener `name` config ("dxlog", "log4om", …).
 - `device_online` is the **logger feed** liveness (two-layer liveness model):
   true while any UDP datagram arrived within `stale_after` (default 10 min).

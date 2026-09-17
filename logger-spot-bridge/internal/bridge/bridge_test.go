@@ -199,12 +199,12 @@ func (f *fakeLookup) Lookup(_ context.Context, call string) (qrz.Record, error) 
 }
 
 // A Log4OM selection (bare call, no position) is the QRZ gap-fill's whole
-// reason: the grid places the pin, finish answers the beam, country/qth ride
-// along.
+// reason: the grid places the pin, finish answers the beam, name/country/qth
+// ride along.
 func TestEnrichFillsMissingPosition(t *testing.T) {
 	r := stationResolver()
 	lk := &fakeLookup{rec: qrz.Record{
-		Call: "VK9XY", Grid: "QH42wp", Country: "Australia", Qth: "Cairns",
+		Call: "VK9XY", Grid: "QH42wp", Country: "Australia", Qth: "Cairns", Name: "Fred Nerk",
 	}}
 	r.QRZ = lk
 
@@ -228,6 +228,9 @@ func TestEnrichFillsMissingPosition(t *testing.T) {
 	if sel.Country != "Australia" || sel.QTH != "Cairns" {
 		t.Errorf("country/qth = %q/%q", sel.Country, sel.QTH)
 	}
+	if sel.Name != "Fred Nerk" {
+		t.Errorf("name = %q, want the QRZ operator name", sel.Name)
+	}
 }
 
 // QRZ without a grid but with coordinates still places the pin (finish's
@@ -249,36 +252,49 @@ func TestEnrichFromCoordinatesWithoutGrid(t *testing.T) {
 	}
 }
 
-// Logger-provided positions are authoritative: no lookup, no QRZ fields.
-func TestEnrichSkipsWhenLoggerPlacedTheStation(t *testing.T) {
+// Logger-provided positions are authoritative: the lookup still runs (the
+// console's read-out wants the operator name) but locator, coordinates and
+// the beam answer are never overwritten.
+func TestEnrichKeepsLoggerPositionFillsIdentity(t *testing.T) {
 	r := stationResolver()
-	lk := &fakeLookup{rec: qrz.Record{Call: "VK9XY", Grid: "QH42wp"}}
+	lk := &fakeLookup{rec: qrz.Record{
+		Call: "VK9XY", Grid: "QH42wp", Country: "Australia", Qth: "Cairns", Name: "Fred Nerk",
+	}}
 	r.QRZ = lk
 
 	// DXLog az+dist → direct problem, no grid.
 	sel := r.FromN1MM(n1mmDXLog("VK9XY"), "dxlog")
+	before := *sel
 	if _, err := r.Enrich(context.Background(), sel); err != nil {
 		t.Fatalf("enrich: %v", err)
 	}
-	if len(lk.calls) != 0 {
-		t.Fatalf("lookups = %v, want none", lk.calls)
+	if len(lk.calls) != 1 || lk.calls[0] != "VK9XY" {
+		t.Fatalf("lookups = %v, want [VK9XY]", lk.calls)
 	}
-	if sel.Country != "" {
-		t.Error("QRZ fields leaked into a logger-placed record")
+	if sel.Locator != before.Locator || sel.Lat != before.Lat || sel.Lng != before.Lng ||
+		sel.Azimuth != before.Azimuth || sel.DistanceKm != before.DistanceKm {
+		t.Errorf("QRZ position leaked into a logger-placed record: %+v → %+v", &before, sel)
+	}
+	if sel.Name != "Fred Nerk" || sel.Country != "Australia" || sel.QTH != "Cairns" {
+		t.Errorf("identity not filled: name/country/qth = %q/%q/%q", sel.Name, sel.Country, sel.QTH)
 	}
 
-	// N1MM grid → locator path, also no lookup.
+	// N1MM grid → locator path: same contract.
 	gridSel := r.FromN1MM(n1mm.LookupInfo{
 		Call: "VK9XY", FreqTx10: 1402476, Band: "20", Mode: "CW", Grid: "QH42",
 	}, "n1mm")
+	gridBefore := *gridSel
 	if _, err := r.Enrich(context.Background(), gridSel); err != nil {
 		t.Fatalf("enrich: %v", err)
 	}
-	if len(lk.calls) != 0 {
-		t.Fatalf("lookups = %v, want none", lk.calls)
+	if len(lk.calls) != 2 {
+		t.Fatalf("lookups = %v, want one per selection", lk.calls)
 	}
-	if gridSel.Country != "" {
-		t.Error("QRZ fields leaked into a logger-located record")
+	if gridSel.Locator != gridBefore.Locator || gridSel.Azimuth != gridBefore.Azimuth {
+		t.Errorf("QRZ position leaked into a logger-located record: %+v → %+v", &gridBefore, gridSel)
+	}
+	if gridSel.Name != "Fred Nerk" {
+		t.Errorf("name not filled on the locator path: %q", gridSel.Name)
 	}
 }
 

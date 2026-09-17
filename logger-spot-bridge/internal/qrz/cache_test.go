@@ -11,7 +11,7 @@ import (
 )
 
 func testRecord(call string) Record {
-	return Record{Call: call, Grid: "JO60AB", Lat: 48.13, Lon: 11.57, Country: "Germany", Qth: "München"}
+	return Record{Call: call, Grid: "JO60AB", Lat: 48.13, Lon: 11.57, Country: "Germany", Qth: "München", Name: "Jürgen Müller"}
 }
 
 func TestCachePutGetRoundTrip(t *testing.T) {

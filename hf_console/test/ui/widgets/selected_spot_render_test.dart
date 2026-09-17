@@ -147,7 +147,7 @@ void main() {
     expect(tester.getSize(chipFinder).height, greaterThanOrEqualTo(48.0));
   });
 
-  testWidgets('Chip rows: callsign first, info second, band not shown', (tester) async {
+  testWidgets('Chip rows: read-out first, operator name second, band not shown', (tester) async {
     final store = BusStore();
     _bringRotorOnline(store);
     _applySelected(store, {
@@ -155,6 +155,7 @@ void main() {
       'band': '20m',
       'azimuth': 62.4,
       'distance_km': 15420.3,
+      'name': 'Jürgen Müller',
       'source': 'log4om',
       'ts': DateTime.now().toUtc().toIso8601String(),
     });
@@ -162,8 +163,29 @@ void main() {
     await tester.pumpWidget(TestHarness(store: store, child: const CompassPanel()));
     await tester.pump(const Duration(milliseconds: 600));
 
-    expect(find.text('VK9XY'), findsOneWidget); // row 1: the name
-    expect(find.text('→ 62° · 15420 km'), findsOneWidget); // row 2: info only
+    expect(find.text('VK9XY · → 62° · 15420 km'), findsOneWidget); // row 1: call + info
+    expect(find.text('Jürgen Müller'), findsOneWidget); // row 2: the name
+    expect(find.textContaining('20m'), findsNothing); // band deliberately dropped
+  });
+
+  testWidgets('Chip name row truncates past 32 characters with an ellipsis', (tester) async {
+    final store = BusStore();
+    _applySelected(store, {
+      'call': 'VK9XY',
+      // 40 characters.
+      'name': 'Bartholomew Fitzgerald Montgomery-Windsor',
+      'source': 'log4om',
+      'ts': DateTime.now().toUtc().toIso8601String(),
+    });
+
+    await tester.pumpWidget(TestHarness(store: store, child: const CompassPanel()));
+    await tester.pump(const Duration(milliseconds: 600));
+
+    final finder = find.textContaining('Bartholomew');
+    expect(finder, findsOneWidget);
+    final shown = tester.widget<Text>(finder).data!;
+    expect(shown.length, 32); // 31 chars + …
+    expect(shown.endsWith('…'), isTrue);
   });
 
   testWidgets('Rotor offline: chip renders without the aim marker and tap publishes nothing', (tester) async {

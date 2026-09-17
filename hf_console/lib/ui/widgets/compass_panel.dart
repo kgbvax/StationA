@@ -622,14 +622,25 @@ class _AzimuthChip extends StatelessWidget {
   }
 }
 
-/// The selected-station chip's two rows: the keyed callsign, then the
-/// current info — `az° · dist · old`, each segment only when the bridge
-/// derived it. The band is deliberately not shown; it carries no value here
-/// (user decision 2026-09-17). Distance rounds to whole km — beam-assessment
-/// precision, not pileup precision. With `aimable` the bearing segment
-/// carries the `→` target marker (the same convention as the azimuth pill's
-/// target read-out) because a tap on the chip will turn the rotor onto that
-/// bearing.
+/// Max length of the chip's name row; longer operator names are cut with an
+/// ellipsis (the … counts toward the limit).
+const int kSelectedChipNameMax = 32;
+
+/// The chip's name row: [name] cut to [max] code points, an ellipsis marking
+/// the cut. QRZ operator names are unbounded free text; the chip is not.
+String _truncateName(String name, int max) {
+  if (name.length <= max) return name;
+  return '${name.substring(0, max - 1)}…';
+}
+
+/// The selected-station chip's two rows: the read-out `CALL · az° · dist ·
+/// old`, then the QRZ operator name under it. The band is deliberately not
+/// shown; it carries no value here (user decision 2026-09-17). Each segment
+/// only when the bridge derived it. Distance rounds to whole km —
+/// beam-assessment precision, not pileup precision. With `aimable` the
+/// bearing segment carries the `→` target marker (the same convention as the
+/// azimuth pill's target read-out) because a tap on the chip will turn the
+/// rotor onto that bearing.
 (String, String) _selectedChipLines(SelectedSpot sel, int ageSeconds, {bool aimable = false}) {
   final stale = stalenessFor(ageSeconds) != SelectedStaleness.fresh;
   String? azText;
@@ -638,16 +649,17 @@ class _AzimuthChip extends StatelessWidget {
   }
   String? distText;
   if (sel.distanceKm != null) distText = '${sel.distanceKm!.round()} km';
-  final info = [
+  final line1 = [
+    sel.call,
     if (azText != null) azText,
     if (distText != null) distText,
     if (stale) 'old',
   ].join(' · ');
-  return (sel.call, info);
+  return (line1, _truncateName(sel.name, kSelectedChipNameMax));
 }
 
 /// Bottom-left chip naming the keyed station with the beam answer, on two
-/// rows: the callsign, then the current info under it. Amber — the theme's
+/// rows: the read-out, then the operator name under it. Amber — the theme's
 /// "attention, not alarm" color — and grey when the selection is stale.
 /// Mirror of [_AzimuthChip] so the two read-outs read as one family. It is
 /// also the actuator: a tap aims the rotor at the keyed station. [onTap] is
