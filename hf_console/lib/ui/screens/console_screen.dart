@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '../../dxspot/dxspot_service.dart';
 import '../../store/bus_store.dart';
 import '../../mqtt/mqtt_service.dart';
 import '../../store/wiring.dart';
@@ -29,7 +30,16 @@ class ConsoleScreen extends StatefulWidget {
 class _ConsoleScreenState extends State<ConsoleScreen> {
   String _page = 'hf';
 
-  void _setPage(String page) => setState(() => _page = page);
+  // The DX-spot subscription follows the active page: the UHF dial reads
+  // 2m/70cm only, and horstreporter drops every other band server-side
+  // (`enabled_bands` stream parameter) — the device never downloads them.
+  static const Set<String> _uhfBands = {'2m', '70cm'};
+
+  void _setPage(String page) {
+    setState(() => _page = page);
+    context.read<DxSpotService>().setBands(page == 'uhf' ? _uhfBands : null);
+  }
+
   void _setScheme(AppColorScheme scheme) => setState(() => AppTheme.setScheme(scheme));
 
   @override

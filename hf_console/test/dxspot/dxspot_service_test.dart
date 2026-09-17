@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hf_console/dxspot/dxspot_service.dart';
+import 'package:hf_console/dxspot/dxspot_source.dart';
 
 void main() {
   group('DxSpotFilter', () {
@@ -166,4 +167,70 @@ void main() {
       expect(sq.score, closeTo(10.0, 0.0001));
     });
   });
+
+  group('setBands (server-side subscription narrowing)', () {
+    late DxSpotService service;
+    late List<String> startedUrls;
+
+    setUp(() {
+      service = DxSpotService();
+      service.configure(locator: 'JO31');
+      startedUrls = [];
+      DxSpotService.debugSourceFactory = () => _RecordingSource(onStart: startedUrls.add);
+    });
+
+    tearDown(() {
+      DxSpotService.debugSourceFactory = null;
+      service.stop();
+    });
+
+    test('streamUrl carries enabled_bands when set, omits it otherwise', () {
+      expect(
+        DxSpotService.streamUrl('https://example.com', 'JO31OM', bands: const {'2m', '70cm'}),
+        'https://example.com/api/stream?qth=JO31OM&minutes=30&surroundings=true&enabled_bands=2m,70cm',
+      );
+      expect(
+        DxSpotService.streamUrl('https://example.com', 'JO31OM'),
+        'https://example.com/api/stream?qth=JO31OM&minutes=30&surroundings=true',
+      );
+    });
+
+    test('setBands re-dials with the narrowed URL; unchanged set does not', () {
+      service.start();
+      expect(startedUrls, hasLength(1));
+      expect(startedUrls.single, isNot(contains('enabled_bands')));
+
+      service.setBands(const {'2m', '70cm'});
+      expect(startedUrls, hasLength(2));
+      expect(startedUrls.last, contains('enabled_bands=2m,70cm'));
+
+      // Same set in different order: no reconnect.
+      service.setBands({'70cm', '2m'});
+      expect(startedUrls, hasLength(2));
+
+      // Back to unrestricted: re-dial without the parameter.
+      service.setBands(null);
+      expect(startedUrls, hasLength(3));
+      expect(startedUrls.last, isNot(contains('enabled_bands')));
+    });
+  });
+}
+
+/// Records every start URL; never connects, never reports disconnection.
+class _RecordingSource implements DxSpotSource {
+  _RecordingSource({required this.onStart});
+
+  final void Function(String url) onStart;
+
+  @override
+  void start(
+    String url, {
+    required void Function(String data) onData,
+    required void Function() onDisconnected,
+  }) {
+    onStart(url);
+  }
+
+  @override
+  void stop() {}
 }
