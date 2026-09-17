@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hf_console/store/bus_store.dart';
 import 'package:hf_console/store/wiring.dart';
 import 'package:hf_console/ui/widgets/compass_panel.dart';
+import 'package:hf_console/ui/theme.dart';
 import '../../support/fake_mqtt_service.dart';
 import '../../support/fixtures.dart';
 import '../../support/test_harness.dart';
@@ -19,6 +20,13 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.textContaining('OFFLINE'), findsOneWidget);
+      // The system offline color is red (StatusPill convention) — the pill
+      // must not fall back to a muted grey.
+      final chip = tester.widget<Container>(
+        find.ancestor(of: find.textContaining('OFFLINE'), matching: find.byType(Container)).first,
+      );
+      final decoration = chip.decoration! as BoxDecoration;
+      expect((decoration.border! as Border).top.color, AppTheme.red);
     });
 
     testWidgets('shows current azimuth and hides target when within 5°', (tester) async {
