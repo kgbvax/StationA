@@ -57,12 +57,15 @@ class AppTheme extends ChangeNotifier {
     /// label, accent = accent (cyan), green/amber/red = accent.success/
     /// warning/danger, orange = highlight.tx.
     AppColorScheme.aether: _Palette(
-      page: const Color(0xFF000000),
-      pane: const Color(0xFF203040),
-      card: const Color(0xFF1A2A3A),
-      land: const Color(0xFF304050),
-      line: const Color(0xFF2A3A4D),
-      lineHi: const Color(0xFF3A4A5A),
+      // Very dark throughout (review: near-black page alone read as
+      // unchanged because cards and panes dominate the console). Keeps the
+      // blue cast of the original palette; only the surfaces darken.
+      page: const Color(0xFF05070B),
+      pane: const Color(0xFF0D1520),
+      card: const Color(0xFF111B29),
+      land: const Color(0xFF18232F),
+      line: const Color(0xFF1E2B39),
+      lineHi: const Color(0xFF2C3D4D),
       txt: const Color(0xFFC8D8E8),
       txtMute: const Color(0xFF8EA8C0),
       txtFaint: const Color(0xFF506070),

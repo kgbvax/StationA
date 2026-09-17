@@ -98,38 +98,38 @@ class _UltrabeamPanelState extends State<UltrabeamPanel> {
           Padding(
             // Top padding clears the corner-overlaid status pill.
             padding: const EdgeInsets.fromLTRB(12, 26, 12, 10),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.end,
+            child: Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              crossAxisAlignment: WrapCrossAlignment.end,
               children: [
-                // The three direction buttons share the free width equally —
-                // intrinsic sizing made '180°' a sliver next to 'FORWARD'.
-                Expanded(
-                  child: _DirectionButton(
-                    label: 'FORWARD',
-                    active: direction == 'forward',
-                    // Elements moving: lock taps so rapid presses can't queue
-                    // competing direction cmds against mid-travel motors —
-                    // the same lockout ultrabridge's own web UI applies.
-                    onPressed: (online && !moving) ? () => send(antCtrlDirectionPayload('forward')) : null,
-                  ),
+                // The three direction buttons share one width — the natural
+                // width of the widest label ('FORWARD' at the action-button
+                // style, 13 px mono + 10 px side padding). Intrinsic sizing
+                // made '180°' a sliver; stretching filled the whole card.
+                // Wrap so RETRACT drops to a second line on phone widths
+                // instead of overflowing the row.
+                _DirectionButton(
+                  width: 88,
+                  label: 'FORWARD',
+                  active: direction == 'forward',
+                  // Elements moving: lock taps so rapid presses can't queue
+                  // competing direction cmds against mid-travel motors —
+                  // the same lockout ultrabridge's own web UI applies.
+                  onPressed: (online && !moving) ? () => send(antCtrlDirectionPayload('forward')) : null,
                 ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: _DirectionButton(
-                    label: '180°',
-                    active: direction == 'reverse',
-                    onPressed: (online && !moving && !on6m) ? () => send(antCtrlDirectionPayload('reverse')) : null,
-                  ),
+                _DirectionButton(
+                  width: 88,
+                  label: '180°',
+                  active: direction == 'reverse',
+                  onPressed: (online && !moving && !on6m) ? () => send(antCtrlDirectionPayload('reverse')) : null,
                 ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: _DirectionButton(
-                    label: 'BI-DIR',
-                    active: direction == 'bidirectional',
-                    onPressed: (online && !moving && !on6m) ? () => send(antCtrlDirectionPayload('bidirectional')) : null,
-                  ),
+                _DirectionButton(
+                  width: 88,
+                  label: 'BI-DIR',
+                  active: direction == 'bidirectional',
+                  onPressed: (online && !moving && !on6m) ? () => send(antCtrlDirectionPayload('bidirectional')) : null,
                 ),
-                const SizedBox(width: 8),
                 ElevatedButton(
                   // RETRACT stays pressable while moving — it is the emergency
                   // action for an unexpected or stuck direction state, and
@@ -162,17 +162,21 @@ class _UltrabeamPanelState extends State<UltrabeamPanel> {
 
 class _DirectionButton extends StatelessWidget {
   final String label;
+  final double width;
   final bool active;
   final VoidCallback? onPressed;
 
-  const _DirectionButton({required this.label, required this.active, this.onPressed});
+  const _DirectionButton({required this.label, required this.width, required this.active, this.onPressed});
 
   @override
   Widget build(BuildContext context) {
-    return ElevatedButton(
-      onPressed: onPressed,
-      style: AppTheme.actionButton(active: active),
-      child: Text(label),
+    return SizedBox(
+      width: width,
+      child: ElevatedButton(
+        onPressed: onPressed,
+        style: AppTheme.actionButton(active: active),
+        child: Text(label),
+      ),
     );
   }
 }
