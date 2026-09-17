@@ -951,8 +951,9 @@ func TestDriverMocksCompose(t *testing.T) {
 	}
 	waitFor(t, "SPID parked at 123", func() bool { return azMock.Target() == 123 })
 	waitFor(t, "ERC-M W goto on the wire", func() bool {
+		// el rides the az channel (wiring swap): W<el> 000.
 		for _, w := range dev.Writes() {
-			if w == "W000 030" {
+			if w == "W030 000" {
 				return true
 			}
 		}

@@ -114,53 +114,42 @@ func TestGotoWCommandBytes(t *testing.T) {
 	m.SetEL(10)
 	d := startDriver(t, testConfig(func() (io.ReadWriteCloser, error) { return m.Port(), nil }))
 
-	eventually(t, "valid readback", func() bool {
+	// Elevation rides the az channel: the readback el is the AZ digits.
+	eventually(t, "valid readback from the az digits", func() bool {
 		el, ok := d.Readback()
-		return ok && el == 10
+		return ok && el == 123
 	})
 
 	if err := d.SetTarget(45); err != nil {
 		t.Fatalf("SetTarget: %v", err)
 	}
-	eventually(t, "W on the wire", func() bool { return hasLine(m.Writes(), "W123 045") })
-	if m.EL() != 45 {
-		t.Errorf("mock el after W = %v, want 45", m.EL())
-	}
+	eventually(t, "W on the wire with el as the az operand", func() bool {
+		return hasLine(m.Writes(), "W045 000")
+	})
+	eventually(t, "mock az channel at the target", func() bool { return m.AZ() == 45 })
 	eventually(t, "fresh readback after move", func() bool {
 		el, ok := d.Readback()
 		return ok && el == 45
 	})
 }
 
-// The core KTD6 deferral: a goto arriving with NO cached az is deferred until
-// the next poll tick supplies one — never written with a fabricated az operand.
-func TestGotoDeferredUntilFirstReadback(t *testing.T) {
+// The el-on-az-channel mapping needs NO readback first: a goto goes straight
+// to the wire (the old KTD6 az-deferral would stall every goto until a C2
+// reply, on a controller whose az channel IS the elevation).
+func TestGotoWrittenImmediatelyWithoutReadback(t *testing.T) {
 	m := NewMock()
-	m.SetAZ(123)
-	m.SetEL(10)
-	m.HoldReadback(true) // C2 replies suppressed until released
+	m.HoldReadback(true) // NO C2 reply at all
 	d := startDriver(t, testConfig(func() (io.ReadWriteCloser, error) { return m.Port(), nil }))
 
 	eventually(t, "a poll tick ran", func() bool { return hasLine(m.Writes(), "C2") })
 
 	if err := d.SetTarget(30); err != nil {
-		t.Fatalf("SetTarget while deferred: %v", err)
+		t.Fatalf("SetTarget without readback: %v", err)
 	}
-	time.Sleep(50 * time.Millisecond) // several poll cycles' worth of quiet line
-	if hasLineWithPrefix(m.Writes(), "W") {
-		t.Fatalf("W written before any C2 reply supplied an az: %q", m.Writes())
+	if !hasLine(m.Writes(), "W030 000") {
+		t.Fatalf("goto not written immediately without any readback: %q", m.Writes())
 	}
-
-	m.HoldReadback(false)
-	m.StageReadback() // the in-flight C2 finally answers: AZ=123  EL=010
-	eventually(t, "deferred W after first readback", func() bool {
-		return hasLine(m.Writes(), "W123 030")
-	})
-	for _, l := range m.Writes() {
-		if strings.HasPrefix(l, "W") && l != "W123 030" {
-			t.Errorf("unexpected W spelling %q, want exactly W123 030", l)
-		}
-	}
+	eventually(t, "mock az channel at the target", func() bool { return m.AZ() == 30 })
 }
 
 // Readback validity starts false and lands only with the first C2 reply (KTD7).
@@ -180,22 +169,23 @@ func TestReadbackValidityLifecycle(t *testing.T) {
 	m.StageReadback()
 	eventually(t, "valid readback after first reply", func() bool {
 		el, ok := d.Readback()
-		return ok && el == 10
+		return ok && el == 123 // the AZ digits ARE the elevation (wiring swap)
 	})
 }
 
 // --- stop (S/E) ------------------------------------------------------------------
 
-func TestStopWritesEAndClearsPendingTarget(t *testing.T) {
+func TestStopWritesE(t *testing.T) {
 	m := NewMock()
 	m.SetAZ(123)
 	m.SetEL(10)
-	m.HoldReadback(true)
 	d := startDriver(t, testConfig(func() (io.ReadWriteCloser, error) { return m.Port(), nil }))
 
 	eventually(t, "a poll tick ran", func() bool { return hasLine(m.Writes(), "C2") })
 
-	// Park a deferred target, then stop: the stop must clear it (KTD8 spirit).
+	// A goto goes straight to the wire (el-on-az mapping); a following stop
+	// writes E and re-sends nothing — motion is written or refused, never
+	// parked for later.
 	if err := d.SetTarget(30); err != nil {
 		t.Fatalf("SetTarget: %v", err)
 	}
@@ -206,11 +196,18 @@ func TestStopWritesEAndClearsPendingTarget(t *testing.T) {
 		t.Fatalf("stop did not write E, writes: %q", m.Writes())
 	}
 
-	m.HoldReadback(false)
-	m.StageReadback()
-	time.Sleep(60 * time.Millisecond) // let a poll tick process the readback
-	if hasLineWithPrefix(m.Writes(), "W") {
-		t.Fatalf("deferred target survived a stop: %q", m.Writes())
+	time.Sleep(60 * time.Millisecond) // let a poll tick pass
+	ws := 0
+	for _, l := range m.Writes() {
+		if strings.HasPrefix(l, "W") {
+			ws++
+			if l != "W030 000" {
+				t.Errorf("unexpected W spelling %q", l)
+			}
+		}
+	}
+	if ws != 1 {
+		t.Errorf("W count after goto + stop = %d, want exactly 1", ws)
 	}
 
 	// The S form is the same stop command on the wire — the mock must accept
@@ -227,13 +224,12 @@ func TestStopWritesEAndClearsPendingTarget(t *testing.T) {
 	}
 }
 
-// An OFFLINE stop must still cancel a deferred target: Stop refuses with
-// ErrOffline on a down link, but the pendingEl clear runs before that
-// refusal — after the link heals, no W may reach the wire for an intent the
-// operator stopped (the uncommanded-post-recovery-motion trap).
-func TestOfflineStopCancelsDeferredTarget(t *testing.T) {
+// An OFFLINE stop refuses with ErrOffline and writes nothing; when the link
+// heals, no motion may reach the wire on its behalf — motion is written or
+// refused, never parked for later (the uncommanded-post-recovery-motion
+// trap).
+func TestOfflineStopRefusesAndHealsToNoMotion(t *testing.T) {
 	m1 := NewMock()
-	m1.HoldReadback(true) // no C2 reply ⇒ no az cached ⇒ SetTarget defers (KTD6)
 	m2 := NewMock()
 	m2.SetAZ(75)
 	m2.SetEL(20)
@@ -256,20 +252,10 @@ func TestOfflineStopCancelsDeferredTarget(t *testing.T) {
 		}
 		return nil, errors.New("adapter absent (scripted)")
 	}
-	// Long reply timeout: the hold-suppressed polls must not time the link
-	// down before the test has staged the deferral and the fault.
 	cfg := testConfig(opener)
-	cfg.ReplyTimeout = 5 * time.Second
 	d := startDriver(t, cfg)
 
 	eventually(t, "first poll on the initial link", func() bool { return hasLine(m1.Writes(), "C2") })
-	if err := d.SetTarget(30); err != nil {
-		t.Fatalf("SetTarget while az-less: %v", err)
-	}
-	time.Sleep(30 * time.Millisecond)
-	if hasLineWithPrefix(m1.Writes(), "W") {
-		t.Fatalf("W written before any az: %q", m1.Writes())
-	}
 
 	// Fault the link (the FailReads seam): the in-flight poll takes it Down,
 	// and the gated opener keeps it down.
@@ -283,17 +269,20 @@ func TestOfflineStopCancelsDeferredTarget(t *testing.T) {
 	if err := d.Stop(); !errors.Is(err, ErrOffline) {
 		t.Fatalf("Stop on a down link = %v, want ErrOffline", err)
 	}
+	if hasLineWithPrefix(m1.Writes(), "W") || hasLine(m1.Writes(), "E") {
+		t.Fatalf("offline stop wrote motion/stop bytes: %q", m1.Writes())
+	}
 
-	// Heal: the fresh link supplies an az — and must flush nothing.
+	// Heal: the fresh link resumes polling — and must write no motion.
 	close(heal)
 	eventually(t, "healed link readback", func() bool {
 		el, ok := d.Readback()
-		return d.Online() && ok && el == 20
+		return d.Online() && ok && el == 75
 	})
-	time.Sleep(60 * time.Millisecond) // several live, az-cached poll cycles
+	time.Sleep(60 * time.Millisecond) // several live poll cycles
 	for i, m := range []*MockDevice{m1, m2} {
-		if hasLineWithPrefix(m.Writes(), "W") {
-			t.Errorf("mock %d: deferred target survived an offline stop: %q", i+1, m.Writes())
+		if hasLineWithPrefix(m.Writes(), "W") || hasLine(m.Writes(), "E") {
+			t.Errorf("mock %d: motion bytes reached the wire around an offline stop: %q", i+1, m.Writes())
 		}
 	}
 }
@@ -319,7 +308,7 @@ func TestReopenAfterScriptedError(t *testing.T) {
 
 	eventually(t, "recovery on a later tick", func() bool {
 		el, ok := d.Readback()
-		return d.Online() && ok && el == 20
+		return d.Online() && ok && el == 60 // the AZ digits ARE the elevation
 	})
 	if !hasLine(m2.Writes(), "C2") {
 		t.Errorf("no polls on the reopened port: %q", m2.Writes())
@@ -328,58 +317,35 @@ func TestReopenAfterScriptedError(t *testing.T) {
 	// valid again only via the fresh reply — asserted above through ok==true.
 }
 
-// A deferred target whose flush write faults must NOT silently vanish: it is
-// re-deferred (KTD6 — an admitted intent that never hit the wire survives)
-// and the next healed poll flushes it. Swallowing the write error would
-// strand a target /state keeps reporting.
-func TestFailedFlushReDefersPendingTarget(t *testing.T) {
+// A goto whose write faults must return the error to the caller — the
+// intent never hit the wire, and nothing is silently re-sent later
+// (re-sending a motion command with no operator behind it is the
+// ultrabridge stale-cmd pattern). The link self-heals; polling resumes; the
+// failed motion stays failed.
+func TestFailedGotoReturnsErrorToCaller(t *testing.T) {
 	m := NewMock()
 	m.SetAZ(123)
 	m.SetEL(10)
-	m.HoldReadback(true) // stay az-less until the test stages the first reply
-
-	// Long reply timeout: the hold-suppressed polls must not take the link
-	// down before the staged reply arrives.
-	cfg := testConfig(func() (io.ReadWriteCloser, error) { return m.Port(), nil })
-	cfg.ReplyTimeout = 5 * time.Second
-	d := startDriver(t, cfg)
+	d := startDriver(t, testConfig(func() (io.ReadWriteCloser, error) { return m.Port(), nil }))
 
 	eventually(t, "first poll on the wire", func() bool { return hasLine(m.Writes(), "C2") })
-	if err := d.SetTarget(30); err != nil {
-		t.Fatalf("SetTarget while az-less: %v", err)
+
+	m.FailNextW()
+	if err := d.SetTarget(30); err == nil {
+		t.Fatal("SetTarget with a scripted W write fault returned nil — the caller must learn the goto failed")
 	}
 
-	// The staged first reply supplies the az; the flush W it triggers is
-	// scripted to fail (command-selective seam — the poll C2s must not eat
-	// the fault). The flush error takes the link Down; the target must
-	// survive as a re-deferred intent, not vanish with the swallowed error.
-	// HoldReadback is released up front so every C2 AFTER the staged reply
-	// is answered — the staged line stays first in the FIFO and remains the
-	// one that arms the failing flush.
-	m.FailNextW()
-	m.Script("AZ=123  EL=010")
-	m.HoldReadback(false)
-
-	// Heal on the same controller (fresh handle from the opener): the first
-	// fresh C2 reply re-arms the flush — this time onto the wire. The flush
-	// itself doubles as durable evidence of the fault+heal cycle: it can
-	// only be written on a healed link.
-	eventually(t, "re-deferred target flushed after heal", func() bool {
-		return hasLine(m.Writes(), "W123 030")
+	// The link self-heals (the fault took it Down through the reopen path)
+	// and polling resumes — but the goto is NOT re-sent.
+	eventually(t, "link healed after the write fault", func() bool {
+		el, ok := d.Readback()
+		return d.Online() && ok && el == 123
 	})
-	eventually(t, "mock axis at the flushed target", func() bool { return m.EL() == 30 })
-
-	ws := 0
+	time.Sleep(60 * time.Millisecond) // several healed poll cycles
 	for _, l := range m.Writes() {
 		if strings.HasPrefix(l, "W") {
-			ws++
-			if l != "W123 030" {
-				t.Errorf("unexpected W spelling %q", l)
-			}
+			t.Errorf("motion reached the wire after a failed goto: %q", l)
 		}
-	}
-	if ws != 1 {
-		t.Errorf("W count after failed flush + heal = %d, want exactly 1", ws)
 	}
 }
 
@@ -465,7 +431,7 @@ func TestWriteStallWatchdogKeepsStateAnswerableAndHeals(t *testing.T) {
 	// fresh valid readback through it.
 	eventually(t, "watchdog stall converted into a heal", func() bool {
 		el, ok := d.Readback()
-		return d.Online() && ok && el == 20
+		return d.Online() && ok && el == 75 // the AZ digits ARE the elevation
 	})
 	if opens < 2 {
 		t.Errorf("opener attempts = %d, want >= 2 (the watchdog must feed the reopen path)", opens)
@@ -529,16 +495,16 @@ func TestMockScriptedAModeReply(t *testing.T) {
 	eventually(t, "driver polling", func() bool { return hasLine(m.Writes(), "C2") })
 
 	m.Script("+0123+0045") // GS-232A shape must still parse (KTD6 tolerance)
-	eventually(t, "A-mode reply parsed", func() bool {
+	eventually(t, "A-mode reply parsed: elevation from the az digits", func() bool {
 		el, ok := d.Readback()
-		return ok && el == 45
+		return ok && el == 123
 	})
 
 	if err := d.SetTarget(50); err != nil {
 		t.Fatalf("SetTarget: %v", err)
 	}
-	eventually(t, "W with the A-mode-supplied az", func() bool {
-		return hasLine(m.Writes(), "W123 050")
+	eventually(t, "W with el as the az operand", func() bool {
+		return hasLine(m.Writes(), "W050 000")
 	})
 }
 

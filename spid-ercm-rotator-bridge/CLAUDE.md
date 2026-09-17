@@ -4,7 +4,11 @@ spid-ercm-rotator-bridge fronts the station's **satellite-tracking az/el rotator
 mount** as two canonical `rotator` slots: `muehle/uhf/az-rotator` (SPID
 azimuth rotor, Rot1Prog binary protocol over serial, 1200 baud) and
 `muehle/uhf/el-rotator` (GS-500 elevation via the **ERC-M** controller,
-GS-232B dialect over serial, 9600 baud). It is a **compound bridge** (one
+GS-232B dialect over serial, 9600 baud). **Station wiring note:** the
+elevation rotor is wired to the ERC-M's *azimuth* channel (bench-proven
+2026-09-17), so the el driver maps elevation onto that channel — gotos go
+out as `W<el> 000` and readback elevation is the `C2` reply's AZ digits; the
+el channel/digits float unconnected. It is a **compound bridge** (one
 process, two slots, two MQTT clients — the shelly-power-bridge `[[slot]]`
 shape): each slot gets its own paho client and LWT so a dead serial port
 degrades only its own slot while a process death takes both offline with no
@@ -85,8 +89,9 @@ motion (R4).
 2. `internal/config` — TOML config (one `[[slot]]` per axis), flags,
    `SPID_ERCM_ROTATOR_BRIDGE_*` env overrides.
 3. `internal/spid` (Rot1Prog driver, 13-byte frames at 1200 baud 8N1, az-only),
-   `internal/ercm` (GS-232B driver: `W` goto, `C2`/`B` readback, `S`/`E` stop,
-   `rFMW` firmware; polls at `control.poll_interval`), `internal/mount`
+   `internal/ercm` (GS-232B driver: `W<el> 000` goto with elevation on the az
+   channel, `C2` readback — el from the AZ digits, `E` stop; polls at
+   `control.poll_interval`), `internal/mount`
    (per-axis Controller + mount façade: latest-wins coalescing with one
    in-flight per axis, bounded stop epoch that halts BOTH axes and cancels
    pending targets, two-axis refusal aggregation into the single client reply,
@@ -135,7 +140,10 @@ slot's own serial link** — a dead elevation port takes only `el-rotator`
 offline). `/cmd` payloads: `{"action":"goto","value":"45.0"}` /
 `{"action":"stop"}` — published non-retained, subscribed at QoS 0, cleared with
 an empty retained publish after execute-or-reject, `ts`-gated when stamped
-(KTD13; unstamped producers tolerated). The boot path issues **no rFMW
+(KTD13; unstamped producers tolerated). A goto is written immediately as
+`W<el> 000` — elevation rides the ERC-M's az channel (wiring note above);
+no az-deferral, and a failed write returns the error to the caller instead
+of re-sending later. The boot path issues **no rFMW
 firmware probe**: the live bench ERC-M goes unresponsive to subsequent input
 after the unknown rFMW, so a boot probe poisons the link and every cooldown
 reopen re-poisons it (commissioned 2026-09-17); `/meta.device.firmware` stays

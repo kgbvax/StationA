@@ -641,3 +641,29 @@ TX-inhibit path (vectors 1, 6); remote PTT enters unattended operation (vector 5
 permit TTL or a second session primitive lands (vectors 8, 9); or the bench pin
 answers refusal-vs-eviction differently than the never-steal policy assumes
 (vector 9).
+
+# spid-ercm-rotator-bridge: commissioning findings (2026-09-17)
+
+## [defect] The ERC-M's elevation rotor is wired to the controller's AZIMUTH channel — software-remapped
+
+Bench-proven on first commissioning (shari, FT230X D30IYM3E): commanding
+`W000 090` swung the physical elevation rotor from 180° to 0°, and `W090 000`
+drove it to 90° — the rotor tracks the az operand in true degrees, and `C2`'s
+AZ digits read it back correctly. The el channel/digits float unconnected.
+Root cause is a wiring swap at the ERC-M/rotor side, not software.
+
+Mitigation in force: `internal/ercm` maps elevation onto the az channel —
+gotos go out as `W<el> 000` and the cached elevation is the reply's AZ
+digits (`writeGoto` + `applyReadback`). The az channel is calibrated in true
+degrees (180/0/90 agreed with the physical mount at the bench).
+
+Re-open this if: the wiring is swapped at the ERC-M box (then flip the
+mapping back in the driver and recalibrate the el channel), or the az digits
+ever drift against the physical position (pot fault). The same commissioning
+found the unit goes unresponsive to serial input after the unknown `rFMW`
+command — the driver's boot path issues nothing before the first `C2` poll;
+do not reintroduce a firmware probe. Elevation calibration of the physical
+rotor through the remapped path, the real GS-500 travel range (0–90° is the
+configured assumption; 90° was reachable), and the 1° deadband remain bench
+items. The az slot runs against a placeholder serial path (truthful
+`device_online:false`) until the SPID azimuth bench bring-up.

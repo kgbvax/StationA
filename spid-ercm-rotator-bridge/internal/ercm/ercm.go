@@ -23,26 +23,27 @@
 // Wire dialect (Appendix B, CR-terminated commands):
 //
 //	Waaa eee   goto: az AND el in one command (single space separator). The
-//	           elevation axis needs the CURRENT az as an operand, which this
-//	           bridge does not own (azimuth lives on the SPID driver) — the
-//	           driver caches the az each C2 reply reports alongside el.
+//	           station's ERC-M has the ELEVATION rotor wired to its AZIMUTH
+//	           channel (bench-proven 2026-09-17: the rotor tracks the az
+//	           operand in true degrees, C2's AZ digits read it back, and
+//	           the el channel/digits float unconnected). The driver maps
+//	           elevation onto the az channel: a goto goes out as
+//	           W<el> 000. If the wiring is ever swapped at the box, this
+//	           mapping (writeGoto + applyReadback) flips back with it.
 //	C2         readback: B-mode "AZ=aaa  EL=eee"; the A-mode "+0aaa+0eee"
 //	           shape and elevation-only "EL=eee" replies are tolerated.
+//	           The ELEVATION is the AZ digits (see the wiring note above);
+//	           the EL digits float and are ignored.
 //	E / S      stop elevation / stop both. The driver sends E; the mock
 //	           accepts both spellings.
-//	rFMW       firmware version string, read once at startup for /meta.
 //
-// The az-deferral rule (KTD6, distinct from U4's deadband skip): a W arriving
-// with NO cached az — post-start/post-reopen, pre-first-readback — is DEFERRED
-// until the next poll tick supplies one. Never is a W written with a
-// fabricated az operand. Stop cancels a deferred target — an OFFLINE stop
-// too: the cancel runs before the offline refusal, so a healed link never
-// moves the axis on an intent the operator stopped. A deferred target whose
-// flush write faults is re-deferred (it never hit the wire), not dropped.
+// The el-on-az-channel rule (supersedes KTD6's az-deferral): a SetTarget is
+// written immediately as W<el> 000 — no waiting for an az the controller
+// does not meaningfully carry, and elevation is read from the AZ digits.
 //
 // Concurrency model: TWO mutexes, as in the SPID driver (internal/spid).
 // d.mu guards only cached state — the port handle, the reader generation,
-// online/readback caches, pendingEl, lastErr, closed — and is NEVER held
+// online/readback caches, lastErr, closed — and is NEVER held
 // across port I/O or the opener, so Online/Readback/LastError stay
 // answerable. d.ioMu serializes the port WRITE phase of every path; a write
 // wedged on a dead fd parks only other writers. Each write runs under a
@@ -183,16 +184,14 @@ type Driver struct {
 	lastOpenAttempt time.Time
 
 	// readback cache: valid is false until the first C2 reply after start
-	// or after any Down transition (KTD7); cachedAz feeds the W operand.
+	// or after any Down transition (KTD7). Elevation rides the ERC-M's az
+	// channel (wiring swap, see the wire dialect above), so cachedEl holds
+	// the reply's AZ digits.
 	valid    bool
-	cachedAz float64
-	haveAz   bool
 	cachedEl float64
 
-	pendingEl *float64 // deferred target awaiting a first az (KTD6)
-	stopGen   uint64   // bumped by every Stop; a flush that raced a stop must not re-defer it
-	firmware  string   // rFMW reply, read once per (re)open
-	lastErr   string
+	firmware string // always "" — the boot path probes no firmware (see tryOpen)
+	lastErr  string
 
 	// ioMu serializes the port WRITE phase of every path (goto, stop, poll
 	// exchange, init): writers queue here, never on mu. A write stalled in
@@ -258,12 +257,10 @@ func New(cfg Config, log *slog.Logger) *Driver {
 	}
 }
 
-// SetTarget commands the elevation axis to deg. While no azimuth has been
-// cached (post-start/post-reopen, pre-first-readback) the intent is DEFERRED:
-// it is accepted, stored, and written as a W carrying the az the next C2
-// reply supplies — never with a fabricated az operand (KTD6). A deferred
-// target is cancelled by Stop (offline included) and superseded by a later
-// SetTarget.
+// SetTarget commands the elevation axis to deg: written immediately as
+// W<el> 000 — elevation rides the ERC-M's az channel (wiring swap; see the
+// wire dialect). A write fault returns the error to the caller (the intent
+// is known to have failed; nothing is silently re-sent later).
 func (d *Driver) SetTarget(deg float64) error {
 	d.mu.Lock()
 	if d.closed {
@@ -278,36 +275,20 @@ func (d *Driver) SetTarget(deg float64) error {
 		d.mu.Unlock()
 		return ErrOutOfRange
 	}
-	if !d.haveAz {
-		el := deg
-		d.pendingEl = &el
-		d.log.Debug("elevation goto deferred until first readback supplies az", "el", deg)
-		d.mu.Unlock()
-		return nil
-	}
-	// Direct path: snapshot the az operand, release d.mu, then take the port
-	// — the write must never hold the state mutex (a wedged fd would freeze
-	// Online/Readback with it).
-	az := d.cachedAz
 	d.mu.Unlock()
-	return d.writeGoto(az, deg)
+	return d.writeGoto(deg)
 }
 
-// Stop halts the elevation axis (E command) and cancels any deferred target
-// REGARDLESS of link state: the pendingEl clear runs BEFORE the offline
-// guard, so an offline stop (ErrOffline) still cancels the intent — after
-// the link heals there must be no stale parked target left to move the axis
-// (KTD8's queue-cancel discipline, applied to this driver's deferral). When
-// the link is live the E command is written; a write fault takes the link
-// Down and the reopen self-heal engages.
+// Stop halts the elevation axis (E command) when the link is live; a write
+// fault takes the link Down and the reopen self-heal engages. Offline it
+// refuses with ErrOffline — there is no deferred intent to cancel since the
+// el-only operand rule (targets are written or refused, never parked).
 func (d *Driver) Stop() error {
 	d.mu.Lock()
 	if d.closed {
 		d.mu.Unlock()
 		return ErrClosed
 	}
-	d.pendingEl = nil
-	d.stopGen++
 	if !d.online {
 		d.mu.Unlock()
 		return ErrOffline
@@ -366,14 +347,12 @@ func (d *Driver) Close() {
 	}
 	d.online = false
 	d.valid = false
-	d.haveAz = false
-	d.pendingEl = nil // the session dies; no parked intent may outlive it
 }
 
 // Run drives the poll loop until ctx is cancelled or the driver is Closed:
-// open (retrying indefinitely, cooldown-bounded), init (rFMW), then one C2
-// readback exchange per tick. Errors never end the loop — the link goes Down
-// and a later tick reopens (KTD7).
+// open (retrying indefinitely, cooldown-bounded), then one C2 readback
+// exchange per tick. Errors never end the loop — the link goes Down and a
+// later tick reopens (KTD7).
 func (d *Driver) Run(ctx context.Context) error {
 	for {
 		if ctx.Err() != nil {
@@ -462,68 +441,30 @@ func (d *Driver) tryOpen(ctx context.Context) error {
 	return nil
 }
 
-// applyReadback folds one C2 reply into the cache and — if a goto was
-// deferred for want of an az — writes it now with the az this reply supplied
-// (KTD6). The flush write runs WITHOUT d.mu (a wedged fd must not freeze the
-// state reads); a write fault does NOT silently drop the intent: the target
-// is re-deferred and the next healed poll flushes it again — /state keeps
-// reporting the target, so the driver must keep chasing it. A Stop or a
-// newer SetTarget landing in the unlocked window wins over the re-defer.
+// applyReadback folds one C2 reply into the cache. Elevation rides the
+// ERC-M's az channel (wiring swap), so the reply's AZ digits are the cached
+// elevation; the EL digits float unconnected and are ignored.
 func (d *Driver) applyReadback(line string) {
 	d.mu.Lock()
-	az, el, hasAz, hasEl := parsePosition(line)
+	defer d.mu.Unlock()
+	azDigits, _, hasAz, _ := parsePosition(line)
 	if hasAz {
-		d.cachedAz = az
-		d.haveAz = true
-	}
-	if hasEl {
-		d.cachedEl = el
+		d.cachedEl = azDigits
 		d.valid = true
 	}
-	if d.pendingEl == nil || !d.haveAz {
-		d.mu.Unlock()
-		return
-	}
-	pending := *d.pendingEl
-	flushAz := d.cachedAz
-	stopGen := d.stopGen
-	d.pendingEl = nil
-	d.mu.Unlock()
-
-	err := d.writeGoto(flushAz, pending)
-
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	if err == nil || errors.Is(err, ErrClosed) {
-		return // written, or the driver is closing and the intent dies with it
-	}
-	if errors.Is(err, ErrOutOfRange) {
-		// The az operand cannot be carried by the fixed-width W spelling;
-		// retrying can never succeed — report and drop rather than spin.
-		d.log.Warn("deferred elevation goto cannot be carried by the W operands, dropping it", "el", pending, "az", flushAz)
-		return
-	}
-	if d.pendingEl != nil || d.stopGen != stopGen {
-		// A newer SetTarget superseded it or a Stop raced the flush window —
-		// the newer intent (or the cancellation) wins; do not resurrect.
-		d.log.Debug("deferred elevation flush superseded while in flight", "el", pending)
-		return
-	}
-	d.pendingEl = &pending
-	d.log.Warn("deferred elevation goto lost to a write fault, re-deferred until the link heals", "el", pending, "err", err)
 }
 
-// writeGoto puts one Waaa eee on the wire: the given az operand plus the
-// target el. A write fault takes the link Down; the intent is NOT retried
-// on reopen — re-sending a motion command with no operator behind it is the
-// ultrabridge stale-cmd pattern. The control path re-issues. (The KTD6
-// deferred-target flush is the exception: it re-defers on a fault and
-// retries under the same rule that admitted it.)
-func (d *Driver) writeGoto(az, el float64) error {
-	if !inOperandRange(az) || !inOperandRange(el) {
+// writeGoto puts one W<el> 000 on the wire — elevation rides the ERC-M's
+// az channel (wiring swap; the el operand targets the unconnected channel
+// and is fixed at 000). A write fault takes the link Down; the intent is
+// NOT retried on reopen — re-sending a motion command with no operator
+// behind it is the ultrabridge stale-cmd pattern. The control path
+// re-issues.
+func (d *Driver) writeGoto(el float64) error {
+	if !inOperandRange(el) {
 		return ErrOutOfRange
 	}
-	_, err := d.portWrite(fmt.Sprintf("%s%03d %03d", cmdGoto, roundDeg(az), roundDeg(el)))
+	_, err := d.portWrite(fmt.Sprintf("%s%03d %03d", cmdGoto, roundDeg(el), 0))
 	return err
 }
 
@@ -680,9 +621,7 @@ func (d *Driver) startReaderLocked() {
 // linkDownLocked handles a link fault: close the stale handle (which unblocks
 // the reader goroutine of that generation), mark offline, and clear the
 // cached readback + az so post-reopen behavior is always-write until the
-// first fresh C2 reply (KTD7). A deferred target SURVIVES: it is an admitted
-// intent that never hit the wire, and it still defers until the healed link
-// supplies an az. Idempotent. Callers must hold d.mu.
+// first fresh C2 reply (KTD7). Idempotent. Callers must hold d.mu.
 func (d *Driver) linkDownLocked(err error) {
 	if d.port != nil {
 		_ = d.port.Close()
@@ -690,7 +629,6 @@ func (d *Driver) linkDownLocked(err error) {
 	d.port = nil
 	d.online = false
 	d.valid = false
-	d.haveAz = false
 	d.lastErr = err.Error()
 	d.log.Warn("ercm link down, will reopen", "err", err)
 }

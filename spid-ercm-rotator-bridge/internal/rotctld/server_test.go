@@ -649,9 +649,10 @@ func TestMockModeEndToEnd(t *testing.T) {
 		t.Fatalf("P reply = %q, want RPRT 0", got)
 	}
 	// The SPID encodes whole degrees (rounds 180.5 → 181); the ERC-M moves
-	// instantly on the W command.
+	// instantly on the W command — and elevation lands on the mock's AZ
+	// axis (el rides the az channel, wiring swap).
 	waitFor(t, "SPID commanded to 181", func() bool { return azMock.Target() == 181 })
-	waitFor(t, "GS-500 at 45", func() bool { return elDev.EL() == 45 })
+	waitFor(t, "GS-500 at 45", func() bool { return elDev.AZ() == 45 })
 	// The driver caches refresh on the next poll tick after the devices park.
 	waitFor(t, "az driver cache at 181", func() bool {
 		deg, ok := m.Readback(mount.AZ)
