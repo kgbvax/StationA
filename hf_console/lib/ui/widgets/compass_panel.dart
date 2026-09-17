@@ -170,6 +170,9 @@ class _CompassBody extends StatelessWidget {
     // rotor online and a bearing derived (a pin from coordinates has its
     // beam answer filled by the bridge; a logger azimuth counts too).
     final selectedAimable = selectedLive && rotatorOnline && selected.azimuth != null;
+    final (selCall, selInfo) = selected == null
+        ? ('', '')
+        : _selectedChipLines(selected, selectedAge, aimable: selectedAimable);
 
     final targetDiff = (targetAz - az).abs();
     final targetVisible = targetDiff > 5.0;
@@ -376,7 +379,8 @@ class _CompassBody extends StatelessWidget {
                 left: 8,
                 bottom: 4,
                 child: _SelectedChip(
-                  parts: _selectedChipParts(selected, selectedAge, aimable: selectedAimable),
+                  call: selCall,
+                  info: selInfo,
                   stale: stalenessFor(selectedAge) == SelectedStaleness.stale,
                   onTap: selectedAimable ? () => sendAz(selected.azimuth!) : null,
                 ),
@@ -618,13 +622,15 @@ class _AzimuthChip extends StatelessWidget {
   }
 }
 
-/// Read-out parts for the selected-station chip: `CALL · az° · dist`, each
-/// segment only when the bridge derived it. Distance rounds to whole km —
-/// beam-assessment precision, not pileup precision. With `aimable` the
-/// bearing segment carries the `→` target marker (the same convention as
-/// the azimuth pill's target read-out) because a tap on the chip will turn
-/// the rotor onto that bearing.
-List<String> _selectedChipParts(SelectedSpot sel, int ageSeconds, {bool aimable = false}) {
+/// The selected-station chip's two rows: the keyed callsign, then the
+/// current info — `az° · dist · old`, each segment only when the bridge
+/// derived it. The band is deliberately not shown; it carries no value here
+/// (user decision 2026-09-17). Distance rounds to whole km — beam-assessment
+/// precision, not pileup precision. With `aimable` the bearing segment
+/// carries the `→` target marker (the same convention as the azimuth pill's
+/// target read-out) because a tap on the chip will turn the rotor onto that
+/// bearing.
+(String, String) _selectedChipLines(SelectedSpot sel, int ageSeconds, {bool aimable = false}) {
   final stale = stalenessFor(ageSeconds) != SelectedStaleness.fresh;
   String? azText;
   if (sel.azimuth != null) {
@@ -632,26 +638,27 @@ List<String> _selectedChipParts(SelectedSpot sel, int ageSeconds, {bool aimable 
   }
   String? distText;
   if (sel.distanceKm != null) distText = '${sel.distanceKm!.round()} km';
-  return [
-    sel.call,
-    if (sel.band.isNotEmpty) sel.band,
+  final info = [
     if (azText != null) azText,
     if (distText != null) distText,
     if (stale) 'old',
-  ];
+  ].join(' · ');
+  return (sel.call, info);
 }
 
-/// Bottom-left chip naming the keyed station with the beam answer. Amber —
-/// the theme's "attention, not alarm" color — and grey when the selection
-/// is stale. Mirror of [_AzimuthChip] so the two read-outs read as one
-/// family. It is also the actuator: a tap aims the rotor at the keyed
-/// station. [onTap] is null when that can't work (no bearing, rotor
-/// offline) and the chip stays a plain read-out.
+/// Bottom-left chip naming the keyed station with the beam answer, on two
+/// rows: the callsign, then the current info under it. Amber — the theme's
+/// "attention, not alarm" color — and grey when the selection is stale.
+/// Mirror of [_AzimuthChip] so the two read-outs read as one family. It is
+/// also the actuator: a tap aims the rotor at the keyed station. [onTap] is
+/// null when that can't work (no bearing, rotor offline) and the chip stays
+/// a plain read-out.
 class _SelectedChip extends StatelessWidget {
-  final List<String> parts;
+  final String call;
+  final String info;
   final bool stale;
   final VoidCallback? onTap;
-  const _SelectedChip({required this.parts, required this.stale, this.onTap});
+  const _SelectedChip({required this.call, required this.info, required this.stale, this.onTap});
 
   @override
   Widget build(BuildContext context) {
@@ -662,7 +669,9 @@ class _SelectedChip extends StatelessWidget {
       child: Container(
         // Control first, read-out second: one-tap contract means a real
         // touch target — [kSelectedChipHeight] tall with wide padding, not
-        // the ~20 dp the 12 px text alone would make.
+        // the ~20 dp the 12 px text alone would make. The pinned `height: 1.2`
+        // line boxes keep both rows inside 48 dp total; anything taller would
+        // grow the chip and collide with the dragon parked on its top edge.
         constraints: const BoxConstraints(minHeight: kSelectedChipHeight),
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
         alignment: Alignment.center,
@@ -671,9 +680,22 @@ class _SelectedChip extends StatelessWidget {
           border: Border.all(color: color),
           borderRadius: BorderRadius.circular(4),
         ),
-        child: Text(
-          parts.join(' · '),
-          style: AppTheme.mono(12, weight: FontWeight.w700, color: color),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Text(
+              call,
+              style: AppTheme.mono(12, weight: FontWeight.w700, color: color)
+                  .copyWith(height: 1.2),
+            ),
+            if (info.isNotEmpty)
+              Text(
+                info,
+                style: AppTheme.mono(11, weight: FontWeight.w500, color: color)
+                    .copyWith(height: 1.2),
+              ),
+          ],
         ),
       ),
     );

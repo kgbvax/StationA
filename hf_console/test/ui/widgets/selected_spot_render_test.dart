@@ -147,6 +147,25 @@ void main() {
     expect(tester.getSize(chipFinder).height, greaterThanOrEqualTo(48.0));
   });
 
+  testWidgets('Chip rows: callsign first, info second, band not shown', (tester) async {
+    final store = BusStore();
+    _bringRotorOnline(store);
+    _applySelected(store, {
+      'call': 'VK9XY',
+      'band': '20m',
+      'azimuth': 62.4,
+      'distance_km': 15420.3,
+      'source': 'log4om',
+      'ts': DateTime.now().toUtc().toIso8601String(),
+    });
+
+    await tester.pumpWidget(TestHarness(store: store, child: const CompassPanel()));
+    await tester.pump(const Duration(milliseconds: 600));
+
+    expect(find.text('VK9XY'), findsOneWidget); // row 1: the name
+    expect(find.text('→ 62° · 15420 km'), findsOneWidget); // row 2: info only
+  });
+
   testWidgets('Rotor offline: chip renders without the aim marker and tap publishes nothing', (tester) async {
     final store = BusStore();
     final mqtt = FakeMqttService(store);
