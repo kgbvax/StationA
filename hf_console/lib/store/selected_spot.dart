@@ -29,6 +29,15 @@ SelectedStaleness stalenessFor(int ageSeconds) {
   return SelectedStaleness.fresh;
 }
 
+/// Whether the bottom-left selected-station chip is on screen at [nowMs]:
+/// a parseable selection that has not expired (dim at 5 min, gone at
+/// 15 min). Shared by the compass panel (which renders the chip) and
+/// DxMapContainer (which lifts the dragon above it).
+bool selectedChipVisible(dynamic raw, int nowMs) {
+  final sel = SelectedSpot.fromSelected(raw);
+  return sel != null && stalenessFor(sel.ageSecondsAt(nowMs)) != SelectedStaleness.expired;
+}
+
 /// One operator-keyed station, exactly as the bridge published it. Nullable
 /// doubles mean "the logger did not send / the bridge could not derive" — the
 /// painters degrade per field (pin needs lat/lng, the bearing ray needs

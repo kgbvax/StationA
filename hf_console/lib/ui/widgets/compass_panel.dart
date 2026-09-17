@@ -47,6 +47,11 @@ const double kCompassZoomStep = 0.2;
 /// `Positioned(left:)` lands on the *visible* disc rim, not past it).
 const double kDiscInset = 10.0;
 
+/// The selected-station chip's height (its `minHeight` — the content is one
+/// line and never outgrows it). Top-level so DxMapContainer can park the
+/// dragon exactly on the chip's top edge without hard-coding the same 48.
+const double kSelectedChipHeight = 48.0;
+
 double clampCompassZoom(double z) {
   // NaN falls back to the default; ±infinity clamps to the corresponding
   // bound (otherwise `z.clamp(min, max)` returns the same infinity, which
@@ -656,9 +661,9 @@ class _SelectedChip extends StatelessWidget {
       behavior: HitTestBehavior.opaque,
       child: Container(
         // Control first, read-out second: one-tap contract means a real
-        // touch target — 48 dp tall with wide padding, not the ~20 dp the
-        // 12 px text alone would make.
-        constraints: const BoxConstraints(minHeight: 48),
+        // touch target — [kSelectedChipHeight] tall with wide padding, not
+        // the ~20 dp the 12 px text alone would make.
+        constraints: const BoxConstraints(minHeight: kSelectedChipHeight),
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
         alignment: Alignment.center,
         decoration: BoxDecoration(
