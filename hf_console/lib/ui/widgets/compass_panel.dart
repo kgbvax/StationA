@@ -186,7 +186,7 @@ class _CompassBody extends StatelessWidget {
     final azimuthColor = moving
         ? AppTheme.red
         : !rotatorOnline
-            ? AppTheme.txtMute
+            ? AppTheme.red // offline is the system red (StatusPill convention), not muted
             : AppTheme.accent;
 
     void sendAz(double value) {
@@ -597,7 +597,8 @@ class _ZoomBadge extends StatelessWidget {
 }
 
 /// Azimuth / target / moving / offline chip in the top-right of the module.
-/// Color comes from the caller (red when moving, muted when offline, accent
+/// Color comes from the caller (red when moving, red when offline — the
+/// StatusPill convention, accent
 /// otherwise). The chip is pinned to the module border instead of living in
 /// a header row so the disc gets the full card height.
 class _AzimuthChip extends StatelessWidget {
