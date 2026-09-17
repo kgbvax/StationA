@@ -663,7 +663,7 @@ ever drift against the physical position (pot fault). The same commissioning
 found the unit goes unresponsive to serial input after the unknown `rFMW`
 command — the driver's boot path issues nothing before the first `C2` poll;
 do not reintroduce a firmware probe. Elevation calibration of the physical
-rotor through the remapped path, the real GS-500 travel range (0–90° is the
-configured assumption; 90° was reachable), and the 1° deadband remain bench
-items. The az slot runs against a placeholder serial path (truthful
+rotor through the remapped path and the 1° deadband are fine at the bench
+(2026-09-17); travel range confirmed 0–180°, configured `max=180`. The az slot
+runs against a placeholder serial path (truthful
 `device_online:false`) until the SPID azimuth bench bring-up.
