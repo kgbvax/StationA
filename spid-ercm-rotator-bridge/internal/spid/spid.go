@@ -138,12 +138,15 @@ func (l *link) snapshot() io.ReadWriteCloser {
 }
 
 // swap replaces the handle and closes the previous one best-effort (it is
-// likely already gone — that is why we are swapping).
+// likely already gone — that is why we are swapping). The Close runs OUTSIDE
+// link.mu: go.bug.st's Close waits for the port's readers to drain, and a
+// reader parked on a silent link must not hold every future snapshot/swap
+// hostage while it drains.
 func (l *link) swap(rw io.ReadWriteCloser) {
 	l.mu.Lock()
-	defer l.mu.Unlock()
 	old := l.rw
 	l.rw = rw
+	l.mu.Unlock()
 	if old != nil {
 		_ = old.Close()
 	}
@@ -216,7 +219,7 @@ func New(slot config.SlotConfig, control config.ControlConfig, log *slog.Logger)
 	if slot.Mock() {
 		return NewMock(opts), nil
 	}
-	return NewDriver(serialOpener(slot.Serial.Port, slot.Serial.Baud), opts, log), nil
+	return NewDriver(serialOpener(slot.Serial.Port, slot.Serial.Baud, opts.ReadTimeout), opts, log), nil
 }
 
 // --- Axis contract ------------------------------------------------------------
@@ -493,8 +496,13 @@ func (d *Driver) reopenIO() error {
 	d.mu.Lock()
 	d.gen++
 	gen := d.gen
-	d.lnk.swap(nil)
 	d.mu.Unlock()
+	// swap (which Closes the stale handle) runs OUTSIDE d.mu: Close waits
+	// for the port's readers to drain, and a reader parked on a silent link
+	// must never stall Online()/Readback() — the observed az-slot freeze of
+	// 2026-09-17 (RWMutex handoff between Close and a timeout-less Read,
+	// under d.mu) is exactly that shape.
+	d.lnk.swap(nil)
 	rw, err := d.opener()
 	if err != nil {
 		d.mu.Lock()
@@ -603,12 +611,22 @@ func (d *Driver) emitFrames(pending []byte) []byte {
 
 // serialOpener returns the opener closure the driver self-heals through: it
 // re-resolves the stable /dev/serial/by-id/ symlink on every call, so a USB
-// re-enumeration heals instead of wedging on a deleted device node.
-func serialOpener(path string, baud int) func() (io.ReadWriteCloser, error) {
+// re-enumeration heals instead of wedging on a deleted device node. The port
+// read timeout is BOUNDED: without it the reader goroutine parks in a
+// blocking Read on a silent link, and the library's Close (which waits for
+// readers to drain) then hangs every reopen — the 2026-09-17 az-slot freeze.
+func serialOpener(path string, baud int, readTimeout time.Duration) func() (io.ReadWriteCloser, error) {
+	if readTimeout <= 0 {
+		readTimeout = DefaultReadTimeout
+	}
 	return func() (io.ReadWriteCloser, error) {
 		p, err := serial.Open(path, &serial.Mode{BaudRate: baud})
 		if err != nil {
 			return nil, fmt.Errorf("open serial %s @ %d baud: %w", path, baud, err)
+		}
+		if err := p.SetReadTimeout(readTimeout); err != nil {
+			_ = p.Close()
+			return nil, fmt.Errorf("open serial %s: set read timeout: %w", path, err)
 		}
 		return p, nil
 	}

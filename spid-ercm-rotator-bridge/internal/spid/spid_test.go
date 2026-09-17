@@ -699,3 +699,112 @@ func (w *scriptedRW) wakeReaders() {
 func newScriptedRW(az float64) *scriptedRW {
 	return &scriptedRW{az: az, wake: make(chan struct{})}
 }
+
+// wedgedCloseRW models the bench failure that froze the az slot on shari
+// (2026-09-17): a reader parked in Read on a silent controller, and a Close
+// that waits for readers to drain (go.bug.st's Close takes a writer lock
+// against the readers' RLock). Read parks until released; Close parks until
+// released — reproducing the RWMutex handoff that deadlocked reopenIO.
+type wedgedCloseRW struct {
+	readEntered  chan struct{}
+	readRelease  chan struct{}
+	closeEntered chan struct{}
+	closeRelease chan struct{}
+	onceRead     sync.Once
+	onceClose    sync.Once
+}
+
+func newWedgedCloseRW() *wedgedCloseRW {
+	return &wedgedCloseRW{
+		readEntered:  make(chan struct{}),
+		readRelease:  make(chan struct{}),
+		closeEntered: make(chan struct{}),
+		closeRelease: make(chan struct{}),
+	}
+}
+
+func (w *wedgedCloseRW) Write(p []byte) (int, error) { return len(p), nil }
+
+func (w *wedgedCloseRW) Read(p []byte) (int, error) {
+	w.onceRead.Do(func() { close(w.readEntered) })
+	<-w.readRelease // parked on a silent controller, like the real link
+	return 0, io.EOF
+}
+
+func (w *wedgedCloseRW) Close() error {
+	w.onceClose.Do(func() { close(w.closeEntered) })
+	<-w.closeRelease // drains only after the parked reader is released
+	return nil
+}
+
+// answerable runs one cached-state read on its own goroutine and fails the
+// test if it does not return promptly — the assertion the 2026-09-17 freeze
+// violated (d.mu held across the blocking Close inside reopenIO).
+func answerable(t *testing.T, what string, call func()) {
+	t.Helper()
+	done := make(chan struct{})
+	go func() { call(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatalf("%s blocked while a reopen was wedged in Close — cached state must never serialize behind port I/O", what)
+	}
+}
+
+// The reopen path must not freeze the driver's cached state when Close parks
+// behind a parked reader: Online()/Readback() stay answerable throughout the
+// wedged Close, and the link recovers once it is released.
+func TestReopenWithWedgedCloseKeepsStateAnswerable(t *testing.T) {
+	wedged := newWedgedCloseRW()
+	healthy := newScriptedRW(150)
+	first := true
+	opener := func() (io.ReadWriteCloser, error) {
+		if first {
+			first = false
+			return wedged, nil
+		}
+		return healthy, nil
+	}
+	d := NewDriver(opener, fastOpts(), nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go d.RunPoll(ctx)
+
+	// The reader parks in Read (silent controller); three quiet polls take
+	// the link down and the next poll's reopen wedges inside Close.
+	if !waitCond(2*time.Second, func() bool {
+		select {
+		case <-wedged.readEntered:
+			return true
+		default:
+			return false
+		}
+	}) {
+		t.Fatal("reader never entered Read")
+	}
+	if !waitCond(2*time.Second, func() bool {
+		select {
+		case <-wedged.closeEntered:
+			return true
+		default:
+			return false
+		}
+	}) {
+		t.Fatal("reopen never reached the (wedged) Close")
+	}
+
+	answerable(t, "Online()", func() { d.Online() })
+	answerable(t, "Readback()", func() { _, _ = d.Readback() })
+	answerable(t, "Err()", func() { d.Err() })
+
+	// Release the Close: the opener returns the healthy port, the link
+	// heals, and the first status reply populates the readback.
+	close(wedged.closeRelease)
+	if !waitCond(2*time.Second, func() bool {
+		az, valid := d.Readback()
+		return d.Online() && valid && az == 150
+	}) {
+		az, valid := d.Readback()
+		t.Fatalf("driver never recovered after the wedged Close released: readback (%v, %v), online %v", az, valid, d.Online())
+	}
+}
