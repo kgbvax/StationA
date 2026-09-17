@@ -15,6 +15,7 @@ void main() {
       'azimuth': 62.4,
       'distance_km': 15420.3,
       'country_prefix': 'VK9',
+      'name': 'Fred Nerk',
       'source': 'dxlog',
       'ts': '2026-09-15T14:03:12Z',
     },
@@ -32,6 +33,7 @@ void main() {
     expect(sel.azimuth, 62.4);
     expect(sel.distanceKm, 15420.3);
     expect(sel.countryPrefix, 'VK9');
+    expect(sel.name, 'Fred Nerk');
     expect(sel.source, 'dxlog');
     expect(sel.hasPosition, isTrue);
     expect(sel.hasBearing, isTrue);
@@ -66,6 +68,11 @@ void main() {
     );
   });
 
+  test('name absent or blank parses to empty', () {
+    expect(SelectedSpot.fromSelected({'call': 'AB1CDE'})!.name, '');
+    expect(SelectedSpot.fromSelected({'call': 'AB1CDE', 'name': '   '})!.name, '');
+  });
+
   test('age buckets: fresh, stale, expired', () {
     final now = DateTime.parse('2026-09-15T15:00:00Z').millisecondsSinceEpoch;
     int ageFor(String ts) {
@@ -76,5 +83,16 @@ void main() {
     expect(stalenessFor(ageFor('2026-09-15T14:59:30Z')), SelectedStaleness.fresh);
     expect(stalenessFor(ageFor('2026-09-15T14:54:00Z')), SelectedStaleness.stale);
     expect(stalenessFor(ageFor('2026-09-15T14:30:00Z')), SelectedStaleness.expired);
+  });
+
+  test('selectedChipVisible: shown fresh or stale, gone once expired', () {
+    final now = DateTime.parse('2026-09-15T15:00:00Z').millisecondsSinceEpoch;
+    Map<String, dynamic> sel(String ts) => {'call': 'AB1CDE', 'ts': ts};
+
+    expect(selectedChipVisible(sel('2026-09-15T14:59:30Z'), now), isTrue); // fresh
+    expect(selectedChipVisible(sel('2026-09-15T14:54:00Z'), now), isTrue); // stale — dimmed, not gone
+    expect(selectedChipVisible(sel('2026-09-15T14:30:00Z'), now), isFalse); // expired
+    expect(selectedChipVisible(null, now), isFalse); // nothing keyed
+    expect(selectedChipVisible(<String, dynamic>{}, now), isFalse); // empty call
   });
 }

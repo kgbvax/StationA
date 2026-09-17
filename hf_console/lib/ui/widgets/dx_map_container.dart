@@ -1,10 +1,14 @@
 // dx_map_container.dart — switches between the azimuthal compass and the
 // Web-Mercator DX map, sharing the same DxSpotService data source.
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../dxspot/dxspot_service.dart';
+import '../../store/bus_store.dart';
+import '../../store/selected_spot.dart';
 import '../../store/wiring.dart';
 import '../theme.dart';
 import 'compass_panel.dart';
@@ -76,9 +80,35 @@ class DxMapContainer extends StatefulWidget {
 class _DxMapContainerState extends State<DxMapContainer> {
   late DxProjection _projection = widget.initialProjection;
 
+  // Aging tick for the dragon lift: the dragon must drop back to its corner
+  // when the keyed selection expires (15 min), which on a quiet band happens
+  // with no other rebuild. Mirrors CompassPanel's `_ageTick`.
+  Timer? _ageTick;
+
+  @override
+  void initState() {
+    super.initState();
+    _ageTick = Timer.periodic(const Duration(seconds: 30), (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _ageTick?.cancel();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
     final dx = context.watch<DxSpotService>();
+    final store = context.watch<BusStore>();
+    // When the selected-station chip is on screen (azimuth projection, keyed
+    // selection not expired), the dragon parks on the chip's top edge instead
+    // of its corner so the two don't collide.
+    final chipVisible = _projection == DxProjection.azimuth &&
+        selectedChipVisible(store.stateValue('muehle/hf/spots', 'selected'),
+            DateTime.now().millisecondsSinceEpoch);
     return Stack(
       fit: StackFit.expand,
       children: [
@@ -102,10 +132,14 @@ class _DxMapContainerState extends State<DxMapContainer> {
           ),
         ),
         // Lower-left corner resident. Taps and drags must reach the map —
-        // the dragon is decoration, not a control.
-        Positioned(
+        // the dragon is decoration, not a control. Lifts above the
+        // selected-station chip (which anchors at the same corner) when that
+        // chip is on screen.
+        AnimatedPositioned(
+          duration: const Duration(milliseconds: 150),
+          curve: Curves.easeInOut,
           left: 8,
-          bottom: 4,
+          bottom: chipVisible ? 4 + kSelectedChipHeight + 4 : 4,
           child: IgnorePointer(child: const HorstKevin()),
         ),
       ],

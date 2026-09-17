@@ -46,8 +46,10 @@ type Selected struct {
 	CountryPrefix string `json:"country_prefix,omitempty"`
 	WPXPrefix     string `json:"wpx_prefix,omitempty"`
 
-	// Country/QTH come only from the QRZ gap-fill (the loggers don't send
-	// them) — context for the console's read-out.
+	// Name/Country/QTH come only from the QRZ enrichment (the loggers don't
+	// send them) — context for the console's read-out; the name is the QRZ
+	// record's fname + name (operator).
+	Name    string `json:"name,omitempty"`
 	Country string `json:"country,omitempty"`
 	QTH     string `json:"qth,omitempty"`
 
@@ -187,22 +189,20 @@ func (r Resolver) finish(sel *Selected, locator string) {
 	// Neither present: the record stays call+RF only.
 }
 
-// Enrich runs the QRZ gap-fill on a fresh selection: when the logger gave no
-// position at all (Log4OM's CALLSIGN broadcast is the bare call), the QRZ
-// lookup provides locator/coordinates and country/city, and finish computes
-// the beam answer from them exactly as it would for logger-provided data.
+// Enrich runs the QRZ enrichment on a fresh selection: identity (operator
+// name, country, city) is filled for every keyed call when QRZ is enabled —
+// the console's read-out shows the name, and the disk cache makes repeats
+// free. Position stays logger-authoritative: locator/coordinates and the
+// beam answer derived from them are only filled when the logger gave no
+// position at all (Log4OM's CALLSIGN broadcast is the bare call), because
+// DXLog's azimuth+distance is station-relative and live while a QRZ grid can
+// be stale.
 //
-// Logger-provided positions never trigger a lookup: DXLog's azimuth+distance
-// is station-relative and live, while a QRZ grid can be stale. On lookup
-// error the selection is returned unchanged — it publishes call+RF only,
-// exactly as with the lookup disabled. Runs on the jobs worker; ctx bounds
-// the HTTP work.
+// On lookup error the selection is returned unchanged — it publishes call+RF
+// only, exactly as with the lookup disabled. Runs on the jobs worker; ctx
+// bounds the HTTP work.
 func (r Resolver) Enrich(ctx context.Context, sel *Selected) (*Selected, error) {
 	if sel == nil || r.QRZ == nil {
-		return sel, nil
-	}
-	// Already placeable (locator, coordinates, or a bearing ray): skip.
-	if sel.Locator != "" || sel.Lat != 0 || sel.Lng != 0 || sel.Azimuth > 0 || sel.DistanceKm > 0 {
 		return sel, nil
 	}
 
@@ -210,8 +210,14 @@ func (r Resolver) Enrich(ctx context.Context, sel *Selected) (*Selected, error) 
 	if err != nil {
 		return sel, err
 	}
+	sel.Name = rec.Name
 	sel.Country = rec.Country
 	sel.QTH = rec.Qth
+	// Already placeable (locator, coordinates, or a bearing ray): keep the
+	// logger's answer, only the identity above comes from QRZ.
+	if sel.Locator != "" || sel.Lat != 0 || sel.Lng != 0 || sel.Azimuth > 0 || sel.DistanceKm > 0 {
+		return sel, nil
+	}
 	switch {
 	case rec.Grid != "":
 		r.finish(sel, rec.Grid)

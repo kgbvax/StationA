@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hf_console/store/bus_store.dart';
 import 'package:hf_console/store/wiring.dart';
 import 'package:hf_console/ui/widgets/compass_panel.dart';
+import 'package:hf_console/ui/widgets/dx_map_container.dart';
 import 'package:hf_console/ui/widgets/mercator_map_panel.dart';
 
 import '../../support/fake_mqtt_service.dart';
@@ -146,6 +147,47 @@ void main() {
     expect(tester.getSize(chipFinder).height, greaterThanOrEqualTo(48.0));
   });
 
+  testWidgets('Chip rows: read-out first, operator name second, band not shown', (tester) async {
+    final store = BusStore();
+    _bringRotorOnline(store);
+    _applySelected(store, {
+      'call': 'VK9XY',
+      'band': '20m',
+      'azimuth': 62.4,
+      'distance_km': 15420.3,
+      'name': 'Jürgen Müller',
+      'source': 'log4om',
+      'ts': DateTime.now().toUtc().toIso8601String(),
+    });
+
+    await tester.pumpWidget(TestHarness(store: store, child: const CompassPanel()));
+    await tester.pump(const Duration(milliseconds: 600));
+
+    expect(find.text('VK9XY · → 62° · 15420 km'), findsOneWidget); // row 1: call + info
+    expect(find.text('Jürgen Müller'), findsOneWidget); // row 2: the name
+    expect(find.textContaining('20m'), findsNothing); // band deliberately dropped
+  });
+
+  testWidgets('Chip name row truncates past 32 characters with an ellipsis', (tester) async {
+    final store = BusStore();
+    _applySelected(store, {
+      'call': 'VK9XY',
+      // 40 characters.
+      'name': 'Bartholomew Fitzgerald Montgomery-Windsor',
+      'source': 'log4om',
+      'ts': DateTime.now().toUtc().toIso8601String(),
+    });
+
+    await tester.pumpWidget(TestHarness(store: store, child: const CompassPanel()));
+    await tester.pump(const Duration(milliseconds: 600));
+
+    final finder = find.textContaining('Bartholomew');
+    expect(finder, findsOneWidget);
+    final shown = tester.widget<Text>(finder).data!;
+    expect(shown.length, 32); // 31 chars + …
+    expect(shown.endsWith('…'), isTrue);
+  });
+
   testWidgets('Rotor offline: chip renders without the aim marker and tap publishes nothing', (tester) async {
     final store = BusStore();
     final mqtt = FakeMqttService(store);
@@ -165,5 +207,66 @@ void main() {
     await tester.tap(find.textContaining('VK9XY'), warnIfMissed: false);
     await tester.pump();
     expect(mqtt.publishes, isEmpty);
+  });
+
+  // --- The dragon yields the corner while the chip is up ---
+
+  /// The dragon's top edge relative to the map card's top, on a 400×300 card.
+  /// Corner position: 300 − 4 (inset) − 64 (dragon) = 232. Lifted onto the
+  /// chip: 300 − (4 + 48 + 4) − 64 = 180.
+  Future<double> pumpContainerWith(WidgetTester tester, BusStore store,
+      {DxProjection projection = DxProjection.azimuth}) async {
+    await tester.pumpWidget(TestHarness(
+      store: store,
+      child: SizedBox(
+        width: 400,
+        height: 300,
+        child: DxMapContainer(initialProjection: projection),
+      ),
+    ));
+    await tester.pump(const Duration(milliseconds: 600)); // settle the AnimatedPositioned
+    final cardTop = tester.getTopLeft(find.byType(DxMapContainer)).dy;
+    return tester.getTopLeft(find.byType(HorstKevin)).dy - cardTop;
+  }
+
+  testWidgets('Dragon lifts onto the chip top while a selection is live', (tester) async {
+    final store = BusStore();
+    _applySelected(store, {
+      'call': 'VK9XY',
+      'azimuth': 62.4,
+      'source': 'log4om',
+      'ts': DateTime.now().toUtc().toIso8601String(),
+    });
+
+    expect(await pumpContainerWith(tester, store), closeTo(180.0, 0.5));
+    expect(find.textContaining('VK9XY'), findsOneWidget); // the chip it sits on
+  });
+
+  testWidgets('Expired selection: dragon back in its corner', (tester) async {
+    final store = BusStore();
+    _applySelected(store, {
+      'call': 'VK9XY',
+      'azimuth': 62.4,
+      'source': 'log4om',
+      // 16 minutes old: past the 15-minute hide.
+      'ts': DateTime.now().toUtc().subtract(const Duration(minutes: 16)).toIso8601String(),
+    });
+
+    expect(await pumpContainerWith(tester, store), closeTo(232.0, 0.5));
+  });
+
+  testWidgets('Mercator projection has no chip — dragon stays in its corner', (tester) async {
+    final store = BusStore();
+    _applySelected(store, {
+      'call': 'VK9XY',
+      'azimuth': 62.4,
+      'source': 'log4om',
+      'ts': DateTime.now().toUtc().toIso8601String(),
+    });
+
+    expect(
+      await pumpContainerWith(tester, store, projection: DxProjection.mercator),
+      closeTo(232.0, 0.5),
+    );
   });
 }

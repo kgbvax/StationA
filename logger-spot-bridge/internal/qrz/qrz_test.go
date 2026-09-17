@@ -124,6 +124,7 @@ func TestLookupSuccess(t *testing.T) {
 		Call: "DL1ABC", Grid: "JO60AB",
 		Lat: 48.137222, Lon: 11.575556,
 		Country: "Germany", Qth: "München",
+		Name: "Jürgen Müller",
 	}
 	if rec != want {
 		t.Errorf("record = %+v, want %+v", rec, want)

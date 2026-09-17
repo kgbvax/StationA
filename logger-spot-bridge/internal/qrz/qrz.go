@@ -50,7 +50,8 @@ type Record struct {
 	Lat     float64 `json:"lat,omitempty"`
 	Lon     float64 `json:"lon,omitempty"`
 	Country string  `json:"country,omitempty"`
-	Qth     string  `json:"qth,omitempty"` // QRZ addr2 (city)
+	Qth     string  `json:"qth,omitempty"`  // QRZ addr2 (city)
+	Name    string  `json:"name,omitempty"` // QRZ fname + name (operator)
 }
 
 // NormalizeCall canonicalizes a callsign for lookup and cache keys.
@@ -110,6 +111,8 @@ type qrzResponse struct {
 		Grid    string `xml:"grid"`
 		Lat     string `xml:"lat"`
 		Lon     string `xml:"lon"`
+		Fname   string `xml:"fname"`
+		Name    string `xml:"name"` // surname in QRZ's XML
 	} `xml:"Callsign"`
 }
 
@@ -186,6 +189,7 @@ func recordFrom(resp qrzResponse, call string) Record {
 		Grid:    resp.Callsign.Grid,
 		Country: resp.Callsign.Country,
 		Qth:     resp.Callsign.Addr2,
+		Name:    strings.TrimSpace(resp.Callsign.Fname + " " + resp.Callsign.Name),
 	}
 	if rec.Call == "" {
 		rec.Call = call
