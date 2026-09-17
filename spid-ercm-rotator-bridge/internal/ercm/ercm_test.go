@@ -524,6 +524,39 @@ func TestFirmwareFromRFMW(t *testing.T) {
 	eventually(t, "rFMW reply parsed into firmware", func() bool { return d.Firmware() == testFirmware })
 }
 
+// The live bench ERC-M answers C2 but stays silent to rFMW (the extended
+// r* query set is not implemented on every unit) — the firmware init read
+// must NOT take a healthy link down; /meta just omits the firmware key and
+// the poll loop carries on.
+func TestSilentFirmwareKeepsLinkUp(t *testing.T) {
+	m := NewMock()
+	m.SetFirmware("") // the reader drops the empty staged line: rFMW goes unanswered
+	cfg := testConfig(func() (io.ReadWriteCloser, error) { return m.Port(), nil })
+	cfg.ReplyTimeout = 150 * time.Millisecond
+	d := startDriver(t, cfg)
+
+	eventually(t, "online despite the silent firmware read", func() bool {
+		_, ok := d.Readback()
+		return d.Online() && ok
+	})
+	if fw := d.Firmware(); fw != "" {
+		t.Errorf("Firmware() = %q, want empty", fw)
+	}
+	// The link must have stayed up across the timeout: one rFMW at init is
+	// fine; repeated ones would mean the link bounced and self-healed
+	// instead of riding out the silence.
+	time.Sleep(2 * cfg.ReplyTimeout)
+	rfmw := 0
+	for _, l := range m.Writes() {
+		if l == "rFMW" {
+			rfmw++
+		}
+	}
+	if rfmw != 1 {
+		t.Errorf("rFMW sent %d times, want exactly 1 — the link bounced on the silent firmware read", rfmw)
+	}
+}
+
 // --- mock parity (scriptable, same contract as U2's) --------------------------------
 
 // The mock must be scriptable: a staged raw reply overrides the computed one,

@@ -136,7 +136,9 @@ offline). `/cmd` payloads: `{"action":"goto","value":"45.0"}` /
 `{"action":"stop"}` — published non-retained, subscribed at QoS 0, cleared with
 an empty retained publish after execute-or-reject, `ts`-gated when stamped
 (KTD13; unstamped producers tolerated). The ERC-M's `rFMW` firmware string
-folds into `/meta.device.firmware` once the first link open reads it; the SPID
+folds into `/meta.device.firmware` once the first link open reads it
+(best-effort: the live bench ERC-M stays silent to rFMW — the link stays up
+and the key is omitted); the SPID
 Rot1Prog has none and omits the key. Rotator slots publish **read-only**
 `expose` blocks (state fields only — no writable setpoints, no actions) —
 hadiscovery renders state but no HA motion widgets (KTD4).
