@@ -15,8 +15,10 @@
 //	                until the first C2 reply after start or after any Down
 //	                transition (KTD7 always-write rule)
 //	Online()        the serial link health (device_online, not /status)
-//	Firmware()      the rFMW string, read once per (re)open for /meta
-//	Run(ctx)        the poll loop: open, init, C2 every tick, self-heal
+//	Firmware()      /meta firmware string — always empty: the boot path
+//	                issues no rFMW probe (the live bench ERC-M goes
+//	                unresponsive after the unknown command)
+//	Run(ctx)        the poll loop: open, C2 every tick, self-heal
 //
 // Wire dialect (Appendix B, CR-terminated commands):
 //
@@ -69,9 +71,9 @@
 // Self-heal (KTD7): reopen via the opener closure re-resolving the stable
 // /dev/serial/by-id symlink, retry indefinitely after a cooldown, tag every
 // reader goroutine with a generation so late errors from a replaced port are
-// ignored, and re-init (re-read rFMW) after every successful reopen. Every
-// Down transition clears readback validity and the cached az, so post-reopen
-// behavior is always-write until the first fresh C2 reply.
+// ignored. Every Down transition clears readback validity and the cached
+// az, so post-reopen behavior is always-write until the first fresh C2
+// reply.
 package ercm
 
 import (
@@ -104,10 +106,9 @@ var (
 
 // GS-232B command spellings (Appendix B, CR-terminated).
 const (
-	cmdReadback = "C2"   // az+el readback (B-mode "AZ=aaa  EL=eee")
-	cmdGoto     = "W"    // az AND el in one command, "W%03d %03d"
-	cmdStop     = "E"    // stop elevation (S = stop both; mock accepts either)
-	cmdFirmware = "rFMW" // firmware version, best-effort read per (re)open for /meta
+	cmdReadback = "C2" // az+el readback (B-mode "AZ=aaa  EL=eee")
+	cmdGoto     = "W"  // az AND el in one command, "W%03d %03d"
+	cmdStop     = "E"  // stop elevation (S = stop both; mock accepts either)
 )
 
 // Config wires one driver instance to its serial port. It is the ercm-side
@@ -333,8 +334,10 @@ func (d *Driver) Online() bool {
 	return d.online
 }
 
-// Firmware returns the rFMW string read at the last successful open, for
-// /meta.device.firmware.
+// Firmware returns the controller firmware string for /meta.device.firmware.
+// It is always "": the boot path issues no rFMW probe — the live bench
+// ERC-M goes unresponsive to subsequent input after the unknown rFMW, so a
+// probe poisons the link (see tryOpen). The seam stays for /meta wiring.
 func (d *Driver) Firmware() string {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -397,7 +400,7 @@ func (d *Driver) Run(ctx context.Context) error {
 
 		// One readback tick. The reply wait runs without d.mu, so a slow or
 		// silent controller parks the loop, never the control paths.
-		line, err := d.exchange(ctx, cmdReadback, false)
+		line, err := d.exchange(ctx, cmdReadback)
 		if err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
@@ -412,12 +415,10 @@ func (d *Driver) Run(ctx context.Context) error {
 	}
 }
 
-// tryOpen brings the link up: opener (cooldown-gated), a fresh reader
-// generation, then re-init (rFMW, best-effort) — the controller may have
-// power-cycled in every gap the link was down, so the init re-runs after
-// EVERY successful (re)open, not just the first (KTD7). The opener itself
-// runs under NO driver lock: a wedged device enumeration must not freeze
-// the mu-guarded state reads either (the same discipline as the write path).
+// tryOpen brings the link up: opener (cooldown-gated), then a fresh reader
+// generation. The opener runs under NO driver lock: a wedged device
+// enumeration must not freeze the mu-guarded state reads either (the same
+// discipline as the write path).
 func (d *Driver) tryOpen(ctx context.Context) error {
 	d.mu.Lock()
 	if d.closed {
@@ -451,32 +452,13 @@ func (d *Driver) tryOpen(ctx context.Context) error {
 	d.startReaderLocked()
 	d.mu.Unlock()
 
-	// Re-init: read the firmware once — best-effort. The live bench ERC-M
-	// answers C2 but stays silent to rFMW (and the other extended r*
-	// queries), so a firmware timeout must NOT fail the open: the link is
-	// healthy and /meta just omits the key. A read fault is different — the
-	// exchange already took the link Down and the cooldown-gated reopen
-	// engages. A reply that is not a position line lands in /meta's
-	// firmware field; position-shaped lines (a stale reply draining out of
-	// the previous reader) are ignored.
-	line, err := d.exchange(ctx, cmdFirmware, true)
-	if err != nil {
-		if ctx.Err() != nil {
-			return err
-		}
-		if !d.Online() {
-			return err
-		}
-		d.log.Warn("ercm firmware read unanswered; continuing without firmware", "err", err)
-		return nil
-	}
-	if _, _, hasAz, hasEl := parsePosition(line); !hasAz && !hasEl {
-		if fw := strings.TrimSpace(line); fw != "" {
-			d.mu.Lock()
-			d.firmware = fw
-			d.mu.Unlock()
-		}
-	}
+	// NO boot-time firmware probe: the live bench ERC-M answers C2 reliably
+	// but goes UNRESPONSIVE to subsequent input after the unknown rFMW
+	// command, so the old boot rFMW poisoned the link and every cooldown
+	// reopen re-poisoned it — minutes of bounce before a lucky cycle got
+	// through. The boot path therefore writes nothing before the first C2
+	// poll; /meta.device.firmware stays empty (the mqttslot Firmware seam
+	// remains for a driver that can probe safely on a live bench device).
 	return nil
 }
 
@@ -618,13 +600,10 @@ func (d *Driver) writeWatchdog(port io.WriteCloser, cmd string) error {
 // have exactly one consumer. A reader error or a timeout from the CURRENT
 // generation is a link fault: the link goes Down and self-heals on a later
 // tick (KTD7).
-// exchange writes cmd and waits one reply line. A read fault always takes
-// the link Down; a reply TIMEOUT does so too — except when lenient is set,
-// which is for the firmware init read only: the live bench ERC-M answers C2
-// but stays silent to the extended r* queries, and a healthy link must not
-// bounce forever on an unanswered nicety (a real serial fault surfaces
-// within one poll tick via the C2 exchange anyway).
-func (d *Driver) exchange(ctx context.Context, cmd string, lenient bool) (string, error) {
+// exchange writes cmd and waits one reply line. A read fault or a reply
+// timeout takes the link Down (the reopen self-heal re-engages on the
+// cooldown).
+func (d *Driver) exchange(ctx context.Context, cmd string) (string, error) {
 	gen, err := d.portWrite(cmd)
 	if err != nil {
 		return "", err
@@ -646,9 +625,6 @@ func (d *Driver) exchange(ctx context.Context, cmd string, lenient bool) (string
 			return "", ge.err
 		case <-timeout.C:
 			err := fmt.Errorf("timeout waiting for reply to %q", cmd)
-			if lenient {
-				return "", err
-			}
 			d.mu.Lock()
 			d.linkDownLocked(err)
 			d.mu.Unlock()

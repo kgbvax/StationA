@@ -112,10 +112,8 @@ func TestGotoWCommandBytes(t *testing.T) {
 	m := NewMock()
 	m.SetAZ(123)
 	m.SetEL(10)
-	m.SetFirmware(testFirmware)
 	d := startDriver(t, testConfig(func() (io.ReadWriteCloser, error) { return m.Port(), nil }))
 
-	eventually(t, "firmware readback", func() bool { return d.Firmware() == testFirmware })
 	eventually(t, "valid readback", func() bool {
 		el, ok := d.Readback()
 		return ok && el == 10
@@ -143,7 +141,6 @@ func TestGotoDeferredUntilFirstReadback(t *testing.T) {
 	m.HoldReadback(true) // C2 replies suppressed until released
 	d := startDriver(t, testConfig(func() (io.ReadWriteCloser, error) { return m.Port(), nil }))
 
-	eventually(t, "init exchange (rFMW)", func() bool { return hasLine(m.Writes(), "rFMW") })
 	eventually(t, "a poll tick ran", func() bool { return hasLine(m.Writes(), "C2") })
 
 	if err := d.SetTarget(30); err != nil {
@@ -174,7 +171,7 @@ func TestReadbackValidityLifecycle(t *testing.T) {
 	m.HoldReadback(true)
 	d := startDriver(t, testConfig(func() (io.ReadWriteCloser, error) { return m.Port(), nil }))
 
-	eventually(t, "init exchange", func() bool { return hasLine(m.Writes(), "rFMW") })
+	eventually(t, "a poll tick ran", func() bool { return hasLine(m.Writes(), "C2") })
 	if _, ok := d.Readback(); ok {
 		t.Fatal("readback reported valid before the first C2 reply")
 	}
@@ -196,7 +193,7 @@ func TestStopWritesEAndClearsPendingTarget(t *testing.T) {
 	m.HoldReadback(true)
 	d := startDriver(t, testConfig(func() (io.ReadWriteCloser, error) { return m.Port(), nil }))
 
-	eventually(t, "init exchange", func() bool { return hasLine(m.Writes(), "rFMW") })
+	eventually(t, "a poll tick ran", func() bool { return hasLine(m.Writes(), "C2") })
 
 	// Park a deferred target, then stop: the stop must clear it (KTD8 spirit).
 	if err := d.SetTarget(30); err != nil {
@@ -236,12 +233,10 @@ func TestStopWritesEAndClearsPendingTarget(t *testing.T) {
 // operator stopped (the uncommanded-post-recovery-motion trap).
 func TestOfflineStopCancelsDeferredTarget(t *testing.T) {
 	m1 := NewMock()
-	m1.SetFirmware(testFirmware)
 	m1.HoldReadback(true) // no C2 reply ⇒ no az cached ⇒ SetTarget defers (KTD6)
 	m2 := NewMock()
 	m2.SetAZ(75)
 	m2.SetEL(20)
-	m2.SetFirmware(testFirmware)
 
 	// The heal is gated: until the test says so, reopens after the fault fail
 	// fast — the down state must be DURABLE while Stop runs, not the ~1 ms
@@ -267,7 +262,7 @@ func TestOfflineStopCancelsDeferredTarget(t *testing.T) {
 	cfg.ReplyTimeout = 5 * time.Second
 	d := startDriver(t, cfg)
 
-	eventually(t, "init exchange on the first link", func() bool { return hasLine(m1.Writes(), "rFMW") })
+	eventually(t, "first poll on the initial link", func() bool { return hasLine(m1.Writes(), "C2") })
 	if err := d.SetTarget(30); err != nil {
 		t.Fatalf("SetTarget while az-less: %v", err)
 	}
@@ -307,12 +302,10 @@ func TestOfflineStopCancelsDeferredTarget(t *testing.T) {
 
 func TestReopenAfterScriptedError(t *testing.T) {
 	m1 := NewMock()
-	m1.SetFirmware(testFirmware)
-	m1.FailReads(1) // the first read (rFMW at init) faults
+	m1.FailReads(1) // the first read (the first C2 poll) faults
 	m2 := NewMock()
 	m2.SetAZ(60)
 	m2.SetEL(20)
-	m2.SetFirmware(testFirmware)
 
 	opened := 0
 	opener := func() (io.ReadWriteCloser, error) {
@@ -328,9 +321,6 @@ func TestReopenAfterScriptedError(t *testing.T) {
 		el, ok := d.Readback()
 		return d.Online() && ok && el == 20
 	})
-	if !hasLine(m2.Writes(), "rFMW") {
-		t.Errorf("re-init (rFMW) missing after reopen: %q", m2.Writes())
-	}
 	if !hasLine(m2.Writes(), "C2") {
 		t.Errorf("no polls on the reopened port: %q", m2.Writes())
 	}
@@ -346,7 +336,6 @@ func TestFailedFlushReDefersPendingTarget(t *testing.T) {
 	m := NewMock()
 	m.SetAZ(123)
 	m.SetEL(10)
-	m.SetFirmware(testFirmware)
 	m.HoldReadback(true) // stay az-less until the test stages the first reply
 
 	// Long reply timeout: the hold-suppressed polls must not take the link
@@ -355,7 +344,7 @@ func TestFailedFlushReDefersPendingTarget(t *testing.T) {
 	cfg.ReplyTimeout = 5 * time.Second
 	d := startDriver(t, cfg)
 
-	eventually(t, "init exchange", func() bool { return hasLine(m.Writes(), "rFMW") })
+	eventually(t, "first poll on the wire", func() bool { return hasLine(m.Writes(), "C2") })
 	if err := d.SetTarget(30); err != nil {
 		t.Fatalf("SetTarget while az-less: %v", err)
 	}
@@ -364,25 +353,17 @@ func TestFailedFlushReDefersPendingTarget(t *testing.T) {
 	// scripted to fail (command-selective seam — the poll C2s must not eat
 	// the fault). The flush error takes the link Down; the target must
 	// survive as a re-deferred intent, not vanish with the swallowed error.
-	// Durable evidence of the fault+heal cycle: the KTD7 re-init (rFMW)
-	// reruns after the reopen. HoldReadback is released up front so every
-	// C2 AFTER the staged reply is answered — the staged line stays first in
-	// the FIFO and remains the one that arms the failing flush.
+	// HoldReadback is released up front so every C2 AFTER the staged reply
+	// is answered — the staged line stays first in the FIFO and remains the
+	// one that arms the failing flush.
 	m.FailNextW()
 	m.Script("AZ=123  EL=010")
 	m.HoldReadback(false)
-	eventually(t, "reopen re-initialized the link", func() bool {
-		rfmw := 0
-		for _, l := range m.Writes() {
-			if l == "rFMW" {
-				rfmw++
-			}
-		}
-		return rfmw >= 2
-	})
 
 	// Heal on the same controller (fresh handle from the opener): the first
-	// fresh C2 reply re-arms the flush — this time onto the wire.
+	// fresh C2 reply re-arms the flush — this time onto the wire. The flush
+	// itself doubles as durable evidence of the fault+heal cycle: it can
+	// only be written on a healed link.
 	eventually(t, "re-deferred target flushed after heal", func() bool {
 		return hasLine(m.Writes(), "W123 030")
 	})
@@ -448,7 +429,6 @@ func TestWriteStallWatchdogKeepsStateAnswerableAndHeals(t *testing.T) {
 	m := NewMock()
 	m.SetAZ(75)
 	m.SetEL(20)
-	m.SetFirmware(testFirmware)
 	opens := 0
 	opener := func() (io.ReadWriteCloser, error) {
 		opens++
@@ -515,45 +495,27 @@ func TestOpenRetriesIndefinitely(t *testing.T) {
 	}
 }
 
-// --- rFMW firmware ----------------------------------------------------------------
+// --- boot path ----------------------------------------------------------------
 
-func TestFirmwareFromRFMW(t *testing.T) {
+// The boot path must issue NOTHING before the first C2 poll: the live bench
+// ERC-M goes unresponsive to subsequent input after the unknown rFMW, so a
+// boot-time firmware probe poisons the link (and every cooldown reopen
+// re-poisons it). The driver therefore never writes rFMW at all and
+// /meta.device.firmware stays empty.
+func TestBootIssuesNoFirmwareProbe(t *testing.T) {
 	m := NewMock()
-	m.SetFirmware(testFirmware)
+	m.SetFirmware(testFirmware) // the mock WOULD answer rFMW — the driver must not ask
 	d := startDriver(t, testConfig(func() (io.ReadWriteCloser, error) { return m.Port(), nil }))
-	eventually(t, "rFMW reply parsed into firmware", func() bool { return d.Firmware() == testFirmware })
-}
 
-// The live bench ERC-M answers C2 but stays silent to rFMW (the extended
-// r* query set is not implemented on every unit) — the firmware init read
-// must NOT take a healthy link down; /meta just omits the firmware key and
-// the poll loop carries on.
-func TestSilentFirmwareKeepsLinkUp(t *testing.T) {
-	m := NewMock()
-	m.SetFirmware("") // the reader drops the empty staged line: rFMW goes unanswered
-	cfg := testConfig(func() (io.ReadWriteCloser, error) { return m.Port(), nil })
-	cfg.ReplyTimeout = 150 * time.Millisecond
-	d := startDriver(t, cfg)
-
-	eventually(t, "online despite the silent firmware read", func() bool {
+	eventually(t, "online with a valid readback", func() bool {
 		_, ok := d.Readback()
 		return d.Online() && ok
 	})
 	if fw := d.Firmware(); fw != "" {
-		t.Errorf("Firmware() = %q, want empty", fw)
+		t.Errorf("Firmware() = %q, want empty (no boot probe)", fw)
 	}
-	// The link must have stayed up across the timeout: one rFMW at init is
-	// fine; repeated ones would mean the link bounced and self-healed
-	// instead of riding out the silence.
-	time.Sleep(2 * cfg.ReplyTimeout)
-	rfmw := 0
-	for _, l := range m.Writes() {
-		if l == "rFMW" {
-			rfmw++
-		}
-	}
-	if rfmw != 1 {
-		t.Errorf("rFMW sent %d times, want exactly 1 — the link bounced on the silent firmware read", rfmw)
+	if hasLine(m.Writes(), "rFMW") {
+		t.Errorf("boot path probed rFMW — this poisons the live ERC-M link: %q", m.Writes())
 	}
 }
 
@@ -563,9 +525,8 @@ func TestSilentFirmwareKeepsLinkUp(t *testing.T) {
 // which lets U4+ tests drive A-mode shapes and odd vendor spellings.
 func TestMockScriptedAModeReply(t *testing.T) {
 	m := NewMock()
-	m.SetFirmware(testFirmware)
 	d := startDriver(t, testConfig(func() (io.ReadWriteCloser, error) { return m.Port(), nil }))
-	eventually(t, "init exchange", func() bool { return d.Firmware() == testFirmware })
+	eventually(t, "driver polling", func() bool { return hasLine(m.Writes(), "C2") })
 
 	m.Script("+0123+0045") // GS-232A shape must still parse (KTD6 tolerance)
 	eventually(t, "A-mode reply parsed", func() bool {

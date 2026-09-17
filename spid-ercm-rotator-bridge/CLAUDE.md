@@ -135,11 +135,11 @@ slot's own serial link** — a dead elevation port takes only `el-rotator`
 offline). `/cmd` payloads: `{"action":"goto","value":"45.0"}` /
 `{"action":"stop"}` — published non-retained, subscribed at QoS 0, cleared with
 an empty retained publish after execute-or-reject, `ts`-gated when stamped
-(KTD13; unstamped producers tolerated). The ERC-M's `rFMW` firmware string
-folds into `/meta.device.firmware` once the first link open reads it
-(best-effort: the live bench ERC-M stays silent to rFMW — the link stays up
-and the key is omitted); the SPID
-Rot1Prog has none and omits the key. Rotator slots publish **read-only**
+(KTD13; unstamped producers tolerated). The boot path issues **no rFMW
+firmware probe**: the live bench ERC-M goes unresponsive to subsequent input
+after the unknown rFMW, so a boot probe poisons the link and every cooldown
+reopen re-poisons it (commissioned 2026-09-17); `/meta.device.firmware` stays
+empty and the SPID Rot1Prog has none either. Rotator slots publish **read-only**
 `expose` blocks (state fields only — no writable setpoints, no actions) —
 hadiscovery renders state but no HA motion widgets (KTD4).
 
