@@ -141,6 +141,11 @@ class DxSpotFilter {
 }
 
 class DxSpotService extends ChangeNotifier {
+  /// Test seam: when set, [DxSpotSource]s come from here instead of the
+  /// platform factory, so re-subscribe behaviour is observable in tests.
+  @visibleForTesting
+  static DxSpotSource Function()? debugSourceFactory;
+
   final Map<String, DxSpot> _byKey = {};
   List<DxSpot> _spots = const [];
   List<GridSquare> _gridSquares = const [];
@@ -156,6 +161,7 @@ class DxSpotService extends ChangeNotifier {
   String? _error;
   int _backoff = _minBackoffSeconds;
   DxSpotFilter _filter = const DxSpotFilter();
+  Set<String>? _enabledBands;
 
   DxSpotSource? _source;
   Timer? _reconnect;
@@ -217,6 +223,27 @@ class DxSpotService extends ChangeNotifier {
     }
   }
 
+  /// Restrict the subscription to these canonical bands (the UHF page asks
+  /// for {'2m','70cm'}); null/empty = every band the feed carries. The
+  /// narrowing happens SERVER-side: horstreporter's `enabled_bands` stream
+  /// parameter drops non-matching spots before serialization, so the device
+  /// never downloads or parses them. A change re-dials immediately — the SSE
+  /// URL is wrong until it does — and the minutes-window replay refills the
+  /// map from the narrowed feed.
+  void setBands(Set<String>? bands) {
+    final next = (bands == null || bands.isEmpty) ? null : Set.unmodifiable(bands);
+    if (_bandsEqual(next, _enabledBands)) return;
+    _enabledBands = next;
+    notifyListeners();
+    if (_running) _connect();
+  }
+
+  static bool _bandsEqual(Set<String>? a, Set<String>? b) {
+    if (a == null || a.isEmpty) return b == null || b.isEmpty;
+    if (b == null || b.isEmpty) return false;
+    return a.length == b.length && a.containsAll(b);
+  }
+
   void start() {
     if (_running) return;
     if (!active) return; // idle: no locator → beam-only compass
@@ -266,16 +293,21 @@ class DxSpotService extends ChangeNotifier {
     if (!_running || !active) return;
     _source?.stop();
     final qth = (_callsign != null && _callsign!.isNotEmpty) ? _callsign! : _locator!;
-    final url = streamUrl(_baseUrl ?? '', qth);
-    _source = createDxSpotSource();
+    final url = streamUrl(_baseUrl ?? '', qth, bands: _enabledBands);
+    _source = debugSourceFactory != null ? debugSourceFactory!() : createDxSpotSource();
     _source!.start(url, onData: _ingest, onDisconnected: _onDisconnected);
   }
 
   /// Build the SSE URL used by this service. Public so tests can assert the
-  /// query parameters without starting a real connection.
-  static String streamUrl(String baseUrl, String qth) {
+  /// query parameters without starting a real connection. [bands] narrows the
+  /// feed server-side via horstreporter's `enabled_bands` stream parameter.
+  static String streamUrl(String baseUrl, String qth, {Set<String>? bands}) {
     final base = baseUrl.isEmpty ? _defaultBaseUrl : baseUrl;
-    return '$base/api/stream?qth=${Uri.encodeComponent(qth)}&minutes=30&surroundings=true';
+    var url = '$base/api/stream?qth=${Uri.encodeComponent(qth)}&minutes=30&surroundings=true';
+    if (bands != null && bands.isNotEmpty) {
+      url += '&enabled_bands=${bands.join(',')}';
+    }
+    return url;
   }
 
   void _onDisconnected() {
