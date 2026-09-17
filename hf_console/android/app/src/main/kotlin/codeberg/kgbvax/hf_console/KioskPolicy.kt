@@ -14,8 +14,13 @@ import android.util.Log
  *
  * All calls degrade gracefully when the app is not device owner (development
  * machine, unprovisioned device): every entry point checks [isDeviceOwner]
- * first and only logs. Every policy call logs its result so provisioning
- * problems are diagnosable from `adb logcat -s KioskPolicy` alone.
+ * first and only logs. Every policy call additionally goes through [attempt],
+ * because owner record and admin activation can drift apart — installing a
+ * build whose manifest lacks the receiver deactivates the admin, and a later
+ * kiosk build then draws SecurityException on every DPM call. Kiosk features
+ * may degrade to log lines; the console must still start. Results are logged
+ * so provisioning problems are diagnosable from
+ * `adb logcat -s KioskPolicy` alone.
  */
 class KioskPolicy(private val context: Context) {
 
@@ -49,6 +54,22 @@ class KioskPolicy(private val context: Context) {
         dpm.isDeviceOwnerApp(context.packageName)
 
     /**
+     * Runs one device-policy call, degrading to a log line when the system
+     * rejects it. SecurityException here means the owner record is intact but
+     * the admin is no longer active (component was absent from an intervening
+     * install) — reactivate with
+     * `adb shell dpm set-active-admin <pkg>/.KioskAdminReceiver`.
+     */
+    private fun policyCall(what: String, block: () -> Unit) {
+        try {
+            block()
+            Log.i(TAG, "$what -> ok")
+        } catch (e: Exception) {
+            Log.w(TAG, "$what -> failed: $e")
+        }
+    }
+
+    /**
      * Applies the kiosk policies. No-op (logged) when not device owner.
      */
     fun enable() {
@@ -57,33 +78,41 @@ class KioskPolicy(private val context: Context) {
             return
         }
 
-        val keyguardOff = dpm.setKeyguardDisabled(admin, true)
-        if (keyguardOff) {
-            Log.i(TAG, "setKeyguardDisabled(true) -> true")
-        } else {
-            Log.w(
+        val keyguardOff = try {
+            dpm.setKeyguardDisabled(admin, true)
+        } catch (e: Exception) {
+            Log.w(TAG, "setKeyguardDisabled(true) -> failed: $e")
+            null
+        }
+        when (keyguardOff) {
+            true -> Log.i(TAG, "setKeyguardDisabled(true) -> true")
+            false -> Log.w(
                 TAG,
                 "setKeyguardDisabled(true) -> false — a secure lock credential (PIN/pattern/password) " +
                     "is still set. Remove it (Settings -> Security -> Screen lock -> None) and restart the app."
             )
+            null -> {} // already logged above
         }
 
-        dpm.setLockTaskPackages(admin, arrayOf(context.packageName))
-        Log.i(TAG, "setLockTaskPackages(${context.packageName}) -> ok")
+        policyCall("setLockTaskPackages(${context.packageName})") {
+            dpm.setLockTaskPackages(admin, arrayOf(context.packageName))
+        }
 
         val home = IntentFilter(Intent.ACTION_MAIN).apply {
             addCategory(Intent.CATEGORY_HOME)
         }
-        dpm.addPersistentPreferredActivity(
-            admin,
-            home,
-            ComponentName(context, MainActivity::class.java)
-        )
-        Log.i(TAG, "addPersistentPreferredActivity(ACTION_MAIN/CATEGORY_HOME -> MainActivity) -> ok")
+        policyCall("addPersistentPreferredActivity(ACTION_MAIN/CATEGORY_HOME -> MainActivity)") {
+            dpm.addPersistentPreferredActivity(
+                admin,
+                home,
+                ComponentName(context, MainActivity::class.java)
+            )
+        }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            dpm.setLockTaskFeatures(admin, kioskLockTaskFeatures)
-            Log.i(TAG, "setLockTaskFeatures(0x${kioskLockTaskFeatures.toString(16)}) -> ok")
+            policyCall("setLockTaskFeatures(0x${kioskLockTaskFeatures.toString(16)})") {
+                dpm.setLockTaskFeatures(admin, kioskLockTaskFeatures)
+            }
         } else {
             Log.i(TAG, "setLockTaskFeatures: skipped — requires API 28")
         }
@@ -98,18 +127,25 @@ class KioskPolicy(private val context: Context) {
             return
         }
 
-        val keyguardBack = dpm.setKeyguardDisabled(admin, false)
-        Log.i(TAG, "setKeyguardDisabled(false) -> $keyguardBack")
+        try {
+            val keyguardBack = dpm.setKeyguardDisabled(admin, false)
+            Log.i(TAG, "setKeyguardDisabled(false) -> $keyguardBack")
+        } catch (e: Exception) {
+            Log.w(TAG, "setKeyguardDisabled(false) -> failed: $e")
+        }
 
-        dpm.setLockTaskPackages(admin, arrayOf<String>())
-        Log.i(TAG, "setLockTaskPackages(<empty>) -> ok")
+        policyCall("setLockTaskPackages(<empty>)") {
+            dpm.setLockTaskPackages(admin, arrayOf<String>())
+        }
 
-        dpm.clearPackagePersistentPreferredActivities(admin, context.packageName)
-        Log.i(TAG, "clearPackagePersistentPreferredActivities(${context.packageName}) -> ok")
+        policyCall("clearPackagePersistentPreferredActivities(${context.packageName})") {
+            dpm.clearPackagePersistentPreferredActivities(admin, context.packageName)
+        }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            dpm.setLockTaskFeatures(admin, allLockTaskFeatures)
-            Log.i(TAG, "setLockTaskFeatures(all) -> ok")
+            policyCall("setLockTaskFeatures(all)") {
+                dpm.setLockTaskFeatures(admin, allLockTaskFeatures)
+            }
         }
     }
 
