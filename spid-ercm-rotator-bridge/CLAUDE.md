@@ -94,7 +94,8 @@ motion (R4).
    `SPID_ERCM_ROTATOR_BRIDGE_*` env overrides.
 3. `internal/spid` (Rot1Prog driver, 13-byte frames at 1200 baud 8N1, az-only),
    `internal/ercm` (GS-232B driver: `W<el> 000` goto with elevation on the az
-   channel, `C2` readback — el from the AZ digits, `E` stop; polls at
+   channel, `C2` readback — el from the AZ digits, `S` stop-both (E would
+   halt the unconnected el channel and stop nothing physical); polls at
    `control.poll_interval`), `internal/mount`
    (per-axis Controller + mount façade: latest-wins coalescing with one
    in-flight per axis, bounded stop epoch that halts BOTH axes and cancels

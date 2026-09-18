@@ -175,7 +175,7 @@ func TestReadbackValidityLifecycle(t *testing.T) {
 
 // --- stop (S/E) ------------------------------------------------------------------
 
-func TestStopWritesE(t *testing.T) {
+func TestStopWritesS(t *testing.T) {
 	m := NewMock()
 	m.SetAZ(123)
 	m.SetEL(10)
@@ -184,16 +184,20 @@ func TestStopWritesE(t *testing.T) {
 	eventually(t, "a poll tick ran", func() bool { return hasLine(m.Writes(), "C2") })
 
 	// A goto goes straight to the wire (el-on-az mapping); a following stop
-	// writes E and re-sends nothing — motion is written or refused, never
-	// parked for later.
+	// writes S (stop BOTH — the el axis rides the az channel, so E would
+	// halt the unconnected el channel) and re-sends nothing — motion is
+	// written or refused, never parked for later.
 	if err := d.SetTarget(30); err != nil {
 		t.Fatalf("SetTarget: %v", err)
 	}
 	if err := d.Stop(); err != nil {
 		t.Fatalf("Stop: %v", err)
 	}
-	if !hasLine(m.Writes(), "E") {
-		t.Fatalf("stop did not write E, writes: %q", m.Writes())
+	if !hasLine(m.Writes(), "S") {
+		t.Fatalf("stop did not write S, writes: %q", m.Writes())
+	}
+	if hasLine(m.Writes(), "E") {
+		t.Fatalf("stop wrote E — that halts the unconnected el channel and stops nothing physical: %q", m.Writes())
 	}
 
 	time.Sleep(60 * time.Millisecond) // let a poll tick pass
@@ -210,17 +214,14 @@ func TestStopWritesE(t *testing.T) {
 		t.Errorf("W count after goto + stop = %d, want exactly 1", ws)
 	}
 
-	// The S form is the same stop command on the wire — the mock must accept
-	// both spellings (plan "S/E stop").
+	// The E form is the same stop class on the wire — the mock must accept
+	// both spellings (plan "S/E stop"), only the driver must never send E.
 	before := m.StopCount()
-	if _, err := m.Write([]byte("S\r")); err != nil {
-		t.Fatalf("direct S write: %v", err)
+	if _, err := m.Write([]byte("E\r")); err != nil {
+		t.Fatalf("direct E write: %v", err)
 	}
 	if got := m.StopCount(); got != before+1 {
-		t.Errorf("mock StopCount after S = %d, want %d", got, before+1)
-	}
-	if !hasLine(m.Writes(), "S") {
-		t.Errorf("S missing from mock write log: %q", m.Writes())
+		t.Errorf("mock StopCount after E = %d, want %d", got, before+1)
 	}
 }
 
@@ -269,7 +270,7 @@ func TestOfflineStopRefusesAndHealsToNoMotion(t *testing.T) {
 	if err := d.Stop(); !errors.Is(err, ErrOffline) {
 		t.Fatalf("Stop on a down link = %v, want ErrOffline", err)
 	}
-	if hasLineWithPrefix(m1.Writes(), "W") || hasLine(m1.Writes(), "E") {
+	if hasLineWithPrefix(m1.Writes(), "W") || hasLine(m1.Writes(), "S") {
 		t.Fatalf("offline stop wrote motion/stop bytes: %q", m1.Writes())
 	}
 
@@ -281,7 +282,7 @@ func TestOfflineStopRefusesAndHealsToNoMotion(t *testing.T) {
 	})
 	time.Sleep(60 * time.Millisecond) // several live poll cycles
 	for i, m := range []*MockDevice{m1, m2} {
-		if hasLineWithPrefix(m.Writes(), "W") || hasLine(m.Writes(), "E") {
+		if hasLineWithPrefix(m.Writes(), "W") || hasLine(m.Writes(), "S") {
 			t.Errorf("mock %d: motion bytes reached the wire around an offline stop: %q", i+1, m.Writes())
 		}
 	}

@@ -34,8 +34,10 @@
 //	           shape and elevation-only "EL=eee" replies are tolerated.
 //	           The ELEVATION is the AZ digits (see the wiring note above);
 //	           the EL digits float and are ignored.
-//	E / S      stop elevation / stop both. The driver sends E; the mock
-//	           accepts both spellings.
+//	S          stop BOTH channels. With the el-on-az wiring swap the el axis
+//	           rides the az channel, so E (stop-el) would halt the
+//	           UNCONNECTED channel — the driver sends S; the mock accepts
+//	           both spellings.
 //
 // The el-on-az-channel rule (supersedes KTD6's az-deferral): a SetTarget is
 // written immediately as W<el> 000 — no waiting for an az the controller
@@ -109,7 +111,7 @@ var (
 const (
 	cmdReadback = "C2" // az+el readback (B-mode "AZ=aaa  EL=eee")
 	cmdGoto     = "W"  // az AND el in one command, "W%03d %03d"
-	cmdStop     = "E"  // stop elevation (S = stop both; mock accepts either)
+	cmdStop     = "S"  // stop BOTH channels — the el axis rides the az channel (2026-09-17 wiring swap), so E would halt the unconnected el channel
 )
 
 // Config wires one driver instance to its serial port. It is the ercm-side
@@ -279,10 +281,12 @@ func (d *Driver) SetTarget(deg float64) error {
 	return d.writeGoto(deg)
 }
 
-// Stop halts the elevation axis (E command) when the link is live; a write
+// Stop halts the elevation axis (S stop-both) when the link is live; a write
 // fault takes the link Down and the reopen self-heal engages. Offline it
 // refuses with ErrOffline — there is no deferred intent to cancel since the
-// el-only operand rule (targets are written or refused, never parked).
+// el-only operand rule (targets are written or refused, never parked). S is
+// the wire spelling because the el axis rides the ERC-M's az channel (wiring
+// swap): E would halt the unconnected el channel and stop nothing physical.
 func (d *Driver) Stop() error {
 	d.mu.Lock()
 	if d.closed {
