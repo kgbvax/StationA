@@ -87,6 +87,7 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 		Host:         cfg.RadioHost,
 		Manager:      mgr,
 		PollInterval: cfg.Radio.PollIntervalDur,
+		TXWatchdog:   cfg.Session.TXWatchdogDur,
 		Logger:       log,
 	})
 	if err != nil {
