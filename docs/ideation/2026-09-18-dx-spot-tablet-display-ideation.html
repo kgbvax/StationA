@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ideation: Permanent tablet DX-spot display</title>
+<style>
+  :root {
+    --bg: #faf9f7;
+    --ink: #1c1c1e;
+    --muted: #6b6a67;
+    --line: #e3e1dc;
+    --accent: #0f6b5f;
+    --accent-soft: #e7f2ef;
+    --warn-soft: #f7efe4;
+    --warn-ink: #7a5a1e;
+    --chip-bg: #f0eeea;
+    --code-bg: #f2f1ed;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 0;
+    background: var(--bg); color: var(--ink);
+    font: 15px/1.6 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  .container { max-width: 920px; margin-inline: auto; padding: 2.5rem 1.25rem 4rem; }
+  header.doc-meta { border-bottom: 2px solid var(--ink); padding-bottom: 1.25rem; margin-bottom: 2rem; }
+  .eyebrow { font-size: 0.72rem; letter-spacing: 0.14em; text-transform: uppercase; color: var(--accent); font-weight: 700; margin: 0 0 0.4rem; }
+  h1 { font-size: 1.7rem; line-height: 1.25; margin: 0 0 0.9rem; font-weight: 800; }
+  dl.meta { display: grid; grid-template-columns: max-content 1fr; gap: 0.3rem 1rem; margin: 0; font-size: 0.88rem; }
+  dl.meta dt { font-weight: 700; color: var(--muted); text-transform: uppercase; font-size: 0.68rem; letter-spacing: 0.08em; padding-top: 0.15em; }
+  dl.meta dd { margin: 0; }
+  section { margin-bottom: 2.75rem; }
+  h2 { font-size: 1.15rem; font-weight: 800; margin: 0 0 0.9rem; padding-top: 0.4rem; }
+  h3 { font-size: 1.02rem; font-weight: 750; margin: 0; }
+  p { max-width: 72ch; }
+  .lede { color: var(--muted); max-width: 72ch; }
+  code { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 0.86em; background: var(--code-bg); padding: 0.1em 0.35em; border-radius: 4px; }
+  ul.ground { padding-left: 1.2rem; max-width: 76ch; }
+  ul.ground li { margin-bottom: 0.55rem; }
+  ul.axes { list-style: none; padding: 0; margin: 0; }
+  ul.axes li { padding: 0.45rem 0 0.45rem 1.6rem; position: relative; border-bottom: 1px solid var(--line); }
+  ul.axes li::before { content: "◆"; position: absolute; left: 0.2rem; color: var(--accent); font-size: 0.7rem; top: 0.65rem; }
+  .jump { background: var(--chip-bg); border: 1px solid var(--line); border-radius: 8px; padding: 0.9rem 1.1rem; margin-bottom: 1.25rem; }
+  .jump ol { margin: 0.35rem 0 0; padding-left: 1.3rem; }
+  .jump a { color: var(--accent); text-decoration: none; font-weight: 600; }
+  .jump a:hover { text-decoration: underline; }
+  article.idea { border: 1px solid var(--line); border-radius: 10px; padding: 1.3rem 1.4rem 1.1rem; margin-bottom: 1.5rem; background: #fff; }
+  .idea-head { display: flex; align-items: baseline; gap: 0.7rem; flex-wrap: wrap; margin-bottom: 0.7rem; }
+  .rank-chip { font-size: 0.72rem; font-weight: 800; color: var(--accent); background: var(--accent-soft); padding: 0.15rem 0.55rem; border-radius: 99px; white-space: nowrap; }
+  .pill-row { display: flex; gap: 0.45rem; flex-wrap: wrap; margin: 0 0 0.9rem; }
+  .pill { font-size: 0.72rem; font-weight: 700; padding: 0.18rem 0.6rem; border-radius: 99px; background: var(--chip-bg); color: var(--ink); border: 1px solid var(--line); white-space: nowrap; }
+  .pill.conf-high { background: var(--accent-soft); color: var(--accent); border-color: transparent; }
+  .pill.conf-med { background: var(--warn-soft); color: var(--warn-ink); border-color: transparent; }
+  article.idea p { margin: 0.55rem 0; }
+  article.idea .field-label { font-size: 0.68rem; font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); display: block; margin-top: 0.9rem; }
+  article.idea .basis-text { font-size: 0.9rem; }
+  .caveat { background: var(--warn-soft); border-radius: 8px; padding: 0.6rem 0.9rem; font-size: 0.86rem; color: var(--warn-ink); margin-top: 0.9rem; }
+  .caveat strong { color: var(--warn-ink); }
+  figure { margin: 1.1rem 0 0.4rem; }
+  figure svg { max-width: 100%; height: auto; display: block; margin-inline: auto; }
+  figcaption { font-size: 0.8rem; color: var(--muted); text-align: center; margin-top: 0.5rem; max-width: 68ch; margin-inline: auto; }
+  table.rej { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+  table.rej th { text-align: left; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); border-bottom: 2px solid var(--ink); padding: 0.5rem 0.6rem; }
+  table.rej td { border-bottom: 1px solid var(--line); padding: 0.55rem 0.6rem; vertical-align: top; }
+  table.rej td:first-child { white-space: nowrap; font-weight: 700; }
+  footer.composition-signal { border-top: 1px solid var(--line); margin-top: 3rem; padding-top: 1rem; font-size: 0.78rem; color: var(--muted); }
+  a.ext { color: var(--accent); }
+  strong { color: inherit; }
+</style>
+</head>
+<body>
+<div class="container">
+
+<header class="doc-meta">
+  <p class="eyebrow">Ideation · ce-ideate</p>
+  <h1>Permanent tablet DX-spot display — worked-before &amp; propagation</h1>
+  <dl class="meta">
+    <dt>Date</dt><dd><time datetime="2026-09-18">2026-09-18</time></dd>
+    <dt>Topic</dt><dd><code>dx-spot-tablet-display</code></dd>
+    <dt>Focus</dt><dd>A permanent display of DX-cluster information much as Log4OM displays it — worked before, new band, new band mode — on a tablet, always at the same place; Wavelog mirror (or Log4OM remote API) as the worked-before source; rows carry call, flag, optional op name, age, comment, mode, band; plus propagation information.</dd>
+    <dt>Mode</dt><dd>Repo-grounded (stationa monorepo)</dd>
+    <dt>Run</dt><dd>40 raw ideas from 5 frames + 5 evidence dossiers + web research → 14 deduped candidates → adversarial basis verification (13 sound, 1 weak, 0 refuted) → 7 survivors</dd>
+  </dl>
+</header>
+
+<section id="grounding-context">
+  <h2>Grounding Context</h2>
+  <p class="lede">What the repo actually has today, and what the outside world already solved.</p>
+  <ul class="ground">
+    <li><strong>The bus has no DX-cluster source.</strong> <code>muehle/hf/spots</code> exists but carries one operator-<em>selected</em> station record (retained <code>/state</code>, role <code>bandmap</code>) from logger-spot-bridge — not a spot list. A draft, <code>docs/logging-integration-model.md</code> §6.3, defines an unbuilt non-retained <code>…/spots/event</code> stream (action/ts/dxcall/freq_hz/band/mode/spotter/comment/source/status) — and it contradicts its own idempotency rule ("Every event carries a stable <code>id</code>"): the drafted event has no <code>id</code>.</li>
+    <li><strong>The console ACL makes the drafted stream invisible to the tablet.</strong> The seeded <code>console</code> account reads only <code>muehle/+/+/state|meta|status</code> (<code>mqtt-broker/acl.conf.example</code>); a 4-level <code>…/spots/event</code> matches no read rule, while a retained <code>…/spots/state</code> passes. (Seed-file verified; live broker — the HA add-on at 192.168.1.50 — not audited.)</li>
+    <li><strong>hf_console already has the kiosk, but not permanence.</strong> Device-owner lock, KioskPolicy, immersive fullscreen, doze-proof MQTT recovery (fresh-client + pong watchdog), band-color palette, tablet reflow — all shipped. But keep-screen-on was deliberately removed (commit <code>e05cf64</code>): the display sleeps after 1 h of <em>touch</em> idle. A permanent board is never touched, so as shipped it goes dark every hour.</li>
+    <li><strong>No spot table exists anywhere in hf_console.</strong> Spots render as 2.5 px canvas dots; the comment-bearing dxcluster source is discarded at ingest (<code>dxspot_service.dart</code>: <code>if (sourceType != 'mqtt') return;</code>). A mature aging/repaint vocabulary exists to reuse: fresh/stale/expired buckets, 30 s repaint keys, 500 ms notify throttle, stable-skeleton in-place updates (testui).</li>
+    <li><strong>Worked-before has zero footprint</strong> (no ATNO/LoTW/DXCC-entity code anywhere). The station-proven pattern to copy is bridge-side QRZ enrichment (session key, disk cache 30 d / 10 min / 2000-cap, creds off device). Callsign request/reply was already explicitly deferred in the draft: "request/reply — awkward on MQTT".</li>
+    <li><strong>Propagation is a documented zero</strong> — one unexplained hook ("horstprop Layer-3 modelling", deferred, never defined) and nothing else.</li>
+    <li><strong>External:</strong> Wavelog API v2 <code>/lookup?callsign=…&amp;detail=full</code> returns workedBefore + worked-on-band + worked-band-mode + confirmed flags + LoTW membership + DXCC payload with flag emoji in one call (no spots endpoint). Log4OM 2 has no consequential lookup API — its spot-panel lookups are display-only and never merged into outbound UDP; the canonical log-mirror path is Log4OM UDP out (WaveLogGate, port 2236) → Wavelog. Propagation's de-facto source is the hamqsl.com solar XML (~3 h cadence, incl. per-band day/night conditions); WWV/WCY messages already ride every cluster feed (QLog renders them as propagation views).</li>
+    <li><strong>Prior art:</strong> wave-flex-integrator (per-spot Wavelog coloring), SpotCollector / N1MM+ bandmaps (color-against-log, update-in-place rows), dxwatch/hamspots (web walls), ESP32 spot boards, Ian Renton's telnet-cluster→MQTT "meta-spotter", QLog's WWV/WCY views. The departure-board/NOC-wall pattern (append-only rows, relative age, color-as-state, headline strip, dim schedule vs burn-in) is the working cross-domain template.</li>
+  </ul>
+</section>
+
+<section id="topic-axes">
+  <h2>Topic Axes</h2>
+  <ul class="axes">
+    <li><strong>Spot pipeline</strong> — getting cluster spots onto the bus (no ingest exists; draft schema unbuilt; slot-name collision with the selected-station record)</li>
+    <li><strong>Worked-before enrichment</strong> — ATNO / new band / new mode per spot (Wavelog vs Log4OM; where lookup + cache live)</li>
+    <li><strong>Display surface &amp; kiosk</strong> — where the permanent always-on screen lives and how it stays on</li>
+    <li><strong>Spot-table UX</strong> — the Log4OM-like row presentation (columns, aging, color-as-state, filters, at-a-distance legibility)</li>
+    <li><strong>Propagation panel</strong> — solar/band-conditions data and where it rides the bus</li>
+  </ul>
+</section>
+
+<section id="ranked-ideas">
+  <h2>Ranked Ideas</h2>
+  <nav class="jump">
+    <strong>Jump to:</strong>
+    <ol>
+      <li><a href="#idea-1">Bandmap-enricher logic slot</a></li>
+      <li><a href="#idea-2">Worked-before as a synced set</a></li>
+      <li><a href="#idea-3">Spot pipeline: DXLog ingest + event schema + shared rails</a></li>
+      <li><a href="#idea-4">Liveness-gated screen-on</a></li>
+      <li><a href="#idea-5">Table grammar: rows, worked ladder, silence</a></li>
+      <li><a href="#idea-6">Two-deck propagation</a></li>
+      <li><a href="#idea-7">Surface fork, decided deliberately</a></li>
+    </ol>
+  </nav>
+
+  <article class="idea" id="idea-1">
+    <div class="idea-head"><span class="rank-chip">1</span><h3>Bandmap-enricher logic slot</h3></div>
+    <div class="pill-row">
+      <span class="pill">Axis: spot pipeline</span>
+      <span class="pill conf-high">Confidence 85%</span>
+      <span class="pill">Complexity M</span>
+    </div>
+    <p><strong>Description.</strong> One new logic slot on shari — the antennaselect/powerseq species: no device, just a process — subscribes the spot stream, holds the worked-before state (idea 2), classifies each spot by in-memory set membership, and publishes a bounded top-N enriched bandmap as a single retained <code>/state</code> snapshot on a slow tick (5–10 s). Every display — the tablet, the <code>:8091</code> web channel, testui, a future e-paper frame — becomes a dumb renderer of one retained payload. A tablet booting out of doze recovers into a full board from one retained message (hf_console's recovery model already ends in a fresh client), with no QoS-1 dedup, no replay windows, no reconnect machinery on any consumer. Worked verdicts ride asynchronously: the row appears the moment the spot lands, the ATNO badge pops in when classification catches up, and a slow or down logbook degrades to colorless rows — never to missing spots.</p>
+    <span class="field-label">Basis</span>
+    <p class="basis-text"><code>direct:</code> the draft's "Consumers build their own bandmap from the event stream" is inverted by the draft's own retained-rollup rule ("the retained rollup a late joiner reads immediately … consumers couple to this, not to the fact an event was emitted"). The seeded console ACL reads <code>muehle/+/+/state</code> — a retained <code>…/spots/state</code> reaches the tablet today; the drafted event topic matches no read rule. The publish-anyway posture ("on lookup error the selection is published unchanged") is the station's existing degradation precedent. <code>external:</code> Kafka log-compaction / market-data snapshot-then-incremental; departure-board walls as dumb renderers of a maintained snapshot. Three ideation frames converged on this shape independently.</p>
+    <span class="field-label">Rationale</span>
+    <p>This is the load-bearing architectural fork: events-first (the draft's current sentence) puts dedup/replay/recovery logic in every consumer forever and is invisible to the tablet under the seeded ACL; state-first makes the ACL problem vanish, makes every future DX surface free, and gives worked-before enrichment (idea 2) a natural home. It also forces a decision the docs currently encode as a collision — the <code>bandmap</code> role at <code>…/spots</code> is taken by logger-spot-bridge's selection record.</p>
+    <span class="field-label">Downsides</span>
+    <p>Retained republish churn across the HA bridge every tick (small). No event history for future analytics — though "the logbook is the system of record, not the bus", and events can be added later without breaking state consumers. One more always-on process on shari.</p>
+  </article>
+
+  <article class="idea" id="idea-2">
+    <div class="idea-head"><span class="rank-chip">2</span><h3>Worked-before as a synced set, not a per-spot lookup</h3></div>
+    <div class="pill-row">
+      <span class="pill">Axis: worked-before enrichment</span>
+      <span class="pill conf-high">Confidence 85%</span>
+      <span class="pill">Complexity M</span>
+    </div>
+    <p><strong>Description.</strong> Don't ask the log about each spot — sync the log's worked matrix into the enrichment point and classify by set membership. Bulk-seed once from the Wavelog mirror (ADIF export or API): call → bands → modes, plus confirmed tiers and the DXCC-entity set (a lifetime log is a few MB of keys). Incremental deltas ride the drafted <code>…/log/event</code> stream as they land. Every spot then classifies in O(1): ATNO / new band / new mode / dupe / confirmed — and flips from ATNO to worked seconds after the QSO is logged (self-healing), instead of staying stale until a re-lookup. The user's named alternative — per-spot Wavelog <code>/lookup</code> — is demoted to op-name/callbook gap-fill on the jobs worker; the Log4OM remote API is consciously deprioritized (its lookups are display-only and never merged into outbound data).</p>
+    <span class="field-label">Basis</span>
+    <p class="basis-text"><code>direct:</code> the repo already deferred callsign request/reply once ("request/reply — awkward on MQTT | deferred"); the QRZ disk-cache design (30 d positive / 10 min negative / 2000-cap, tmp+rename 0600, creds env-only) is the station-proven placement precedent; "the logbook is the system of record … not the bus"; enrichment lives bridge-side by recorded user decision (2026-09-15). <code>external:</code> Wavelog API v2 <code>/lookup</code> returns workedBefore + band/mode flags + confirmed trio + LoTW + flag emoji per call — with no spots endpoint, so per-spot HTTP at cluster rate couples the board's latency to an API; QRZ's free tier (~100 lookups/day, 24 h IP bans) shows the rate wall. Three frames converged here independently.</p>
+    <span class="field-label">Rationale</span>
+    <p>Membership beats lookup on latency, rate limits, cost, and offline operation simultaneously — and the LAN-only principle ("the console must work with no internet beyond the LAN") holds because the set lives on shari. It also gives the draft's <code>status ∈ new|dupe|mult</code> field a real producer at last, and makes the Wavelog mirror load-bearing rather than a passive archive.</p>
+    <span class="field-label">Downsides</span>
+    <p>Sync staleness (minutes) vs per-spot freshness — a spot spotted before its QSO syncs can show ATNO for a short window (mitigated by the flip-on-QSO-event path). Needs the Wavelog mirror to actually run (WaveLogGate UDP from Log4OM). Seed from ADIF/API is the realistic v1; <code>…/log/event</code> exists only in the draft.</p>
+    <figure>
+      <svg viewBox="0 0 860 260" role="img" aria-label="Per-spot lookup versus synced worked-set">
+        <style>.lbl{font:12.5px -apple-system,Segoe UI,sans-serif;fill:#1c1c1e}.sm{font:11px -apple-system,Segoe UI,sans-serif;fill:#6b6a67}.ttl{font:bold 12px -apple-system,Segoe UI,sans-serif;fill:#0f6b5f;letter-spacing:.08em}.arr{stroke:#8a8880;stroke-width:1.5;fill:none;marker-end:url(#ah)}</style>
+        <defs><marker id="ah" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#8a8880"/></marker></defs>
+        <text x="20" y="30" class="ttl">A · PER-SPOT LOOKUP (demoted to op-name gap-fill)</text>
+        <rect x="20" y="45" width="120" height="46" rx="8" fill="#fff" stroke="#c9c7c1"/>
+        <text x="80" y="64" text-anchor="middle" class="lbl">each spot</text><text x="80" y="80" text-anchor="middle" class="sm">at cluster rate</text>
+        <line x1="145" y1="68" x2="265" y2="68" class="arr"/>
+        <text x="205" y="58" text-anchor="middle" class="sm">HTTP GET /lookup</text>
+        <rect x="270" y="45" width="130" height="46" rx="8" fill="#fff" stroke="#c9c7c1"/>
+        <text x="335" y="64" text-anchor="middle" class="lbl">Wavelog API</text><text x="335" y="80" text-anchor="middle" class="sm">+ callbook</text>
+        <line x1="405" y1="68" x2="520" y2="68" class="arr"/>
+        <text x="545" y="58" class="sm">latency per row · rate walls · offline fails ·</text>
+        <text x="545" y="74" class="sm">row stays ATNO until a re-lookup after</text>
+        <text x="545" y="90" class="sm">the QSO lands</text>
+        <text x="20" y="140" class="ttl">B · SYNCED WORKED-SET (proposed)</text>
+        <rect x="20" y="158" width="160" height="46" rx="8" fill="#e7f2ef" stroke="#0f6b5f"/>
+        <text x="100" y="177" text-anchor="middle" class="lbl">Wavelog mirror</text><text x="100" y="193" text-anchor="middle" class="sm">bulk seed + log/event deltas</text>
+        <line x1="185" y1="181" x2="305" y2="181" class="arr"/>
+        <text x="245" y="171" text-anchor="middle" class="sm">sync, not query</text>
+        <rect x="310" y="158" width="190" height="46" rx="8" fill="#e7f2ef" stroke="#0f6b5f"/>
+        <text x="405" y="177" text-anchor="middle" class="lbl">in-memory worked set</text><text x="405" y="193" text-anchor="middle" class="sm">call→bands→modes · confirmed · DXCC</text>
+        <line x1="505" y1="181" x2="615" y2="181" class="arr"/>
+        <text x="560" y="171" text-anchor="middle" class="sm">O(1) membership</text>
+        <rect x="620" y="158" width="170" height="46" rx="8" fill="#e7f2ef" stroke="#0f6b5f"/>
+        <text x="705" y="177" text-anchor="middle" class="lbl">ATNO / new band</text><text x="705" y="193" text-anchor="middle" class="sm">/ new mode / dupe — instantly</text>
+        <text x="20" y="240" class="sm">No runtime HTTP for classification · works with the internet down · flips to “worked” seconds after the QSO logs.</text>
+      </svg>
+      <figcaption>Two architectures for worked-before. The synced set removes the per-spot API dependency the repo already declined once ("request/reply — awkward on MQTT").</figcaption>
+    </figure>
+  </article>
+
+  <article class="idea" id="idea-3">
+    <div class="idea-head"><span class="rank-chip">3</span><h3>Spot pipeline: DXLog ingest + event schema + shared rails</h3></div>
+    <div class="pill-row">
+      <span class="pill">Axis: spot pipeline</span>
+      <span class="pill conf-med">Confidence 75%</span>
+      <span class="pill">Complexity M</span>
+    </div>
+    <p><strong>Description.</strong> Get spots onto the bus by extending the bridge that already runs: logger-spot-bridge's deployed UDP listener recognizes — and currently ignores — a <code>spot</code> root in the N1MM/DXLog broadcast family. Wiring that root to the spot stream turns the hardened, seeded, monitored service into the cluster ingest with zero new network surfaces and pre-filtered spots from the logger the operator already trusts; a standalone telnet cluster client (the meta-spotter shape) remains the fallback, not the default. Resolve the written-into-the-docs slot collision (the draft assigns <code>…/spots</code> role <code>bandmap</code> = "DX-spot event source" while the deployed bridge uses the same address for its selection record) via the spid-ercm compound-bridge precedent: one process, two slots, per-slot <code>device_online</code>. Fix the event schema in the same stroke: add the <code>id</code> the draft's own idempotency rule mandates, plus a bridge-assigned stable track identity per (dxcall, band[, mode]) with refresh/drop semantics so re-spot bursts coalesce into one row (<code>spotters[]</code>, <code>count</code>) — and land the first shared non-retained event-publish helper in <code>shared/mqtt</code>, which today has none.</p>
+    <span class="field-label">Basis</span>
+    <p class="basis-text"><code>direct:</code> logger-spot-bridge's API doc: "<code>contactinfo</code>/<code>RadioInfo</code>/<code>spot</code> roots are recognized and ignored … the spot stream has no consumer yet"; logger-spot-bridge/CLAUDE.md pins "Log4OM has NO N1MM-style spot/lookup UDP out". Schema gap verified: the draft mandates "Every event carries a stable <code>id</code>" while its §6.3 payload has none. The console ACL conflict is real (broker seed file vs hf_console/CLAUDE.md's "subscribe muehle/#"). <code>external:</code> radar track-while-scan (correlation window, coast, drop) and AIS track fusion for the identity model; Ian Renton's meta-spotter and dh1tw/DX-Cluster-Parser for the telnet fallback.</p>
+    <span class="field-label">Rationale</span>
+    <p>The difference between a new always-on project and a parser extension of a deployed service. Track identity decided in the schema now prevents every consumer from inventing incompatible dedup heuristics (the compass already hand-rolls one, with a documented refresh gotcha); the shared event kit is a conventions act that every future event topic (<code>…/log/event</code>, meters) rides for free.</p>
+    <span class="field-label">Downsides</span>
+    <p>The primary path rests on DXLog actually emitting <code>spot</code>-root datagrams when enabled — not yet live-captured (the telnet fallback hedges this). Slot-topology change touches a deployed service and its docs. The ACL question (does <code>console</code> get event read?) is only moot if idea 1's retained-state shape wins.</p>
+    <div class="caveat"><strong>Unverified:</strong> DXLog <code>spot</code> emission on the LAN needs a live capture before committing (mirror of the Log4OM bare-call capture that gated the selection path). Live-broker ACL enforcement is seed-file-verified, production-untested.</div>
+  </article>
+
+  <article class="idea" id="idea-4">
+    <div class="idea-head"><span class="rank-chip">4</span><h3>Liveness-gated screen-on</h3></div>
+    <div class="pill-row">
+      <span class="pill">Axis: display surface &amp; kiosk</span>
+      <span class="pill conf-high">Confidence 90%</span>
+      <span class="pill">Complexity L</span>
+    </div>
+    <p><strong>Description.</strong> The kiosk build deliberately removed <code>FLAG_KEEP_SCREEN_ON</code> (commit <code>e05cf64</code>) so the tablet sleeps after 1 h of <em>touch</em> idle. A permanent board is never touched — under the shipped policy the "permanent" display goes dark every hour, and with keyguard disabled the wake is a physical power press (on a wall mount, a ladder). Reverse it deliberately and scoped: assert keep-screen-on only while the board surface is foreground, implemented natively beside KioskPolicy (the app is device owner; no wakelock plugin exists in pubspec and none is needed), paired with a night dim schedule and burn-in countermeasures — the table's natural churn, a slow content shift, and the true-black aether scheme. Optionally gate on content liveness (fresh rows + link up) rather than a bare schedule.</p>
+    <span class="field-label">Basis</span>
+    <p class="basis-text"><code>direct:</code> e05cf64 ("let the display sleep after 1h idle in kiosk — Drop FLAG_KEEP_SCREEN_ON …"); <code>MainActivity.kt</code>: "No FLAG_KEEP_SCREEN_ON: the display should sleep after the system screen-off timeout"; PROVISIONING.md's 1 h touch-idle sleep; the dossier-verified absence of any wakelock/brightness plugin. Five ideation frames converged on this collision. <code>external:</code> digital-signage duty cycles (schedule + content shift, never touch-idle); <code>STAY_ON_WHILE_PLUGGED_IN</code> as a device-owner global setting.</p>
+    <span class="field-label">Rationale</span>
+    <p>This is the one requirement word — "permanent" — that the current build actively defeats; every other idea is moot if the board is asleep. It reverses a deliberate, recorded decision, so it must be a conscious team act with the burn-in trade-off owned, not a silent revert.</p>
+    <span class="field-label">Downsides</span>
+    <p>Re-litigating a recent decision; always-on-at-brightness is heat and burn-in exposure that needs the dim schedule to be more than a gesture; device-specific behavior of <code>STAY_ON_WHILE_PLUGGED_IN</code> on this tablet is untested.</p>
+  </article>
+
+  <article class="idea" id="idea-5">
+    <div class="idea-head"><span class="rank-chip">5</span><h3>Table grammar: rows, worked ladder, silence</h3></div>
+    <div class="pill-row">
+      <span class="pill">Axis: spot-table UX</span>
+      <span class="pill conf-high">Confidence 80%</span>
+      <span class="pill">Complexity M</span>
+    </div>
+    <p><strong>Description.</strong> The Log4OM-like table doesn't exist (spots are 2.5 px canvas dots today) — so its behavioral contract gets written once, up front, from the repo's own proven patterns.</p>
+    <p><strong>Rows maintain themselves.</strong> One row per track (call|band[, mode]) — the same key at ingest dedup, enrichment updates, and the table widget; re-spots refresh in place with a count column ("×4"); the comment column is an expiry signal ("QRT" kills the row now, "dupe" flags it); age rides the existing fresh/stale/expired buckets with 30 s repaint keys and the 500 ms notify throttle; stable-skeleton in-place row mutation (testui's chooser-snap fix, at table rate). Sort by RF within band groups — Log4OM's own discipline — and never re-sort live: position never fights the eye; new rows settle in.</p>
+    <p><strong>Worked-before is a 4-rung ladder with a settled color channel.</strong> ATNO / new band / new mode / dupe, with a worked-vs-confirmed split. Band colors are fixed hex and "band color wins" is a documented cross-component rule — so worked status needs a deliberate, argued channel (left-edge state stripe, badge column, or row-tint override), not a latent palette clash discovered after theming. Density-adaptive: an empty log makes every row scream ATNO (group ATNOs by DXCC entity into a "needed now" digest); a 50k-QSO log makes every row grey (collapse dupes to counts, float near-misses like "worked 20m cw — now 17m ssb = NEW BAND+MODE").</p>
+    <p><strong>Designed for its most common state: nearly empty.</strong> A blank board reads as broken. A liveness line ("last spot 14 min ago") gated on the two-layer AND (<code>/status</code> + <code>device_online</code>); aged-out rows drift to a dim "recently heard" tail instead of vanishing at the 600 s age-out; and the stream's <code>device_online</code> semantics get defined properly — UDP-silence-is-offline is wrong for a feed where silence is normal. A pit-board glance budget (call in display-scale mono, flag, one worked glyph, band chip, mm:ss, comment — ~5 rows) beats a Log4OM clone squeezed into the 320–420 px side rail at 10–12 px mono.</p>
+    <span class="field-label">Basis</span>
+    <p class="basis-text"><code>direct:</code> <code>selected_spot.dart</code> fresh/stale/expired 5/15-min buckets; <code>compass_panel.dart</code> 30 s repaint keys and the lone age readout "old"; <code>dxspot_service.dart</code> 500 ms throttle, freshest-wins dedup + the receivedAtMs refresh gotcha; testui's stable-skeleton rationale; <code>docs/conventions/band-mode-reference.md</code>: "These are fixed hex values … band color wins when present"; <code>console_screen.dart</code> right-rail geometry (320/420 px); the two-layer liveness convention. <code>external:</code> ED track boards and broadcast tally (escalation color, sort stability); SpotCollector/N1MM bandmaps (re-spots are row updates, never new rows); motorsport pit boards (glance-time budget).</p>
+    <span class="field-label">Rationale</span>
+    <p>Color semantics, merge keys, expiry triggers, and repaint budget form one shared contract every rendering decision depends on — cheap to agree before the table exists, expensive to retrofit. The quiet-band anatomy is the trust contract: distinguishing "band is dead" from "display is dead" is what makes the other 10% of the time believable.</p>
+    <span class="field-label">Downsides</span>
+    <p>Three UX decisions bundled (lifecycle, ladder, silence) — brainstorm should split them if it wants finer grain. The full-screen pit-board framing conflicts with "a panel in the existing rail" until the surface fork (idea 7) is decided.</p>
+    <figure>
+      <svg viewBox="0 0 860 200" role="img" aria-label="One spot row anatomy sketch">
+        <style>.wl{font:13px ui-monospace,Menlo,monospace;fill:#1c1c1e}.wb{font:bold 15px ui-monospace,Menlo,monospace;fill:#1c1c1e}.ws{font:10.5px -apple-system,Segoe UI,sans-serif;fill:#6b6a67}.cap{font:italic 11px -apple-system,Segoe UI,sans-serif;fill:#6b6a67}</style>
+        <rect x="10" y="40" width="840" height="56" rx="8" fill="#fff" stroke="#c9c7c1"/>
+        <rect x="10" y="40" width="10" height="56" rx="5" fill="#d33"/>
+        <text x="40" y="74" class="wb">🇨🇳 BY0AA</text>
+        <text x="170" y="66" class="wl">Wei</text>
+        <text x="170" y="84" class="ws">op name (from log / callbook)</text>
+        <text x="330" y="66" class="wl">CQ DX — up 2</text>
+        <text x="330" y="84" class="ws">comment — QRT/dupe act as expiry signals</text>
+        <text x="580" y="74" class="wl">00:12</text>
+        <text x="580" y="90" class="ws">age, bucket-ticked</text>
+        <rect x="650" y="52" width="60" height="30" rx="15" fill="#f0eeea" stroke="#c9c7c1"/><text x="680" y="72" text-anchor="middle" class="wl">usb</text>
+        <rect x="722" y="52" width="106" height="30" rx="15" fill="#3d7dd8"/><text x="775" y="72" text-anchor="middle" class="wl" fill="#ffffff">20 m · ×4</text>
+        <text x="40" y="118" class="ws">left edge = worked-ladder state stripe (ATNO red · new-band amber · new-mode teal · dupe grey) — deliberately NOT the row's band color, which stays the band chip's job</text>
+        <rect x="10" y="130" width="190" height="26" rx="6" fill="#f7efe4"/><text x="20" y="148" class="ws">NEW BAND — worked 20m cw</text>
+        <rect x="210" y="130" width="150" height="26" rx="6" fill="#f7efe4"/><text x="220" y="148" class="ws">ATNO — never worked</text>
+        <text x="10" y="182" class="cap">Directional only — illustrates the intended user-facing shape. Exact colors, spacing, copy, and component choices are placeholders for review, not requirements.</text>
+      </svg>
+      <figcaption>Row anatomy: the worked ladder needs its own channel — the band-color invariant already owns row color elsewhere in the station's design system.</figcaption>
+    </figure>
+  </article>
+
+  <article class="idea" id="idea-6">
+    <div class="idea-head"><span class="rank-chip">6</span><h3>Two-deck propagation: realized above forecast</h3></div>
+    <div class="pill-row">
+      <span class="pill">Axis: propagation panel</span>
+      <span class="pill conf-med">Confidence 75%</span>
+      <span class="pill">Complexity M</span>
+    </div>
+    <p><strong>Description.</strong> A headline strip above the table in two decks, answering the operator's actual question — "which band is open right now" — with two different kinds of truth. <strong>Realized deck (client-side):</strong> per-band spot rate over a ~15-min window (openness) plus top-quartile SNR trend (quality), derived from the spot data the display already holds — the console already computes this exact metric per grid square, lifted here to band granularity. It can never disagree with the table: it <em>is</em> the table, aggregated. <strong>Forecast deck (a new slot):</strong> a small shari bridge fetches the hamqsl solar XML (~3 h cadence: SFI, A, K, sunspots, signalnoise, aurora, calculated day/night conditions per band group, VHF conditions) and publishes one retained JSON <code>/state</code> at a doc-first-registered <code>muehle/hf/prop</code> slot. Staleness labeling follows METAR discipline: an index hours old is labeled, not trusted. The forecast deck's per-band verdicts also tint the band-legend chips the panels already draw — one data source, two presentations. WWV/WCY messages already carried on the cluster feed are the zero-marginal-cost alternative source for the forecast deck.</p>
+    <span class="field-label">Basis</span>
+    <p class="basis-text"><code>direct:</code> the propagation axis is a documented zero (repo-wide grep; the reserved "horstprop Layer-3 modelling" hook has never been defined — this is its concrete v0); the meter-stream exclusion precedent ("high-rate, non-retained" — a ~3-hourly retained snapshot is the complementary case the plane discipline allows); the independence rule ("Loss of either feed must never disable the other") maps exactly onto the two-deck split: realized client-side, forecast on the bus. <code>external:</code> hamqsl solar XML field set; QLog renders cluster WWV/WCY as propagation views; METAR+TAF briefing model (obs above forecast).</p>
+    <span class="field-label">Rationale</span>
+    <p>Realized propagation answers "what can I work right now from <em>this</em> receiver" — strictly more actionable than indices and already flowing with zero new external dependency; indices answer "why". The forecast slot gives the bus its first propagation role in a fully conventional retained shape, consumable by every surface at once, and it honors the LAN-only principle (the bridge is the one sanctioned internet place — the CORS precedent from the QRZ web build shows why per-consumer polling fails).</p>
+    <span class="field-label">Downsides</span>
+    <p>FT8/RBN-derived realized conditions measure those modes' activity — label it "measured", not omniscient. The realized deck's source should be the bus bandmap once idea 1 lands (deriving from the horstreporter SSE instead sits awkwardly against the overlay-independence rule). One more tiny service on shari.</p>
+    <figure>
+      <svg viewBox="0 0 860 160" role="img" aria-label="Two-deck propagation strip">
+        <style>.dl{font:bold 12px -apple-system,Segoe UI,sans-serif;fill:#1c1c1e}.ds{font:11px -apple-system,Segoe UI,sans-serif;fill:#6b6a67}</style>
+        <rect x="20" y="20" width="820" height="44" rx="8" fill="#e7f2ef" stroke="#0f6b5f"/>
+        <text x="36" y="46" class="dl">REALIZED — measured now</text>
+        <text x="280" y="46" class="ds">spot rate + SNR trend per band, 15-min window · client-derived from the bandmap the display already holds</text>
+        <rect x="20" y="76" width="820" height="44" rx="8" fill="#fff" stroke="#c9c7c1"/>
+        <text x="36" y="102" class="dl">FORECAST — why</text>
+        <text x="280" y="102" class="ds">SFI · A · K · aurora · day/night band conditions · VHF E-skip — muehle/hf/prop retained /state, ~3 h cadence, age-labeled</text>
+        <text x="20" y="146" class="ds">Two owners, one strip: the realized deck never disagrees with the table above it — it is the table, aggregated.</text>
+      </svg>
+      <figcaption>The METAR/TAF split for propagation: measured conditions above forecast indices, each with its own owner and staleness label.</figcaption>
+    </figure>
+  </article>
+
+  <article class="idea" id="idea-7">
+    <div class="idea-head"><span class="rank-chip">7</span><h3>Surface fork, decided deliberately</h3></div>
+    <div class="pill-row">
+      <span class="pill">Axis: display surface &amp; kiosk</span>
+      <span class="pill conf-med">Confidence 70%</span>
+      <span class="pill">Complexity: decision</span>
+    </div>
+    <p><strong>Description.</strong> "On a tablet, always at the same place" still leaves one genuine fork, and each leg has evidence.</p>
+    <p><strong>(a) A 'dx' page in hf_console.</strong> The console already owns everything a permanent display needs and a new surface would have to re-earn: device-owner kiosk with hardened admin guard, doze-proof MQTT recovery, two-layer liveness in BusStore, the band palette, the only settings surface a provisioned tablet can reach (dx_config_sheet). Cost: every iteration is the documented adb-sideload dance (dead mDNS, force-stop no-op on device owner, reboot-to-restart); the narrow console ACL matches this path — a point in its favor.</p>
+    <p><strong>(b) A browser board on the existing hf-console-web (<code>:8091</code>).</strong> Zero provisioning, iteration becomes <code>./deploy.sh</code>, browser keep-awake, any cheap tablet — but it means the broader <code>hf</code> account in a browser, and no native kiosk policy.</p>
+    <p><strong>(c) An e-paper / wall frame (exploratory flip).</strong> Permanence by physics: no sleep policy, no burn-in, no doze, one-minute refresh matching a spot table's natural rate — the station already ships ESP32 firmware. Rides idea 1's retained bandmap as a one-topic consumer; decouples "permanent" from the APK release cycle entirely.</p>
+    <p><strong>De-risking first move (any leg):</strong> un-drop the dxcluster-family spots the console already receives and discards at ingest (<code>if (sourceType != 'mqtt') return;</code> — sender/receiver are parsed before the discard) and throw a throwaway full-row table at real cluster data this weekend, validating legibility, sort stability, and aging choices before any Go service is committed. Known gaps: no comment/mode parsed today; outside the canonical contract — a prototype, not the end state.</p>
+    <span class="field-label">Basis</span>
+    <p class="basis-text"><code>direct:</code> <code>console_screen.dart</code> <code>_page = 'hf' | 'uhf' | 'station'</code> and the 320/420 px rail; hf-console-web on <code>:8091</code> in hf_console/CLAUDE.md; PROVISIONING.md's one-way device-owner door and force-stop no-op; the root CLAUDE.md ESP32 firmware fleet; the verified ingest discard line. <code>reasoned:</code> duplicating shipped kiosk/liveness/theme capability in a second surface is pure re-earn cost — but so is wedging a glance display into a rail sized for control panels; the fork deserves numbers (viewing distance, column count, glyph height), not taste.</p>
+    <span class="field-label">Rationale</span>
+    <p>Surface choice determines the deploy story, the credential exposure, whether the kiosk/screen-on work (idea 4) is spent on the console or a new surface, and whether the weekend prototype's UI survives into the real build. Deciding it explicitly is cheaper than discovering it after either leg is built.</p>
+    <span class="field-label">Downsides</span>
+    <p>A decision, not a build — its value is only realized when the chosen leg ships. The prototype path hacks a feed the design docs deliberately bypass MQTT with; it must stay throwaway.</p>
+  </article>
+</section>
+
+<section id="rejection-summary">
+  <h2>Rejection Summary</h2>
+  <table class="rej">
+    <thead><tr><th>#</th><th>Idea</th><th>Reason not a separate survivor</th></tr></thead>
+    <tbody>
+      <tr><td>—</td><td>Retained bandmap slot (ship the bandmap, don't make consumers build it)</td><td>Merged into idea 1 — the enricher slot <em>is</em> the retained-bandmap publisher; verified sound on its own (ACL pass-through, fresh-client recovery) and carried there.</td></tr>
+      <tr><td>—</td><td>Async annotation join (the tape never waits for enrichment)</td><td>Folded into idea 1 — a corollary of the synced set plus the existing no-block-publish rule; kept there as the two-phase render contract (row fast, badge soon, unannotated on failure).</td></tr>
+      <tr><td>—</td><td>One broker stroke serves three ideas (ACL edit)</td><td>Weak on verification: two of three claimed legs need no ACL edit, and the one real edit is optional once idea 1's retained state wins; the ACL decision is recorded inside ideas 1/3.</td></tr>
+      <tr><td>—</td><td>E-paper frame as its own candidate</td><td>Duplicate — kept deliberately as option (c) of idea 7.</td></tr>
+      <tr><td>—</td><td>Weekend horstreporter prototype (un-drop dxcluster spots)</td><td>Folded into idea 7 as the de-risking first move; throwaway by design.</td></tr>
+      <tr><td>—</td><td>Propagation tint on the band legend</td><td>Folded into idea 6 as the forecast deck's second presentation ("the table already draws it" is wrong today — the legend belongs to the map panels; the table doesn't exist yet).</td></tr>
+      <tr><td>—</td><td>Axis coverage</td><td>All five axes carry at least one survivor: pipeline → ideas 1, 3; worked-before → idea 2; display/kiosk → ideas 4, 7; spot-table UX → idea 5; propagation → idea 6.</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<footer class="composition-signal">Composed 2026-09-18 by ce-ideate from the user's ideation prompt (permanent tablet DX-cluster display, Log4OM-like, worked-before via Wavelog/Log4OM, propagation) · run ea778a40 · 40 raw ideas → 14 candidates → 7 survivors, adversarially basis-verified (0 refutations)</footer>
+
+</div>
+</body>
+</html>
