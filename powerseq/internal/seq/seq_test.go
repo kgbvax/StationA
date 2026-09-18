@@ -392,11 +392,12 @@ func TestBusyGuards(t *testing.T) {
 	defer cancel()
 	go s.Run(ctx)
 
-	// stop while idle (no fault) → dropped.
+	// stop while idle (no fault) → honored: idempotent teardown (the fault
+	// latch is in-memory; a restart wipes it, so stop must not depend on it).
 	s.Stop()
-	time.Sleep(20 * time.Millisecond)
-	if !phaseIs(s, PhaseIdle) || len(pub.cmds()) != 0 {
-		t.Errorf("stop while idle (no fault) should be dropped; phase=%s cmds=%d", mustPhase(s), len(pub.cmds()))
+	runUntil(t, s, func() bool { return len(pub.cmds()) == 5 }, time.Second)
+	if !phaseIs(s, PhaseIdle) {
+		t.Errorf("stop from plain idle ended in phase=%s, want idle", mustPhase(s))
 	}
 
 	// start → running; start while running → dropped (no extra cmds).
@@ -407,6 +408,43 @@ func TestBusyGuards(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 	if got := len(pub.cmds()); got != before {
 		t.Errorf("start while running emitted extra cmds: %+v", pub.cmds()[before:])
+	}
+}
+
+// A process restart wipes the in-memory fault latch (fresh Sequencer,
+// fault=""): stop must still tear the station down — it is the only rollback
+// path for slots a faulted sequence left energized (review: "boot wipes fault
+// → stop ignored after restart").
+func TestRestartAfterFaultStopStillHonored(t *testing.T) {
+	// First life: a startup faults mid-sequence; slots stay energized
+	// (no rollback by design).
+	s1, _ := newTestSeq(t)
+	s1.markOnline("power/master")
+	ctx1, cancel1 := context.WithCancel(context.Background())
+	defer cancel1()
+	go s1.Run(ctx1)
+	s1.Start()
+	runUntil(t, s1, func() bool {
+		ph, _, fault := s1.Phase()
+		return ph == PhaseIdle && fault != ""
+	}, time.Second)
+
+	// Second life: a fresh process — fault latch gone, phase=idle.
+	s2, pub2 := newTestSeq(t)
+	ctx2, cancel2 := context.WithCancel(context.Background())
+	defer cancel2()
+	go s2.Run(ctx2)
+	runUntil(t, s2, func() bool { return phaseIs(s2, PhaseIdle) }, time.Second)
+
+	s2.Stop()
+	runUntil(t, s2, func() bool { return len(pub2.cmds()) == 5 }, time.Second)
+	cmds := pub2.cmds()
+	if len(cmds) != 5 {
+		t.Fatalf("post-restart stop emitted %+v, want 5 shutdown cmds", cmds)
+	}
+	last := cmds[len(cmds)-1]
+	if last.topic != abs("power/master")+"/cmd" || last.value != "off" {
+		t.Errorf("last shutdown cmd = %+v, want master off", last)
 	}
 }
 
