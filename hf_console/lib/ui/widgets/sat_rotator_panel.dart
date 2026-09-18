@@ -201,7 +201,11 @@ class _AxisControlState extends State<_AxisControl> {
     final gotoEnabled = widget.online && valid;
 
     void publishGoto() {
-      final deg = parsed;
+      // Re-parse at publish time: the build-frame `parsed` goes stale when
+      // step() rewrites the controller text (programmatic writes fire no
+      // onChanged), and a stale closure here once published the pre-step
+      // bearing. The controller is the single source of truth.
+      final deg = double.tryParse(_controller.text.trim());
       if (deg == null) return;
       mqtt.publish(
         cmdTopic(widget.slotName),
@@ -221,6 +225,10 @@ class _AxisControlState extends State<_AxisControl> {
       if (minLimit != null && next < minLimit) next = minLimit;
       if (maxLimit != null && next > maxLimit) next = maxLimit;
       _controller.text = _fmtDeg(next);
+      // Rebuild: without this, parsed/valid/gotoEnabled and the GOTO button's
+      // closure keep the pre-step frame (a programmatic controller write fires
+      // no onChanged) — GOTO then published the stale bearing.
+      setState(() {});
     }
 
     return Column(

@@ -296,6 +296,15 @@ class MqttService {
     store.apply(topic, payload, retained);
   }
 
+  /// Test seam for the ingestion path ([_apply]): the broker-bound `updates`
+  /// listener is unreachable from tests, and the T2 guarantee is about the
+  /// BATCH — one bad payload must not take out the messages after it. Feed
+  /// raw wire bytes for one message.
+  @visibleForTesting
+  void ingest(String topic, List<int> bytes, {bool retained = false}) {
+    _apply(topic, Uint8Buffer()..addAll(bytes), retained);
+  }
+
   /// Publishes a command. Returns false (and publishes nothing) when the
   /// link is down — callers that care about delivery must check.
   bool publish(String topic, String payload,
