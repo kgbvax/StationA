@@ -112,8 +112,10 @@ link         = "serial"
 #                   before any serial write (R10). Set to the real mechanical
 #                   range; SPID models vary (360/450).
 # <axis>.deadband = a target within this distance of the cached readback skips
-#                   the serial write (R12; ~1° default — the elevation deadband
-#                   is expected to need bench loosening, KTD14)
+#                   the serial write (R12; az default 4° so tracking clients'
+#                   micro-corrections do not jerk the rotor, el 1° — the
+#                   elevation deadband is expected to need bench loosening,
+#                   KTD14)
 # <axis>.park     = park position for the PstRotator PARK command (R7)
 
 [control]
@@ -123,7 +125,7 @@ reopen_cooldown = "2s"
 [control.az]
 min      = 0.0
 max      = 360.0
-deadband = 1.0
+deadband = 4.0
 park     = 0.0
 
 [control.el]

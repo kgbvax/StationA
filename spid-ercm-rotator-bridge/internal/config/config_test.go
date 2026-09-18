@@ -66,7 +66,7 @@ func TestDefaults(t *testing.T) {
 		baud  int
 		label string
 	}{
-		{"az", cfg.Control.AZ, 0, 360, 0, 1, 1200, "SPID Rotor (Rot1Prog)"},
+		{"az", cfg.Control.AZ, 0, 360, 0, 4, 1200, "SPID Rotor (Rot1Prog)"},
 		{"el", cfg.Control.EL, 0, 90, 0, 1, 9600, "ERC-M / GS-500"},
 	} {
 		if ax.ctrl.Min != ax.min || ax.ctrl.Max != ax.max {
@@ -151,8 +151,8 @@ func TestAbsentDefaultConfigUsesDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("absent default config must not error: %v", err)
 	}
-	if cfg.Control.AZ.Deadband != 1.0 {
-		t.Errorf("az deadband = %v, want default 1.0", cfg.Control.AZ.Deadband)
+	if cfg.Control.AZ.Deadband != 4.0 {
+		t.Errorf("az deadband = %v, want default 4.0", cfg.Control.AZ.Deadband)
 	}
 	if cfg.MQTT.Broker != "tcp://127.0.0.1:1883" || cfg.Host != "shari" {
 		t.Errorf("defaults not applied: broker %q, host %q", cfg.MQTT.Broker, cfg.Host)

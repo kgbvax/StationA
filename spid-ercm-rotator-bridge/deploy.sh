@@ -51,6 +51,8 @@
 #   AZ_MIN/AZ_MAX   az travel limits      (defaults: 0 / 360 — set the real
 #   EL_MIN/EL_MAX   el travel limits       mechanical range at bench bring-up)
 #   AZ_PARK/EL_PARK park positions        (default: 0)
+#   AZ_DEADBAND     az no-op deadband °   (default: 4 — smaller azimuth changes
+#   EL_DEADBAND     el no-op deadband °   (defaults: 1 / 1) do not move the rotor)
 #
 #   SERIAL_GROUP      group owning the tty devices (default: dialout)
 #   SERIAL_USB_VENDORS space-separated USB vendor ids for the udev serial-group
@@ -112,6 +114,8 @@ AZ_PARK="${AZ_PARK:-0}"
 EL_MIN="${EL_MIN:-0}"
 EL_MAX="${EL_MAX:-90}"
 EL_PARK="${EL_PARK:-0}"
+AZ_DEADBAND="${AZ_DEADBAND:-4.0}"
+EL_DEADBAND="${EL_DEADBAND:-1.0}"
 
 SERIAL_GROUP="${SERIAL_GROUP:-dialout}"
 # Space-separated USB vendor ids — one udev rule per vendor (the repo template
@@ -224,13 +228,13 @@ trap 'rm -f "$SEED_CONFIG" "$SEED_ENV" "${UNIT_FILE:-}" "${UDEV_FILE:-}"' EXIT
   echo "[control.az]"
   echo "min      = ${AZ_MIN}"
   echo "max      = ${AZ_MAX}"
-  echo "deadband = 1.0"
+  echo "deadband = ${AZ_DEADBAND}"
   echo "park     = ${AZ_PARK}"
   echo ""
   echo "[control.el]"
   echo "min      = ${EL_MIN}"
   echo "max      = ${EL_MAX}"
-  echo "deadband = 1.0"
+  echo "deadband = ${EL_DEADBAND}"
   echo "park     = ${EL_PARK}"
 } > "$SEED_CONFIG"
 
