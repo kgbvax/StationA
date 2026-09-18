@@ -230,3 +230,101 @@ func TestRun_CtxCancel(t *testing.T) {
 		t.Fatal("Run did not return after ctx cancel")
 	}
 }
+
+// ----- liveness probe (Run-owned; single reader) -------------------------------
+
+// newProbeClient builds a client with shrunk probe bounds.
+func newProbeClient(conn net.Conn, interval, timeout time.Duration) *Client {
+	c := newClientFromConn(conn)
+	c.probeInterval = interval
+	c.probeTimeout = timeout
+	return c
+}
+
+// A frozen peer (accepts commands, NEVER replies) must end Run within
+// probeInterval + probeTimeout. Pre-fix, Run blocked in ReadString forever and
+// the bridge's 5 s heartbeat kept laundering stale state as fresh.
+func TestRun_ProbeTimesOutOnFrozenPeer(t *testing.T) {
+	clientConn, radioConn := net.Pipe()
+	defer radioConn.Close()
+	client := newProbeClient(clientConn, 30*time.Millisecond, 50*time.Millisecond)
+
+	probes := make(chan string, 8)
+	go func() {
+		defer radioConn.Close()
+		sc := bufio.NewScanner(radioConn)
+		for sc.Scan() {
+			select {
+			case probes <- sc.Text():
+			default:
+			}
+		}
+	}()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	start := time.Now()
+	go func() { done <- client.Run(ctx) }()
+
+	select {
+	case err := <-done:
+		if !strings.Contains(err.Error(), "probe") {
+			t.Errorf("err = %v, want a probe-timeout error", err)
+		}
+		if el := time.Since(start); el > 2*time.Second {
+			t.Errorf("frozen peer detected only after %s; probe bounds not honored", el)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Run never returned against a frozen peer")
+	}
+	select {
+	case p := <-probes:
+		if !strings.Contains(p, "|version") {
+			t.Errorf("probe sent %q, want an eliciting version probe", p)
+		}
+	default:
+		t.Error("no eliciting probe was written before the timeout")
+	}
+}
+
+// A quiet-but-alive peer must NOT be dropped: each idle gap gets a probe, the
+// reply proves the wire, and Run keeps cycling until ctx cancels. This pins
+// the on-change-only discipline — silence alone is never fatal.
+func TestRun_ProbeKeepsQuietPeerAlive(t *testing.T) {
+	clientConn, radioConn := net.Pipe()
+	defer radioConn.Close()
+	client := newProbeClient(clientConn, 40*time.Millisecond, 500*time.Millisecond)
+
+	var mu sync.Mutex
+	probeCount := 0
+	go func() {
+		defer radioConn.Close()
+		sc := bufio.NewScanner(radioConn)
+		for sc.Scan() {
+			mu.Lock()
+			probeCount++
+			mu.Unlock()
+			_, _ = io.WriteString(radioConn, "R1|0|0|v3.4.1.10\n")
+		}
+	}()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- client.Run(ctx) }()
+
+	time.Sleep(300 * time.Millisecond) // several idle-gap cycles
+	mu.Lock()
+	got := probeCount
+	mu.Unlock()
+	if got < 2 {
+		t.Fatalf("radio saw %d probes in 300ms; idle-gap probing is not cycling", got)
+	}
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run did not return after ctx cancel")
+	}
+}

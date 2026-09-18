@@ -26,6 +26,23 @@ import (
 // CommandPort is the SmartSDR TCP API port.
 const CommandPort = 4992
 
+// Liveness-probe bounds. SmartSDR is on-change-only: a healthy but quiet band
+// streams nothing for minutes, so frame silence must NOT be mistaken for a
+// dead link. Instead, after probeInterval with no inbound traffic the read
+// loop sends an eliciting `version` probe; if NOTHING arrives within
+// probeTimeout of that eliciting write, the connection is provably dead.
+// Worst-case frozen-conn detection ≈ probeInterval + probeTimeout (vs ~11 min
+// for TCP keepalive, and forever before). Without this, a frozen TCP conn
+// (radio power-pulled, LAN path silently dropped) blocked Run forever while
+// the bridge's 5 s heartbeat kept laundering stale state as fresh.
+const (
+	DefaultProbeInterval = 10 * time.Second
+	DefaultProbeTimeout  = 5 * time.Second
+
+	// probeCmd elicits a reply from any SmartSDR firmware and changes nothing.
+	probeCmd = "version"
+)
+
 // Handler receives parsed status frames. Implementations typically route
 // by frame.Topic. It must not block; slow work should be queued.
 type Handler func(Frame)
@@ -36,6 +53,9 @@ type Client struct {
 	conn    net.Conn
 	rd      *bufio.Reader
 	handler Handler
+
+	probeInterval time.Duration // idle gap before the liveness probe
+	probeTimeout  time.Duration // wait for proof of life after the probe
 
 	mu      sync.Mutex
 	closed  bool
@@ -51,23 +71,38 @@ func Dial(ctx context.Context, host string) (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("dial %s: %w", addr, err)
 	}
-	return &Client{
+	c := &Client{
 		addr:    addr,
 		conn:    conn,
 		rd:      bufio.NewReader(conn),
 		handler: func(Frame) {},
 		handle:  1,
-	}, nil
+	}
+	c.defaults()
+	return c, nil
 }
 
 // newClientFromConn builds a client over an already-connected conn. Used
 // by tests to inject an in-memory pipe.
 func newClientFromConn(conn net.Conn) *Client {
-	return &Client{
+	c := &Client{
 		conn:    conn,
 		rd:      bufio.NewReader(conn),
 		handler: func(Frame) {},
 		handle:  1,
+	}
+	c.defaults()
+	return c
+}
+
+// defaults fills unset probe bounds (tests shrink them between construction
+// and Run).
+func (c *Client) defaults() {
+	if c.probeInterval <= 0 {
+		c.probeInterval = DefaultProbeInterval
+	}
+	if c.probeTimeout <= 0 {
+		c.probeTimeout = DefaultProbeTimeout
 	}
 }
 
@@ -269,20 +304,59 @@ func (c *Client) SetMicProfile(name string) error {
 
 // Run blocks reading status lines and dispatching them to the handler.
 // It returns when the connection is closed, the context is cancelled, or
-// an unrecoverable read error occurs.
+// an unrecoverable read error occurs — including silence after an eliciting
+// probe (the liveness watchdog; see the probe-bound constants).
+//
+// The probe runs on THIS goroutine: sendAwaitReply reads the same bufio
+// reader as Run, so a watchdog calling it from another goroutine would race
+// the read loop. Single reader, always.
 func (c *Client) Run(ctx context.Context) error {
+	// Wake the blocking read on ctx cancellation: an already-expired read
+	// deadline unblocks it and the loop's error path returns ctx.Err().
+	// (Without this, Run could block in ReadString long past cancellation —
+	// pre-probe it blocked FOREVER on a silent conn.)
+	go func() {
+		<-ctx.Done()
+		_ = c.conn.SetReadDeadline(time.Now())
+	}()
+
+	probing := false
 	for {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
+		wait := c.probeInterval
+		if probing {
+			wait = c.probeTimeout
+		}
+		_ = c.conn.SetReadDeadline(time.Now().Add(wait))
 		line, err := c.rd.ReadString('\n')
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		if err != nil {
+			var ne net.Error
+			if errors.As(err, &ne) && ne.Timeout() {
+				if !probing {
+					// Idle gap reached: elicit proof of life. Silence alone is
+					// not death (on-change-only stream); the eliciting write is
+					// what makes the NEXT silence meaningful.
+					if perr := c.send(ctx, probeCmd); perr != nil {
+						return fmt.Errorf("radio probe write: %w", perr)
+					}
+					probing = true
+					continue
+				}
+				return fmt.Errorf("radio probe: no traffic within %s of the %s probe",
+					c.probeTimeout, probeCmd)
+			}
 			if errors.Is(err, io.EOF) || isClosed(err) {
 				return err
 			}
 			// Transient read error: keep going briefly, then surface.
 			return err
 		}
+		probing = false // any inbound line — status or reply — proves the wire alive
 		frame, err := ParseFrame(line)
 		if err != nil {
 			continue // malformed line; skip

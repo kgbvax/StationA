@@ -55,7 +55,11 @@ go test ./internal/bridge/... -run TestGate
    runs a handshake: sends `version`, sets local UDP port for meter streaming, subscribes
    to `slice/radio/interlock/atu/meter all`, and best-effort `sub dvk all` (SmartSDR v4+;
    fire-and-forget so a v3/unlicensed radio rejecting it cannot break the handshake). After
-   that, `Client.Run` blocks reading async status lines.
+   that, `Client.Run` blocks reading async status lines under a probe-based liveness
+   watchdog: after 10 s of silence Run sends an eliciting `version` probe and drops the
+   connection if nothing arrives within 5 s. SmartSDR is on-change-only — silence alone is
+   never fatal; only silence after an eliciting write is. The probe runs on Run's own
+   goroutine (`sendAwaitReply` shares the bufio reader — single reader, always).
 3. **UDP meter stream** (VITA-49) — the radio sends real-time meter datagrams at 10–20 fps
    to the port registered during handshake. Decoded in `flexradio.ParseVITA49` /
    `VITAPacket.MeterReadings`.
@@ -77,7 +81,9 @@ tracked from `sub pan all` status so `set_band` can target a pan handle.
 `Bridge` (`internal/bridge/bridge.go`) owns all shared state under `sync.RWMutex`.
 
 **Reconnect loop** (`cmd/flexbridge/main.go:radioLoop`): connects, runs until disconnect, then
-exponential-backoffs and retries. Calls `Bridge.Reset()` between attempts to clear stale
+exponential-backoffs and retries (2 s → 60 s, ×1.5). The backoff resets to 2 s after any
+connection that lived ≥ 1 min — without that it only ever grew, so one long outage doomed
+every later reconnect to the full 60 s wait. Calls `Bridge.Reset()` between attempts to clear stale
 state and force republish on reconnect.
 
 ---
