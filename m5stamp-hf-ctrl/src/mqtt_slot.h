@@ -20,6 +20,22 @@
 
 typedef void (*CmdCallback)(const char* topic, const uint8_t* payload, unsigned int len);
 
+// BoundedConnectClient bounds the TCP connect wait. PubSubClient dials through
+// the 2-arg Client overloads; the ESP32 core's default is a 3 s select() wait
+// against a silent host — with TWO slots dialing every pass that stalled the
+// arm-logic loop ~6 s per round (observed ~16 s arm drop vs the documented
+// ~10 s bound). The 3-arg overloads take milliseconds and have no read-side
+// side effects (setTimeout() would also shrink SO_RCVTIMEO — not wanted).
+class BoundedConnectClient : public WiFiClient {
+   public:
+    int connect(IPAddress ip, uint16_t port) override {
+        return WiFiClient::connect(ip, port, (int32_t)MQTT_CONNECT_TIMEOUT_MS);
+    }
+    int connect(const char* host, uint16_t port) override {
+        return WiFiClient::connect(host, port, (int32_t)MQTT_CONNECT_TIMEOUT_MS);
+    }
+};
+
 class SlotMqtt {
    public:
     SlotMqtt(const char* base, const char* clientSuffix, CmdCallback onCmd)
@@ -27,6 +43,7 @@ class SlotMqtt {
         client_.setClient(net_);
         client_.setBufferSize(MQTT_BUFFER_SIZE);
         client_.setKeepAlive(MQTT_KEEPALIVE_S);
+        client_.setSocketTimeout(MQTT_CONNACK_TIMEOUT_S);
         // LWT: retained "offline" on this slot's /status — fires on unexpected disconnect.
         char willTopic[80];
         snprintf(willTopic, sizeof(willTopic), "%s/status", base);
@@ -40,13 +57,20 @@ class SlotMqtt {
     }
 
     // loop drives the MQTT state machine; call every main iteration. Handles
-    // reconnect with a backoff. Returns true while connected.
+    // reconnect with a shared backoff: at most ONE slot dials per pass, so a
+    // down broker can never stall the arm-logic loop on both connections in
+    // the same iteration (defect D6). Returns true while connected.
     bool loop() {
         if (client_.connected()) {
             client_.loop();
             return true;
         }
-        // (re)connect
+        static unsigned long lastAttemptMs = 0;  // shared across ALL SlotMqtt instances
+        unsigned long now = millis();
+        if (now - lastAttemptMs < MQTT_RECONNECT_BACKOFF_MS) {
+            return false;
+        }
+        lastAttemptMs = now;
         if (connect()) {
             onConnect();
         }
@@ -80,7 +104,7 @@ class SlotMqtt {
     const char* base_;
     const char* suffix_;
     CmdCallback onCmd_;
-    WiFiClient net_;
+    BoundedConnectClient net_;
     PubSubClient client_;
     bool connected_;
     char willTopic_[80];

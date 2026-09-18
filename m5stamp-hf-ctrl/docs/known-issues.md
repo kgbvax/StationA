@@ -51,7 +51,7 @@ Code-check 2026-09-03: still open — `handleAntSwitchState()` at
 `m5stamp-hf-ctrl/src/main.cpp:162-170` records no timestamp and
 `currentPaArmError()` checks only the boolean.
 
-## [defect] D6 / O11 — No MQTT reconnect backoff (STILL OPEN)
+## [defect] D6 / O11 — No MQTT reconnect backoff (FIXED IN CODE 2026-09-18, NOT YET FLASHED)
 
 The reference tries reconnect every loop pass (~every 50 ms, no backoff —
 ~20 tries/s per client) indefinitely. A re-implementation must use bounded
@@ -61,6 +61,18 @@ Code-check 2026-09-03: still open — `SlotMqtt::loop()` in
 `m5stamp-hf-ctrl/src/mqtt_slot.h:44-54` calls `connect()` on every disconnected
 loop pass. (Its comment says "Handles reconnect with a backoff" — no backoff
 exists; the comment is drift.)
+
+Code-check 2026-09-18: fixed in source — `SlotMqtt::loop()` now rate-limits
+attempts to one per `MQTT_RECONNECT_BACKOFF_MS` (1 s) across BOTH slots (shared
+cooldown), and the dial itself is bounded: `BoundedConnectClient` shrinks the
+ESP32 TCP SYN wait 3000 ms → `MQTT_CONNECT_TIMEOUT_MS` (150 ms) and
+`setSocketTimeout(1)` shrinks PubSubClient's 15 s CONNACK wait to 1 s. Worst
+single-pass stall drops from ~6 s (two unbounded TCP waits) / ~18 s (CONNACK
+case) to ~1.15 s; the observed ~16 s arm drop vs the ~10 s R3.1 bound becomes
+~11.2 s worst case. Residual: PubSubClient's CONNACK floor is 1 s (whole-second
+granularity), so the strict ≤200 ms loop-period reading of R3.1 would need an
+async MQTT client — deliberate non-goal here. **Not yet flashed**: the field
+PLC runs pre-OTA firmware; first flash of this build must be physical USB.
 
 ## [defect] D8 / O5 — Retained replay reverts outage-time button toggles (STILL OPEN)
 
