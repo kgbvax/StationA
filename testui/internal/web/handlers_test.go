@@ -145,6 +145,17 @@ func TestPublishErrShuttingDownMaps503(t *testing.T) {
 	}
 }
 
+// TestPublishErrDisconnectedMaps503: a Publish dropped because the relay is
+// mid-reconnect must surface as 503 (with a republish hint), never a false 200.
+func TestPublishErrDisconnectedMaps503(t *testing.T) {
+	s, m := newTestServer()
+	m.err = mqtt.ErrDisconnected
+	rec := doJSON(t, s, "/api/publish", `{"topic":"muehle/hf/radio/state","payload":{"x":1}}`)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 for ErrDisconnected, got %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 // TestPublishBrokerErrorMaps502: a non-sentinel Publish error surfaces as 502.
 func TestPublishBrokerErrorMaps502(t *testing.T) {
 	s, m := newTestServer()

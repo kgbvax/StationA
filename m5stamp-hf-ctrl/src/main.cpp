@@ -304,7 +304,11 @@ static void publishPaArmMeta(SlotMqtt& s) {
         JsonObject cmd = f["command"].to<JsonObject>();
         cmd["action"] = "set_enabled";
         cmd["value_key"] = "value";
-        cmd["value_type"] = "boolean";
+        // Wire form is a STRING ("true"/"false") — parseCmd reads doc["value"]
+        // as const char* and ArduinoJson cannot coerce a JSON bool (it would
+        // arrive as "" → enabled=false → silent disarm). Must match the API
+        // doc §set_enabled; consumers key on this descriptor.
+        cmd["value_type"] = "string";
     }
     String out;
     serializeJson(doc, out);
