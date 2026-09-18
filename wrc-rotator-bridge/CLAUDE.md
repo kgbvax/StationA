@@ -55,7 +55,9 @@ paths.
    loop with exponential backoff, GS-232 server start.
 2. `internal/rotor` — WRC WebSocket device: dial (ctx-aware `DialContext`),
    read loop parsing `RotorStatus` into canonical `State`, mutex-guarded
-   command writes (`SetAz`/`Stop`/`Jog`), thread-safe `Snapshot`/`CurrentAz`
+   command writes (`SetAz`/`Stop`/`Jog`) bounded by a 3 s per-write deadline
+   (a wedged write tears the connection down so the restart loop redials —
+   STOP must never wedge), thread-safe `Snapshot`/`CurrentAz`
    for the GS-232 server.
 3. `internal/bridge` — canonical rotator state model + MQTT publishing:
    `/meta` (role `rotator`, `axes [az]`, `expose`), retained `/state` snapshot

@@ -132,17 +132,35 @@ func (d *Device) Jog(dir string) error {
 	return d.send(RotorCommand{Az: dir})
 }
 
-// send writes a command under the write mutex. Safe to call from the /cmd
-// worker and from GS-232 handler goroutines concurrently.
+// writeTimeout bounds a single command write. A wedged TCP peer (half-open
+// connection, controller power-pulled) must not hold writeMu forever — STOP
+// rides this write path and /cmd, GS-232 and PSTRotator all serialize on it.
+// 3 s is ~100x generous for a ~20-byte LAN control frame (fleet precedent:
+// pelcobridge2's e-stop write deadline). A var so tests can shrink it.
+var writeTimeout = 3 * time.Second
+
+// send writes a command under the write mutex, bounded by a per-write
+// deadline. A failed write tears the connection down (gorilla write errors
+// are sticky) so the read loop unblocks and the restart loop redials —
+// Safe to call from the /cmd worker and from GS-232 handler goroutines
+// concurrently.
 func (d *Device) send(cmd RotorCommand) error {
 	d.writeMu.Lock()
 	defer d.writeMu.Unlock()
 	if d.conn == nil {
 		return fmt.Errorf("wrc: websocket not connected")
 	}
-	if err := d.conn.WriteJSON(cmd); err != nil {
+	conn := d.conn
+	_ = conn.SetWriteDeadline(time.Now().Add(writeTimeout))
+	if err := conn.WriteJSON(cmd); err != nil {
+		// We already hold writeMu, so nil + Close directly — closeConn()
+		// would deadlock on its own Lock. Tearing down unblocks Run's read
+		// loop; the wsLoop backoff redials from there.
+		d.conn = nil
+		_ = conn.Close()
 		return fmt.Errorf("wrc write: %w", err)
 	}
+	_ = conn.SetWriteDeadline(time.Time{}) // the deadline is per-write
 	if d.debug {
 		d.log.Debugf("TX to WRC: %+v", cmd)
 	}
