@@ -72,7 +72,9 @@ func (s *Slot) OnConnect(c pahomqtt.Client) {
 		payload := append([]byte(nil), m.Payload()...)
 		sharedmqtt.Enqueue(s.jobs, func() { s.HandleCmd(payload) })
 	})
-	if tok.Wait() && tok.Error() != nil {
+	// Bounded Wait (review S1f): a stalled SUBACK must not park paho's
+	// OnConnect goroutine forever.
+	if !tok.WaitTimeout(10*time.Second) || tok.Error() != nil {
 		s.log.Warnf("subscribe %s: %v", s.cfg.CmdTopic(), tok.Error())
 	}
 }

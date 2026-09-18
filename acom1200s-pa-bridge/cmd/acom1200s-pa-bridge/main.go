@@ -162,12 +162,14 @@ func connectMQTT(ctx context.Context, cfg config.Config, log *slog.Logger) (paho
 	opts.OnConnect = func(c pahomqtt.Client) {
 		c.Publish(avail, 1, true, []byte("online"))
 		log.Info("MQTT (re)connected, published online LWT")
-		// /cmd is not retained; resubscribe on every reconnect.
+		// /cmd is not retained; resubscribe on every reconnect. Bounded Wait
+		// (review S1f): a stalled SUBACK must not park paho's OnConnect
+		// goroutine forever.
 		if tok := c.Subscribe(cmd, 1, func(_ pahomqtt.Client, m pahomqtt.Message) {
 			// Runs in paho's goroutine; the bridge only touches serial via the
 			// Commander (acom.Device), which guards all writes under its mutex.
 			cmdHandler(m.Payload())
-		}); tok.Wait() && tok.Error() != nil {
+		}); !tok.WaitTimeout(10*time.Second) || tok.Error() != nil {
 			log.Warn("subscribe cmd failed", "err", tok.Error())
 		}
 	}
