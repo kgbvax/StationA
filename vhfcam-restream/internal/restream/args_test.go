@@ -26,9 +26,9 @@ func TestBuildArgs(t *testing.T) {
 	for _, want := range []string{
 		"-rtsp_transport tcp",
 		"-map 0:v:0",
-		"-map 0:a:m:aac", // must pin the AAC track: default selection would pick Opus, which FLV cannot carry
+		"-map 0:a:0", // first audio track, whatever codec (some SDP sessions expose Opus only)
 		"-c:v copy",
-		"-c:a copy",
+		"-c:a aac", // RTMP/FLV carries AAC only; transcode Opus/AAC -> AAC
 		"-f flv",
 		"-progress pipe:1",
 	} {

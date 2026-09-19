@@ -9,13 +9,15 @@ deliberately outside the bus.
 
 ## Why the args look the way they do
 
-Both camera profiles (SD 1024x576, HD 1920x1080, both @20fps) emit **H.264
-video + two audio tracks (AAC mono, Opus stereo)**. RTMP/FLV can only carry
-AAC, and ffmpeg's default stream selection would pick the 2-channel **Opus**
-track and fail — so `audio_map = "0:a:m:aac"` pins the AAC track explicitly,
-and both streams are `-c copy` (no transcoding on the Pi). Do not "simplify"
-the maps away; a camera firmware change that reorders streams is exactly what
-the codec-based map survives.
+Both camera profiles (Medium 1024x576, HD 1920x1080, both @20fps) carry
+**H.264 video + AAC and Opus audio tracks** — but at least one SDP session was
+observed exposing **Opus only** (2026-09-19: `Stream map '0:a:m:aac' matches
+no streams`), so a codec-selecting audio map is not safe. The mapping is
+therefore `audio_map = "0:a:0"` (first audio track, whatever codec) +
+`audio_codec = "aac"`: RTMP/FLV carries AAC only, and transcoding one mono/
+stereo track to AAC costs nothing on the Pi. Video is always `-c copy`. Do
+not "simplify" this back to `-c:a copy` — a bare copy breaks the moment the
+track is Opus, which is what the default stream selection picks.
 
 ## Commands
 
