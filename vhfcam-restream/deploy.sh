@@ -32,6 +32,10 @@
 #   MQTT_USER       overlay.mqtt_user     (default: hf)
 #   MQTT_PASSWORD   overlay.mqtt_password (default: empty -> set on device)
 #
+#   ENABLED         install enabled+running? (default: false — the service is
+#                   DISABLED by default so the Pi does not stream constantly;
+#                   start ad hoc with: sudo systemctl enable --now vhfcam-restream)
+#
 # Configuration lives in a single 0600 TOML file on the target
 # (/etc/vhfcam-restream/config.toml). The RTSPS path token and the YouTube
 # stream key are secrets and live in that file — never on any command line or
@@ -66,6 +70,7 @@ OVERLAY_ENABLED="${OVERLAY_ENABLED:-false}"
 MQTT_BROKER="${MQTT_BROKER:-tcp://192.168.1.50:1883}"
 MQTT_USER="${MQTT_USER:-hf}"
 MQTT_PASSWORD="${MQTT_PASSWORD:-}"
+ENABLED="${ENABLED:-false}"
 
 # Allow "user@host" in SSH_HOST; otherwise prepend SSH_USER.
 if [[ "$SSH_HOST" == *"@"* ]]; then
@@ -242,14 +247,25 @@ sudo mv "/tmp/${BINARY}.new" "${INSTALL_DIR}/${BINARY}"
 sudo chmod 755 "${INSTALL_DIR}/${BINARY}"
 sudo mv "/tmp/${SERVICE_NAME}.service" "/etc/systemd/system/${SERVICE_NAME}.service"
 sudo systemctl daemon-reload
-sudo systemctl enable "${SERVICE_NAME}.service"
-sudo systemctl restart "${SERVICE_NAME}.service"
+# Disabled by default: the unit is installed but not enabled and not started,
+# so the Pi does not stream unless the operator asks for it.
+if [ "$ENABLED" = "true" ]; then
+  sudo systemctl enable "${SERVICE_NAME}.service"
+  sudo systemctl restart "${SERVICE_NAME}.service"
+else
+  sudo systemctl disable "${SERVICE_NAME}.service" 2>/dev/null || true
+  sudo systemctl stop "${SERVICE_NAME}.service" 2>/dev/null || true
+fi
 echo "--- service status ---"
 sudo systemctl --no-pager --full status "${SERVICE_NAME}.service" || true
 REMOTE
 
 echo ""
 echo ">> Done. vhfcam-restream deployed to ${SSH_TARGET} as systemd service '${SERVICE_NAME}'."
+if [ "$ENABLED" != "true" ]; then
+  echo "   Service is DISABLED (not running). Start it ad hoc on the device:"
+  echo "     sudo systemctl enable --now ${SERVICE_NAME}"
+fi
 echo "   Logs:    ssh ${SSH_TARGET} 'journalctl -u ${SERVICE_NAME} -f'"
 echo "   Config:  ${CONFIG_FILE}"
 if [[ -z "$SOURCE_URL" || -z "$YT_STREAM_KEY" ]]; then

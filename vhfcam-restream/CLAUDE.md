@@ -33,6 +33,12 @@ go vet ./...
 `SOURCE_HD_URL`, `QUALITY`, `YT_URL`, `YT_STREAM_KEY`, `LOG_LEVEL` from the
 environment (see the header comment).
 
+**The service installs DISABLED by default** (`ENABLED=false`): the unit is on
+the device but not running — the Pi does not stream constantly. Bring it up ad
+hoc on shari with `sudo systemctl enable --now vhfcam-restream`, stop it with
+`sudo systemctl disable --now vhfcam-restream`, or deploy with `ENABLED=true`
+to have deploys start it.
+
 ## Config
 
 `/etc/vhfcam-restream/config.toml` on shari (0600, seed-once; see
