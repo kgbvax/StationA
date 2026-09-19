@@ -54,6 +54,14 @@ type snap struct {
 // round-trips): selected VFO, satellite mode, both VFOs' freq+mode, PTT,
 // meters. Runs on the poll tick; never called off-session.
 func (b *Bridge) poll() {
+	// KTD-2/R2: the poll is not itself a demand. Telemetry only flows
+	// while a session is already live (arm, a /cmd, or the safety
+	// PTT-off delivery opened it); from idle or error the poll must
+	// return without dialing — a demanding poll would grab the radio's
+	// single LAN session around the clock and starve manual wfview.
+	if b.mgr.Snapshot().SessionState != radio.StateLive {
+		return
+	}
 	// The poll's own bound is generous (a dozen sequential round-trips on
 	// a LAN session); the TICK is the cadence, not the deadline. A poll
 	// that outlives its ctx is abandoned — the next tick re-reads.
