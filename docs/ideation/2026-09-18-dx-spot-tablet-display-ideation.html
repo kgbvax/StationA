@@ -80,7 +80,7 @@
     <dt>Topic</dt><dd><code>dx-spot-tablet-display</code></dd>
     <dt>Focus</dt><dd>A permanent display of DX-cluster information much as Log4OM displays it — worked before, new band, new band mode — on a tablet, always at the same place; Wavelog mirror (or Log4OM remote API) as the worked-before source; rows carry call, flag, optional op name, age, comment, mode, band; plus propagation information.</dd>
     <dt>Mode</dt><dd>Repo-grounded (stationa monorepo)</dd>
-    <dt>Run</dt><dd>40 raw ideas from 5 frames + 5 evidence dossiers + web research → 14 deduped candidates → adversarial basis verification (13 sound, 1 weak, 0 refuted) → 7 survivors</dd>
+    <dt>Run</dt><dd>40 raw ideas from 5 frames + 5 evidence dossiers + web research → 14 deduped candidates → adversarial basis verification (13 sound, 1 weak, 0 refuted) → 7 survivors · revised 2026-09-19: surface decided in review (browser board on <code>:8091</code>, dedicated second tablet)</dd>
   </dl>
 </header>
 
@@ -121,7 +121,7 @@
       <li><a href="#idea-4">Liveness-gated screen-on</a></li>
       <li><a href="#idea-5">Table grammar: rows, worked ladder, silence</a></li>
       <li><a href="#idea-6">Two-deck propagation</a></li>
-      <li><a href="#idea-7">Surface fork, decided deliberately</a></li>
+      <li><a href="#idea-7">Surface: browser board on :8091 — decided</a></li>
     </ol>
   </nav>
 
@@ -211,13 +211,13 @@
       <span class="pill conf-high">Confidence 90%</span>
       <span class="pill">Complexity L</span>
     </div>
-    <p><strong>Description.</strong> The kiosk build deliberately removed <code>FLAG_KEEP_SCREEN_ON</code> (commit <code>e05cf64</code>) so the tablet sleeps after 1 h of <em>touch</em> idle. A permanent board is never touched — under the shipped policy the "permanent" display goes dark every hour, and with keyguard disabled the wake is a physical power press (on a wall mount, a ladder). Reverse it deliberately and scoped: assert keep-screen-on only while the board surface is foreground, implemented natively beside KioskPolicy (the app is device owner; no wakelock plugin exists in pubspec and none is needed), paired with a night dim schedule and burn-in countermeasures — the table's natural churn, a slow content shift, and the true-black aether scheme. Optionally gate on content liveness (fresh rows + link up) rather than a bare schedule.</p>
+    <p><strong>Description.</strong> With the surface decided (idea 7 — browser board on <code>:8091</code>, dedicated second tablet), screen-on is a browser concern: acquire the <strong>Wake Lock API</strong> on first tap after boot/refresh (Chrome on Android supports it; the gesture is required), pair with a CSS night-dim schedule and the true-black scheme, and let burn-in countermeasures ride the table's natural churn plus a slow content shift. The native path stays documented as the alternative: hf_console deliberately removed <code>FLAG_KEEP_SCREEN_ON</code> (commit <code>e05cf64</code>) so the console tablet sleeps after 1 h of <em>touch</em> idle — a policy a permanent board defeats, reversible in native Kotlin beside KioskPolicy if the board ever moves onto that device.</p>
     <span class="field-label">Basis</span>
-    <p class="basis-text"><code>direct:</code> e05cf64 ("let the display sleep after 1h idle in kiosk — Drop FLAG_KEEP_SCREEN_ON …"); <code>MainActivity.kt</code>: "No FLAG_KEEP_SCREEN_ON: the display should sleep after the system screen-off timeout"; PROVISIONING.md's 1 h touch-idle sleep; the dossier-verified absence of any wakelock/brightness plugin. Five ideation frames converged on this collision. <code>external:</code> digital-signage duty cycles (schedule + content shift, never touch-idle); <code>STAY_ON_WHILE_PLUGGED_IN</code> as a device-owner global setting.</p>
+    <p class="basis-text"><code>direct:</code> e05cf64 ("let the display sleep after 1h idle in kiosk — Drop FLAG_KEEP_SCREEN_ON …"); <code>MainActivity.kt</code>: "No FLAG_KEEP_SCREEN_ON: the display should sleep after the system screen-off timeout"; PROVISIONING.md's 1 h touch-idle sleep; the dossier-verified absence of any wakelock/brightness plugin. Five ideation frames converged on this collision. <code>external:</code> digital-signage duty cycles (schedule + content shift, never touch-idle); the Wake Lock API as the browser surface's keep-awake primitive (one user gesture required); <code>STAY_ON_WHILE_PLUGGED_IN</code> as the device-owner lever on the native path.</p>
     <span class="field-label">Rationale</span>
     <p>This is the one requirement word — "permanent" — that the current build actively defeats; every other idea is moot if the board is asleep. It reverses a deliberate, recorded decision, so it must be a conscious team act with the burn-in trade-off owned, not a silent revert.</p>
     <span class="field-label">Downsides</span>
-    <p>Re-litigating a recent decision; always-on-at-brightness is heat and burn-in exposure that needs the dim schedule to be more than a gesture; device-specific behavior of <code>STAY_ON_WHILE_PLUGGED_IN</code> on this tablet is untested.</p>
+    <p>Browser keep-awake is weaker than native policy: the lock needs re-acquiring after reboot/navigation and dies when the tab is backgrounded. Always-on-at-brightness is heat and burn-in exposure that needs the dim schedule to be more than a gesture; device-specific Wake Lock behavior on the chosen second tablet is untested.</p>
   </article>
 
   <article class="idea" id="idea-5">
@@ -290,23 +290,21 @@
   </article>
 
   <article class="idea" id="idea-7">
-    <div class="idea-head"><span class="rank-chip">7</span><h3>Surface fork, decided deliberately</h3></div>
+    <div class="idea-head"><span class="rank-chip">7</span><h3>Surface: browser board on <code>:8091</code> — decided</h3></div>
     <div class="pill-row">
       <span class="pill">Axis: display surface &amp; kiosk</span>
-      <span class="pill conf-med">Confidence 70%</span>
-      <span class="pill">Complexity: decision</span>
+      <span class="pill conf-high">Confidence 80%</span>
+      <span class="pill">Complexity M</span>
     </div>
-    <p><strong>Description.</strong> "On a tablet, always at the same place" still leaves one genuine fork, and each leg has evidence.</p>
-    <p><strong>(a) A 'dx' page in hf_console.</strong> The console already owns everything a permanent display needs and a new surface would have to re-earn: device-owner kiosk with hardened admin guard, doze-proof MQTT recovery, two-layer liveness in BusStore, the band palette, the only settings surface a provisioned tablet can reach (dx_config_sheet). Cost: every iteration is the documented adb-sideload dance (dead mDNS, force-stop no-op on device owner, reboot-to-restart); the narrow console ACL matches this path — a point in its favor.</p>
-    <p><strong>(b) A browser board on the existing hf-console-web (<code>:8091</code>).</strong> Zero provisioning, iteration becomes <code>./deploy.sh</code>, browser keep-awake, any cheap tablet — but it means the broader <code>hf</code> account in a browser, and no native kiosk policy.</p>
-    <p><strong>(c) An e-paper / wall frame (exploratory flip).</strong> Permanence by physics: no sleep policy, no burn-in, no doze, one-minute refresh matching a spot table's natural rate — the station already ships ESP32 firmware. Rides idea 1's retained bandmap as a one-topic consumer; decouples "permanent" from the APK release cycle entirely.</p>
-    <p><strong>De-risking first move (any leg):</strong> un-drop the dxcluster-family spots the console already receives and discards at ingest (<code>if (sourceType != 'mqtt') return;</code> — sender/receiver are parsed before the discard) and throw a throwaway full-row table at real cluster data this weekend, validating legibility, sort stability, and aging choices before any Go service is committed. Known gaps: no comment/mode parsed today; outside the canonical contract — a prototype, not the end state.</p>
+    <p><strong>Description.</strong> Decided in review (2026-09-19): the "always at the same place" display is a <strong>dedicated second tablet running a browser pointed at a board page served by the existing hf-console-web service on shari <code>:8091</code></strong>. Zero provisioning; iteration is <code>./deploy.sh</code>; browser keep-awake covers screen-on (idea 4); and the operator's console tablet stays untouched as the control tool. The comparison that decided it: a <code>'dx'</code> page inside hf_console re-earns nothing that isn't already shared through the <code>:8091</code> WebSocket bridge, but taxes every change with the documented adb-sideload dance (dead LAN mDNS, force-stop no-op on device owner, reboot-to-restart); e-paper wins on physics but constrains color, flags, and refresh, and isn't a tablet. The browser leg's known costs are owned, not ignored: the broader <code>hf</code>-class account in a browser (narrowable later — ACL is per-account, not per-surface) and weaker kiosk guarantees than device-owner lock (mitigate with a full-screen tab plus Android screen pinning, or a thin WebView wrapper, if the board proves out).</p>
+    <p><strong>First move:</strong> prototype the table's legibility before the pipeline lands — a throwaway page reading horstreporter's SSE (or the <code>:8091</code> WS bridge) with real cluster-family data, so row height, sort stability, and aging behavior are validated at web speed. Known gaps: the console today discards the dxcluster source family at ingest (<code>if (sourceType != 'mqtt') return;</code> — sender/receiver are parsed before the discard), and no comment/mode is parsed; the prototype exists to de-risk UX, not to be the end state.</p>
+    <p><strong>Escape hatches kept open:</strong> if the board later earns a place on the console tablet, the <code>'dx'</code> page in hf_console (option a) inherits a proven design; if the desire drifts toward an always-on wall board across the room, the e-paper frame (option c) remains the flip, riding idea 1's retained bandmap as a one-topic consumer.</p>
     <span class="field-label">Basis</span>
-    <p class="basis-text"><code>direct:</code> <code>console_screen.dart</code> <code>_page = 'hf' | 'uhf' | 'station'</code> and the 320/420 px rail; hf-console-web on <code>:8091</code> in hf_console/CLAUDE.md; PROVISIONING.md's one-way device-owner door and force-stop no-op; the root CLAUDE.md ESP32 firmware fleet; the verified ingest discard line. <code>reasoned:</code> duplicating shipped kiosk/liveness/theme capability in a second surface is pure re-earn cost — but so is wedging a glance display into a rail sized for control panels; the fork deserves numbers (viewing distance, column count, glyph height), not taste.</p>
+    <p class="basis-text"><code>direct:</code> hf_console/CLAUDE.md web channel — the Go bridge "forwards the <code>/mqtt</code> WebSocket stream byte-for-byte" on <code>:8091</code>; <code>console_screen.dart</code> rail geometry (320/420 px) showing why the console can't host a glance table; PROVISIONING.md's one-way device-owner door. <code>external:</code> DX Cluster Lite's keep-screen-on big-row boards and dxwatch's web walls as the browser-board prior art. <code>reasoned:</code> an unproven UX should iterate at deploy-script speed, and display risk should not share a process with the operator's control console.</p>
     <span class="field-label">Rationale</span>
-    <p>Surface choice determines the deploy story, the credential exposure, whether the kiosk/screen-on work (idea 4) is spent on the console or a new surface, and whether the weekend prototype's UI survives into the real build. Deciding it explicitly is cheaper than discovering it after either leg is built.</p>
+    <p>Surface choice determined the deploy story, the credential exposure, and where the screen-on work is spent — it is now decided, and the data layer (ideas 1–3) is independent of this fork and proceeds regardless.</p>
     <span class="field-label">Downsides</span>
-    <p>A decision, not a build — its value is only realized when the chosen leg ships. The prototype path hacks a feed the design docs deliberately bypass MQTT with; it must stay throwaway.</p>
+    <p>Browser keep-awake is weaker than device-owner policy: Wake Lock needs one tap after reboot and the page can be navigated away. <code>hf</code>-class credentials in a browser on the LAN. Flutter-web rendering performance on a cheap second tablet is untested.</p>
   </article>
 </section>
 
@@ -322,6 +320,7 @@
       <tr><td>—</td><td>Weekend horstreporter prototype (un-drop dxcluster spots)</td><td>Folded into idea 7 as the de-risking first move; throwaway by design.</td></tr>
       <tr><td>—</td><td>Propagation tint on the band legend</td><td>Folded into idea 6 as the forecast deck's second presentation ("the table already draws it" is wrong today — the legend belongs to the map panels; the table doesn't exist yet).</td></tr>
       <tr><td>—</td><td>Axis coverage</td><td>All five axes carry at least one survivor: pipeline → ideas 1, 3; worked-before → idea 2; display/kiosk → ideas 4, 7; spot-table UX → idea 5; propagation → idea 6.</td></tr>
+      <tr><td>—</td><td>Surface fork (three legs)</td><td>Decided in review 2026-09-19: dedicated second tablet, browser board on <code>:8091</code> (idea 7); the console-page and e-paper legs remain recorded as escape hatches in idea 7.</td></tr>
     </tbody>
   </table>
 </section>
