@@ -37,3 +37,17 @@ restart_max_s   = 300
 stable_run_s    = 120
 
 log_level = "info"
+
+# Operational-data overlay: subscribes to the station MQTT broker and burns
+# AZ/EL/freq/TX text into the video via ffmpeg drawtext. enabled=true switches
+# the video from -c:v copy to a software x264 transcode (576p is comfortable
+# on the Pi 4; keep HD clean). The writer always runs so a SIGHUP toggle of
+# `enabled` is safe — only this flag needs a restart-less switch.
+[overlay]
+enabled       = true
+mqtt_broker   = "tcp://192.168.1.50:1883"
+mqtt_user     = "hf"
+mqtt_password = "<mqtt-hf-password>"   # or env VHFCAM_MQTT_PASSWORD
+site          = "muehle"
+station       = "hf"
+slot          = "vhfcam"

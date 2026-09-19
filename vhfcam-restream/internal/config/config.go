@@ -41,7 +41,37 @@ type Config struct {
 	RestartMaxSec   int `toml:"restart_max_s"`   // backoff cap
 	StableRunSec    int `toml:"stable_run_s"`    // a run longer than this resets the backoff
 
+	// Operational-data overlay (drawtext burn-in). The overlay writer always
+	// runs (its textfiles must exist before ffmpeg inits the drawtext filters);
+	// Enabled only gates whether ffmpeg gets the -vf chain.
+	Overlay OverlayConfig `toml:"overlay"`
+
 	LogLevel string `toml:"log_level"`
+}
+
+// OverlayConfig configures the MQTT-fed drawtext overlay.
+type OverlayConfig struct {
+	Enabled bool `toml:"enabled"`
+
+	MQTTBroker   string `toml:"mqtt_broker"`
+	MQTTUser     string `toml:"mqtt_user"`
+	MQTTPassword string `toml:"mqtt_password"` // secret; VHFCAM_MQTT_PASSWORD env overrides
+
+	Site    string `toml:"site"`    // status/state plane prefix
+	Station string `toml:"station"`
+	Slot    string `toml:"slot"`
+
+	TopicAZ    string `toml:"topic_az"`    // rotator state carrying az
+	TopicEL    string `toml:"topic_el"`    // rotator state carrying el
+	TopicRadio string `toml:"topic_radio"` // radio state carrying freq_hz/tx
+
+	Dir         string  `toml:"dir"`         // drawtext textfile directory (tmpfs on the device)
+	StaleAfterS float64 `toml:"stale_after_s"` // max age of a snapshot's own ts before the field renders --- (rotators are change-only publishers; liveness comes from /status + device_online, not republish cadence)
+	RefreshS    float64 `toml:"refresh_s"` // writer cadence (seconds, may be fractional)
+
+	FontFile string `toml:"fontfile"`
+	FontSize int    `toml:"font_size"`
+	Margin   int    `toml:"margin"`
 }
 
 // Default returns the built-in defaults (used when the config file does not
@@ -60,7 +90,24 @@ func Default() Config {
 		RestartMinSec:   5,
 		RestartMaxSec:   300,
 		StableRunSec:    120,
-		LogLevel:        "info",
+		Overlay: OverlayConfig{
+			Enabled:      false,
+			MQTTBroker:   "tcp://192.168.1.50:1883",
+			MQTTUser:     "hf",
+			Site:         "muehle",
+			Station:      "hf",
+			Slot:         "vhfcam",
+			TopicAZ:      "muehle/uhf/az-rotator/state",
+			TopicEL:      "muehle/uhf/el-rotator/state",
+			TopicRadio:   "muehle/uhf/radio/state",
+			Dir:          "/run/vhfcam-restream/overlay",
+			StaleAfterS:  3600,
+			RefreshS:     0.5,
+			FontFile:     "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+			FontSize:     28,
+			Margin:       12,
+		},
+		LogLevel: "info",
 	}
 }
 
@@ -82,6 +129,9 @@ func Load(path string) (Config, error) {
 func (c *Config) ApplyEnv() {
 	if v := os.Getenv("VHFCAM_STREAM_KEY"); v != "" {
 		c.StreamKey = v
+	}
+	if v := os.Getenv("VHFCAM_MQTT_PASSWORD"); v != "" {
+		c.Overlay.MQTTPassword = v
 	}
 }
 
@@ -112,6 +162,25 @@ func (c *Config) Validate() error {
 	}
 	if c.StallTimeoutSec <= 0 || c.RestartMinSec <= 0 || c.RestartMaxSec < c.RestartMinSec || c.StableRunSec <= 0 {
 		return fmt.Errorf("config: supervision timings invalid (need stall_timeout_s > 0, restart_min_s > 0, restart_max_s >= restart_min_s, stable_run_s > 0)")
+	}
+	if err := c.Overlay.validate(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (o *OverlayConfig) validate() error {
+	if !o.Enabled {
+		return nil
+	}
+	if o.MQTTBroker == "" {
+		return fmt.Errorf("config: overlay.enabled but overlay.mqtt_broker is empty")
+	}
+	if o.Dir == "" || o.FontFile == "" {
+		return fmt.Errorf("config: overlay.dir and overlay.fontfile must be set when enabled")
+	}
+	if o.StaleAfterS <= 0 || o.RefreshS <= 0 || o.FontSize <= 0 || o.Margin < 0 {
+		return fmt.Errorf("config: overlay timings/sizes invalid")
 	}
 	return nil
 }

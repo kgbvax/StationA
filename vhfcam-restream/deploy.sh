@@ -26,6 +26,12 @@
 #   FFMPEG_BIN      ffmpeg_bin value      (default: /usr/bin/ffmpeg)
 #   LOG_LEVEL       log_level value       (default: info)
 #
+# Overlay (drawtext burn-in of station data; needs the station MQTT broker):
+#   OVERLAY_ENABLED overlay.enabled value (default: false)
+#   MQTT_BROKER     overlay.mqtt_broker   (default: tcp://192.168.1.50:1883)
+#   MQTT_USER       overlay.mqtt_user     (default: hf)
+#   MQTT_PASSWORD   overlay.mqtt_password (default: empty -> set on device)
+#
 # Configuration lives in a single 0600 TOML file on the target
 # (/etc/vhfcam-restream/config.toml). The RTSPS path token and the YouTube
 # stream key are secrets and live in that file — never on any command line or
@@ -55,6 +61,11 @@ YT_URL="${YT_URL:-rtmp://a.rtmp.youtube.com/live2}"
 YT_STREAM_KEY="${YT_STREAM_KEY:-}"
 FFMPEG_BIN="${FFMPEG_BIN:-/usr/bin/ffmpeg}"
 LOG_LEVEL="${LOG_LEVEL:-info}"
+
+OVERLAY_ENABLED="${OVERLAY_ENABLED:-false}"
+MQTT_BROKER="${MQTT_BROKER:-tcp://192.168.1.50:1883}"
+MQTT_USER="${MQTT_USER:-hf}"
+MQTT_PASSWORD="${MQTT_PASSWORD:-}"
 
 # Allow "user@host" in SSH_HOST; otherwise prepend SSH_USER.
 if [[ "$SSH_HOST" == *"@"* ]]; then
@@ -114,6 +125,20 @@ trap 'rm -f "$SEED_CONFIG" "${UNIT_FILE:-}"' EXIT
   echo "stable_run_s    = 120"
   echo ""
   echo "log_level = \"$(toml_escape "$LOG_LEVEL")\""
+  echo ""
+  echo "# Operational-data overlay (drawtext burn-in): subscribes to the uhf"
+  echo "# rotator/radio state snapshots and renders AZ/EL/freq/TX textfiles"
+  echo "# under /run (tmpfs). enabled=false keeps the plain copy pipeline."
+  echo "# The MQTT password is a secret — this whole file stays 0600."
+  echo "[overlay]"
+  echo "enabled       = ${OVERLAY_ENABLED}"
+  echo "mqtt_broker   = \"$(toml_escape "$MQTT_BROKER")\""
+  echo "mqtt_user     = \"$(toml_escape "$MQTT_USER")\""
+  if [[ -n "$MQTT_PASSWORD" ]]; then
+    echo "mqtt_password = \"$(toml_escape "$MQTT_PASSWORD")\""
+  else
+    echo "# mqtt_password = \"...\"   # set on the device (copy from another hf service)"
+  fi
 } > "$SEED_CONFIG"
 
 # --- build for the Pi (Linux arm64) -----------------------------------------
@@ -144,6 +169,11 @@ Group=${SERVICE_USER}
 ConfigurationDirectory=${SERVICE_NAME}
 # A writable state dir (unused today, reserved for future on-disk state).
 StateDirectory=${SERVICE_NAME}
+# Overlay textfiles live on tmpfs under /run (drawtext reads them each frame);
+# RuntimeDirectory creates it owned by the service user, ReadWritePaths opens
+# it inside the ProtectSystem=strict sandbox.
+RuntimeDirectory=${SERVICE_NAME}
+ReadWritePaths=/var/lib/${SERVICE_NAME} /run/${SERVICE_NAME}
 
 # Hardening. vhfcam-restream needs only outbound TCP (camera 7441 TLS/SRTP,
 # YouTube 1935 RTMP) and /usr/bin/ffmpeg — no serial, no disk, no elevated

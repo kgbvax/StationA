@@ -3,9 +3,10 @@
 vhfcam-restream copies the shack VHF camera's (UniFi Protect) RTSPS stream to
 YouTube Live over RTMP. It supervises **one `ffmpeg` process**: ffmpeg does the
 streaming (RTSPS in, FLV out), the Go binary owns liveness — restart with
-exponential backoff, kill on stall, SIGHUP-driven profile switch. **Not an MQTT
-slot** — no `/meta`, `/state`, `/cmd` planes; it is a plain media relay and is
-deliberately outside the bus.
+exponential backoff, kill on stall, SIGHUP-driven profile switch. Since
+2026-09-19 it is also an MQTT **consumer** (and minimal slot): the
+operational-data overlay subscribes to the uhf rotator/radio state snapshots
+and burns AZ/EL/freq/TX into the video (see below).
 
 ## Why the args look the way they do
 
@@ -49,6 +50,38 @@ sudo systemctl kill -s SIGHUP vhfcam-restream
 SIGHUP re-reads the config and restarts ffmpeg. A failed reload (malformed
 file) keeps the current config *and* the current stream running. `log_level`
 changes are picked up on the next service restart only.
+
+## Overlay (operational-data burn-in)
+
+`[overlay] enabled = true` switches the video from `-c:v copy` to
+`libx264 -preset superfast` + a `drawtext` chain (576p comfortable on the Pi 4,
+load ~+0.8; keep the HD profile clean — 1080p software x264 is not budgeted).
+
+- **File contract**: the writer (`internal/overlay`) renders
+  `/run/vhfcam-restream/overlay/{az,el,freq,tx}.txt` at 2 Hz (tmpfs,
+  `RuntimeDirectory` + `ReadWritePaths` in the unit). ffmpeg's drawtext reads
+  them with `reload=1` every frame. The files MUST exist before ffmpeg inits
+  drawtext — the writer runs unconditionally and seeds them at startup, which
+  is what makes a SIGHUP toggle of `enabled` safe.
+- **Data**: `muehle/uhf/az-rotator/state` (`az`), `muehle/uhf/el-rotator/state`
+  (`el`), `muehle/uhf/radio/state` (`freq_hz`, `tx`) **plus each slot's
+  `/status` LWT**. Freshness is two-layer (station model): a field renders only
+  when our MQTT link is up, the source slot's `/status` is `online`, the
+  snapshot says `device_online`, and the snapshot's own `ts` is younger than
+  `stale_after_s` (default 3600 — the bridges are change-only publishers, so
+  silence is normal and message-arrival time is *not* a staleness signal).
+  Stale → `---`, never a frozen value. The red TX line just goes empty when
+  not transmitting.
+- **Planes**: publishes `muehle/hf/vhfcam/status` (retained LWT online/offline)
+  and `/state` (`mqtt_connected`, per-field stale flags, `tx`). No `/meta` or
+  `/cmd` yet. Broker is the **hassio** one (`tcp://192.168.1.50:1883`) — the
+  shari-local mosquitto of the repo docs is not what is deployed (see
+  memory `station-broker-hassio`).
+- paho conventions apply: handlers Enqueue (never publish inline),
+  ctx-aware connect via `shared/mqtt`.
+- Later phases (planned, not built): phase 2 = Go-rendered overlay PNG piped
+  to ffmpeg for a minimap + worked-station (from `muehle/hf/spots`) + sat
+  subpoint via SGP4; phase 3 = RX/TX audio via an ALSA line tap (hardware).
 
 ## Ops
 

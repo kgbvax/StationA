@@ -36,11 +36,36 @@ func TestBuildArgs(t *testing.T) {
 			t.Errorf("args missing %q:\n%s", want, joined)
 		}
 	}
+	if strings.Contains(joined, "-vf") {
+		t.Errorf("overlay disabled but -vf present:\n%s", joined)
+	}
 	if last := args[len(args)-1]; last != "rtmp://a.rtmp.youtube.com/live2/SEKRIT" {
 		t.Errorf("output URL = %q", last)
 	}
-	if has := strings.Contains(joined, "TOKEN1"); !has {
-		t.Errorf("source URL not in args (sanity): %s", joined)
+}
+
+func TestBuildArgsWithOverlay(t *testing.T) {
+	cfg := testCfg()
+	cfg.Overlay.Enabled = true
+	src, _ := cfg.EffectiveSource()
+	args := BuildArgs(cfg, src)
+	joined := strings.Join(args, " ")
+
+	for _, want := range []string{
+		"-vf drawbox=",
+		"drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+		"textfile=/run/vhfcam-restream/overlay/az.txt:reload=1",
+		"fontcolor=red", // TX indicator
+		"-c:v libx264",
+		"-preset superfast",
+		"-pix_fmt yuv420p",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("overlay args missing %q:\n%s", want, joined)
+		}
+	}
+	if strings.Contains(joined, "-c:v copy") {
+		t.Errorf("overlay enabled but video still copied:\n%s", joined)
 	}
 }
 
