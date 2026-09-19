@@ -42,6 +42,7 @@ separate per-component remotes to push to.
 | m5dial-hf-rotctrl | `m5dial-hf-rotctrl/` | M5Stack Dial firmware — HF rotator control head (analog meter face + knob; not a slot; consumer + /cmd stimulator) |
 | logger-spot-bridge | `logger-spot-bridge/` | Shack-logger bridge (DXLog/Log4OM) → `hf/spots` — the operator-keyed station (call, position, beam bearing) |
 | testui | `testui/` | MQTT relay + schema-aware browser UI for the bus (not a slot; passive consumer + /cmd stimulator) |
+| vhfcam-restream | `vhfcam-restream/` | VHF cam (UniFi Protect RTSPS) → YouTube Live restreamer — Go supervisor around ffmpeg, sd/hd profiles via SIGHUP (not an MQTT slot; no bus presence) |
 | mqtt-broker | `mqtt-broker/` | Shack-local Mosquitto broker on shari, bridged to the HA broker (infra — not a slot, not Go) |
 
 Each project has its own `CLAUDE.md` and is independently buildable (`go build`/`go test`

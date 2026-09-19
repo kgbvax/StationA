@@ -1,0 +1,37 @@
+# vhfcam-restream example configuration.
+#
+# The real config lives at /etc/vhfcam-restream/config.toml on shari (0600,
+# seeded once by deploy.sh). The RTSPS path tokens and the YouTube stream key
+# are secrets — never commit a filled-in copy of this file.
+
+# Camera sources (UniFi Protect RTSPS). SD is the default profile.
+source_url    = "rtsps://192.168.0.1:7441/<sd-token>?enableSrtp"
+source_hd_url = "rtsps://192.168.0.1:7441/<hd-token>?enableSrtp"
+
+# Which source feeds the stream: "sd" | "hd".
+# Switch live without restarting: `sudo systemctl kill -s SIGHUP vhfcam-restream`
+quality = "sd"
+
+# YouTube RTMP ingest (stream key is the secret part).
+youtube_url = "rtmp://a.rtmp.youtube.com/live2"
+stream_key  = "<youtube-stream-key>"   # or env VHFCAM_STREAM_KEY
+
+# ffmpeg invocation. Both camera profiles emit H.264 video + AAC and Opus
+# audio tracks; RTMP/FLV only carries AAC, so audio_map pins the AAC track.
+# Both streams are copied — no transcoding on the Pi.
+ffmpeg_bin     = "/usr/bin/ffmpeg"
+rtsp_transport = "tcp"
+video_map      = "0:v:0"
+audio_map      = "0:a:m:aac"
+video_codec    = "copy"
+audio_codec    = "copy"
+
+# Supervision: kill+restart when ffmpeg emits no progress for stall_timeout_s;
+# restart backoff starts at restart_min_s and doubles up to restart_max_s;
+# a run longer than stable_run_s resets the backoff.
+stall_timeout_s = 60
+restart_min_s   = 5
+restart_max_s   = 300
+stable_run_s    = 120
+
+log_level = "info"
