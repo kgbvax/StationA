@@ -34,7 +34,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"math"
 	"sync"
 
 	"spid-ercm-rotator-bridge/internal/config"
@@ -297,8 +296,9 @@ func (m *Mount) Target(ax Axis) (float64, bool) {
 	return *a.target, true
 }
 
-// Moving reports the axis's inferred motion (KTD14): |target − readback| >
-// deadband, false while readback validity is unknown, false after a stop.
+// Moving reports the axis's inferred motion (KTD14): target outside the
+// deadband of the readback (az circular, el linear — see axis.outOfDeadband),
+// false while readback validity is unknown, false after a stop.
 func (m *Mount) Moving(ax Axis) bool {
 	a := m.axes[ax]
 	if a == nil {
@@ -309,5 +309,5 @@ func (m *Mount) Moving(ax Axis) bool {
 		return false
 	}
 	rb, valid := a.ctrl.Readback()
-	return valid && math.Abs(deg-rb) > a.ctl.Deadband
+	return valid && a.outOfDeadband(deg, rb)
 }
