@@ -164,7 +164,9 @@ type AxisControl struct {
 	Min float64 `toml:"min"`
 	Max float64 `toml:"max"`
 	// Deadband is the no-op skip distance: a target within this distance of
-	// the cached readback skips the serial write (R12).
+	// the cached readback skips the serial write (R12). Defaults: az 4°
+	// (micro-corrections from tracking clients must not jerk the rotor),
+	// el 1°.
 	Deadband float64 `toml:"deadband"`
 	// Park is the axis park position dispatched by the PstRotator PARK
 	// command (R7).
@@ -211,7 +213,7 @@ func Defaults() Config {
 			ReopenCooldown:    "2s",
 			PollIntervalDur:   time.Second,
 			ReopenCooldownDur: 2 * time.Second,
-			AZ:                AxisControl{Min: 0, Max: 360, Deadband: 1, Park: 0},
+			AZ:                AxisControl{Min: 0, Max: 360, Deadband: 4, Park: 0},
 			EL:                AxisControl{Min: 0, Max: 90, Deadband: 1, Park: 0},
 		},
 	}

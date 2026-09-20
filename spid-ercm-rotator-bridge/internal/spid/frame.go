@@ -118,7 +118,23 @@ func decodeStatusReply(b []byte) (float64, error) {
 		}
 	}
 	u := int(b[1])*100 + int(b[2])*10 + int(b[3])
-	return float64(u - 360), nil
+	if u < 360 {
+		// az is u − 360; a u below the 360 offset claims a negative azimuth,
+		// which no physical rotor reports — treat it as the encoding
+		// violation it is, never as a position (the codec's never-misread
+		// posture).
+		return 0, fmt.Errorf("status reply az u=%d below the 360 offset — encoding violation", u)
+	}
+	az := float64(u - 360)
+	if az >= 360 {
+		// Controllers with a continuous position register keep counting past
+		// north when a shortest-path slew crosses 0° (observed live
+		// 2026-09-20: 271°→89° through north reported as 449). The geometry
+		// is right, only the report is unwrapped — normalize into [0, 360)
+		// so the deadband/moving math and /state stay in degrees.
+		az = math.Mod(az, 360)
+	}
+	return az, nil
 }
 
 // decodeCommandAz reads the azimuth back out of a set-position command

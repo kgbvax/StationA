@@ -431,6 +431,41 @@ func TestDeadbandBoundaryExactlyConfigured(t *testing.T) {
 	}
 }
 
+// The az deadband distance is circular: across the 359°↔1° seam a 2°
+// micro-correction is WITHIN the deadband (the live 2026-09-20 failure had
+// the linear comparison dispatch every tracking micro-goto once the
+// controller's readback landed a full turn off). el stays linear.
+func TestDeadbandAzWrapsAtNorth(t *testing.T) {
+	az, el := newFake(), newFake()
+	az.setReadback(359, true) // deadband is 2 in testControl()
+	m := newTestMount(t, testControl(), az, el)
+
+	// Across-north micro-correction: circular distance 359→1 is 2° — within.
+	m.Goto(Target{AZ: 1, HasAZ: true})
+	waitIdle(t, m, AZ)
+	if got := az.written(); len(got) != 0 {
+		t.Errorf("az writes = %v, want none (2° across north is within the deadband)", got)
+	}
+	if m.Moving(AZ) {
+		t.Error("Moving(AZ) = true for a within-deadband cross-north target, want false")
+	}
+
+	// Just beyond: 359→2.5 is 3.5° — writes.
+	m.Goto(Target{AZ: 2.5, HasAZ: true})
+	waitIdle(t, m, AZ)
+	if got := az.written(); len(got) != 1 || got[0] != 2.5 {
+		t.Errorf("az writes = %v, want [2.5] (3.5° across north is beyond the deadband)", got)
+	}
+
+	// el keeps the linear comparison: deadband 2, target 3 vs readback 0.
+	el.setReadback(0, true)
+	m.Goto(Target{EL: 3, HasEL: true})
+	waitIdle(t, m, EL)
+	if got := el.written(); len(got) != 1 || got[0] != 3 {
+		t.Errorf("el writes = %v, want [3] (el deadband is linear, 3 > 2)", got)
+	}
+}
+
 // KTD7/KTD8: a readback of unknown validity never skips a write.
 func TestUnknownReadbackNeverSkips(t *testing.T) {
 	az, el := newFake(), newFake()

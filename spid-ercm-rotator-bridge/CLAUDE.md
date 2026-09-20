@@ -164,7 +164,8 @@ Config is TOML (`/etc/spid-ercm-rotator-bridge/config.toml` by default, or
 `-config <path>`). It holds one `[[slot]]` per axis (`axis` = `az`|`el`, slot
 name, `device_model`, `link`, a `[slot.serial]` port/baud table — empty port ⇒
 mock mode), the `[rotctld]` and `[pstrotator]` listener endpoints, and
-`[control]` (per-axis travel limits, deadband ~1°, park positions, poll
+`[control]` (per-axis travel limits, no-op deadband — az default 4° so
+tracking micro-corrections do not move the rotor, el 1° — park positions, poll
 interval, reopen cooldown). The MQTT password is **not** in the TOML — it is
 loaded from an `EnvironmentFile` so it never appears in the unit file or
 process command line:
