@@ -109,7 +109,7 @@ func run(ctx context.Context, cfg config.Config, debug bool, log *slog.Logger) e
 	}
 
 	// 1. Connect MQTT with LWT and a /cmd subscription.
-	mqttClient, err := connectMQTT(ctx, cfg, log)
+	mqttClient, err := connectMQTT(ctx, cfg, b, log)
 	if err != nil {
 		return fmt.Errorf("mqtt connect: %w", err)
 	}
@@ -132,7 +132,7 @@ var cmdHandler = func(payload []byte) {}
 // Connect is ctx-aware: paho's Connect()/Wait() blocks ignoring our context, so
 // without this a SIGTERM while the broker is unreachable (or auth is failing)
 // can't interrupt the connect and systemd must SIGKILL after TimeoutStopSec.
-func connectMQTT(ctx context.Context, cfg config.Config, log *slog.Logger) (pahomqtt.Client, error) {
+func connectMQTT(ctx context.Context, cfg config.Config, b *bridge.Bridge, log *slog.Logger) (pahomqtt.Client, error) {
 	opts := pahomqtt.NewClientOptions()
 	opts.AddBroker(cfg.MQTT.Broker)
 	clientID := cfg.MQTT.ClientID
@@ -169,6 +169,10 @@ func connectMQTT(ctx context.Context, cfg config.Config, log *slog.Logger) (paho
 		// Re-publish the retained birth certificate on reconnect so a fresh
 		// broker (or a late subscriber) sees current identity/capabilities.
 		publishMetaOnReconnect(c, cfg)
+		// Re-land the retained /state too (review S2): the broker may have
+		// flushed it, and the bridge's change-only dedup would otherwise never
+		// restore it while the tuner sits steady. No-ops before first telemetry.
+		b.RepublishState()
 	}
 	opts.OnConnectionLost = func(_ pahomqtt.Client, err error) {
 		log.Warn("MQTT connection lost", "err", err)

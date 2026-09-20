@@ -148,6 +148,20 @@ func (a *axis) run(ctx context.Context) {
 	}
 }
 
+// outOfDeadband reports whether a target is outside the axis's no-op
+// deadband of a cached readback (the R12 comparison). For the az axis the
+// distance is circular (the 359°↔1° seam counts as 2°, not 358°) — a linear
+// comparison over-fires at north and, against a readback that ever lands a
+// full turn off, neuters the deadband entirely; el is linear (0–180 does not
+// wrap).
+func (a *axis) outOfDeadband(deg, rb float64) bool {
+	d := math.Abs(deg - rb)
+	if a.name == AZ && d > 180 {
+		d = 360 - d
+	}
+	return d > a.ctl.Deadband
+}
+
 // drain claims the latest pending target and writes it, repeatedly, until
 // the queue is empty. Between claims a newer target may have superseded the
 // last one — claiming again picks it up, so the axis always moves toward the
@@ -178,7 +192,7 @@ func (a *axis) drain() {
 			// that intervened between admission and claim. Drop it — the
 			// suppression covers exactly the intents admitted before the
 			// stop, and nothing beyond them.
-		} else if rb, valid := a.ctrl.Readback(); !valid || math.Abs(deg-rb) > a.ctl.Deadband {
+		} else if rb, valid := a.ctrl.Readback(); !valid || a.outOfDeadband(deg, rb) {
 			// R12: within the configured deadband of a VALID cached
 			// readback the write is skipped; an unknown readback never
 			// skips (KTD7 always-write). The boundary at exactly the

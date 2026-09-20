@@ -459,9 +459,30 @@ func (c *Client) publishMeta() {
 	c.publishJSON(c.selfTopic("meta"), meta, 1, true)
 }
 
+// tokenTimeout bounds every paho token Wait (publishes AND subscribes). A
+// broker that accepts the TCP connection but stalls PUBACK/SUBACK must not
+// park the single jobs worker — the reconciler's idle walk-away grounding
+// runs on it, and a parked worker silently stops that safety function while
+// /status stays online (review S1a).
+const tokenTimeout = 10 * time.Second
+
+// waitToken bounds a token Wait; false = it did not complete in time (already
+// logged). The caller still checks tok.Error() on true.
+func waitToken(tok paho.Token, what, topic string) bool {
+	if !tok.WaitTimeout(tokenTimeout) {
+		slog.Error("[mqtt] "+what+" timed out", "topic", topic, "after", tokenTimeout)
+		return false
+	}
+	return true
+}
+
 func (c *Client) subscribe(topic string, handler paho.MessageHandler) {
-	if token := c.client.Subscribe(topic, 1, handler); token.Wait() && token.Error() != nil {
-		slog.Error("[mqtt] subscribe failed", "topic", topic, "err", token.Error())
+	tok := c.client.Subscribe(topic, 1, handler)
+	if !waitToken(tok, "subscribe", topic) {
+		return
+	}
+	if err := tok.Error(); err != nil {
+		slog.Error("[mqtt] subscribe failed", "topic", topic, "err", err)
 		return
 	}
 	slog.Info("[mqtt] subscribed", "topic", topic)
@@ -469,14 +490,22 @@ func (c *Client) subscribe(topic string, handler paho.MessageHandler) {
 
 func (c *Client) publishJSON(topic string, v any, qos byte, retained bool) {
 	b, _ := json.Marshal(v)
-	if token := c.client.Publish(topic, qos, retained, b); token.Wait() && token.Error() != nil {
-		slog.Error("[mqtt] publish failed", "topic", topic, "err", token.Error())
+	tok := c.client.Publish(topic, qos, retained, b)
+	if !waitToken(tok, "publish", topic) {
+		return
+	}
+	if err := tok.Error(); err != nil {
+		slog.Error("[mqtt] publish failed", "topic", topic, "err", err)
 	}
 }
 
 func (c *Client) publishString(topic, payload string, qos byte, retained bool) {
-	if token := c.client.Publish(topic, qos, retained, payload); token.Wait() && token.Error() != nil {
-		slog.Error("[mqtt] publish failed", "topic", topic, "err", token.Error())
+	tok := c.client.Publish(topic, qos, retained, payload)
+	if !waitToken(tok, "publish", topic) {
+		return
+	}
+	if err := tok.Error(); err != nil {
+		slog.Error("[mqtt] publish failed", "topic", topic, "err", err)
 	}
 }
 

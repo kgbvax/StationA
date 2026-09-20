@@ -638,7 +638,16 @@ func (s *Session) RoundTrip(ctx context.Context, c *civ.Client, frame []byte, wa
 			return civ.Frame{}, fmt.Errorf("radio: no reply to command %02x within %s", frame[4], wait)
 		case <-ctx.Done():
 			return civ.Frame{}, ctx.Err()
-		case <-c.Lost:
+		case e := <-c.Lost:
+			// Run owns the loss transition (see closeClient's doc) and Lost
+			// delivers exactly once — an in-flight RoundTrip that observes
+			// the loss must RE-QUEUE it or the state machine never sees the
+			// loss and the session stays zombie-live (a watchdog trip or any
+			// demand racing the radio dying hits this).
+			select {
+			case c.Lost <- e:
+			default:
+			}
 			return civ.Frame{}, errors.New("radio: session lost awaiting reply")
 		}
 	}

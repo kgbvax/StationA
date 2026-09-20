@@ -64,6 +64,17 @@ static const int SAFE_BANDS_COUNT = sizeof(SAFE_BANDS) / sizeof(SAFE_BANDS[0]);
 // block; bump it before connect() (the LWT is set before connect).
 #define MQTT_BUFFER_SIZE 1024
 #define MQTT_KEEPALIVE_S 30
+
+// Bounded reconnect (defect D6): a silent broker must not stall the arm-logic
+// loop. PubSubClient::connect blocks in two places — the TCP SYN wait (ESP32
+// WiFiClient default: 3000 ms) and the CONNACK wait (PubSubClient default:
+// 15 s). Both are shrunk here; SlotMqtt::loop() additionally rate-limits
+// attempts so at most ONE slot dials per main-loop pass. Worst-case single-pass
+// stall ≈ MQTT_CONNECT_TIMEOUT_MS + 1 s CONNACK floor, vs ~6 s (two unbounded
+// TCP waits) / ~18 s (CONNACK case) before.
+#define MQTT_CONNECT_TIMEOUT_MS   150  // TCP SYN wait per attempt, ms
+#define MQTT_CONNACK_TIMEOUT_S    1    // CONNACK wait, whole seconds (PubSubClient floor)
+#define MQTT_RECONNECT_BACKOFF_MS 1000 // min spacing between connect attempts (shared)
 // Two slots ⇒ two MQTT connections (each with its own LWT), mirroring the Go
 // compound bridge's one-client-per-slot decision. MQTT 3.1.1 allows one Will
 // per client, so one connection per slot is what makes a PLC crash fire both

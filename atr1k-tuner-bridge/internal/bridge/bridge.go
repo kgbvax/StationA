@@ -51,6 +51,10 @@ type Bridge struct {
 	mu    sync.RWMutex
 	state tuner.State
 	last  tuner.State // last published snapshot (for change dedup)
+	// hasLast latches once a snapshot has actually published. RepublishState
+	// refuses to run before the first telemetry, so an early OnConnect (before
+	// wsLoop's first frame) cannot publish an all-zero snapshot (review S2).
+	hasLast bool
 }
 
 // metaPayload is the JSON shape published to <slot>/meta (retained birth cert).
@@ -203,6 +207,7 @@ func (b *Bridge) HandleTelemetry(st tuner.State) {
 	changed := stateChanged(b.last, st)
 	if changed {
 		b.last = st
+		b.hasLast = true
 	}
 	b.mu.Unlock()
 	if changed {
@@ -221,11 +226,29 @@ func (b *Bridge) SetDeviceOnline(online bool, errMsg string) {
 	changed := stateChanged(b.last, snap)
 	if changed {
 		b.last = snap
+		b.hasLast = true
 	}
 	b.mu.Unlock()
 	if changed {
 		b.publishState(snap)
 	}
+}
+
+// RepublishState re-lands the retained /state after an MQTT (re)connect: the
+// broker may have flushed retained messages, and the change-only dedup would
+// otherwise keep /state missing indefinitely while the tuner sits steady —
+// exactly the ultrabridge gap (review S2). No-op until the first telemetry
+// has published, so the OnConnect hook firing before wsLoop's first frame
+// never publishes an all-zero snapshot.
+func (b *Bridge) RepublishState() {
+	b.mu.Lock()
+	if !b.hasLast {
+		b.mu.Unlock()
+		return
+	}
+	snap := b.state
+	b.mu.Unlock()
+	b.publishState(snap)
 }
 
 // stateChanged reports whether two snapshots differ in any published field.

@@ -80,6 +80,12 @@ not — always present), `error` (string, omitempty).
 `direction` is deliberately not called `mode` — on the station bus `mode` is the
 canonical radio-mode vocabulary (`cw`/`usb`/…, integration model §4).
 
+On every (re)connect the client re-lands the retained `/state` — bypassing the
+change-only dedup, after `/meta` and before the `/cmd` subscription re-arms —
+so a broker-side flush of retained messages self-heals even while the antenna
+sits idle. The Home Assistant birth (`homeassistant/status` = online) bypasses
+the dedup the same way.
+
 The RCU-06 uses kHz internally; ultrabridge multiplies by 1000 before publishing `freq_hz`.
 
 See `ultrabeam-mqtt-api.md` for the full on-the-wire contract.

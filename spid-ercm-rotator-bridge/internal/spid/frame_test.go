@@ -84,14 +84,16 @@ func TestDecodeStatusReplyRawDigits(t *testing.T) {
 		t.Fatal("ASCII digit bytes in a status reply must be rejected — Rot1Prog reply digits are raw 0-9 (Appendix A)")
 	}
 
-	// Full digit span: az 0 → u 360 → raw 3,6,0; az 360 → u 720 → raw 7,2,0.
+	// Full digit span: az 0 → u 360 → raw 3,6,0; az 360 ≡ 0 → u 720 → raw
+	// 7,2,0 (normalized into [0, 360) — same contract as the past-north wrap
+	// pinned by TestDecodeStatusReplyWrapsPastNorth).
 	for _, tc := range []struct {
 		az   float64
 		raw  []byte
 		want float64
 	}{
 		{0, []byte{0x57, 0x03, 0x06, 0x00, 0x20}, 0},
-		{360, []byte{0x57, 0x07, 0x02, 0x00, 0x20}, 360},
+		{360, []byte{0x57, 0x07, 0x02, 0x00, 0x20}, 0},
 	} {
 		got, err := decodeStatusReply(tc.raw)
 		if err != nil {
@@ -110,6 +112,9 @@ func TestDecodeStatusReplyRejectsBadFrames(t *testing.T) {
 		"short":            {0x57, 0x04, 0x08, 0x20},
 		"long":             {0x57, 0x04, 0x08, 0x03, 0x20, 0x00},
 		"empty":            {},
+		// u = 100 < the 360 offset would decode to az −260 — no physical
+		// rotor reports a negative azimuth; this is an encoding violation.
+		"u below the 360 offset": {0x57, 0x01, 0x00, 0x00, 0x20},
 	} {
 		if _, err := decodeStatusReply(b); err == nil {
 			t.Errorf("%s: expected decode error, got none", name)
@@ -117,11 +122,29 @@ func TestDecodeStatusReplyRejectsBadFrames(t *testing.T) {
 	}
 }
 
+// TestDecodeStatusReplyWrapsPastNorth pins the live observation of
+// 2026-09-20: a shortest-path slew across north (271°→89°) left the
+// controller's continuous position register at 449; the bridge must
+// normalize it into [0, 360) or the deadband compares targets against a
+// readback a full turn away and never suppresses.
+func TestDecodeStatusReplyWrapsPastNorth(t *testing.T) {
+	reply := encodeStatusReply(449) // u = 809 → raw digits 8, 0, 9
+	got, err := decodeStatusReply(reply)
+	if err != nil {
+		t.Fatalf("decode past-north reply %s: %v", hex(reply), err)
+	}
+	if got != 89 {
+		t.Errorf("past-north report 449 decoded to %v, want 89", got)
+	}
+}
+
 // TestCommandReplyRoundTrip walks the whole encode/decode pair: a set command's
 // ASCII digits and the device's raw-digit status reply for the same azimuth
-// must both resolve back to the same whole degrees, fractions rounding.
+// must both resolve back to the same whole degrees, fractions rounding. (360
+// is absent by design: the reply side normalizes it to 0 — see
+// TestDecodeStatusReplyRawDigits.)
 func TestCommandReplyRoundTrip(t *testing.T) {
-	for _, az := range []float64{0, 1, 45, 123, 180, 359, 360, 123.4, 359.6} {
+	for _, az := range []float64{0, 1, 45, 123, 180, 359, 123.4, 359.6} {
 		want := math.Round(az)
 		cmd := encodeSet(az)
 		if got := decodeCommandAz(cmd); got != want {
@@ -131,6 +154,11 @@ func TestCommandReplyRoundTrip(t *testing.T) {
 		got, err := decodeStatusReply(reply)
 		if err != nil {
 			t.Fatalf("az %v: decode reply %s: %v", az, hex(reply), err)
+		}
+		// The reply side normalizes into [0, 360): a whole-degree want of 360
+		// (359.6 rounded) reads back as 0 — the same position.
+		if want == 360 {
+			want = 0
 		}
 		if got != want {
 			t.Errorf("az %v: reply %s decodes to %v, want %v", az, hex(reply), got, want)

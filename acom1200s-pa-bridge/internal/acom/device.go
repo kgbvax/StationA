@@ -473,8 +473,17 @@ func (d *Device) sendAck(msgReceivedAddr byte) error {
 	return d.write("TX ACK", packet)
 }
 
-// write sends a packet to the port under the device mutex. Returns an error if
-// the port is not open.
+// writeTimeout bounds a serial Write (review S1c): a wedged USB adapter must
+// not hold d.mu forever — the /cmd worker, the Run loop's ACK path, and the
+// ctx-cancelled Close all serialize on it, and a shutdown hang ends in
+// systemd SIGKILL.
+const writeTimeout = 5 * time.Second
+
+// write sends a packet to the port under the device mutex, with a bounded
+// Wait. Returns an error if the port is not open. On timeout the port handle
+// is dropped (the same convention reopen uses): later writes fail fast with
+// "not active" until the in-place self-heal brings a fresh port up, and the
+// abandoned goroutine unblocks when the stale handle is closed.
 func (d *Device) write(label string, packet []byte) error {
 	// Frames carrying a checksum append it as the final byte.
 	if packet[1] != MsgEnableAuto {
@@ -488,6 +497,17 @@ func (d *Device) write(label string, packet []byte) error {
 	if d.debug {
 		d.log.Debugf("%s: %s", label, hex.EncodeToString(packet))
 	}
-	_, err := d.port.Write(packet)
-	return err
+	port := d.port
+	done := make(chan error, 1)
+	go func() {
+		_, err := port.Write(packet)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(writeTimeout):
+		d.port = nil
+		return fmt.Errorf("%s: serial write timed out after %s — port dropped for reopen", label, writeTimeout)
+	}
 }

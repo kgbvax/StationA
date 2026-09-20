@@ -74,6 +74,14 @@ class BusStore extends ChangeNotifier {
   final _highFreq = <String, ValueNotifier<dynamic>>{};
   final List<FaultRecord> _faultHistory = [];
 
+  /// Payloads rejected by apply's type guards (non-object JSON on meta/state/
+  /// cmd, non-string on status). Diagnostic only — the house style has no
+  /// logger; surface it like the other store getters. A rejected payload
+  /// keeps the previous plane value: it must neither throw out of the MQTT
+  /// batch loop (T2) nor clobber or clear last-good state.
+  int _malformedPayloads = 0;
+  int get malformedPayloads => _malformedPayloads;
+
   /// When the MQTT link came up this session. Silence reporting (expected
   /// slots never heard from) runs on a grace period after it — NOT after the
   /// first message: a broker with no retained payloads under muehle/# (fresh
@@ -155,13 +163,23 @@ class BusStore extends ChangeNotifier {
       }
     } else {
       final value = _decodePayload(payload);
+      // Type guards, not casts (T2): a non-object payload ([1,2], 42, true,
+      // or non-JSON text that _decodePayload passed through raw) used to
+      // throw a TypeError out of the MQTT ingestion batch — every message
+      // after it in that batch was dropped, and a poisoned retained payload
+      // re-aborted the same replay on every reconnect. A rejected payload
+      // keeps the previous plane value.
       switch (plane) {
         case 'meta':
-          slot.meta = value as Map<String, dynamic>?;
+          if (value is Map<String, dynamic>) {
+            slot.meta = value;
+          } else {
+            _malformedPayloads++;
+          }
         case 'state':
-          final oldState = slot.state;
-          slot.state = value as Map<String, dynamic>?;
-          if (slot.state != null) {
+          if (value is Map<String, dynamic>) {
+            final oldState = slot.state;
+            slot.state = value;
             // device_online carries the operator-visible liveness; stamp its
             // flips so 'device unreachable' rows can show when it happened.
             if (oldState == null || oldState['device_online'] != slot.state!['device_online']) {
@@ -169,13 +187,22 @@ class BusStore extends ChangeNotifier {
             }
             _updateHotValues(addr, slot.state!);
             _updateFaultHistory(addr, slot.state);
+          } else {
+            _malformedPayloads++;
           }
         case 'status':
-          final newStatus = value as String?;
-          if (slot.status != newStatus) slot.statusChangedAt = clock.now();
-          slot.status = newStatus;
+          if (value is String) {
+            if (slot.status != value) slot.statusChangedAt = clock.now();
+            slot.status = value;
+          } else {
+            _malformedPayloads++;
+          }
         case 'cmd':
-          slot.cmd = value as Map<String, dynamic>?;
+          if (value is Map<String, dynamic>) {
+            slot.cmd = value;
+          } else {
+            _malformedPayloads++;
+          }
       }
     }
     notifyListeners();

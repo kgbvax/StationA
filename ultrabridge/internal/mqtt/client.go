@@ -163,11 +163,7 @@ func New(ctx context.Context, broker, clientID, site, station, slot, discoveryPr
 	})
 	opts.SetOnConnectHandler(func(_ paho.Client) {
 		c.logger().Info("connected", "broker", broker, "client_id", clientID)
-		c.publishString(c.statusTopic(), "online", 1, true)
-		c.PublishMeta()
-		// Re-subscribe on every connect in case the broker lost session state.
-		c.subscribeCmd()
-		c.subscribeHABirth()
+		c.onConnect(nil)
 	})
 
 	c.client = paho.NewClient(opts)
@@ -194,6 +190,32 @@ func (c *Client) Close() {
 		c.publishString(c.statusTopic(), "offline", 1, true)
 		c.client.Disconnect(250)
 	}
+}
+
+// onConnect is the connect ritual, run by paho on its own goroutine on every
+// connect AND auto-reconnect — synchronous publishes are safe here (this is
+// never paho's dispatch goroutine). Order matters: status → meta → state →
+// subscribe. The /cmd subscription arms last, so a replayed command is never
+// handled against a bus that hasn't already seen the fresh /state.
+func (c *Client) onConnect(_ paho.Client) {
+	c.publishString(c.statusTopic(), "online", 1, true)
+	c.PublishMeta()
+	c.republishState()
+	// Re-subscribe on every connect in case the broker lost session state.
+	c.subscribeCmd()
+	c.subscribeHABirth()
+}
+
+// republishState re-lands the retained /state after a (re)connect: the broker
+// may have flushed retained messages, and shouldPublishState's change-only
+// dedup would otherwise keep /state stale-or-missing indefinitely while the
+// antenna sits idle. Clearing the dedup latch makes the next PublishState
+// unconditional.
+func (c *Client) republishState() {
+	c.mu.Lock()
+	c.hasLastState = false
+	c.mu.Unlock()
+	c.PublishState(c.ctrl.State())
 }
 
 func (c *Client) PublishState(state service.State) {
@@ -558,7 +580,9 @@ func (c *Client) onHAStatus(_ paho.Client, msg paho.Message) {
 			c.logger().Info("Home Assistant online, re-publishing embedded discovery")
 			c.PublishDiscovery()
 		}
-		c.PublishState(c.ctrl.State())
+		// HA's restart wipes its retained view too — bypass the dedup exactly
+		// like the connect ritual does.
+		c.republishState()
 	})
 }
 

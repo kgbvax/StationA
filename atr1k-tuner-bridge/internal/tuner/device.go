@@ -17,6 +17,16 @@ import (
 const (
 	writeTimeout = 5 * time.Second
 	tuneTimeout  = 12 * time.Second
+
+	// defaultReadTimeout bounds the status-stream read (review S4). The ATR
+	// streams meter frames continuously and never legitimately goes quiet —
+	// not even during tune settling — so a silence bound is honest: expiry
+	// means the link is dead, Run returns, and wsLoop reconnects. Without it
+	// a silently dead link (power pulled behind a switch, no FIN/RST) blocked
+	// Run forever while retained /state kept device_online:true with frozen
+	// values. A field (not a package var) so tests can shrink it per-device
+	// without cross-test races.
+	defaultReadTimeout = 30 * time.Second
 )
 
 // Commander is the tuner control surface the bridge drives from /cmd. *Device
@@ -60,6 +70,10 @@ type Device struct {
 	writeMu sync.Mutex // serializes WebSocket writes (commands)
 	conn    *websocket.Conn
 
+	// readTimeout bounds the status-stream read. Set once at construction
+	// (tests may shrink it before Run); Run reads it per iteration.
+	readTimeout time.Duration
+
 	mu          sync.Mutex // guards state + timer
 	state       State
 	timer       *time.Timer
@@ -68,7 +82,7 @@ type Device struct {
 
 // New constructs a Device for the given ATR-1000 WebSocket URL.
 func New(url string, debug bool, log Logger) *Device {
-	return &Device{url: url, debug: debug, log: log}
+	return &Device{url: url, debug: debug, log: log, readTimeout: defaultReadTimeout}
 }
 
 // Snapshot returns a thread-safe copy of the current canonical state.
@@ -102,14 +116,24 @@ func (d *Device) Run(ctx context.Context, onTelemetry func(State)) error {
 	// Request a full state snapshot from the tuner.
 	_ = d.sendFrame(buildFrame(scmdSync))
 
-	// If ctx is cancelled while blocked in ReadMessage, nudge the conn closed so
-	// the read unblocks. The defer above also closes on return.
+	// If ctx is cancelled while blocked in ReadMessage, nudge the conn closed
+	// so the read unblocks. The stop channel makes this watcher exit whenever
+	// Run returns — a bare <-ctx.Done() parks on the ROOT context until app
+	// shutdown, stranding one goroutine per reconnect cycle (review S3; the
+	// acom1200s-pa-bridge pattern).
+	stop := make(chan struct{})
+	defer close(stop)
 	go func() {
-		<-ctx.Done()
-		d.closeConn()
+		select {
+		case <-ctx.Done():
+			d.closeConn()
+		case <-stop:
+		}
 	}()
 
 	for {
+		// Read deadline (review S4): see defaultReadTimeout.
+		_ = conn.SetReadDeadline(time.Now().Add(d.readTimeout))
 		_, data, err := conn.ReadMessage()
 		if err != nil {
 			return fmt.Errorf("atr1k read: %w", err)

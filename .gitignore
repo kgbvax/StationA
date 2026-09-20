@@ -3,3 +3,6 @@
 .claude/
 # local model-provider env scratch
 /claude_code_zai_env.sh
+
+# Compound Engineering machine-local config (example config stays tracked)
+.compound-engineering/*.local.yaml

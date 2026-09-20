@@ -209,6 +209,28 @@ void main() {
       expect(jsonDecode(rec.payload), {'action': 'goto', 'value': '45.0'});
     });
 
+    testWidgets(
+        'GOTO after a ± step publishes the STEPPED bearing, not the stale '
+        'pre-step closure value (review T1)', (tester) async {
+      final store = BusStore();
+      final mqtt = FakeMqttService(store);
+      store.setSatRotator(azAddress, axis: 'az', pos: 45);
+
+      await pumpPanel(tester, store: store, mqtt: mqtt);
+      await tester.enterText(find.byKey(const ValueKey('sat-az-input')), '45');
+      await tester.pumpAndSettle();
+      // Step the field to 46 (a programmatic controller write fires no
+      // onChanged) and hit GOTO without any other rebuild trigger.
+      await tester.tap(find.byKey(const ValueKey('sat-az-step-up')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('sat-az-goto')));
+      await tester.pumpAndSettle();
+
+      expect(jsonDecode(mqtt.publishes.single.payload),
+          {'action': 'goto', 'value': '46.0'},
+          reason: 'the field shows 46; publishing 45 is the stale-closure bug');
+    });
+
     testWidgets('publishes on the el slot with el limits', (tester) async {
       final store = BusStore();
       final mqtt = FakeMqttService(store);

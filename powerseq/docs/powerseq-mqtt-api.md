@@ -150,7 +150,10 @@ restores an idle sequencer's `/state` instead of leaving it absent.
 ```
 
 - `start` is honored only when `phase=idle`; runs the startup sequence.
-- `stop` is honored only when `phase=running`; runs the shutdown sequence.
+- `stop` is honored when `phase=running` or `phase=idle`; runs the shutdown
+  sequence. An idle stop is the teardown path for slots a faulted sequence
+  left energized: the in-memory fault latch does not survive a restart, and
+  the shutdown re-states "off" — it never energizes.
 - A command that arrives mid-sequence (e.g. `start` while `starting`) is
   dropped and logged; aborting an in-progress sequence is deferred.
 

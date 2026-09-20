@@ -250,18 +250,29 @@ func (t instantToken) Error() error                   { return t.err }
 
 // recPub records one Publish call's arguments.
 type recPub struct {
+	seq      uint64 // shared monotonic order across publishes AND subscribes
 	topic    string
 	qos      byte
 	retained bool
 	payload  string
 }
 
-// recordingPaho records every Publish and completes it instantly; only Publish is
-// exercised on this path (no Connect/Subscribe, mirroring fakePaho above).
+// recSub records one Subscribe call's arguments.
+type recSub struct {
+	seq   uint64
+	topic string
+	qos   byte
+}
+
+// recordingPaho records every Publish and Subscribe and completes both
+// instantly (the onConnect ritual path subscribes; everything else mirrors
+// fakePaho above — no Connect/IsConnectionOpen on this path).
 type recordingPaho struct {
 	paho.Client
 	mu   sync.Mutex
+	seq  uint64
 	pubs []recPub
+	subs []recSub
 }
 
 func (f *recordingPaho) Publish(topic string, qos byte, retained bool, payload any) paho.Token {
@@ -270,7 +281,16 @@ func (f *recordingPaho) Publish(topic string, qos byte, retained bool, payload a
 		b = []byte(fmt.Sprintf("%v", payload))
 	}
 	f.mu.Lock()
-	f.pubs = append(f.pubs, recPub{topic: topic, qos: qos, retained: retained, payload: string(b)})
+	f.seq++
+	f.pubs = append(f.pubs, recPub{seq: f.seq, topic: topic, qos: qos, retained: retained, payload: string(b)})
+	f.mu.Unlock()
+	return instantToken{}
+}
+
+func (f *recordingPaho) Subscribe(topic string, qos byte, _ paho.MessageHandler) paho.Token {
+	f.mu.Lock()
+	f.seq++
+	f.subs = append(f.subs, recSub{seq: f.seq, topic: topic, qos: qos})
 	f.mu.Unlock()
 	return instantToken{}
 }
@@ -279,6 +299,12 @@ func (f *recordingPaho) recorded() []recPub {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]recPub(nil), f.pubs...)
+}
+
+func (f *recordingPaho) recordedSubs() []recSub {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]recSub(nil), f.subs...)
 }
 
 // waitFor polls fn until it returns true or the timeout elapses.
@@ -313,6 +339,52 @@ func cmdTestClient(t *testing.T) (*Client, *recordingPaho, *service.Controller) 
 	}
 	go sharedmqtt.RunJobs(ctx, c.jobs)
 	return c, fake, ctrl
+}
+
+// TestOnConnectRepublishesStateUnchanged locks the reconnect-restore semantics
+// (2026-09 review finding): on every (re)connect the retained /state must
+// re-land even when the snapshot is unchanged — the broker may have flushed
+// retained messages, and the change-only dedup would otherwise leave /state
+// stale-or-missing while the antenna sits idle. The ritual order is pinned
+// too: /state re-lands BEFORE the /cmd subscription re-arms.
+func TestOnConnectRepublishesStateUnchanged(t *testing.T) {
+	c, fake, ctrl := cmdTestClient(t)
+
+	c.PublishState(ctrl.State()) // latch the dedup on the (zero) snapshot
+
+	statePubs := func() []recPub {
+		var out []recPub
+		for _, p := range fake.recorded() {
+			if p.topic == "muehle/hf/ant-ctrl/state" && p.retained {
+				out = append(out, p)
+			}
+		}
+		return out
+	}
+	if got := len(statePubs()); got != 1 {
+		t.Fatalf("warm-up published %d /state snapshots, want 1", got)
+	}
+
+	c.onConnect(nil) // the connect ritual against an UNCHANGED snapshot
+
+	waitFor(t, 2*time.Second, "unchanged /state republished on connect", func() bool {
+		return len(statePubs()) == 2
+	})
+
+	// Order: the state republish precedes the /cmd re-subscription.
+	var cmdSub recSub
+	for _, s := range fake.recordedSubs() {
+		if s.topic == "muehle/hf/ant-ctrl/cmd" {
+			cmdSub = s
+		}
+	}
+	if cmdSub.topic == "" {
+		t.Fatal("/cmd never re-subscribed by the connect ritual")
+	}
+	if last := statePubs()[1]; last.seq > cmdSub.seq {
+		t.Errorf("/state republish (seq %d) landed after the /cmd subscribe (seq %d)",
+			last.seq, cmdSub.seq)
+	}
 }
 
 // TestOnCmdExecutesThenClears locks the one-shot /cmd semantics (2026-09-03 stale-cmd

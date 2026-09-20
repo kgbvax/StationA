@@ -230,7 +230,9 @@ func (c *Client) subscribe(cl pahomqtt.Client, topic string, h pahomqtt.MessageH
 }
 
 func (c *Client) subscribeQoS(cl pahomqtt.Client, topic string, qos byte, h pahomqtt.MessageHandler) {
-	if tok := cl.Subscribe(topic, qos, h); tok.Wait() && tok.Error() != nil {
+	// Bounded Wait (review S1f): a stalled SUBACK parks paho's OnConnect
+	// goroutine and later subscriptions never run — silent partial subscribe.
+	if tok := cl.Subscribe(topic, qos, h); !tok.WaitTimeout(publishTimeout) || tok.Error() != nil {
 		c.log.Warn("subscribe failed", "topic", topic, "err", tok.Error())
 		return
 	}
