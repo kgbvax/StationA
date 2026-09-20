@@ -168,6 +168,11 @@ func runSlot(ctx context.Context, cfg config.Config, sc config.SlotConfig, log *
 	opts.SetCleanSession(false)
 	opts.SetWill(avail, "offline", 1, true)
 
+	// subTimeout bounds OnConnect subscribe Waits (review S1f): a stalled
+	// SUBACK parks paho's OnConnect goroutine and the remaining subscriptions
+	// never run — a silent partial subscribe.
+	const subTimeout = 10 * time.Second
+
 	opts.OnConnect = func(c pahomqtt.Client) {
 		slotLog.Info("MQTT (re)connected", "broker", cfg.MQTT.Broker)
 		c.Publish(avail, 1, true, []byte("online"))
@@ -184,7 +189,7 @@ func runSlot(ctx context.Context, cfg config.Config, sc config.SlotConfig, log *
 				return
 			}
 			sharedmqtt.Enqueue(jobs, func() { b.HandleTelemetry(power) })
-		}); tok.Wait() && tok.Error() != nil {
+		}); !tok.WaitTimeout(subTimeout) || tok.Error() != nil {
 			slotLog.Warn("subscribe shelly status failed", "err", tok.Error())
 		}
 
@@ -196,7 +201,7 @@ func runSlot(ctx context.Context, cfg config.Config, sc config.SlotConfig, log *
 			} else {
 				sharedmqtt.Enqueue(jobs, func() { b.MarkDeviceOffline("shelly online=false") })
 			}
-		}); tok.Wait() && tok.Error() != nil {
+		}); !tok.WaitTimeout(subTimeout) || tok.Error() != nil {
 			slotLog.Warn("subscribe shelly online failed", "err", tok.Error())
 		}
 
@@ -210,7 +215,7 @@ func runSlot(ctx context.Context, cfg config.Config, sc config.SlotConfig, log *
 		if tok := c.Subscribe(cmdTopic, 0, func(_ pahomqtt.Client, m pahomqtt.Message) {
 			payload := append([]byte(nil), m.Payload()...) // copy; only valid during handler
 			sharedmqtt.Enqueue(jobs, func() { b.HandleCommand(payload) })
-		}); tok.Wait() && tok.Error() != nil {
+		}); !tok.WaitTimeout(subTimeout) || tok.Error() != nil {
 			slotLog.Warn("subscribe cmd failed", "err", tok.Error())
 		}
 	}
@@ -239,6 +244,10 @@ type shellyCommander struct {
 	rpcTopic string
 }
 
+// rpcPublishTimeout bounds the Shelly RPC publish Wait (review S1b; mirrors
+// bridge.publishTimeout).
+const rpcPublishTimeout = 10 * time.Second
+
 func (s *shellyCommander) setClient(c pahomqtt.Client, rpcTopic string) {
 	s.mu.Lock()
 	s.client = c
@@ -255,7 +264,11 @@ func (s *shellyCommander) SetPower(on bool) error {
 		return fmt.Errorf("mqtt client not connected")
 	}
 	tok := c.Publish(topic, 1, false, shelly.SwitchSet(on))
-	tok.Wait()
+	// Bounded Wait (review S1b): an unbounded Wait here parks the /cmd path
+	// on a stalled broker forever.
+	if !tok.WaitTimeout(rpcPublishTimeout) {
+		return fmt.Errorf("publish %s: timed out after %s", topic, rpcPublishTimeout)
+	}
 	return tok.Error()
 }
 

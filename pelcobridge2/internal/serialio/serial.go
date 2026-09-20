@@ -35,11 +35,23 @@ func mode(baud int) *serial.Mode {
 	}
 }
 
-// OpenPort opens name at baud, 8N1.
+// serialReadTimeout bounds every blocking Read (review S1d). A plugged-in but
+// wedged adapter previously parked the reader goroutine with no error — no
+// readErrCh, no auto-reopen, device_online latched true on a dead head. With
+// the timeout an idle link yields (0, nil) once per interval, which the
+// engine's reader loop tolerates (it paces the loop instead of spinning).
+// A var so tests can compress it.
+var serialReadTimeout = 1 * time.Second
+
+// OpenPort opens name at baud, 8N1, with a bounded read.
 func OpenPort(name string, baud int) (*SerialPort, error) {
 	p, err := serial.Open(name, mode(baud))
 	if err != nil {
 		return nil, err
+	}
+	if err := p.SetReadTimeout(serialReadTimeout); err != nil {
+		_ = p.Close()
+		return nil, fmt.Errorf("set read timeout: %w", err)
 	}
 	return &SerialPort{port: p, name: name, baud: baud}, nil
 }
@@ -54,9 +66,10 @@ func (s *SerialPort) current() serial.Port {
 	return s.port
 }
 
-// Read reads available bytes. A timeout (when configured) returns (0, nil).
-// Never hold the mutex across the blocking read — a concurrent Reopen must be
-// able to swap the port (Close unblocks this Read with an error).
+// Read reads available bytes. The read is bounded by serialReadTimeout: an
+// idle link returns (0, nil) instead of parking forever. Never hold the mutex
+// across the blocking read — a concurrent Reopen must be able to swap the
+// port (Close unblocks this Read with an error).
 func (s *SerialPort) Read(p []byte) (int, error) {
 	port := s.current()
 	if port == nil {
@@ -88,22 +101,43 @@ func (s *SerialPort) Reopen() error {
 	return nil
 }
 
+// writeTimeout bounds a frame write (review S1d): a wedged adapter must not
+// park the engine loop's tx — every stop path (TUI, rotctld, MQTT) funnels
+// through it, and a held write also removes the error signal that drives the
+// auto-reopen.
+const writeTimeout = 3 * time.Second
+
 // Write sends one frame. Nothing else ever writes. A short write is an error:
 // a partially-transmitted frame silently logged as sent is a bench failure
-// recorded in ptest.
+// recorded in ptest. The write is bounded: on timeout the handle is closed
+// and dropped, so the reader generation dies with a read error and the
+// engine's auto-reopen brings the link back (invariants 5/6) — the abandoned
+// write goroutine unblocks when the stale handle closes.
 func (s *SerialPort) Write(b []byte) error {
 	port := s.current()
 	if port == nil {
 		return fmt.Errorf("port is closed")
 	}
-	n, err := port.Write(b)
-	if err != nil {
+	done := make(chan error, 1)
+	go func() {
+		n, err := port.Write(b)
+		if err == nil && n != len(b) {
+			err = fmt.Errorf("short write: %d of %d bytes", n, len(b))
+		}
+		done <- err
+	}()
+	select {
+	case err := <-done:
 		return err
+	case <-time.After(writeTimeout):
+		s.mu.Lock()
+		if s.port == port {
+			s.port = nil
+		}
+		s.mu.Unlock()
+		_ = port.Close()
+		return fmt.Errorf("serial write timed out after %s — port closed for reopen", writeTimeout)
 	}
-	if n != len(b) {
-		return fmt.Errorf("short write: %d of %d bytes", n, len(b))
-	}
-	return nil
 }
 
 // Close closes the port.

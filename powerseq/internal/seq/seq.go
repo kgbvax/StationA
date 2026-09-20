@@ -339,8 +339,9 @@ func (s *Sequencer) SetBrokerOnline(online bool) {
 func (s *Sequencer) Start() { s.request("start") }
 
 // Stop requests a shutdown sequence. Non-blocking; honored when phase=running
-// OR phase=idle with a fault (resume an interrupted shutdown — idempotent),
-// dropped (logged) otherwise.
+// or phase=idle — the teardown is idempotent and can only de-energize, and the
+// fault latch is in-memory (a process restart wipes it), so stop-from-idle
+// must not depend on remembering why it is idle. Dropped (logged) mid-sequence.
 func (s *Sequencer) Stop() { s.request("stop") }
 
 func (s *Sequencer) request(cmd string) {
@@ -351,7 +352,11 @@ func (s *Sequencer) request(cmd string) {
 	case "start":
 		allow = phase == PhaseIdle
 	case "stop":
-		allow = phase == PhaseRunning || (phase == PhaseIdle && fault != "")
+		// Idle is honored regardless of fault: the in-memory fault latch dies
+		// with the process, so after a restart a stop is the ONLY teardown
+		// path for the slots a faulted sequence left energized — and a
+		// shutdown re-states "off", it never energizes.
+		allow = phase == PhaseRunning || phase == PhaseIdle
 	}
 	s.mu.Unlock()
 	if !allow {
@@ -432,7 +437,10 @@ func (s *Sequencer) begin(cmd string) (steps []resolvedStep, endPhase string, ok
 			steps, endPhase, ok = s.startup, PhaseRunning, true
 		}
 	case "stop":
-		if s.phase == PhaseRunning || (s.phase == PhaseIdle && s.fault != "") {
+		// Same idle rule as request(): stop must not depend on the in-memory
+		// fault latch surviving a restart (idempotent teardown, de-energize
+		// only).
+		if s.phase == PhaseRunning || s.phase == PhaseIdle {
 			s.phase = PhaseStopping
 			s.step = ""
 			s.fault = ""

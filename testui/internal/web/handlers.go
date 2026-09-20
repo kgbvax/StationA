@@ -17,11 +17,14 @@ const maxBody = 1 << 20 // 1 MiB
 //
 // topic   — the MQTT topic to publish to (must be under the configured site prefix).
 // payload — JSON value (object, array, string, number, bool) OR a raw string. When it is
-//           a JSON object/array/number/bool it is published verbatim; when it is a string
-//           it is published as a UTF-8 byte slice (so /status "online" works too).
+//
+//	a JSON object/array/number/bool it is published verbatim; when it is a string
+//	it is published as a UTF-8 byte slice (so /status "online" works too).
+//
 // qos     — optional QoS (0 or 1); defaults to 1.
 // retain  — optional. Retained is allowed for /state and /meta but REJECTED for /cmd
-//           (integration model §8: intent is never retained).
+//
+//	(integration model §8: intent is never retained).
 type publishReq struct {
 	Topic   string          `json:"topic"`
 	Payload json.RawMessage `json:"payload"`
@@ -116,11 +119,16 @@ func (s *Server) validateTopicPrefix(topic string) error {
 }
 
 // writePublishErr maps an mqtt.Publish error to the right HTTP status: ErrShuttingDown
-// is a 503 (the message did not go out because the relay is closing), anything else is
-// a 502 (broker/transport failure).
+// and ErrDisconnected are 503s (the message did NOT go out — the relay is closing, or
+// the broker link is down and the publish was dropped rather than queued), anything
+// else is a 502 (broker/transport failure).
 func writePublishErr(w http.ResponseWriter, err error) {
 	if errors.Is(err, mqtt.ErrShuttingDown) {
 		http.Error(w, "publish failed: relay shutting down", http.StatusServiceUnavailable)
+		return
+	}
+	if errors.Is(err, mqtt.ErrDisconnected) {
+		http.Error(w, "publish dropped: relay not connected to the broker — republish", http.StatusServiceUnavailable)
 		return
 	}
 	http.Error(w, "publish failed: "+err.Error(), http.StatusBadGateway)

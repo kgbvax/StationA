@@ -92,6 +92,14 @@ type bharness struct {
 
 func newBH(t *testing.T) *bharness {
 	t.Helper()
+	return newBHWithTimings(t, 0, 10*time.Second)
+}
+
+// newBHWithTimings shrinks the safety bounds: txWatchdog feeds the bridge's
+// max-TX bound (0 = the 180 s default), lossWatchdog the session's
+// silence-detection (so tests can force a session loss via SetSilent).
+func newBHWithTimings(t *testing.T, txWatchdog, lossWatchdog time.Duration) *bharness {
+	t.Helper()
 	f := civ.NewFakeRadio(t)
 	mgr := radio.NewManager(radio.Config{
 		Host:            "127.0.0.1",
@@ -105,7 +113,7 @@ func newBH(t *testing.T) *bharness {
 		CIVPort:         f.CIVPort(),
 		AreYouThere:     25 * time.Millisecond,
 		HandshakeBudget: 1500 * time.Millisecond,
-		LossWatchdog:    10 * time.Second,
+		LossWatchdog:    lossWatchdog,
 		Logger:          slog.Default(),
 	})
 
@@ -119,6 +127,7 @@ func newBH(t *testing.T) *bharness {
 		DeviceModel:  "Icom IC-9700",
 		Manager:      mgr,
 		PollInterval: 100 * time.Millisecond,
+		TXWatchdog:   txWatchdog,
 		Logger:       slog.Default(),
 	})
 	if err != nil {

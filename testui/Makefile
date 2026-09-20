@@ -19,6 +19,7 @@ vet:
 
 test:
 	go test ./...
+	node --test internal/web/static/
 
 test-race:
 	go test -race ./...

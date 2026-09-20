@@ -35,6 +35,47 @@ void main() {
       store.apply('muehle/hf/pa/unknown', jsonEncode({'x': 1}), true);
       expect(store.slots['muehle/hf/pa'], isNull);
     });
+
+    group('rejects non-object payloads without throwing (T2)', () {
+      for (final bad in ['[1,2]', '42', 'true', 'garbage']) {
+        test('drops "$bad" on meta/state/cmd, keeps last-good', () {
+          final store = BusStore();
+          store.apply('muehle/hf/pa/meta', jsonEncode({'schema': '1.0'}), true);
+          store.apply('muehle/hf/pa/state', jsonEncode({'mode': 'operate'}), true);
+          store.apply('muehle/hf/pa/cmd', jsonEncode({'action': 'set_mode'}), true);
+          final before = store.malformedPayloads;
+
+          store.apply('muehle/hf/pa/meta', bad, true);
+          store.apply('muehle/hf/pa/state', bad, true);
+          store.apply('muehle/hf/pa/cmd', bad, true);
+
+          final slot = store.slots['muehle/hf/pa']!;
+          expect(slot.meta?['schema'], '1.0', reason: 'last-good meta kept');
+          expect(slot.state?['mode'], 'operate', reason: 'last-good state kept');
+          expect(slot.cmd?['action'], 'set_mode', reason: 'last-good cmd kept');
+          expect(store.malformedPayloads, before + 3);
+        });
+      }
+
+      test('drops a non-string status payload, keeps last-good', () {
+        final store = BusStore();
+        store.apply('muehle/hf/pa/status', 'online', true);
+        final before = store.malformedPayloads;
+
+        store.apply('muehle/hf/pa/status', jsonEncode({'online': true}), true);
+
+        expect(store.slots['muehle/hf/pa']?.status, 'online');
+        expect(store.malformedPayloads, before + 1);
+      });
+
+      test('the empty-payload clear still works alongside the guards', () {
+        final store = BusStore();
+        store.apply('muehle/hf/pa/state', jsonEncode({'mode': 'operate'}), true);
+        store.apply('muehle/hf/pa/state', '', true);
+        expect(store.slots['muehle/hf/pa']?.state, isNull);
+        expect(store.malformedPayloads, 0);
+      });
+    });
   });
 
   group('Slot online state', () {

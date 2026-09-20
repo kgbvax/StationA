@@ -99,8 +99,11 @@ liveness wait is safe — it is never a paho handler. `Sequencer.mu` guards the
 status/state maps, the broker-online flag, and phase/step/fault.
 
 **Busy guard:** `start` is honored only when `phase=idle`; `stop` when
-`phase=running`, or `phase=idle` with a `fault` set (resume an interrupted
-shutdown — idempotent re-run). The guard is checked twice: once in `request()`
+`phase=running` or `phase=idle` — the shutdown is an idempotent teardown that
+can only de-energize, and it must not depend on the in-memory `fault` latch:
+a process restart wipes the latch, and stop is then the only teardown path for
+the still-energized slots a faulted sequence left behind (no rollback by
+design). The guard is checked twice: once in `request()`
 (a fast-path drop so an obviously-busy command never enqueues) and again
 authoritatively in the runner's `begin()` (under `mu`, atomically transitioning
 phase) — the re-check closes the TOCTOU window between `request()`'s phase

@@ -21,6 +21,7 @@ package mqtt
 
 import (
 	"errors"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -31,6 +32,20 @@ import (
 // ErrShuttingDown is returned by Publish when the client is closing, so the HTTP layer
 // can report 503 instead of a false success.
 var ErrShuttingDown = errors.New("mqtt client shutting down")
+
+// ErrDisconnected is returned by Publish when the client is mid-reconnect
+// (paho status != connected): the publish is DROPPED, not queued. During an
+// outage paho's AutoReconnect keeps IsConnected() true and a QoS 1 publish
+// would sit in paho's internal outbound store, then replay DUP=1 after the
+// reconnect — stale operator intent (a /cmd with no ts) executing on hardware
+// long after the click. testui owns no bus state, so drop is the freshness
+// policy; the handler answers 503 "republish".
+var ErrDisconnected = errors.New("mqtt: not connected — publish dropped, republish when reconnected")
+
+// publishWait bounds how long Publish waits for paho's token. A publish that
+// wins the race into a just-dropped connection must not hang the HTTP handler
+// for the whole outage. A var so tests can compress it.
+var publishWait = 5 * time.Second
 
 // Message is one inbound MQTT publication handed to the store.
 type Message struct {
@@ -147,6 +162,13 @@ func (c *Client) Publish(topic string, qos byte, retained bool, payload []byte) 
 	default:
 	}
 
+	// Drop while mid-reconnect (or before any client exists): queuing here
+	// would stash the message in paho's outbound store for a DUP replay after
+	// the reconnect. See ErrDisconnected.
+	if c.client == nil || !c.client.IsConnectionOpen() {
+		return ErrDisconnected
+	}
+
 	res := make(chan error, 1)
 	go func() {
 		tok := c.client.Publish(topic, qos, retained, payload)
@@ -161,6 +183,8 @@ func (c *Client) Publish(topic string, qos byte, retained bool, payload []byte) 
 		return err
 	case <-c.done:
 		return ErrShuttingDown
+	case <-time.After(publishWait):
+		return fmt.Errorf("mqtt: publish unconfirmed after %s (connection lost mid-publish?)", publishWait)
 	}
 }
 

@@ -36,6 +36,10 @@ func newHarness(t *testing.T, script func(o *SessionOptions)) *harness {
 }
 
 // fastSessionOpts: the plan's timers shrunk ~1000x against the fake radio.
+// PingInterval stays well under LossWatchdog — the production invariant
+// (keepalives ≪ loss bound); a harness that lets the control stream go
+// silent past the watchdog races the idle close and eats the teardown
+// packets (the loss path closes the sockets mid-teardown).
 func fastSessionOpts(f *civ.FakeRadio) SessionOptions {
 	return SessionOptions{
 		Host:            "127.0.0.1",
@@ -51,6 +55,7 @@ func fastSessionOpts(f *civ.FakeRadio) SessionOptions {
 		AreYouThere:     25 * time.Millisecond,
 		HandshakeBudget: 600 * time.Millisecond,
 		LossWatchdog:    150 * time.Millisecond,
+		PingInterval:    25 * time.Millisecond,
 		Logger:          slog.Default(),
 	}
 }
@@ -110,9 +115,10 @@ func TestCmdDemandLifecycle(t *testing.T) {
 	}
 
 	// Idle timeout disconnects: back to idle AND the fake saw the close
-	// (the datagram is in flight — poll for it).
+	// (the datagram is in flight — poll for it; the window is generous
+	// because the suite runs parallel).
 	waitState(t, h.s, StateIdle, 2*time.Second)
-	waitTrue(t, "close packet at the fake", time.Second, func() bool {
+	waitTrue(t, "close packet at the fake", 3*time.Second, func() bool {
 		_, _, _, closes, _ := h.f.Counts()
 		return closes >= 1
 	})
@@ -211,8 +217,84 @@ func TestWFViewContention(t *testing.T) {
 	}
 }
 
+// Bench 2026-09-20 (real radio busy reject): ONE attempt, then the error
+// carries the observed fact — retrying into a held session is a storm.
+func TestLoginBusySingleAttempt(t *testing.T) {
+	h := newHarness(t, nil)
+	h.f.SetBusyLogin(true)
+
+	err := h.s.Demand(h.ctx, func(*civ.Client) error { return nil })
+	if !errors.Is(err, civ.ErrLoginBusy) {
+		t.Fatalf("err = %v, want ErrLoginBusy", err)
+	}
+	if snap := h.s.Snapshot(); !strings.Contains(snap.Err, "held") {
+		t.Errorf("error state text = %q, want the busy fact", snap.Err)
+	}
+	if attempts := h.s.Snapshot().ConnectAttempts; attempts != 1 {
+		t.Fatalf("connect attempts = %d, want exactly 1 (no retry storm into a held session)", attempts)
+	}
+}
+
 // Plan U4 scenario 4 lives in TestHoldBlocksIdleDisconnect (disarm starts
 // the idle timer).
+
+// KTD-2 regression (production, 2026-09-20): the telemetry poll is a free
+// RIDER. Repeated rides while live must NOT restart the idle clock — the
+// session decays to idle on schedule even though polls continue every few
+// milliseconds. A demanding poll kept the radio's single LAN session open
+// forever, starving manual wfview.
+func TestRideDoesNotExtendIdle(t *testing.T) {
+	h := newHarness(t, nil)
+	waitState(t, h.s, StateIdle, time.Second)
+
+	if err := h.s.SetHold(h.ctx, true); err != nil {
+		t.Fatalf("SetHold: %v", err)
+	}
+	waitState(t, h.s, StateLive, time.Second)
+	if err := h.s.SetHold(h.ctx, false); err != nil {
+		t.Fatalf("SetHold(false): %v", err)
+	}
+
+	// Poll-shaped rides, faster than the idle timeout, across the whole
+	// decay window.
+	deadline := time.Now().Add(2 * time.Second)
+	rides := 0
+	for time.Now().Before(deadline) {
+		_ = h.s.Ride(h.ctx, func(*civ.Client) error { return nil })
+		rides++
+		if h.s.Snapshot().SessionState == StateIdle {
+			if rides < 2 {
+				t.Fatalf("session decayed after %d rides — rides never ran", rides)
+			}
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("session still live after %d rides across the decay window — a ride extends the idle clock", rides)
+}
+
+// Ride runs fn against a live session; from idle it is a quiet no-op that
+// never dials (KTD-2/R2).
+func TestRideNoOpWhenIdle(t *testing.T) {
+	h := newHarness(t, nil)
+	waitState(t, h.s, StateIdle, time.Second)
+
+	executed := false
+	if err := h.s.Ride(h.ctx, func(*civ.Client) error { executed = true; return nil }); err != nil {
+		t.Fatalf("Ride from idle: %v", err)
+	}
+	if executed {
+		t.Error("Ride executed against a non-live session")
+	}
+	if snap := h.s.Snapshot(); snap.SessionState != StateIdle {
+		t.Errorf("state = %q after an idle Ride, want idle (a ride must not dial)", snap.SessionState)
+	}
+	// The radio heard nothing.
+	logins, _, _, _, _ := h.f.Counts()
+	if logins != 0 {
+		t.Errorf("logins = %d after an idle Ride, want 0", logins)
+	}
+}
 
 // Plan U4 scenario 5: refuseLogin 3x — covered by TestWFViewContention
 // (spaced attempts, observed-fact error text).

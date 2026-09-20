@@ -12,6 +12,8 @@
 
 // --- canonical data -------------------------------------------------------
 
+import { buildPayload, cmdValue } from './cmd_payload.mjs';
+
 // Canonical HF/VHF band edges (Hz), from docs/conventions/band-mode-reference.md.
 const BAND_TABLE = [
   { name: '160m', lo: 1_800_000, hi: 1_999_999 },
@@ -698,7 +700,10 @@ function buildSetpointRow(addr, f, meta) {
   send.textContent = 'send';
   send.onclick = () => {
     let val = input.value;
-    if (f.type === 'boolean') val = (val === 'true');
+    // The boolean wire decision lives in cmd_payload.cmdValue, keyed on the
+    // descriptor's value_type: m5stamp-style "boolean" must ship the STRING
+    // ("true"), a raw JSON boolean disarms the arm slot (T3).
+    if (f.type === 'boolean') val = cmdValue(cmd, val);
     else val = coerce(val, cmd.value_type || (f.type === 'number' ? 'float' : 'string'));
     const payload = buildPayload(cmd, val);
     sendCommand(send, topic, payload, retain.checked, addr, ackKey(f, val));
@@ -754,9 +759,10 @@ function buildActionRow(addr, a, meta) {
   send.onclick = () => {
     let val = null;
     if (hasKey) {
-      val = input.value;
-      if (cmd.value_type === 'bool') val = (val === 'true');
-      else val = coerce(val, cmd.value_type || 'string');
+      // 'bool' (atr1k set_inline) is a real JSON boolean by receiver contract;
+      // cmdValue owns that decision (see cmd_payload.mjs).
+      if (cmd.value_type === 'bool') val = cmdValue(cmd, input.value);
+      else val = coerce(input.value, cmd.value_type || 'string');
     }
     const payload = buildPayload(cmd, val);
     const key = hasKey ? `${cmd.action}=${val}` : cmd.action;
@@ -828,18 +834,8 @@ function buildRawCmdRow(addr) {
   return row;
 }
 
-// Build the /cmd JSON payload from an expose command descriptor.
-//   action != ""  -> {"action":<action>, <value_key>:<value>}
-//   action == ""  -> {<value_key>:<value>}        (value-key-only, e.g. {"select":"port2"})
-//   no value_key  -> {"action":<action>}          (button)
-function buildPayload(cmd, value) {
-  const hasAction = cmd.action && cmd.action !== '';
-  const hasKey = cmd.value_key && cmd.value_key !== '';
-  if (hasAction && hasKey) return { action: cmd.action, [cmd.value_key]: value };
-  if (!hasAction && hasKey) return { [cmd.value_key]: value };
-  if (hasAction && !hasKey) return { action: cmd.action };
-  return {};
-}
+// buildPayload lives in cmd_payload.mjs (imported above) so node --test pins
+// the wire contract.
 
 function ackKey(f, val) { return `${f.key}=${val}`; }
 

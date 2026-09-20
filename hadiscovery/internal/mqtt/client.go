@@ -8,7 +8,9 @@ package mqtt
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
+	"time"
 
 	paho "github.com/eclipse/paho.mqtt.golang"
 
@@ -113,13 +115,28 @@ func (c *Client) Close() {
 	}
 }
 
+// tokenTimeout bounds every paho token Wait (publishes AND subscribes; review
+// S1e — a stalled PUBACK/SUBACK must not park the jobs worker or paho's
+// OnConnect goroutine forever).
+const tokenTimeout = 10 * time.Second
+
+// waitToken bounds a token Wait; false = it did not complete in time (already
+// logged). The caller still checks tok.Error() on true.
+func waitToken(tok paho.Token, what, topic string) bool {
+	if !tok.WaitTimeout(tokenTimeout) {
+		slog.Error("[mqtt] "+what+" timed out", "topic", topic, "after", tokenTimeout)
+		return false
+	}
+	return true
+}
+
 // Publish implements engine.Pub so the engine can emit discovery through this client.
 func (c *Client) Publish(topic string, qos byte, retained bool, payload []byte) error {
-	token := c.client.Publish(topic, qos, retained, payload)
-	if token.Wait() && token.Error() != nil {
-		return token.Error()
+	tok := c.client.Publish(topic, qos, retained, payload)
+	if !waitToken(tok, "publish", topic) {
+		return fmt.Errorf("publish %s: timed out after %s", topic, tokenTimeout)
 	}
-	return nil
+	return tok.Error()
 }
 
 // --- subscriptions ----------------------------------------------------------
@@ -167,8 +184,12 @@ func (c *Client) publishMeta() {
 // --- publish helpers --------------------------------------------------------
 
 func (c *Client) subscribe(topic string, handler paho.MessageHandler) {
-	if token := c.client.Subscribe(topic, 1, handler); token.Wait() && token.Error() != nil {
-		slog.Error("[mqtt] subscribe failed", "topic", topic, "err", token.Error())
+	tok := c.client.Subscribe(topic, 1, handler)
+	if !waitToken(tok, "subscribe", topic) {
+		return
+	}
+	if err := tok.Error(); err != nil {
+		slog.Error("[mqtt] subscribe failed", "topic", topic, "err", err)
 		return
 	}
 	slog.Info("[mqtt] subscribed", "topic", topic)
@@ -176,14 +197,22 @@ func (c *Client) subscribe(topic string, handler paho.MessageHandler) {
 
 func (c *Client) publishJSON(topic string, v any, qos byte, retained bool) {
 	b, _ := json.Marshal(v)
-	if token := c.client.Publish(topic, qos, retained, b); token.Wait() && token.Error() != nil {
-		slog.Error("[mqtt] publish failed", "topic", topic, "err", token.Error())
+	tok := c.client.Publish(topic, qos, retained, b)
+	if !waitToken(tok, "publish", topic) {
+		return
+	}
+	if err := tok.Error(); err != nil {
+		slog.Error("[mqtt] publish failed", "topic", topic, "err", err)
 	}
 }
 
 func (c *Client) publishString(topic, payload string, qos byte, retained bool) {
-	if token := c.client.Publish(topic, qos, retained, payload); token.Wait() && token.Error() != nil {
-		slog.Error("[mqtt] publish failed", "topic", topic, "err", token.Error())
+	tok := c.client.Publish(topic, qos, retained, payload)
+	if !waitToken(tok, "publish", topic) {
+		return
+	}
+	if err := tok.Error(); err != nil {
+		slog.Error("[mqtt] publish failed", "topic", topic, "err", err)
 	}
 }
 

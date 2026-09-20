@@ -96,6 +96,18 @@ func (s *Server) Addr() net.Addr {
 	return nil
 }
 
+// Per-connection I/O bounds (review S1d): without a read deadline one
+// half-open rotctl client leaks its serveConn goroutine forever (the Clients()
+// count in /state goes phantom); without a write deadline a stalled client
+// parks the goroutine mid-reply. The read bound is deliberately generous —
+// a tracking gpredict polls ~1/s, but a passive client may sit silent for
+// a long time; ten minutes of total silence drops the conn and any real
+// client just reconnects.
+const (
+	connIdleTimeout = 10 * time.Minute
+	connWriteDelay  = 5 * time.Second
+)
+
 func (s *Server) serveConn(conn net.Conn) {
 	s.clients.Add(1)
 	defer s.clients.Add(-1)
@@ -106,6 +118,7 @@ func (s *Server) serveConn(conn net.Conn) {
 	for sc.Scan() {
 		reply, closeConn := s.Handle(sc.Text())
 		if reply != "" {
+			_ = conn.SetWriteDeadline(time.Now().Add(connWriteDelay))
 			if _, err := conn.Write([]byte(reply)); err != nil {
 				return
 			}
@@ -113,6 +126,7 @@ func (s *Server) serveConn(conn net.Conn) {
 		if closeConn {
 			return
 		}
+		_ = conn.SetReadDeadline(time.Now().Add(connIdleTimeout))
 	}
 }
 

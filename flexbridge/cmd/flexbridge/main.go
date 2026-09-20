@@ -186,6 +186,7 @@ func cmdTopic(cfg config.Config) string {
 // failure until ctx is cancelled.
 func radioLoop(ctx context.Context, cfg config.Config, b *bridge.Bridge, pub *bridge.PahoPublisher, log *slog.Logger) (string, error) {
 	const maxBackoff = 60 * time.Second
+	const backoffResetAfter = time.Minute // a connection that lived this long was healthy
 	backoff := 2 * time.Second
 
 	for {
@@ -211,10 +212,17 @@ func radioLoop(ctx context.Context, cfg config.Config, b *bridge.Bridge, pub *br
 		// radio's real identity (or left untouched when the radio is unreachable).
 		log.Info("radio resolved", "host", host, "serial", serial)
 
+		start := time.Now()
 		runErr := runOnce(ctx, cfg, host, b, log)
 
 		if ctx.Err() != nil {
 			return serial, ctx.Err()
+		}
+		// A connection that lived a while was genuinely healthy — re-arm the
+		// fast path. Without this the backoff only ever grows: after one long
+		// outage, every later reconnect (even hours later) waits the full 60 s.
+		if time.Since(start) >= backoffResetAfter {
+			backoff = 2 * time.Second
 		}
 		log.Warn("radio connection lost", "err", runErr)
 		b.Reset()

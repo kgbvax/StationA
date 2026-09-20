@@ -14,8 +14,10 @@
 //	         gate, clear-after-execute-or-reject with the echo guard, clipped
 //	         rejections
 //
-// PTT is safety-gated HERE (R10: armed ∧ live at send time); the max-TX
-// watchdog and the remaining loss-of-plane rules land with U6's safety core.
+// PTT is safety-gated HERE: the armed ∧ live gate at dispatch (R10) plus
+// the U6 safety core (safety.go — max-TX watchdog, MQTT-loss disarm +
+// out-of-band PTT-off, session-loss fail-disarm with safety-driven
+// redelivery).
 package bridge
 
 import (
@@ -64,6 +66,11 @@ type Options struct {
 	// snapshot (KTD-8).
 	PollInterval time.Duration
 
+	// TXWatchdog is the max-TX bound (config session.tx_watchdog, U6/
+	// KTD-5): a PTT left keyed longer than this is forced off and the armed
+	// permit drops. <= 0 takes the 180 s default.
+	TXWatchdog time.Duration
+
 	Logger *slog.Logger
 }
 
@@ -87,8 +94,9 @@ type Bridge struct {
 	stopOnce sync.Once
 
 	// radio is the cached CI-V truth (poll + transceive folding); the mu
-	// guard covers it together with the dedup snapshot, the armed permit
-	// and the rejection error. Held only briefly; never across a publish.
+	// guard covers it together with the dedup snapshot, the armed permit,
+	// the safety-core state and the rejection error. Held only briefly;
+	// never across a publish.
 	mu           sync.Mutex
 	radio        radioState
 	sessionState string
@@ -97,6 +105,15 @@ type Bridge struct {
 	lastPub      time.Time
 	armed        bool
 	cmdErr       string
+
+	// Safety core (U6): pendingOff is a PTT-off the radio never confirmed —
+	// the OnLive hook re-issues it with priority on the next handshake and
+	// the redelivery loop keeps series armed until it lands; txWatchdog is
+	// the rearmable max-TX bound (KTD-5); redelivering guards against
+	// stacked redelivery series. All live under mu.
+	pendingOff    bool
+	redelivering  bool
+	txWatchdog    *time.Timer
 }
 
 // mqClient is the publish/subscribe surface the bridge needs — the paho
@@ -134,6 +151,9 @@ func New(o Options) (*Bridge, error) {
 		stateTopic:  schema.StateTopic(o.Site, o.Station, o.Slot),
 		cmdTopic:    schema.CmdTopic(o.Site, o.Station, o.Slot),
 	}
+	// The U6 safety hooks: session loss and reconnect redelivery. The armed
+	// permit starts false (fail-disarmed on boot, R11).
+	b.installSafety()
 	return b, nil
 }
 
@@ -217,7 +237,9 @@ func (b *Bridge) Start(ctx context.Context) error {
 		opts.SetPassword(b.opts.Password)
 	}
 	opts.SetConnectionLostHandler(func(_ paho.Client, err error) {
-		log.Warn("mqtt connection lost", "err", err)
+		// U6 loss-of-plane rule: disarm + out-of-band PTT-off attempt; the
+		// handler itself stays cheap (paho goroutine).
+		b.onMqttLoss(err)
 	})
 	opts.SetOnConnectHandler(func(cl paho.Client) {
 		log.Info("mqtt connected", "broker", b.opts.Broker)
@@ -304,6 +326,7 @@ func (b *Bridge) Close() {
 		if b.cancel != nil {
 			b.cancel()
 		}
+		b.safetyClose()
 		if b.cli != nil && b.cli.isConnected() {
 			b.cli.publish(b.statusTopic, 1, true, []byte("offline"))
 			b.cli.disconnect(250)

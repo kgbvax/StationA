@@ -3,6 +3,7 @@ package bridge
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -184,8 +185,8 @@ func (b *Bridge) executeSatMode(on bool) {
 }
 
 // executeArm is the arm/disarm demand (KTD4: an explicit operator permit —
-// the permit itself is bridge-held and drops on session loss, R11; U6 adds
-// the watchdog and loss-of-plane rules around it).
+// the permit itself is bridge-held and drops on session loss, R11; the U6
+// safety core wraps it with the watchdog and the loss-of-plane rules).
 func (b *Bridge) executeArm(on bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -204,7 +205,8 @@ func (b *Bridge) executeArm(on bool) {
 
 // executePtt applies the settled safety gate (R10) BEFORE any radio frame:
 // not armed → the exact taxonomy rejection; not live → ditto. Armed and
-// live, the PTT frame goes out and the state re-reports from the radio.
+// live, the PTT frame goes out, the U6 watchdog arms on key-on (and stops
+// on key-off), and the state re-reports from the radio.
 func (b *Bridge) executePtt(on bool) {
 	if on {
 		b.mu.Lock()
@@ -223,23 +225,43 @@ func (b *Bridge) executePtt(on bool) {
 	defer cancel()
 	err := b.mgr.Session().Demand(ctx, func(c *civ.Client) error {
 		// Re-check at send time (R10: the gate holds at dispatch, not just
-		// at acceptance — the state can move while the demand queued).
+		// at acceptance — the permit can drop while the demand queued).
+		if on {
+			b.mu.Lock()
+			armed := b.armed
+			b.mu.Unlock()
+			if !armed {
+				return errArmedDropped
+			}
+		}
 		if _, err := b.mgr.Session().RoundTrip(ctx, c, civ.CmdPTT(on), 5*time.Second); err != nil {
 			return err
 		}
 		// Readback-only truth: confirm the keyed state from the radio
-		// before it reaches /state (never tap optimism).
-		if f, err := b.mgr.Session().RoundTrip(ctx, c, civ.BuildFrame(0x1C, []byte{0x00}), 5*time.Second); err == nil && len(f.Sub) == 1 {
-			tx := "rx"
-			if f.Sub[0] == 0x01 {
-				tx = "tx"
+		// before it reaches /state (never tap optimism). The read reply
+		// repeats the 00 sub byte (real firmware) — strip it.
+		if f, err := b.mgr.Session().RoundTrip(ctx, c, civ.BuildFrame(0x1C, []byte{0x00}), 5*time.Second); err == nil && len(f.Sub) >= 1 {
+			sub := f.Sub
+			if len(sub) > 1 {
+				sub = sub[1:]
 			}
-			b.mu.Lock()
-			b.radio.tx = tx
-			b.mu.Unlock()
+			if len(sub) == 1 {
+				tx := "rx"
+				if sub[0] == 0x01 {
+					tx = "tx"
+				}
+				b.mu.Lock()
+				b.radio.tx = tx
+				b.mu.Unlock()
+			}
 		}
 		return nil
 	})
+	if errors.Is(err, errArmedDropped) {
+		// The frame never went out — report the taxonomy rejection.
+		b.reject(errPttNotArmed)
+		return
+	}
 	if err != nil {
 		if !on {
 			// A PTT-off that could not reach the radio is the safety
@@ -248,7 +270,15 @@ func (b *Bridge) executePtt(on bool) {
 		} else {
 			b.setCmdErr(err.Error())
 		}
+	} else if on {
+		b.armWatchdog()
+		b.setCmdErr("")
 	} else {
+		// Key-off confirmed: the bound is satisfied, nothing pending.
+		b.mu.Lock()
+		b.stopWatchdogLocked()
+		b.pendingOff = false
+		b.mu.Unlock()
 		b.setCmdErr("")
 	}
 	b.publishState(false)
