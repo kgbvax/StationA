@@ -64,6 +64,10 @@ type Options struct {
 	// snapshot (KTD-8).
 	PollInterval time.Duration
 
+	// TXWatchdog is the max-TX bound (config session.tx_watchdog, KTD5):
+	// a keyed PTT is unkeyed by force after this long. Zero disables.
+	TXWatchdog time.Duration
+
 	Logger *slog.Logger
 }
 
@@ -97,6 +101,11 @@ type Bridge struct {
 	lastPub      time.Time
 	armed        bool
 	cmdErr       string
+
+	// Safety core (U6): the max-TX timer and the owed reconnect PTT-off
+	// (see safety.go).
+	txWatch    *time.Timer
+	pttOffOwed bool
 }
 
 // mqClient is the publish/subscribe surface the bridge needs — the paho
@@ -134,6 +143,7 @@ func New(o Options) (*Bridge, error) {
 		stateTopic:  schema.StateTopic(o.Site, o.Station, o.Slot),
 		cmdTopic:    schema.CmdTopic(o.Site, o.Station, o.Slot),
 	}
+	b.registerSafety()
 	return b, nil
 }
 
