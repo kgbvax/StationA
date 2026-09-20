@@ -72,7 +72,7 @@ func TestHandshakeHappyPath(t *testing.T) {
 
 	// The control stream must show the full handshake in order.
 	var fams []string
-	var auth05, requested int
+	var auth02, requested int
 	f.mu.Lock()
 	for _, p := range f.ctrlPackets {
 		switch {
@@ -89,12 +89,12 @@ func TestHandshakeHappyPath(t *testing.T) {
 			requested++
 		}
 	}
-	auth05 = f.auth05Count
+	auth02 = f.auth02Count
 	f.mu.Unlock()
 
 	want := []string{
 		"pkt3", "pkt3", "pkt6", "pkt6", // are-you-there / ready exchange
-		"login", "auth", "auth", // login, first auth 0x02, second auth 0x05
+		"login", "auth", // login, first auth 0x02 (wfview's single immediate auth)
 		"request",
 	}
 	if len(fams) < len(want) {
@@ -105,9 +105,9 @@ func TestHandshakeHappyPath(t *testing.T) {
 			t.Fatalf("handshake sequence at %d = %s, want %s (full: %v)", i, fams[i], w, fams)
 		}
 	}
-	// The auth pair brackets the login: 0x02 then 0x05.
-	if auth05 < 1 {
-		t.Errorf("second auth (0x05) never sent")
+	// Exactly one immediate auth (the 0x05 renewal rides the timer).
+	if auth02 != 1 {
+		t.Errorf("first auth (0x02) count = %d, want 1", auth02)
 	}
 	if requested == 0 {
 		t.Errorf("stream request never sent")
@@ -196,6 +196,34 @@ func TestSessionRefused(t *testing.T) {
 	}
 }
 
+// The real radio's held-session login reject (bench 2026-09-20): a 20-byte
+// 81 ff ff ff packet, then the radio keeps the control connection up and
+// pings. Dial must surface ErrLoginBusy — and the abort must still send
+// the control disconnect (0x05), or the radio stays busy for every later
+// login attempt.
+func TestLoginBusy(t *testing.T) {
+	f := NewFakeRadio(t)
+	f.SetBusyLogin(true)
+
+	_, err := Dial(context.Background(), fastOptions(f))
+	if err == nil {
+		t.Fatal("Dial succeeded against a busy radio")
+	}
+	if !errors.Is(err, ErrLoginBusy) {
+		t.Fatalf("err = %v, want ErrLoginBusy", err)
+	}
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		for _, pkt := range f.ctrlLog() {
+			if len(pkt) >= 6 && pkt[4] == 0x05 {
+				return
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("abort sent no control disconnect (0x05) — the radio keeps the session busy")
+}
+
 // TestCIVRoundTrip: SendCIV reaches the fake with intact framing; inbound
 // frames arrive ordered, payload-stripped.
 func TestCIVRoundTrip(t *testing.T) {
@@ -244,10 +272,10 @@ func TestCIVRoundTrip(t *testing.T) {
 	for {
 		select {
 		case got := <-cli.Frames():
-			// Skip the fake's replies to our cmd-03 probes (radio ->
-			// controller, FB-terminated); take the first non-reply frame.
-			if len(got) >= 7 && got[0] == 0xfe && got[1] == 0xfe &&
-				got[3] == 0xa2 && got[4] == 0x03 && got[len(got)-2] == 0xfb {
+			// Skip every radio->controller reply (the fake's answers to
+			// our cmd-03 probes); the injected controller-addressed frame
+			// is the first one left.
+			if len(got) >= 4 && got[0] == 0xfe && got[1] == 0xfe && got[2] == 0xe0 {
 				continue
 			}
 			if string(got) != string(want) {

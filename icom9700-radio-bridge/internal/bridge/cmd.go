@@ -238,15 +238,22 @@ func (b *Bridge) executePtt(on bool) {
 			return err
 		}
 		// Readback-only truth: confirm the keyed state from the radio
-		// before it reaches /state (never tap optimism).
-		if f, err := b.mgr.Session().RoundTrip(ctx, c, civ.BuildFrame(0x1C, []byte{0x00}), 5*time.Second); err == nil && len(f.Sub) == 1 {
-			tx := "rx"
-			if f.Sub[0] == 0x01 {
-				tx = "tx"
+		// before it reaches /state (never tap optimism). The read reply
+		// repeats the 00 sub byte (real firmware) — strip it.
+		if f, err := b.mgr.Session().RoundTrip(ctx, c, civ.BuildFrame(0x1C, []byte{0x00}), 5*time.Second); err == nil && len(f.Sub) >= 1 {
+			sub := f.Sub
+			if len(sub) > 1 {
+				sub = sub[1:]
 			}
-			b.mu.Lock()
-			b.radio.tx = tx
-			b.mu.Unlock()
+			if len(sub) == 1 {
+				tx := "rx"
+				if sub[0] == 0x01 {
+					tx = "tx"
+				}
+				b.mu.Lock()
+				b.radio.tx = tx
+				b.mu.Unlock()
+			}
 		}
 		return nil
 	})

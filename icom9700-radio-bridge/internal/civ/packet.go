@@ -96,45 +96,53 @@ const (
 // Auth-family datagrams (login 0x80, auth 0x40, request-stream 0x90 and
 // their answers 0x60/0xa8/0x50) dispatch on (length byte, first bytes).
 var (
-	sigLoginAnswer   = []byte{0x60, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00}
-	sigAuthAnswer    = []byte{0x40, 0x00, 0x00, 0x00, 0x00, 0x00}
+	sigLoginAnswer = []byte{0x60, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00}
+	sigAuthAnswer  = []byte{0x40, 0x00, 0x00, 0x00, 0x00, 0x00}
+	// sigRequestAnswer matches the client's 0x90 stream-request datagram.
 	sigRequestAnswer = []byte{0x90, 0x00, 0x00, 0x00, 0x00, 0x00}
-	sigAuthFail      = []byte{0x50, 0x00, 0x00, 0x00, 0x00, 0x00}
-	sigA8Reply       = []byte{0xa8, 0x00, 0x00, 0x00, 0x00, 0x00}
+	// sigStatus is the 0x50 status packet: the stream-request answer
+	// (error 0 = granted) and, mid-session, refusal/disconnect reports.
+	sigStatus  = []byte{0x50, 0x00, 0x00, 0x00, 0x00, 0x00}
+	sigA8Reply = []byte{0xa8, 0x00, 0x00, 0x00, 0x00, 0x00}
+	// sigBusyReject matches a 20-byte control packet real IC-9700 firmware
+	// answered to our kappanhang-shaped login on every attempt (bench
+	// 2026-09-20: len 0x14, type 0x0001, body 81 ff ff ff) — a stale-
+	// tracked-packet rejection, since the wire format now follows wfview
+	// exactly. Undocumented in wfview/kappanhang — their type-0x0001 forms
+	// are the 0x10 single / 0x18 range retransmit requests, never 0x14.
+	sigBusyReject = []byte{0x14, 0x00, 0x00, 0x00, 0x01, 0x00}
+	// sigBusyBody is the reject body at offset 0x10 (LE 0xffffff81).
+	sigBusyBody = []byte{0x81, 0xff, 0xff, 0xff}
 )
 
-// Auth answer status offsets (kappanhang controlstream.handleRead).
+// Auth-family field offsets (wfview packettypes.h). The auth family
+// follows wfview's wire format — see the authState comment in token.go.
 const (
-	// offAuthMagic is where the auth answer echoes the request magic
-	// (0x05 = the renewal/second auth was answered).
-	offAuthMagic = 21
+	// authSeqInit is wfview's starting inner sequence for the login/auth
+	// family (uint16_t authSeq = 0x30), sent big-endian at 0x16.
+	authSeqInit = 0x30
 	// loginErrOffset holds ff ff ff fe on a login answer when the
-	// username/password is wrong.
+	// username/password is wrong; on the 0x50 status answer 0 means
+	// granted and 0xffffffff refused.
 	loginErrOffset = 48
-	// authFailOffset holds ff ff ff on the 0x50 packet when the radio
-	// refuses (held session / auth failure); 00 00 00 with
-	// radioDisconnectedFlag 0x01 at radioDisconnectedOffset means the radio
-	// says the session went away.
-	authFailOffset          = 48
+	// radioDisconnectedOffset (0x40) carries 0x01 when the radio says the
+	// session went away (0x50, error 0).
 	radioDisconnectedOffset = 64
-	// requestOKFlag is 0x01 on a successful request-stream answer.
+	// tokRequestOffset / tokenOffset on the login answer (and the same
+	// fields in every auth-family request): the 2-byte tokrequest echo and
+	// the 4-byte session token.
+	tokRequestOffset = 0x1a
+	tokenOffset      = 0x1c
+	tokenLen         = 4
+	// authResponseOffset on the 0x40 auth answer carries the 4-byte
+	// response code (0 = ok, 0xffffffff = rejected).
+	authResponseOffset = 48
+	// requestOKFlag is 0x01 on a successful 144-byte 0x90 stream-request
+	// answer (kappanhang-style firmware; the 0x50 status is the wfview form).
 	requestOKFlag = 96
-	// a8ReplyIDOffset carries the 16-byte radio ID the radio may volunteer
-	// in an unprompted 0xa8 packet; it is echoed in the request-stream
-	// packet (zeros until one arrives).
-	a8ReplyIDOffset = 66
-	a8ReplyIDLen    = 16
-	// authIDOffset on the login answer and the request-stream answer
-	// carries the 6-byte session auth ID (token).
-	authIDOffset = 26
-	authIDLen    = 6
-	// requestDevNameOffset on the request-stream answer carries the radio's
-	// null-terminated self-description ("IC-9700 ...").
-	requestDevNameOffset = 64
-	// requestAnswerSIDs refresh both session IDs — a prior login can have
-	// changed them under us.
-	requestAnswerLocalSID  = 12
-	requestAnswerRemoteSID = 8
+	// a8NameOffset carries the first radio name in the volunteered 0xa8
+	// capabilities packet (0x42 header + name at +0x10 in each 0x66 entry).
+	a8NameOffset = 0x42 + 0x10
 )
 
 // Errors surfaced by the handshake. All are observed wire facts (the plan's
@@ -143,6 +151,12 @@ var (
 	// ErrLoginRejected is the radio's explicit ff ff ff fe login answer —
 	// wrong username or password.
 	ErrLoginRejected = errors.New("civ: login refused (invalid username/password)")
+	// ErrLoginBusy is the 20-byte 81 ff ff ff packet the radio answers to a
+	// login while its single LAN session is held (manual wfview, or a
+	// stale session left by a crashed client until the radio's reaper
+	// clears it — bench 2026-09-20). Surfaced verbatim, never retried
+	// silently.
+	ErrLoginBusy = errors.New("civ: login refused — radio LAN session held (wfview or stale session)")
 	// ErrConnectionRefused is the 0x50 ff ff ff answer: the radio refused
 	// the session (a stale or other client's session may need a radio
 	// reboot to clear — research brief, deploy gate 5).
@@ -175,12 +189,15 @@ func isPing(r []byte) bool {
 }
 
 // isData reports whether r is a tracked CI-V data packet: the length byte is
-// 0x15+len and the sub-header reply flag is set. Idle packets on the data
-// stream are NOT data (they still enter the receive reorder buffer to keep
-// sequence continuity, like kappanhang).
+// 0x15+datalen and the sub-header reply flag is set. Real IC-9700 frames
+// occasionally claim one byte more datalen than the datagram carries (bench
+// 2026-09-20: datalen 8, payload 7 on the wire) — wfview clamps the payload
+// to the datagram, and so do we, rather than dropping the frame (a strict
+// length equality silently discarded EVERY radio frame in the first live
+// bench). Idle packets on the data stream are NOT data (they still enter
+// the receive reorder buffer to keep sequence continuity, like kappanhang).
 func isData(r []byte) bool {
-	return len(r) >= dataHeaderLen && r[16] == dataReplyFlag &&
-		int(r[0])-dataSubHeaderLen == int(r[17])
+	return len(r) > dataHeaderLen && r[16] == dataReplyFlag
 }
 
 // dataSeq returns the packet's stream sequence number ([6..7] LE).
@@ -192,9 +209,15 @@ func dataSeq(r []byte) uint16 {
 }
 
 // dataPayload strips the header + sub-header, returning the raw CI-V bytes.
+// The datalen field is authoritative but clamped to the datagram (real
+// firmware over-reports by one now and then — see isData).
 // Caller guarantees isData.
 func dataPayload(r []byte) []byte {
-	return r[dataHeaderLen:]
+	n := int(r[17])
+	if n > len(r)-dataHeaderLen {
+		n = len(r) - dataHeaderLen
+	}
+	return r[dataHeaderLen : dataHeaderLen+n]
 }
 
 // buildData assembles a tracked CI-V data packet around payload with the
@@ -202,7 +225,7 @@ func dataPayload(r []byte) []byte {
 func buildData(localSID, remoteSID uint32, innerSeq uint16, payload []byte) []byte {
 	l := len(payload)
 	p := make([]byte, dataHeaderLen+l)
-	p[0] = byte(dataSubHeaderLen + l)
+	p[0] = byte(dataHeaderLen + l)
 	binary.BigEndian.PutUint32(p[8:12], localSID)
 	binary.BigEndian.PutUint32(p[12:16], remoteSID)
 	p[16] = dataReplyFlag

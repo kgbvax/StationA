@@ -54,49 +54,72 @@ type snap struct {
 // round-trips): selected VFO, satellite mode, both VFOs' freq+mode, PTT,
 // meters. Runs on the poll tick; never called off-session.
 func (b *Bridge) poll() {
+	// KTD-2/R2: the poll is not itself a demand. Telemetry only flows
+	// while a session is already live (arm, a /cmd, or the safety
+	// PTT-off delivery opened it); from idle or error the poll must
+	// return without dialing — a demanding poll would grab the radio's
+	// single LAN session around the clock and starve manual wfview.
+	if b.mgr.Snapshot().SessionState != radio.StateLive {
+		return
+	}
 	// The poll's own bound is generous (a dozen sequential round-trips on
 	// a LAN session); the TICK is the cadence, not the deadline. A poll
-	// that outlives its ctx is abandoned — the next tick re-reads.
+	// that outlives its ctx is abandoned — the next tick re-reads. Ride,
+	// never Demand: telemetry is a free rider on the live session and must
+	// not restart its idle clock (KTD-2 — a demanding poll would keep the
+	// radio's session open around the clock and starve manual wfview).
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	err := b.mgr.Session().Demand(ctx, func(c *civ.Client) error {
+	err := b.mgr.Session().Ride(ctx, func(c *civ.Client) error {
 		rs := radioState{}
 		wait := b.opts.PollInterval
 
-		if f, err := b.mgr.Session().RoundTrip(ctx, c, civ.CmdReadSelectedVFO(), wait); err == nil && len(f.Sub) == 1 {
-			if v, err := civ.ParseVFOReply(f.Sub); err == nil {
+		// Real firmware repeats the sub bytes in replies to sub-command
+		// queries (FE FE E0 A2 15 02 <hi> <lo> FD) — stripSub drops that
+		// echo. Single-command reads (03/04) have no echo.
+		stripSub := func(f civ.Frame) []byte {
+			if len(f.Sub) > 1 {
+				return f.Sub[1:]
+			}
+			return f.Sub
+		}
+
+		if f, err := b.mgr.Session().RoundTrip(ctx, c, civ.CmdReadSelectedVFO(), wait); err == nil && len(f.Sub) >= 1 {
+			if v, err := civ.ParseVFOReply(stripSub(f)); err == nil {
 				rs.selectedVFO = v
 			}
 		}
-		if f, err := b.mgr.Session().RoundTrip(ctx, c, civ.CmdReadSatelliteMode(), wait); err == nil && len(f.Sub) == 1 {
-			rs.satellite, _ = civ.ParseSatelliteReply(f.Sub)
+		if f, err := b.mgr.Session().RoundTrip(ctx, c, civ.CmdReadSatelliteMode(), wait); err == nil && len(f.Sub) >= 1 {
+			rs.satellite, _ = civ.ParseSatelliteReply(stripSub(f))
 		}
 		rs.main = b.pollVFO(ctx, c, "main", wait)
 		rs.sub = b.pollVFO(ctx, c, "sub", wait)
 
 		// PTT read: `1C 00` with no data.
-		if f, err := b.mgr.Session().RoundTrip(ctx, c, civ.BuildFrame(0x1C, []byte{0x00}), wait); err == nil && len(f.Sub) == 1 {
-			if f.Sub[0] == 0x01 {
-				rs.tx = "tx"
-			} else {
-				rs.tx = "rx"
+		if f, err := b.mgr.Session().RoundTrip(ctx, c, civ.BuildFrame(0x1C, []byte{0x00}), wait); err == nil && len(f.Sub) >= 1 {
+			if sub := stripSub(f); len(sub) == 1 {
+				if sub[0] == 0x01 {
+					rs.tx = "tx"
+				} else {
+					rs.tx = "rx"
+				}
 			}
 		}
 
-		if f, err := b.mgr.Session().RoundTrip(ctx, c, civ.CmdReadSMeter(), wait); err == nil && len(f.Sub) == 1 {
-			v, err := civ.ParseMeter(f.Sub)
+		if f, err := b.mgr.Session().RoundTrip(ctx, c, civ.CmdReadSMeter(), wait); err == nil && len(f.Sub) >= 1 {
+			v, err := civ.ParseMeter(stripSub(f))
 			if err == nil {
 				rs.sMeter = &v
 			}
 		}
-		if f, err := b.mgr.Session().RoundTrip(ctx, c, civ.CmdReadSWR(), wait); err == nil && len(f.Sub) == 1 {
-			v, err := civ.ParseMeter(f.Sub)
+		if f, err := b.mgr.Session().RoundTrip(ctx, c, civ.CmdReadSWR(), wait); err == nil && len(f.Sub) >= 1 {
+			v, err := civ.ParseMeter(stripSub(f))
 			if err == nil {
 				rs.swr = &v
 			}
 		}
-		if f, err := b.mgr.Session().RoundTrip(ctx, c, civ.CmdReadALC(), wait); err == nil && len(f.Sub) == 1 {
-			v, err := civ.ParseMeter(f.Sub)
+		if f, err := b.mgr.Session().RoundTrip(ctx, c, civ.CmdReadALC(), wait); err == nil && len(f.Sub) >= 1 {
+			v, err := civ.ParseMeter(stripSub(f))
 			if err == nil {
 				rs.alc = &v
 			}

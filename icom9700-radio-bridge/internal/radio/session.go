@@ -15,6 +15,7 @@
 package radio
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -76,6 +77,7 @@ var ErrSessionStopped = errors.New("radio: session manager stopped")
 type demand struct {
 	fn    func(*civ.Client) error
 	errCh chan error
+	ride  bool // telemetry rider: runs only while live, never resets idle
 }
 
 // Session is the on-demand state machine. Create with NewSession, run Run,
@@ -212,6 +214,29 @@ func (s *Session) Demand(ctx context.Context, fn func(*civ.Client) error) error 
 	return err
 }
 
+// Ride runs fn against the CURRENT live session without ever opening one
+// and without restarting the idle clock (KTD-2/R2: telemetry is a free
+// rider, never work — a demanding poll would keep the session open around
+// the clock and starve manual wfview). When the session is not live, Ride
+// is a quiet no-op (nil): finding nothing to ride is the expected outcome,
+// not a failure.
+func (s *Session) Ride(ctx context.Context, fn func(*civ.Client) error) error {
+	d := demand{fn: fn, errCh: make(chan error, 1), ride: true}
+	select {
+	case s.demands <- d:
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-s.stopped:
+		return ErrSessionStopped
+	}
+	select {
+	case err := <-d.errCh:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
 // connectAndRun submits a work demand, driving idle/error -> connecting if
 // needed, and waits for it to execute or fail.
 func (s *Session) connectAndRun(ctx context.Context, fn func(*civ.Client) error) (*civ.Client, error) {
@@ -295,10 +320,21 @@ func (s *Session) Run(ctx context.Context) error {
 			s.mu.Lock()
 			live := s.snap.SessionState == StateLive && s.client != nil
 			s.mu.Unlock()
+			if d.ride && !live {
+				// A telemetry rider never opens a session and never wakes
+				// the state machine for one (KTD-2/R2).
+				d.errCh <- nil
+				continue
+			}
 			if live {
-				// Already live: run now, restart the idle clock (this was
-				// work; keepalives never reach this path).
 				s.runDemand(d)
+				if d.ride {
+					// Telemetry never restarts the idle clock — the session
+					// decays on schedule even while polls continue (KTD-2).
+					continue
+				}
+				// This was work: restart the idle clock (keepalives never
+				// reach this path).
 				stopIdle()
 				if !s.held() {
 					idleTimer = time.NewTimer(s.opts.IdleTimeout)
@@ -450,6 +486,14 @@ func (s *Session) connectWithRetries(ctx context.Context) error {
 		})
 		if err != nil {
 			lastErr = err
+			if errors.Is(err, civ.ErrLoginBusy) {
+				// The radio explicitly refused: its LAN session is held.
+				// Retrying into a held session is a login storm — fail
+				// now; the next demand retries the series.
+				s.log.Warn("login refused: radio LAN session is held",
+					"attempt", attempt, "of", s.opts.MaxAttempts)
+				break
+			}
 			s.log.Warn("connect attempt failed",
 				"attempt", attempt, "of", s.opts.MaxAttempts, "err", err)
 			continue
@@ -520,8 +564,13 @@ func (s *Session) routeFrames(c *civ.Client, done chan struct{}) {
 				s.log.Debug("dropping unparseable frame", "err", err)
 				continue
 			}
-			if f.Terminator == civ.TerminatorOK || f.Terminator == civ.TerminatorNG {
-				// A read reply: route to the (serialized) command waiter.
+			if f.Direct {
+				// A direct reply (E0 A2) routes to the (serialized) command
+				// waiter regardless of terminator — real firmware answers
+				// reads with FD-terminated frames (e.g. FE FE E0 A2 15 02
+				// <hi> <lo> FD) and sets with the bare FB/FA acknowledge
+				// (bench 2026-09-20); keying routing on the terminator
+				// dropped every read reply.
 				select {
 				case s.replyCh <- f:
 				default:
@@ -562,10 +611,23 @@ func (s *Session) RoundTrip(ctx context.Context, c *civ.Client, frame []byte, wa
 		return civ.Frame{}, fmt.Errorf("radio: send: %w", err)
 	}
 	deadline := time.After(wait)
+	// Sub-command queries sharing a command byte (15 02 / 15 12 / 15 13)
+	// are told apart by the reply's repeated FIRST sub byte — the real
+	// radio echoes it (bench 2026-09-20). A trailing read-placeholder byte
+	// (07 d2 00 → 07 d2 <value>) is NOT echoed verbatim, so only the first
+	// sub byte is matched.
+	wantSub := frame[5 : len(frame)-1]
 	for {
 		select {
 		case f := <-s.replyCh:
-			if f.Cmd != frame[4] {
+			// Calls are serialized, so a bare FB/FA acknowledge (the real
+			// radio answers sets with FE FE E0 A2 FB — no command echo)
+			// necessarily answers the pending command. Everything else must
+			// carry the sent command byte and the discriminating sub byte.
+			isAck := f.Cmd == civ.TerminatorOK || f.Cmd == civ.TerminatorNG
+			matches := f.Cmd == frame[4] &&
+				(len(wantSub) == 0 || bytes.HasPrefix(f.Sub, wantSub[:1]))
+			if !matches && !isAck {
 				continue // a late reply to an earlier command
 			}
 			if f.IsNG() {

@@ -1,6 +1,7 @@
 package civ
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"errors"
@@ -177,6 +178,7 @@ func Dial(ctx context.Context, opts Options) (c *Client, err error) {
 		frames:  make(chan []byte, 128),
 		authAck: make(chan struct{}, 1),
 		a8Got:   make(chan struct{}, 1),
+		auth:    *newAuthState(),
 	}
 	// Credentials never reach the log: host/ports/username only.
 	c.log.Info("dialing radio", "host", opts.Host,
@@ -191,11 +193,15 @@ func Dial(ctx context.Context, opts Options) (c *Client, err error) {
 	if c.control, err = c.dialStream("control", opts.ControlPort, opts.BindControl); err != nil {
 		return nil, err
 	}
+	// The abort target must be a local: `return nil, err` paths nil the
+	// named return BEFORE defers run, and a `c != nil` guard on the named
+	// return would then skip abort — leaking the control socket (no close,
+	// no disconnect) on every failed handshake (bench 2026-09-20: six
+	// dead control sockets, each leaving the radio's session busy).
+	cl := c
 	defer func() {
-		// `return nil, err` paths nil the named return — only abort when a
-		// client was actually constructed.
-		if err != nil && c != nil {
-			c.abort()
+		if err != nil {
+			cl.abort()
 		}
 	}()
 	c.control.startReader()
@@ -214,55 +220,69 @@ func Dial(ctx context.Context, opts Options) (c *Client, err error) {
 	if err = c.sendTracked(c.control, login); err != nil {
 		return nil, c.hsErr(err)
 	}
-	r, ok := c.expect(c.control, ctx, opts.HandshakeTO, sigLoginAnswer)
+	r, ok := c.expectAny(c.control, ctx, opts.HandshakeTO, sigLoginAnswer, sigBusyReject)
 	if !ok {
+		return nil, c.hsErr(ErrHandshakeTimeout)
+	}
+	if prefixEqual(r, sigBusyReject) {
+		// Body check: only the 20-byte 81 ff ff ff form is the busy
+		// rejection (a hypothetical 0x14 retransmit variant has no such
+		// body — none is documented anywhere).
+		if len(r) == 20 && bytes.Equal(r[16:20], sigBusyBody) {
+			return nil, c.hsErr(ErrLoginBusy)
+		}
 		return nil, c.hsErr(ErrHandshakeTimeout)
 	}
 	if err = c.auth.parseLoginAnswer(r); err != nil {
 		return nil, err
 	}
 
-	// 4. First auth (0x02), then the periodic keepalives start, then the
-	// second auth (0x05) — kappanhang's order. The radio also volunteers an
-	// 0xa8 packet in this window, whose 16-byte ID the request-stream
-	// packet echoes (kappanhang gates the request on having received it).
+	// 4. First auth (0x02) — a single immediate auth (wfview's order); the
+	// 0x05 renewal rides the periodic timer. The radio answers 0x40 with a
+	// 0 response and volunteers its 0xa8 capabilities (the radio name).
 	if err = c.sendTracked(c.control, c.auth.buildAuth(c.control.localSID, c.control.remoteSID, 0x02)); err != nil {
 		return nil, c.hsErr(err)
 	}
 	c.startKeepalives(c.control)
-	if err = c.sendTracked(c.control, c.auth.buildAuth(c.control.localSID, c.control.remoteSID, 0x05)); err != nil {
-		return nil, c.hsErr(err)
-	}
 	if err = c.awaitAuthAck(ctx); err != nil {
 		return nil, c.hsErr(err)
 	}
 
-	// 5. Request the CI-V data stream; the answer refreshes SIDs and the
-	// auth token and carries the radio's self-description.
+	// 5. Request the CI-V data stream. The radio volunteers a 0x90 conninfo
+	// around this point (wfview treats it as the "you may connect" trigger);
+	// drain it best-effort so it doesn't shadow the actual answer. The
+	// answer itself is either a 0x50 status (error 0 = granted) or the
+	// kappanhang-style 144-byte 0x90 with the OK flag.
+	select {
+	case <-c.control.readCh:
+	case <-time.After(c.opts.HandshakeTO):
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 	req := c.auth.buildRequestStream(c.control.localSID, c.control.remoteSID,
-		opts.Username, opts.RigName, opts.CIVPort, AudioPort, announcedTxBufferMs)
+		opts.Username, opts.CIVPort, AudioPort, announcedTxBufferMs)
 	if err = c.sendTracked(c.control, req); err != nil {
 		return nil, c.hsErr(err)
 	}
-	ans, ok := c.expectAny(c.control, ctx, opts.HandshakeTO, sigRequestAnswer, sigAuthFail)
+	ans, ok := c.expectAny(c.control, ctx, opts.HandshakeTO, sigStatus, sigRequestAnswer)
 	if !ok {
 		return nil, c.hsErr(ErrHandshakeTimeout)
 	}
-	if prefixEqual(ans, sigAuthFail) {
-		return nil, ErrConnectionRefused
+	if prefixEqual(ans, sigStatus) {
+		if okAns, refused := parseStatusAnswer(ans); refused {
+			return nil, ErrConnectionRefused
+		} else if !okAns {
+			return nil, c.hsErr(ErrHandshakeTimeout)
+		}
+	} else if len(ans) <= requestOKFlag || ans[requestOKFlag] != 0x01 {
+		return nil, c.hsErr(ErrHandshakeTimeout)
 	}
-	remoteSID, devName, ok := c.auth.parseRequestAnswer(ans)
-	if !ok {
-		return nil, fmt.Errorf("civ: stream request not acknowledged")
+	// wfview keeps the i-am-here identity; no SID refresh happens here.
+	c.rigName = c.auth.devName
+	if c.rigName == "" {
+		c.rigName = opts.RigName
 	}
-	// The answer may refresh the control stream's remote SID (a prior
-	// login can have changed it — kappanhang handleRead); readers snapshot
-	// SIDs under wmu.
-	c.wmu.Lock()
-	c.control.remoteSID = remoteSID
-	c.wmu.Unlock()
-	c.rigName = devName
-	c.log.Info("ci-v stream granted", "radio", devName)
+	c.log.Info("ci-v stream granted", "radio", c.rigName)
 
 	// 6. Open the CI-V data socket, run its pkt3/4/6 start, and send the
 	// open packet. The stream carries its own session IDs (derived from its
@@ -295,24 +315,25 @@ func (c *Client) hsErr(err error) error {
 	return err
 }
 
-// awaitAuthAck waits for the 0x05-magic auth answer AND the radio's
-// volunteered 0xa8 ID (kappanhang gates the stream request on both).
+// awaitAuthAck waits for the radio to accept the 0x02 auth. Real IC-9700
+// firmware answers with the volunteered 0xa8 capabilities packet (echoing
+// the auth's tokrequest and token) — there is no 0x40 auth answer; a 0x40
+// with response 0 is accepted too for compatibility. The 0xa8 also carries
+// the radio name used by /meta.
 func (c *Client) awaitAuthAck(ctx context.Context) error {
 	deadline := time.After(c.opts.HandshakeBudget)
-	needAuth, needA8 := true, true
-	for needAuth || needA8 {
+	for {
 		select {
-		case <-c.authAck:
-			needAuth = false
 		case <-c.a8Got:
-			needA8 = false
+			return nil
+		case <-c.authAck:
+			return nil
 		case <-deadline:
 			return ErrHandshakeTimeout
 		case <-ctx.Done():
 			return ctx.Err()
 		}
 	}
-	return nil
 }
 
 // expectAny scans for any of the given prefixes.
@@ -337,13 +358,14 @@ func (c *Client) expectAny(s *udpStream, ctx context.Context, wait time.Duration
 	}
 }
 
-// buildOpenClose assembles the data-stream open/close packet (kappanhang
-// serialStream.sendOpenClose): sub-header flag 0xc0, one data byte — 0x05
-// opens, 0x00 closes. (The research brief's "magic 0x04" follows wfview's
-// older variant; kappanhang's 0x05/0x00 is what current firmware answers.)
+// buildOpenClose assembles the data-stream open/close packet (wfview
+// icomUdpCivData::sendOpenClose): sub-header flag 0xc0, one data byte —
+// 0x04 opens, 0x00 closes. (kappanhang's 0x05 open was accepted-and-ignored
+// by the real IC-9700: it ACKed the packet but never started CI-V flow —
+// commands came back as echoes with no replies, bench 2026-09-20.)
 // Caller holds wmu.
 func (c *Client) buildOpenClose(close bool) []byte {
-	magic := byte(0x05)
+	magic := byte(0x04)
 	if close {
 		magic = 0x00
 	}
@@ -357,8 +379,11 @@ func (c *Client) buildOpenClose(close bool) []byte {
 
 // startKeepalives launches the stream's idle-packet sender (the reference
 // client idles every 100 ms under load, decaying to 1 s when quiet; this
-// client has no traffic of its own beyond cmds, so a fixed 1 s idle keeps
-// the radio's liveness picture) and the ping ticker.
+// client has no traffic of its own beyond cmds, so a fixed interval keeps
+// the radio's liveness picture) and the ping ticker. Idles are TRACKED —
+// wfview's civ-stream idles ride sendTrackedPacket, and a data stream with
+// no tracked traffic never had CI-V flow opened on the real radio (bench
+// 2026-09-20).
 func (c *Client) startKeepalives(s *udpStream) {
 	go func() {
 		t := time.NewTicker(c.opts.PingInterval)
@@ -368,13 +393,13 @@ func (c *Client) startKeepalives(s *udpStream) {
 			case <-c.done:
 				return
 			case <-t.C:
-				// Snapshot SIDs under wmu — Dial refreshes the control
-				// stream's remote SID from the request answer while this
-				// loop is already running.
+				// SIDs are snapshotted under wmu — Dial refreshes the
+				// control stream's remote SID from the request answer
+				// while this loop is already running.
 				c.wmu.Lock()
-				l, r := s.localSID, s.remoteSID
+				p := header(sigIdle, s.localSID, s.remoteSID)
+				_ = s.sendTracked(p)
 				c.wmu.Unlock()
-				_ = s.send(header(sigIdle, l, r))
 			}
 		}
 	}()
@@ -429,21 +454,26 @@ func (c *Client) handlePing(s *udpStream, r []byte) {
 }
 
 // handleControlPacket dispatches control-stream-only packet families once
-// the handshake is over. Returns true when the packet was consumed.
+// the handshake is over. Returns true when the packet was consumed; an
+// unconsumed packet falls through to the handshake's expectAny.
 func (c *Client) handleControlPacket(r []byte) bool {
 	switch {
 	case prefixEqual(r, sigAuthAnswer):
-		if authMagicRenewal(r) {
-			select {
-			case c.authAck <- struct{}{}:
-			default:
+		if resp, ok := authResponse(r); ok {
+			if resp == 0 {
+				select {
+				case c.authAck <- struct{}{}:
+				default:
+				}
+				c.smu.Lock()
+				if c.reauthDead != nil {
+					c.reauthDead.Stop()
+					c.reauthDead = nil
+				}
+				c.smu.Unlock()
+			} else {
+				c.lose(ErrConnectionRefused)
 			}
-			c.smu.Lock()
-			if c.reauthDead != nil {
-				c.reauthDead.Stop()
-				c.reauthDead = nil
-			}
-			c.smu.Unlock()
 		}
 		return true
 	case prefixEqual(r, sigA8Reply):
@@ -453,14 +483,21 @@ func (c *Client) handleControlPacket(r []byte) bool {
 		default:
 		}
 		return true
-	case prefixEqual(r, sigAuthFail):
-		switch authFailKind(r) {
-		case 1:
-			c.lose(ErrConnectionRefused)
-		case 2:
+	case prefixEqual(r, sigStatus):
+		switch {
+		case statusRadiosDisconnected(r):
+			// Error 0 with the disc flag — the radio ended the session.
 			c.lose(errors.New("civ: radio reported disconnect"))
+			return true
+		default:
+			if _, refused := parseStatusAnswer(r); refused {
+				c.lose(ErrConnectionRefused)
+				return true
+			}
+			// A success 0x50 (e.g. the stream-request answer during the
+			// handshake) is consumed by expectAny instead.
+			return false
 		}
-		return true
 	}
 	return false
 }
@@ -696,7 +733,7 @@ func (c *Client) Close() {
 		// Deauth (0x01), then give the radio ~500 ms to ask for
 		// retransmits before the control socket disappears.
 		if c.control != nil && c.control.conn != nil {
-			if c.auth.gotAuthID {
+			if c.auth.gotToken {
 				_ = c.sendTracked(c.control, c.auth.buildAuth(c.control.localSID, c.control.remoteSID, 0x01))
 				time.Sleep(500 * time.Millisecond)
 			}
@@ -707,7 +744,10 @@ func (c *Client) Close() {
 }
 
 // abort tears down after a failed handshake (no clean disconnect is
-// possible — the radio never granted the session).
+// possible — the radio never granted the session). The control disconnect
+// (type 0x05) still goes out: bench 2026-09-20 showed the radio keeps the
+// control connection established (pinging a dead socket, staying busy for
+// every later login) when an attempt just vanishes.
 func (c *Client) abort() {
 	c.closeOnce.Do(func() {
 		c.clean.Store(true)
@@ -716,6 +756,7 @@ func (c *Client) abort() {
 			_ = c.civ.conn.Close()
 		}
 		if c.control != nil && c.control.conn != nil {
+			c.control.disconnect()
 			_ = c.control.conn.Close()
 		}
 		c.shutdown()
