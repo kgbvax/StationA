@@ -38,6 +38,7 @@ type FakeRadio struct {
 
 	dropNext    int  // drop the next N control datagrams from the client
 	refuseLogin bool // answer 0x60 with ff ff ff fe
+	busyLogin   bool // answer the login with the 20-byte 81 ff ff ff busy reject
 	refuseSess  bool // answer the stream request with 0x50 ff ff ff
 	silent      bool // stop answering entirely (session-loss rehearsal)
 
@@ -221,6 +222,18 @@ func (f *FakeRadio) handle(stream string, conn *net.UDPConn, from *net.UDPAddr, 
 		// ff ff ff fe credential rejection).
 		f.loginCount++
 		f.loginTimes = append(f.loginTimes, time.Now())
+		if f.busyLogin {
+			// The real radio's held-session reject (bench 2026-09-20):
+			// 20 bytes, type 0x0001, body 81 ff ff ff — then the radio
+			// keeps the control connection and pings.
+			busy := make([]byte, 20)
+			copy(busy, sigBusyReject)
+			binary.BigEndian.PutUint32(busy[8:12], radioSID)
+			binary.BigEndian.PutUint32(busy[12:16], binary.BigEndian.Uint32(pkt[12:16]))
+			copy(busy[16:20], sigBusyBody)
+			reply = busy
+			break
+		}
 		ans := make([]byte, 96)
 		copy(ans, sigLoginAnswer)
 		binary.BigEndian.PutUint32(ans[8:12], radioSID)
@@ -491,6 +504,15 @@ func modeFromByteKnown(b byte) (string, bool) {
 func (f *FakeRadio) SetRefuseLogin(v bool) {
 	f.mu.Lock()
 	f.refuseLogin = v
+	f.mu.Unlock()
+}
+
+// SetBusyLogin scripts the 20-byte 81 ff ff ff login rejection real
+// IC-9700 firmware sends while its single LAN session is held (bench
+// 2026-09-20; undocumented in wfview/kappanhang).
+func (f *FakeRadio) SetBusyLogin(v bool) {
+	f.mu.Lock()
+	f.busyLogin = v
 	f.mu.Unlock()
 }
 

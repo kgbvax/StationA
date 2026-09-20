@@ -211,6 +211,24 @@ func TestWFViewContention(t *testing.T) {
 	}
 }
 
+// Bench 2026-09-20 (real radio busy reject): ONE attempt, then the error
+// carries the observed fact — retrying into a held session is a storm.
+func TestLoginBusySingleAttempt(t *testing.T) {
+	h := newHarness(t, nil)
+	h.f.SetBusyLogin(true)
+
+	err := h.s.Demand(h.ctx, func(*civ.Client) error { return nil })
+	if !errors.Is(err, civ.ErrLoginBusy) {
+		t.Fatalf("err = %v, want ErrLoginBusy", err)
+	}
+	if snap := h.s.Snapshot(); !strings.Contains(snap.Err, "held") {
+		t.Errorf("error state text = %q, want the busy fact", snap.Err)
+	}
+	if attempts := h.s.Snapshot().ConnectAttempts; attempts != 1 {
+		t.Fatalf("connect attempts = %d, want exactly 1 (no retry storm into a held session)", attempts)
+	}
+}
+
 // Plan U4 scenario 4 lives in TestHoldBlocksIdleDisconnect (disarm starts
 // the idle timer).
 

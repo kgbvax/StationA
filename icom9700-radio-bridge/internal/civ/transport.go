@@ -1,6 +1,7 @@
 package civ
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"errors"
@@ -191,11 +192,15 @@ func Dial(ctx context.Context, opts Options) (c *Client, err error) {
 	if c.control, err = c.dialStream("control", opts.ControlPort, opts.BindControl); err != nil {
 		return nil, err
 	}
+	// The abort target must be a local: `return nil, err` paths nil the
+	// named return BEFORE defers run, and a `c != nil` guard on the named
+	// return would then skip abort — leaking the control socket (no close,
+	// no disconnect) on every failed handshake (bench 2026-09-20: six
+	// dead control sockets, each leaving the radio's session busy).
+	cl := c
 	defer func() {
-		// `return nil, err` paths nil the named return — only abort when a
-		// client was actually constructed.
-		if err != nil && c != nil {
-			c.abort()
+		if err != nil {
+			cl.abort()
 		}
 	}()
 	c.control.startReader()
@@ -214,8 +219,17 @@ func Dial(ctx context.Context, opts Options) (c *Client, err error) {
 	if err = c.sendTracked(c.control, login); err != nil {
 		return nil, c.hsErr(err)
 	}
-	r, ok := c.expect(c.control, ctx, opts.HandshakeTO, sigLoginAnswer)
+	r, ok := c.expectAny(c.control, ctx, opts.HandshakeTO, sigLoginAnswer, sigBusyReject)
 	if !ok {
+		return nil, c.hsErr(ErrHandshakeTimeout)
+	}
+	if prefixEqual(r, sigBusyReject) {
+		// Body check: only the 20-byte 81 ff ff ff form is the busy
+		// rejection (a hypothetical 0x14 retransmit variant has no such
+		// body — none is documented anywhere).
+		if len(r) == 20 && bytes.Equal(r[16:20], sigBusyBody) {
+			return nil, c.hsErr(ErrLoginBusy)
+		}
 		return nil, c.hsErr(ErrHandshakeTimeout)
 	}
 	if err = c.auth.parseLoginAnswer(r); err != nil {
@@ -707,7 +721,10 @@ func (c *Client) Close() {
 }
 
 // abort tears down after a failed handshake (no clean disconnect is
-// possible — the radio never granted the session).
+// possible — the radio never granted the session). The control disconnect
+// (type 0x05) still goes out: bench 2026-09-20 showed the radio keeps the
+// control connection established (pinging a dead socket, staying busy for
+// every later login) when an attempt just vanishes.
 func (c *Client) abort() {
 	c.closeOnce.Do(func() {
 		c.clean.Store(true)
@@ -716,6 +733,7 @@ func (c *Client) abort() {
 			_ = c.civ.conn.Close()
 		}
 		if c.control != nil && c.control.conn != nil {
+			c.control.disconnect()
 			_ = c.control.conn.Close()
 		}
 		c.shutdown()

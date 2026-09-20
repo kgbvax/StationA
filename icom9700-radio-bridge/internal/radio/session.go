@@ -450,6 +450,14 @@ func (s *Session) connectWithRetries(ctx context.Context) error {
 		})
 		if err != nil {
 			lastErr = err
+			if errors.Is(err, civ.ErrLoginBusy) {
+				// The radio explicitly refused: its LAN session is held.
+				// Retrying into a held session is a login storm — fail
+				// now; the next demand retries the series.
+				s.log.Warn("login refused: radio LAN session is held",
+					"attempt", attempt, "of", s.opts.MaxAttempts)
+				break
+			}
 			s.log.Warn("connect attempt failed",
 				"attempt", attempt, "of", s.opts.MaxAttempts, "err", err)
 			continue

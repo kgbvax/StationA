@@ -101,6 +101,14 @@ var (
 	sigRequestAnswer = []byte{0x90, 0x00, 0x00, 0x00, 0x00, 0x00}
 	sigAuthFail      = []byte{0x50, 0x00, 0x00, 0x00, 0x00, 0x00}
 	sigA8Reply       = []byte{0xa8, 0x00, 0x00, 0x00, 0x00, 0x00}
+	// sigBusyReject matches a 20-byte control packet real IC-9700 firmware
+	// answers to a login while its single LAN session is held (bench
+	// 2026-09-20: len 0x14, type 0x0001, body 81 ff ff ff). Undocumented
+	// in wfview/kappanhang — their type-0x0001 forms are the 0x10 single /
+	// 0x18 range retransmit requests, never 0x14.
+	sigBusyReject = []byte{0x14, 0x00, 0x00, 0x00, 0x01, 0x00}
+	// sigBusyBody is the reject body at offset 0x10 (LE 0xffffff81).
+	sigBusyBody = []byte{0x81, 0xff, 0xff, 0xff}
 )
 
 // Auth answer status offsets (kappanhang controlstream.handleRead).
@@ -143,6 +151,12 @@ var (
 	// ErrLoginRejected is the radio's explicit ff ff ff fe login answer —
 	// wrong username or password.
 	ErrLoginRejected = errors.New("civ: login refused (invalid username/password)")
+	// ErrLoginBusy is the 20-byte 81 ff ff ff packet the radio answers to a
+	// login while its single LAN session is held (manual wfview, or a
+	// stale session left by a crashed client until the radio's reaper
+	// clears it — bench 2026-09-20). Surfaced verbatim, never retried
+	// silently.
+	ErrLoginBusy = errors.New("civ: login refused — radio LAN session held (wfview or stale session)")
 	// ErrConnectionRefused is the 0x50 ff ff ff answer: the radio refused
 	// the session (a stale or other client's session may need a radio
 	// reboot to clear — research brief, deploy gate 5).

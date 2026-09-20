@@ -196,6 +196,34 @@ func TestSessionRefused(t *testing.T) {
 	}
 }
 
+// The real radio's held-session login reject (bench 2026-09-20): a 20-byte
+// 81 ff ff ff packet, then the radio keeps the control connection up and
+// pings. Dial must surface ErrLoginBusy — and the abort must still send
+// the control disconnect (0x05), or the radio stays busy for every later
+// login attempt.
+func TestLoginBusy(t *testing.T) {
+	f := NewFakeRadio(t)
+	f.SetBusyLogin(true)
+
+	_, err := Dial(context.Background(), fastOptions(f))
+	if err == nil {
+		t.Fatal("Dial succeeded against a busy radio")
+	}
+	if !errors.Is(err, ErrLoginBusy) {
+		t.Fatalf("err = %v, want ErrLoginBusy", err)
+	}
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		for _, pkt := range f.ctrlLog() {
+			if len(pkt) >= 6 && pkt[4] == 0x05 {
+				return
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("abort sent no control disconnect (0x05) — the radio keeps the session busy")
+}
+
 // TestCIVRoundTrip: SendCIV reaches the fake with intact framing; inbound
 // frames arrive ordered, payload-stripped.
 func TestCIVRoundTrip(t *testing.T) {
