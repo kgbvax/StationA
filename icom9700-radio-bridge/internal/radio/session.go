@@ -15,6 +15,7 @@
 package radio
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -528,8 +529,13 @@ func (s *Session) routeFrames(c *civ.Client, done chan struct{}) {
 				s.log.Debug("dropping unparseable frame", "err", err)
 				continue
 			}
-			if f.Terminator == civ.TerminatorOK || f.Terminator == civ.TerminatorNG {
-				// A read reply: route to the (serialized) command waiter.
+			if f.Direct {
+				// A direct reply (E0 A2) routes to the (serialized) command
+				// waiter regardless of terminator — real firmware answers
+				// reads with FD-terminated frames (e.g. FE FE E0 A2 15 02
+				// <hi> <lo> FD) and sets with the bare FB/FA acknowledge
+				// (bench 2026-09-20); keying routing on the terminator
+				// dropped every read reply.
 				select {
 				case s.replyCh <- f:
 				default:
@@ -570,10 +576,23 @@ func (s *Session) RoundTrip(ctx context.Context, c *civ.Client, frame []byte, wa
 		return civ.Frame{}, fmt.Errorf("radio: send: %w", err)
 	}
 	deadline := time.After(wait)
+	// Sub-command queries sharing a command byte (15 02 / 15 12 / 15 13)
+	// are told apart by the reply's repeated FIRST sub byte — the real
+	// radio echoes it (bench 2026-09-20). A trailing read-placeholder byte
+	// (07 d2 00 → 07 d2 <value>) is NOT echoed verbatim, so only the first
+	// sub byte is matched.
+	wantSub := frame[5 : len(frame)-1]
 	for {
 		select {
 		case f := <-s.replyCh:
-			if f.Cmd != frame[4] {
+			// Calls are serialized, so a bare FB/FA acknowledge (the real
+			// radio answers sets with FE FE E0 A2 FB — no command echo)
+			// necessarily answers the pending command. Everything else must
+			// carry the sent command byte and the discriminating sub byte.
+			isAck := f.Cmd == civ.TerminatorOK || f.Cmd == civ.TerminatorNG
+			matches := f.Cmd == frame[4] &&
+				(len(wantSub) == 0 || bytes.HasPrefix(f.Sub, wantSub[:1]))
+			if !matches && !isAck {
 				continue // a late reply to an earlier command
 			}
 			if f.IsNG() {

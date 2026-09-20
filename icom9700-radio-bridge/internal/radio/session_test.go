@@ -110,9 +110,10 @@ func TestCmdDemandLifecycle(t *testing.T) {
 	}
 
 	// Idle timeout disconnects: back to idle AND the fake saw the close
-	// (the datagram is in flight — poll for it).
+	// (the datagram is in flight — poll for it; the window is generous
+	// because the suite runs parallel).
 	waitState(t, h.s, StateIdle, 2*time.Second)
-	waitTrue(t, "close packet at the fake", time.Second, func() bool {
+	waitTrue(t, "close packet at the fake", 3*time.Second, func() bool {
 		_, _, _, closes, _ := h.f.Counts()
 		return closes >= 1
 	})

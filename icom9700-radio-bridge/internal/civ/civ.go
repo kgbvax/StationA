@@ -71,6 +71,7 @@ type Frame struct {
 	Cmd        byte
 	Sub        []byte // everything between the command and the terminator
 	Terminator byte   // FB (ok/reply), FA (rejection), FD (broadcast/command end)
+	Direct     bool   // addressed to the controller (E0 A2) — a direct reply
 }
 
 // IsNG reports a radio rejection (FA).
@@ -117,11 +118,13 @@ func ParseFrame(p []byte) (Frame, error) {
 		return Frame{}, fmt.Errorf("civ: missing FE FE preamble (% x)", p[:2])
 	}
 	var cmdIdx int
+	var direct bool
 	switch {
 	case p[2] == 0xFE: // broadcast: FE FE FE <00> <cmd> ...
 		cmdIdx = 4
 	case p[2] == CIVAddrController && p[3] == CIVAddrRadio: // direct reply
 		cmdIdx = 4
+		direct = true
 	case p[2] == 0x00 && p[3] == CIVAddrRadio: // broadcast with explicit dest 00
 		cmdIdx = 4
 	default:
@@ -130,10 +133,21 @@ func ParseFrame(p []byte) (Frame, error) {
 	if p[len(p)-1] != TerminatorFrame {
 		return Frame{}, fmt.Errorf("civ: missing FD end marker")
 	}
-	f := Frame{Cmd: p[cmdIdx]}
+	f := Frame{Cmd: p[cmdIdx], Direct: direct}
 	body := p[cmdIdx+1 : len(p)-1]
 	if len(body) == 0 {
-		f.Terminator = TerminatorFrame
+		// Bare acknowledge: the real IC-9700 answers a set/select command
+		// with FE FE E0 A2 FB (or FA for NG) — the ack code rides in the
+		// COMMAND slot with no body (bench 2026-09-20: 9x `fe fe e0 a2 fb
+		// fd` for 24 commands; the fake's cmd-echo form masked this).
+		switch f.Cmd {
+		case TerminatorOK:
+			f.Terminator = TerminatorOK
+		case TerminatorNG:
+			f.Terminator = TerminatorNG
+		default:
+			f.Terminator = TerminatorFrame
+		}
 		return f, nil
 	}
 	f.Terminator = body[len(body)-1]

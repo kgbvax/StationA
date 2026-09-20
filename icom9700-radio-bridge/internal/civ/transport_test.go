@@ -272,10 +272,10 @@ func TestCIVRoundTrip(t *testing.T) {
 	for {
 		select {
 		case got := <-cli.Frames():
-			// Skip the fake's replies to our cmd-03 probes (radio ->
-			// controller, FB-terminated); take the first non-reply frame.
-			if len(got) >= 7 && got[0] == 0xfe && got[1] == 0xfe &&
-				got[3] == 0xa2 && got[4] == 0x03 && got[len(got)-2] == 0xfb {
+			// Skip every radio->controller reply (the fake's answers to
+			// our cmd-03 probes); the injected controller-addressed frame
+			// is the first one left.
+			if len(got) >= 4 && got[0] == 0xfe && got[1] == 0xfe && got[2] == 0xe0 {
 				continue
 			}
 			if string(got) != string(want) {

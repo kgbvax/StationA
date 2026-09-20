@@ -141,12 +141,18 @@ func CmdReadSMeter() []byte { return BuildFrame(CivCmdReadMeter, []byte{SubSMete
 func CmdReadSWR() []byte    { return BuildFrame(CivCmdReadMeter, []byte{SubSWR}) }
 func CmdReadALC() []byte    { return BuildFrame(CivCmdReadMeter, []byte{SubALC}) }
 
-// ParseMeter decodes an 0-255 meter value (S-meter: S9 = 120).
+// ParseMeter decodes an 0-255 meter value (S-meter: S9 = 120). Real
+// firmware answers `15 <sub> <hi> <lo>` (two bytes, big-endian, bench
+// 2026-09-20); the fake's single-byte legacy form is still accepted.
 func ParseMeter(data []byte) (int, error) {
-	if len(data) != 1 {
-		return 0, fmt.Errorf("civ: meter reply must be 1 byte, got %d", len(data))
+	switch len(data) {
+	case 1:
+		return int(data[0]), nil
+	case 2:
+		return int(data[0])<<8 | int(data[1]), nil
+	default:
+		return 0, fmt.Errorf("civ: meter reply must be 1-2 bytes, got %d", len(data))
 	}
-	return int(data[0]), nil
 }
 
 // CmdReadPreamp / CmdReadAttenuator build `16 02` / `16 11`.

@@ -391,13 +391,21 @@ func (f *FakeRadio) handleCIV(pkt []byte) {
 	sub := frame[5 : len(frame)-1] // between cmd and FD
 
 	radioMu := &f.radioMu
-	reply := func(data ...byte) {
-		ans := append([]byte{0xFE, 0xFE, 0xE0, 0xA2, cmd}, data...)
-		ans = append(ans, 0xFB, 0xFD)
-		f.SendCIVFrame(ans, false)
+	// Real-firmware reply conventions (bench 2026-09-20):
+	//   - set/select commands are answered with the BARE acknowledge
+	//     FE FE E0 A2 FB (FA on NG) — no command echo;
+	//   - data replies are FD-terminated with no FB byte;
+	//   - replies to sub-command queries repeat the sub bytes
+	//     (FE FE E0 A2 15 02 <hi> <lo> FD).
+	ack := func() {
+		f.SendCIVFrame([]byte{0xFE, 0xFE, 0xE0, 0xA2, 0xFB, 0xFD}, false)
 	}
 	ng := func() {
-		ans := []byte{0xFE, 0xFE, 0xE0, 0xA2, cmd, 0xFA, 0xFD}
+		f.SendCIVFrame([]byte{0xFE, 0xFE, 0xE0, 0xA2, 0xFA, 0xFD}, false)
+	}
+	reply := func(data ...byte) {
+		ans := append([]byte{0xFE, 0xFE, 0xE0, 0xA2, cmd}, data...)
+		ans = append(ans, 0xFD)
 		f.SendCIVFrame(ans, false)
 	}
 
@@ -418,57 +426,57 @@ func (f *FakeRadio) handleCIV(pkt []byte) {
 			return
 		}
 		f.freq[f.selectedVFO] = hz
-		reply()
+		ack()
 	case cmd == 0x04 && len(sub) == 0: // read mode (selected VFO)
 		reply(modeByte(f.mode[f.selectedVFO]), 0x01)
 	case cmd == 0x06 && len(sub) == 2: // set mode+filter (or data-mode modifier)
 		if m, ok := modeFromByteKnown(sub[0]); ok {
 			f.mode[f.selectedVFO] = m
 		}
-		reply()
+		ack()
 	case cmd == 0x07 && len(sub) == 1 && (sub[0] == 0xD0 || sub[0] == 0xD1):
 		if sub[0] == 0xD0 {
 			f.selectedVFO = "main"
 		} else {
 			f.selectedVFO = "sub"
 		}
-		reply()
+		ack()
 	case cmd == 0x07 && len(sub) == 2 && sub[0] == 0xD2:
 		if f.selectedVFO == "main" {
-			reply(0x00)
+			reply(sub[0], 0x00)
 		} else {
-			reply(0x01)
+			reply(sub[0], 0x01)
 		}
 	case cmd == 0x16 && len(sub) >= 1 && sub[0] == 0x5A:
 		if len(sub) == 2 {
 			f.satMode = sub[1] == 0x01
-			reply()
+			ack()
 		} else {
 			if f.satMode {
-				reply(0x01)
+				reply(sub[0], 0x01)
 			} else {
-				reply(0x00)
+				reply(sub[0], 0x00)
 			}
 		}
 	case cmd == 0x1C && len(sub) == 2 && sub[0] == 0x00: // PTT set
 		f.ptt = sub[1] == 0x01
-		reply()
+		ack()
 	case cmd == 0x1C && len(sub) == 1 && sub[0] == 0x00: // PTT read
 		if f.ptt {
-			reply(0x01)
+			reply(sub[0], 0x01)
 		} else {
-			reply(0x00)
+			reply(sub[0], 0x00)
 		}
 	case cmd == 0x15 && len(sub) == 1 && sub[0] == 0x02:
-		reply(f.sMeterVal)
+		reply(sub[0], 0x00, f.sMeterVal)
 	case cmd == 0x15 && len(sub) == 1 && sub[0] == 0x12:
-		reply(f.swrVal)
+		reply(sub[0], 0x00, f.swrVal)
 	case cmd == 0x15 && len(sub) == 1 && sub[0] == 0x13:
-		reply(f.alcVal)
+		reply(sub[0], 0x00, f.alcVal)
 	case cmd == 0x19: // transceiver ID
 		reply(0x98) // the 9700's CI-V address
 	case cmd == 0x14 || cmd == 0x06 || cmd == 0x1A:
-		reply()
+		ack()
 	default:
 		ng()
 	}
