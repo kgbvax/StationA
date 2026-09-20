@@ -27,9 +27,9 @@ type FakeRadio struct {
 	cliCtrl     *net.UDPAddr
 	cliCiv      *net.UDPAddr
 	radioSID    uint32
-	authID      [6]byte
 	loginCount  int
 	loginTimes  []time.Time
+	auth02Count int
 	auth05Count int
 	requested   bool
 	civOpened   int
@@ -81,7 +81,6 @@ func NewFakeRadio(t testing.TB) *FakeRadio {
 		mode:         map[string]string{"main": "usb", "sub": "fm"},
 		selectedVFO:  "sub",
 	}
-	copy(f.authID[:], []byte{0xde, 0xad, 0xbe, 0xef, 0x01, 0x02})
 
 	var err error
 	f.ctrl, err = net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
@@ -203,11 +202,11 @@ func (f *FakeRadio) handle(stream string, conn *net.UDPConn, from *net.UDPAddr, 
 		return
 	}
 	radioSID := f.radioSID
-	authID := f.authID
 	refuseLogin := f.refuseLogin
 	refuseSess := f.refuseSess
 
 	var reply []byte
+	var posts [][]byte // datagrams sent right after reply (0xa8 + conninfo)
 	switch {
 	case stream == "control" && prefixEqual(pkt, sigAreYouThere):
 		reply = header(sigIAmHere, radioSID, binary.BigEndian.Uint32(pkt[8:12]))
@@ -218,12 +217,12 @@ func (f *FakeRadio) handle(stream string, conn *net.UDPConn, from *net.UDPAddr, 
 	case stream == "civ" && prefixEqual(pkt, sigReady):
 		reply = header(sigReady, radioSID, binary.BigEndian.Uint32(pkt[8:12]))
 	case stream == "control" && len(pkt) == 128 && pkt[0] == 0x80:
-		// Login answer: 96 bytes with the session auth ID (or the explicit
-		// ff ff ff fe credential rejection).
+		// Login answer (wfview form): the tokrequest echo plus the session
+		// token — or the explicit ff ff ff fe credential rejection.
 		f.loginCount++
 		f.loginTimes = append(f.loginTimes, time.Now())
 		if f.busyLogin {
-			// The real radio's held-session reject (bench 2026-09-20):
+			// The real radio's stale-login reject (bench 2026-09-20):
 			// 20 bytes, type 0x0001, body 81 ff ff ff — then the radio
 			// keeps the control connection and pings.
 			busy := make([]byte, 20)
@@ -241,53 +240,63 @@ func (f *FakeRadio) handle(stream string, conn *net.UDPConn, from *net.UDPAddr, 
 		if refuseLogin {
 			ans[48], ans[49], ans[50], ans[51] = 0xff, 0xff, 0xff, 0xfe
 		} else {
-			copy(ans[authIDOffset:authIDOffset+authIDLen], authID[:])
+			copy(ans[tokRequestOffset:tokRequestOffset+2], pkt[tokRequestOffset:tokRequestOffset+2])
+			binary.LittleEndian.PutUint32(ans[tokenOffset:tokenOffset+tokenLen], 0x0badf00d)
 		}
 		reply = ans
 	case stream == "control" && len(pkt) == 64 && pkt[0] == 0x40:
-		// Auth (first 0x02, renewal/deauth 0x05 / 0x01): 64-byte answer.
-		magic := pkt[offAuthMagic]
-		if magic == 0x05 {
+		// Auth (first 0x02, renewal/deauth 0x05 / 0x01). Real IC-9700
+		// firmware answers the 0x02 with the 0xa8 capabilities packet
+		// (echoing the auth fields) — there is no 0x40 auth answer — and
+		// then volunteers the 0x90 conninfo. Renewals keep the 0x40 form.
+		magic := pkt[21]
+		switch magic {
+		case 0x02:
+			f.auth02Count++
+		case 0x05:
 			f.auth05Count++
-			if f.auth05Count >= 2 {
-				f.renewed++
-			}
-			ans := make([]byte, 64)
-			copy(ans, sigAuthAnswer)
-			binary.BigEndian.PutUint32(ans[8:12], radioSID)
-			binary.BigEndian.PutUint32(ans[12:16], binary.BigEndian.Uint32(pkt[12:16]))
-			ans[offAuthMagic] = 0x05
-			reply = ans
+			f.renewed++
 		}
-		// After the FIRST auth the radio volunteers its 0xa8 identity.
 		if magic == 0x02 && !refuseLogin {
 			a8 := make([]byte, 168)
 			a8[0] = 0xa8
+			copy(a8[0x10:0x14], []byte{0x00, 0x00, 0x00, 0x98})
+			a8[0x14] = 0x02
+			a8[0x15] = 0x02
 			binary.BigEndian.PutUint32(a8[8:12], radioSID)
-			copy(a8[66:82], []byte("radio-id-12345678"))
-			f.mu.Unlock()
-			_ = f.sendTo(conn, from, a8)
-			return
+			binary.BigEndian.PutUint32(a8[12:16], binary.BigEndian.Uint32(pkt[12:16]))
+			copy(a8[a8NameOffset:a8NameOffset+32], []byte("IC-9700\x00"))
+			posts = append(posts, a8)
+			conninfo := make([]byte, 144)
+			conninfo[0] = 0x90
+			binary.BigEndian.PutUint32(conninfo[8:12], radioSID)
+			binary.BigEndian.PutUint32(conninfo[12:16], binary.BigEndian.Uint32(pkt[12:16]))
+			posts = append(posts, conninfo)
+			break
 		}
+		ans := make([]byte, 64)
+		copy(ans, sigAuthAnswer)
+		binary.BigEndian.PutUint32(ans[8:12], radioSID)
+		binary.BigEndian.PutUint32(ans[12:16], binary.BigEndian.Uint32(pkt[12:16]))
+		ans[21] = magic
+		binary.LittleEndian.PutUint32(ans[48:52], 0)
+		reply = ans
 	case stream == "control" && pkt[0] == 0x90 && prefixEqual(pkt, sigRequestAnswer):
-		// Request-stream.
+		// Request-stream: the radio answers with the 0x50 status (error 0
+		// = granted, carrying the CI-V/audio ports; 0xffffffff = refused).
 		f.requested = true
+		ans := make([]byte, 80)
+		copy(ans, sigStatus)
+		binary.BigEndian.PutUint32(ans[8:12], radioSID)
+		binary.BigEndian.PutUint32(ans[12:16], binary.BigEndian.Uint32(pkt[12:16]))
 		if refuseSess {
-			fail := make([]byte, 80)
-			fail[0] = 0x50
-			binary.BigEndian.PutUint32(fail[8:12], radioSID)
-			fail[48], fail[49], fail[50] = 0xff, 0xff, 0xff
-			reply = fail
+			binary.LittleEndian.PutUint32(ans[48:52], 0xffffffff)
 		} else {
-			ans := make([]byte, 144)
-			ans[0] = 0x90
-			binary.BigEndian.PutUint32(ans[8:12], radioSID)
-			binary.BigEndian.PutUint32(ans[12:16], binary.BigEndian.Uint32(pkt[12:16]))
-			copy(ans[authIDOffset:authIDOffset+authIDLen], authID[:])
-			ans[requestOKFlag] = 0x01
-			copy(ans[requestDevNameOffset:], "IC-9700\x00")
-			reply = ans
+			binary.LittleEndian.PutUint32(ans[48:52], 0)
+			binary.BigEndian.PutUint16(ans[0x42:0x44], uint16(pkt[0x7c+2])<<8|uint16(pkt[0x7c+3]))
+			binary.BigEndian.PutUint16(ans[0x46:0x48], uint16(pkt[0x80+2])<<8|uint16(pkt[0x80+3]))
 		}
+		reply = ans
 	case isPing(pkt) && pkt[16] == pingRequest:
 		ans := make([]byte, pingLen)
 		copy(ans, []byte{0x15, 0x00, 0x00, 0x00, pingFamily, 0x00})
@@ -298,7 +307,7 @@ func (f *FakeRadio) handle(stream string, conn *net.UDPConn, from *net.UDPAddr, 
 		copy(ans[17:21], pkt[17:21])
 		reply = ans
 	case stream == "civ" && pkt[0] == 0x16 && len(pkt) == 22:
-		if pkt[21] == 0x05 {
+		if pkt[21] == 0x04 {
 			f.civOpened++
 		} else {
 			f.civClosed++
@@ -329,6 +338,9 @@ func (f *FakeRadio) handle(stream string, conn *net.UDPConn, from *net.UDPAddr, 
 
 	if reply != nil {
 		_ = f.sendTo(conn, from, reply)
+	}
+	for _, p := range posts {
+		_ = f.sendTo(conn, from, p)
 	}
 }
 

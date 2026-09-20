@@ -72,7 +72,7 @@ func TestHandshakeHappyPath(t *testing.T) {
 
 	// The control stream must show the full handshake in order.
 	var fams []string
-	var auth05, requested int
+	var auth02, requested int
 	f.mu.Lock()
 	for _, p := range f.ctrlPackets {
 		switch {
@@ -89,12 +89,12 @@ func TestHandshakeHappyPath(t *testing.T) {
 			requested++
 		}
 	}
-	auth05 = f.auth05Count
+	auth02 = f.auth02Count
 	f.mu.Unlock()
 
 	want := []string{
 		"pkt3", "pkt3", "pkt6", "pkt6", // are-you-there / ready exchange
-		"login", "auth", "auth", // login, first auth 0x02, second auth 0x05
+		"login", "auth", // login, first auth 0x02 (wfview's single immediate auth)
 		"request",
 	}
 	if len(fams) < len(want) {
@@ -105,9 +105,9 @@ func TestHandshakeHappyPath(t *testing.T) {
 			t.Fatalf("handshake sequence at %d = %s, want %s (full: %v)", i, fams[i], w, fams)
 		}
 	}
-	// The auth pair brackets the login: 0x02 then 0x05.
-	if auth05 < 1 {
-		t.Errorf("second auth (0x05) never sent")
+	// Exactly one immediate auth (the 0x05 renewal rides the timer).
+	if auth02 != 1 {
+		t.Errorf("first auth (0x02) count = %d, want 1", auth02)
 	}
 	if requested == 0 {
 		t.Errorf("stream request never sent")

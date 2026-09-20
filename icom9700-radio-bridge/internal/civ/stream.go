@@ -48,11 +48,16 @@ func (c *Client) dialStream(name string, radioPort, localPort int) (*udpStream, 
 		return nil, fmt.Errorf("dial %s udp %d->%d: %w", name, localPort, radioPort, err)
 	}
 	s := &udpStream{
-		cli:    c,
-		name:   name,
-		conn:   conn,
-		readCh: make(chan []byte, readQueueLen),
-		tx:     newTxSeqBuf(c.opts.TxRetention),
+		cli:  c,
+		name: name,
+		conn: conn,
+		// The tracked sequence starts at 1 (wfview uint16_t sendSeq = 1).
+		// A first tracked packet at seq 0 reads as a stale packet on real
+		// IC-9700 firmware — it answered our seq-0 login with the 20-byte
+		// 81 ff ff ff reject on every attempt (bench 2026-09-20).
+		sendSeq: 1,
+		readCh:  make(chan []byte, readQueueLen),
+		tx:      newTxSeqBuf(c.opts.TxRetention),
 	}
 	// Local session ID: the socket's IPv4 bytes shifted left 16, OR the
 	// local port (kappanhang streamCommon.init — derived, not random).

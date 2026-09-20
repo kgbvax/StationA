@@ -13,11 +13,20 @@ import (
 // and starve manual wfview operating.
 func TestPollIdleDoesNotDial(t *testing.T) {
 	h := newBH(t)
+	// The state machine reaches idle asynchronously — wait for it before
+	// stimulating, or the snapshot below races the startup transition.
+	deadline := time.Now().Add(2 * time.Second)
+	for h.b.mgr.Snapshot().SessionState != radio.StateIdle {
+		if time.Now().After(deadline) {
+			t.Fatalf("session never reached idle (at %q)", h.b.mgr.Snapshot().SessionState)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 	h.pollNow()
 	// A demanding poll would drive idle -> connecting -> (the fake radio
 	// answers) live within milliseconds. The guard must leave the session
 	// untouched and the radio silent.
-	deadline := time.Now().Add(500 * time.Millisecond)
+	deadline = time.Now().Add(500 * time.Millisecond)
 	for time.Now().Before(deadline) {
 		if st := h.b.mgr.Snapshot().SessionState; st != radio.StateIdle {
 			t.Fatalf("session_state = %q after idle poll, want idle (the poll dialed the radio)", st)
