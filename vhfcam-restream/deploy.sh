@@ -32,6 +32,12 @@
 #   MQTT_USER       overlay.mqtt_user     (default: hf)
 #   MQTT_PASSWORD   overlay.mqtt_password (default: empty -> set on device)
 #
+# Sinks (which outputs run when the service is started):
+#   YT_ENABLED      youtube_enabled value (default: true)
+#   PREVIEW_ENABLED preview.enabled value (default: true — local HLS preview
+#                   at http://<shari>:8083/, served by the built-in server)
+#   PREVIEW_ADDR    preview.http_addr      (default: :8083)
+#
 #   ENABLED         install enabled+running? (default: false — the service is
 #                   DISABLED by default so the Pi does not stream constantly;
 #                   start ad hoc with: sudo systemctl enable --now vhfcam-restream)
@@ -71,6 +77,10 @@ MQTT_BROKER="${MQTT_BROKER:-tcp://192.168.1.50:1883}"
 MQTT_USER="${MQTT_USER:-hf}"
 MQTT_PASSWORD="${MQTT_PASSWORD:-}"
 ENABLED="${ENABLED:-false}"
+
+YT_ENABLED="${YT_ENABLED:-true}"
+PREVIEW_ENABLED="${PREVIEW_ENABLED:-true}"
+PREVIEW_ADDR="${PREVIEW_ADDR:-:8083}"
 
 # Allow "user@host" in SSH_HOST; otherwise prepend SSH_USER.
 if [[ "$SSH_HOST" == *"@"* ]]; then
@@ -129,7 +139,17 @@ trap 'rm -f "$SEED_CONFIG" "${UNIT_FILE:-}"' EXIT
   echo "restart_max_s   = 300"
   echo "stable_run_s    = 120"
   echo ""
+  echo "# Sinks: which outputs run when the service is started. The YouTube"
+  echo "# push and the local HLS preview (http://<shari>:8083/) are"
+  echo "# independent — either can be off without touching the other."
+  echo "youtube_enabled = ${YT_ENABLED}"
+  echo ""
   echo "log_level = \"$(toml_escape "$LOG_LEVEL")\""
+  echo ""
+  echo "[preview]"
+  echo "enabled   = ${PREVIEW_ENABLED}"
+  echo "http_addr = \"$(toml_escape "$PREVIEW_ADDR")\""
+  echo "# dir / hls_time_s / hls_list_size keep the app defaults (tmpfs)."
   echo ""
   echo "# Operational-data overlay (drawtext burn-in): subscribes to the uhf"
   echo "# rotator/radio state snapshots and renders AZ/EL/freq/TX textfiles"

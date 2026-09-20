@@ -38,6 +38,18 @@ stable_run_s    = 120
 
 log_level = "info"
 
+# Sinks: which outputs run when the service is started. They are independent
+# — either can be off without touching the other.
+youtube_enabled = true
+
+# Local web-browser preview: a second ffmpeg writes HLS to tmpfs and the
+# built-in server serves it at http://<shari>:8083/ (hls.js is embedded in
+# the binary, so the page works with the internet down). ~10 s behind live.
+[preview]
+enabled   = true
+http_addr = ":8083"
+
+
 # Operational-data overlay: subscribes to the station MQTT broker and burns
 # AZ/EL/freq/TX text into the video via ffmpeg drawtext. enabled=true switches
 # the video from -c:v copy to a software x264 transcode (576p is comfortable

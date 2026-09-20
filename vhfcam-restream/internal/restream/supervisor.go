@@ -28,27 +28,46 @@ type reloadFn func() (config.Config, error)
 // stalls. A SIGHUP (Reload) re-reads the config and restarts the stream — that
 // is how the sd/hd profile is switched live.
 type Supervisor struct {
-	log       *slog.Logger
-	reload    reloadFn
-	cfgPtr    atomic.Pointer[config.Config]
-	reloadC   chan struct{}          // SIGHUP tokens
-	wake      chan struct{}          // wakes the backoff wait when a reload lands
+	log      *slog.Logger
+	reload   reloadFn
+	cfgPtr   atomic.Pointer[config.Config]
+	reloadC  chan struct{}          // SIGHUP tokens
+	wake     chan struct{}          // wakes the backoff wait when a reload lands
 	reloadHit atomic.Bool            // set when the current run ended due to a reload
 	curCancel atomic.Pointer[context.CancelFunc] // cancels the in-flight run, if any
 	lastBeat  atomic.Int64           // unix nanos of the last ffmpeg progress line
+	enabledFn func() bool            // nil = always enabled (sink gate)
+	argsFn    func(*config.Config, string) []string
 }
 
 // New builds a Supervisor. reload is called on SIGHUP to re-read the config.
+// The default sink is the YouTube push; WithEnabled/WithArgsFn adapt it.
 func New(cfg config.Config, reload reloadFn, log *slog.Logger) *Supervisor {
 	s := &Supervisor{
 		log:     log,
 		reload:  reload,
 		reloadC: make(chan struct{}, 1),
 		wake:    make(chan struct{}, 1),
+		argsFn:  BuildArgs,
 	}
 	s.cfgPtr.Store(&cfg)
 	return s
 }
+
+// WithEnabled gates the sink: when fn returns false the supervisor idles (and
+// stops the in-flight run on the next reload). nil = always enabled.
+func (s *Supervisor) WithEnabled(fn func() bool) *Supervisor {
+	s.enabledFn = fn
+	return s
+}
+
+// WithArgsFn replaces the ffmpeg argument builder (e.g. the HLS preview sink).
+func (s *Supervisor) WithArgsFn(fn func(*config.Config, string) []string) *Supervisor {
+	s.argsFn = fn
+	return s
+}
+
+func (s *Supervisor) enabled() bool { return s.enabledFn == nil || s.enabledFn() }
 
 // Reload requests a config re-read and stream restart (SIGHUP). Coalesces.
 func (s *Supervisor) Reload() {
@@ -95,6 +114,17 @@ func (s *Supervisor) Run(ctx context.Context) error {
 
 	backoff := time.Duration(s.cfg().RestartMinSec) * time.Second
 	for {
+		if !s.enabled() {
+			s.log.Info("sink disabled — idle")
+			select {
+			case <-ctx.Done():
+				return nil
+			case <-s.wake: // config reload may have enabled the sink
+			}
+			backoff = time.Duration(s.cfg().RestartMinSec) * time.Second
+			continue
+		}
+
 		cfg := s.cfg()
 		src, profile := cfg.EffectiveSource()
 		s.log.Info("starting stream",
@@ -114,6 +144,10 @@ func (s *Supervisor) Run(ctx context.Context) error {
 		if s.reloadHit.Swap(false) {
 			backoff = time.Duration(cfg.RestartMinSec) * time.Second
 			continue // restart immediately with the freshly-loaded config
+		}
+
+		if !s.enabled() { // sink was disabled by the reload — stop cleanly
+			continue
 		}
 
 		runtime := time.Since(start)
@@ -143,7 +177,7 @@ func (s *Supervisor) Run(ctx context.Context) error {
 // runOnce runs ffmpeg until it exits or ctx is cancelled. It returns when the
 // process is gone (pipes drained).
 func (s *Supervisor) runOnce(ctx context.Context, cfg *config.Config, src string) error {
-	args := BuildArgs(cfg, src)
+	args := s.argsFn(cfg, src)
 	s.log.Info("exec",
 		"bin", cfg.FFmpegBin,
 		"args", strings.Join(RedactArgs(args, src, cfg.StreamKey), " "))

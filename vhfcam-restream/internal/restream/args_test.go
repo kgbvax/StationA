@@ -69,6 +69,42 @@ func TestBuildArgsWithOverlay(t *testing.T) {
 	}
 }
 
+func TestBuildPreviewArgs(t *testing.T) {
+	cfg := testCfg()
+	cfg.Preview.Enabled = true
+	src, _ := cfg.EffectiveSource()
+	args := BuildPreviewArgs(cfg, src)
+	joined := strings.Join(args, " ")
+
+	for _, want := range []string{
+		"-rtsp_transport tcp",
+		"-map 0:v:0",
+		"-map 0:a:0",
+		"-c:v copy", // overlay off in the default test config: copy, no transcode
+		"-c:a aac",
+		"-f hls",
+		"-hls_time 2",
+		"-hls_list_size 6",
+		"-hls_flags delete_segments+temp_file",
+		"-hls_segment_filename /run/vhfcam-restream/preview/seg_%05d.ts",
+		"/run/vhfcam-restream/preview/live.m3u8",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("preview args missing %q:\n%s", want, joined)
+		}
+	}
+	if strings.Contains(joined, "-f flv") {
+		t.Errorf("preview args must not carry the YouTube output:\n%s", joined)
+	}
+
+	// With the overlay on, the preview transcodes too (burn-in required).
+	cfg.Overlay.Enabled = true
+	joined = strings.Join(BuildPreviewArgs(cfg, src), " ")
+	if !strings.Contains(joined, "-c:v libx264") || !strings.Contains(joined, "-vf drawbox=") {
+		t.Errorf("overlay-enabled preview args missing transcode+filter:\n%s", joined)
+	}
+}
+
 func TestRedactArgs(t *testing.T) {
 	src, _ := testCfg().EffectiveSource()
 	args := RedactArgs(BuildArgs(testCfg(), src), src, "SEKRIT")

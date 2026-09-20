@@ -89,6 +89,23 @@ load ~+0.8; keep the HD profile clean — 1080p software x264 is not budgeted).
   to ffmpeg for a minimap + worked-station (from `muehle/hf/spots`) + sat
   subpoint via SGP4; phase 3 = RX/TX audio via an ALSA line tap (hardware).
 
+## Sinks
+
+The app runs **two independent sinks** (separate ffmpeg processes, each with
+its own supervisor, restart backoff and stall watchdog):
+
+1. **YouTube RTMP push** (`youtube_enabled`, default true) — the original sink.
+2. **Local HLS preview** (`[preview] enabled`, default true) — a second ffmpeg
+   writes `live.m3u8` + segments to `/run/vhfcam-restream/preview` (tmpfs) and
+   the built-in HTTP server (`:8083`) serves a minimal player page at
+   `http://<shari>:8083/`. **hls.js is vendored into the binary** (`go:embed`,
+   Apache-2.0, see `internal/preview/assets/NOTICE`) so the page works with
+   the internet down — the main reason a local preview exists. ~10 s behind
+   live (`hls_time_s 2`, `hls_list_size 6`). No auth: LAN-only service, same
+   posture as testui. The preview is deliberately a separate process so a
+   YouTube/internet outage never blanks the LAN view; sink toggles apply via
+   SIGHUP (the idle supervisor waits on the reload wake).
+
 ## Ops
 
 ```bash

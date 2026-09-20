@@ -5,19 +5,34 @@ package restream
 import (
 	"fmt"
 	"net/url"
+	"path/filepath"
+	"strconv"
 	"strings"
 
 	"vhfcam-restream/internal/config"
 )
 
-// BuildArgs assembles the ffmpeg invocation for one stream run.
-//
-// The cameras emit H.264 video plus two audio tracks (AAC mono and Opus
-// stereo). RTMP/FLV can only carry AAC, and ffmpeg's default stream selection
-// would pick the 2-channel Opus track — so the audio is mapped explicitly
-// (first audio track) and transcoded to AAC. Video is copied unless the
-// overlay is enabled, which forces a software transcode to burn it in.
+// BuildArgs assembles the ffmpeg invocation for the YouTube sink.
 func BuildArgs(cfg *config.Config, sourceURL string) []string {
+	args := buildInputArgs(cfg, sourceURL)
+	return append(args, youtubeOutputArgs(cfg)...)
+}
+
+// BuildPreviewArgs assembles the ffmpeg invocation for the local HLS preview
+// sink. It is a separate ffmpeg process on purpose: the LAN preview must keep
+// working when YouTube or the internet is down, which kills the YouTube push.
+func BuildPreviewArgs(cfg *config.Config, sourceURL string) []string {
+	args := buildInputArgs(cfg, sourceURL)
+	return append(args, previewOutputArgs(cfg)...)
+}
+
+// buildInputArgs covers input, transport, stream selection and the overlay
+// filter. The cameras emit H.264 video plus two audio tracks (AAC mono and
+// Opus stereo). RTMP/FLV can only carry AAC, and ffmpeg's default stream
+// selection would pick the 2-channel Opus track — so the audio is mapped
+// explicitly (first audio track). Video codec handling is per-sink (see
+// videoCodecArgs).
+func buildInputArgs(cfg *config.Config, sourceURL string) []string {
 	args := []string{
 		"-hide_banner",
 		"-loglevel", "warning",
@@ -29,7 +44,15 @@ func BuildArgs(cfg *config.Config, sourceURL string) []string {
 	}
 	if vf := BuildVideoFilter(cfg); vf != "" {
 		args = append(args, "-vf", vf)
-		args = append(args,
+	}
+	return args
+}
+
+// videoCodecArgs returns the video codec arguments: a software x264 transcode
+// when the overlay needs burning in, otherwise a straight copy.
+func videoCodecArgs(cfg *config.Config) []string {
+	if BuildVideoFilter(cfg) != "" {
+		return []string{
 			"-c:v", "libx264",
 			"-preset", "superfast",
 			"-crf", "23",
@@ -37,11 +60,14 @@ func BuildArgs(cfg *config.Config, sourceURL string) []string {
 			"-bufsize", "1250k",
 			"-g", "40",
 			"-pix_fmt", "yuv420p",
-		)
-	} else {
-		args = append(args, "-c:v", cfg.VideoCodec)
+		}
 	}
-	args = append(args,
+	return []string{"-c:v", cfg.VideoCodec}
+}
+
+func youtubeOutputArgs(cfg *config.Config) []string {
+	args := videoCodecArgs(cfg)
+	return append(args,
 		"-c:a", cfg.AudioCodec,
 		"-flvflags", "no_duration_filesize",
 		"-stats_period", "5",
@@ -49,7 +75,22 @@ func BuildArgs(cfg *config.Config, sourceURL string) []string {
 		"-f", "flv",
 		cfg.YouTubeURL + "/" + cfg.StreamKey,
 	)
-	return args
+}
+
+func previewOutputArgs(cfg *config.Config) []string {
+	p := &cfg.Preview
+	args := videoCodecArgs(cfg)
+	return append(args,
+		"-c:a", cfg.AudioCodec,
+		"-stats_period", "5",
+		"-progress", "pipe:1",
+		"-f", "hls",
+		"-hls_time", strconv.Itoa(p.HlsTimeS),
+		"-hls_list_size", strconv.Itoa(p.ListSize),
+		"-hls_flags", "delete_segments+temp_file",
+		"-hls_segment_filename", filepath.Join(p.Dir, "seg_%05d.ts"),
+		filepath.Join(p.Dir, "live.m3u8"),
+	)
 }
 
 // BuildVideoFilter returns the -vf drawtext chain for the operational-data

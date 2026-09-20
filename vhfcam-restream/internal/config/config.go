@@ -35,6 +35,12 @@ type Config struct {
 	VideoCodec    string `toml:"video_codec"`    // -c:v
 	AudioCodec    string `toml:"audio_codec"`    // -c:a
 
+	// Sinks. The service is disabled at boot by default (deploy.sh), so nothing
+	// streams constantly; when started, these pick which sinks run. The
+	// preview is deliberately independent of YouTube: the LAN preview must
+	// work when the internet (or YouTube) is down.
+	YoutubeEnabled bool `toml:"youtube_enabled"`
+
 	// Supervision.
 	StallTimeoutSec int `toml:"stall_timeout_s"` // no ffmpeg progress for this long -> kill + restart
 	RestartMinSec   int `toml:"restart_min_s"`   // initial restart backoff
@@ -46,7 +52,20 @@ type Config struct {
 	// Enabled only gates whether ffmpeg gets the -vf chain.
 	Overlay OverlayConfig `toml:"overlay"`
 
+	// Local web-browser preview: a second ffmpeg writes HLS to tmpfs and a
+	// built-in HTTP server serves it to LAN browsers.
+	Preview PreviewConfig `toml:"preview"`
+
 	LogLevel string `toml:"log_level"`
+}
+
+// PreviewConfig configures the local HLS preview sink.
+type PreviewConfig struct {
+	Enabled  bool   `toml:"enabled"`
+	HTTPAddr string `toml:"http_addr"` // listen address for the built-in server
+	Dir      string `toml:"dir"`       // HLS output (tmpfs on the device)
+	HlsTimeS int    `toml:"hls_time_s"`
+	ListSize int    `toml:"hls_list_size"`
 }
 
 // OverlayConfig configures the MQTT-fed drawtext overlay.
@@ -79,6 +98,7 @@ type OverlayConfig struct {
 func Default() Config {
 	return Config{
 		Quality:         "sd",
+		YoutubeEnabled:  true,
 		YouTubeURL:      "rtmp://a.rtmp.youtube.com/live2",
 		FFmpegBin:       "/usr/bin/ffmpeg",
 		RTSPTransport:   "tcp",
@@ -90,6 +110,13 @@ func Default() Config {
 		RestartMinSec:   5,
 		RestartMaxSec:   300,
 		StableRunSec:    120,
+		Preview: PreviewConfig{
+			Enabled:  false,
+			HTTPAddr: ":8083",
+			Dir:      "/run/vhfcam-restream/preview",
+			HlsTimeS: 2,
+			ListSize: 6,
+		},
 		Overlay: OverlayConfig{
 			Enabled:      false,
 			MQTTBroker:   "tcp://192.168.1.50:1883",
@@ -165,6 +192,9 @@ func (c *Config) Validate() error {
 	}
 	if err := c.Overlay.validate(); err != nil {
 		return err
+	}
+	if c.Preview.Enabled && (c.Preview.Dir == "" || c.Preview.HlsTimeS <= 0 || c.Preview.ListSize <= 0) {
+		return fmt.Errorf("config: preview.dir, preview.hls_time_s and preview.hls_list_size must be set when enabled")
 	}
 	return nil
 }

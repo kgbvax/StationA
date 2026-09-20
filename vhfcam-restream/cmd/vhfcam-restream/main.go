@@ -20,6 +20,7 @@ import (
 
 	"vhfcam-restream/internal/config"
 	"vhfcam-restream/internal/overlay"
+	"vhfcam-restream/internal/preview"
 	"vhfcam-restream/internal/restream"
 )
 
@@ -67,26 +68,58 @@ func main() {
 		os.Exit(1)
 	}
 
-	sup := restream.New(cfg, func() (config.Config, error) {
+	// Preview HTTP server: always on (cheap); with the preview sink disabled
+	// the player page just reports "offline".
+	pvSrv := preview.NewServer(func() config.PreviewConfig { return curCfg.Load().Preview },
+		logger.With("component", componentName, "subcomponent", "preview"))
+	go func() {
+		if err := pvSrv.ListenAndServe(ctx); err != nil {
+			logger.Error("preview http server", "err", err)
+		}
+	}()
+
+	reload := func() (config.Config, error) {
 		nc, err := config.Load(*configPath)
 		if err != nil {
 			return nc, err
 		}
 		nc.ApplyEnv()
 		curCfg.Store(&nc)
+		// The HLS muxer does not create directories; the preview sink needs
+		// its output dir to exist before ffmpeg starts.
+		if err := os.MkdirAll(nc.Preview.Dir, 0755); err != nil {
+			logger.Warn("preview dir create failed", "dir", nc.Preview.Dir, "err", err)
+		}
 		return nc, nil
-	}, logger.With("component", componentName))
+	}
+	// Same, for the initial config.
+	if err := os.MkdirAll(curCfg.Load().Preview.Dir, 0755); err != nil {
+		logger.Error("preview dir create failed", "dir", curCfg.Load().Preview.Dir, "err", err)
+		os.Exit(1)
+	}
+	sinkLog := logger.With("component", componentName)
+	ytSup := restream.New(cfg, reload, sinkLog.With("sink", "youtube")).
+		WithEnabled(func() bool { return curCfg.Load().YoutubeEnabled })
+	pvSup := restream.New(cfg, reload, sinkLog.With("sink", "preview")).
+		WithEnabled(func() bool { return curCfg.Load().Preview.Enabled }).
+		WithArgsFn(restream.BuildPreviewArgs)
 
 	sighup := make(chan os.Signal, 1)
 	signal.Notify(sighup, syscall.SIGHUP)
 	go func() {
 		for range sighup {
-			logger.Info("SIGHUP — reloading config and restarting the stream")
-			sup.Reload()
+			logger.Info("SIGHUP — reloading config and restarting the streams")
+			ytSup.Reload()
+			pvSup.Reload()
 		}
 	}()
 
-	if err := sup.Run(ctx); err != nil {
+	// Run both sinks until shutdown; a sink-level failure never takes the
+	// other one down (each supervisor loops on its own).
+	done := make(chan error, 2)
+	go func() { done <- ytSup.Run(ctx) }()
+	go func() { done <- pvSup.Run(ctx) }()
+	if err := <-done; err != nil {
 		logger.Error("supervisor terminated", "err", err)
 		os.Exit(1)
 	}
