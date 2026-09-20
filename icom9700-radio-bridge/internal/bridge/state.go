@@ -64,10 +64,13 @@ func (b *Bridge) poll() {
 	}
 	// The poll's own bound is generous (a dozen sequential round-trips on
 	// a LAN session); the TICK is the cadence, not the deadline. A poll
-	// that outlives its ctx is abandoned — the next tick re-reads.
+	// that outlives its ctx is abandoned — the next tick re-reads. Ride,
+	// never Demand: telemetry is a free rider on the live session and must
+	// not restart its idle clock (KTD-2 — a demanding poll would keep the
+	// radio's session open around the clock and starve manual wfview).
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	err := b.mgr.Session().Demand(ctx, func(c *civ.Client) error {
+	err := b.mgr.Session().Ride(ctx, func(c *civ.Client) error {
 		rs := radioState{}
 		wait := b.opts.PollInterval
 

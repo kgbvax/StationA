@@ -233,6 +233,64 @@ func TestLoginBusySingleAttempt(t *testing.T) {
 // Plan U4 scenario 4 lives in TestHoldBlocksIdleDisconnect (disarm starts
 // the idle timer).
 
+// KTD-2 regression (production, 2026-09-20): the telemetry poll is a free
+// RIDER. Repeated rides while live must NOT restart the idle clock — the
+// session decays to idle on schedule even though polls continue every few
+// milliseconds. A demanding poll kept the radio's single LAN session open
+// forever, starving manual wfview.
+func TestRideDoesNotExtendIdle(t *testing.T) {
+	h := newHarness(t, nil)
+	waitState(t, h.s, StateIdle, time.Second)
+
+	if err := h.s.SetHold(h.ctx, true); err != nil {
+		t.Fatalf("SetHold: %v", err)
+	}
+	waitState(t, h.s, StateLive, time.Second)
+	if err := h.s.SetHold(h.ctx, false); err != nil {
+		t.Fatalf("SetHold(false): %v", err)
+	}
+
+	// Poll-shaped rides, faster than the idle timeout, across the whole
+	// decay window.
+	deadline := time.Now().Add(2 * time.Second)
+	rides := 0
+	for time.Now().Before(deadline) {
+		_ = h.s.Ride(h.ctx, func(*civ.Client) error { return nil })
+		rides++
+		if h.s.Snapshot().SessionState == StateIdle {
+			if rides < 2 {
+				t.Fatalf("session decayed after %d rides — rides never ran", rides)
+			}
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("session still live after %d rides across the decay window — a ride extends the idle clock", rides)
+}
+
+// Ride runs fn against a live session; from idle it is a quiet no-op that
+// never dials (KTD-2/R2).
+func TestRideNoOpWhenIdle(t *testing.T) {
+	h := newHarness(t, nil)
+	waitState(t, h.s, StateIdle, time.Second)
+
+	executed := false
+	if err := h.s.Ride(h.ctx, func(*civ.Client) error { executed = true; return nil }); err != nil {
+		t.Fatalf("Ride from idle: %v", err)
+	}
+	if executed {
+		t.Error("Ride executed against a non-live session")
+	}
+	if snap := h.s.Snapshot(); snap.SessionState != StateIdle {
+		t.Errorf("state = %q after an idle Ride, want idle (a ride must not dial)", snap.SessionState)
+	}
+	// The radio heard nothing.
+	logins, _, _, _, _ := h.f.Counts()
+	if logins != 0 {
+		t.Errorf("logins = %d after an idle Ride, want 0", logins)
+	}
+}
+
 // Plan U4 scenario 5: refuseLogin 3x — covered by TestWFViewContention
 // (spaced attempts, observed-fact error text).
 

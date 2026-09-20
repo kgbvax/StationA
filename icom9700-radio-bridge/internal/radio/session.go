@@ -77,6 +77,7 @@ var ErrSessionStopped = errors.New("radio: session manager stopped")
 type demand struct {
 	fn    func(*civ.Client) error
 	errCh chan error
+	ride  bool // telemetry rider: runs only while live, never resets idle
 }
 
 // Session is the on-demand state machine. Create with NewSession, run Run,
@@ -213,6 +214,29 @@ func (s *Session) Demand(ctx context.Context, fn func(*civ.Client) error) error 
 	return err
 }
 
+// Ride runs fn against the CURRENT live session without ever opening one
+// and without restarting the idle clock (KTD-2/R2: telemetry is a free
+// rider, never work — a demanding poll would keep the session open around
+// the clock and starve manual wfview). When the session is not live, Ride
+// is a quiet no-op (nil): finding nothing to ride is the expected outcome,
+// not a failure.
+func (s *Session) Ride(ctx context.Context, fn func(*civ.Client) error) error {
+	d := demand{fn: fn, errCh: make(chan error, 1), ride: true}
+	select {
+	case s.demands <- d:
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-s.stopped:
+		return ErrSessionStopped
+	}
+	select {
+	case err := <-d.errCh:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
 // connectAndRun submits a work demand, driving idle/error -> connecting if
 // needed, and waits for it to execute or fail.
 func (s *Session) connectAndRun(ctx context.Context, fn func(*civ.Client) error) (*civ.Client, error) {
@@ -296,10 +320,21 @@ func (s *Session) Run(ctx context.Context) error {
 			s.mu.Lock()
 			live := s.snap.SessionState == StateLive && s.client != nil
 			s.mu.Unlock()
+			if d.ride && !live {
+				// A telemetry rider never opens a session and never wakes
+				// the state machine for one (KTD-2/R2).
+				d.errCh <- nil
+				continue
+			}
 			if live {
-				// Already live: run now, restart the idle clock (this was
-				// work; keepalives never reach this path).
 				s.runDemand(d)
+				if d.ride {
+					// Telemetry never restarts the idle clock — the session
+					// decays on schedule even while polls continue (KTD-2).
+					continue
+				}
+				// This was work: restart the idle clock (keepalives never
+				// reach this path).
 				stopIdle()
 				if !s.held() {
 					idleTimer = time.NewTimer(s.opts.IdleTimeout)
