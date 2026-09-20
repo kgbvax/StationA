@@ -107,10 +107,13 @@ type Bridge struct {
 	cmdErr       string
 
 	// Safety core (U6): pendingOff is a PTT-off the radio never confirmed —
-	// the OnLive hook re-issues it with priority on the next handshake;
-	// txWatchdog is the rearmable max-TX bound (KTD-5). Both live under mu.
-	pendingOff bool
-	txWatchdog *time.Timer
+	// the OnLive hook re-issues it with priority on the next handshake and
+	// the redelivery loop keeps series armed until it lands; txWatchdog is
+	// the rearmable max-TX bound (KTD-5); redelivering guards against
+	// stacked redelivery series. All live under mu.
+	pendingOff    bool
+	redelivering  bool
+	txWatchdog    *time.Timer
 }
 
 // mqClient is the publish/subscribe surface the bridge needs — the paho

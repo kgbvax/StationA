@@ -31,6 +31,7 @@ type Config struct {
 	AreYouThere     time.Duration
 	HandshakeBudget time.Duration
 	LossWatchdog    time.Duration
+	PingInterval    time.Duration
 
 	Logger *slog.Logger
 }
@@ -67,6 +68,7 @@ func NewManager(cfg Config) *Manager {
 		AreYouThere:     cfg.AreYouThere,
 		HandshakeBudget: cfg.HandshakeBudget,
 		LossWatchdog:    cfg.LossWatchdog,
+		PingInterval:    cfg.PingInterval,
 		Logger:          cfg.Logger,
 	})
 	return &Manager{sess: sess, cfg: cfg, log: cfg.Logger.With("component", "radio-manager")}

@@ -33,9 +33,16 @@ const errTxWatchdog = "tx watchdog expired: ptt forced off"
 
 // pttOffRedeliveryBudget bounds ONE safety-driven redelivery series: the
 // session's own retry policy (max_attempts x attempt_spacing, default
-// 3x30 s) plus handshake headroom. A failure leaves pendingOff set — the
-// OnLive hook retries on the next handshake instead of re-dialing here.
+// 3x30 s) plus handshake headroom. A failure leaves pendingOff set and the
+// delivery loop re-arms — a keyed radio is never given up on.
 const pttOffRedeliveryBudget = 150 * time.Second
+
+// pttOffRetryBackoff spaces the redelivery loop's series once the first
+// series has failed (the radio's zombie-session reaper needs time; gate 5,
+// 2026-09-20: the reconnect was refused for ~60s while the radio stayed
+// keyed). The OnLive hook remains the fast path when any other demand
+// reconnects first.
+const pttOffRetryBackoff = 15 * time.Second
 
 // installSafety registers the loss-of-plane hooks with the radio manager.
 // Called once from New; the hooks run on the session's goroutines and stay
@@ -108,27 +115,55 @@ func (b *Bridge) onMqttLoss(err error) {
 	}
 }
 
-// deliverPttOff forces the unkey through one bounded demand series. On
-// failure the pending flag stays set and the OnLive hook owns the retry —
-// this goroutine never dials twice (R2: no login storm).
+// deliverPttOff forces the unkey: one bounded demand series now, and —
+// while the radio stays keyed — a re-armed series every retry backoff until
+// it lands (gate 5, 2026-09-20: the radio's zombie session refused
+// reconnects for ~60s after a loss; "the OnLive hook owns the retry" hangs
+// forever when nothing else reconnects). The redelivering guard keeps the
+// loss hook, the reconnect hook and the loop from stacking series.
 func (b *Bridge) deliverPttOff(why string) {
-	ctx, cancel := context.WithTimeout(context.Background(), pttOffRedeliveryBudget)
-	defer cancel()
-	err := b.mgr.Session().Demand(ctx, func(c *civ.Client) error {
-		_, err := b.mgr.Session().RoundTrip(ctx, c, civ.CmdPTT(false), 5*time.Second)
-		return err
-	})
-	if err != nil {
-		b.log.Warn("ptt-off undeliverable — redelivery pending on reconnect",
-			"why", why, "err", err)
-		b.setCmdErr(errPttOffUndeliv)
-	} else {
-		b.mu.Lock()
-		b.pendingOff = false
+	b.mu.Lock()
+	if b.redelivering {
 		b.mu.Unlock()
-		b.log.Warn("ptt-off delivered", "why", why)
+		return
 	}
-	sharedmqtt.Enqueue(b.jobs, func() { b.publishState(false) })
+	b.redelivering = true
+	b.mu.Unlock()
+	defer func() {
+		b.mu.Lock()
+		b.redelivering = false
+		b.mu.Unlock()
+	}()
+
+	for {
+		ctx, cancel := context.WithTimeout(context.Background(), pttOffRedeliveryBudget)
+		err := b.mgr.Session().Demand(ctx, func(c *civ.Client) error {
+			_, err := b.mgr.Session().RoundTrip(ctx, c, civ.CmdPTT(false), 5*time.Second)
+			return err
+		})
+		cancel()
+		if err == nil {
+			b.mu.Lock()
+			b.pendingOff = false
+			b.redelivering = false
+			b.mu.Unlock()
+			b.log.Warn("ptt-off delivered", "why", why)
+			sharedmqtt.Enqueue(b.jobs, func() { b.publishState(false) })
+			return
+		}
+		b.mu.Lock()
+		stillPending := b.pendingOff
+		b.mu.Unlock()
+		b.log.Warn("ptt-off undeliverable — redelivery loop stays armed",
+			"why", why, "backoff", pttOffRetryBackoff.String(), "err", err)
+		b.setCmdErr(errPttOffUndeliv)
+		sharedmqtt.Enqueue(b.jobs, func() { b.publishState(false) })
+		if !stillPending {
+			// Someone else delivered it (the OnLive hook) — done.
+			return
+		}
+		time.Sleep(pttOffRetryBackoff)
+	}
 }
 
 // armWatchdog (re)arms the max-TX bound; called after a successful PTT-on.
@@ -182,11 +217,12 @@ func (b *Bridge) txWatchdogTrip() {
 	})
 	b.setCmdErr(errTxWatchdog)
 	if err != nil {
-		b.log.Warn("watchdog ptt-off failed — redelivery pending on reconnect", "err", err)
+		b.log.Warn("watchdog ptt-off failed — redelivery loop takes over", "err", err)
 		b.setCmdErr(errPttOffUndeliv)
 		b.mu.Lock()
 		b.pendingOff = true
 		b.mu.Unlock()
+		go b.deliverPttOff("watchdog")
 	}
 	b.publishState(false)
 }

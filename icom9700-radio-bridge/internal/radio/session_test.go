@@ -36,6 +36,10 @@ func newHarness(t *testing.T, script func(o *SessionOptions)) *harness {
 }
 
 // fastSessionOpts: the plan's timers shrunk ~1000x against the fake radio.
+// PingInterval stays well under LossWatchdog — the production invariant
+// (keepalives ≪ loss bound); a harness that lets the control stream go
+// silent past the watchdog races the idle close and eats the teardown
+// packets (the loss path closes the sockets mid-teardown).
 func fastSessionOpts(f *civ.FakeRadio) SessionOptions {
 	return SessionOptions{
 		Host:            "127.0.0.1",
@@ -51,6 +55,7 @@ func fastSessionOpts(f *civ.FakeRadio) SessionOptions {
 		AreYouThere:     25 * time.Millisecond,
 		HandshakeBudget: 600 * time.Millisecond,
 		LossWatchdog:    150 * time.Millisecond,
+		PingInterval:    25 * time.Millisecond,
 		Logger:          slog.Default(),
 	}
 }

@@ -53,7 +53,10 @@ type SessionOptions struct {
 	AreYouThere     time.Duration
 	HandshakeBudget time.Duration
 	LossWatchdog    time.Duration
-	Logger          *slog.Logger
+	// PingInterval passes through to the transport's keepalive cadence
+	// (tests shrink it; it must stay ≪ LossWatchdog — see fastSessionOpts).
+	PingInterval time.Duration
+	Logger       *slog.Logger
 }
 
 // Snapshot is the lifecycle truth for the /state assembly (U5): the
@@ -482,6 +485,7 @@ func (s *Session) connectWithRetries(ctx context.Context) error {
 			HandshakeTO:     s.opts.HandshakeTO,
 			HandshakeBudget: s.opts.HandshakeBudget,
 			LossWatchdog:    s.opts.LossWatchdog,
+			PingInterval:    s.opts.PingInterval,
 			Logger:          s.log,
 		})
 		if err != nil {
