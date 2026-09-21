@@ -36,6 +36,7 @@ const (
 	CivCmdReadID        byte = 0x19 // transceiver ID probe
 	CivCmdPTT           byte = 0x1C // sub 00: on/off + transceive
 	CivCmdSetTransceive byte = 0x1A // sub 05 01 27: CI-V Transceive on/off
+	CivCmdPower         byte = 0x1A // sub 05 02 01: power ON from standby (IC-9700 remote wake; frame configurable — see audio.power_on_frame)
 
 	// OUT OF SCOPE (KTD-10): main power on/off 18 01/00 is never emitted by
 	// the bridge — a U3 test pins that nothing in the codec produces it.

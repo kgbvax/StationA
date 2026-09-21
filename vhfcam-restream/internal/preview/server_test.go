@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"vhfcam-restream/internal/config"
@@ -22,7 +23,7 @@ func testServer(t *testing.T) *Server {
 		c := config.Default().Preview
 		c.Dir = dir
 		return c
-	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	}, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
 }
 
 func get(t *testing.T, h http.Handler, path string) *httptest.ResponseRecorder {
@@ -103,5 +104,54 @@ func TestPathTraversalBlocked(t *testing.T) {
 		if rec := get(t, h, p); rec.Code == 200 {
 			t.Errorf("path %s escaped the preview dir", p)
 		}
+	}
+}
+
+func TestRadioCmdEndpoints(t *testing.T) {
+	var mu sync.Mutex
+	var got []string
+	s := testServer(t)
+	s.WithCmd(func(action string) error {
+		mu.Lock()
+		defer mu.Unlock()
+		got = append(got, action)
+		return nil
+	})
+	h := s.Handler()
+
+	for _, action := range []string{"audio_on", "audio_off", "power_on"} {
+		req := httptest.NewRequest(http.MethodPost, "/api/cmd/"+action, nil)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != 200 {
+			t.Errorf("POST %s = %d", action, rec.Code)
+		}
+	}
+	mu.Lock()
+	if strings.Join(got, ",") != "audio_on,audio_off,power_on" {
+		t.Errorf("cmdFn got %v", got)
+	}
+	mu.Unlock()
+
+	// Unknown action -> 404; page still carries the control buttons.
+	req := httptest.NewRequest(http.MethodPost, "/api/cmd/self_destruct", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != 404 {
+		t.Errorf("unknown action status %d, want 404", rec.Code)
+	}
+	if rec := get(t, h, "/"); !strings.Contains(rec.Body.String(), "btn-power") {
+		t.Error("page missing radio control bar")
+	}
+}
+
+func TestRadioCmdWithoutPublisher(t *testing.T) {
+	s := testServer(t) // cmdFn nil
+	h := s.Handler()
+	req := httptest.NewRequest(http.MethodPost, "/api/cmd/power_on", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("status %d, want 503", rec.Code)
 	}
 }

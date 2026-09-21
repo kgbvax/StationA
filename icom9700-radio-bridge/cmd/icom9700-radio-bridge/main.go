@@ -97,6 +97,7 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 		AttemptSpacing: cfg.Session.AttemptSpacingDur,
 		AudioDemandTTL: cfg.Audio.DemandTTLDur,
 		AudioSink:      audioSink,
+		PowerFrame:     cfg.Audio.PowerOnFrameBytes,
 		Logger:         log,
 	})
 

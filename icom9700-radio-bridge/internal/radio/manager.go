@@ -40,6 +40,11 @@ type Config struct {
 	AudioDemandTTL time.Duration
 	AudioSink      func([]byte)
 
+	// PowerFrame is the CI-V remote-wake frame sent by the power_on cmd
+	// (blind send — a standby radio answers no ack). Empty = power_on
+	// rejected.
+	PowerFrame []byte
+
 	Logger *slog.Logger
 }
 
@@ -282,6 +287,18 @@ func (m *Manager) Execute(ctx context.Context, payload []byte) error {
 		return m.SetAudioDemand(ctx, true)
 	case "audio_off":
 		return m.SetAudioDemand(ctx, false)
+
+	case "power_on":
+		// Remote wake from standby: a blind, untracked send — a standby
+		// radio answers no CI-V ack, and after the wake the LAN link may
+		// re-handshake (session loss -> decay -> next demand reconnects).
+		if len(m.cfg.PowerFrame) == 0 {
+			return errors.New("radio: power_on not configured (audio.power_on_frame empty)")
+		}
+		return m.sess.Demand(ctx, func(c *civ.Client) error {
+			m.log.Info("sending remote power-on frame")
+			return c.SendCIV(m.cfg.PowerFrame)
+		})
 
 	case "ptt":
 		// The safety core (U6) owns the arm gate; until it lands the

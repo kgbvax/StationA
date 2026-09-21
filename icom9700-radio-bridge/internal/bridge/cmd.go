@@ -130,6 +130,17 @@ func (b *Bridge) onCmd(payload []byte) {
 			return
 		}
 		sharedmqtt.Enqueue(b.jobs, func() { b.executeSatMode(on) })
+	case "power_on":
+		// A remote wake must never cut a keyed carrier: refused outright
+		// while the last-known TX state is on (the safety core owns tx).
+		b.mu.Lock()
+		tx := b.radio.tx == "tx"
+		b.mu.Unlock()
+		if tx {
+			b.rejectAsync("power_on rejected: transmitter is keyed")
+			return
+		}
+		sharedmqtt.Enqueue(b.jobs, func() { b.executeViaManager(cmd.Action, "", "") })
 	default:
 		// set_freq / set_mode / set_data / set_power (+ unknown actions,
 		// which the manager's dispatch rejects with a warning+drop).

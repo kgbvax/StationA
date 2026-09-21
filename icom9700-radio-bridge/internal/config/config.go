@@ -14,6 +14,7 @@
 package config
 
 import (
+	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
@@ -118,8 +119,13 @@ type AudioConfig struct {
 	// duration string, "60s" — a dead preview consumer must not pin the
 	// radio session, KTD-2). Parsed into DemandTTLDur at load.
 	DemandTTL string `toml:"demand_ttl"`
+	// PowerOnFrame is the CI-V wake frame (hex, no FE FE preamble) sent by
+	// the power_on cmd: the IC-9700's remote wake from standby is
+	// `1a050201`. Empty (default) = power_on cmds are rejected.
+	PowerOnFrame string `toml:"power_on_frame"`
 
-	DemandTTLDur time.Duration `toml:"-"`
+	DemandTTLDur     time.Duration `toml:"-"`
+	PowerOnFrameBytes []byte       `toml:"-"`
 }
 
 // RadioConfig holds the live-session telemetry cadence.
@@ -170,8 +176,10 @@ func Defaults() Config {
 			PollIntervalDur: time.Second,
 		},
 		Audio: AudioConfig{
-			DemandTTL:    "60s",
-			DemandTTLDur: 60 * time.Second,
+			DemandTTL:         "60s",
+			DemandTTLDur:      60 * time.Second,
+			PowerOnFrame:      "1a050201",
+			PowerOnFrameBytes: []byte{0x1a, 0x05, 0x02, 0x01},
 		},
 		Log: LogConfig{Level: "info"},
 	}
@@ -297,6 +305,14 @@ func Load(f *Flags) (Config, error) {
 		return Config{}, fmt.Errorf("audio.demand_ttl %q: %w", cfg.Audio.DemandTTL, err)
 	}
 	cfg.Audio.DemandTTLDur = d
+
+	if cfg.Audio.PowerOnFrame != "" {
+		frame, err := hex.DecodeString(strings.TrimPrefix(cfg.Audio.PowerOnFrame, "0x"))
+		if err != nil {
+			return Config{}, fmt.Errorf("audio.power_on_frame %q: %w", cfg.Audio.PowerOnFrame, err)
+		}
+		cfg.Audio.PowerOnFrameBytes = frame
+	}
 
 	return cfg, nil
 }

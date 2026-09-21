@@ -11,6 +11,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"io/fs"
 	"log/slog"
 	"os"
@@ -71,8 +72,10 @@ func main() {
 	}
 
 	// Preview HTTP server: always on (cheap); with the preview sink disabled
-	// the player page just reports "offline".
+	// the player page just reports "offline". The radio control buttons ride
+	// the same server (POST /api/cmd/{action} -> MQTT).
 	pvSrv := preview.NewServer(func() config.PreviewConfig { return curCfg.Load().Preview },
+		nil,
 		logger.With("component", componentName, "subcomponent", "preview"))
 	go func() {
 		if err := pvSrv.ListenAndServe(ctx); err != nil {
@@ -136,20 +139,51 @@ func main() {
 	// heartbeat audio_on to the radio bridge (the demand is TTL-bounded
 	// there — the heartbeat is what keeps the radio's audio flowing); on
 	// shutdown, release it. The MQTT connection comes from the overlay.
-	audioDemand := func(on bool) {
+	// The web-page controls flip audioManualOn: a manual disconnect stops
+	// the heartbeat until the page reconnects.
+	audioDemandOn := &atomic.Bool{}
+	audioDemandOn.Store(true)
+	radioPublish := func(action string) error {
 		c := ov.Client()
-		if c == nil || !curCfg.Load().Preview.Enabled || curCfg.Load().Preview.RadioAudio == "" {
-			return
+		if c == nil {
+			return errors.New("mqtt not connected")
 		}
-		payload := `{"action":"audio_off","value":"off"}`
-		if on {
+		var payload string
+		switch action {
+		case "audio_on":
 			payload = `{"action":"audio_on","value":"on"}`
+		case "audio_off":
+			payload = `{"action":"audio_off","value":"off"}`
+		case "power_on":
+			payload = `{"action":"power_on","value":"on"}`
+		default:
+			return fmt.Errorf("unknown radio action %q", action)
 		}
 		topic := curCfg.Load().Preview.RadioAudioCmdTopic
 		if tok := c.Publish(topic, 0, false, payload); tok.Wait() && tok.Error() != nil {
-			logger.Warn("radio audio demand publish failed", "topic", topic, "err", tok.Error())
-		} else {
-			logger.Info("radio audio demand published", "topic", topic, "on", on)
+			return tok.Error()
+		}
+		logger.Info("radio cmd published", "topic", topic, "action", action)
+		return nil
+	}
+	pvSrv.WithCmd(func(action string) error {
+		switch action {
+		case "audio_on":
+			audioDemandOn.Store(true)
+		case "audio_off":
+			audioDemandOn.Store(false)
+		}
+		return radioPublish(action)
+	})
+	audioDemand := func(on bool) {
+		if !curCfg.Load().Preview.Enabled || curCfg.Load().Preview.RadioAudio == "" {
+			return
+		}
+		if on && !audioDemandOn.Load() {
+			return // operator disconnected via the page — heartbeat stays off
+		}
+		if err := radioPublish(map[bool]string{true: "audio_on", false: "audio_off"}[on]); err != nil {
+			logger.Warn("radio audio demand publish failed", "err", err)
 		}
 	}
 	go func() {
