@@ -55,10 +55,11 @@ const pageHTML = `<!doctype html>
   <span class="led"><span class="dot" id="led-online"></span>radio online</span>
   <span class="led"><span class="dot" id="led-connected"></span>connected</span>
   <span class="led"><span class="dot" id="led-audio"></span>audio</span>
+  <span class="led"><span class="dot" id="led-sound"></span>sound</span>
   <button id="btn-connect">Radio: connect</button>
   <button id="btn-disconnect">Radio: disconnect</button>
   <button id="btn-power">Radio: power on</button>
-  <button id="btn-mute">Mute</button>
+  <button id="btn-mute">Unmute</button>
   <span id="radio-st"></span>
 </div>
 <script src="/hls.js"></script>
@@ -103,10 +104,16 @@ document.getElementById('btn-power').onclick = async () => {
   await radioCmd('audio_on', 'connecting (audio demand on)');
 };
 const muteBtn = document.getElementById('btn-mute');
+const soundLed = document.getElementById('led-sound');
+function reflectMute() {
+  muteBtn.textContent = v.muted ? 'Unmute' : 'Mute';
+  setLed('led-sound', v.muted ? 'off' : 'on');
+}
 muteBtn.onclick = () => {
   v.muted = !v.muted;
-  muteBtn.textContent = v.muted ? 'Unmute' : 'Mute';
+  reflectMute();
 };
+reflectMute(); // autoplay starts muted — show it
 
 function setLed(id, state) {
   const d = document.getElementById(id);
@@ -120,6 +127,10 @@ async function pollStatus() {
     setLed('led-online', s.radio_online ? 'on' : 'off');
     setLed('led-connected', s.session_connected ? 'on' : 'off');
     setLed('led-audio', s.audio_stream ? 'on' : 'off');
+    // Standby signature: the session is up but CI-V reads return nothing
+    // and no audio streams — the radio is likely powered off (standby).
+    rst.textContent = (s.radio_online && s.session_connected && !s.radio_responding && !s.audio_stream)
+      ? 'radio not responding — in standby? try Power on' : '';
   } catch (e) { /* transient — next tick retries */ }
 }
 pollStatus();
@@ -131,11 +142,14 @@ setInterval(pollStatus, 2000);
 
 // RadioStatus is the preview page's indicator truth: radio online (bridge
 // LWT + CI-V session liveness), connected (audio demand held on the bridge),
-// audio stream (radio PCM actually arriving at this host).
+// audio stream (radio PCM actually arriving at this host), responding (CI-V
+// reads succeed — false with a live session means the radio is likely in
+// standby).
 type RadioStatus struct {
 	RadioOnline      bool `json:"radio_online"`
 	SessionConnected bool `json:"session_connected"`
 	AudioStream      bool `json:"audio_stream"`
+	RadioResponding  bool `json:"radio_responding"`
 }
 
 // Server serves the player page, the vendored hls.js, the HLS files the

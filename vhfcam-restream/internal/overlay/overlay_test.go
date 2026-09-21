@@ -145,3 +145,31 @@ func TestApplyIgnoresUnknownTopic(t *testing.T) {
 		t.Error("unknown topic mutated az state")
 	}
 }
+
+// The bridge omits fields it could not read (radio in standby: session live,
+// CI-V deaf). An omitted frequency must render "---" — never a zero and
+// never a stale value presented as current.
+func TestRenderOmittedFreq(t *testing.T) {
+	o, _ := newTestOverlay(t)
+	now := time.Now()
+	o.setUp(true)
+	o.applyStatus(statusOf(testCfg("").TopicRadio), "online")
+
+	o.apply(testCfg("").TopicRadio, []byte(`{"freq_hz":437775000,"tx":"rx","device_online":true,"ts":"`+now.Format(time.RFC3339)+`"}`))
+	if texts := o.render(now); texts["freq"] != "437.775 MHz" {
+		t.Errorf("freq with value = %q", texts["freq"])
+	}
+
+	// Next snapshot: freq omitted (standby) — render --- even though fresh.
+	o.apply(testCfg("").TopicRadio, []byte(`{"device_online":true,"audio_demand":true,"session_state":"live","ts":"`+now.Format(time.RFC3339)+`"}`))
+	texts := o.render(now)
+	if texts["freq"] != "FREQ ---" {
+		t.Errorf("omitted freq = %q, want FREQ ---", texts["freq"])
+	}
+	if !o.RadioLink().DeviceOnline {
+		t.Error("session live with omitted freq should still read device online")
+	}
+	if o.RadioLink().Responding {
+		t.Error("Responding = true while freq omitted")
+	}
+}

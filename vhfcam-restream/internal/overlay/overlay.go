@@ -36,8 +36,12 @@ type reading struct {
 
 type radioReading struct {
 	freqHz int64
-	tx     bool
-	online bool
+	// freqPresent: the snapshot CARRIED freq_hz. The bridge omits fields it
+	// could not read (e.g. radio in standby: session live, CI-V deaf) — an
+	// omitted frequency must render as "---", never as a zero.
+	freqPresent bool
+	tx          bool
+	online      bool
 	// Session truth from the icom9700 bridge (2026-09-21 preview status):
 	session string // idle|connecting|live|error
 	demand  bool   // audio demand set (audio_on heartbeats active)
@@ -107,10 +111,10 @@ func (o *Overlay) apply(topic string, payload []byte) {
 		Az           *float64 `json:"az"`
 		El           *float64 `json:"el"`
 		DeviceOnline bool     `json:"device_online"`
-		FreqHz       int64    `json:"freq_hz"`
-		Tx           string   `json:"tx"`
-		SessionState string   `json:"session_state"`
-		AudioDemand  bool     `json:"audio_demand"`
+		FreqHz       *int64   `json:"freq_hz"`
+		Tx           *string  `json:"tx"`
+		SessionState *string  `json:"session_state"`
+		AudioDemand  *bool    `json:"audio_demand"`
 		Ts           string   `json:"ts"`
 	}
 	if err := json.Unmarshal(payload, &m); err != nil {
@@ -132,9 +136,26 @@ func (o *Overlay) apply(topic string, payload []byte) {
 	case cfg.TopicEL:
 		o.el = reading{val: m.El, online: m.DeviceOnline, at: at}
 	case cfg.TopicRadio:
+		r := o.radio // fields the snapshot omits carry over the last value
+		freqHz := r.freqHz
+		freqPresent := false
+		if m.FreqHz != nil {
+			freqHz, freqPresent = *m.FreqHz, true
+		}
+		tx := r.tx
+		if m.Tx != nil {
+			tx = *m.Tx == "tx"
+		}
+		session, demand := r.session, r.demand
+		if m.SessionState != nil {
+			session = *m.SessionState
+		}
+		if m.AudioDemand != nil {
+			demand = *m.AudioDemand
+		}
 		o.radio = radioReading{
-			freqHz: m.FreqHz, tx: m.Tx == "tx", online: m.DeviceOnline,
-			session: m.SessionState, demand: m.AudioDemand, at: at,
+			freqHz: freqHz, freqPresent: freqPresent, tx: tx, online: m.DeviceOnline,
+			session: session, demand: demand, at: at,
 		}
 	}
 }
@@ -183,6 +204,11 @@ type RadioLink struct {
 	DeviceOnline bool
 	SessionState string
 	AudioDemand  bool
+	// Responding: the latest snapshot actually carried a frequency — CI-V
+	// reads succeed. Absent while the radio is in standby or deaf (session
+	// live, no data) — the standby signature together with a silent audio
+	// stream.
+	Responding bool
 }
 
 // RadioLink snapshots the radio slot's status truth.
@@ -190,11 +216,13 @@ func (o *Overlay) RadioLink() RadioLink {
 	staleAfter := time.Duration(o.cfgFn().StaleAfterS * float64(time.Second))
 	o.mu.Lock()
 	defer o.mu.Unlock()
+	fresh := o.up && o.radUp && o.radio.online && time.Since(o.radio.at) <= staleAfter
 	return RadioLink{
 		BridgeOnline: o.up && o.radUp,
-		DeviceOnline: o.up && o.radUp && o.radio.online && time.Since(o.radio.at) <= staleAfter,
+		DeviceOnline: fresh,
 		SessionState: o.radio.session,
 		AudioDemand:  o.up && o.radUp && o.radio.demand,
+		Responding:   fresh && o.radio.freqPresent,
 	}
 }
 
@@ -223,8 +251,11 @@ func (o *Overlay) render(now time.Time) map[string]string {
 	} else {
 		texts["el"] = "EL ---"
 	}
+	// freqPresent=false = the bridge omitted the field (could not read it —
+	// e.g. radio in standby); a carried-over or zero value must never render
+	// as a real frequency.
 	radioOK := up && radUp && radio.online && now.Sub(radio.at) <= staleAfter
-	if radioOK {
+	if radioOK && radio.freqPresent && radio.freqHz > 0 {
 		texts["freq"] = fmt.Sprintf("%.3f MHz", float64(radio.freqHz)/1e6)
 	} else {
 		texts["freq"] = "FREQ ---"

@@ -85,6 +85,7 @@ func main() {
 				RadioOnline:      rl.BridgeOnline && rl.DeviceOnline,
 				SessionConnected: rl.AudioDemand && rl.SessionState == "live",
 				AudioStream:      audioStatus.Alive(),
+				RadioResponding:  rl.Responding,
 			}
 		})
 	go func() {
