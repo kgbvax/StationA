@@ -4,6 +4,7 @@ package restream
 
 import (
 	"fmt"
+	"net"
 	"net/url"
 	"path/filepath"
 	"strconv"
@@ -15,37 +16,63 @@ import (
 // BuildArgs assembles the ffmpeg invocation for the YouTube sink.
 func BuildArgs(cfg *config.Config, sourceURL string) []string {
 	args := buildInputArgs(cfg, sourceURL)
+	args = append(args, "-map", "0:v:0", "-map", "0:a:0")
+	if vf := BuildVideoFilter(cfg); vf != "" {
+		args = append(args, "-vf", vf)
+	}
 	return append(args, youtubeOutputArgs(cfg)...)
 }
 
 // BuildPreviewArgs assembles the ffmpeg invocation for the local HLS preview
 // sink. It is a separate ffmpeg process on purpose: the LAN preview must keep
 // working when YouTube or the internet is down, which kills the YouTube push.
+// With radio_audio configured, the second input is the IC-9700's demodulated
+// audio (fed by the preview's silence-filling source) and the camera's own
+// audio track is replaced by it.
 func BuildPreviewArgs(cfg *config.Config, sourceURL string) []string {
 	args := buildInputArgs(cfg, sourceURL)
+	audioMap := "0:a:0"
+	if cfg.Preview.RadioAudio != "" {
+		args = append(args,
+			"-f", "s16le",
+			"-ar", "48000",
+			"-ac", "1",
+			"-i", RadioAudioInputURL(cfg.Preview.RadioAudio),
+		)
+		audioMap = "1:a:0"
+	}
+	args = append(args, "-map", "0:v:0", "-map", audioMap)
+	if vf := BuildVideoFilter(cfg); vf != "" {
+		args = append(args, "-vf", vf)
+	}
 	return append(args, previewOutputArgs(cfg)...)
 }
 
-// buildInputArgs covers input, transport, stream selection and the overlay
-// filter. The cameras emit H.264 video plus two audio tracks (AAC mono and
-// Opus stereo). RTMP/FLV can only carry AAC, and ffmpeg's default stream
-// selection would pick the 2-channel Opus track — so the audio is mapped
-// explicitly (first audio track). Video codec handling is per-sink (see
-// videoCodecArgs).
+// RadioAudioInputURL derives the ffmpeg input from the configured UDP bind
+// address (":45031" -> "tcp://127.0.0.1:45031"): the preview's audio source
+// re-publishes the received PCM on loopback TCP with silence fill.
+func RadioAudioInputURL(bindAddr string) string {
+	_, port, err := net.SplitHostPort(bindAddr)
+	if err != nil || port == "" {
+		return ""
+	}
+	return "tcp://127.0.0.1:" + port
+}
+
+// buildInputArgs covers global flags, the camera input and its transport.
+// Stream selection and filtering are per-sink (maps and -vf are output
+// options). The cameras emit H.264 video plus two audio tracks (AAC mono and
+// Opus stereo) — the audio track a sink maps is always explicit, because
+// ffmpeg's default selection would pick the 2-channel Opus track, which
+// RTMP/FLV cannot carry.
 func buildInputArgs(cfg *config.Config, sourceURL string) []string {
-	args := []string{
+	return []string{
 		"-hide_banner",
 		"-loglevel", "warning",
 		"-nostdin",
 		"-rtsp_transport", cfg.RTSPTransport,
 		"-i", sourceURL,
-		"-map", cfg.VideoMap,
-		"-map", cfg.AudioMap,
 	}
-	if vf := BuildVideoFilter(cfg); vf != "" {
-		args = append(args, "-vf", vf)
-	}
-	return args
 }
 
 // videoCodecArgs returns the video codec arguments: a software x264 transcode

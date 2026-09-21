@@ -15,8 +15,10 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"os/signal"
+	"sync/atomic"
 	"syscall"
 
 	"icom9700-radio-bridge/internal/bridge"
@@ -58,6 +60,30 @@ func main() {
 }
 
 func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
+	// The audio PCM publisher (2026-09-21 preview sink): while the audio
+	// demand is set, demodulated radio audio (S16LE 48 kHz mono) is
+	// re-published as raw UDP datagrams to the preview host. UDP write
+	// failures are contained to audio — the first one is logged, the rest
+	// are dropped silently (a down preview host must not spam the log).
+	var audioSink func([]byte)
+	if cfg.Audio.PublishAddr != "" {
+		raddr, err := net.ResolveUDPAddr("udp", cfg.Audio.PublishAddr)
+		if err != nil {
+			return fmt.Errorf("audio.publish_addr: %w", err)
+		}
+		conn, err := net.DialUDP("udp", nil, raddr)
+		if err != nil {
+			return fmt.Errorf("audio publish dial: %w", err)
+		}
+		defer conn.Close()
+		var firstErr atomic.Bool
+		audioSink = func(pcm []byte) {
+			if _, err := conn.Write(pcm); err != nil && firstErr.CompareAndSwap(false, true) {
+				log.Warn("audio publish write failed (further errors dropped)", "err", err)
+			}
+		}
+	}
+
 	// The on-demand radio session manager (U4): Run owns the lifecycle
 	// (idle/connecting/live/error); the bus drives it through the bridge's
 	// Execute/SetHold. It sits politely idle until a /cmd demand or the
@@ -69,6 +95,8 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 		IdleTimeout:    cfg.Session.IdleTimeoutDur,
 		MaxAttempts:    cfg.Session.MaxAttempts,
 		AttemptSpacing: cfg.Session.AttemptSpacingDur,
+		AudioDemandTTL: cfg.Audio.DemandTTLDur,
+		AudioSink:      audioSink,
 		Logger:         log,
 	})
 

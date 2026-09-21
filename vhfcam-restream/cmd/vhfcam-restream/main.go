@@ -15,8 +15,10 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"sync/atomic"
 	"syscall"
+	"time"
 
 	"vhfcam-restream/internal/config"
 	"vhfcam-restream/internal/overlay"
@@ -78,6 +80,22 @@ func main() {
 		}
 	}()
 
+	// Radio-audio source: bridges the icom9700-radio-bridge's UDP PCM into
+	// the preview ffmpeg's TCP input, silence-filled at a 10 ms cadence so
+	// the radio audio never stalls the pipeline (radio off = silence, not a
+	// frozen preview).
+	if cfg.Preview.RadioAudio != "" {
+		srcLog := logger.With("component", componentName, "subcomponent", "radio-audio")
+		go func() {
+			// net.Listen wants the bare address; the scheme prefix is only
+			// for the ffmpeg input URL.
+			tcpAddr := strings.TrimPrefix(restream.RadioAudioInputURL(cfg.Preview.RadioAudio), "tcp://")
+			if err := preview.StartAudioSource(ctx, cfg.Preview.RadioAudio, tcpAddr, srcLog); err != nil {
+				srcLog.Error("radio audio source", "err", err)
+			}
+		}()
+	}
+
 	reload := func() (config.Config, error) {
 		nc, err := config.Load(*configPath)
 		if err != nil {
@@ -111,6 +129,43 @@ func main() {
 			logger.Info("SIGHUP — reloading config and restarting the streams")
 			ytSup.Reload()
 			pvSup.Reload()
+		}
+	}()
+
+	// Radio-audio demand: while the preview sink runs with radio_audio set,
+	// heartbeat audio_on to the radio bridge (the demand is TTL-bounded
+	// there — the heartbeat is what keeps the radio's audio flowing); on
+	// shutdown, release it. The MQTT connection comes from the overlay.
+	audioDemand := func(on bool) {
+		c := ov.Client()
+		if c == nil || !curCfg.Load().Preview.Enabled || curCfg.Load().Preview.RadioAudio == "" {
+			return
+		}
+		payload := `{"action":"audio_off","value":"off"}`
+		if on {
+			payload = `{"action":"audio_on","value":"on"}`
+		}
+		topic := curCfg.Load().Preview.RadioAudioCmdTopic
+		if tok := c.Publish(topic, 0, false, payload); tok.Wait() && tok.Error() != nil {
+			logger.Warn("radio audio demand publish failed", "topic", topic, "err", tok.Error())
+		} else {
+			logger.Info("radio audio demand published", "topic", topic, "on", on)
+		}
+	}
+	go func() {
+		// Let MQTT connect, then heartbeat at a third of the bridge's TTL.
+		time.Sleep(3 * time.Second)
+		audioDemand(true)
+		t := time.NewTicker(20 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				audioDemand(false)
+				return
+			case <-t.C:
+				audioDemand(true)
+			}
 		}
 	}()
 

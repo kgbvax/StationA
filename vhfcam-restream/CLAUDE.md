@@ -105,6 +105,15 @@ its own supervisor, restart backoff and stall watchdog):
    posture as testui. The preview is deliberately a separate process so a
    YouTube/internet outage never blanks the LAN view; sink toggles apply via
    SIGHUP (the idle supervisor waits on the reload wake).
+   **Radio audio** (`radio_audio`, e.g. ":45031"): replaces the camera's
+   audio track with the IC-9700's demodulated audio. The bridge publishes
+   S16LE/48 kHz/mono UDP datagrams; `internal/preview.StartAudioSource` binds
+   the UDP address, silence-fills at 10 ms cadence and feeds the preview
+   ffmpeg over loopback TCP (`-f s16le -i tcp://127.0.0.1:<port>`, mapped
+   `1:a:0`) — radio off = silence, never a stalled preview. The bridge only
+   streams on demand: this app heartbeats `audio_on` (20 s cadence) to
+   `radio_audio_cmd_topic`; the bridge-side demand is TTL-bounded (60 s) so a
+   dead preview releases the radio's session to manual wfview (KTD-2).
 
 ## Ops
 

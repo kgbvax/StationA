@@ -157,6 +157,14 @@ func (o *Overlay) setUp(up bool) {
 	o.mu.Unlock()
 }
 
+// Client returns the current MQTT client (nil until connectLoop built it).
+// Used for other radio-audio demand publications on the same connection.
+func (o *Overlay) Client() pahomqtt.Client {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.client
+}
+
 // render produces the drawtext textfile contents keyed by file base name.
 // A field is fresh only when our MQTT link is up, the source slot's /status is
 // "online", the snapshot says device_online, and the snapshot's ts is younger

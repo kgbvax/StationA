@@ -238,7 +238,7 @@ scp -q "$SEED_CONFIG" "${SSH_TARGET}:/tmp/${SERVICE_NAME}.config.seed"
 
 # --- install remotely -------------------------------------------------------
 echo ">> Installing on ${SSH_TARGET}..."
-ssh "$SSH_TARGET" "SERVICE_NAME='${SERVICE_NAME}' SERVICE_USER='${SERVICE_USER}' INSTALL_DIR='${INSTALL_DIR}' CONFIG_DIR='${CONFIG_DIR}' CONFIG_FILE='${CONFIG_FILE}' BINARY='${BINARY}' FFMPEG_BIN='${FFMPEG_BIN}' bash -s" <<'REMOTE'
+ssh "$SSH_TARGET" "SERVICE_NAME='${SERVICE_NAME}' SERVICE_USER='${SERVICE_USER}' INSTALL_DIR='${INSTALL_DIR}' CONFIG_DIR='${CONFIG_DIR}' CONFIG_FILE='${CONFIG_FILE}' BINARY='${BINARY}' FFMPEG_BIN='${FFMPEG_BIN}' ENABLED='${ENABLED}' bash -s" <<'REMOTE'
 set -euo pipefail
 SEED_CFG="/tmp/${SERVICE_NAME}.config.seed"
 trap 'rm -f "$SEED_CFG"' EXIT

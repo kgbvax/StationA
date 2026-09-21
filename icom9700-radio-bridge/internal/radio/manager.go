@@ -28,10 +28,17 @@ type Config struct {
 	// defaults; tests point the session at a fake radio).
 	ControlPort     int
 	CIVPort         int
+	AudioPort       int
 	AreYouThere     time.Duration
 	HandshakeBudget time.Duration
 	LossWatchdog    time.Duration
 	PingInterval    time.Duration
+
+	// AudioDemandTTL bounds an unrefreshed audio_on (0 = 60 s); AudioSink
+	// receives the demodulated audio PCM chunks while the audio stream is
+	// open (the main wiring publishes them to the preview host).
+	AudioDemandTTL time.Duration
+	AudioSink      func([]byte)
 
 	Logger *slog.Logger
 }
@@ -65,10 +72,13 @@ func NewManager(cfg Config) *Manager {
 		HandshakeTO:     cfg.CmdWait,
 		ControlPort:     cfg.ControlPort,
 		CIVPort:         cfg.CIVPort,
+		AudioPort:       cfg.AudioPort,
 		AreYouThere:     cfg.AreYouThere,
 		HandshakeBudget: cfg.HandshakeBudget,
 		LossWatchdog:    cfg.LossWatchdog,
 		PingInterval:    cfg.PingInterval,
+		AudioDemandTTL:  cfg.AudioDemandTTL,
+		AudioSink:       cfg.AudioSink,
 		Logger:          cfg.Logger,
 	})
 	return &Manager{sess: sess, cfg: cfg, log: cfg.Logger.With("component", "radio-manager")}
@@ -103,6 +113,13 @@ func (m *Manager) OnLoss(fn func(err error)) { m.sess.OnLoss(fn) }
 // holds the session open; the hold drops on session loss (fail-disarmed).
 func (m *Manager) SetHold(ctx context.Context, on bool) error {
 	return m.sess.SetHold(ctx, on)
+}
+
+// SetAudioDemand is the audio_on/audio_off demand: on = connect (when idle)
+// and open the audio receive stream, TTL-bounded so a dead consumer never
+// pins the radio session (KTD-2). Receive-only — no arm gate applies.
+func (m *Manager) SetAudioDemand(ctx context.Context, on bool) error {
+	return m.sess.SetAudioDemand(ctx, on)
 }
 
 // busCmd is the stationa value-key payload shape: {"action": ..., "value":
@@ -260,6 +277,11 @@ func (m *Manager) Execute(ctx context.Context, payload []byte) error {
 		return m.SetHold(ctx, true)
 	case "disarm":
 		return m.SetHold(ctx, false)
+
+	case "audio_on":
+		return m.SetAudioDemand(ctx, true)
+	case "audio_off":
+		return m.SetAudioDemand(ctx, false)
 
 	case "ptt":
 		// The safety core (U6) owns the arm gate; until it lands the

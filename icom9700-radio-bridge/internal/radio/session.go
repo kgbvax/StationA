@@ -50,13 +50,21 @@ type SessionOptions struct {
 	// the civ defaults).
 	ControlPort     int
 	CIVPort         int
+	AudioPort       int
 	AreYouThere     time.Duration
 	HandshakeBudget time.Duration
 	LossWatchdog    time.Duration
 	// PingInterval passes through to the transport's keepalive cadence
 	// (tests shrink it; it must stay ≪ LossWatchdog — see fastSessionOpts).
 	PingInterval time.Duration
-	Logger       *slog.Logger
+	// AudioDemandTTL bounds an audio demand without a refreshing audio_on
+	// (a dead preview consumer must not pin the radio session). 0 = 60 s.
+	AudioDemandTTL time.Duration
+	// AudioSink receives the demodulated audio PCM chunks while the audio
+	// stream is open (the main wiring publishes them to the preview host).
+	// nil = audio demand connects but no PCM is delivered.
+	AudioSink func([]byte)
+	Logger    *slog.Logger
 }
 
 // Snapshot is the lifecycle truth for the /state assembly (U5): the
@@ -65,6 +73,7 @@ type Snapshot struct {
 	SessionState string
 	Err          string
 	Hold         bool
+	AudioDemand  bool
 	RadioName    string
 	// ConnectAttempts is the cumulative count of Dial attempts since the
 	// session was created (diagnostics; the attempt-policy tests pin it).
@@ -89,21 +98,29 @@ type Session struct {
 	opts SessionOptions
 	log  *slog.Logger
 
-	demands chan demand
-	holdCh  chan holdReq
-	stopped chan struct{}
-	runDone chan struct{}
+	demands  chan demand
+	holdCh   chan holdReq
+	audioCh  chan audioReq
+	stopped  chan struct{}
+	runDone  chan struct{}
 
-	mu       sync.Mutex
-	snap     Snapshot
-	hold     bool
-	onLive   func(ctx context.Context, c *civ.Client) error
-	onLoss   func(err error)
-	client   *civ.Client
-	routeCh  chan struct{} // closed when the routed client is torn down
-	notifyCh chan struct{}
-	transCh  chan civ.Transceive
-	replyCh  chan civ.Frame // read replies, consumed by roundTrip
+	mu           sync.Mutex
+	snap         Snapshot
+	hold         bool
+	audioDemand  bool
+	onLive       func(ctx context.Context, c *civ.Client) error
+	onLoss       func(err error)
+	client       *civ.Client
+	routeCh      chan struct{} // closed when the routed client is torn down
+	audioRouteCh chan struct{} // same, for the audio PCM router
+	notifyCh     chan struct{}
+	transCh      chan civ.Transceive
+	replyCh      chan civ.Frame // read replies, consumed by roundTrip
+}
+
+type audioReq struct {
+	on  bool
+	err chan error
 }
 
 type holdReq struct {
@@ -131,11 +148,15 @@ func NewSession(opts SessionOptions) *Session {
 	if opts.HandshakeTO <= 0 {
 		opts.HandshakeTO = 2 * time.Second
 	}
+	if opts.AudioDemandTTL <= 0 {
+		opts.AudioDemandTTL = 60 * time.Second
+	}
 	return &Session{
 		opts:     opts,
 		log:      opts.Logger.With("component", "radio-session"),
 		demands:  make(chan demand, 16),
 		holdCh:   make(chan holdReq, 1),
+		audioCh:  make(chan audioReq, 1),
 		stopped:  make(chan struct{}),
 		runDone:  make(chan struct{}),
 		notifyCh: make(chan struct{}, 1),
@@ -217,6 +238,93 @@ func (s *Session) Demand(ctx context.Context, fn func(*civ.Client) error) error 
 	return err
 }
 
+// SetAudioDemand sets/clears the audio demand: on = connect (when idle) and
+// open the audio receive stream; off = close it. The demand is TTL-bounded
+// (AudioDemandTTL) — consumers refresh it with repeated audio_on — so a dead
+// consumer never pins the radio session (KTD-2). A connect failure while
+// setting the demand rejects the cmd; the demand itself is NOT set in that
+// case (the operator retries).
+func (s *Session) SetAudioDemand(ctx context.Context, on bool) error {
+	select {
+	case <-s.stopped:
+		return ErrSessionStopped
+	default:
+	}
+	if on {
+		if _, err := s.connectAndRun(ctx, func(*civ.Client) error { return nil }); err != nil {
+			return err
+		}
+	}
+	done := make(chan error, 1)
+	select {
+	case s.audioCh <- audioReq{on: on, err: done}:
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-s.stopped:
+		return ErrSessionStopped
+	}
+	select {
+	case err := <-done:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// audioDemanded reports the audio demand under the state mutex.
+func (s *Session) audioDemanded() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.audioDemand
+}
+
+// ensureAudio opens the audio receive stream + PCM router on the live client
+// when the demand is set (post-connect and post-audio_on). Failures are
+// logged, never fatal: audio is auxiliary and the next heartbeat retries.
+func (s *Session) ensureAudio() {
+	if !s.audioDemanded() {
+		return
+	}
+	s.mu.Lock()
+	c := s.client
+	sink := s.opts.AudioSink
+	routeCh := s.audioRouteCh
+	s.mu.Unlock()
+	if c == nil {
+		return
+	}
+	if err := c.OpenAudio(); err != nil {
+		s.log.Warn("audio stream open failed", "err", err)
+		return
+	}
+	if routeCh != nil {
+		return // router already running for this client
+	}
+	s.mu.Lock()
+	s.audioRouteCh = make(chan struct{})
+	routeCh = s.audioRouteCh
+	s.mu.Unlock()
+	go s.routeAudio(c, routeCh, sink)
+}
+
+// routeAudio pumps PCM chunks from the live client's audio stream to the
+// configured sink until the session or the audio stream ends.
+func (s *Session) routeAudio(c *civ.Client, done chan struct{}, sink func([]byte)) {
+	for {
+		select {
+		case <-done:
+			return
+		case pcm, ok := <-c.AudioFrames():
+			if !ok {
+				return // audio stream closed (demand off, loss, or shutdown)
+			}
+			if sink != nil {
+				sink(pcm)
+			}
+		}
+	}
+}
+
 // Ride runs fn against the CURRENT live session without ever opening one
 // and without restarting the idle clock (KTD-2/R2: telemetry is a free
 // rider, never work — a demanding poll would keep the session open around
@@ -295,6 +403,8 @@ func (s *Session) Run(ctx context.Context) error {
 	var idleC <-chan time.Time
 	var decayTimer *time.Timer
 	var decayC <-chan time.Time
+	var audioTTLTimer *time.Timer
+	var audioTTLC <-chan time.Time
 	stopIdle := func() {
 		if idleTimer != nil {
 			idleTimer.Stop()
@@ -311,6 +421,14 @@ func (s *Session) Run(ctx context.Context) error {
 	}
 	defer stopIdle()
 	defer stopDecay()
+	stopAudioTTL := func() {
+		if audioTTLTimer != nil {
+			audioTTLTimer.Stop()
+			audioTTLTimer = nil
+			audioTTLC = nil
+		}
+	}
+	defer stopAudioTTL()
 
 	s.setState(StateIdle, "")
 
@@ -339,7 +457,7 @@ func (s *Session) Run(ctx context.Context) error {
 				// This was work: restart the idle clock (keepalives never
 				// reach this path).
 				stopIdle()
-				if !s.held() {
+				if !s.held() && !s.audioDemanded() {
 					idleTimer = time.NewTimer(s.opts.IdleTimeout)
 					idleC = idleTimer.C
 				}
@@ -355,10 +473,11 @@ func (s *Session) Run(ctx context.Context) error {
 			}
 			s.runDemand(d)
 			stopIdle()
-			if !s.held() {
+			if !s.held() && !s.audioDemanded() {
 				idleTimer = time.NewTimer(s.opts.IdleTimeout)
 				idleC = idleTimer.C
 			}
+			s.ensureAudio()
 
 		case h := <-s.holdCh:
 			s.mu.Lock()
@@ -369,12 +488,65 @@ func (s *Session) Run(ctx context.Context) error {
 			h.err <- nil
 			if h.on {
 				stopIdle() // armed holds the session open (R11)
-			} else if s.live() {
+			} else if s.live() && !s.audioDemanded() {
 				// Disarm with no pending traffic starts the idle clock.
 				stopIdle()
 				idleTimer = time.NewTimer(s.opts.IdleTimeout)
 				idleC = idleTimer.C
 			}
+
+			case ar := <-s.audioCh:
+				s.mu.Lock()
+				s.audioDemand = ar.on
+				s.snap.AudioDemand = ar.on
+				s.mu.Unlock()
+				s.notify()
+				ar.err <- nil
+				if ar.on {
+					// The audio demand holds the session open; audio_on is
+					// heartbeat-refreshed by the consumer and expires via the
+					// TTL — a dead consumer never pins the radio (KTD-2).
+					stopIdle()
+					stopAudioTTL()
+					audioTTLTimer = time.NewTimer(s.opts.AudioDemandTTL)
+					audioTTLC = audioTTLTimer.C
+					if s.live() {
+						s.ensureAudio()
+					}
+				} else {
+					stopAudioTTL()
+					if s.live() {
+						s.mu.Lock()
+						c := s.client
+						s.mu.Unlock()
+						if c != nil {
+							c.CloseAudio()
+						}
+					}
+					if s.live() && !s.held() {
+						stopIdle()
+						idleTimer = time.NewTimer(s.opts.IdleTimeout)
+						idleC = idleTimer.C
+					}
+				}
+
+			case <-audioTTLC:
+				// Audio demand expired without a refreshing audio_on: close
+				// the audio stream and release the session to the idle clock.
+				s.mu.Lock()
+				s.audioDemand = false
+				s.snap.AudioDemand = false
+				c := s.client
+				s.mu.Unlock()
+				s.notify()
+				if c != nil {
+					c.CloseAudio()
+				}
+				if s.live() && !s.held() {
+					stopIdle()
+					idleTimer = time.NewTimer(s.opts.IdleTimeout)
+					idleC = idleTimer.C
+				}
 
 		case <-idleC:
 			// Live without work and not held: disconnect politely (R1) —
@@ -479,6 +651,7 @@ func (s *Session) connectWithRetries(ctx context.Context) error {
 			Host:            s.opts.Host,
 			ControlPort:     s.opts.ControlPort,
 			CIVPort:         s.opts.CIVPort,
+			AudioPort:       s.opts.AudioPort,
 			Username:        s.opts.Username,
 			Password:        s.opts.Password,
 			AreYouThere:     s.opts.AreYouThere,
@@ -665,9 +838,14 @@ func (s *Session) closeClient() {
 	s.client = nil
 	routeCh := s.routeCh
 	s.routeCh = nil
+	audioRouteCh := s.audioRouteCh
+	s.audioRouteCh = nil
 	s.mu.Unlock()
 	if routeCh != nil {
 		close(routeCh)
+	}
+	if audioRouteCh != nil {
+		close(audioRouteCh)
 	}
 	if c != nil {
 		c.Close()

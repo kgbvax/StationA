@@ -51,10 +51,12 @@ type Options struct {
 	// Radio-side ports; defaults ControlPort/CIVDataPort.
 	ControlPort int
 	CIVPort     int
+	AudioPort   int
 
 	// Local bind ports; 0 (default) binds an ephemeral port.
 	BindControl int
 	BindCIV     int
+	BindAudio   int
 
 	PingInterval    time.Duration
 	LossWatchdog    time.Duration // control-stream silence that ends the session
@@ -82,6 +84,9 @@ func (o *Options) fillDefaults() error {
 	}
 	if o.CIVPort == 0 {
 		o.CIVPort = CIVDataPort
+	}
+	if o.AudioPort == 0 {
+		o.AudioPort = AudioPort
 	}
 	if o.RigName == "" {
 		o.RigName = "IC-9700"
@@ -132,6 +137,7 @@ type Client struct {
 
 	control *udpStream
 	civ     *udpStream
+	audio   *udpStream      // audio receive stream; nil unless OpenAudio ran
 	auth    authState
 
 	wmu sync.Mutex // serializes all tracked sends + inner/outer seq bookkeeping
@@ -142,6 +148,8 @@ type Client struct {
 	Lost     chan error // exactly one delivery
 
 	frames chan []byte // ordered inbound CI-V frames
+
+	audioFrames chan []byte // inbound audio PCM chunks (nil unless audio open)
 
 	// handshake-phase events (reader goroutine → Dial)
 	authAck chan struct{}
@@ -789,6 +797,7 @@ func (c *Client) markDone() {
 // shutdown closes done and the sockets, waking all readers.
 func (c *Client) shutdown() {
 	c.markDone()
+	c.closeAudioLocked()
 	if c.civ != nil && c.civ.conn != nil {
 		_ = c.civ.conn.Close()
 	}

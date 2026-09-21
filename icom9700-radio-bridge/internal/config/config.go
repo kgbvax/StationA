@@ -42,6 +42,7 @@ type Config struct {
 	CIV     CIVConfig     `toml:"civ"`
 	Session SessionConfig `toml:"session"`
 	Radio   RadioConfig   `toml:"radio"`
+	Audio   AudioConfig   `toml:"audio"`
 	Log     LogConfig     `toml:"log"`
 }
 
@@ -105,6 +106,22 @@ type SessionConfig struct {
 	ErrorDecayDur     time.Duration `toml:"-"`
 }
 
+// AudioConfig holds the receive-audio publisher (2026-09-21 preview sink):
+// while the audio demand is set (audio_on / audio_off cmds, TTL-bounded),
+// demodulated audio leaves the radio's :50003 stream and is re-published as
+// raw UDP datagrams — S16LE 48 kHz mono — to PublishAddr (the preview host).
+type AudioConfig struct {
+	// PublishAddr is the udp host:port PCM goes to (e.g. the preview host
+	// "192.168.1.139:45031"). Empty (default) = audio cmds are rejected.
+	PublishAddr string `toml:"publish_addr"`
+	// DemandTTL bounds an audio demand without a refreshing audio_on (a
+	// duration string, "60s" — a dead preview consumer must not pin the
+	// radio session, KTD-2). Parsed into DemandTTLDur at load.
+	DemandTTL string `toml:"demand_ttl"`
+
+	DemandTTLDur time.Duration `toml:"-"`
+}
+
 // RadioConfig holds the live-session telemetry cadence.
 type RadioConfig struct {
 	// PollInterval is the /state refresh cadence while a session is live
@@ -151,6 +168,10 @@ func Defaults() Config {
 		Radio: RadioConfig{
 			PollInterval:    "1s",
 			PollIntervalDur: time.Second,
+		},
+		Audio: AudioConfig{
+			DemandTTL:    "60s",
+			DemandTTLDur: 60 * time.Second,
 		},
 		Log: LogConfig{Level: "info"},
 	}
@@ -270,6 +291,12 @@ func Load(f *Flags) (Config, error) {
 		return Config{}, fmt.Errorf("radio.poll_interval %q: %w", cfg.Radio.PollInterval, err)
 	}
 	cfg.Radio.PollIntervalDur = d
+
+	d, err = time.ParseDuration(cfg.Audio.DemandTTL)
+	if err != nil {
+		return Config{}, fmt.Errorf("audio.demand_ttl %q: %w", cfg.Audio.DemandTTL, err)
+	}
+	cfg.Audio.DemandTTLDur = d
 
 	return cfg, nil
 }

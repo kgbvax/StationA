@@ -48,6 +48,14 @@ youtube_enabled = true
 [preview]
 enabled   = true
 http_addr = ":8083"
+# Radio audio (optional): UDP bind receiving the IC-9700's demodulated
+# audio from icom9700-radio-bridge (S16LE 48 kHz mono). When set, the
+# preview audio is the RADIO's audio (camera audio is replaced) and the
+# bridge gets audio_on heartbeats on radio_audio_cmd_topic (the demand is
+# TTL-bounded there — the heartbeat keeps the radio's session + audio up;
+# stopping the preview releases it). Radio off = silence, never a stall.
+radio_audio            = ":45031"
+radio_audio_cmd_topic  = "muehle/uhf/radio/cmd"
 
 
 # Operational-data overlay: subscribes to the station MQTT broker and burns

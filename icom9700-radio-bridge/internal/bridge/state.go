@@ -44,10 +44,11 @@ type radioState struct {
 // snap is the comparable /state snapshot: dedup compares this, never the
 // serialized form. ts is stamped at publish time.
 type snap struct {
-	session string
-	armed   bool
-	err     string
-	radio   radioState
+	session     string
+	armed       bool
+	audioDemand bool
+	err         string
+	radio       radioState
 }
 
 // poll reads the radio over the live session (one Demand, several
@@ -228,10 +229,11 @@ func (b *Bridge) snapshot() snap {
 		err = b.cmdErr
 	}
 	return snap{
-		session: ss.SessionState,
-		armed:   b.armed,
-		err:     err,
-		radio:   b.radio,
+		session:     ss.SessionState,
+		armed:       b.armed,
+		audioDemand: ss.AudioDemand,
+		err:         err,
+		radio:       b.radio,
 	}
 }
 
@@ -278,6 +280,7 @@ func (b *Bridge) statePayload(sn snap) map[string]any {
 		"ts":            time.Now().UTC().Format(time.RFC3339),
 		"session_state": sn.session,
 		"armed":         sn.armed,
+		"audio_demand":  sn.audioDemand,
 		"device_online": live,
 	}
 	if sn.err != "" {

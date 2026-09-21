@@ -66,6 +66,15 @@ type PreviewConfig struct {
 	Dir      string `toml:"dir"`       // HLS output (tmpfs on the device)
 	HlsTimeS int    `toml:"hls_time_s"`
 	ListSize int    `toml:"hls_list_size"`
+
+	// RadioAudio is the UDP bind address receiving the IC-9700's
+	// demodulated audio from the icom9700-radio-bridge (S16LE 48 kHz mono,
+	// e.g. ":45031"). Empty (default) = the preview carries the camera's
+	// audio track. When set, the preview audio is the RADIO's audio — a
+	// 20 ms silence-fill keeps the pipeline alive when the radio is off —
+	// and the bridge receives audio_on heartbeats on RadioAudioCmdTopic.
+	RadioAudio        string `toml:"radio_audio"`
+	RadioAudioCmdTopic string `toml:"radio_audio_cmd_topic"`
 }
 
 // OverlayConfig configures the MQTT-fed drawtext overlay.
@@ -111,11 +120,12 @@ func Default() Config {
 		RestartMaxSec:   300,
 		StableRunSec:    120,
 		Preview: PreviewConfig{
-			Enabled:  false,
-			HTTPAddr: ":8083",
-			Dir:      "/run/vhfcam-restream/preview",
-			HlsTimeS: 2,
-			ListSize: 6,
+			Enabled:            false,
+			HTTPAddr:           ":8083",
+			Dir:                "/run/vhfcam-restream/preview",
+			HlsTimeS:           2,
+			ListSize:           6,
+			RadioAudioCmdTopic: "muehle/uhf/radio/cmd",
 		},
 		Overlay: OverlayConfig{
 			Enabled:      false,

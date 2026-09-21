@@ -446,3 +446,49 @@ func TestDemandRoundTrip(t *testing.T) {
 		t.Fatalf("PTT-shaped round trip: %v", err)
 	}
 }
+
+// Audio demand lifecycle (2026-09-21 preview sink): audio_on during idle
+// connects and HOLDS the session open past the idle timeout; after the TTL
+// expires without a refreshing audio_on the demand releases and the session
+// idles out (a dead preview consumer must not pin the radio, KTD-2). The
+// fake has no audio listener — OpenAudio failing is contained (logged, the
+// demand still holds); PCM delivery is pinned by the civ package tests.
+func TestAudioDemandLifecycle(t *testing.T) {
+	h := newHarness(t, func(o *SessionOptions) {
+		o.AudioDemandTTL = 400 * time.Millisecond
+		o.AudioSink = func([]byte) {}
+	})
+	waitState(t, h.s, StateIdle, time.Second)
+
+	if err := h.s.SetAudioDemand(h.ctx, true); err != nil {
+		t.Fatalf("SetAudioDemand(true): %v", err)
+	}
+	waitState(t, h.s, StateLive, time.Second)
+	if snap := h.s.Snapshot(); !snap.AudioDemand {
+		t.Error("Snapshot.AudioDemand = false while demanded")
+	}
+	time.Sleep(400 * time.Millisecond) // ~2.5x the idle timeout
+	if snap := h.s.Snapshot(); snap.SessionState != StateLive {
+		t.Fatalf("audio demand did not hold the session open (at %q)", snap.SessionState)
+	}
+
+	// A refreshing audio_on before the TTL keeps the demand alive.
+	if err := h.s.SetAudioDemand(h.ctx, true); err != nil {
+		t.Fatalf("SetAudioDemand refresh: %v", err)
+	}
+	time.Sleep(250 * time.Millisecond)
+	if snap := h.s.Snapshot(); snap.SessionState != StateLive {
+		t.Fatalf("refresh did not hold the session (at %q)", snap.SessionState)
+	}
+
+	// TTL expiry releases the session: it idles out again.
+	waitState(t, h.s, StateIdle, 3*time.Second)
+	if snap := h.s.Snapshot(); snap.AudioDemand {
+		t.Error("AudioDemand still true after TTL expiry")
+	}
+
+	// audio_off during idle is a clean no-op.
+	if err := h.s.SetAudioDemand(h.ctx, false); err != nil {
+		t.Fatalf("SetAudioDemand(false): %v", err)
+	}
+}

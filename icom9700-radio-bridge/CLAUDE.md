@@ -2,8 +2,14 @@
 
 icom9700-radio-bridge fronts the **Icom IC-9700** as the station's UHF radio: the
 canonical `radio` slot `muehle/uhf/radio` on the station bus, controlled over CI-V
-via Icom's RS-BA1-style LAN protocol (UDP control :50001 + CI-V data :50002; the
-:50003 audio stream is out of scope in v1 — see `docs/civ-research-brief.md`).
+via Icom's RS-BA1-style LAN protocol (UDP control :50001 + CI-V data :50002). The
+:50003 audio stream is **receive-only and demand-driven** (2026-09-21): an
+`audio_on` /cmd opens it and publishes demodulated audio (S16LE 48 kHz mono UDP
+to `audio.publish_addr`, the vhfcam preview host); the demand is TTL-bounded
+(`audio.demand_ttl`, 60 s, refreshed by the consumer's audio_on heartbeats) so a
+dead consumer never pins the radio session (KTD-2). RX-only — TX-side audio
+stays out of scope while the unattended-TX gates are open. See
+`docs/civ-research-brief.md` and `internal/civ/audio.go`.
 
 The defining design constraint (KTD-2, user-settled): **the radio's single LAN
 session stays freely available for manual wfview operating** — the bridge is a
@@ -136,7 +142,8 @@ Key defaults: `radio_host = "9700.kgbvax.net"`, `[mqtt] broker =
 the muehle/#-authoritative broker, never the HA consumer broker; deploy.sh
 gates on this), site/station/slot `muehle`/`uhf`/`radio`, `[session]
 idle_timeout=120s tx_watchdog=180s max_attempts=3 attempt_spacing=30s`,
-`[radio] poll_interval=1s`.
+`[radio] poll_interval=1s`, `[audio] publish_addr="" demand_ttl="60s"`
+(publish_addr empty = audio cmds rejected).
 
 See `../docs/conventions/config-and-secrets.md` for the full convention.
 
