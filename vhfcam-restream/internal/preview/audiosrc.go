@@ -15,6 +15,7 @@ import (
 	"context"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -28,10 +29,23 @@ const (
 	maxBuffer = audioSampleRate * 2 / 2
 )
 
+// AudioSourceStatus tracks whether real radio PCM is arriving (silence-fill
+// does not count — zeros are written locally without touching this).
+type AudioSourceStatus struct {
+	lastRx atomic.Int64 // unix nanos of the last received datagram
+}
+
+// Alive reports whether a radio-audio datagram arrived recently.
+func (s *AudioSourceStatus) Alive() bool {
+	ts := s.lastRx.Load()
+	return ts != 0 && time.Since(time.Unix(0, ts)) < 3*time.Second
+}
+
 // StartAudioSource binds udpAddr (bridge PCM in), listens on tcpAddr (the
 // ffmpeg input, one client — newest wins) and pumps a constant-rate stream.
-// Runs until ctx is done; UDP errors are logged and retried.
-func StartAudioSource(ctx context.Context, udpAddr, tcpAddr string, log interface{ Warn(string, ...any) }) error {
+// Runs until ctx is done; UDP errors are logged and retried. status (may be
+// nil) is stamped on every real datagram.
+func StartAudioSource(ctx context.Context, udpAddr, tcpAddr string, status *AudioSourceStatus, log interface{ Warn(string, ...any) }) error {
 	udp, err := net.ListenPacket("udp", udpAddr)
 	if err != nil {
 		return err
@@ -68,6 +82,9 @@ func StartAudioSource(ctx context.Context, udpAddr, tcpAddr string, log interfac
 				buf = buf[len(buf)-maxBuffer:]
 			}
 			mu.Unlock()
+			if status != nil {
+				status.lastRx.Store(time.Now().UnixNano())
+			}
 		}
 	}()
 

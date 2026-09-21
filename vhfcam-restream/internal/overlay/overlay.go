@@ -38,7 +38,10 @@ type radioReading struct {
 	freqHz int64
 	tx     bool
 	online bool
-	at     time.Time
+	// Session truth from the icom9700 bridge (2026-09-21 preview status):
+	session string // idle|connecting|live|error
+	demand  bool   // audio demand set (audio_on heartbeats active)
+	at      time.Time
 }
 
 // Overlay is the MQTT consumer + textfile writer. All mutable state is guarded
@@ -106,6 +109,8 @@ func (o *Overlay) apply(topic string, payload []byte) {
 		DeviceOnline bool     `json:"device_online"`
 		FreqHz       int64    `json:"freq_hz"`
 		Tx           string   `json:"tx"`
+		SessionState string   `json:"session_state"`
+		AudioDemand  bool     `json:"audio_demand"`
 		Ts           string   `json:"ts"`
 	}
 	if err := json.Unmarshal(payload, &m); err != nil {
@@ -127,7 +132,10 @@ func (o *Overlay) apply(topic string, payload []byte) {
 	case cfg.TopicEL:
 		o.el = reading{val: m.El, online: m.DeviceOnline, at: at}
 	case cfg.TopicRadio:
-		o.radio = radioReading{freqHz: m.FreqHz, tx: m.Tx == "tx", online: m.DeviceOnline, at: at}
+		o.radio = radioReading{
+			freqHz: m.FreqHz, tx: m.Tx == "tx", online: m.DeviceOnline,
+			session: m.SessionState, demand: m.AudioDemand, at: at,
+		}
 	}
 }
 
@@ -163,6 +171,31 @@ func (o *Overlay) Client() pahomqtt.Client {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	return o.client
+}
+
+// RadioLink is the radio slot's status truth for the preview indicators:
+// BridgeOnline is the bridge's /status LWT, DeviceOnline the CI-V control
+// session liveness (state.device_online — two-layer liveness per the station
+// model), SessionState the bridge's own lifecycle word, AudioDemand whether
+// the audio demand is set.
+type RadioLink struct {
+	BridgeOnline bool
+	DeviceOnline bool
+	SessionState string
+	AudioDemand  bool
+}
+
+// RadioLink snapshots the radio slot's status truth.
+func (o *Overlay) RadioLink() RadioLink {
+	staleAfter := time.Duration(o.cfgFn().StaleAfterS * float64(time.Second))
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return RadioLink{
+		BridgeOnline: o.up && o.radUp,
+		DeviceOnline: o.up && o.radUp && o.radio.online && time.Since(o.radio.at) <= staleAfter,
+		SessionState: o.radio.session,
+		AudioDemand:  o.up && o.radUp && o.radio.demand,
+	}
 }
 
 // render produces the drawtext textfile contents keyed by file base name.

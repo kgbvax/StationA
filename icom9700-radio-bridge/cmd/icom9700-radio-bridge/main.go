@@ -62,23 +62,25 @@ func main() {
 func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 	// The audio PCM publisher (2026-09-21 preview sink): while the audio
 	// demand is set, demodulated radio audio (S16LE 48 kHz mono) is
-	// re-published as raw UDP datagrams to the preview host. UDP write
-	// failures are contained to audio — the first one is logged, the rest
-	// are dropped silently (a down preview host must not spam the log).
+	// re-published as raw UDP datagrams to the preview host. Unconnected
+	// socket + WriteTo on purpose: a connected UDP socket caches ICMP-derived
+	// errors (ECONNREFUSED while the preview restarts) and would fail every
+	// later write silently. The first failure is logged, the rest dropped
+	// (a down preview host must not spam the log).
 	var audioSink func([]byte)
 	if cfg.Audio.PublishAddr != "" {
 		raddr, err := net.ResolveUDPAddr("udp", cfg.Audio.PublishAddr)
 		if err != nil {
 			return fmt.Errorf("audio.publish_addr: %w", err)
 		}
-		conn, err := net.DialUDP("udp", nil, raddr)
+		conn, err := net.ListenUDP("udp", &net.UDPAddr{})
 		if err != nil {
-			return fmt.Errorf("audio publish dial: %w", err)
+			return fmt.Errorf("audio publish bind: %w", err)
 		}
 		defer conn.Close()
 		var firstErr atomic.Bool
 		audioSink = func(pcm []byte) {
-			if _, err := conn.Write(pcm); err != nil && firstErr.CompareAndSwap(false, true) {
+			if _, err := conn.WriteToUDP(pcm, raddr); err != nil && firstErr.CompareAndSwap(false, true) {
 				log.Warn("audio publish write failed (further errors dropped)", "err", err)
 			}
 		}

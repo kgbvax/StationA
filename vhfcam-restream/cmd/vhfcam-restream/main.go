@@ -73,10 +73,20 @@ func main() {
 
 	// Preview HTTP server: always on (cheap); with the preview sink disabled
 	// the player page just reports "offline". The radio control buttons ride
-	// the same server (POST /api/cmd/{action} -> MQTT).
+	// the same server (POST /api/cmd/{action} -> MQTT), and the status
+	// indicators poll GET /api/radio-status.
+	var audioStatus preview.AudioSourceStatus
 	pvSrv := preview.NewServer(func() config.PreviewConfig { return curCfg.Load().Preview },
 		nil,
-		logger.With("component", componentName, "subcomponent", "preview"))
+		logger.With("component", componentName, "subcomponent", "preview")).
+		WithStatus(func() preview.RadioStatus {
+			rl := ov.RadioLink()
+			return preview.RadioStatus{
+				RadioOnline:      rl.BridgeOnline && rl.DeviceOnline,
+				SessionConnected: rl.AudioDemand && rl.SessionState == "live",
+				AudioStream:      audioStatus.Alive(),
+			}
+		})
 	go func() {
 		if err := pvSrv.ListenAndServe(ctx); err != nil {
 			logger.Error("preview http server", "err", err)
@@ -93,7 +103,7 @@ func main() {
 			// net.Listen wants the bare address; the scheme prefix is only
 			// for the ffmpeg input URL.
 			tcpAddr := strings.TrimPrefix(restream.RadioAudioInputURL(cfg.Preview.RadioAudio), "tcp://")
-			if err := preview.StartAudioSource(ctx, cfg.Preview.RadioAudio, tcpAddr, srcLog); err != nil {
+			if err := preview.StartAudioSource(ctx, cfg.Preview.RadioAudio, tcpAddr, &audioStatus, srcLog); err != nil {
 				srcLog.Error("radio audio source", "err", err)
 			}
 		}()

@@ -10,6 +10,7 @@ package preview
 import (
 	"context"
 	"embed"
+	"encoding/json"
 	"log/slog"
 	"net/http"
 	"path/filepath"
@@ -34,21 +35,30 @@ const pageHTML = `<!doctype html>
   h1{font-size:15px;margin:0;font-weight:600;color:#fff}
   #st{color:#999;font-size:12px;margin:0}
   video{display:block;width:100%;max-height:85vh;background:#000}
-  #bar{padding:8px 14px;display:flex;gap:8px;align-items:center}
+  #bar{padding:8px 14px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
   button{background:#2a2a2a;color:#ddd;border:1px solid #444;border-radius:6px;
          padding:7px 14px;font:inherit;cursor:pointer}
   button:hover{background:#3a3a3a}
   button:disabled{opacity:.5;cursor:default}
   #radio-st{font-size:12px;color:#999;margin-left:6px}
+  .led{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:#999;
+       margin-right:10px}
+  .dot{width:9px;height:9px;border-radius:50%;background:#555;display:inline-block}
+  .dot.on{background:#3fbf5f}
+  .dot.off{background:#c04545}
 </style>
 </head>
 <body>
 <header><h1>VHF cam — preview</h1><p id="st">connecting…</p></header>
 <video id="v" autoplay muted playsinline></video>
 <div id="bar">
+  <span class="led"><span class="dot" id="led-online"></span>radio online</span>
+  <span class="led"><span class="dot" id="led-connected"></span>connected</span>
+  <span class="led"><span class="dot" id="led-audio"></span>audio</span>
   <button id="btn-connect">Radio: connect</button>
   <button id="btn-disconnect">Radio: disconnect</button>
   <button id="btn-power">Radio: power on</button>
+  <button id="btn-mute">Mute</button>
   <span id="radio-st"></span>
 </div>
 <script src="/hls.js"></script>
@@ -92,17 +102,55 @@ document.getElementById('btn-power').onclick = async () => {
   await radioCmd('power_on', 'power on frame sent');
   await radioCmd('audio_on', 'connecting (audio demand on)');
 };
+const muteBtn = document.getElementById('btn-mute');
+muteBtn.onclick = () => {
+  v.muted = !v.muted;
+  muteBtn.textContent = v.muted ? 'Unmute' : 'Mute';
+};
+
+function setLed(id, state) {
+  const d = document.getElementById(id);
+  d.classList.remove('on', 'off');
+  d.classList.add(state);
+}
+async function pollStatus() {
+  try {
+    const r = await fetch('/api/radio-status');
+    const s = await r.json();
+    setLed('led-online', s.radio_online ? 'on' : 'off');
+    setLed('led-connected', s.session_connected ? 'on' : 'off');
+    setLed('led-audio', s.audio_stream ? 'on' : 'off');
+  } catch (e) { /* transient — next tick retries */ }
+}
+pollStatus();
+setInterval(pollStatus, 2000);
 </script>
 </body>
 </html>
 `
 
+// RadioStatus is the preview page's indicator truth: radio online (bridge
+// LWT + CI-V session liveness), connected (audio demand held on the bridge),
+// audio stream (radio PCM actually arriving at this host).
+type RadioStatus struct {
+	RadioOnline      bool `json:"radio_online"`
+	SessionConnected bool `json:"session_connected"`
+	AudioStream      bool `json:"audio_stream"`
+}
+
 // Server serves the player page, the vendored hls.js, the HLS files the
 // preview ffmpeg writes, and the radio control endpoints.
 type Server struct {
-	cfgFn func() config.PreviewConfig
-	log   *slog.Logger
-	cmdFn func(action string) error // publishes a radio /cmd; nil = controls disabled
+	cfgFn   func() config.PreviewConfig
+	log     *slog.Logger
+	cmdFn   func(action string) error // publishes a radio /cmd; nil = controls disabled
+	statusFn func() RadioStatus       // nil = /api/radio-status reports zeros
+}
+
+// WithStatus sets the indicator source polled by GET /api/radio-status.
+func (s *Server) WithStatus(fn func() RadioStatus) *Server {
+	s.statusFn = fn
+	return s
 }
 
 // NewServer builds the preview server. cfgFn is consulted per request, so a
@@ -154,6 +202,15 @@ func (s *Server) Handler() http.Handler {
 		_, _ = w.Write([]byte(pageHTML))
 	})
 	allowed := map[string]bool{"audio_on": true, "audio_off": true, "power_on": true}
+	mux.HandleFunc("GET /api/radio-status", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-store")
+		var st RadioStatus
+		if s.statusFn != nil {
+			st = s.statusFn()
+		}
+		_ = json.NewEncoder(w).Encode(st)
+	})
 	mux.HandleFunc("POST /api/cmd/{action}", func(w http.ResponseWriter, r *http.Request) {
 		action := r.PathValue("action")
 		if !allowed[action] {

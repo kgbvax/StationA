@@ -155,3 +155,42 @@ func TestRadioCmdWithoutPublisher(t *testing.T) {
 		t.Errorf("status %d, want 503", rec.Code)
 	}
 }
+
+func TestRadioStatusEndpoint(t *testing.T) {
+	dir := t.TempDir()
+	var s *Server
+	s = NewServer(func() config.PreviewConfig {
+		c := config.Default().Preview
+		c.Dir = dir
+		return c
+	}, nil, slog.New(slog.NewTextHandler(io.Discard, nil))).WithStatus(func() RadioStatus {
+		return RadioStatus{RadioOnline: true, SessionConnected: true, AudioStream: false}
+	})
+	h := s.Handler()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/radio-status", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != 200 {
+		t.Fatalf("status endpoint %d", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{`"radio_online":true`, `"session_connected":true`, `"audio_stream":false`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("status body missing %s: %s", want, body)
+		}
+	}
+	if cc := rec.Header().Get("Cache-Control"); cc != "no-store" {
+		t.Errorf("status cache-control %q", cc)
+	}
+}
+
+func TestRadioStatusEndpointZeroesWithoutSource(t *testing.T) {
+	s := testServer(t)
+	req := httptest.NewRequest(http.MethodGet, "/api/radio-status", nil)
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, req)
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"radio_online":false`) {
+		t.Errorf("zero status: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
