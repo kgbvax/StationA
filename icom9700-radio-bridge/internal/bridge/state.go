@@ -39,6 +39,11 @@ type radioState struct {
 	swr         *int
 	alc         *int
 	readAt      time.Time // last successful live poll
+	// responding: the radio answered CI-V on the latest poll (or a
+	// transceive arrived). False while the session is live but deaf — the
+	// standby signature (2026-09-21 preview indicators). Always present in
+	// /state while live; radio-measured fields are omitted while false.
+	responding bool
 }
 
 // snap is the comparable /state snapshot: dedup compares this, never the
@@ -74,6 +79,19 @@ func (b *Bridge) poll() {
 	err := b.mgr.Session().Ride(ctx, func(c *civ.Client) error {
 		rs := radioState{}
 		wait := b.opts.PollInterval
+		answered := 0
+
+		// rt counts answered round-trips: an err==nil frame means the radio
+		// executed CI-V (FB acknowledge included) — the responsiveness fact
+		// the /state assembly publishes. Zero answers = the radio is deaf
+		// (standby): the cached radio state stays completely untouched.
+		rt := func(frame []byte) (civ.Frame, error) {
+			f, err := b.mgr.Session().RoundTrip(ctx, c, frame, wait)
+			if err == nil {
+				answered++
+			}
+			return f, err
+		}
 
 		// Real firmware repeats the sub bytes in replies to sub-command
 		// queries (FE FE E0 A2 15 02 <hi> <lo> FD) — stripSub drops that
@@ -85,19 +103,19 @@ func (b *Bridge) poll() {
 			return f.Sub
 		}
 
-		if f, err := b.mgr.Session().RoundTrip(ctx, c, civ.CmdReadSelectedVFO(), wait); err == nil && len(f.Sub) >= 1 {
+		if f, err := rt(civ.CmdReadSelectedVFO()); err == nil && len(f.Sub) >= 1 {
 			if v, err := civ.ParseVFOReply(stripSub(f)); err == nil {
 				rs.selectedVFO = v
 			}
 		}
-		if f, err := b.mgr.Session().RoundTrip(ctx, c, civ.CmdReadSatelliteMode(), wait); err == nil && len(f.Sub) >= 1 {
+		if f, err := rt(civ.CmdReadSatelliteMode()); err == nil && len(f.Sub) >= 1 {
 			rs.satellite, _ = civ.ParseSatelliteReply(stripSub(f))
 		}
-		rs.main = b.pollVFO(ctx, c, "main", wait)
-		rs.sub = b.pollVFO(ctx, c, "sub", wait)
+		rs.main = b.pollVFO(ctx, c, "main", wait, rt)
+		rs.sub = b.pollVFO(ctx, c, "sub", wait, rt)
 
 		// PTT read: `1C 00` with no data.
-		if f, err := b.mgr.Session().RoundTrip(ctx, c, civ.BuildFrame(0x1C, []byte{0x00}), wait); err == nil && len(f.Sub) >= 1 {
+		if f, err := rt(civ.BuildFrame(0x1C, []byte{0x00})); err == nil && len(f.Sub) >= 1 {
 			if sub := stripSub(f); len(sub) == 1 {
 				if sub[0] == 0x01 {
 					rs.tx = "tx"
@@ -107,19 +125,19 @@ func (b *Bridge) poll() {
 			}
 		}
 
-		if f, err := b.mgr.Session().RoundTrip(ctx, c, civ.CmdReadSMeter(), wait); err == nil && len(f.Sub) >= 1 {
+		if f, err := rt(civ.CmdReadSMeter()); err == nil && len(f.Sub) >= 1 {
 			v, err := civ.ParseMeter(stripSub(f))
 			if err == nil {
 				rs.sMeter = &v
 			}
 		}
-		if f, err := b.mgr.Session().RoundTrip(ctx, c, civ.CmdReadSWR(), wait); err == nil && len(f.Sub) >= 1 {
+		if f, err := rt(civ.CmdReadSWR()); err == nil && len(f.Sub) >= 1 {
 			v, err := civ.ParseMeter(stripSub(f))
 			if err == nil {
 				rs.swr = &v
 			}
 		}
-		if f, err := b.mgr.Session().RoundTrip(ctx, c, civ.CmdReadALC(), wait); err == nil && len(f.Sub) >= 1 {
+		if f, err := rt(civ.CmdReadALC()); err == nil && len(f.Sub) >= 1 {
 			v, err := civ.ParseMeter(stripSub(f))
 			if err == nil {
 				rs.alc = &v
@@ -127,12 +145,18 @@ func (b *Bridge) poll() {
 		}
 
 		b.mu.Lock()
-		// Bridge-held fields survive a failed sub-read.
-		if rs.selectedVFO != "" {
-			b.radio.selectedVFO = rs.selectedVFO
+		if answered > 0 {
+			// Bridge-held fields survive a failed sub-read.
+			if rs.selectedVFO != "" {
+				b.radio.selectedVFO = rs.selectedVFO
+			}
+			rs.selectedVFO = b.radio.selectedVFO
+			b.radio.merge(rs)
 		}
-		rs.selectedVFO = b.radio.selectedVFO
-		b.radio.merge(rs)
+		// A zero-answer poll leaves the cached radio state completely
+		// untouched — merge would fabricate satellite=false, clobber the
+		// meters with nils and stamp readAt (defeating the /state dedup).
+		b.setResponding(answered > 0)
 		b.mu.Unlock()
 		return nil
 	})
@@ -141,23 +165,50 @@ func (b *Bridge) poll() {
 	}
 }
 
-// pollVFO reads one VFO's freq and mode (select, read, read).
-func (b *Bridge) pollVFO(ctx context.Context, c *civ.Client, vfo string, wait time.Duration) vfoState {
+// deafTicksToClear is the hysteresis before the standby signature flips
+// radio_responding off: a single CI-V collision while operating must not
+// flash "FREQ ---" into the video burn-in. Documented in docs/mqtt-api.md.
+const deafTicksToClear = 2
+
+// setResponding records whether the latest poll got any CI-V answer. An
+// answer sets the flag immediately; deafTicksToClear consecutive deaf polls
+// clear it (and rate-limited-warn the standby signature). Callers hold b.mu.
+func (b *Bridge) setResponding(ok bool) {
+	if ok {
+		b.radio.responding = true
+		b.deafStreak = 0
+		return
+	}
+	b.deafStreak++
+	if b.deafStreak >= deafTicksToClear {
+		if b.radio.responding {
+			b.radio.responding = false
+		}
+		if time.Since(b.deafWarnAt) >= time.Minute {
+			b.deafWarnAt = time.Now()
+			b.log.Warn("ci-v polls unanswered (radio in standby?)")
+		}
+	}
+}
+
+// pollVFO reads one VFO's freq and mode (select, read, read). rt is the
+// caller's round-trip wrapper so answer counting covers these trips too.
+func (b *Bridge) pollVFO(ctx context.Context, c *civ.Client, vfo string, wait time.Duration, rt func([]byte) (civ.Frame, error)) vfoState {
 	vs := vfoState{}
 	sel, err := civ.CmdSelectVFO(vfo)
 	if err != nil {
 		return vs
 	}
-	if _, err := b.mgr.Session().RoundTrip(ctx, c, sel, wait); err != nil {
+	if _, err := rt(sel); err != nil {
 		return vs
 	}
-	if f, err := b.mgr.Session().RoundTrip(ctx, c, civ.CmdReadFreq(), wait); err == nil {
+	if f, err := rt(civ.CmdReadFreq()); err == nil {
 		if hz, err := civ.ParseFreqReply(f.Sub); err == nil {
 			vs.FreqHz = hz
 			vs.Band, _ = civ.BandForFreq(hz)
 		}
 	}
-	if f, err := b.mgr.Session().RoundTrip(ctx, c, civ.CmdReadMode(), wait); err == nil {
+	if f, err := rt(civ.CmdReadMode()); err == nil {
 		if mode, _, ok, _ := civ.ParseModeReply(f.Sub); ok {
 			vs.Mode = mode
 		}
@@ -195,6 +246,10 @@ func (b *Bridge) foldTransceive(tr civ.Transceive) {
 	if b.snapSession() != radio.StateLive {
 		return // stale events off-session are not state
 	}
+	// An unsolicited transceive frame is direct proof the radio executes
+	// CI-V — same evidence as an answered poll.
+	b.radio.responding = true
+	b.deafStreak = 0
 	vfo := b.radio.selectedVFO
 	if b.radio.satellite {
 		vfo = "sub"
@@ -283,6 +338,13 @@ func (b *Bridge) statePayload(sn snap) map[string]any {
 		"audio_demand":  sn.audioDemand,
 		"device_online": live,
 	}
+	// radio_responding is NOT device_online (that is CI-V control-session
+	// liveness): it says the radio answered CI-V on the latest poll — false
+	// while the session is live but deaf (standby). Present while live,
+	// omitted off-session with the other radio-measured fields.
+	if live {
+		p["radio_responding"] = sn.radio.responding
+	}
 	if sn.err != "" {
 		p["error"] = sn.err
 	}
@@ -290,6 +352,18 @@ func (b *Bridge) statePayload(sn snap) map[string]any {
 		p["selected_vfo"] = sn.radio.selectedVFO
 	}
 	if !live {
+		return p
+	}
+	// Radio-measured fields are OMITTED while the radio is not answering
+	// (live-but-deaf: standby) exactly as off-session — never zeroed, never
+	// frozen (R6, extended 2026-09-21 for the preview indicators).
+	// selected_vfo and tx stay above/below the gate on purpose: selected_vfo
+	// is bridge-held, and tx is the safety mirror — an operator must see a
+	// keyed transmitter even while the radio is otherwise deaf.
+	if !sn.radio.responding {
+		if sn.radio.tx != "" {
+			p["tx"] = sn.radio.tx
+		}
 		return p
 	}
 	// Top-level active-TX fields mirror the TX VFO: SUB in satellite mode
@@ -373,6 +447,8 @@ func (b *Bridge) metaPayload() map[string]any {
 				{"key": "tx", "name": "Transmitting", "type": "boolean", "on": "tx", "off": "rx"},
 				{"key": "s_meter", "name": "S-meter", "type": "number", "state_class": "measurement"},
 				{"key": "armed", "name": "TX armed", "type": "boolean"},
+				{"key": "audio_demand", "name": "Audio demand", "type": "boolean"},
+				{"key": "radio_responding", "name": "Radio responding", "type": "boolean"},
 				{"key": "session_state", "name": "Session state", "type": "string"},
 				{"key": "error", "name": "Last error", "type": "string"},
 			},

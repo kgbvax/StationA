@@ -164,7 +164,7 @@ func TestRadioStatusEndpoint(t *testing.T) {
 		c.Dir = dir
 		return c
 	}, nil, slog.New(slog.NewTextHandler(io.Discard, nil))).WithStatus(func() RadioStatus {
-		return RadioStatus{RadioOnline: true, SessionConnected: true, AudioStream: false}
+		return ComputeStatus(true, true, true, true)
 	})
 	h := s.Handler()
 
@@ -175,7 +175,7 @@ func TestRadioStatusEndpoint(t *testing.T) {
 		t.Fatalf("status endpoint %d", rec.Code)
 	}
 	body := rec.Body.String()
-	for _, want := range []string{`"radio_online":true`, `"session_connected":true`, `"audio_stream":false`} {
+	for _, want := range []string{`"bridge_online":true`, `"session_held":true`, `"radio_ready":true`, `"audio_stream":true`, `"hint":""`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("status body missing %s: %s", want, body)
 		}
@@ -190,7 +190,35 @@ func TestRadioStatusEndpointZeroesWithoutSource(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/radio-status", nil)
 	rec := httptest.NewRecorder()
 	s.Handler().ServeHTTP(rec, req)
-	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"radio_online":false`) {
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"bridge_online":false`) {
 		t.Errorf("zero status: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// The indicator decision table: every operator-observable state maps to LED
+// states + hint that read truthfully (the standby row is the one this whole
+// feature exists for).
+func TestComputeStatusTable(t *testing.T) {
+	cases := []struct {
+		name                            string
+		bridge, held, ready, audio      bool
+		wantBridge, wantSession, wantRadio, wantAudio string
+		wantHintSub                     string
+	}{
+		{"all good", true, true, true, true, "on", "on", "on", "on", ""},
+		{"bridge down", false, false, false, false, "off", "unk", "unk", "off", "bridge unreachable"},
+		{"no session (free / wfview holds)", true, false, false, false, "on", "off", "unk", "off", "no radio session"},
+		{"standby: held but deaf", true, true, false, false, "on", "on", "warn", "off", "in standby? try Power on"},
+		{"ready but no audio", true, true, true, false, "on", "on", "on", "off", "no audio arriving"},
+	}
+	for _, tc := range cases {
+		st := ComputeStatus(tc.bridge, tc.held, tc.ready, tc.audio)
+		if st.Leds.Bridge != tc.wantBridge || st.Leds.Session != tc.wantSession ||
+			st.Leds.Radio != tc.wantRadio || st.Leds.Audio != tc.wantAudio {
+			t.Errorf("%s: leds = %+v", tc.name, st.Leds)
+		}
+		if !strings.Contains(st.Hint, tc.wantHintSub) {
+			t.Errorf("%s: hint %q missing %q", tc.name, st.Hint, tc.wantHintSub)
+		}
 	}
 }

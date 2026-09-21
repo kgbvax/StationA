@@ -45,7 +45,13 @@ type radioReading struct {
 	// Session truth from the icom9700 bridge (2026-09-21 preview status):
 	session string // idle|connecting|live|error
 	demand  bool   // audio demand set (audio_on heartbeats active)
-	at      time.Time
+	// responding: the bridge's radio_responding (CI-V answered the latest
+	// poll). sawRespField records whether the field existed at all — an old
+	// bridge (pre-2026-09-21) omits it, and then freq presence is the
+	// fallback signal (deploy-skew shim).
+	responding   bool
+	sawRespField bool
+	at           time.Time
 }
 
 // Overlay is the MQTT consumer + textfile writer. All mutable state is guarded
@@ -108,14 +114,15 @@ func (o *Overlay) Start(ctx context.Context) error {
 func (o *Overlay) apply(topic string, payload []byte) {
 	cfg := o.cfgFn()
 	var m struct {
-		Az           *float64 `json:"az"`
-		El           *float64 `json:"el"`
-		DeviceOnline bool     `json:"device_online"`
-		FreqHz       *int64   `json:"freq_hz"`
-		Tx           *string  `json:"tx"`
-		SessionState *string  `json:"session_state"`
-		AudioDemand  *bool    `json:"audio_demand"`
-		Ts           string   `json:"ts"`
+		Az               *float64 `json:"az"`
+		El               *float64 `json:"el"`
+		DeviceOnline     bool     `json:"device_online"`
+		FreqHz           *int64   `json:"freq_hz"`
+		Tx               *string  `json:"tx"`
+		SessionState     *string  `json:"session_state"`
+		AudioDemand      *bool    `json:"audio_demand"`
+		RadioResponding  *bool    `json:"radio_responding"`
+		Ts               string   `json:"ts"`
 	}
 	if err := json.Unmarshal(payload, &m); err != nil {
 		o.log.Warn("overlay: bad state payload", "topic", topic, "err", err)
@@ -153,9 +160,15 @@ func (o *Overlay) apply(topic string, payload []byte) {
 		if m.AudioDemand != nil {
 			demand = *m.AudioDemand
 		}
+		responding, sawResp := r.responding, r.sawRespField
+		if m.RadioResponding != nil {
+			responding, sawResp = *m.RadioResponding, true
+		}
 		o.radio = radioReading{
 			freqHz: freqHz, freqPresent: freqPresent, tx: tx, online: m.DeviceOnline,
-			session: session, demand: demand, at: at,
+			session: session, demand: demand,
+			responding: responding, sawRespField: sawResp,
+			at: at,
 		}
 	}
 }
@@ -194,21 +207,22 @@ func (o *Overlay) Client() pahomqtt.Client {
 	return o.client
 }
 
-// RadioLink is the radio slot's status truth for the preview indicators:
-// BridgeOnline is the bridge's /status LWT, DeviceOnline the CI-V control
-// session liveness (state.device_online — two-layer liveness per the station
-// model), SessionState the bridge's own lifecycle word, AudioDemand whether
-// the audio demand is set.
+// RadioLink is the radio slot's status truth for the preview indicators —
+// every field is a single fact, freshness-gated (a stale snapshot yields zero
+// values: unknown is not failure):
+//   - BridgeOnline: the bridge's /status LWT is "online" (process alive).
+//   - DeviceOnline: the CI-V control session is live (state.device_online).
+//   - SessionState: the bridge's lifecycle word ("" when stale).
+//   - AudioDemand:  the audio demand is set on the bridge.
+//   - Responding:   the radio answers CI-V. Bridge-published
+//     (radio_responding); with an older bridge the absence of that field
+//     falls back to freq_hz presence (deploy-skew shim).
 type RadioLink struct {
 	BridgeOnline bool
 	DeviceOnline bool
 	SessionState string
 	AudioDemand  bool
-	// Responding: the latest snapshot actually carried a frequency — CI-V
-	// reads succeed. Absent while the radio is in standby or deaf (session
-	// live, no data) — the standby signature together with a silent audio
-	// stream.
-	Responding bool
+	Responding   bool
 }
 
 // RadioLink snapshots the radio slot's status truth.
@@ -217,12 +231,18 @@ func (o *Overlay) RadioLink() RadioLink {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	fresh := o.up && o.radUp && o.radio.online && time.Since(o.radio.at) <= staleAfter
+	responding := o.radio.responding || (!o.radio.sawRespField && o.radio.freqPresent)
 	return RadioLink{
 		BridgeOnline: o.up && o.radUp,
 		DeviceOnline: fresh,
-		SessionState: o.radio.session,
-		AudioDemand:  o.up && o.radUp && o.radio.demand,
-		Responding:   fresh && o.radio.freqPresent,
+		SessionState: func() string {
+			if fresh {
+				return o.radio.session
+			}
+			return ""
+		}(),
+		AudioDemand: fresh && o.up && o.radUp && o.radio.demand,
+		Responding:  fresh && responding,
 	}
 }
 

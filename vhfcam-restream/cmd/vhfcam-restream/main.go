@@ -81,12 +81,7 @@ func main() {
 		logger.With("component", componentName, "subcomponent", "preview")).
 		WithStatus(func() preview.RadioStatus {
 			rl := ov.RadioLink()
-			return preview.RadioStatus{
-				RadioOnline:      rl.BridgeOnline && rl.DeviceOnline,
-				SessionConnected: rl.AudioDemand && rl.SessionState == "live",
-				AudioStream:      audioStatus.Alive(),
-				RadioResponding:  rl.Responding,
-			}
+			return preview.ComputeStatus(rl.BridgeOnline, rl.DeviceOnline, rl.Responding, audioStatus.Alive())
 		})
 	go func() {
 		if err := pvSrv.ListenAndServe(ctx); err != nil {

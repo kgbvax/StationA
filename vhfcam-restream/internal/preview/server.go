@@ -46,14 +46,17 @@ const pageHTML = `<!doctype html>
   .dot{width:9px;height:9px;border-radius:50%;background:#555;display:inline-block}
   .dot.on{background:#3fbf5f}
   .dot.off{background:#c04545}
+  .dot.warn{background:#d9a13b}
+  .dot.unk{background:#777}
 </style>
 </head>
 <body>
 <header><h1>VHF cam — preview</h1><p id="st">connecting…</p></header>
 <video id="v" autoplay muted playsinline></video>
 <div id="bar">
-  <span class="led"><span class="dot" id="led-online"></span>radio online</span>
-  <span class="led"><span class="dot" id="led-connected"></span>connected</span>
+  <span class="led"><span class="dot" id="led-bridge"></span>bridge</span>
+  <span class="led"><span class="dot" id="led-session"></span>session</span>
+  <span class="led"><span class="dot" id="led-radio"></span>radio</span>
   <span class="led"><span class="dot" id="led-audio"></span>audio</span>
   <span class="led"><span class="dot" id="led-sound"></span>sound</span>
   <button id="btn-connect">Radio: connect</button>
@@ -124,13 +127,11 @@ async function pollStatus() {
   try {
     const r = await fetch('/api/radio-status');
     const s = await r.json();
-    setLed('led-online', s.radio_online ? 'on' : 'off');
-    setLed('led-connected', s.session_connected ? 'on' : 'off');
-    setLed('led-audio', s.audio_stream ? 'on' : 'off');
-    // Standby signature: the session is up but CI-V reads return nothing
-    // and no audio streams — the radio is likely powered off (standby).
-    rst.textContent = (s.radio_online && s.session_connected && !s.radio_responding && !s.audio_stream)
-      ? 'radio not responding — in standby? try Power on' : '';
+    setLed('led-bridge', s.leds.bridge);
+    setLed('led-session', s.leds.session);
+    setLed('led-radio', s.leds.radio);
+    setLed('led-audio', s.leds.audio);
+    rst.textContent = s.hint || '';
   } catch (e) { /* transient — next tick retries */ }
 }
 pollStatus();
@@ -140,16 +141,65 @@ setInterval(pollStatus, 2000);
 </html>
 `
 
-// RadioStatus is the preview page's indicator truth: radio online (bridge
-// LWT + CI-V session liveness), connected (audio demand held on the bridge),
-// audio stream (radio PCM actually arriving at this host), responding (CI-V
-// reads succeed — false with a live session means the radio is likely in
-// standby).
+// RadioStatus is the preview page's indicator payload: one fact per LED plus
+// the computed operator hint. Each LED owns exactly one fact — no composite
+// booleans — so every state of the world reads true.
 type RadioStatus struct {
-	RadioOnline      bool `json:"radio_online"`
-	SessionConnected bool `json:"session_connected"`
-	AudioStream      bool `json:"audio_stream"`
-	RadioResponding  bool `json:"radio_responding"`
+	BridgeOnline bool   `json:"bridge_online"` // icom9700-radio-bridge reachable (its /status LWT over our MQTT link)
+	SessionHeld  bool   `json:"session_held"`  // the bridge holds a live CI-V session (for us, via the audio demand)
+	RadioReady   bool   `json:"radio_ready"`   // the radio answers CI-V (false while held = standby)
+	AudioStream  bool   `json:"audio_stream"`  // real radio PCM arriving at this host
+	Hint         string `json:"hint"`
+	Leds         Leds   `json:"leds"`
+}
+
+// Leds is the per-LED render state: on / off / warn (held-but-deaf) / unk
+// (cannot know).
+type Leds struct {
+	Bridge  string `json:"bridge"`
+	Session string `json:"session"`
+	Radio   string `json:"radio"`
+	Audio   string `json:"audio"`
+}
+
+// ComputeStatus is the pure indicator decision (table-tested): map the radio
+// facts onto the four LEDs and the operator hint.
+func ComputeStatus(bridgeOnline, sessionHeld, radioReady, audioStream bool) RadioStatus {
+	st := RadioStatus{
+		BridgeOnline: bridgeOnline,
+		SessionHeld:  sessionHeld,
+		RadioReady:   radioReady,
+		AudioStream:  audioStream,
+	}
+	st.Leds.Bridge = map[bool]string{true: "on", false: "off"}[bridgeOnline]
+
+	switch {
+	case !bridgeOnline:
+		// Blind: nothing about the radio is knowable — unknown is not failure.
+		st.Leds.Session, st.Leds.Radio = "unk", "unk"
+		st.Hint = "radio bridge unreachable (broker or bridge process)"
+	default:
+		st.Leds.Session = map[bool]string{true: "on", false: "off"}[sessionHeld]
+		if !sessionHeld {
+			st.Leds.Radio = "unk"
+			st.Hint = "no radio session (wfview may hold it, or connect failed)"
+		} else {
+			st.Leds.Session = "on"
+			if radioReady {
+				st.Leds.Radio = "on"
+			} else {
+				// Held but deaf: the standby signature. The green session
+				// stays — it is the session the power_on wake rides.
+				st.Leds.Radio = "warn"
+				st.Hint = "radio not answering CI-V — in standby? try Power on"
+			}
+			if radioReady && !audioStream {
+				st.Hint = "radio answers but no audio arriving — check the radio UDP audio path"
+			}
+		}
+	}
+	st.Leds.Audio = map[bool]string{true: "on", false: "off"}[audioStream]
+	return st
 }
 
 // Server serves the player page, the vendored hls.js, the HLS files the

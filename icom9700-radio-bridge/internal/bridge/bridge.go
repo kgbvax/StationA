@@ -106,6 +106,13 @@ type Bridge struct {
 	armed        bool
 	cmdErr       string
 
+	// CI-V deaf streak (2026-09-21 preview indicators): consecutive polls
+	// with zero answered round-trips; radio_responding clears after
+	// deafTicksToClear of them and the standby signature warns at most once
+	// a minute while it persists. Both guarded by mu.
+	deafStreak int
+	deafWarnAt time.Time
+
 	// Safety core (U6): pendingOff is a PTT-off the radio never confirmed —
 	// the OnLive hook re-issues it with priority on the next handshake and
 	// the redelivery loop keeps series armed until it lands; txWatchdog is
