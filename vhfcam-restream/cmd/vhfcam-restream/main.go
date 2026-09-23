@@ -111,12 +111,18 @@ func main() {
 	// the same server (POST /api/cmd/{action} -> MQTT), and the status
 	// indicators poll GET /api/radio-status.
 	var audioStatus preview.AudioSourceStatus
+	// The YouTube sink's runtime gate: the page's start/stop buttons flip it;
+	// config youtube_enabled is the boot default.
+	ytEnabled := &atomic.Bool{}
+	ytEnabled.Store(cfg.YoutubeEnabled)
 	pvSrv := preview.NewServer(func() config.PreviewConfig { return curCfg.Load().Preview },
 		nil,
 		logger.With("component", componentName, "subcomponent", "preview")).
 		WithStatus(func() preview.RadioStatus {
 			rl := ov.RadioLink()
-			return preview.ComputeStatus(rl.BridgeOnline, rl.DeviceOnline, rl.Responding, audioStatus.Alive())
+			st := preview.ComputeStatus(rl.BridgeOnline, rl.DeviceOnline, rl.Responding, audioStatus.Alive())
+			st.Youtube = ytEnabled.Load()
+			return st
 		})
 	go func() {
 		if err := pvSrv.ListenAndServe(ctx); err != nil {
@@ -162,7 +168,7 @@ func main() {
 	}
 	sinkLog := logger.With("component", componentName)
 	ytSup := restream.New(cfg, reload, sinkLog.With("sink", "youtube")).
-		WithEnabled(func() bool { return curCfg.Load().YoutubeEnabled })
+		WithEnabled(func() bool { return ytEnabled.Load() && curCfg.Load().YoutubeEnabled })
 	pvSup := restream.New(cfg, reload, sinkLog.With("sink", "preview")).
 		WithEnabled(func() bool { return curCfg.Load().Preview.Enabled }).
 		WithArgsFn(restream.BuildPreviewArgs)
@@ -215,6 +221,14 @@ func main() {
 			audioDemandOn.Store(true)
 		case "audio_off":
 			audioDemandOn.Store(false)
+		case "yt_start":
+			ytEnabled.Store(true)
+			ytSup.Reload()
+			return nil
+		case "yt_stop":
+			ytEnabled.Store(false)
+			ytSup.Reload()
+			return nil
 		}
 		return radioPublish(action)
 	})

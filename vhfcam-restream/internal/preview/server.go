@@ -63,6 +63,8 @@ const pageHTML = `<!doctype html>
   <button id="btn-disconnect">Radio: disconnect</button>
   <button id="btn-power">Radio: power on</button>
   <button id="btn-mute">Unmute</button>
+  <button id="btn-yt-start">YouTube: start</button>
+  <button id="btn-yt-stop">YouTube: stop</button>
   <span id="radio-st"></span>
 </div>
 <script src="/hls.js"></script>
@@ -105,6 +107,12 @@ document.getElementById('btn-disconnect').onclick = async () => {
 document.getElementById('btn-power').onclick = async () => {
   await radioCmd('power_on', 'power on frame sent');
   await radioCmd('audio_on', 'connecting (audio demand on)');
+};
+document.getElementById('btn-yt-start').onclick = async () => {
+  await radioCmd('yt_start', 'YouTube sink starting');
+};
+document.getElementById('btn-yt-stop').onclick = async () => {
+  await radioCmd('yt_stop', 'YouTube sink stopping');
 };
 const muteBtn = document.getElementById('btn-mute');
 const soundLed = document.getElementById('led-sound');
@@ -149,6 +157,7 @@ type RadioStatus struct {
 	SessionHeld  bool   `json:"session_held"`  // the bridge holds a live CI-V session (for us, via the audio demand)
 	RadioReady   bool   `json:"radio_ready"`   // the radio answers CI-V (false while held = standby)
 	AudioStream  bool   `json:"audio_stream"`  // real radio PCM arriving at this host
+	Youtube      bool   `json:"youtube"`       // the YouTube sink is running
 	Hint         string `json:"hint"`
 	Leds         Leds   `json:"leds"`
 }
@@ -265,7 +274,10 @@ func (s *Server) Handler() http.Handler {
 		w.Header().Set("Cache-Control", "no-store")
 		_, _ = w.Write([]byte(pageHTML))
 	})
-	allowed := map[string]bool{"audio_on": true, "audio_off": true, "power_on": true}
+	allowed := map[string]bool{
+		"audio_on": true, "audio_off": true, "power_on": true,
+		"yt_start": true, "yt_stop": true,
+	}
 	mux.HandleFunc("GET /api/radio-status", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "no-store")
