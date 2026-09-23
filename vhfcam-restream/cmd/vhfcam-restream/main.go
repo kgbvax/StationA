@@ -168,7 +168,7 @@ func main() {
 	}
 	sinkLog := logger.With("component", componentName)
 	ytSup := restream.New(cfg, reload, sinkLog.With("sink", "youtube")).
-		WithEnabled(func() bool { return ytEnabled.Load() && curCfg.Load().YoutubeEnabled })
+		WithEnabled(func() bool { return ytEnabled.Load() })
 	pvSup := restream.New(cfg, reload, sinkLog.With("sink", "preview")).
 		WithEnabled(func() bool { return curCfg.Load().Preview.Enabled }).
 		WithArgsFn(restream.BuildPreviewArgs)
