@@ -70,6 +70,68 @@ func waitCond(timeout time.Duration, cond func() bool) bool {
 	return cond()
 }
 
+// TestPollOnceDrainsCommandAckBeforeStatus pins the live 2026-09-23
+// "erroneous reading 0": the controller answers every set/stop with the
+// all-zero ACK, and the frame scanner hands it to the poll loop like any
+// reply. Misread as a status reply it decodes to az 0 — published for a
+// tick, and the deadband compares that tick's targets against 0. The poll
+// must drain ACKs and only ever cache a real status reply.
+func TestPollOnceDrainsCommandAckBeforeStatus(t *testing.T) {
+	rw := newScriptedRW(180)
+	rw.stage(encodeAck()) // the ACK of a set frame written just before this tick
+	d := NewDriver(func() (io.ReadWriteCloser, error) { return rw, nil }, fastOpts(), nil)
+	if err := d.reopenIO(); err != nil {
+		t.Fatalf("open: %v", err)
+	}
+
+	d.pollOnce(context.Background())
+
+	az, valid := d.Readback()
+	if !valid || az != 180 {
+		t.Errorf("readback after poll = (%v, %v), want (180, true) — an ACK leaked as a position", az, valid)
+	}
+	if len(d.rxCh) != 0 {
+		t.Errorf("rxCh holds %d frames after the poll, want 0 (drained)", len(d.rxCh))
+	}
+}
+
+// TestMockGotoAckDoesNotSurfaceAsZero runs the same contract end-to-end
+// through the mock, which now answers set/stop with the ACK like real
+// hardware (it long answered with nothing, which is why the stack never
+// caught the misread).
+func TestMockGotoAckDoesNotSurfaceAsZero(t *testing.T) {
+	m := NewMock(fastOpts())
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go m.RunPoll(ctx)
+
+	if !waitCond(2*time.Second, func() bool {
+		_, valid := m.Readback()
+		return valid
+	}) {
+		t.Fatal("mock never produced a first status reply")
+	}
+	if err := m.SetTarget(180); err != nil {
+		t.Fatalf("SetTarget: %v", err)
+	}
+
+	if !waitCond(2*time.Second, func() bool {
+		az, valid := m.Readback()
+		return valid && az == 180
+	}) {
+		az, valid := m.Readback()
+		t.Fatalf("readback after goto = (%v, %v), want (180, true)", az, valid)
+	}
+	// Hold across several poll cycles: a late ACK surfacing would flip az to 0.
+	deadline := time.Now().Add(100 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if az, _ := m.Readback(); az != 180 {
+			t.Fatalf("readback regressed to %v — an ACK leaked into the position cache", az)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
 // --- readback cache -----------------------------------------------------------
 
 func TestPollPopulatesCachedReadbackAndClearsUnknown(t *testing.T) {
@@ -698,6 +760,15 @@ func (w *scriptedRW) wakeReaders() {
 
 func newScriptedRW(az float64) *scriptedRW {
 	return &scriptedRW{az: az, wake: make(chan struct{})}
+}
+
+// stage prepends raw reply frames ahead of the canned status flow — e.g. a
+// command ACK already queued while the next status reply is still pending.
+func (w *scriptedRW) stage(frames ...[]byte) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.replies = append(frames, w.replies...)
+	w.wakeReaders()
 }
 
 // wedgedCloseRW models the bench failure that froze the az slot on shari

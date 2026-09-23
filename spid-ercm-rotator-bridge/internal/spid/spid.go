@@ -281,50 +281,71 @@ func (d *Driver) RunPoll(ctx context.Context) {
 	}
 }
 
-// pollOnce writes the status request and consumes one reply.
+// pollOnce writes the status request and consumes one reply. Stale command
+// ACKs (the all-zero set/stop replies — see isCommandAck) are drained on the
+// way: they arrive out of phase with the poll cadence because writes happen
+// on their own path, and misreading one as a status reply published a bogus
+// az 0 for a tick (live 2026-09-23).
 func (d *Driver) pollOnce(ctx context.Context) {
 	if err := d.writeFrame(encodeStatus()); err != nil {
 		return // writeFrame already marked the link down and logged
 	}
 
-	select {
-	case frame := <-d.rxCh:
-		az, err := decodeStatusReply(frame)
-		if err != nil {
-			// A malformed reply proves the link but must never be misread as
-			// a position — ASCII digits in a reply are the Rot1Prog desync
-			// trap and are rejected by the codec, not interpreted.
-			d.log.Warn("malformed status reply", "err", err, "frame", fmt.Sprintf("% X", frame))
+	for {
+		select {
+		case frame := <-d.rxCh:
+			if isCommandAck(frame) {
+				// An ACK for a set/stop written earlier on the write path —
+				// never a position. Drop it and keep waiting for this tick's
+				// status reply (the reader is FIFO, so the status frame is
+				// behind at most one ACK per outstanding command).
+				d.log.Debug("consumed command ack frame", "frame", fmt.Sprintf("% X", frame))
+				d.mu.Lock()
+				d.timeouts = 0 // a frame, however empty, proves a live device
+				d.mu.Unlock()
+				continue
+			}
+			az, err := decodeStatusReply(frame)
+			if err != nil {
+				// A malformed reply proves the link but must never be misread as
+				// a position — ASCII digits in a reply are the Rot1Prog desync
+				// trap and are rejected by the codec, not interpreted.
+				d.log.Warn("malformed status reply", "err", err, "frame", fmt.Sprintf("% X", frame))
+				d.mu.Lock()
+				d.timeouts = 0 // a reply, however malformed, proves a live device
+				d.mu.Unlock()
+				return
+			}
 			d.mu.Lock()
-			d.timeouts = 0 // a reply, however malformed, proves a live device
+			d.az = az
+			d.valid = true // KTD9: the first status reply clears the unknown flag
+			d.online = true
+			d.errStr = ""
+			d.timeouts = 0
 			d.mu.Unlock()
 			return
+		case re := <-d.readErrCh:
+			d.onReadErr(re)
+			return
+		case <-time.After(d.opts.ReadTimeout):
+			// No reply this tick: the controller may just be slow or busy — one
+			// missed tick is not news. But a controller that stays silent for
+			// maxConsecutiveTimeouts ticks is a DEAD device behind a live
+			// adapter (powered-off rotor), and the cached state must not stay
+			// frozen-online forever: take the link down exactly as a port fault
+			// would (the internal/ercm exchange-timeout contract — device_online
+			// goes false and the deadband always writes again).
+			d.mu.Lock()
+			if d.noteReadTimeoutLocked() {
+				d.markDownLocked(fmt.Errorf(
+					"no status reply after %d consecutive polls (read timeout %s each)",
+					maxConsecutiveTimeouts, d.opts.ReadTimeout))
+			}
+			d.mu.Unlock()
+			return
+		case <-ctx.Done():
+			return
 		}
-		d.mu.Lock()
-		d.az = az
-		d.valid = true // KTD9: the first status reply clears the unknown flag
-		d.online = true
-		d.errStr = ""
-		d.timeouts = 0
-		d.mu.Unlock()
-	case re := <-d.readErrCh:
-		d.onReadErr(re)
-	case <-time.After(d.opts.ReadTimeout):
-		// No reply this tick: the controller may just be slow or busy — one
-		// missed tick is not news. But a controller that stays silent for
-		// maxConsecutiveTimeouts ticks is a DEAD device behind a live
-		// adapter (powered-off rotor), and the cached state must not stay
-		// frozen-online forever: take the link down exactly as a port fault
-		// would (the internal/ercm exchange-timeout contract — device_online
-		// goes false and the deadband always writes again).
-		d.mu.Lock()
-		if d.noteReadTimeoutLocked() {
-			d.markDownLocked(fmt.Errorf(
-				"no status reply after %d consecutive polls (read timeout %s each)",
-				maxConsecutiveTimeouts, d.opts.ReadTimeout))
-		}
-		d.mu.Unlock()
-	case <-ctx.Done():
 	}
 }
 

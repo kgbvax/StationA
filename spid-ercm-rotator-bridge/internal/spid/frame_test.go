@@ -166,6 +166,26 @@ func TestDecodeStatusReplyWrapsBelowOffset(t *testing.T) {
 	}
 }
 
+// TestIsCommandAck pins the ACK discriminator: the all-zero set/stop reply
+// must be recognized even though a status reply for a wrapped register can
+// (in principle) carry all-zero digits too — the exact hit costs one dropped
+// poll tick, the misread cost a bogus az 0 (live 2026-09-23).
+func TestIsCommandAck(t *testing.T) {
+	if !isCommandAck(encodeAck()) {
+		t.Errorf("encodeAck() % X not recognized as ACK", encodeAck())
+	}
+	for name, b := range map[string][]byte{
+		"status az 0 (u=360, digits 3-6-0)": encodeStatusReply(0),
+		"status az 180":                     encodeStatusReply(180),
+		"wrong end byte":                    {0x57, 0, 0, 0, 0x00},
+		"short":                             {0x57, 0, 0},
+	} {
+		if isCommandAck(b) {
+			t.Errorf("%s: misclassified as command ACK (% X)", name, b)
+		}
+	}
+}
+
 // TestCommandReplyRoundTrip walks the whole encode/decode pair: a set command's
 // ASCII digits and the device's raw-digit status reply for the same azimuth
 // must both resolve back to the same whole degrees, fractions rounding. (360

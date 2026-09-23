@@ -12,8 +12,12 @@
 // field and keeps H4 = 0x30. The 5-byte STATUS REPLY carries its digit fields
 // as RAW byte values 0-9, NOT ASCII — the classic desync trap, pinned by the
 // byte-exact fixtures in frame_test.go. K: 0x2F set position, 0x1F status
-// request, 0x0F stop. Set commands expect NO reply; stop/status packets zero
-// the position fields. Azimuth encoding: u = 360 + az (whole degrees).
+// request, 0x0F stop. EVERY command is answered with a 5-byte reply frame:
+// the set/stop reply is the all-zero ACK (S 00 00 00 END), observed live
+// 2026-09-23 as "erroneous az 0" readbacks whenever it was left to be
+// misread as a status reply. Stop/status packets zero the position fields.
+// Azimuth encoding: u = 360 + az (whole degrees), register wrapped modulo
+// 720 — see decodeStatusReply.
 package spid
 
 import (
@@ -134,6 +138,25 @@ func decodeStatusReply(b []byte) (float64, error) {
 		az += 360
 	}
 	return az, nil
+}
+
+// encodeAck builds the all-zero reply frame the controller answers every
+// set/stop command with (S 00 00 00 END). The mock replies with it for
+// hardware fidelity; the driver side only needs to RECOGNIZE it.
+func encodeAck() []byte {
+	return []byte{startByte, 0, 0, 0, endByte}
+}
+
+// isCommandAck reports whether a scanned reply frame is the all-zero ACK the
+// controller answers set/stop commands with, as opposed to a status reply. A
+// genuine status reply of all-zero digits would mean the wrapped register
+// landed exactly on count 0 — an exact hit that costs one dropped poll tick
+// if misjudged, while MISREADING the ACK as az 0 corrupts the deadband and
+// publishes a bogus position for a tick (the live 2026-09-23 "erroneous 0").
+func isCommandAck(b []byte) bool {
+	return len(b) == replyLen &&
+		b[0] == startByte && b[replyLen-1] == endByte &&
+		b[1] == 0 && b[2] == 0 && b[3] == 0
 }
 
 // decodeCommandAz reads the azimuth back out of a set-position command

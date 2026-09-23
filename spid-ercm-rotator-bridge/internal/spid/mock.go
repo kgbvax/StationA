@@ -147,11 +147,13 @@ func (c *mockController) handleFrames(p *memPort, pending []byte) []byte {
 		case kSet:
 			az := decodeCommandAz(frame)
 			c.target = az
-			c.az = az // instant slew: the mock parks at the commanded position
+			c.az = az           // instant slew: the mock parks at the commanded position
+			reply = encodeAck() // hardware fidelity: every command is answered
 		case kStatus:
 			reply = encodeStatusReply(c.az)
 		case kStop:
 			// Position stays wherever it is.
+			reply = encodeAck() // hardware fidelity: every command is answered
 		}
 		c.mu.Unlock()
 
