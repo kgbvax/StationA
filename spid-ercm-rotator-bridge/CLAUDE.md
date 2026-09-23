@@ -99,10 +99,16 @@ motion (R4).
    `control.poll_interval`), `internal/mount`
    (per-axis Controller + mount façade: latest-wins coalescing with one
    in-flight per axis, bounded stop epoch that halts BOTH axes and cancels
-   pending targets, two-axis refusal aggregation into the single client reply,
+   pending targets — with a stop **debounce**: the first halt of a process
+   incarnation always writes (inherited wire state is unknown), a written
+   set frame re-arms it, and an idle re-halt writes nothing, so a client
+   stop-flood cannot chatter the controller relay (live 2026-09-23),
+   two-axis refusal aggregation into the single client reply,
    park as an atomic mount-level intent), `internal/mqttslot` (two paho
    clients, one per slot), `internal/rotctld` (`p`/`P`/`S`/`_`/`\dump_state`/`q`,
-   `RPRT 0/-1/-4/-6/-9/-11`), `internal/pstrotator` (`<PST>` datagrams, `AZ?`/
+   `RPRT 0/-1/-4/-6/-9/-11`; connects and P/S commands log at Info with the
+   remote — ingress parity with the other paths, polls stay silent),
+   `internal/pstrotator` (`<PST>` datagrams, `AZ?`/
    `EL?` replies to the source IP at listen-port+1, `<STOP>`, `<PARK>`).
 4. `internal/mount` self-heal: each driver re-resolves its stable
    `/dev/serial/by-id/` path and retries its reopen indefinitely after a
