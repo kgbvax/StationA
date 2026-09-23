@@ -148,12 +148,22 @@ trap 'rm -f "$SEED_CONFIG" "$SEED_ENV" "${UNIT_FILE:-}"' EXIT
   echo ""
   echo "[session]"
   echo "idle_timeout    = \"120s\""
-  echo "tx_watchdog     = \"180s\""
   echo "max_attempts    = 3"
   echo "attempt_spacing = \"30s\""
   echo ""
-  echo "[radio]"
-  echo "poll_interval = \"1s\""
+  echo "[serial]"
+  echo "# Read-only CI-V telemetry + the power_on wake — the ONLY serial path."
+  echo "# device empty (default) = monitor_*/power_on cmds rejected. The deploy"
+  echo "# host must be the Pi holding the radio's USB CI-V cable."
+  echo "device         = \"\""
+  echo "baud           = 115200"
+  echo "meter_interval = \"500ms\""
+  echo "power_on_frame = \"1a050201\""
+  echo ""
+  echo "[audio]"
+  echo "# RX audio publisher (vhfcam preview host). Empty = audio cmds rejected."
+  echo "publish_addr = \"\""
+  echo "demand_ttl   = \"60s\""
   echo ""
   echo "[log]"
   echo "level = \"$(toml_escape "$LOG_LEVEL")\""
@@ -205,14 +215,18 @@ ConfigurationDirectory=${SERVICE_NAME}
 # A writable state dir (unused today, reserved for future on-disk state).
 StateDirectory=${SERVICE_NAME}
 
-# Hardening. The bridge needs only outbound TCP (MQTT) and UDP (radio CI-V
-# :50001/:50002) — no serial, no listeners, no disk, no elevated capabilities
-# — so the sandbox can be strict.
+# Hardening. The bridge needs only outbound TCP (MQTT) and UDP (the radio's
+# audio session) plus — when serial.device is configured — the radio's USB
+# CI-V serial device (read-only telemetry + wake; allow-listed below). No
+# listeners, no disk, no elevated capabilities, so the sandbox stays strict.
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
 PrivateDevices=true
+DeviceAllow=char-ttyUSB rw
+DeviceAllow=char-ttyACM rw
+DeviceAllow=char-serial rw
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true

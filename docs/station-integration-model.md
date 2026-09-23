@@ -624,43 +624,40 @@ sits in it (the arm relay ANDs with the hardware key line), fail-safe-open.
 
 Leaner — most of the HF machinery is absent, which is the model collapsing correctly.
 
-**`muehle/uhf/radio`** — Icom IC-9700, LAN (RS-BA1-style CI-V over UDP: control
-:50001, CI-V data :50002; the :50003 audio stream is out of scope in v1), fronted by
-**icom9700-radio-bridge** on host `shari`.
+**`muehle/uhf/radio`** — Icom IC-9700, **receive-only** (2026-09 pivot): the RS-BA1
+LAN session (control :50001) carries the demand-driven :50003 **RX audio stream**
+only — the CI-V data stream is not opened, and **no LAN CI-V commands exist**.
+Telemetry is read over the radio's dedicated **serial CI-V** port (read-only)
+and broadcast on change. Fronted by **icom9700-radio-bridge** (host: the Pi
+holding the USB CI-V cable).
 ```
-capabilities: bands [2m,70cm,23cm]; modes [cw,usb,lsb,am,fm,data];
-              bias_t true (informational); satellite true; vfos [main,sub]
-state:        ts; freq_hz (Hz int); band (derived); mode (canonical); tx {rx|tx}
-              — the top-level active-TX fields mirror the **TX VFO** (the selected
-              VFO, forced to **SUB in satellite mode**, where SUB is the uplink/TX
-              side); main/sub (per-VFO detail objects: band, freq_hz, mode,
-              data_mode, preamp 0–3, attenuator — present only when known
-              (preamp/attenuator are cmd echoes, never polled in v1), omitted with
-              the radio-measured fields whenever no session is live); selected_vfo (bridge-held, survives session
-              loss); satellite (bool, live only); session_state
-              {idle|connecting|live|error}; device_online (bool); armed (bool);
-              s_meter, tx_power, swr, alc (raw 0–255, ≤1 Hz dedup); error
-              (observed facts only)
-intent:       set_freq; set_mode; set_data; set_preamp; set_attenuator; set_power;
-              sat_mode; arm; disarm; ptt {on|off}    # /cmd NOT retained (one-shot)
+capabilities: bands [2m,70cm,23cm]; modes [cw,usb,lsb,am,fm,data]
+state:        ts; session_state {idle|connecting|live|error}   # CAPTURE-session state
+              audio_demand (bool, TTL-bounded); monitor (bool);
+              device_online (bool = capture liveness; false on healthy idle);
+              — telemetry, monitor-gated (omitted while monitor off or the radio
+              is deaf — never zeroed, never frozen):
+              radio_responding; freq_hz (Hz int); band (derived); mode (canonical);
+              satellite (read-only); s_meter, swr, alc (raw 0–255, on change);
+              tx_power (only when the bench proves the CI-V read); error
+intent:       audio_on; audio_off; power_on; monitor_on; monitor_off
+              # /cmd NOT retained (one-shot); nothing keys or steers the radio
 ```
-**Hybrid VFO shape.** One device is one slot, so the slot's flat active-TX document is
-retained and **extended** with `main`/`sub` detail objects — a deliberate, pinned
-deviation from the single-active-TX rule the generic radio example shows: the top-level
-fields always answer "what is the TX side doing" without consumers digging into VFO
-objects. The field-for-field wire contract for this slot is
+**Receive-only.** The radio cannot be keyed or steered from the bus — no `ptt`,
+no `arm`, no tuning actions. The removal (and the firmware PTT-off gap that
+motivated it) is recorded in `icom9700-radio-bridge/docs/known-issues.md`; any
+future TX control goes through serial CI-V and must re-pass the exposure review.
+The field-for-field wire contract for this slot is
 `icom9700-radio-bridge/docs/mqtt-api.md`; where that document and this model's generic
-radio example (Appendix A) differ, the module contract wins. 23 cm exists on MAIN only
-(SUB has no 23 cm), so the bridge rejects an out-of-band `set_freq` locally; non-canonical
-radio modes (RTTY, DV, DD) are never published — the `mode` field is omitted instead.
+radio example (Appendix A) differ, the module contract wins.
 
 **On-demand session.** The radio's single LAN session stays freely available for manual
 wfview operating: the bridge is a polite on-demand client, not a permanent session
-holder. It connects only when a `/cmd` arrives, an armed permit is set, or an
-outstanding PTT-off must be delivered, never auto-steals the session, and disconnects
-after an idle timeout. While disconnected, radio-measured `/state` fields are
-**omitted** (never zeroed, never frozen); `ts`, `selected_vfo`, `armed`,
-`session_state`, and `error` remain. Contention policy: never steal — a refused connect
+holder. It connects only when an `audio_on` demand arrives, never auto-steals the
+session, and disconnects after an idle timeout (the audio demand itself is TTL-bounded
+so a dead consumer releases it). While disconnected, telemetry `/state` fields are
+**omitted** (never zeroed, never frozen); `ts`, `session_state`, `audio_demand`,
+`monitor`, and `error` remain. Contention policy: never steal — a refused connect
 surfaces as an observed fact in `/state.error`, and whether the radio distinguishes
 refusal from eviction is pinned at the bench.
 
