@@ -123,8 +123,9 @@ func ParseSatelliteReply(data []byte) (bool, error) {
 	}
 }
 
-// CmdPTT builds `1C 00 01/00` (on/off). The bus-side arm gate lives in the
-// bridge's safety core (U6) — this is the raw wire builder.
+// CmdPTT builds `1C 00 01/00` (on/off). NO runtime caller: the bridge has no
+// TX path (receive-only posture, 2026-09) — kept as codec reference and for
+// the fake radio's wire grammar.
 func CmdPTT(on bool) []byte {
 	v := byte(0x00)
 	if on {
@@ -197,6 +198,6 @@ func CmdSetTransceive(on bool) []byte {
 
 // CmdPowerOn builds the IC-9700 remote wake `1A 05 02 01` (standby -> ON).
 // Sent blind: a standby radio answers no CI-V ack, so there is no
-// round-trip. The frame bytes are configurable (audio.power_on_frame) —
+// round-trip. The frame bytes are configurable (serial.power_on_frame) —
 // this builder is the documented default.
 func CmdPowerOn() []byte { return BuildFrame(CivCmdPower, []byte{0x05, 0x02, 0x01}) }

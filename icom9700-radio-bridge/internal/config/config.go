@@ -1,11 +1,12 @@
 // Package config holds runtime configuration for icom9700-radio-bridge.
 //
 // icom9700-radio-bridge fronts the Icom IC-9700 as the canonical `radio` slot
-// muehle/uhf/radio on the station bus, controlling it over CI-V via Icom's
-// RS-BA1-style LAN protocol (UDP :50001 control / :50002 CI-V data — the
-// protocol has no discovery, so radio_host is mandatory). This package defines
-// the configuration shape, defaults and loading (TOML file + flags +
-// ICOM9700_* env overrides).
+// muehle/uhf/radio on the station bus. Receive-only (2026-09): the RS-BA1-style
+// LAN session (UDP :50001 control + :50003 audio — the CI-V data stream is not
+// opened) carries the RX audio capture; telemetry is read over the dedicated
+// serial CI-V port. The protocol has no discovery, so radio_host is mandatory.
+// This package defines the configuration shape, defaults and loading (TOML
+// file + flags + ICOM9700_* env overrides).
 //
 // The two secrets — the MQTT password and the CI-V login password — are
 // deliberately NOT TOML keys: both are read from the environment (systemd

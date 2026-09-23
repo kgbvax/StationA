@@ -47,9 +47,9 @@ class Slot {
 
   /// On-demand-session slots (state carries `session_state`, e.g.
   /// muehle/uhf/radio from icom9700-radio-bridge): there `device_online` is
-  /// CI-V control-SESSION liveness and `false` is the healthy idle (R16
+  /// CAPTURE-session liveness and `false` is the healthy idle (R16
   /// carve-out), so folding it into liveness here would flag a healthy idle
-  /// radio as a station fault and lock its arm loop away. These slots key
+  /// radio as a station fault. These slots key
   /// [isOnline] and the offline listing on /status (bridge process liveness)
   /// alone; session trouble still surfaces via /state.error → fault history.
   bool get sessionSlot => state?.containsKey('session_state') ?? false;

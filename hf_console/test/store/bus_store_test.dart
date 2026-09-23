@@ -114,7 +114,8 @@ void main() {
       store.apply('muehle/uhf/radio/status', 'online', true);
       store.apply('muehle/uhf/radio/state', jsonEncode({
         'session_state': 'idle',
-        'armed': false,
+        'audio_demand': false,
+        'monitor': false,
         'device_online': false,
         'ts': '2026-09-14T12:00:00Z',
       }), true);

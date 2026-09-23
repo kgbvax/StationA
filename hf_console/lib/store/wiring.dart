@@ -34,11 +34,11 @@ const cmdRetain = {
   // above): a retained set_pol re-applies the operator's last intent after
   // a controller reboot or broker reconnect.
   'muehle/uhf/pol-ctrl': true,
-  // uhf/radio (icom9700-radio-bridge) — one-shot across the whole action set:
-  // `arm` is a session-hold permit that must never re-apply after a bridge
-  // or broker restart (fail-disarmed, R11), and a stale queued ptt/set_freq
-  // must never replay into a fresh session. The bridge clears the topic
-  // after every execute-or-reject.
+  // uhf/radio (icom9700-radio-bridge) — one-shot across the whole action
+  // set (receive-only posture, 2026-09: audio_on/audio_off/power_on/
+  // monitor_on/monitor_off). A stale queued demand must never re-fire
+  // into a fresh session; the bridge clears the topic after every
+  // execute-or-reject.
   'muehle/uhf/radio': false,
 };
 
