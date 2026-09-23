@@ -95,11 +95,11 @@ func TestPollOnceDrainsCommandAckBeforeStatus(t *testing.T) {
 	}
 }
 
-// TestMockGotoAckDoesNotSurfaceAsZero runs the same contract end-to-end
-// through the mock, which now answers set/stop with the ACK like real
-// hardware (it long answered with nothing, which is why the stack never
-// caught the misread).
-func TestMockGotoAckDoesNotSurfaceAsZero(t *testing.T) {
+// TestMockStopAckDoesNotSurfaceAsZero runs the same contract end-to-end
+// through the mock, which answers stop with the spec's zero reply (it long
+// answered with nothing, which is why the stack never caught the misread).
+// The tracker's 1 Hz stop flood is exactly this path under load.
+func TestMockStopAckDoesNotSurfaceAsZero(t *testing.T) {
 	m := NewMock(fastOpts())
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -111,22 +111,24 @@ func TestMockGotoAckDoesNotSurfaceAsZero(t *testing.T) {
 	}) {
 		t.Fatal("mock never produced a first status reply")
 	}
-	if err := m.SetTarget(180); err != nil {
-		t.Fatalf("SetTarget: %v", err)
-	}
-
+	m.SetAz(180)
 	if !waitCond(2*time.Second, func() bool {
 		az, valid := m.Readback()
 		return valid && az == 180
 	}) {
 		az, valid := m.Readback()
-		t.Fatalf("readback after goto = (%v, %v), want (180, true)", az, valid)
+		t.Fatalf("readback = (%v, %v), want (180, true)", az, valid)
 	}
-	// Hold across several poll cycles: a late ACK surfacing would flip az to 0.
+	if err := m.Stop(); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+
+	// Hold across several poll cycles: the stop reply must be drained, never
+	// surface as az 0, and the position readout must hold at 180.
 	deadline := time.Now().Add(100 * time.Millisecond)
 	for time.Now().Before(deadline) {
 		if az, _ := m.Readback(); az != 180 {
-			t.Fatalf("readback regressed to %v — an ACK leaked into the position cache", az)
+			t.Fatalf("readback regressed to %v — a stop reply leaked into the position cache", az)
 		}
 		time.Sleep(time.Millisecond)
 	}
