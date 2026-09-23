@@ -227,7 +227,8 @@ class AppTheme extends ChangeNotifier {
         disabledForegroundColor: txtFaint,
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
         minimumSize: const Size(44, 44),
-        textStyle: mono(13, weight: FontWeight.w600),
+        // mono(n) renders n+1 pt, so this is 15 pt on screen.
+        textStyle: mono(14, weight: FontWeight.w600),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
       );
 
