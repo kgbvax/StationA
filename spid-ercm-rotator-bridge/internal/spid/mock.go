@@ -251,9 +251,10 @@ type memWire struct {
 
 // memPort is one end of a memWire.
 type memPort struct {
-	w   *memWire
-	in  <-chan []byte
-	out chan []byte
+	w           *memWire
+	in          <-chan []byte
+	out         chan []byte
+	readTimeout time.Duration
 }
 
 func newMemWire() (driverEnd, deviceEnd *memPort) {
@@ -266,7 +267,21 @@ func newMemWire() (driverEnd, deviceEnd *memPort) {
 		&memPort{w: w, in: w.aToB, out: w.bToA}
 }
 
+// SetReadTimeout gives the wire the bounded-read capability the driver owner
+// configures on real serial ports (readTimeoutSetter): a read with no data
+// once the timeout lapsed returns (0, nil), exactly like go.bug.st/serial.
+func (p *memPort) SetReadTimeout(d time.Duration) error {
+	p.readTimeout = d
+	return nil
+}
+
 func (p *memPort) Read(b []byte) (int, error) {
+	var deadline <-chan time.Time
+	if p.readTimeout > 0 {
+		timer := time.NewTimer(p.readTimeout)
+		defer timer.Stop()
+		deadline = timer.C
+	}
 	for {
 		p.w.mu.Lock()
 		if p.w.failErr != nil {
@@ -284,6 +299,8 @@ func (p *memPort) Read(b []byte) (int, error) {
 		case data := <-in:
 			return copy(b, data), nil
 		case <-changed:
+		case <-deadline:
+			return 0, nil
 		}
 	}
 }

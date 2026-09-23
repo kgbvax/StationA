@@ -5,24 +5,44 @@
 // command packets, a 5-byte raw-digit status reply, set commands with no
 // reply, a poll loop on the configured tick, writes paced ≥300 ms.
 //
-// The driver self-heals indefinitely (KTD7): every read/write fault takes the
-// axis down (clearing the cached-readback validity so the U4 deadband can
-// never silently no-op against a pre-outage position), and the poll loop
-// re-resolves the stable /dev/serial/by-id/ path after the configured
-// cooldown, forever. Reader generations are tagged so a late error from a
-// reader that has already been replaced by a reopen is ignored (the
-// pelcobridge2 pattern). After every successful reopen the readback starts
-// unknown again until the first fresh status reply — Rot1Prog has no init
-// command sequence, so the status request on the next tick IS the re-init.
+// COMMUNICATION MODEL (single owner, re-architected 2026-09-23 after the
+// ultracode review of the live incidents): ONE goroutine — the RunPoll owner
+// — performs every byte of port I/O, as synchronous write→read EXCHANGES.
+// Commands (set/stop) arrive from other goroutines on a channel and are
+// written by the owner between polls; each exchange owns its reply by
+// structure (half-duplex FIFO: the first frame after a request IS its
+// reply), so there is no reply-to-request pairing heuristic, no shared
+// frame channel, no reader goroutine, and no generation tagging — the
+// entire class of "stale frame resurfaces after a reopen" and "ACK misread
+// as a position" defects (both observed live 2026-09-23) is unrepresentable.
+// The one content heuristic left is deliberate and command-accounted: the
+// spec makes SET silent, but flood hardware was observed answering with the
+// all-zero frame, so the owner remembers it wrote a set and lets the next
+// status exchange swallow one all-zero frame instead of caching it as az 0.
 //
-// A controller that stays SILENT is also a dead link: three consecutive poll
-// read timeouts take the axis down (the internal/ercm timeout contract — a
-// powered-off rotor behind a live USB adapter must not keep a frozen but
-// valid readback online forever). Writes are watchdog-bounded because
-// go.bug.st/serial exposes no write deadline: a stalled write has its handle
-// closed after Opts.WriteTimeout and feeds the same self-heal path. The
-// cached liveness state locks separately from port I/O, so Online/Readback
-// stay answerable even while a write is wedged on a dead fd.
+// The driver self-heals indefinitely (KTD7): every fault takes the axis
+// down (clearing the cached-readback validity so the U4 deadband can never
+// silently no-op against a pre-outage position), and the owner re-resolves
+// the stable /dev/serial/by-id/ path after the configured cooldown, forever.
+// After every reopen the readback starts unknown until the first fresh
+// status reply — Rot1Prog has no init sequence, so the next tick's status
+// request IS the re-init.
+//
+// A controller that stays SILENT is also a dead link: three consecutive
+// status exchanges with no reply take the axis down (the internal/ercm
+// timeout contract — a powered-off rotor behind a live USB adapter must not
+// keep a frozen but valid readback online forever). Only a decoded status
+// reply resets the silence count; a command ACK proves nothing about the
+// status path (a 1 Hz stop flood ACKed for hours on 2026-09-23 while the
+// status path was dead). Writes are watchdog-bounded because go.bug.st/serial
+// exposes no write deadline: the owner arms a timer per write; a write
+// stalled on a wedged fd has its handle closed out from under it, which
+// converts the parked Write into an error and feeds the same self-heal path.
+// The single owner makes the watchdog trivially safe — it can only ever
+// close the one handle the owner is writing through, and a late timer is
+// neutralized by the exchange sequence number. The cached liveness state
+// locks separately, so Online/Readback stay answerable while the owner is
+// wedged or exchanging.
 //
 // An empty configured serial path selects the in-process mock device (KTD7)
 // so the whole stack runs bench- and CI-side without hardware.
@@ -30,11 +50,13 @@ package spid
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"math"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	serial "go.bug.st/serial"
@@ -62,8 +84,9 @@ type Axis interface {
 	Online() bool
 	// Err returns the last link error, "" while healthy (feeds /state.error).
 	Err() string
-	// RunPoll runs the readback poll until ctx is done; the poll loop owns
-	// the self-heal cadence, so the consumer spawns it on its own goroutine.
+	// RunPoll runs the owner loop until ctx is done; it owns every byte of
+	// port I/O and the self-heal cadence, so the consumer spawns it on its
+	// own goroutine.
 	RunPoll(ctx context.Context)
 }
 
@@ -78,14 +101,13 @@ type Opts struct {
 	// WritePace is the minimum spacing between any two writes (Rot1Prog
 	// needs ≥300 ms, Appendix A / hamlib post_write_delay).
 	WritePace time.Duration
-	// ReadTimeout bounds the wait for a status reply after the poll writes
-	// the request.
+	// ReadTimeout bounds the wait for a reply inside one exchange.
 	ReadTimeout time.Duration
 	// WriteTimeout bounds one port write. go.bug.st/serial exposes no write
 	// deadline (its unix Write is a plain blocking write), so a write stalled
-	// on a wedged fd is closed out by a watchdog after this long and feeds
-	// the reopen/self-heal path. Tests shrink it; real deployments take the
-	// 3 s default.
+	// on a wedged fd is closed out by the owner's watchdog after this long
+	// and feeds the reopen/self-heal path. Tests shrink it; real deployments
+	// take the 3 s default.
 	WriteTimeout time.Duration
 }
 
@@ -108,98 +130,96 @@ func (o Opts) withDefaults() Opts {
 	return o
 }
 
-// maxConsecutiveTimeouts is the poll read-timeout bound: a controller that
-// stays silent for this many consecutive ticks is a dead device behind a live
-// adapter (powered-off rotor), not a busy one, and the link must go down —
-// the internal/ercm exchange-timeout contract applied to the poll loop.
+// maxConsecutiveTimeouts is the status-exchange silence bound: a controller
+// that answers nothing for this many consecutive polls is a dead device
+// behind a live adapter (powered-off rotor), not a busy one, and the link
+// must go down — the internal/ercm exchange-timeout contract applied to the
+// owner loop.
 const maxConsecutiveTimeouts = 3
 
-// readErr tags a transport read failure with the generation of the reader that
-// produced it, so an error from a reader already replaced by a reopen does
-// not tear down the freshly reopened link.
-type readErr struct {
-	gen int
-	err error
+// readTimeoutSetter is the optional port capability the owner configures
+// after open: bounded reads (real serial ports and the test fakes both
+// honor it; a read then returns (0, nil) once the timeout lapses).
+type readTimeoutSetter interface {
+	SetReadTimeout(time.Duration) error
 }
 
-// link guards the swappable port handle. The reader goroutine snapshots the
-// handle for each Read; a concurrent reopen (swap) closes the old handle,
-// which unblocks the old reader with an error — the stale-generation tag then
-// discards it.
-type link struct {
-	mu sync.Mutex
-	rw io.ReadWriteCloser
+// replyKind tells the exchange how to treat a command's reply phase.
+type replyKind int
+
+const (
+	// noReply: SET is documented silent — write only. If flood firmware
+	// answers it anyway, the all-zero frame is swallowed by the next status
+	// exchange via ackPending (command accounting, not content guessing).
+	noReply replyKind = iota
+	// ackReply: STOP answers — consume one reply frame, whatever it carries
+	// (the spec's "approximate stopped position"; zeros in ROT1 captures).
+	ackReply
+	// wantStatus: the exchange is a status poll; the reply is the position.
+	wantStatus
+)
+
+// command is one queued set/stop with its synchronous result. The caller
+// blocks on ack until the owner has put the frame on the wire (or failed
+// to) — the Axis contract reports write errors to the mount, which turns
+// them into refusals rather than retries.
+type command struct {
+	frame []byte
+	kind  replyKind
+	ack   chan error
 }
 
-func (l *link) snapshot() io.ReadWriteCloser {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	return l.rw
-}
-
-// swap replaces the handle and closes the previous one best-effort (it is
-// likely already gone — that is why we are swapping). The Close runs OUTSIDE
-// link.mu: go.bug.st's Close waits for the port's readers to drain, and a
-// reader parked on a silent link must not hold every future snapshot/swap
-// hostage while it drains.
-func (l *link) swap(rw io.ReadWriteCloser) {
-	l.mu.Lock()
-	old := l.rw
-	l.rw = rw
-	l.mu.Unlock()
-	if old != nil {
-		_ = old.Close()
-	}
+// linkState is the owner's private wire state: the current handle, the
+// partial-frame buffer, and whether a SET went out whose (spec-silent,
+// flood-observed) zero reply may still arrive. Owner-goroutine-only.
+type linkState struct {
+	rw         io.ReadWriteCloser
+	pending    []byte
+	ackPending bool
 }
 
 // Driver talks Rot1Prog to one azimuth controller over a byte-oriented port.
-// All writes (goto, stop, status request) serialize on ioMu and respect the
-// write pace, so concurrent callers can never interleave bytes on the wire.
+// Exactly one goroutine — RunPoll — ever touches the port; everyone else
+// talks to it through cmdCh and the mutex-published cached state.
 type Driver struct {
 	opener func() (io.ReadWriteCloser, error)
 	opts   Opts
 	log    *slog.Logger
 
-	// mu guards the cached readback, the reader generation and the
-	// liveness/error state — and NOTHING else. It is never held across port
-	// I/O, the write-pace sleep or the opener, so Online()/Readback() stay
-	// answerable even while a write is wedged on a dead fd.
-	mu        sync.Mutex
-	lnk       *link
-	gen       int
-	rxCh      chan []byte
-	readErrCh chan readErr
+	cmdCh chan command
+	done  chan struct{} // closed when the owner loop has exited
 
-	// ioMu serializes the port write path (writes, pacing, reopen): exactly
-	// one write path runs at a time. A write stalled in the kernel holds
-	// ioMu — the watchdog reclaims it by closing the handle through the
-	// link's own lock, never by taking ioMu.
-	ioMu sync.Mutex
+	// writeSeq increments on every owner exchange; the write watchdog
+	// captures it and only closes the port if the exchange it armed for is
+	// still the current one (a late timer must never fault a healthy,
+	// already-completed write — the blind-resend race of the old design).
+	writeSeq atomic.Int64
 
-	az        float64
-	valid     bool
-	online    bool
-	errStr    string
-	timeouts  int  // consecutive poll read timeouts; any reply resets it
-	everUp    bool // a Warn on reopen is recovery news; the first open is Info
-	lastWrite time.Time
-	// lastFault is when the link was last observed going down (or when the
-	// last open attempt failed); every reopen waits out the cooldown from it.
-	lastFault time.Time
+	// paceMu guards lastWriteAt. Only the owner writes today; the mutex
+	// keeps pace() correct even if a second write path ever appears.
+	paceMu      sync.Mutex
+	lastWriteAt time.Time
+
+	// strikes is the consecutive-silent-status-exchange count (owner-only).
+	strikes int
+
+	// stateMu guards ONLY the published cache below; the owner takes it for
+	// the brief transitions, never across port I/O, so Readback/Online/Err
+	// stay answerable no matter what the owner is doing.
+	stateMu sync.Mutex
+	az      float64
+	valid   bool
+	online  bool
+	errStr  string
 }
 
-// NewDriver builds a driver over an opener closure. The opener re-resolves
-// the stable /dev/serial/by-id/ path on every call so a USB re-enumeration
-// heals instead of wedging on a deleted device node (KTD7, the ultrabridge
-// model). A nil log silences the driver (tests).
 func NewDriver(opener func() (io.ReadWriteCloser, error), opts Opts, log *slog.Logger) *Driver {
 	return &Driver{
-		opener:    opener,
-		opts:      opts.withDefaults(),
-		log:       logOrDiscard(log),
-		lnk:       &link{},
-		rxCh:      make(chan []byte, 8),
-		readErrCh: make(chan readErr, 4),
+		opener: opener,
+		opts:   opts.withDefaults(),
+		log:    logOrDiscard(log),
+		cmdCh:  make(chan command, 8),
+		done:   make(chan struct{}),
 	}
 }
 
@@ -228,414 +248,368 @@ func (d *Driver) SetTarget(az float64) error {
 	if math.IsNaN(az) || math.IsInf(az, 0) {
 		return fmt.Errorf("azimuth %v is not finite", az)
 	}
-	return d.writeFrame(encodeSet(az))
+	return d.submit(command{frame: encodeSet(az), kind: noReply})
 }
 
-func (d *Driver) Stop() error { return d.writeFrame(encodeStop()) }
+func (d *Driver) Stop() error {
+	return d.submit(command{frame: encodeStop(), kind: ackReply})
+}
+
+// submit queues one command frame to the owner and waits for its wire
+// result. The bound is generous — the owner answers every command, even on
+// error — and expiring here means the owner is wedged in a syscall the
+// watchdog has not yet reclaimed, which is a dead link worth reporting.
+func (d *Driver) submit(c command) error {
+	c.ack = make(chan error, 1)
+	select {
+	case d.cmdCh <- c:
+	case <-d.done:
+		return fmt.Errorf("driver stopped")
+	}
+	bound := 3 * (d.opts.WriteTimeout + d.opts.ReadTimeout)
+	select {
+	case err := <-c.ack:
+		return err
+	case <-time.After(bound):
+		return fmt.Errorf("command not written within %s — link wedged", bound)
+	case <-d.done:
+		return fmt.Errorf("driver stopped")
+	}
+}
 
 func (d *Driver) Readback() (float64, bool) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
+	d.stateMu.Lock()
+	defer d.stateMu.Unlock()
 	return d.az, d.valid
 }
 
 func (d *Driver) Online() bool {
-	d.mu.Lock()
-	defer d.mu.Unlock()
+	d.stateMu.Lock()
+	defer d.stateMu.Unlock()
 	return d.online
 }
 
 func (d *Driver) Err() string {
-	d.mu.Lock()
-	defer d.mu.Unlock()
+	d.stateMu.Lock()
+	defer d.stateMu.Unlock()
 	return d.errStr
 }
 
-// --- poll + self-heal loop ------------------------------------------------------
+// --- the owner loop -------------------------------------------------------------
 
-// RunPoll opens the port and then, on every tick, writes one status request
-// and consumes the reply — the bridge owns the poll cadence (Appendix A).
-// It never gives up: a link that is down is retried every ReopenCooldown,
-// indefinitely (KTD7). Returns when ctx is done, after closing the port.
+// RunPoll is the single owner: it opens the port, then loops forever over
+// command submissions, poll ticks, and self-heal, performing every byte of
+// I/O itself. Returns when ctx is done, after closing the port.
 func (d *Driver) RunPoll(ctx context.Context) {
-	d.ioMu.Lock()
-	if d.lnk.snapshot() == nil {
-		// Initial open. A controller absent at boot must not wedge anything:
-		// the loop retries via writeFrame's reopen path.
-		_ = d.reopenIO()
+	defer close(d.done)
+	defer d.publishOffline("driver stopped")
+
+	st := &linkState{}
+
+	heal := func(why string, immediate bool) {
+		// Fault path: close the stale handle, publish the down state, and
+		// re-open after the cooldown; the opener re-resolves the by-id path
+		// (KTD7). A failed attempt waits out the cooldown and retries —
+		// indefinitely, paced. The initial open (immediate) skips the
+		// cooldown exactly like the old zero-lastFault always-due rule, and
+		// publishes nothing — the axis simply starts offline-until-first-poll.
+		faulted := st.rw != nil
+		if faulted {
+			_ = st.rw.Close()
+			st.rw = nil
+		}
+		st.pending = nil
+		st.ackPending = false
+		if faulted {
+			d.publishOffline(why)
+		}
+		for attempt := 0; ; attempt++ {
+			if !(immediate && attempt == 0) {
+				deadline := time.Now().Add(d.opts.ReopenCooldown)
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(time.Until(deadline)):
+				}
+			}
+			var err error
+			st.rw, err = d.opener()
+			if err == nil {
+				if rts, ok := st.rw.(readTimeoutSetter); ok {
+					_ = rts.SetReadTimeout(d.opts.ReadTimeout)
+				}
+				d.publishUp()
+				d.log.Info("serial port opened")
+				return
+			}
+			d.publishOffline("open serial: " + err.Error())
+		}
 	}
-	d.ioMu.Unlock()
+
+	heal("", true)
 
 	ticker := time.NewTicker(d.opts.PollInterval)
 	defer ticker.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
-			d.lnk.swap(nil) // close the port; the reader dies on the stale handle
+			if st.rw != nil {
+				_ = st.rw.Close()
+				st.rw = nil
+			}
 			return
-		case re := <-d.readErrCh:
-			d.onReadErr(re)
+
+		case c := <-d.cmdCh:
+			_, _, err := d.exchange(st, c.frame, c.kind)
+			if st.rw == nil {
+				heal(err.Error(), false) // the exchange faulted the link; heal re-opens
+			}
+			if c.kind == noReply && err == nil {
+				st.ackPending = true
+			}
+			c.ack <- err
+
 		case <-ticker.C:
-			d.pollOnce(ctx)
-		}
-	}
-}
-
-// pollOnce writes the status request and consumes one reply. Stale command
-// ACKs (the all-zero set/stop replies — see isCommandAck) are drained on the
-// way: they arrive out of phase with the poll cadence because writes happen
-// on their own path, and misreading one as a status reply published a bogus
-// az 0 for a tick (live 2026-09-23).
-func (d *Driver) pollOnce(ctx context.Context) {
-	if err := d.writeFrame(encodeStatus()); err != nil {
-		return // writeFrame already marked the link down and logged
-	}
-
-	for {
-		select {
-		case frame := <-d.rxCh:
-			if isCommandAck(frame) {
-				// An ACK for a set/stop written earlier on the write path —
-				// never a position. Drop it and keep waiting for this tick's
-				// status reply (the reader is FIFO, so the status frame is
-				// behind at most one ACK per outstanding command).
-				d.log.Debug("consumed command ack frame", "frame", fmt.Sprintf("% X", frame))
-				d.mu.Lock()
-				d.timeouts = 0 // a frame, however empty, proves a live device
-				d.mu.Unlock()
+			frame, silent, err := d.exchange(st, encodeStatus(), wantStatus)
+			if st.rw == nil {
+				heal(err.Error(), false)
 				continue
 			}
-			az, err := decodeStatusReply(frame)
+			if silent {
+				// No reply at all: a strike. Three consecutive ones are a
+				// dead device behind a live adapter — take the link down
+				// (the ercm timeout contract) and heal.
+				d.strikes++
+				if d.strikes >= maxConsecutiveTimeouts {
+					why := fmt.Sprintf(
+						"no status reply after %d consecutive polls (read timeout %s each)",
+						d.strikes, d.opts.ReadTimeout)
+					d.strikes = 0
+					heal(why, false)
+					continue
+				}
+				continue
+			}
 			if err != nil {
-				// A malformed reply proves the link but must never be misread as
-				// a position — ASCII digits in a reply are the Rot1Prog desync
-				// trap and are rejected by the codec, not interpreted.
-				d.log.Warn("malformed status reply", "err", err, "frame", fmt.Sprintf("% X", frame))
-				d.mu.Lock()
-				d.timeouts = 0 // a reply, however malformed, proves a live device
-				d.mu.Unlock()
-				return
+				d.strikes = 0
+				continue // read fault already healed via st.rw == nil above
 			}
-			d.mu.Lock()
-			d.az = az
-			d.valid = true // KTD9: the first status reply clears the unknown flag
-			d.online = true
-			d.errStr = ""
-			d.timeouts = 0
-			d.mu.Unlock()
-			return
-		case re := <-d.readErrCh:
-			d.onReadErr(re)
-			return
-		case <-time.After(d.opts.ReadTimeout):
-			// No reply this tick: the controller may just be slow or busy — one
-			// missed tick is not news. But a controller that stays silent for
-			// maxConsecutiveTimeouts ticks is a DEAD device behind a live
-			// adapter (powered-off rotor), and the cached state must not stay
-			// frozen-online forever: take the link down exactly as a port fault
-			// would (the internal/ercm exchange-timeout contract — device_online
-			// goes false and the deadband always writes again).
-			d.mu.Lock()
-			if d.noteReadTimeoutLocked() {
-				d.markDownLocked(fmt.Errorf(
-					"no status reply after %d consecutive polls (read timeout %s each)",
-					maxConsecutiveTimeouts, d.opts.ReadTimeout))
+			if frame == nil {
+				continue // stray frames only; nothing usable this tick
 			}
-			d.mu.Unlock()
-			return
-		case <-ctx.Done():
-			return
+			az, derr := decodeStatusReply(frame)
+			if derr != nil {
+				// A malformed reply proves the link but must never be misread
+				// as a position — ASCII digits in a reply are the Rot1Prog
+				// desync trap and are rejected by the codec, not interpreted.
+				d.log.Warn("malformed status reply", "err", derr, "frame", fmt.Sprintf("% X", frame))
+				d.strikes = 0
+				continue
+			}
+			d.commit(az)
+			d.strikes = 0
+			st.ackPending = false
 		}
 	}
 }
 
-// noteReadTimeoutLocked counts one poll read timeout and reports whether the
-// maxConsecutiveTimeouts bound tripped — the caller must take the link down.
-// Any reply (or link transition) resets the count; requires d.mu held.
-func (d *Driver) noteReadTimeoutLocked() bool {
-	d.timeouts++
-	return d.timeouts >= maxConsecutiveTimeouts
-}
-
-// onReadErr handles a transport read failure: mark the link down (clearing the
-// cached readback validity — KTD7) and let the next tick's write path heal.
-// Errors from a stale reader generation are dropped here.
-func (d *Driver) onReadErr(re readErr) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	if re.gen != d.gen {
-		return // stale reader; a fresh generation already owns the link
+// exchange performs one paced write→(reply) cycle. Owner-only. On a wire
+// fault it closes and NILS st.rw, clears the frame buffer, publishes the
+// down state, and returns the error — the caller runs heal. Semantics by
+// kind:
+//
+//	noReply    (SET): write only, no reply phase; (nil, false) on success.
+//	ackReply  (STOP): write, then consume one reply frame; silence is
+//
+// tolerated (a slow controller — the status path counts real silence).
+//
+//	wantStatus: write, then the FIRST frame is the reply — half-duplex FIFO,
+//
+// by structure. (nil, true) when nothing arrived in time.
+//
+// The ackPending exception: when the previous SET may still emit its
+// non-spec zero reply, an all-zero frame is that command's ACK, never a
+// position — swallow it and read once more (command accounting, per the
+// ultracode review; a register resting exactly on count 0 costs one dropped
+// tick here, while misreading the ACK cost a bogus az 0 live).
+func (d *Driver) exchange(st *linkState, frame []byte, kind replyKind) (reply []byte, silent bool, err error) {
+	if st.rw == nil {
+		return nil, false, errors.New("serial link down")
 	}
-	d.markDownLocked(re.err)
-}
-
-// --- writes ---------------------------------------------------------------------
-
-// writeFrame puts one command packet on the wire, paced and self-healing.
-// The write path serializes on ioMu (never d.mu): a write wedged on a dead fd
-// blocks only other writers, the watchdog bounds even that, and the cached
-// liveness state stays answerable throughout.
-func (d *Driver) writeFrame(frame []byte) error {
-	d.ioMu.Lock()
-	defer d.ioMu.Unlock()
-	return d.writeFrameIO(frame)
-}
-
-// writeFrameIO requires d.ioMu held: exactly one write path at a time, so
-// concurrent callers can never tear a frame on the wire (a torn frame on a
-// Rot1Prog is indistinguishable from a position command). d.mu is taken only
-// around cached-state transitions — never across port I/O, the pace sleep or
-// the opener.
-func (d *Driver) writeFrameIO(frame []byte) error {
-	d.mu.Lock()
-	down := d.lnk.snapshot() == nil || !d.online
-	due := d.reopenDueLocked()
-	errStr := d.errStr
-	d.mu.Unlock()
-	if down {
-		// Link down (never opened, or after a fault): heal on the caller's
-		// behalf, cooldown-gated so a flapping adapter cannot spin
-		// open/write/close (KTD7: indefinite, one attempt per window).
-		if !due {
-			return fmt.Errorf("serial link down: %s", errStr)
-		}
-		if err := d.reopenIO(); err != nil {
-			return err
-		}
+	if err := d.pacedWrite(st.rw, frame); err != nil {
+		d.fault(st, err)
+		return nil, false, err
 	}
 
-	// Rot1Prog write pacing (Appendix A): ≥300 ms between any two writes. The
-	// sleep runs under ioMu only — writers still serialize, but the cached
-	// state stays answerable.
-	d.mu.Lock()
-	var wait time.Duration
-	if !d.lastWrite.IsZero() {
-		if w := d.opts.WritePace - time.Since(d.lastWrite); w > 0 {
-			wait = w
+	switch kind {
+	case noReply:
+		return nil, false, nil
+
+	case ackReply:
+		b, had, err := d.readFrame(st)
+		if err != nil {
+			return nil, false, err
+		}
+		if had {
+			d.log.Debug("consumed stop reply frame", "frame", fmt.Sprintf("% X", b))
+		}
+		return nil, false, nil
+
+	default: // wantStatus
+		b, had, err := d.readFrame(st)
+		if err != nil {
+			return nil, false, err
+		}
+		if !had {
+			return nil, true, nil
+		}
+		if st.ackPending && isCommandAck(b) {
+			// Ambiguous only because of the SET-silent spec vs the flood
+			// reality; command accounting decides, not frame shape alone.
+			d.log.Debug("consumed command ack frame", "frame", fmt.Sprintf("% X", b))
+			st.ackPending = false
+			b, had, err = d.readFrame(st)
+			if err != nil {
+				return nil, false, err
+			}
+			if !had {
+				return nil, true, nil
+			}
+		}
+		return b, false, nil
+	}
+}
+
+// fault closes and nils the handle, drops partial frame bytes, and publishes
+// the down state — the exchange's single fault exit.
+func (d *Driver) fault(st *linkState, err error) {
+	if st.rw != nil {
+		_ = st.rw.Close()
+		st.rw = nil
+	}
+	st.pending = nil
+	d.publishOffline(err.Error())
+}
+
+// readFrame waits up to ReadTimeout for the next complete frame. Returns
+// (frame, true, nil) on a frame, (nil, false, nil) on a silent timeout, and
+// the fault via d.fault + error on a port read error.
+func (d *Driver) readFrame(st *linkState) ([]byte, bool, error) {
+	deadline := time.Now().Add(d.opts.ReadTimeout)
+	for {
+		// Emit a frame if one is complete in the buffer (resync-scanned).
+		for len(st.pending) >= replyLen {
+			i := 0
+			for i < len(st.pending) && st.pending[i] != startByte {
+				i++
+			}
+			st.pending = st.pending[i:]
+			if len(st.pending) < replyLen {
+				break
+			}
+			if st.pending[replyLen-1] != endByte {
+				st.pending = st.pending[1:] // not a frame after all; slide one byte
+				continue
+			}
+			frame := make([]byte, replyLen)
+			copy(frame, st.pending[:replyLen])
+			st.pending = st.pending[replyLen:]
+			return frame, true, nil
+		}
+		if time.Now().After(deadline) {
+			return nil, false, nil
+		}
+		buf := make([]byte, 64)
+		n, err := st.rw.Read(buf)
+		if n > 0 {
+			st.pending = append(st.pending, buf[:n]...)
+			if len(st.pending) > 64 { // endless stream with no END byte
+				st.pending = st.pending[len(st.pending)-64:]
+			}
+		}
+		if err != nil {
+			d.fault(st, fmt.Errorf("read: %w", err))
+			return nil, false, err
 		}
 	}
-	d.mu.Unlock()
-	if wait > 0 {
+}
+
+// pacedWrite enforces the ≥300 ms inter-write spacing (Appendix A) and then
+// writes through the watchdog. Owner-only; the mutex stays so pace() remains
+// correct even if a second write path ever appears.
+func (d *Driver) pacedWrite(rw io.ReadWriteCloser, frame []byte) error {
+	d.paceMu.Lock()
+	if wait := d.opts.WritePace - time.Since(d.lastWriteAt); wait > 0 {
 		time.Sleep(wait)
 	}
-
-	if err := d.writeWatchdog(frame); err != nil {
-		d.mu.Lock()
-		d.markDownLocked(err)
-		due := d.reopenDueLocked()
-		d.mu.Unlock()
-		if !due {
-			return fmt.Errorf("write: %w", err)
-		}
-		// One reopen+retry per call (the ultrabridge model): the stale handle
-		// is replaced and the frame re-sent once; a persistently broken link
-		// surfaces the error and the next poll tick retries.
-		if rErr := d.reopenIO(); rErr != nil {
-			return fmt.Errorf("write: %w (reopen: %v)", err, rErr)
-		}
-		d.log.Warn("serial write fault, port reopened", "err", err)
-		if err := d.writeWatchdog(frame); err != nil {
-			d.mu.Lock()
-			d.markDownLocked(err)
-			d.mu.Unlock()
-			return fmt.Errorf("write after reopen: %w", err)
-		}
-	}
-	d.mu.Lock()
-	d.lastWrite = time.Now()
-	d.mu.Unlock()
-	return nil
+	d.lastWriteAt = time.Now()
+	d.paceMu.Unlock()
+	return d.watchedWrite(rw, frame)
 }
 
-// writeWatchdog writes one frame through the current port handle, bounded by
-// Opts.WriteTimeout. go.bug.st/serial exposes no write deadline (its unix
-// Write is a plain blocking write), so a wedged tty fd would park here
-// forever holding ioMu; instead the watchdog closes the handle on stall —
-// closing the fd converts the parked Write into an error, which feeds the
-// existing markDown/reopen self-heal path (the USB-unplug rehearsal applied
-// to the write side). Requires d.ioMu held (single writer); the Close runs
-// through the link handle itself, deliberately NOT through ioMu — the stuck
-// writer still holds ioMu, which is exactly why it must be reclaimable.
-func (d *Driver) writeWatchdog(frame []byte) error {
-	rw := d.lnk.snapshot()
-	if rw == nil {
-		return io.ErrClosedPipe
-	}
-	done := make(chan error, 1) // buffered: a late parked Write never leaks its goroutine
+// watchedWrite writes one frame, bounded by WriteTimeout. go.bug.st/serial
+// exposes no write deadline, so the owner arms a timer that closes THIS
+// handle on stall — closing the fd converts the parked Write into an error.
+// The writeSeq check makes a late timer harmless once the exchange moved on.
+func (d *Driver) watchedWrite(rw io.ReadWriteCloser, frame []byte) error {
+	seq := d.writeSeq.Add(1)
+	done := make(chan error, 1) // buffered: a late parked Write never leaks
 	go func() {
 		_, err := rw.Write(frame)
 		done <- err
 	}()
-	timer := time.NewTimer(d.opts.WriteTimeout)
+	timer := time.AfterFunc(d.opts.WriteTimeout, func() {
+		if d.writeSeq.Load() == seq {
+			_ = rw.Close()
+		}
+	})
 	defer timer.Stop()
 	select {
 	case err := <-done:
 		return err
-	case <-timer.C:
-		_ = rw.Close()
+	case <-time.After(d.opts.WriteTimeout + 250*time.Millisecond):
 		return fmt.Errorf("write stalled for %s — port handle closed by watchdog", d.opts.WriteTimeout)
 	}
 }
 
-// --- link state -------------------------------------------------------------------
+// --- published state ------------------------------------------------------------
 
-// markDownLocked takes the link down and invalidates the cached readback:
-// after a Down transition the deadband must never trust a pre-outage position
-// (KTD7). Only the healthy→down transition stamps lastFault and Warns — the
-// repeated write failures of a persistently dead link are symptoms, not new
-// events, and must not push the reopen cooldown out forever.
-func (d *Driver) markDownLocked(err error) {
-	wasDown := !d.online
+func (d *Driver) commit(az float64) {
+	d.stateMu.Lock()
+	d.az = az
+	d.valid = true
+	d.online = true
+	d.errStr = ""
+	d.stateMu.Unlock()
+}
+
+func (d *Driver) publishUp() {
+	d.stateMu.Lock()
+	d.online = true
+	d.errStr = ""
+	d.stateMu.Unlock()
+}
+
+func (d *Driver) publishOffline(err string) {
+	d.stateMu.Lock()
 	d.online = false
 	d.valid = false
-	d.errStr = err.Error()
-	d.timeouts = 0 // any link transition restarts the consecutive-timeout count
-	if !wasDown {
-		d.lastFault = time.Now()
+	d.errStr = err
+	d.stateMu.Unlock()
+	if err != "" && err != "driver stopped" {
 		d.log.Warn("serial link down", "err", err)
 	}
 }
 
-// reopenDueLocked reports whether the cooldown since the last fault has
-// elapsed. The zero lastFault (never faulted) is always due — the first open
-// is immediate.
-func (d *Driver) reopenDueLocked() bool {
-	return time.Since(d.lastFault) >= d.opts.ReopenCooldown
-}
-
-// reopenIO replaces the port handle: it closes the stale one (which also
-// unblocks the old reader — its late error is discarded by generation tag),
-// calls the opener (which re-resolves the by-id path), bumps the reader
-// generation, and re-initializes the axis state (KTD7). Reopening must be
-// preceded by reopenDueLocked; a failed attempt stamps lastFault so the next
-// retry waits out the cooldown — that is the indefinite, paced retry.
-//
-// Requires d.ioMu held (the port lifecycle is io-owned); d.mu is taken only
-// around the cached-state transitions, so even a slow device-node open cannot
-// freeze Online()/Readback().
-func (d *Driver) reopenIO() error {
-	d.mu.Lock()
-	d.gen++
-	gen := d.gen
-	d.mu.Unlock()
-	// swap (which Closes the stale handle) runs OUTSIDE d.mu: Close waits
-	// for the port's readers to drain, and a reader parked on a silent link
-	// must never stall Online()/Readback() — the observed az-slot freeze of
-	// 2026-09-17 (RWMutex handoff between Close and a timeout-less Read,
-	// under d.mu) is exactly that shape.
-	d.lnk.swap(nil)
-	rw, err := d.opener()
-	if err != nil {
-		d.mu.Lock()
-		d.online = false
-		d.valid = false
-		d.errStr = "open serial: " + err.Error()
-		d.lastFault = time.Now()
-		d.mu.Unlock()
-		return err
-	}
-	d.lnk.swap(rw)
-	d.mu.Lock()
-	d.online = true
-	// Re-init after reopen (KTD7): Rot1Prog has no init command sequence —
-	// the status request on the next tick IS the re-init, and until its
-	// reply the readback is unknown, so the deadband always writes.
-	d.valid = false
-	d.errStr = ""
-	d.timeouts = 0
-	// Drop any frames the dead link staged before the fault: a stale
-	// pre-outage reply must never be consumed as a fresh readback.
-	for {
-		select {
-		case <-d.rxCh:
-			continue
-		default:
-		}
-		break
-	}
-	d.mu.Unlock()
-	d.startReader(gen)
-	d.mu.Lock()
-	wasUp := d.everUp
-	d.everUp = true
-	d.mu.Unlock()
-	if wasUp {
-		d.log.Warn("serial port reopened after fault", "gen", gen)
-	} else {
-		d.log.Info("serial port opened", "gen", gen)
-	}
-	return nil
-}
-
-// startReader spawns the reader generation gen: it assembles 0x57…0x20 frames
-// from the raw byte stream (resync-scanning, never fixed offsets) and reports
-// any read error tagged with its generation.
-func (d *Driver) startReader(gen int) {
-	go func() {
-		buf := make([]byte, 64)
-		var pending []byte
-		for {
-			rw := d.lnk.snapshot()
-			if rw == nil {
-				return // link torn down (shutdown); late errors are moot
-			}
-			n, err := rw.Read(buf)
-			if n > 0 {
-				pending = append(pending, buf[:n]...)
-				pending = d.emitFrames(pending)
-			}
-			if err != nil {
-				select {
-				case d.readErrCh <- readErr{gen: gen, err: err}:
-				default: // shutdown: nobody is reading anymore
-				}
-				return
-			}
-		}
-	}()
-}
-
-// emitFrames strips whole 0x57…END frames off the head of pending and pushes
-// them to rxCh (the poll loop is the only consumer; overflow drops rather
-// than blocks the reader). Returns the remainder.
-func (d *Driver) emitFrames(pending []byte) []byte {
-	for len(pending) >= replyLen {
-		// Resync: discard noise before the start byte.
-		i := 0
-		for i < len(pending) && pending[i] != startByte {
-			i++
-		}
-		pending = pending[i:]
-		if len(pending) < replyLen {
-			break
-		}
-		if pending[replyLen-1] != endByte {
-			pending = pending[1:] // not a frame after all; slide one byte
-			continue
-		}
-		frame := make([]byte, replyLen)
-		copy(frame, pending[:replyLen])
-		pending = pending[replyLen:]
-		select {
-		case d.rxCh <- frame:
-		default:
-		}
-	}
-	// Bound the buffer against an endless stream with no END byte.
-	if len(pending) > 64 {
-		pending = pending[len(pending)-64:]
-	}
-	return pending
-}
-
-// --- serial port opener --------------------------------------------------------
+// --- serial port opener ---------------------------------------------------------
 
 // serialOpener returns the opener closure the driver self-heals through: it
 // re-resolves the stable /dev/serial/by-id/ symlink on every call, so a USB
 // re-enumeration heals instead of wedging on a deleted device node. The port
-// read timeout is BOUNDED: without it the reader goroutine parks in a
-// blocking Read on a silent link, and the library's Close (which waits for
-// readers to drain) then hangs every reopen — the 2026-09-17 az-slot freeze.
+// read timeout is BOUNDED: the owner's exchanges rely on reads returning
+// once the timeout lapses — without it a reply-less link parks the owner in
+// a blocking Read forever (the 2026-09-17 az-slot freeze).
 func serialOpener(path string, baud int, readTimeout time.Duration) func() (io.ReadWriteCloser, error) {
 	if readTimeout <= 0 {
 		readTimeout = DefaultReadTimeout

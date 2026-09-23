@@ -92,7 +92,14 @@ motion (R4).
    systemd restarts — §8.1 item 10).
 2. `internal/config` — TOML config (one `[[slot]]` per axis), flags,
    `SPID_ERCM_ROTATOR_BRIDGE_*` env overrides.
-3. `internal/spid` (Rot1Prog driver, 13-byte frames at 1200 baud 8N1, az-only),
+3. `internal/spid` (Rot1Prog driver, 13-byte frames at 1200 baud 8N1, az-only —
+   **single-owner communication model** (2026-09-23, post-ultracode-review): one
+   goroutine owns every byte of port I/O as synchronous write→read exchanges;
+   set/stop arrive on a channel between polls, replies belong to their exchange
+   by half-duplex FIFO structure — no reader goroutine, no frame channel, no
+   generation tagging, so stale-frame-rebirth and ACK-misread-as-position (both
+   live 2026-09-23) are unrepresentable; the spec-silent SET's flood-observed
+   zero reply is swallowed via command accounting (ackPending), never cached),
    `internal/ercm` (GS-232B driver: `W<el> 000` goto with elevation on the az
    channel, `C2` readback — el from the AZ digits, `S` stop-both (E would
    halt the unconnected el channel and stop nothing physical); polls at
