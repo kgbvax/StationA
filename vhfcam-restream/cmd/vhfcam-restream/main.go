@@ -145,10 +145,11 @@ func main() {
 	// heartbeat audio_on to the radio bridge (the demand is TTL-bounded
 	// there — the heartbeat is what keeps the radio's audio flowing); on
 	// shutdown, release it. The MQTT connection comes from the overlay.
-	// The web-page controls flip audioManualOn: a manual disconnect stops
-	// the heartbeat until the page reconnects.
+	// The web-page controls flip audioDemandOn: capture is OPT-IN — it
+	// starts OFF (2026-09) and only the page's connect button starts the
+	// heartbeat; disconnect stops it until the operator clicks again.
 	audioDemandOn := &atomic.Bool{}
-	audioDemandOn.Store(true)
+	audioDemandOn.Store(false)
 	radioPublish := func(action string) error {
 		c := ov.Client()
 		if c == nil {
@@ -193,9 +194,10 @@ func main() {
 		}
 	}
 	go func() {
-		// Let MQTT connect, then heartbeat at a third of the bridge's TTL.
+		// Let MQTT connect, then clear any stale demand from before the
+		// restart (capture is opt-in — it must not outlive a restart).
 		time.Sleep(3 * time.Second)
-		audioDemand(true)
+		audioDemand(false)
 		t := time.NewTicker(20 * time.Second)
 		defer t.Stop()
 		for {
