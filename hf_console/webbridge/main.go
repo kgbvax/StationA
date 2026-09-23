@@ -25,6 +25,12 @@ var (
 var upgrader = websocket.Upgrader{
 	ReadBufferSize:  4096,
 	WriteBufferSize: 4096,
+	// The browser's mqtt_client requests the "mqtt" subprotocol; per RFC 6455
+	// the browser FAILS the connection unless the server echoes a protocol it
+	// offered. Without this, every browser WebSocket dies right after the
+	// upgrade while raw clients (no subprotocol) work — exactly the
+	// "MQTT link down" signature.
+	Subprotocols: []string{"mqtt"},
 	CheckOrigin: func(r *http.Request) bool {
 		// Served on the LAN; allow any origin so the browser can load the page
 		// from shari and connect back to the same host.
