@@ -15,9 +15,9 @@ import (
 
 // BuildArgs assembles the ffmpeg invocation for the YouTube sink.
 func BuildArgs(cfg *config.Config, sourceURL string) []string {
-	inputs, vmap, fc := buildInputsAndOverlay(cfg, sourceURL)
+	inputs, vmap, fc, audioMap := buildInputsAndOverlay(cfg, sourceURL)
 	transcode := fc != ""
-	args := append(inputs, "-map", vmap, "-map", "0:a:0")
+	args := append(inputs, "-map", vmap, "-map", audioMap)
 	if fc != "" {
 		// The bar is part of the filter complex when the logo rides along.
 		args = append(args, "-filter_complex", fc)
@@ -35,11 +35,7 @@ func BuildArgs(cfg *config.Config, sourceURL string) []string {
 // audio (fed by the preview's silence-filling source) and the camera's own
 // audio track is replaced by it.
 func BuildPreviewArgs(cfg *config.Config, sourceURL string) []string {
-	inputs, vmap, fc := buildInputsAndOverlay(cfg, sourceURL)
-	audioMap := "0:a:0"
-	if cfg.Preview.RadioAudio != "" {
-		audioMap = "1:a:0"
-	}
+	inputs, vmap, fc, audioMap := buildInputsAndOverlay(cfg, sourceURL)
 	transcode := fc != ""
 	args := append(inputs, "-map", vmap, "-map", audioMap)
 	if fc != "" {
@@ -55,12 +51,13 @@ func BuildPreviewArgs(cfg *config.Config, sourceURL string) []string {
 // buildInputsAndOverlay assembles the input section (global flags, camera,
 // optional radio PCM and logo image) and returns the input args, the video
 // label for the sink's -map ("0:v" plainly, "[vout]" through the filter
-// complex) and the filter_complex itself ("" when none).
+// complex), the audio label ("0:a:0" camera track, or "1:a:0" radio PCM when
+// radio_audio is configured) and the filter_complex itself ("" when none).
 //
 // The cameras emit H.264 video plus two audio tracks (AAC mono and Opus
 // stereo); ffmpeg's default selection would pick the 2-channel Opus track,
 // which RTMP/FLV cannot carry — audio is always mapped explicitly per sink.
-func buildInputsAndOverlay(cfg *config.Config, sourceURL string) (args []string, vmap, fc string) {
+func buildInputsAndOverlay(cfg *config.Config, sourceURL string) (args []string, vmap, fc, audioMap string) {
 	args = []string{
 		"-hide_banner",
 		"-loglevel", "warning",
@@ -80,8 +77,9 @@ func buildInputsAndOverlay(cfg *config.Config, sourceURL string) (args []string,
 	// The logo rides the overlay toggle: enabled + configured opens the
 	// filtergraph path (which forces the transcode), otherwise plain maps.
 	vmap = "0:v"
+	audioMap = "0:a:0"
 	if !cfg.Overlay.Enabled || cfg.Overlay.Logo == "" {
-		return args, vmap, ""
+		return args, vmap, fc, audioMap
 	}
 
 	logoIdx := 0
@@ -105,7 +103,7 @@ func buildInputsAndOverlay(cfg *config.Config, sourceURL string) (args []string,
 	fc = fmt.Sprintf("%s[%d:v]scale=-1:140,colorkey=black:0.1:0[dl];[%s][dl]overlay=x=%d:y=main_h-%d-140[vout]",
 		chain, logoIdx, barSrc, cfg.Overlay.Margin, cfg.Overlay.Margin+barH)
 	vmap = "[vout]"
-	return args, vmap, fc
+	return args, vmap, fc, audioMap
 }
 
 // RadioAudioInputURL derives the ffmpeg input from the configured UDP bind
