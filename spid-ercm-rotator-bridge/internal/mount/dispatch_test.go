@@ -214,6 +214,66 @@ func (f *fakeCtrl) maxConcurrent() int {
 	return f.maxInFlight
 }
 
+// --- stop debounce ------------------------------------------------------------------
+
+// The live 2026-09-23 failure: a rotctld client S-flooding at ~1 Hz pulsed
+// the controller's stop relay forever while nothing moved. The FIRST halt of
+// a process incarnation is always real (the wire state it inherited is
+// unknown — a pre-restart set frame may still be driving the controller);
+// every halt after it, with nothing in the pipeline, is debounced.
+func TestStopDebounceFirstRealThenNoop(t *testing.T) {
+	az, el := newFake(), newFake()
+	m := newTestMount(t, testControl(), az, el)
+
+	m.Stop()
+	if got := az.stopCount(); got != 1 {
+		t.Errorf("az stops = %d, want 1 (first halt of an incarnation: wire state unknown)", got)
+	}
+	if got := el.stopCount(); got != 1 {
+		t.Errorf("el stops = %d, want 1 (first halt of an incarnation: wire state unknown)", got)
+	}
+
+	m.Stop()
+	if got := az.stopCount() + el.stopCount(); got != 2 {
+		t.Errorf("stops = %d, want 2 (repeat stop on a halted wire is debounced)", got)
+	}
+}
+
+// A stop following a written set frame is always sent (the dirty pin — the
+// wire, not the pipeline, decides), and repeat stops after it are no-ops
+// again.
+func TestStopAfterSetFrameWrittenThenDebounced(t *testing.T) {
+	az, el := newFake(), newFake()
+	az.setReadback(0, true)
+	el.setReadback(0, true)
+	m := newTestMount(t, testControl(), az, el)
+
+	refs := m.Goto(Target{AZ: 180, HasAZ: true, EL: 0, HasEL: true})
+	if len(refs) != 0 {
+		t.Fatalf("unexpected refusals: %v", refs)
+	}
+	waitIdle(t, m, AZ)
+	if got := az.eventLog(); len(got) != 1 || got[0] != "set" {
+		t.Fatalf("az events = %v, want [set]", got)
+	}
+	if got := el.written(); len(got) != 0 {
+		t.Fatalf("el writes = %v, want none (within deadband)", got)
+	}
+
+	m.Stop()
+	if got := az.stopCount(); got != 1 {
+		t.Errorf("az stops = %d, want 1 (set frame on the wire must be cancelled)", got)
+	}
+	if got := el.stopCount(); got != 1 {
+		t.Errorf("el stops = %d, want 1 (first halt of the incarnation)", got)
+	}
+
+	m.Stop()
+	if got := az.stopCount() + el.stopCount(); got != 2 {
+		t.Errorf("stops = %d, want 2 (repeat stop is a no-op on both axes)", got)
+	}
+}
+
 // --- basic dispatch ----------------------------------------------------------------
 
 // F1: both axes online, a two-axis intent dispatches once per axis.

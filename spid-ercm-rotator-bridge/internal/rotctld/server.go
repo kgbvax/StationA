@@ -216,6 +216,15 @@ func (s *Server) serveConn(conn net.Conn) {
 	defer s.clients.Add(-1)
 	defer conn.Close()
 
+	// Ingress parity with the gs232/pstrotator/MQTT paths: a connect and
+	// every motion command log at Info. Before this, a rotctld-driven slew
+	// left no journal trace at Info at all — the 2026-09-23 incident (a
+	// client repositioning the mount invisibly) was diagnosed only by
+	// packet sniffing. Polls (`p`) stay silent: gpredict polls at ~1 Hz and
+	// would drown the journal.
+	remote := conn.RemoteAddr().String()
+	s.log.Info("rotctld: client connected", "remote", remote)
+
 	sc := bufio.NewScanner(conn)
 	sc.Buffer(make([]byte, 1024), 4096)
 	for {
@@ -226,10 +235,11 @@ func (s *Server) serveConn(conn net.Conn) {
 		if !sc.Scan() {
 			if err := sc.Err(); err != nil && !errors.Is(err, os.ErrDeadlineExceeded) {
 				s.log.Debug("rotctld: session read error",
-					"remote", conn.RemoteAddr().String(), "err", err)
+					"remote", remote, "err", err)
 			}
 			return
 		}
+		s.logCmd(remote, sc.Text())
 		reply, closeConn := s.Handle(sc.Text())
 		if reply != "" {
 			if _, err := conn.Write([]byte(reply)); err != nil {
@@ -239,6 +249,26 @@ func (s *Server) serveConn(conn net.Conn) {
 		if closeConn {
 			return
 		}
+	}
+}
+
+// logCmd surfaces the motion commands at Info, keyed to the client that sent
+// them (the gs232 "cmd" log shape). Only the wire-visible actions matter:
+// P/S move or halt hardware, everything else is protocol chatter.
+func (s *Server) logCmd(remote, line string) {
+	f := strings.Fields(line)
+	if len(f) == 0 {
+		return
+	}
+	switch f[0] {
+	case "P", "+P":
+		if len(f) >= 3 {
+			s.log.Info("rotctld: cmd", "remote", remote, "cmd", "goto", "az", f[1], "el", f[2])
+		} else {
+			s.log.Info("rotctld: cmd", "remote", remote, "cmd", "goto", "malformed", line)
+		}
+	case "S", "+S":
+		s.log.Info("rotctld: cmd", "remote", remote, "cmd", "stop")
 	}
 }
 

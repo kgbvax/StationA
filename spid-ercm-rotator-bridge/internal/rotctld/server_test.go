@@ -909,3 +909,48 @@ func TestIdleSessionReaped(t *testing.T) {
 	}
 	waitFor(t, "reaped client uncounted", func() bool { return s.Clients() == 0 })
 }
+
+// The 2026-09-23 incident: a rotctld client repositioned the mount with no
+// Info trace at all. Connects and the motion commands (P/S) must log at
+// Info, keyed to the remote; polls (`p`) must not — a 1 Hz gpredict poll
+// loop would drown the journal.
+func TestMotionCommandsLogAtInfo(t *testing.T) {
+	sink := &lockedBuffer{}
+	lg := slog.New(slog.NewTextHandler(sink, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	ctl := testControl()
+	m := mount.New(fakeAt(10), fakeAt(5), ctl, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go m.Run(ctx)
+	s := New(m, "mockmount", LimitsFromControl(ctl), lg)
+	addr := serveTCP(t, s)
+
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+	if _, err := conn.Write([]byte("p\nP 180 45\nS\nq\n")); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	sc := bufio.NewScanner(conn)
+	for _, w := range []string{"10.00", "5.00", "RPRT 0", "RPRT 0"} {
+		if got := readLine(t, sc); got != w {
+			t.Fatalf("reply = %q, want %q", got, w)
+		}
+	}
+	waitFor(t, "stop cmd logged", func() bool {
+		return strings.Count(sink.String(), "cmd=stop") == 1
+	})
+
+	out := sink.String()
+	if !strings.Contains(out, "rotctld: client connected") || !strings.Contains(out, "remote=") {
+		t.Errorf("connect must log at Info with the remote, got:\n%s", out)
+	}
+	if !strings.Contains(out, "cmd=goto az=180 el=45") {
+		t.Errorf("goto must log its targets at Info, got:\n%s", out)
+	}
+	if got := strings.Count(out, "rotctld: cmd"); got != 2 {
+		t.Errorf("cmd log lines = %d, want 2 (goto+stop; the p poll must stay silent):\n%s", got, out)
+	}
+}

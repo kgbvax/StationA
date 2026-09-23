@@ -49,6 +49,14 @@ type axis struct {
 
 	writeMu sync.Mutex    // the serial section (see the locking model)
 	notify  chan struct{} // cap-1 wakeups for the worker
+
+	// dirty is guarded by writeMu alone: the wire owes this axis a stop
+	// frame. It starts true — at process birth the wire state is unknown (a
+	// pre-restart set frame may still be driving the controller), so the
+	// first halt is always real. A written set frame keeps it true, a written
+	// stop frame clears it. The stop-debounce (see halt) must not skip a halt
+	// while it is set, so it is not foldable into the a.mu state.
+	dirty bool
 }
 
 func newAxis(m *Mount, name Axis, ctrl Controller, ctl config.AxisControl) *axis {
@@ -59,6 +67,7 @@ func newAxis(m *Mount, name Axis, ctrl Controller, ctl config.AxisControl) *axis
 		log:    m.log,
 		mount:  m,
 		notify: make(chan struct{}, 1),
+		dirty:  true,
 	}
 }
 
@@ -115,14 +124,30 @@ func (a *axis) beginHalt() {
 	a.mu.Unlock()
 }
 
-// halt writes the stop frame. It waits for the serial section, so an
-// in-flight set frame finishes first and the stop frame follows it — the
-// only ordering a byte already on the wire admits. Clearing the halt flag
-// inside the serial section guarantees no worker can observe a stale flag
-// while holding writeMu.
+// halt writes the stop frame — unless stopOwed says the wire is already in
+// the halted state this process last imposed. It waits for the serial
+// section, so an in-flight set frame finishes first and the stop frame
+// follows it — the only ordering a byte already on the wire admits. Clearing
+// the halt flag inside the serial section guarantees no worker can observe a
+// stale flag while holding writeMu.
 func (a *axis) halt() AxisError {
 	a.writeMu.Lock()
-	err := a.ctrl.Stop()
+	var err error
+	if a.stopOwed() {
+		err = a.ctrl.Stop()
+		if err == nil {
+			a.dirty = false
+		}
+	} else {
+		// Stop-debounce: every set frame has been followed by a stop frame,
+		// and no intent is anywhere in the pipeline — a stop frame would only
+		// pulse the controller's stop relay. Observed live 2026-09-23: a
+		// rotctld client S-flooding at ~1 Hz clattered the ERC-M relay
+		// continuously without ever moving anything. The command answer is
+		// unaffected (the façade's Stop still succeeds), and anything that
+		// moves — or anything written by an earlier process incarnation —
+		// sees dirty true and halts for real.
+	}
 	a.mu.Lock()
 	a.halting = false
 	a.mu.Unlock()
@@ -133,6 +158,18 @@ func (a *axis) halt() AxisError {
 	default:
 	}
 	return AxisError{Axis: a.name, Err: err}
+}
+
+// stopOwed reports whether a stop frame owes the wire a write: any intent in
+// the pipeline (queued, recorded, or claimed), or a set frame / process
+// restart that leaves the wire state unknown. The intent fields are read
+// under a.mu; dirty is only touched under writeMu, which the caller (halt)
+// holds — so the worker cannot slip a claim or a write past this check.
+func (a *axis) stopOwed() bool {
+	a.mu.Lock()
+	busy := a.pending != nil || a.target != nil || a.inFlight > 0
+	a.mu.Unlock()
+	return busy || a.dirty
 }
 
 // run is the per-axis worker: park on the notify channel, drain the pipeline
@@ -203,6 +240,10 @@ func (a *axis) drain() {
 				// ultrabridge stale-cmd pattern. The next poll marks the
 				// link down and the control path re-issues.
 				a.log.Warn("serial write failed", "axis", string(a.name), "target", deg, "err", err)
+			} else {
+				// A set frame may now be on the wire: the next halt owes it a
+				// stop frame, however idle the pipeline looks by then.
+				a.dirty = true
 			}
 		}
 		a.mu.Lock()
