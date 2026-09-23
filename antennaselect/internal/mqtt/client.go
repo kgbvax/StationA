@@ -278,6 +278,13 @@ func (c *Client) onOperatorCmd(_ paho.Client, msg paho.Message) {
 		return
 	}
 	req := strings.TrimSpace(cmd.Request)
+	if !validRequest(req) {
+		// Reject at the door: a malformed request must never become a hold on a
+		// port no switch has. (A UI once sent "manual" as a mode toggle; the hold
+		// it created silently overrode auto selection forever.)
+		slog.Warn("[mqtt] unknown operator request; dropping cmd", "request", req)
+		return
+	}
 	if req == "" || req == reconcile.RequestAuto {
 		// Release ("auto") is not evidence of presence: it withdraws the hold
 		// and leaves the idle clock alone.
@@ -285,6 +292,21 @@ func (c *Client) onOperatorCmd(_ paho.Client, msg paho.Message) {
 		return
 	}
 	sharedmqtt.Enqueue(c.jobs, func() { c.update(func(in *reconcile.Inputs) { c.applyOperatorHold(in, req) }) })
+}
+
+// validRequest reports whether req is a well-formed operator request: a release
+// ("" | "auto"), the manual stand-down, the grounded port, or one of the six
+// physical switch ports (whether or not the wiring map currently names an
+// antenna for it).
+func validRequest(req string) bool {
+	switch req {
+	case "", reconcile.RequestAuto, reconcile.RequestManual, reconcile.PortOff:
+		return true
+	}
+	if len(req) == len("portN") && strings.HasPrefix(req, "port") && req[4] >= '1' && req[4] <= '6' {
+		return true
+	}
+	return false
 }
 
 // applyOperatorHold records a hold and marks the station active. A hold is

@@ -571,7 +571,7 @@ config:     wiring_map  { port1: dummy-load, port3: ultrabeam, port6: fan-dipole
             controllers { ultrabeam: ant-ctrl }            # resource → controller slot
             band_policy { 6,10,12,15,17,20m: ultrabeam;
                           30,40,60,80m:     fan-dipole }   # 30/60/80/160m require the ATU
-            priority   { 1 idle, 2 operator, 3 auto }
+            priority   { 0 manual-standdown, 1 idle, 2 operator, 3 auto }
 state:      mode {auto|manual}; target {off|port1..port6}; source {idle|operator|auto}
 ```
 
@@ -601,7 +601,9 @@ override / pre-position path, not the primary follow mechanism.
 - `ant-ctrl.{band,freq}` ← `radio.{band,freq}` (via the controller map)
 - `ant-switch.select` ← arbiter(band_policy, wiring_map, ladder)
 - `ant-switch.select` → `off` when the idle timeout elapses with no VFO change or TX
-  (ladder tier 1; walk-away lightning protection)
+  (ladder tier 1; walk-away lightning protection) — except under an operator `manual`
+  stand-down (tier 0): in manual the antenna is **never** moved automatically, and idle
+  grounding is itself an automatic move
 - `pa-arm.armed` ← `enabled ∧ radio_online ∧ ¬radio.tuning ∧ band_safe ∧ heartbeat ∧
   antenna_ready` (realized in the M5 Stamp firmware, not the reconciler; fail-safe open,
   heartbeat-driven; `antenna_ready` drops the arm when the antenna is grounded/off)
@@ -1025,7 +1027,10 @@ Stated plainly rather than left implied.
   trusted, especially for state fields that feed safety mirrors.
 - **Idle-over-operator is a deliberate surprise.** Walking away (station inactive)
   overrides an operator dummy-load hold. Defensible for walk-away safety; documented so
-  it is chosen behaviour, not emergent.
+  it is chosen behaviour, not emergent. The one exception is an explicit operator
+  `manual` stand-down (antenna-select tier 0): in manual the antenna is never moved
+  automatically — idle grounding included — so a manual operator grounds via an explicit
+  `off` request instead.
 - **Two TA16 masts.** Distinct passive-resource names (`mast/ta16-hf`, `mast/ta16-vhf`)
   are load-bearing; never reference a mast by model alone.
 
