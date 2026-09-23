@@ -50,7 +50,18 @@ class TestHarness extends StatelessWidget {
             displayColor: AppTheme.txt,
           ),
         ),
-        home: Scaffold(body: child),
+        home: Scaffold(
+          // Freeze animations (the PulsingAmberButton pulse repeats forever
+          // by design) so pumpAndSettle always returns in widget tests. The
+          // pulse itself is exercised by pulsing_amber_button_test with an
+          // explicit disableAnimations:false override.
+          body: Builder(
+            builder: (context) => MediaQuery(
+              data: MediaQuery.of(context).copyWith(disableAnimations: true),
+              child: child,
+            ),
+          ),
+        ),
       ),
     );
   }

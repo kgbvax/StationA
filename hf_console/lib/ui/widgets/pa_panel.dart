@@ -9,6 +9,7 @@ import '../../mqtt/mqtt_service.dart';
 import '../../store/wiring.dart';
 import '../theme.dart';
 import 'card_container.dart';
+import 'pulsing_amber_button.dart';
 import 'status_pill.dart';
 
 class PaPanel extends StatefulWidget {
@@ -213,9 +214,13 @@ class _PaPanelState extends State<PaPanel> {
                   SizedBox(
                     width: 96,
                     height: 37,
-                    child: ElevatedButton(
+                    // Standby engaged is the deliberate not-TX-ready state —
+                    // amber pulse, not the cyan used for OPERATE.
+                    child: PulsingAmberButton(
                       onPressed: online ? () => setMode('standby') : null,
-                      style: AppTheme.actionButton(amber: true, active: mode == 'standby'),
+                      engaged: mode == 'standby',
+                      // Idle keeps the dim amber tint it always had.
+                      idleStyle: AppTheme.actionButton(amber: true),
                       child: const Text('STANDBY'),
                     ),
                   ),

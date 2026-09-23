@@ -4,6 +4,7 @@ import '../../store/bus_store.dart';
 import '../../mqtt/mqtt_service.dart';
 import '../../store/wiring.dart';
 import '../theme.dart';
+import 'pulsing_amber_button.dart';
 import 'status_pill.dart';
 
 class AntennaPanel extends StatelessWidget {
@@ -138,12 +139,12 @@ class AntennaPanel extends StatelessWidget {
                   style: AppTheme.actionButton(active: managed && mode == 'auto'),
                   child: const Text('AUTO'),
                 ),
-                ElevatedButton(
+                // Manual routing overrides the reconciler — amber pulse while
+                // engaged: an operator hold, not a fault (unlike the grounded
+                // port buttons, which stay red).
+                PulsingAmberButton(
                   onPressed: selectOnline ? () => setMode('manual') : null,
-                  // Manual routing overrides the reconciler — shown in solid
-                  // amber while engaged: an operator hold, not a fault
-                  // (unlike the grounded port buttons, which stay red).
-                  style: AppTheme.actionButton(amberActive: isManual),
+                  engaged: isManual,
                   child: const Text('MANUAL'),
                 ),
               ],

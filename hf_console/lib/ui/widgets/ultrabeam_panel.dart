@@ -4,6 +4,7 @@ import '../../store/bus_store.dart';
 import '../../mqtt/mqtt_service.dart';
 import '../../store/wiring.dart';
 import '../theme.dart';
+import 'pulsing_amber_button.dart';
 import 'status_pill.dart';
 
 class UltrabeamPanel extends StatefulWidget {
@@ -121,6 +122,10 @@ class _UltrabeamPanelState extends State<UltrabeamPanel> {
                   width: 112,
                   label: '180°',
                   active: direction == 'reverse',
+                  // Reverse is a deliberate but irregular state for the
+                  // Ultrabeam — amber pulse while engaged, not the cyan
+                  // "normal" highlight and not red error chrome.
+                  irregular: true,
                   onPressed: (online && !moving && !on6m) ? () => send(antCtrlDirectionPayload('reverse')) : null,
                 ),
                 _DirectionButton(
@@ -163,19 +168,32 @@ class _DirectionButton extends StatelessWidget {
   final String label;
   final double width;
   final bool active;
+
+  /// Irregular-but-deliberate state (180° on the Ultrabeam): amber pulse
+  /// while engaged instead of the cyan "normal" highlight.
+  final bool irregular;
   final VoidCallback? onPressed;
 
-  const _DirectionButton({required this.label, required this.width, required this.active, this.onPressed});
+  const _DirectionButton({
+    required this.label,
+    required this.width,
+    required this.active,
+    this.irregular = false,
+    this.onPressed,
+  });
 
   @override
   Widget build(BuildContext context) {
+    final child = Text(label, maxLines: 1, softWrap: false);
     return SizedBox(
       width: width,
-      child: ElevatedButton(
-        onPressed: onPressed,
-        style: AppTheme.actionButton(active: active),
-        child: Text(label, maxLines: 1, softWrap: false),
-      ),
+      child: irregular
+          ? PulsingAmberButton(engaged: active, onPressed: onPressed, child: child)
+          : ElevatedButton(
+              onPressed: onPressed,
+              style: AppTheme.actionButton(active: active),
+              child: child,
+            ),
     );
   }
 }
