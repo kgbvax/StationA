@@ -36,13 +36,14 @@ const EnvPrefix = "ICOM9700"
 type Config struct {
 	// RadioHost is the radio's LAN address (IC-9700 remote-control UDP
 	// endpoint, e.g. 9700.kgbvax.net). The RS-BA1 protocol has no
-	// broadcast/discovery — the client must know the address.
+	// broadcast/discovery — the client must know the address. It carries
+	// the receive-audio session only (no LAN CI-V commands, 2026-09 pivot).
 	RadioHost string `toml:"radio_host"`
 
 	MQTT    MQTTConfig    `toml:"mqtt"`
 	CIV     CIVConfig     `toml:"civ"`
 	Session SessionConfig `toml:"session"`
-	Radio   RadioConfig   `toml:"radio"`
+	Serial  SerialConfig  `toml:"serial"`
 	Audio   AudioConfig   `toml:"audio"`
 	Log     LogConfig     `toml:"log"`
 }
@@ -76,21 +77,19 @@ type CIVConfig struct {
 	Password string `toml:"-"`
 }
 
-// SessionConfig holds the on-demand session policy (plan R1/R2, KTD-2): the
-// bridge connects only on demand and never auto-steals the radio's single LAN
-// session, so the retry parameters are deliberately conservative.
+// SessionConfig holds the on-demand capture-session policy (plan R1/R2,
+// KTD-2): the bridge connects only on demand (an audio demand) and never
+// auto-steals the radio's single LAN session, so the retry parameters are
+// deliberately conservative. There is no TX watchdog — no TX path exists
+// (2026-09 pivot removed LAN control entirely).
 type SessionConfig struct {
-	// IdleTimeout is how long a live session is held with no radio-side work
-	// before the bridge disconnects (a duration string, "120s"). Radio
-	// keepalives and meter frames do not count as work; an armed permit
-	// blocks idle-disconnect (R11). Parsed into IdleTimeoutDur at load.
+	// IdleTimeout is how long a live capture session is held with no
+	// audio demand before the bridge disconnects (a duration string,
+	// "120s"). Radio keepalives do not count as work. Parsed into
+	// IdleTimeoutDur at load.
 	IdleTimeout string `toml:"idle_timeout"`
-	// TXWatchdog bounds a keyed PTT while a session is live or can be
-	// re-established (a duration string, "180s"; plan KTD-5/R12). Parsed
-	// into TXWatchdogDur at load.
-	TXWatchdog string `toml:"tx_watchdog"`
 	// MaxAttempts bounds the login attempt series per connect demand
-	// (cmd-driven, armed-held or safety-driven — R2).
+	// (cmd-driven — R2).
 	MaxAttempts int `toml:"max_attempts"`
 	// AttemptSpacing is the minimum spacing between login attempts (a
 	// duration string, "30s" — pending the login-lockout bench pin, plan
@@ -102,7 +101,6 @@ type SessionConfig struct {
 	ErrorDecay string `toml:"error_decay"`
 
 	IdleTimeoutDur    time.Duration `toml:"-"`
-	TXWatchdogDur     time.Duration `toml:"-"`
 	AttemptSpacingDur time.Duration `toml:"-"`
 	ErrorDecayDur     time.Duration `toml:"-"`
 }
@@ -119,23 +117,32 @@ type AudioConfig struct {
 	// duration string, "60s" — a dead preview consumer must not pin the
 	// radio session, KTD-2). Parsed into DemandTTLDur at load.
 	DemandTTL string `toml:"demand_ttl"`
-	// PowerOnFrame is the CI-V wake frame (hex, no FE FE preamble) sent by
-	// the power_on cmd: the IC-9700's remote wake from standby is
-	// `1a050201`. Empty (default) = power_on cmds are rejected.
-	PowerOnFrame string `toml:"power_on_frame"`
 
-	DemandTTLDur     time.Duration `toml:"-"`
-	PowerOnFrameBytes []byte       `toml:"-"`
+	DemandTTLDur time.Duration `toml:"-"`
 }
 
-// RadioConfig holds the live-session telemetry cadence.
-type RadioConfig struct {
-	// PollInterval is the /state refresh cadence while a session is live
-	// (a duration string, "1s"; meters dedup'd to <=1 Hz into the retained
-	// snapshot, KTD-8). Parsed into PollIntervalDur at load.
-	PollInterval string `toml:"poll_interval"`
+// SerialConfig holds the read-only serial CI-V telemetry reader (2026-09
+// pivot: telemetry moved off LAN — reads happen over the radio's USB
+// serial port and are broadcast on MQTT on change; the only LAN CI-V left
+// is the audio session carrier).
+type SerialConfig struct {
+	// Device is the radio's serial CI-V port, pinned as a /dev/serial/by-id
+	// path (ttyACM numbers move on USB re-enumeration). Empty (default) =
+	// monitor_* and power_on cmds are rejected with the observed fact.
+	Device string `toml:"device"`
+	// Baud is the CI-V USB baud (the radio menu must match; 115200).
+	Baud int `toml:"baud"`
+	// MeterInterval is the s-meter/SWR/ALC read cadence while the monitor
+	// is on (a duration string, "500ms"; values publish only on change).
+	// Parsed into MeterIntervalDur at load.
+	MeterInterval string `toml:"meter_interval"`
+	// PowerOnFrame is the CI-V wake frame (hex, no FE FE preamble) sent by
+	// the power_on cmd over serial: the IC-9700's remote wake from standby
+	// is `1a050201`. Empty (default) = power_on cmds are rejected.
+	PowerOnFrame string `toml:"power_on_frame"`
 
-	PollIntervalDur time.Duration `toml:"-"`
+	MeterIntervalDur  time.Duration `toml:"-"`
+	PowerOnFrameBytes []byte        `toml:"-"`
 }
 
 // LogConfig controls logging verbosity.
@@ -162,24 +169,23 @@ func Defaults() Config {
 		},
 		Session: SessionConfig{
 			IdleTimeout:       "120s",
-			TXWatchdog:        "180s",
 			MaxAttempts:       3,
 			AttemptSpacing:    "30s",
 			ErrorDecay:        "60s",
 			IdleTimeoutDur:    120 * time.Second,
-			TXWatchdogDur:     180 * time.Second,
 			AttemptSpacingDur: 30 * time.Second,
 			ErrorDecayDur:     60 * time.Second,
 		},
-		Radio: RadioConfig{
-			PollInterval:    "1s",
-			PollIntervalDur: time.Second,
-		},
-		Audio: AudioConfig{
-			DemandTTL:         "60s",
-			DemandTTLDur:      60 * time.Second,
+		Serial: SerialConfig{
+			Baud:              115200,
+			MeterInterval:     "500ms",
+			MeterIntervalDur:  500 * time.Millisecond,
 			PowerOnFrame:      "1a050201",
 			PowerOnFrameBytes: []byte{0x1a, 0x05, 0x02, 0x01},
+		},
+		Audio: AudioConfig{
+			DemandTTL:    "60s",
+			DemandTTLDur: 60 * time.Second,
 		},
 		Log: LogConfig{Level: "info"},
 	}
@@ -279,11 +285,6 @@ func Load(f *Flags) (Config, error) {
 		return Config{}, fmt.Errorf("session.idle_timeout %q: %w", cfg.Session.IdleTimeout, err)
 	}
 	cfg.Session.IdleTimeoutDur = d
-	d, err = time.ParseDuration(cfg.Session.TXWatchdog)
-	if err != nil {
-		return Config{}, fmt.Errorf("session.tx_watchdog %q: %w", cfg.Session.TXWatchdog, err)
-	}
-	cfg.Session.TXWatchdogDur = d
 	d, err = time.ParseDuration(cfg.Session.AttemptSpacing)
 	if err != nil {
 		return Config{}, fmt.Errorf("session.attempt_spacing %q: %w", cfg.Session.AttemptSpacing, err)
@@ -294,11 +295,12 @@ func Load(f *Flags) (Config, error) {
 		return Config{}, fmt.Errorf("session.error_decay %q: %w", cfg.Session.ErrorDecay, err)
 	}
 	cfg.Session.ErrorDecayDur = d
-	d, err = time.ParseDuration(cfg.Radio.PollInterval)
+
+	d, err = time.ParseDuration(cfg.Serial.MeterInterval)
 	if err != nil {
-		return Config{}, fmt.Errorf("radio.poll_interval %q: %w", cfg.Radio.PollInterval, err)
+		return Config{}, fmt.Errorf("serial.meter_interval %q: %w", cfg.Serial.MeterInterval, err)
 	}
-	cfg.Radio.PollIntervalDur = d
+	cfg.Serial.MeterIntervalDur = d
 
 	d, err = time.ParseDuration(cfg.Audio.DemandTTL)
 	if err != nil {
@@ -306,12 +308,12 @@ func Load(f *Flags) (Config, error) {
 	}
 	cfg.Audio.DemandTTLDur = d
 
-	if cfg.Audio.PowerOnFrame != "" {
-		frame, err := hex.DecodeString(strings.TrimPrefix(cfg.Audio.PowerOnFrame, "0x"))
+	if cfg.Serial.PowerOnFrame != "" {
+		frame, err := hex.DecodeString(strings.TrimPrefix(cfg.Serial.PowerOnFrame, "0x"))
 		if err != nil {
-			return Config{}, fmt.Errorf("audio.power_on_frame %q: %w", cfg.Audio.PowerOnFrame, err)
+			return Config{}, fmt.Errorf("serial.power_on_frame %q: %w", cfg.Serial.PowerOnFrame, err)
 		}
-		cfg.Audio.PowerOnFrameBytes = frame
+		cfg.Serial.PowerOnFrameBytes = frame
 	}
 
 	return cfg, nil
@@ -342,9 +344,6 @@ func (c Config) Validate() error {
 	if c.Session.IdleTimeoutDur <= 0 {
 		return fmt.Errorf("session.idle_timeout must be > 0 (got %s)", c.Session.IdleTimeoutDur)
 	}
-	if c.Session.TXWatchdogDur <= 0 {
-		return fmt.Errorf("session.tx_watchdog must be > 0 (got %s)", c.Session.TXWatchdogDur)
-	}
 	if c.Session.MaxAttempts <= 0 {
 		return fmt.Errorf("session.max_attempts must be > 0 (got %d)", c.Session.MaxAttempts)
 	}
@@ -354,8 +353,8 @@ func (c Config) Validate() error {
 	if c.Session.ErrorDecayDur <= 0 {
 		return fmt.Errorf("session.error_decay must be > 0 (got %s)", c.Session.ErrorDecayDur)
 	}
-	if c.Radio.PollIntervalDur <= 0 {
-		return fmt.Errorf("radio.poll_interval must be > 0 (got %s)", c.Radio.PollIntervalDur)
+	if c.Serial.MeterIntervalDur <= 0 {
+		return fmt.Errorf("serial.meter_interval must be > 0 (got %s)", c.Serial.MeterIntervalDur)
 	}
 	return nil
 }
@@ -385,6 +384,9 @@ func applyEnv(cfg *Config) {
 	}
 	if v := os.Getenv(EnvPrefix + "_RADIO_HOST"); v != "" {
 		cfg.RadioHost = v
+	}
+	if v := os.Getenv(EnvPrefix + "_SERIAL_DEVICE"); v != "" {
+		cfg.Serial.Device = v
 	}
 	if v := os.Getenv(EnvPrefix + "_SITE"); v != "" {
 		cfg.MQTT.Site = v

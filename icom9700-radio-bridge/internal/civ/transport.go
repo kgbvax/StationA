@@ -58,6 +58,14 @@ type Options struct {
 	BindCIV     int
 	BindAudio   int
 
+	// NoCIVData skips the CI-V data stream (:50002) entirely: the session
+	// carries the control stream and (on demand) the audio stream only, no
+	// CI-V frames flow over LAN, and SendCIV fails. The receive-only bridge
+	// sets this (2026-09 pivot — no LAN CI-V other than audio); the wire
+	// spec confirms the audio stream does not depend on the CI-V data
+	// stream (docs/civ-wire-spec.md §5/§16).
+	NoCIVData bool
+
 	PingInterval    time.Duration
 	LossWatchdog    time.Duration // control-stream silence that ends the session
 	ReauthInterval  time.Duration
@@ -294,22 +302,25 @@ func Dial(ctx context.Context, opts Options) (c *Client, err error) {
 
 	// 6. Open the CI-V data socket, run its pkt3/4/6 start, and send the
 	// open packet. The stream carries its own session IDs (derived from its
-	// own socket, exchanged with its own handshake).
-	if c.civ, err = c.dialStream("civ", opts.CIVPort, opts.BindCIV); err != nil {
-		return nil, err
-	}
-	c.civ.startReader()
-	if err = c.civ.start(ctx); err != nil {
-		return nil, c.hsErr(err)
-	}
-	c.startKeepalives(c.civ)
-	if err = c.sendTracked(c.civ, c.buildOpenClose(false)); err != nil {
-		return nil, c.hsErr(err)
-	}
+	// own socket, exchanged with its own handshake). Skipped under
+	// NoCIVData (receive-only: no LAN CI-V at all).
+	if !opts.NoCIVData {
+		if c.civ, err = c.dialStream("civ", opts.CIVPort, opts.BindCIV); err != nil {
+			return nil, err
+		}
+		c.civ.startReader()
+		if err = c.civ.start(ctx); err != nil {
+			return nil, c.hsErr(err)
+		}
+		c.startKeepalives(c.civ)
+		if err = c.sendTracked(c.civ, c.buildOpenClose(false)); err != nil {
+			return nil, c.hsErr(err)
+		}
 
-	// Ordered CI-V delivery + the session/stream watchdogs.
-	c.civ.rx = newRxSeqBuf(opts.RxBuffer, readQueueLen, c.civ.requestRetransmit)
-	go c.civPump()
+		// Ordered CI-V delivery + the session/stream watchdogs.
+		c.civ.rx = newRxSeqBuf(opts.RxBuffer, readQueueLen, c.civ.requestRetransmit)
+		go c.civPump()
+	}
 	c.startWatchdogs()
 	return c, nil
 }
@@ -611,7 +622,8 @@ func (c *Client) startWatchdogs() {
 	time.AfterFunc(c.opts.ReauthInterval, c.renewToken)
 
 	// CI-V silence: re-send the open packet after CIVSilence without a
-	// frame (the research brief's 2 s watchdog) — NOT session loss.
+	// frame (the research brief's 2 s watchdog) — NOT session loss. No CI-V
+	// data stream (NoCIVData) → nothing to keep alive here.
 	c.resetCIVSilence()
 }
 
@@ -645,6 +657,9 @@ func (c *Client) resetCIVSilence() {
 	defer c.smu.Unlock()
 	if c.isDone() {
 		return
+	}
+	if c.civ == nil {
+		return // NoCIVData session: no data stream to keep alive
 	}
 	if c.civSilent == nil {
 		c.civSilent = time.AfterFunc(c.opts.CIVSilence, func() {
@@ -707,10 +722,15 @@ func (c *Client) sendTrackedLocked(s *udpStream, p []byte) error {
 }
 
 // SendCIV writes one raw CI-V frame (`FE FE ... FD`) to the data stream as
-// a tracked packet. Callers must hold a live session.
+// a tracked packet. Callers must hold a live session. A NoCIVData session
+// has no data stream — the send fails (no LAN CI-V exists, receive-only
+// posture).
 func (c *Client) SendCIV(payload []byte) error {
 	c.wmu.Lock()
 	defer c.wmu.Unlock()
+	if c.civ == nil {
+		return errors.New("civ: no CI-V data stream (NoCIVData session)")
+	}
 	return c.civ.sendTrackedData(payload)
 }
 

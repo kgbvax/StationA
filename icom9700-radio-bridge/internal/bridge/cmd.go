@@ -3,16 +3,10 @@ package bridge
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"strconv"
-	"strings"
 	"time"
 
 	sharedmqtt "codeberg.org/kgbvax/stationa/shared/mqtt"
-
-	"icom9700-radio-bridge/internal/civ"
-	"icom9700-radio-bridge/internal/radio"
 )
 
 // The /cmd gate set, lifted from the spid-ercm mqttslot template (KTD6
@@ -28,56 +22,18 @@ const (
 	cmdErrMax         = 200
 )
 
-// Rejection strings from the settled /state.error taxonomy (plan R5).
-const (
-	errPttNotArmed   = "ptt rejected: not armed"
-	errPttNotLive    = "ptt rejected: session not live"
-	errFreqOutOfBand = "freq rejected: out of band for sub"
-	errPttOffUndeliv = "ptt-off undeliverable: session unavailable"
-)
-
-// busCmd is the /cmd payload: the stationa value-key convention with the
-// optional per-VFO targeting (no select-VFO action exists — the cmd
-// carries the target, R9).
+// busCmd is the /cmd payload: the stationa value-key convention. The five
+// surviving actions carry no value — the action name is the whole intent.
 type busCmd struct {
-	Action string          `json:"action"`
-	Value  json.RawMessage `json:"value,omitempty"`
-	Vfo    string          `json:"vfo,omitempty"`
-	Ts     string          `json:"ts,omitempty"`
-}
-
-func (b *busCmd) stringValue() (string, error) {
-	var s string
-	if err := json.Unmarshal(b.Value, &s); err == nil {
-		return s, nil
-	}
-	var n json.Number
-	if err := json.Unmarshal(b.Value, &n); err == nil {
-		return n.String(), nil
-	}
-	if b.Value == nil {
-		return "", nil
-	}
-	return "", fmt.Errorf("unsupported value form %s", string(b.Value))
-}
-
-func (b *busCmd) boolValue() (bool, error) {
-	s, err := b.stringValue()
-	if err != nil {
-		return false, err
-	}
-	switch strings.ToLower(s) {
-	case "on", "true", "1":
-		return true, nil
-	case "off", "false", "0":
-		return false, nil
-	}
-	return false, fmt.Errorf("unsupported bool value %q", s)
+	Action string `json:"action"`
+	Ts     string `json:"ts,omitempty"`
 }
 
 // onCmd is the /cmd handler: gates inline (cheap), dispatch on the jobs
 // worker. One-shot posture: the retained topic is cleared after the worker
-// has acted on it, whatever the outcome.
+// has acted on it, whatever the outcome. The action set is the complete
+// receive-only surface (2026-09 pivot): audio_on, audio_off, power_on,
+// monitor_on, monitor_off. There is no LAN CI-V command path.
 func (b *Bridge) onCmd(payload []byte) {
 	if len(payload) == 0 {
 		// Our own retained-clear echo — never re-clear (echo guard).
@@ -109,68 +65,32 @@ func (b *Bridge) onCmd(payload []byte) {
 	}
 
 	switch cmd.Action {
-	case "arm":
+	case "audio_on":
 		b.log.Info("rx cmd", "action", cmd.Action)
-		sharedmqtt.Enqueue(b.jobs, func() { b.executeArm(true) })
-	case "disarm":
+		sharedmqtt.Enqueue(b.jobs, func() { b.executeAudioDemand(true) })
+	case "audio_off":
 		b.log.Info("rx cmd", "action", cmd.Action)
-		sharedmqtt.Enqueue(b.jobs, func() { b.executeArm(false) })
-	case "ptt":
-		on, err := cmd.boolValue()
-		if err != nil {
-			b.rejectAsync(fmt.Sprintf("invalid ptt value: %v", err))
-			return
-		}
-		b.log.Info("rx cmd", "action", cmd.Action, "value", on)
-		sharedmqtt.Enqueue(b.jobs, func() { b.executePtt(on) })
-	case "sat_mode":
-		on, err := cmd.boolValue()
-		if err != nil {
-			b.rejectAsync(fmt.Sprintf("invalid sat_mode value: %v", err))
-			return
-		}
-		sharedmqtt.Enqueue(b.jobs, func() { b.executeSatMode(on) })
+		sharedmqtt.Enqueue(b.jobs, func() { b.executeAudioDemand(false) })
+	case "monitor_on":
+		b.log.Info("rx cmd", "action", cmd.Action)
+		sharedmqtt.Enqueue(b.jobs, func() { b.executeMonitor(true) })
+	case "monitor_off":
+		b.log.Info("rx cmd", "action", cmd.Action)
+		sharedmqtt.Enqueue(b.jobs, func() { b.executeMonitor(false) })
 	case "power_on":
-		// A remote wake must never cut a keyed carrier: refused outright
-		// while the last-known TX state is on (the safety core owns tx).
-		b.mu.Lock()
-		tx := b.radio.tx == "tx"
-		b.mu.Unlock()
-		if tx {
-			b.rejectAsync("power_on rejected: transmitter is keyed")
-			return
-		}
-		sharedmqtt.Enqueue(b.jobs, func() { b.executeViaManager(cmd.Action, "", "") })
+		b.log.Info("rx cmd", "action", cmd.Action)
+		sharedmqtt.Enqueue(b.jobs, func() { b.executePowerOn() })
 	default:
-		// set_freq / set_mode / set_data / set_power (+ unknown actions,
-		// which the manager's dispatch rejects with a warning+drop).
-		sharedmqtt.Enqueue(b.jobs, func() { b.executeViaManager(cmd.Action, string(cmd.Value), cmd.Vfo) })
+		b.rejectAsync(fmt.Sprintf("unknown cmd action %q", cmd.Action))
 	}
 }
 
-func onString(on bool) string {
-	if on {
-		return "on"
-	}
-	return "off"
-}
-
-// executeViaManager runs the manager's settled dispatch for the non-safety
-// actions and clears the cmd either way (execute-or-reject).
-func (b *Bridge) executeViaManager(action, rawValue, vfo string) {
-	// The value rides as raw JSON when it already is (the console sends
-	// JSON strings/numbers); bare words ("on") get quoted into strings.
-	value := rawValue
-	if value != "" && !json.Valid([]byte(value)) {
-		value = strconv.Quote(value)
-	}
-	payload := fmt.Sprintf(`{"action":%q,"value":%s,"vfo":%q}`, action, value, vfo)
-	if rawValue == "" {
-		payload = fmt.Sprintf(`{"action":%q,"vfo":%q}`, action, vfo)
-	}
+// executeAudioDemand applies the audio_on/audio_off demand (the session's
+// only hold source — receive-only, no arm gate exists anymore).
+func (b *Bridge) executeAudioDemand(on bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	err := b.mgr.Execute(ctx, []byte(payload))
+	err := b.mgr.SetAudioDemand(ctx, on)
 	if err != nil {
 		b.setCmdErr(err.Error())
 	} else {
@@ -180,116 +100,38 @@ func (b *Bridge) executeViaManager(action, rawValue, vfo string) {
 	b.clearCmd()
 }
 
-// executeSatMode applies the settled gate (R10): satellite mode is
-// rejected while tx is on or the armed permit is set — a satellite-mode
-// switch mid-transmission re-routes the VFOs under a keyed carrier.
-func (b *Bridge) executeSatMode(on bool) {
-	b.mu.Lock()
-	txOn := b.radio.tx == "tx"
-	armed := b.armed
-	b.mu.Unlock()
-	if on && (txOn || armed) {
-		b.reject("sat_mode rejected: tx is on or armed")
+// executeMonitor toggles the serial CI-V telemetry reader (sticky, no
+// TTL — the serial wire is dedicated to this process).
+func (b *Bridge) executeMonitor(on bool) {
+	if b.opts.Monitor == nil {
+		b.reject("monitor unavailable: serial.device not configured")
 		return
 	}
-	b.executeViaManager("sat_mode", onString(on), "")
-}
-
-// executeArm is the arm/disarm demand (KTD4: an explicit operator permit —
-// the permit itself is bridge-held and drops on session loss, R11; the U6
-// safety core wraps it with the watchdog and the loss-of-plane rules).
-func (b *Bridge) executeArm(on bool) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	err := b.mgr.SetHold(ctx, on)
-	b.mu.Lock()
-	b.armed = on && err == nil
-	b.mu.Unlock()
-	if err != nil {
+	if err := b.opts.Monitor.SetMonitor(on); err != nil {
 		b.setCmdErr(err.Error())
 	} else {
+		b.mu.Lock()
+		b.monitorOn = on
+		b.mu.Unlock()
 		b.setCmdErr("")
 	}
 	b.publishState(false)
 	b.clearCmd()
 }
 
-// executePtt applies the settled safety gate (R10) BEFORE any radio frame:
-// not armed → the exact taxonomy rejection; not live → ditto. Armed and
-// live, the PTT frame goes out, the U6 watchdog arms on key-on (and stops
-// on key-off), and the state re-reports from the radio.
-func (b *Bridge) executePtt(on bool) {
-	if on {
-		b.mu.Lock()
-		armed := b.armed
-		b.mu.Unlock()
-		if !armed {
-			b.reject(errPttNotArmed)
-			return
-		}
-		if b.mgr.Snapshot().SessionState != radio.StateLive {
-			b.reject(errPttNotLive)
-			return
-		}
+// executePowerOn sends the CI-V remote-wake frame over the serial port (a
+// blind, untracked send — a standby radio answers no ack). The wake lives
+// on serial CI-V by design: no LAN CI-V command path exists.
+func (b *Bridge) executePowerOn() {
+	if b.opts.Monitor == nil {
+		b.reject("power_on not configured (serial.device empty)")
+		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	err := b.mgr.Session().Demand(ctx, func(c *civ.Client) error {
-		// Re-check at send time (R10: the gate holds at dispatch, not just
-		// at acceptance — the permit can drop while the demand queued).
-		if on {
-			b.mu.Lock()
-			armed := b.armed
-			b.mu.Unlock()
-			if !armed {
-				return errArmedDropped
-			}
-		}
-		if _, err := b.mgr.Session().RoundTrip(ctx, c, civ.CmdPTT(on), 5*time.Second); err != nil {
-			return err
-		}
-		// Readback-only truth: confirm the keyed state from the radio
-		// before it reaches /state (never tap optimism). The read reply
-		// repeats the 00 sub byte (real firmware) — strip it.
-		if f, err := b.mgr.Session().RoundTrip(ctx, c, civ.BuildFrame(0x1C, []byte{0x00}), 5*time.Second); err == nil && len(f.Sub) >= 1 {
-			sub := f.Sub
-			if len(sub) > 1 {
-				sub = sub[1:]
-			}
-			if len(sub) == 1 {
-				tx := "rx"
-				if sub[0] == 0x01 {
-					tx = "tx"
-				}
-				b.mu.Lock()
-				b.radio.tx = tx
-				b.mu.Unlock()
-			}
-		}
-		return nil
-	})
-	if errors.Is(err, errArmedDropped) {
-		// The frame never went out — report the taxonomy rejection.
-		b.reject(errPttNotArmed)
-		return
-	}
-	if err != nil {
-		if !on {
-			// A PTT-off that could not reach the radio is the safety
-			// taxonomy's worst fact (the watchdog bounds the rest, U6).
-			b.setCmdErr(errPttOffUndeliv)
-		} else {
-			b.setCmdErr(err.Error())
-		}
-	} else if on {
-		b.armWatchdog()
-		b.setCmdErr("")
+	if err := b.opts.Monitor.Wake(ctx); err != nil {
+		b.setCmdErr(err.Error())
 	} else {
-		// Key-off confirmed: the bound is satisfied, nothing pending.
-		b.mu.Lock()
-		b.stopWatchdogLocked()
-		b.pendingOff = false
-		b.mu.Unlock()
 		b.setCmdErr("")
 	}
 	b.publishState(false)

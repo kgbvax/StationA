@@ -80,6 +80,71 @@ func (c *recClient) waitCmdErr(t *testing.T, want string) {
 	t.Fatalf("/state.error = %q, want %q", c.stateErr(t), want)
 }
 
+// fakeMonitor is the in-process Monitor stand-in: records the toggle/wake
+// calls and lets tests push telemetry snapshots.
+type fakeMonitor struct {
+	mu      sync.Mutex
+	on      bool
+	woke    int
+	st      RadioState
+	updates chan struct{}
+}
+
+func newFakeMonitor() *fakeMonitor {
+	return &fakeMonitor{updates: make(chan struct{}, 1)}
+}
+
+func (f *fakeMonitor) SetMonitor(on bool) error {
+	f.mu.Lock()
+	f.on = on
+	f.mu.Unlock()
+	f.nudge()
+	return nil
+}
+
+func (f *fakeMonitor) Wake(_ context.Context) error {
+	f.mu.Lock()
+	f.woke++
+	f.mu.Unlock()
+	return nil
+}
+
+func (f *fakeMonitor) Snapshot() RadioState {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.st
+}
+
+func (f *fakeMonitor) Updates() <-chan struct{} { return f.updates }
+
+func (f *fakeMonitor) Close() {}
+
+func (f *fakeMonitor) isOn() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.on
+}
+
+func (f *fakeMonitor) woken() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.woke
+}
+
+func (f *fakeMonitor) push(st RadioState) {
+	f.mu.Lock()
+	f.st = st
+	f.mu.Unlock()
+	f.nudge()
+}
+
+func (f *fakeMonitor) nudge() {
+	select {
+	case f.updates <- struct{}{}:
+	default:
+	}
+}
+
 // bharness: fake radio + real manager + real bridge over a recording
 // client, all timers shrunk.
 type bharness struct {
@@ -87,18 +152,20 @@ type bharness struct {
 	f   *civ.FakeRadio
 	b   *Bridge
 	cli *recClient
+	mon *fakeMonitor // nil unless newBHWithMonitor
 	ctx context.Context
 }
 
 func newBH(t *testing.T) *bharness {
-	t.Helper()
-	return newBHWithTimings(t, 0, 10*time.Second)
+	return newBHWithMonitor(t, false)
 }
 
-// newBHWithTimings shrinks the safety bounds: txWatchdog feeds the bridge's
-// max-TX bound (0 = the 180 s default), lossWatchdog the session's
-// silence-detection (so tests can force a session loss via SetSilent).
-func newBHWithTimings(t *testing.T, txWatchdog, lossWatchdog time.Duration) *bharness {
+// newBHMon wires the bridge with the fake serial monitor.
+func newBHMon(t *testing.T) *bharness {
+	return newBHWithMonitor(t, true)
+}
+
+func newBHWithMonitor(t *testing.T, withMonitor bool) *bharness {
 	t.Helper()
 	f := civ.NewFakeRadio(t)
 	mgr := radio.NewManager(radio.Config{
@@ -108,12 +175,12 @@ func newBHWithTimings(t *testing.T, txWatchdog, lossWatchdog time.Duration) *bha
 		IdleTimeout:     10 * time.Second, // long: tests drive demand explicitly
 		MaxAttempts:     2,
 		AttemptSpacing:  30 * time.Millisecond,
-		CmdWait:         time.Second,
+		HandshakeTO:     time.Second,
 		ControlPort:     f.Addr().Port,
 		CIVPort:         f.CIVPort(),
 		AreYouThere:     25 * time.Millisecond,
 		HandshakeBudget: 1500 * time.Millisecond,
-		LossWatchdog:    lossWatchdog,
+		LossWatchdog:    10 * time.Second,
 		Logger:          slog.Default(),
 	})
 
@@ -121,125 +188,162 @@ func newBHWithTimings(t *testing.T, txWatchdog, lossWatchdog time.Duration) *bha
 	t.Cleanup(cancel)
 	go func() { _ = mgr.Run(ctx) }()
 
+	var mon *fakeMonitor
+	var monIface Monitor
+	if withMonitor {
+		mon = newFakeMonitor()
+		monIface = mon
+	}
+
 	b, err := New(Options{
 		Site: "muehle", Station: "uhf", Slot: "radio",
 		Location: "bauwagen", Host: "9700.kgbvax.net",
-		DeviceModel:  "Icom IC-9700",
-		Manager:      mgr,
-		PollInterval: 100 * time.Millisecond,
-		TXWatchdog:   txWatchdog,
-		Logger:       slog.Default(),
+		DeviceModel: "Icom IC-9700",
+		Manager:     mgr,
+		Monitor:     monIface,
+		Logger:      slog.Default(),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	cli := &recClient{}
 	b.wireClient(cli)
+	if monIface != nil {
+		// Run() starts followMonitor — the on-change path the telemetry
+		// tests exercise (wireClient alone leaves the updates undrained).
+		go b.Run()
+	}
 	t.Cleanup(b.Close)
-	return &bharness{t: t, f: f, b: b, cli: cli, ctx: ctx}
+	return &bharness{t: t, f: f, b: b, cli: cli, mon: mon, ctx: ctx}
 }
 
-// armAndLive arms through the real cmd path and waits for the session.
-func (h *bharness) armAndLive() {
+// captureLive drives audio_on through the real cmd path and waits for the
+// capture session to go live.
+func (h *bharness) captureLive() {
 	h.t.Helper()
-	h.cli.sendCmd([]byte(`{"action":"arm"}`))
+	h.cli.sendCmd([]byte(`{"action":"audio_on"}`))
 	deadline := time.Now().Add(4 * time.Second)
 	for time.Now().Before(deadline) {
 		m := h.cli.lastState(h.t)
-		if armed, _ := m["armed"].(bool); armed {
+		if dem, _ := m["audio_demand"].(bool); dem {
 			if ss, _ := m["session_state"].(string); ss == radio.StateLive {
 				return
 			}
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	h.t.Fatal("armed+live not reached")
+	h.t.Fatal("audio_demand+live not reached")
 }
 
-// pollNow runs one poll tick synchronously.
-func (h *bharness) pollNow() { h.b.poll() }
-
-// PTT while unarmed: the exact taxonomy rejection, and the radio frame is
-// NEVER sent (plan U5 scenario).
-func TestPttUnarmedRejected(t *testing.T) {
+// audio_on connects the capture session; /state carries audio_demand and
+// the live capture state (the session's only hold source).
+func TestAudioOnOffDispatch(t *testing.T) {
 	h := newBH(t)
-	h.cli.sendCmd([]byte(`{"action":"ptt","value":"on"}`))
-	h.cli.waitCmdErr(t, errPttNotArmed)
-	if h.f.PTT() {
-		t.Error("PTT frame reached the radio while unarmed")
-	}
-	// One-shot: the cmd was cleared after the rejection.
+	h.captureLive()
+
+	h.cli.sendCmd([]byte(`{"action":"audio_off"}`))
+	waitTrue(t, "audio_demand cleared in /state", 3*time.Second, func() bool {
+		m := h.cli.lastState(t)
+		dem, _ := m["audio_demand"].(bool)
+		return !dem
+	})
+	// One-shot: the cmd was cleared after execution.
 	waitCmdCleared(t, h.cli)
 }
 
-// PTT while armed+live keys the radio; PTT off clears (plan U5 scenarios).
-func TestPttArmedLive(t *testing.T) {
+// monitor_on without a configured serial device is rejected with the
+// observed fact (not a guess), and the cmd still clears.
+func TestMonitorRejectionWithoutSerial(t *testing.T) {
 	h := newBH(t)
-	h.armAndLive()
-
-	h.cli.sendCmd([]byte(`{"action":"ptt","value":"on"}`))
-	waitTrue(t, "fake PTT keyed", 3*time.Second, func() bool { return h.f.PTT() })
-	waitCmdErr(t, h.cli, "")
-	waitTrue(t, "tx:tx in /state", 3*time.Second, func() bool {
-		m := h.cli.lastState(t)
-		tx, _ := m["tx"].(string)
-		return tx == "tx"
-	})
-
-	h.cli.sendCmd([]byte(`{"action":"ptt","value":"off"}`))
-	waitTrue(t, "fake PTT released", 3*time.Second, func() bool { return !h.f.PTT() })
-	waitTrue(t, "tx:rx back in /state", 3*time.Second, func() bool {
-		m := h.cli.lastState(t)
-		tx, _ := m["tx"].(string)
-		return tx == "rx"
-	})
+	h.cli.sendCmd([]byte(`{"action":"monitor_on"}`))
+	h.cli.waitCmdErr(t, "monitor unavailable: serial.device not configured")
+	waitCmdCleared(t, h.cli)
 }
 
-// sat_mode while tx is on → rejected (R10 gate).
-func TestSatModeRejectedWhileTx(t *testing.T) {
+// power_on without a configured serial device is rejected likewise.
+func TestPowerOnRejectionWithoutSerial(t *testing.T) {
 	h := newBH(t)
-	h.armAndLive()
+	h.cli.sendCmd([]byte(`{"action":"power_on"}`))
+	h.cli.waitCmdErr(t, "power_on not configured (serial.device empty)")
+	waitCmdCleared(t, h.cli)
+}
 
-	h.cli.sendCmd([]byte(`{"action":"ptt","value":"on"}`))
-	waitTrue(t, "fake PTT keyed", 3*time.Second, func() bool { return h.f.PTT() })
+// monitor_on/off toggle the monitor and the /state monitor flag; pushed
+// telemetry flows into /state (on change).
+func TestMonitorToggleAndTelemetry(t *testing.T) {
+	h := newBHMon(t)
 
-	h.cli.sendCmd([]byte(`{"action":"sat_mode","value":"on"}`))
-	waitCmdErr(t, h.cli, "sat_mode rejected: tx is on or armed")
-	if h.f.SelectedVFO() == "" {
-		t.Error("sanity")
+	h.cli.sendCmd([]byte(`{"action":"monitor_on"}`))
+	waitTrue(t, "monitor flag in /state", 3*time.Second, func() bool {
+		m := h.cli.lastState(t)
+		on, _ := m["monitor"].(bool)
+		return on
+	})
+	if !h.mon.isOn() {
+		t.Error("monitor.SetMonitor(true) never reached the monitor")
+	}
+
+	// Telemetry lands in /state (responding radio).
+	h.mon.push(RadioState{
+		Responding: true,
+		FreqHz:     432650000,
+		Band:       "70cm",
+		Mode:       "fm",
+		SMeter:     intPtr(120),
+	})
+	waitTrue(t, "telemetry in /state", 3*time.Second, func() bool {
+		m := h.cli.lastState(t)
+		fh, _ := m["freq_hz"].(float64)
+		return fh == 432650000
+	})
+	m := h.cli.lastState(t)
+	if v, _ := m["s_meter"].(float64); v != 120 {
+		t.Errorf("s_meter = %v", m["s_meter"])
+	}
+	if m["radio_responding"] != true {
+		t.Errorf("radio_responding = %v", m["radio_responding"])
+	}
+
+	// Deaf radio: measured fields omitted (never zeroed, never frozen),
+	// radio_responding flips false.
+	h.mon.push(RadioState{Responding: false})
+	waitTrue(t, "deaf gate hides telemetry", 3*time.Second, func() bool {
+		m := h.cli.lastState(t)
+		if rr, ok := m["radio_responding"].(bool); ok && !rr {
+			if _, has := m["freq_hz"]; has {
+				t.Logf("freq_hz still present while deaf")
+				return false
+			}
+			return true
+		}
+		return false
+	})
+
+	// monitor_off drops the telemetry immediately.
+	h.cli.sendCmd([]byte(`{"action":"monitor_off"}`))
+	waitTrue(t, "monitor flag cleared", 3*time.Second, func() bool {
+		m := h.cli.lastState(t)
+		on, _ := m["monitor"].(bool)
+		return !on
+	})
+	if _, has := h.cli.lastState(t)["freq_hz"]; has {
+		t.Error("telemetry present while the monitor is off")
 	}
 }
 
-// set_freq on SUB above the SUB band windows → the band rejection.
-func TestSetFreqSub23cmRejected(t *testing.T) {
-	h := newBH(t)
-	h.armAndLive()
-
-	h.cli.sendCmd([]byte(`{"action":"set_freq","value":"1296100000","vfo":"sub"}`))
+// power_on with a configured monitor wakes it exactly once, cleanly.
+func TestPowerOnDispatch(t *testing.T) {
+	h := newBHMon(t)
+	h.cli.sendCmd([]byte(`{"action":"power_on"}`))
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
-		if e := h.cli.stateErr(t); strings.Contains(e, "out of band for sub") {
+		if h.mon.woken() >= 1 {
+			waitCmdErr(t, h.cli, "")
 			return
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	t.Fatalf("/state.error = %q, want the sub-band rejection", h.cli.stateErr(t))
-}
-
-// DV mode set → rejected as unsupported (R7).
-func TestSetModeDVRejected(t *testing.T) {
-	h := newBH(t)
-	h.armAndLive()
-
-	h.cli.sendCmd([]byte(`{"action":"set_mode","value":"dv","vfo":"sub"}`))
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		if e := h.cli.stateErr(t); strings.Contains(e, "unsupported mode") {
-			return
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	t.Fatalf("/state.error = %q, want the unsupported-mode rejection", h.cli.stateErr(t))
+	t.Fatal("power_on never reached the monitor")
 }
 
 // An oversized payload gets the FIXED rejection (no attacker bytes in the
@@ -267,7 +371,7 @@ func TestOversizedCmdFixedRejection(t *testing.T) {
 func TestStaleCmdDropped(t *testing.T) {
 	h := newBH(t)
 	old := time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)
-	h.cli.sendCmd([]byte(`{"action":"set_freq","value":"432100000","vfo":"main","ts":"` + old + `"}`))
+	h.cli.sendCmd([]byte(`{"action":"audio_on","ts":"` + old + `"}`))
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
 		if e := h.cli.stateErr(t); strings.Contains(e, "stale cmd") {
@@ -278,118 +382,41 @@ func TestStaleCmdDropped(t *testing.T) {
 	t.Fatalf("/state.error = %q, want the stale-cmd rejection", h.cli.stateErr(t))
 }
 
-// An unknown action is rejected (warn + drop semantics), not dispatched.
-func TestUnknownActionRejected(t *testing.T) {
+// An unknown action is rejected (warn + drop semantics), not dispatched —
+// and control actions are unknown now: the whole LAN command path is gone.
+func TestControlActionsRejected(t *testing.T) {
 	h := newBH(t)
-	h.cli.sendCmd([]byte(`{"action":"self_destruct"}`))
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		if e := h.cli.stateErr(t); strings.Contains(e, "unknown cmd action") {
-			return
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	t.Fatalf("/state.error = %q, want the unknown-action rejection", h.cli.stateErr(t))
-}
-
-// set_freq main updates the /state top-level freq (via the poll, since the
-// fake emits no transceives — plan U5's "via transceive or poll").
-func TestSetFreqReflectsInState(t *testing.T) {
-	h := newBH(t)
-	h.armAndLive()
-
-	h.cli.sendCmd([]byte(`{"action":"set_freq","value":"432650000","vfo":"main"}`))
-	deadline := time.Now().Add(4 * time.Second)
-	for time.Now().Before(deadline) {
-		h.pollNow()
-		h.b.publishState(false)
-		m := h.cli.lastState(t)
-		mainIface, ok := m["main"].(map[string]any)
-		if ok {
-			if fh, _ := mainIface["freq_hz"].(float64); fh == 432650000 {
-				return
-			}
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	t.Fatal("set_freq never reflected in /state.main.freq_hz")
-}
-
-// Satellite-mode state assembly: with satellite on, the top-level fields
-// mirror SUB (the uplink) even with MAIN selected (plan U5 scenario).
-func TestSatelliteMirrorsSub(t *testing.T) {
-	h := newBH(t)
-	h.armAndLive()
-
-	h.cli.sendCmd([]byte(`{"action":"set_freq","value":"432650000","vfo":"main"}`))
-	// Let the cmd land, then switch satellite mode on (radio idle → the
-	// R10 gate passes).
-	deadline := time.Now().Add(4 * time.Second)
-	for time.Now().Before(deadline) {
-		h.pollNow()
-		m := h.cli.lastState(t)
-		if mainIface, ok := m["main"].(map[string]any); ok {
-			if fh, _ := mainIface["freq_hz"].(float64); fh == 432650000 {
+	for _, action := range []string{"ptt", "arm", "disarm", "set_freq", "set_mode", "sat_mode", "set_power"} {
+		h.cli.sendCmd([]byte(`{"action":"` + action + `"}`))
+		deadline := time.Now().Add(3 * time.Second)
+		ok := false
+		for time.Now().Before(deadline) {
+			if e := h.cli.stateErr(t); strings.Contains(e, "unknown cmd action") {
+				ok = true
 				break
 			}
+			time.Sleep(5 * time.Millisecond)
 		}
-		time.Sleep(10 * time.Millisecond)
+		if !ok {
+			t.Fatalf("/state.error = %q, want the unknown-action rejection for %q", h.cli.stateErr(t), action)
+		}
 	}
-	// R10: sat_mode is rejected while armed or keyed — disarm first (the
-	// radio stays live via the demand that follows).
-	h.cli.sendCmd([]byte(`{"action":"disarm"}`))
-	waitTrue(t, "disarmed", 3*time.Second, func() bool {
-		m := h.cli.lastState(t)
-		armed, _ := m["armed"].(bool)
-		return !armed
-	})
-
-	h.cli.sendCmd([]byte(`{"action":"sat_mode","value":"on"}`))
-	waitTrue(t, "satellite mode in /state", 4*time.Second, func() bool {
-		h.pollNow()
-		h.b.publishState(false)
-		m := h.cli.lastState(t)
-		sat, _ := m["satellite"].(bool)
-		if !sat {
-			t.Logf("poll state: sat=%v err=%v sel=%v", m["satellite"], m["error"], m["selected_vfo"])
-		}
-		return sat
-	})
-	// Select MAIN explicitly; the top level must STILL mirror SUB.
-	h.cli.sendCmd([]byte(`{"action":"set_freq","value":"144120000","vfo":"main"}`))
-	time.Sleep(300 * time.Millisecond)
-	for i := 0; i < 10; i++ {
-		h.pollNow()
-		h.b.publishState(false)
-		m := h.cli.lastState(t)
-		fh, _ := m["freq_hz"].(float64)
-		if fh == 145800000 { // SUB's frequency, not MAIN's 144.12 MHz
-			return
-		}
-		time.Sleep(50 * time.Millisecond)
+	if h.f.PTT() {
+		t.Error("a PTT frame reached the radio through some path")
 	}
-	t.Fatalf("top-level freq_hz = %v, want the SUB uplink (145800000)", func() any {
-		m := h.cli.lastState(t)
-		return m["freq_hz"]
-	}())
 }
 
-// Meters appear while live and dedup-suppress while unchanged (KTD-8).
-func TestMetersPollAndDedup(t *testing.T) {
-	h := newBH(t)
-	h.armAndLive()
-	h.f.SetSMeter(120)
-
-	h.pollNow()
-	h.cli.sendCmd([]byte(`{"action":"arm"}`)) // no-op republish trigger
-	waitTrue(t, "s_meter published", 2*time.Second, func() bool {
+// Unchanged snapshots do not republish; a changed one does (the dedup the
+// on-change cadence relies on).
+func TestStateDedupe(t *testing.T) {
+	h := newBHMon(t)
+	h.cli.sendCmd([]byte(`{"action":"monitor_on"}`))
+	waitTrue(t, "monitor flag in /state", 3*time.Second, func() bool {
 		m := h.cli.lastState(t)
-		v, _ := m["s_meter"].(float64)
-		return v == 120
+		on, _ := m["monitor"].(bool)
+		return on
 	})
 
-	// Unchanged state: publishState dedups — count /state publishes over a
-	// few forced calls.
 	h.cli.mu.Lock()
 	before := len(h.cli.pubs)
 	h.cli.mu.Unlock()
@@ -402,20 +429,18 @@ func TestMetersPollAndDedup(t *testing.T) {
 		t.Errorf("unchanged snapshot republished (%d -> %d publishes)", before, after)
 	}
 
-	// A meter change republishes.
-	h.f.SetSMeter(200)
-	h.pollNow()
-	h.b.publishState(false)
-	waitTrue(t, "new s_meter published", time.Second, func() bool {
+	// A telemetry change republishes.
+	h.mon.push(RadioState{Responding: true, FreqHz: 144500000, Band: "2m", Mode: "usb"})
+	waitTrue(t, "changed snapshot republished", 3*time.Second, func() bool {
 		m := h.cli.lastState(t)
-		v, _ := m["s_meter"].(float64)
-		return v == 200
+		fh, _ := m["freq_hz"].(float64)
+		return fh == 144500000
 	})
 }
 
 // Retained /meta never regresses: the birth certificate carries the
-// capabilities and the READ-ONLY expose (no actions), published at the
-// connect ritual before any radio identity (plan U5 scenario).
+// capabilities and the READ-ONLY, control-free expose (no tx, no armed, no
+// actions), published at the connect ritual.
 func TestMetaReadOnlyExpose(t *testing.T) {
 	h := newBH(t)
 	h.cli.mu.Lock()
@@ -436,16 +461,26 @@ func TestMetaReadOnlyExpose(t *testing.T) {
 		t.Errorf("role = %v", meta["role"])
 	}
 	caps := meta["capabilities"].(map[string]any)
-	if caps["bias_t"] != true || caps["satellite"] != true {
-		t.Errorf("capabilities = %v", caps)
+	if _, has := caps["vfos"]; has {
+		t.Error("capabilities still advertise vfos — dual-VFO control is gone")
 	}
 	expose := meta["expose"].(map[string]any)
 	if _, hasActions := expose["actions"]; hasActions {
-		t.Error("expose carries actions — the v1 posture is read-only")
+		t.Error("expose carries actions — the posture is read-only")
+	}
+	fields := expose["fields"].([]any) //nolint:forcetypeassert
+	for _, fi := range fields {
+		f := fi.(map[string]any) //nolint:forcetypeassert
+		key := f["key"].(string) //nolint:forcetypeassert
+		if key == "tx" || key == "armed" {
+			t.Errorf("expose carries control field %q — the pivot removed it", key)
+		}
 	}
 }
 
-// --- helpers shared with bridge_test.go -------------------------------------
+// --- helpers shared across bridge tests --------------------------------------
+
+func intPtr(v int) *int { return &v }
 
 func waitCmdCleared(t *testing.T, cli *recClient) {
 	t.Helper()
