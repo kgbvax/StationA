@@ -9,6 +9,7 @@ package main
 
 import (
 	"context"
+	_ "embed"
 	"errors"
 	"flag"
 	"fmt"
@@ -16,6 +17,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -28,6 +30,38 @@ import (
 )
 
 const componentName = "vhfcam-restream"
+
+// The station dragon is embedded and dropped into the runtime dir at startup
+// so the overlay filter can use it as the logo (config overlay.logo points
+// there by default).
+//
+//go:embed dragon.png
+var dragonPNG []byte
+
+// installLogo materializes the embedded dragon at the configured logo path
+// and clears the logo when that fails — a filter referencing a missing file
+// would kill every ffmpeg run. Custom (non-default) paths are user-provided:
+// they are kept as-is, but a missing file there also clears the logo.
+func installLogo(c *config.Config, log *slog.Logger) {
+	if c.Overlay.Logo == "" {
+		return
+	}
+	if filepath.Base(c.Overlay.Logo) == "dragon.png" {
+		if err := os.MkdirAll(filepath.Dir(c.Overlay.Logo), 0755); err == nil {
+			err = os.WriteFile(c.Overlay.Logo, dragonPNG, 0644)
+			if err == nil {
+				return
+			}
+		}
+		log.Warn("cannot materialize embedded dragon logo — disabling logo", "path", c.Overlay.Logo)
+		c.Overlay.Logo = ""
+		return
+	}
+	if _, err := os.Stat(c.Overlay.Logo); err != nil {
+		log.Warn("logo file missing — disabling logo", "path", c.Overlay.Logo)
+		c.Overlay.Logo = ""
+	}
+}
 
 func main() {
 	def := config.Default()
@@ -52,6 +86,7 @@ func main() {
 		os.Exit(1)
 	}
 	logger = newLogger(cfg.LogLevel)
+	installLogo(&cfg, logger)
 
 	// Shared, reloadable config view: the supervisor and the overlay both read
 	// the freshest config from here (SIGHUP reload stores into it).
@@ -111,6 +146,7 @@ func main() {
 			return nc, err
 		}
 		nc.ApplyEnv()
+		installLogo(&nc, logger)
 		curCfg.Store(&nc)
 		// The HLS muxer does not create directories; the preview sink needs
 		// its output dir to exist before ffmpeg starts.

@@ -25,7 +25,7 @@ func TestBuildArgs(t *testing.T) {
 
 	for _, want := range []string{
 		"-rtsp_transport tcp",
-		"-map 0:v:0",
+		"-map 0:v",
 		"-map 0:a:0", // first audio track, whatever codec (some SDP sessions expose Opus only)
 		"-c:v copy",
 		"-c:a aac", // RTMP/FLV carries AAC only; transcode Opus/AAC -> AAC
@@ -47,6 +47,7 @@ func TestBuildArgs(t *testing.T) {
 func TestBuildArgsWithOverlay(t *testing.T) {
 	cfg := testCfg()
 	cfg.Overlay.Enabled = true
+	cfg.Overlay.Logo = "" // bar-only: simple -vf path
 	src, _ := cfg.EffectiveSource()
 	args := BuildArgs(cfg, src)
 	joined := strings.Join(args, " ")
@@ -69,6 +70,26 @@ func TestBuildArgsWithOverlay(t *testing.T) {
 	}
 }
 
+func TestBuildArgsWithLogo(t *testing.T) {
+	cfg := testCfg()
+	cfg.Overlay.Enabled = true // Logo = default dragon path
+	src, _ := cfg.EffectiveSource()
+	args := BuildArgs(cfg, src)
+	joined := strings.Join(args, " ")
+
+	for _, want := range []string{
+		"-i /run/vhfcam-restream/dragon.png",
+		"-filter_complex [0:v]drawbox=",
+		"[bar];[1:v]scale=-1:140[dl];[bar][dl]overlay=x=12:y=12[vout]",
+		"-map [vout]",
+		"-c:v libx264",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("logo args missing %q:\n%s", want, joined)
+		}
+	}
+}
+
 func TestBuildPreviewArgs(t *testing.T) {
 	cfg := testCfg()
 	cfg.Preview.Enabled = true
@@ -78,7 +99,7 @@ func TestBuildPreviewArgs(t *testing.T) {
 
 	for _, want := range []string{
 		"-rtsp_transport tcp",
-		"-map 0:v:0",
+		"-map 0:v",
 		"-map 0:a:0",
 		"-c:v copy", // overlay off in the default test config: copy, no transcode
 		"-c:a aac",
@@ -100,7 +121,7 @@ func TestBuildPreviewArgs(t *testing.T) {
 	// With the overlay on, the preview transcodes too (burn-in required).
 	cfg.Overlay.Enabled = true
 	joined = strings.Join(BuildPreviewArgs(cfg, src), " ")
-	if !strings.Contains(joined, "-c:v libx264") || !strings.Contains(joined, "-vf drawbox=") {
+	if !strings.Contains(joined, "-c:v libx264") || !strings.Contains(joined, "drawbox=") {
 		t.Errorf("overlay-enabled preview args missing transcode+filter:\n%s", joined)
 	}
 }
