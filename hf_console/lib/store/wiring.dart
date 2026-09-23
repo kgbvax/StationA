@@ -176,26 +176,22 @@ String setPolPayload(String pol) => cmdPayload('set_pol', pol);
 
 // --- UHF radio (muehle/uhf/radio, icom9700-radio-bridge) ----------------------
 //
-// R9/R14 contract (icom9700-radio-bridge/docs/mqtt-api.md): per-VFO actions
-// carry `vfo`:"main"|"sub" and take the argument under `value` — the station
-// value-key convention. The bridge's cmd struct decodes `value` as a JSON
-// **string** (strconv/on-off parsed Go-side), so these builders stringify;
-// a JSON number fails to unmarshal and lands in /state.error. All are
-// published with cmdRetain['muehle/uhf/radio']! = false (one-shot — see the
-// cmdRetain comment above; the arm permit must never re-apply after a
-// bridge restart — fail-disarmed, R11).
+// Receive-only posture (2026-09): the action set is exactly audio_on,
+// audio_off, power_on, monitor_on, monitor_off — no value arguments, the
+// action name is the whole intent. All are published with
+// cmdRetain['muehle/uhf/radio']! = false (one-shot; a stale queued demand
+// must never re-fire after a bridge restart). There is no PTT/arm/tuning
+// path anymore — remote TX control was removed with the pivot.
 
-String uhfRadioSetFreqPayload(int freqHz, String vfo) =>
-    jsonEncode({'action': 'set_freq', 'value': '$freqHz', 'vfo': vfo});
+String uhfRadioAudioOnPayload() => jsonEncode({'action': 'audio_on'});
 
-String uhfRadioSetModePayload(String mode, String vfo) =>
-    jsonEncode({'action': 'set_mode', 'value': mode, 'vfo': vfo});
+String uhfRadioAudioOffPayload() => jsonEncode({'action': 'audio_off'});
 
-String uhfRadioArmPayload() => jsonEncode({'action': 'arm'});
+String uhfRadioPowerOnPayload() => jsonEncode({'action': 'power_on'});
 
-String uhfRadioDisarmPayload() => jsonEncode({'action': 'disarm'});
+String uhfRadioMonitorOnPayload() => jsonEncode({'action': 'monitor_on'});
 
-String uhfRadioPttPayload(String onOff) => cmdPayload('ptt', onOff);
+String uhfRadioMonitorOffPayload() => jsonEncode({'action': 'monitor_off'});
 
 // --- Ultrabeam controller ----------------------------------------------------
 

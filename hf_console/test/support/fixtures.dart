@@ -190,32 +190,28 @@ extension BusStoreFixtures on BusStore {
     applyState(address, state);
   }
 
-  /// Populate the uhf/radio slot (icom9700-radio-bridge, Icom IC-9700) with
-  /// the wire shape icom9700-radio-bridge/docs/mqtt-api.md publishes: always
-  /// {ts, selected_vfo, session_state, device_online, armed} (+ error when a
-  /// fact is held); when live, additionally the top-level active-TX mirror
-  /// {freq_hz, band, mode, tx (string enum)}, the main/sub VFO detail
-  /// objects, satellite and the raw 0-255 meters. `device_online` is CI-V
-  /// session liveness: healthy idle reads false (R16) — the default derives
-  /// it from the session state. Radio-measured fields are OMITTED (never
-  /// zeroed) when not live, exactly like the bridge.
+  /// Populate the uhf/radio slot (icom9700-radio-bridge, Icom IC-9700,
+  /// receive-only since 2026-09) with the wire shape
+  /// icom9700-radio-bridge/docs/mqtt-api.md publishes: always {ts,
+  /// session_state (CAPTURE state), audio_demand, monitor, device_online}
+  /// (+ error when a fact is held); monitor-gated telemetry
+  /// {radio_responding, freq_hz, band, mode, satellite, meters} present
+  /// only while the monitor is on AND the radio responds. `device_online`
+  /// is capture liveness: healthy idle reads false (R16) — the default
+  /// derives it from the session state. Omitted ≠ zeroed.
   void setUhfRadio({
-    String sessionState = 'live',
+    String sessionState = 'idle',
     bool? deviceOnline,
-    bool armed = false,
-    String tx = 'rx',
-    String selectedVfo = 'main',
+    bool audioDemand = false,
+    bool monitor = false,
+    bool responding = false,
+    int? freqHz,
+    String band = '70cm',
+    String mode = 'fm',
     bool satellite = false,
-    int mainFreqHz = 432100000,
-    String mainBand = '70cm',
-    String mainMode = 'fm',
-    int subFreqHz = 145200000,
-    String subBand = '2m',
-    String subMode = 'fm',
-    int sMeter = 34,
-    int txPower = 100,
-    int swr = 12,
-    int alc = 0,
+    int? sMeter,
+    int? swr,
+    int? alc,
     String error = '',
     String ts = '2026-09-15T12:34:56Z',
   }) {
@@ -229,45 +225,29 @@ extension BusStoreFixtures on BusStore {
       'capabilities': {
         'bands': ['2m', '70cm', '23cm'],
         'modes': ['cw', 'usb', 'lsb', 'am', 'fm', 'data'],
-        'satellite': true,
-        'vfos': ['main', 'sub'],
       },
     });
     final deviceOnlineValue = deviceOnline ?? (sessionState == 'live');
     final state = <String, dynamic>{
       'ts': ts,
-      'selected_vfo': selectedVfo,
       'session_state': sessionState,
+      'audio_demand': audioDemand,
+      'monitor': monitor,
       'device_online': deviceOnlineValue,
-      'armed': armed,
     };
-    if (sessionState == 'live') {
-      // The top-level fields mirror the TX VFO: selected EXCEPT satellite
-      // mode forces SUB (the uplink) — matching the bridge's state assembly.
-      final txVfo = satellite ? 'sub' : selectedVfo;
-      final mainActive = txVfo == 'main';
-      state['freq_hz'] = mainActive ? mainFreqHz : subFreqHz;
-      state['band'] = mainActive ? mainBand : subBand;
-      state['mode'] = mainActive ? mainMode : subMode;
-      state['tx'] = tx;
-      state['main'] = {
-        'band': mainBand,
-        'freq_hz': mainFreqHz,
-        'mode': mainMode,
-        'data_mode': false,
-        'preamp': 0,
-        'attenuator': false,
-      };
-      state['sub'] = {
-        'band': subBand,
-        'freq_hz': subFreqHz,
-        'mode': subMode,
-      };
-      state['satellite'] = satellite;
-      state['s_meter'] = sMeter;
-      state['tx_power'] = txPower;
-      state['swr'] = swr;
-      state['alc'] = alc;
+    if (monitor) {
+      state['radio_responding'] = responding;
+      if (responding) {
+        if (freqHz != null) {
+          state['freq_hz'] = freqHz;
+          state['band'] = band;
+        }
+        if (mode.isNotEmpty) state['mode'] = mode;
+        state['satellite'] = satellite;
+        if (sMeter != null) state['s_meter'] = sMeter;
+        if (swr != null) state['swr'] = swr;
+        if (alc != null) state['alc'] = alc;
+      }
     }
     if (error.isNotEmpty) state['error'] = error;
     applyState(address, state);
