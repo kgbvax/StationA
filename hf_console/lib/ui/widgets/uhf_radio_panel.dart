@@ -28,11 +28,14 @@ import 'status_tag.dart';
 ///   the bridge's connect trigger (R1); gating the toggle on live, or on
 ///   device_online, would make the loop unreachable from the panel. PTT and
 ///   tuning gate on armed ∧ session_state=live (R10).
-/// - Arm and PTT are pending-confirm toggles: the tap records the /state.ts
-///   it was keyed against and clears on the first /state with a different
-///   ts (the armed/tx flip or /state.error renders from that readback). A
-///   5 s local timeout reverts to a "no bus confirmation" ERR tag. The
-///   readout comes from /state readback only — never tap optimism (KTD15).
+/// - Arm is a pending-confirm toggle; PTT is hold-to-talk — keying
+///   publishes on pointer-down and unkeys on pointer-up/cancel (and at
+///   dispose, as a belt-and-suspenders against tab switches mid-hold).
+///   Each flip records the /state.ts it was keyed against and clears on
+///   the first /state with a different ts (the tx flip or /state.error
+///   renders from that readback). A 5 s local timeout reverts to a "no
+///   bus confirmation" ERR tag. The readout comes from /state readback
+///   only — never tap optimism (KTD15).
 ///
 /// Publishes one-shot cmds (cmdRetain['muehle/uhf/radio'] = false) with the
 /// per-VFO value-key payload builders from wiring.dart. sat_mode,
@@ -74,10 +77,16 @@ class _UhfRadioPanelState extends State<UhfRadioPanel> {
   };
 
   BusStore? _store;
+  MqttService? _mqtt;
   Timer? _confirmTimer;
 
   _Pending? _armPending;
   _Pending? _pttPending;
+
+  /// True between pointer-down and pointer-up on the PTT button — the
+  /// momentary half of hold-to-talk. Drives the pressed chrome and the
+  /// dispose-time safety unkey.
+  bool _pttHeld = false;
 
   /// The 5 s timeout's ERR text (bus error outranks it in the render), and
   /// the /state.ts it was raised against — any newer snapshot proves the
@@ -89,14 +98,25 @@ class _UhfRadioPanelState extends State<UhfRadioPanel> {
   @override
   void initState() {
     super.initState();
-    // The store reference the timer callback needs (build uses context.watch;
-    // no listener — _settle runs at the top of build instead).
+    // References the timer callback and the dispose-time safety unkey need
+    // (build uses context.watch; no listener — _settle runs at the top of
+    // build instead).
     _store = context.read<BusStore>();
+    _mqtt = context.read<MqttService>();
   }
 
   @override
   void dispose() {
     _confirmTimer?.cancel();
+    // Safety unkey: the panel must never go away while keyed (tab switch,
+    // teardown) — PTT is momentary, the radio has to follow.
+    if (_pttHeld) {
+      _mqtt?.publish(
+        cmdTopic(UhfRadioPanel._slot),
+        uhfRadioPttPayload('off'),
+        retain: cmdRetain[UhfRadioPanel._address]!,
+      );
+    }
     for (final c in _freqControllers.values) {
       c.dispose();
     }
@@ -177,18 +197,37 @@ class _UhfRadioPanelState extends State<UhfRadioPanel> {
     setState(() {});
   }
 
-  void _tapPtt(MqttService mqtt, {required String tx, required String? ts}) {
+  /// Hold-to-talk: pointer-down keys the radio, pointer-up/cancel unkeys.
+  /// The publishes follow the gesture, not a toggle state — the tx readback
+  /// stays the sole truth for the chip (mqtt-api.md).
+  void _pttDown(String? ts) {
+    if (_pttHeld) return; // repeated down without an up (multi-touch)
+    _pttHeld = true;
     _pttPending = _Pending(ts);
     if (_localErr == _noConfirmPtt) {
       _localErr = null;
       _localErrTs = null;
     }
     _restartConfirmTimer();
-    // Toggle against the READBACK, never the last tap: the published tx
-    // always follows the radio (mqtt-api.md).
-    mqtt.publish(
+    _mqtt?.publish(
       cmdTopic(UhfRadioPanel._slot),
-      uhfRadioPttPayload(tx == 'tx' ? 'off' : 'on'),
+      uhfRadioPttPayload('on'),
+      retain: cmdRetain[UhfRadioPanel._address]!,
+    );
+    setState(() {});
+  }
+
+  void _pttUp() {
+    if (!_pttHeld) return;
+    _pttHeld = false;
+    // The unkey gets its own confirmation window: a dead bus with a keyed
+    // PA is exactly what the ERR must surface.
+    final store = _store;
+    _pttPending = _Pending(store == null ? null : _stateTs(store));
+    _restartConfirmTimer();
+    _mqtt?.publish(
+      cmdTopic(UhfRadioPanel._slot),
+      uhfRadioPttPayload('off'),
       retain: cmdRetain[UhfRadioPanel._address]!,
     );
     setState(() {});
@@ -218,10 +257,12 @@ class _UhfRadioPanelState extends State<UhfRadioPanel> {
     final busErr = slot?.state?['error'];
     final errText = busErr is String && busErr.isNotEmpty ? busErr : _localErr;
 
-    // R10 gate: tuning and PTT need the permit AND a live session.
+    // R10 gate: tuning and PTT need the permit AND a live session. PTT is
+    // momentary — a pending confirm must never block re-keying (or the
+    // unkey on release), so only the arm toggle pends itself out.
     final tuneEnabled = bridgeUp && armed && live;
     final armEnabled = bridgeUp && _armPending == null;
-    final pttEnabled = tuneEnabled && _pttPending == null;
+    final pttEnabled = tuneEnabled;
 
     return CardContainer(
       child: Column(
@@ -296,12 +337,22 @@ class _UhfRadioPanelState extends State<UhfRadioPanel> {
               ),
               const SizedBox(width: 8),
               Expanded(
-                child: ElevatedButton(
-                  key: const ValueKey('uhf-ptt-btn'),
-                  onPressed:
-                      pttEnabled ? () => _tapPtt(mqtt, tx: tx, ts: ts) : null,
-                  style: AppTheme.actionButton(danger: true, dangerActive: tx == 'tx'),
-                  child: Text('PTT', style: AppTheme.mono(13, weight: FontWeight.w800)),
+                // Hold-to-talk: the ElevatedButton is chrome and gesture-arena
+                // owner only; keying/unkeying rides the raw pointer events so
+                // the unkey fires even if the finger drifts off the button.
+                child: Listener(
+                  onPointerDown: (_) {
+                    if (pttEnabled) _pttDown(ts);
+                  },
+                  onPointerUp: (_) => _pttUp(),
+                  onPointerCancel: (_) => _pttUp(),
+                  child: ElevatedButton(
+                    key: const ValueKey('uhf-ptt-btn'),
+                    onPressed: pttEnabled ? () {} : null,
+                    style: AppTheme.actionButton(
+                        danger: true, dangerActive: tx == 'tx' || _pttHeld),
+                    child: Text('PTT', style: AppTheme.mono(13, weight: FontWeight.w800)),
+                  ),
                 ),
               ),
             ],

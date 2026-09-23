@@ -428,24 +428,24 @@ void main() {
     });
   });
 
-  group('pending-confirm semantics (arm and PTT)', () {
+  group('pending-confirm semantics (arm toggle, PTT hold-to-talk)', () {
     testWidgets(
-        'PTT pending clears on the next /state and the toggle follows the '
-        'tx readback', (tester) async {
+        'hold-to-talk: press keys, release unkeys; the tx readback is the '
+        'chip truth', (tester) async {
       final store = BusStore();
       final mqtt = FakeMqttService(store);
       store.setUhfRadio(armed: true); // live, rx
 
       await pumpPanel(tester, store: store, mqtt: mqtt);
-      await tester.tap(find.byKey(const ValueKey('uhf-ptt-btn')));
-      await tester.pumpAndSettle();
+
+      final gesture = await tester.startGesture(
+          tester.getCenter(find.byKey(const ValueKey('uhf-ptt-btn'))));
+      await tester.pump();
 
       expect(mqtt.publishes.single.topic, 'muehle/uhf/radio/cmd');
       expect(jsonDecode(mqtt.publishes.single.payload),
           {'action': 'ptt', 'value': 'on'});
       expect(mqtt.publishes.single.retain, isFalse);
-      // Pending: the toggle is inert until the readback confirms.
-      expect(btn(tester, 'uhf-ptt-btn').onPressed, isNull);
       // Still RX — readback is the truth (mqtt-api.md: tx follows the radio).
       expect(find.text('RX'), findsOneWidget);
 
@@ -455,24 +455,29 @@ void main() {
 
       expect(find.text('TX'), findsOneWidget);
       expect(tagOf(tester, 'TX').color, AppTheme.red);
-      expect(btn(tester, 'uhf-ptt-btn').onPressed, isNotNull);
 
-      // The next tap toggles OFF — against the readback, not the last tap.
-      await tester.tap(find.byKey(const ValueKey('uhf-ptt-btn')));
-      await tester.pumpAndSettle();
+      // Release unkeys — regardless of the readback state.
+      await gesture.up();
+      await tester.pump();
+      expect(mqtt.publishes, hasLength(2));
       expect(jsonDecode(mqtt.publishes.last.payload),
           {'action': 'ptt', 'value': 'off'});
     });
 
-    testWidgets('PTT pending times out to the no-confirmation ERR at 5 s',
-        (tester) async {
+    testWidgets(
+        'an unacknowledged press/release times out to the no-confirmation '
+        'ERR at 5 s', (tester) async {
       final store = BusStore();
       final mqtt = FakeMqttService(store);
-      store.setUhfRadio(armed: true, tx: 'tx'); // live, keyed
+      store.setUhfRadio(armed: true, tx: 'tx'); // live, keyed readback
 
       await pumpPanel(tester, store: store, mqtt: mqtt);
-      await tester.tap(find.byKey(const ValueKey('uhf-ptt-btn')));
-      await tester.pumpAndSettle();
+
+      final gesture = await tester.startGesture(
+          tester.getCenter(find.byKey(const ValueKey('uhf-ptt-btn'))));
+      await tester.pump();
+      await gesture.up();
+      await tester.pump();
       expect(find.textContaining('no bus confirmation'), findsNothing);
 
       // No newer /state ever arrives — the local window reverts to ERR.
@@ -481,8 +486,54 @@ void main() {
 
       expect(find.text('ERR'), findsOneWidget);
       expect(find.text('no bus confirmation (ptt)'), findsOneWidget);
-      // Pending consumed: the toggle is operable again for a retry.
-      expect(btn(tester, 'uhf-ptt-btn').onPressed, isNotNull);
+    });
+
+    testWidgets('release unkeys even when the gate went away mid-hold',
+        (tester) async {
+      final store = BusStore();
+      final mqtt = FakeMqttService(store);
+      store.setUhfRadio(armed: true); // live, rx
+
+      await pumpPanel(tester, store: store, mqtt: mqtt);
+
+      final gesture = await tester.startGesture(
+          tester.getCenter(find.byKey(const ValueKey('uhf-ptt-btn'))));
+      await tester.pump();
+      expect(jsonDecode(mqtt.publishes.last.payload),
+          {'action': 'ptt', 'value': 'on'});
+
+      // The arm permit is revoked mid-hold — the unkey must still fire.
+      store.setBridgeOffline(address);
+      await tester.pumpAndSettle();
+      await gesture.up();
+      await tester.pump();
+
+      expect(jsonDecode(mqtt.publishes.last.payload),
+          {'action': 'ptt', 'value': 'off'});
+    });
+
+    testWidgets('unmounting the panel mid-hold publishes the safety unkey',
+        (tester) async {
+      final store = BusStore();
+      final mqtt = FakeMqttService(store);
+      store.setUhfRadio(armed: true); // live, rx
+
+      await pumpPanel(tester, store: store, mqtt: mqtt);
+
+      // Never released — the unmount itself must do the unkey.
+      await tester.startGesture(
+          tester.getCenter(find.byKey(const ValueKey('uhf-ptt-btn'))));
+      await tester.pump();
+      expect(jsonDecode(mqtt.publishes.last.payload),
+          {'action': 'ptt', 'value': 'on'});
+
+      // Tab switch / teardown while keyed — dispose must unkey.
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+
+      expect(mqtt.publishes, hasLength(2));
+      expect(jsonDecode(mqtt.publishes.last.payload),
+          {'action': 'ptt', 'value': 'off'});
     });
 
     testWidgets('a dead-bridge arm tap times out to the no-confirmation ERR '
