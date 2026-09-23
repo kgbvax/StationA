@@ -34,6 +34,12 @@ const (
 	// for the mqtt layer, which must recognize a release to leave the idle
 	// clock untouched (a hold marks presence; a release does not).
 	RequestAuto = "auto"
+	// RequestManual is the operator manual stand-down: the operator owns the
+	// switch and drives it directly, and the reconciler must never move the
+	// antenna automatically — no band-policy select, no follow bindings, and
+	// no idle walk-away grounding (which is itself an automatic move). It is
+	// a hard station requirement, not a convenience.
+	RequestManual = "manual"
 	// PortOff is the switch's no-radiate / grounded position.
 	PortOff = "off"
 )
@@ -137,6 +143,16 @@ func (r *Reconciler) Resolve(in Inputs) Decision {
 		mode = ModeManual
 	}
 
+	// Tier 0 — operator manual stand-down. The operator owns the switch and the
+	// reconciler resolves nothing: no target, no move, ever. This deliberately
+	// outranks the idle tier — walk-away grounding is itself an automatic move,
+	// and the manual requirement ("the antenna is never moved automatically
+	// while in manual") has no exception for it. An operator who wants the
+	// station grounded while in manual requests "off" explicitly.
+	if in.OperatorRequest == RequestManual {
+		return Decision{Mode: mode, Target: "", Source: SourceOperator}
+	}
+
 	// Tier 1 — idle. Station inactive forces off and overrides everything, including an
 	// operator hold (walk-away safety, §10). Unknown activity is treated as active.
 	if in.StationActivity == "inactive" {
@@ -208,6 +224,14 @@ func (r *Reconciler) Next(in Inputs) Actions {
 		} else {
 			act.SelectPort = d.Target
 		}
+	}
+
+	// Manual stand-down: the operator owns the switch, so no follow binding fires
+	// either — band-follow, PA band-follow, and tuner in-line all stand down with
+	// the selection itself. The reconciler's only publication in manual is its own
+	// /state (mode=manual, target empty, source=operator).
+	if in.OperatorRequest == RequestManual {
+		return Actions{Decision: d}
 	}
 
 	// Band-follow (§4 controller map, §7.1): drive the followed antenna's controller to
