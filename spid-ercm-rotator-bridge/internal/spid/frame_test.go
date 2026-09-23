@@ -112,9 +112,6 @@ func TestDecodeStatusReplyRejectsBadFrames(t *testing.T) {
 		"short":            {0x57, 0x04, 0x08, 0x20},
 		"long":             {0x57, 0x04, 0x08, 0x03, 0x20, 0x00},
 		"empty":            {},
-		// u = 100 < the 360 offset would decode to az −260 — no physical
-		// rotor reports a negative azimuth; this is an encoding violation.
-		"u below the 360 offset": {0x57, 0x01, 0x00, 0x00, 0x20},
 	} {
 		if _, err := decodeStatusReply(b); err == nil {
 			t.Errorf("%s: expected decode error, got none", name)
@@ -135,6 +132,37 @@ func TestDecodeStatusReplyWrapsPastNorth(t *testing.T) {
 	}
 	if got != 89 {
 		t.Errorf("past-north report 449 decoded to %v, want 89", got)
+	}
+}
+
+// TestDecodeStatusReplyWrapsBelowOffset pins the live observation of
+// 2026-09-23: during a pass slew the register climbed 180→226 with the
+// target at ~179.9 — the mod-720 count had wrapped from the offset band
+// into [0, 360). A u below 360 is a wrapped position (az ≡ u mod 360), not
+// an encoding violation: rejecting it invalidated the readback for the
+// whole slew and the deadband went blind (invalid readback never
+// suppresses), turning 1 Hz tracking micro-gotos into 1 Hz wire writes and
+// relay clatter. The old "u below the 360 offset" rejection encoded this
+// trap; live hardware disproved it.
+func TestDecodeStatusReplyWrapsBelowOffset(t *testing.T) {
+	for _, tc := range []struct {
+		u    int
+		want float64
+	}{
+		{100, 100},
+		{180, 180}, // the live 2026-09-23 frame: 57 01 08 00 20
+		{226, 226}, // the live 2026-09-23 register, still climbing
+		{0, 0},
+		{359, 359},
+	} {
+		reply := []byte{0x57, byte(tc.u / 100), byte((tc.u / 10) % 10), byte(tc.u % 10), 0x20}
+		got, err := decodeStatusReply(reply)
+		if err != nil {
+			t.Fatalf("decode u=%d reply: %v", tc.u, err)
+		}
+		if got != tc.want {
+			t.Errorf("u=%d decoded to %v, want %v", tc.u, got, tc.want)
+		}
 	}
 }
 
