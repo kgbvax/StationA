@@ -96,7 +96,7 @@ Retained JSON snapshot, QoS 1. Published whenever the resolution changes.
 |-------|------|-------|
 | `ts` | string | RFC 3339 UTC |
 | `mode` | string | `auto` \| `manual`. **Derived**: `manual` whenever an operator hold is active, else `auto`. There is no separate auto/manual switch — the presence of a hold *is* manual. |
-| `target` | string | the port the reconciler currently wants: `off` \| `port1`..`port6` |
+| `target` | string | the port the reconciler currently wants: `off` \| `port1`..`port6`. **Empty under a `manual` stand-down** — the reconciler resolves nothing while the operator owns the switch (§4). |
 | `source` | string | *why* the target is what it is: `idle` \| `operator` \| `auto` (model §5). Published so the live config documents the reason, not just the value. |
 
 `target` is what the reconciler *wants*; the switch's own `selected`/`settled` report what
@@ -116,11 +116,21 @@ Retained JSON, QoS 1. This is the UI-agnostic operator surface (model §9) — a
 | `request` | Effect |
 |-----------|--------|
 | `port1`..`port6` \| `off` | engage an **operator hold** (ladder tier 2) on that port |
+| `manual` | engage the **operator manual stand-down** (ladder tier 0): the operator owns the switch and drives it directly; the reconciler resolves nothing and emits nothing |
 | `auto` | release the hold; return to band-policy selection (tier 3) |
 
+Any other value is rejected at the door with a `Warn` log — a malformed request must
+never become a hold on a port no switch has. (A console once sent `"manual"` as a
+mode toggle; under the old accept-anything rule it became a phantom-port hold that
+silently overrode auto selection until manually released — the 2026-09-23
+"no antenna selected" incident.)
+
 Retained so an operator hold survives a reconciler restart (self-healing). Note the
-deliberate surprise (model §10): an operator hold is still overridden by station-inactive
-(tier 1) — walking away wins over a forced selection.
+deliberate surprise (model §10): a port hold is still overridden by station-inactive
+(tier 1) — walking away wins over a forced selection. **The `manual` stand-down is the
+one exception**: idle grounding is itself an automatic move, and the manual requirement
+("the antenna is never moved automatically while in manual") has no walk-away exception.
+An operator who wants the station grounded while in manual requests `off` explicitly.
 
 ---
 
@@ -129,13 +139,20 @@ deliberate surprise (model §10): an operator hold is still overridden by statio
 Highest asserting tier wins. Re-evaluated on every relevant input change:
 
 ```
+0  manual:    /cmd request == "manual"        →  target = empty (stand down), source = operator
 1  idle:      station.activity == inactive   →  target = off,  source = idle
 2  operator:  hold present (/cmd != auto)     →  target = request, source = operator
 3  auto:      band_policy(radio.band)          →  target = port,  source = auto
 ```
 
-- **Tier 1 (idle)** is the safe default and overrides everything, including an operator
-  hold. The switch's fail-safe-to-ground default covers power loss independently.
+- **Tier 0 (manual stand-down)** outranks everything, idle included. While it is active
+  the reconciler is fully silent toward the bus: no `select`, no band-follow, no PA
+  band-follow, no tuner in-line follow — only its own `/state` (`mode=manual`,
+  `target=""`, `source=operator`). The console drives the switch directly in this mode
+  (with the RF-inhibit ordering enforced hardware-side).
+- **Tier 1 (idle)** is the safe default and overrides everything else, including an
+  operator port hold. The switch's fail-safe-to-ground default covers power loss
+  independently.
 - **Tier 3 (auto)** maps the radio's current band to a port via `[band_policy]`; unmatched
   bands (incl. 160m, and the out-of-band `gen` marker) use the configured `fallback` (see
   config). An **empty band** (`""` — flexbridge's transient "no slice reported yet" /

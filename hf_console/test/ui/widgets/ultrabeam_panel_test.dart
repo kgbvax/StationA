@@ -89,6 +89,22 @@ void main() {
       expect(mqtt.publishes.first.payload, contains('forward'));
     });
 
+    testWidgets('engaged 180° renders amber (TestHarness freezes the pulse)', (tester) async {
+      final store = BusStore();
+      final mqtt = FakeMqttService(store);
+      store.setUltrabeam(direction: 'reverse');
+
+      await tester.pumpWidget(TestHarness(store: store, mqtt: mqtt, child: const UltrabeamPanel()));
+      await tester.pumpAndSettle();
+
+      // Amber, not accent/red: reverse is irregular, not an error.
+      final reverse = tester.widget<ElevatedButton>(find.widgetWithText(ElevatedButton, '180°'));
+      expect(reverse.style!.backgroundColor!.resolve({}), AppTheme.amber);
+      // Normal directions keep the cyan accent highlight.
+      final forward = tester.widget<ElevatedButton>(find.widgetWithText(ElevatedButton, 'FORWARD'));
+      expect(forward.style!.backgroundColor!.resolve({}), isNot(AppTheme.accent));
+    });
+
     testWidgets('on 6m, forces bi-dir back to forward', (tester) async {
       final store = BusStore();
       final mqtt = FakeMqttService(store);

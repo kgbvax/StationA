@@ -1,8 +1,9 @@
-// rotator_presets_bar_test.dart — widget tests for the direction presets
-// (NA / SA / VK / JA / STOP). The horizontal `RotatorPresetsBar` lives in the
-// phone scroll column; the vertical `RotatorPresetsRail` overlays the DX
-// map's right edge above the zoom controls (tablet). Both share
-// `_presetActions` — these tests guard the publish logic and the
+// rotator_presets_bar_test.dart — widget tests for the rotator STOP button.
+// (The NA / SA / VK / JA region presets were removed; these tests pin their
+// absence so they don't creep back in.) The horizontal `RotatorPresetsBar`
+// lives in the phone scroll column; the vertical `RotatorPresetsRail`
+// overlays the DX map's right edge above the zoom controls (tablet). Both
+// share `_presetActions` — these tests guard the publish logic and the
 // offline-gating, plus the rail/stepper geometry (an earlier layout put the
 // rail low enough to cover the + button).
 
@@ -17,7 +18,7 @@ import '../../support/test_harness.dart';
 
 void main() {
   group('RotatorPresetsBar', () {
-    testWidgets('publishes set_az on preset button tap', (tester) async {
+    testWidgets('region presets (NA / SA / VK / JA) are gone', (tester) async {
       final store = BusStore();
       final mqtt = FakeMqttService(store);
       store.setRotator(az: 120.0);
@@ -25,23 +26,21 @@ void main() {
       await tester.pumpWidget(TestHarness(store: store, mqtt: mqtt, child: const RotatorPresetsBar()));
       await tester.pumpAndSettle();
 
-      await tester.tap(find.widgetWithText(ElevatedButton, 'NA 330'));
-      await tester.pumpAndSettle();
-
-      expect(mqtt.publishes.length, 1);
-      expect(mqtt.publishes.first.topic, 'muehle/hf/rotator/cmd');
-      expect(mqtt.publishes.first.payload, contains('set_az'));
-      expect(mqtt.publishes.first.payload, contains('330'));
+      expect(find.text('NA 330'), findsNothing);
+      expect(find.text('SA 210'), findsNothing);
+      expect(find.text('VK 60'), findsNothing);
+      expect(find.text('JA 35'), findsNothing);
+      expect(find.text('STOP'), findsOneWidget);
     });
 
-    testWidgets('does not publish presets when offline', (tester) async {
+    testWidgets('does not publish STOP when offline', (tester) async {
       final store = BusStore();
       final mqtt = FakeMqttService(store);
 
       await tester.pumpWidget(TestHarness(store: store, mqtt: mqtt, child: const RotatorPresetsBar()));
       await tester.pumpAndSettle();
 
-      await tester.tap(find.widgetWithText(ElevatedButton, 'NA 330'));
+      await tester.tap(find.widgetWithText(ElevatedButton, 'STOP'));
       await tester.pumpAndSettle();
 
       expect(mqtt.publishes, isEmpty);
@@ -66,7 +65,7 @@ void main() {
   });
 
   group('RotatorPresetsRail (inside CompassPanel)', () {
-    testWidgets('publishes set_az on preset button tap', (tester) async {
+    testWidgets('rail shows only STOP, no region presets', (tester) async {
       final store = BusStore();
       final mqtt = FakeMqttService(store);
       store.setRotator(az: 120.0);
@@ -74,13 +73,8 @@ void main() {
       await tester.pumpWidget(TestHarness(store: store, mqtt: mqtt, child: const CompassPanel()));
       await tester.pumpAndSettle();
 
-      await tester.tap(find.widgetWithText(ElevatedButton, 'NA 330'));
-      await tester.pumpAndSettle();
-
-      expect(mqtt.publishes.length, 1);
-      expect(mqtt.publishes.first.topic, 'muehle/hf/rotator/cmd');
-      expect(mqtt.publishes.first.payload, contains('set_az'));
-      expect(mqtt.publishes.first.payload, contains('330'));
+      expect(find.text('NA 330'), findsNothing);
+      expect(find.text('STOP'), findsOneWidget);
     });
 
     testWidgets('rail clears the +/- zoom stepper', (tester) async {
@@ -107,7 +101,7 @@ void main() {
           TestHarness(store: store, mqtt: mqtt, child: const CompassPanel(showPresets: false)));
       await tester.pumpAndSettle();
 
-      expect(find.text('NA 330'), findsNothing);
+      expect(find.text('STOP'), findsNothing);
     });
   });
 }

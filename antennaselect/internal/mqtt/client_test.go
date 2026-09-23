@@ -1028,6 +1028,59 @@ func TestOperatorHoldMarksActiveAndReselects(t *testing.T) {
 	}
 }
 
+// TestOperatorManualStandDownAccepted: the "manual" request is the operator
+// stand-down — the reconciler records it as the active operator request but
+// must not emit any select for it. Before the stand-down semantics existed it
+// became a phantom-port hold that silently overrode auto selection forever
+// (the 2026-09-23 "no antenna selected" incident).
+func TestOperatorManualStandDownAccepted(t *testing.T) {
+	c, antSwitchCmds, drain, cancel := idleClient(t, time.Hour)
+	defer cancel()
+	c.onRadioStatus(nil, radioStatusMsg(true))
+	c.onRadioState(nil, radioStateMsg(true, "20m"))
+	drain()
+	before := len(antSwitchCmds())
+
+	c.onOperatorCmd(nil, operatorHoldMsg("manual"))
+	drain()
+	if c.in.OperatorRequest != "manual" {
+		t.Errorf("OperatorRequest=%q, want manual", c.in.OperatorRequest)
+	}
+	if !c.lastActivity.After(time.Now().Add(-time.Minute)) {
+		t.Error("manual stand-down did not reset lastActivity (a hold marks presence)")
+	}
+	if got := antSwitchCmds(); len(got) != before {
+		t.Errorf("manual stand-down emitted selects: %d -> %d", before, len(got))
+	}
+}
+
+// TestOperatorCmdRejectsUnknownRequest: a malformed request is dropped at the
+// door — never a hold on a port no switch has. Unwired-but-physical ports
+// (port2 has no antenna wired today) stay valid; out-of-range port numbers do
+// not exist even physically.
+func TestOperatorCmdRejectsUnknownRequest(t *testing.T) {
+	c, _, drain, cancel := idleClient(t, time.Hour)
+	defer cancel()
+
+	c.onOperatorCmd(nil, operatorHoldMsg("banana"))
+	drain()
+	if c.in.OperatorRequest != "" {
+		t.Errorf("OperatorRequest=%q, want \"\" (unknown request dropped)", c.in.OperatorRequest)
+	}
+
+	c.onOperatorCmd(nil, operatorHoldMsg("port2"))
+	drain()
+	if c.in.OperatorRequest != "port2" {
+		t.Errorf("OperatorRequest=%q, want port2 (physical port accepted)", c.in.OperatorRequest)
+	}
+
+	c.onOperatorCmd(nil, operatorHoldMsg("port7"))
+	drain()
+	if c.in.OperatorRequest != "port2" {
+		t.Errorf("OperatorRequest=%q, want port2 (port7 rejected)", c.in.OperatorRequest)
+	}
+}
+
 // TestOperatorReleaseDoesNotMarkActive: the "auto" release withdraws the hold
 // but is not evidence of presence — it must not reset the idle clock or
 // re-activate a grounded station.

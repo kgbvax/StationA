@@ -187,9 +187,11 @@ class AppTheme extends ChangeNotifier {
     return 1.0;
   }
 
-  static ButtonStyle actionButton({bool active = false, bool danger = false, bool amber = false, bool dangerActive = false, bool fullWidth = false}) =>
+  static ButtonStyle actionButton({bool active = false, bool danger = false, bool amber = false, bool dangerActive = false, bool amberActive = false, bool fullWidth = false}) =>
       ElevatedButton.styleFrom(
-        backgroundColor: dangerActive
+        backgroundColor: amberActive
+            ? AppTheme.amber
+            : dangerActive
             ? red
             : active
                 ? accent
@@ -198,7 +200,7 @@ class AppTheme extends ChangeNotifier {
                 : amber
                     ? blend(AppTheme.amber, 0.12)
                     : pane,
-        foregroundColor: dangerActive
+        foregroundColor: amberActive || dangerActive
             ? activeButtonText
             : active
                 ? activeButtonText
@@ -207,7 +209,9 @@ class AppTheme extends ChangeNotifier {
                     : txt,
         side: BorderSide(
           width: 1.4,
-          color: dangerActive
+          color: amberActive
+              ? AppTheme.amber
+              : dangerActive
               ? red
               : active
                   ? accent
@@ -227,7 +231,8 @@ class AppTheme extends ChangeNotifier {
         disabledForegroundColor: txtFaint,
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
         minimumSize: const Size(44, 44),
-        textStyle: mono(13, weight: FontWeight.w600),
+        // mono(n) renders n+1 pt, so this is 15 pt on screen.
+        textStyle: mono(14, weight: FontWeight.w600),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
       );
 

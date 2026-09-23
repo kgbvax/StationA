@@ -81,6 +81,39 @@ func TestResolveIdleOverridesOperator(t *testing.T) {
 	}
 }
 
+func TestResolveManualStandDown(t *testing.T) {
+	r := New(testConfig())
+	// "manual" is a stand-down, not a port: the reconciler resolves nothing and
+	// holds — even when the radio is online with a known band that the auto tier
+	// would happily serve (20m -> port3).
+	d := r.Resolve(Inputs{RadioOnline: true, RadioBand: "20m", StationActivity: "active", OperatorRequest: RequestManual})
+	if d.Target != "" || d.Source != SourceOperator || d.Mode != ModeManual {
+		t.Errorf("manual stand-down: got %+v, want target=\"\" source=operator mode=manual", d)
+	}
+}
+
+func TestResolveManualBeatsIdle(t *testing.T) {
+	r := New(testConfig())
+	// Idle grounding is itself an automatic move, so an explicit manual
+	// stand-down outranks it (hard requirement: in manual the antenna is never
+	// moved automatically). Grounding while in manual is the operator's own
+	// explicit "off" request.
+	d := r.Resolve(Inputs{RadioOnline: true, RadioBand: "20m", StationActivity: "inactive", OperatorRequest: RequestManual})
+	if d.Target != "" || d.Source != SourceOperator || d.Mode != ModeManual {
+		t.Errorf("manual vs idle: got %+v, want target=\"\" source=operator mode=manual", d)
+	}
+}
+
+func TestResolveIdleStillOverridesPortHold(t *testing.T) {
+	r := New(testConfig())
+	// The manual carve-out must not weaken walk-away safety for plain port
+	// holds: idle still forces off over an operator port hold (§10).
+	d := r.Resolve(Inputs{RadioOnline: true, RadioBand: "20m", StationActivity: "inactive", OperatorRequest: "port3"})
+	if d.Target != PortOff || d.Source != SourceIdle {
+		t.Errorf("idle over port hold: got %+v, want target=off source=idle", d)
+	}
+}
+
 func TestResolveUnknownActivityIsActive(t *testing.T) {
 	r := New(testConfig())
 	d := r.Resolve(Inputs{RadioOnline: true, RadioBand: "40m", StationActivity: ""})
@@ -264,6 +297,56 @@ func TestNextPAFollowNoTXGate(t *testing.T) {
 	}
 	if !act.DeferredForTX {
 		t.Error("ant-switch select should still defer during TX (cold-switch)")
+	}
+}
+
+// manualCfg is testConfig with every follow binding enabled, so the manual
+// stand-down test proves suppression of all of them at once.
+func manualCfg() config.Config {
+	cfg := paFollowCfg()
+	cfg.TunerFollow = config.TunerFollow{
+		Enabled:  true,
+		Slot:     "tuner",
+		Resource: "fan-dipole",
+		ATUBands: []string{"30m", "60m", "80m", "160m"},
+	}
+	return cfg
+}
+
+// TestNextManualStandDownSuppressesAllBindings is the regression guard for the
+// hard station requirement that a manual stand-down never moves the antenna
+// automatically — and for the 2026-09-23 incident where a console "manual"
+// mode request became a phantom-port operator hold that silently overrode auto
+// selection. With the stand-down active the reconciler resolves no target and
+// emits nothing at all: no select, no band-follow, no PA set_band, no tuner
+// set_inline. The same inputs without the stand-down emit every one of those.
+func TestNextManualStandDownSuppressesAllBindings(t *testing.T) {
+	r := New(manualCfg())
+	base := Inputs{
+		RadioOnline:     true,
+		RadioBand:       "20m", // ultrabeam: auto target port3, band-follow fires
+		RadioFreqHz:     14261050,
+		RadioTX:         TXReceive,
+		StationActivity: "active",
+		SwitchSelected:  "port1", // differs from the auto target -> a select is pending
+	}
+
+	// Contrast: without the stand-down, every action fires (SetInline is a
+	// bypass emit on a resonant band — still an emit).
+	act := r.Next(base)
+	if act.SelectPort != "port3" || act.FollowFreqHz != base.RadioFreqHz || act.SetBand != "20m" || act.SetInline == nil || *act.SetInline {
+		t.Errorf("contrast (no hold): expected select=port3 follow=%d setband=20m setinline=false, got %+v", base.RadioFreqHz, act)
+	}
+
+	// With the stand-down: the reconciler is silent.
+	in := base
+	in.OperatorRequest = RequestManual
+	act = r.Next(in)
+	if act.SelectPort != "" || act.FollowFreqHz != 0 || act.SetBand != "" || act.SetInline != nil || act.DeferredForTX {
+		t.Errorf("manual stand-down: expected no actions at all, got %+v", act)
+	}
+	if act.Decision.Mode != ModeManual || act.Decision.Target != "" || act.Decision.Source != SourceOperator {
+		t.Errorf("manual stand-down decision: got %+v, want mode=manual target=\"\" source=operator", act.Decision)
 	}
 }
 

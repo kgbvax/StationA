@@ -69,8 +69,11 @@ The seed config bakes the Mühle wiring map and band policy (matching
 
 - **React to state, emit intent** (§1). Never assume a `select` took — confirm via
   `ant-switch/state`.
-- **Ladder order is fixed**: idle > operator > auto (§5). `mode` is *derived* (`manual` iff
-  a hold is active), never a separate switch.
+- **Ladder order is fixed**: manual-standdown > idle > operator > auto (§5). `mode` is
+  *derived* (`manual` iff a hold is active), never a separate switch. The `manual` /cmd
+  request is the operator stand-down (tier 0): the reconciler resolves nothing and emits
+  nothing — it must **never** move the antenna automatically while in manual (hard
+  requirement; includes idle grounding and all follow bindings).
 - **Cold-switch sequencing** (§6): the ant-switch is `hot_switch: false`. Do not move the
   port under TX — wait for RX, emit `select`, confirm via `selected` (`settled`-gating is
   backlog, lands with antswitchbridge). Enforcement is hardware; the reconciler owns
@@ -81,8 +84,9 @@ The seed config bakes the Mühle wiring map and band policy (matching
   it stays `online` while flexbridge is up but the radio link is down, which is exactly when
   `radio/state` carries a stale/empty `band` (reconnect Reset). An empty `band` holds the
   last selection; only a known-but-unmatched band (160m, `gen`) reaches the `fallback`.
-- **Idle overrides operator** (§10): station-inactive beats an operator hold (walk-away
-  safety). Documented, deliberate.
+- **Idle overrides operator** (§10): station-inactive beats an operator port hold
+  (walk-away safety). Documented, deliberate. The `manual` stand-down is the one
+  exception (tier 0 > tier 1): idle grounding is itself an automatic move.
 - **Unmatched bands** (incl. 160m) → `fallback` (fan-dipole via ATU; §11 item #1).
 
 ---
