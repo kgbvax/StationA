@@ -29,11 +29,11 @@ void main() {
         PulsingAmberButton(engaged: true, onPressed: () {}, child: const Text('PULSE')),
       ),
     ));
-    // 450 ms into the 1800 ms cycle → controller at t=0.25, clearly off
+    // 360 ms into the 1440 ms cycle → controller at t=0.25, clearly off
     // the frozen solid-amber value.
-    await tester.pump(const Duration(milliseconds: 450));
+    await tester.pump(const Duration(milliseconds: 360));
 
-    final dim = Color.lerp(AppTheme.amber, AppTheme.pane, 0.45)!;
+    final dim = Color.lerp(AppTheme.amber, AppTheme.pane, 0.55)!;
     final expected = Color.lerp(dim, AppTheme.amber, Curves.easeInOut.transform(0.25))!;
     expect(bgOf(tester, 'PULSE'), expected);
   });

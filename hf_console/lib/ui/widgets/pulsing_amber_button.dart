@@ -38,11 +38,11 @@ class PulsingAmberButton extends StatefulWidget {
 class _PulsingAmberButtonState extends State<PulsingAmberButton> with SingleTickerProviderStateMixin {
   late final AnimationController _pulse = AnimationController(
     vsync: this,
-    duration: const Duration(milliseconds: 1800),
+    duration: const Duration(milliseconds: 1440),
   );
 
-  /// Bottom of the pulse: amber blended halfway toward the pane colour.
-  static Color get _amberDim => Color.lerp(AppTheme.amber, AppTheme.pane, 0.45)!;
+  /// Bottom of the pulse: amber blended mostly toward the pane colour.
+  static Color get _amberDim => Color.lerp(AppTheme.amber, AppTheme.pane, 0.55)!;
 
   @override
   void dispose() {
