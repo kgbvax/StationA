@@ -6,13 +6,13 @@ import '../../store/bus_store.dart';
 import '../../store/wiring.dart';
 import '../theme.dart';
 
-/// One-tap direction shortcuts for the rotator (NA / SA / VK / JA / STOP).
+/// One-tap STOP shortcut for the rotator.
 ///
 /// Tablet: [RotatorPresetsRail] — a vertical rail on the right edge of the DX
 /// map, stacked above the +/- zoom controls, so the map column no longer
 /// spends a footer row on presets and the disc gets the full card height.
 /// Phone: [RotatorPresetsBar] — the horizontal bar stays in the scrolling
-/// controls column; the phone map is too small to overlay a five-button rail.
+/// controls column; the phone map is too small to overlay a rail.
 ///
 /// Both ride the same chrome as the rest of the HF page (card background,
 /// mono labels, `AppTheme.actionButton`) and read `rotator.isOnline` +
@@ -88,30 +88,18 @@ class _PresetAction {
   const _PresetAction(this.label, {this.danger = false, this.onPressed});
 }
 
-/// The five presets, gated on rotator-bridge liveness — shared by the
+/// The stop action, gated on rotator-bridge liveness — shared by the
 /// horizontal bar and the map-edge rail so the two stay in sync.
 List<_PresetAction> _presetActions(BuildContext context) {
   final store = context.watch<BusStore>();
   final mqtt = context.read<MqttService>();
   final rotatorOnline = (store.slots['muehle/hf/rotator']?.isOnline ?? false) && store.linkUp;
 
-  void sendAz(double value) {
-    mqtt.publish(
-      cmdTopic('hf/rotator'),
-      rotatorAzPayload(value),
-      retain: cmdRetain['muehle/hf/rotator']!,
-    );
-  }
-
   void sendStop() {
     mqtt.publish(cmdTopic('hf/rotator'), rotatorStopPayload(), retain: false);
   }
 
   return [
-    _PresetAction('NA 330', onPressed: rotatorOnline ? () => sendAz(330) : null),
-    _PresetAction('SA 210', onPressed: rotatorOnline ? () => sendAz(210) : null),
-    _PresetAction('VK 60', onPressed: rotatorOnline ? () => sendAz(60) : null),
-    _PresetAction('JA 35', onPressed: rotatorOnline ? () => sendAz(35) : null),
     _PresetAction('STOP', danger: true, onPressed: rotatorOnline ? sendStop : null),
   ];
 }
