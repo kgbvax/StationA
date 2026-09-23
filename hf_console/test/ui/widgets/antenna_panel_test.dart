@@ -130,7 +130,7 @@ void main() {
       expect(buttonBg(tester, 'GND'), isNot(AppTheme.red));
     });
 
-    testWidgets('manual mode renders the MANUAL button in solid red', (tester) async {
+    testWidgets('manual mode renders the MANUAL button in solid amber', (tester) async {
       final store = BusStore();
       final mqtt = FakeMqttService(store);
       store.setAntenna(selected: 'port4', settled: true, mode: 'manual');
@@ -138,7 +138,8 @@ void main() {
       await tester.pumpWidget(TestHarness(store: store, mqtt: mqtt, child: const AntennaPanel()));
       await tester.pumpAndSettle();
 
-      expect(buttonBg(tester, 'MANUAL'), AppTheme.red);
+      // Amber, not red: manual is an operator hold, not an error.
+      expect(buttonBg(tester, 'MANUAL'), AppTheme.amber);
       expect(buttonBg(tester, 'AUTO'), isNot(AppTheme.red));
     });
 

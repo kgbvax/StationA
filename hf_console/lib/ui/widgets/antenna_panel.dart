@@ -141,8 +141,9 @@ class AntennaPanel extends StatelessWidget {
                 ElevatedButton(
                   onPressed: selectOnline ? () => setMode('manual') : null,
                   // Manual routing overrides the reconciler — shown in solid
-                  // red while engaged, like the grounded state.
-                  style: AppTheme.actionButton(dangerActive: isManual),
+                  // amber while engaged: an operator hold, not a fault
+                  // (unlike the grounded port buttons, which stay red).
+                  style: AppTheme.actionButton(amberActive: isManual),
                   child: const Text('MANUAL'),
                 ),
               ],

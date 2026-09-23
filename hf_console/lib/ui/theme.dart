@@ -187,9 +187,11 @@ class AppTheme extends ChangeNotifier {
     return 1.0;
   }
 
-  static ButtonStyle actionButton({bool active = false, bool danger = false, bool amber = false, bool dangerActive = false, bool fullWidth = false}) =>
+  static ButtonStyle actionButton({bool active = false, bool danger = false, bool amber = false, bool dangerActive = false, bool amberActive = false, bool fullWidth = false}) =>
       ElevatedButton.styleFrom(
-        backgroundColor: dangerActive
+        backgroundColor: amberActive
+            ? AppTheme.amber
+            : dangerActive
             ? red
             : active
                 ? accent
@@ -198,7 +200,7 @@ class AppTheme extends ChangeNotifier {
                 : amber
                     ? blend(AppTheme.amber, 0.12)
                     : pane,
-        foregroundColor: dangerActive
+        foregroundColor: amberActive || dangerActive
             ? activeButtonText
             : active
                 ? activeButtonText
@@ -207,7 +209,9 @@ class AppTheme extends ChangeNotifier {
                     : txt,
         side: BorderSide(
           width: 1.4,
-          color: dangerActive
+          color: amberActive
+              ? AppTheme.amber
+              : dangerActive
               ? red
               : active
                   ? accent
