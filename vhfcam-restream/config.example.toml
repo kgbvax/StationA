@@ -1,0 +1,73 @@
+# vhfcam-restream example configuration.
+#
+# The real config lives at /etc/vhfcam-restream/config.toml on shari (0600,
+# seeded once by deploy.sh). The RTSPS path tokens and the YouTube stream key
+# are secrets — never commit a filled-in copy of this file.
+
+# Camera sources (UniFi Protect RTSPS). SD is the default profile.
+source_url    = "rtsps://192.168.0.1:7441/<sd-token>?enableSrtp"
+source_hd_url = "rtsps://192.168.0.1:7441/<hd-token>?enableSrtp"
+
+# Which source feeds the stream: "sd" | "hd".
+# Switch live without restarting: `sudo systemctl kill -s SIGHUP vhfcam-restream`
+quality = "sd"
+
+# YouTube RTMP ingest (stream key is the secret part).
+youtube_url = "rtmp://a.rtmp.youtube.com/live2"
+stream_key  = "<youtube-stream-key>"   # or env VHFCAM_STREAM_KEY
+
+# ffmpeg invocation. The camera channels carry H.264 video plus AAC and Opus
+# audio tracks (and some SDP sessions expose Opus only — a codec-selecting
+# map fails there). Map the first audio track and always transcode it to AAC:
+# RTMP/FLV carries AAC only, and the audio encode is negligible on the Pi.
+# Video is copied — no video transcoding on the Pi.
+ffmpeg_bin     = "/usr/bin/ffmpeg"
+rtsp_transport = "tcp"
+video_map      = "0:v:0"
+audio_map      = "0:a:0"
+video_codec    = "copy"
+audio_codec    = "aac"
+
+# Supervision: kill+restart when ffmpeg emits no progress for stall_timeout_s;
+# restart backoff starts at restart_min_s and doubles up to restart_max_s;
+# a run longer than stable_run_s resets the backoff.
+stall_timeout_s = 60
+restart_min_s   = 5
+restart_max_s   = 300
+stable_run_s    = 120
+
+log_level = "info"
+
+# Sinks: which outputs run when the service is started. They are independent
+# — either can be off without touching the other.
+youtube_enabled = true
+
+# Local web-browser preview: a second ffmpeg writes HLS to tmpfs and the
+# built-in server serves it at http://<shari>:8083/ (hls.js is embedded in
+# the binary, so the page works with the internet down). ~10 s behind live.
+[preview]
+enabled   = true
+http_addr = ":8083"
+# Radio audio (optional): UDP bind receiving the IC-9700's demodulated
+# audio from icom9700-radio-bridge (S16LE 48 kHz mono). When set, the
+# preview audio is the RADIO's audio (camera audio is replaced) and the
+# bridge gets audio_on heartbeats on radio_audio_cmd_topic (the demand is
+# TTL-bounded there — the heartbeat keeps the radio's session + audio up;
+# stopping the preview releases it). Radio off = silence, never a stall.
+radio_audio            = ":45031"
+radio_audio_cmd_topic  = "muehle/uhf/radio/cmd"
+
+
+# Operational-data overlay: subscribes to the station MQTT broker and burns
+# AZ/EL/freq/TX text into the video via ffmpeg drawtext. enabled=true switches
+# the video from -c:v copy to a software x264 transcode (576p is comfortable
+# on the Pi 4; keep HD clean). The writer always runs so a SIGHUP toggle of
+# `enabled` is safe — only this flag needs a restart-less switch.
+[overlay]
+enabled       = true
+mqtt_broker   = "tcp://192.168.1.50:1883"
+mqtt_user     = "hf"
+mqtt_password = "<mqtt-hf-password>"   # or env VHFCAM_MQTT_PASSWORD
+site          = "muehle"
+station       = "hf"
+slot          = "vhfcam"

@@ -526,6 +526,14 @@ actuates real hardware:
 
 ## [decision] IC-9700 remote-PTT exposure review — the `uhf/radio` vectors (plan: docs/plans/2026-09-14-001-feat-icom9700-radio-bridge-plan.md)
 
+> **RESOLVED (2026-09-23, receive-only pivot):** remote TX control was REMOVED
+> from the bridge and the console — the `uhf/radio` `/cmd` set is now exactly
+> `audio_on`/`audio_off`/`power_on`/`monitor_on`/`monitor_off`, and there is no
+> LAN CI-V command path at all. Control-exposure vectors (1, 2, 3, 4, 5, 8, 9)
+> are MOOT. The credential vectors (6, 7) stand for the audio-session login.
+> Any future TX path (serial CI-V per the operator decision) must re-run this
+> review. The block below is kept as the audit record.
+
 The IC-9700 bridge puts a **remotely keyable transmitter** on the bus — the radio
 slot `muehle/uhf/radio` is not a telemetry consumer like `hf/pa` and not an
 external-amplifier relay like `hf/pa-arm`: `ptt` keys the transceiver itself. This

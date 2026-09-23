@@ -1,24 +1,25 @@
-// Package radio owns the IC-9700's on-demand session lifecycle (U4): the
-// state machine that connects only on work (a pending command or the armed
-// hold), spaces login attempts, decays error states, and keeps the radio's
-// single LAN session available for manual wfview use (KTD-2).
+// Package radio owns the IC-9700's on-demand capture-session lifecycle:
+// the state machine that connects only on work (the audio demand), spaces
+// login attempts, decays error states, and keeps the radio's single LAN
+// session available for manual wfview use (KTD-2).
 //
-// Work definition (R1): a pending command demand or the armed hold. Radio
-// keepalives, ping replies and meter polls are never work. While the hold
-// is set the session is kept open (R11); the hold is bridge-held and drops
-// on any session loss (fail-disarmed, KTD-6).
+// Work definition (R1, receive-only posture 2026-09): the audio demand is
+// the ONLY session hold. There are no LAN CI-V commands left — the LAN
+// session exists solely to carry the :50003 receive-audio stream. While
+// the audio demand is set the session is kept open; the demand is
+// TTL-bounded and refreshed by the consumer's audio_on heartbeats, so a
+// dead consumer never pins the radio (KTD-2). Telemetry flows over the
+// dedicated serial CI-V monitor (internal/civserial), never over this
+// session.
 //
 // Concurrency model: one Run goroutine owns the state machine and the
-// live client; callers interact through channels (Demand/SetHold) so the
-// state can never be observed mid-transition. The single-command mutex
-// inside Demand serializes frame round-trips.
+// live client; callers interact through channels (SetAudioDemand) so the
+// state can never be observed mid-transition.
 package radio
 
 import (
-	"bytes"
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -27,7 +28,7 @@ import (
 )
 
 // SessionState values surfaced in Snapshot (the /state.session_state
-// vocabulary, R5/R16).
+// vocabulary, R5/R16 — redefined 2026-09 as the CAPTURE-session state).
 const (
 	StateIdle       = "idle"
 	StateConnecting = "connecting"
@@ -45,26 +46,34 @@ type SessionOptions struct {
 	MaxAttempts    int           // login attempts per connect demand (R2)
 	AttemptSpacing time.Duration // minimum spacing between attempts (R2)
 	DecayTimeout   time.Duration // error state decays to idle after this (plan state machine)
-	HandshakeTO    time.Duration // per-command reply wait
+	HandshakeTO    time.Duration // per-handshake-step reply wait
 	// Passthroughs to the transport (tests shrink them; production takes
 	// the civ defaults).
 	ControlPort     int
 	CIVPort         int
+	AudioPort       int
 	AreYouThere     time.Duration
 	HandshakeBudget time.Duration
 	LossWatchdog    time.Duration
 	// PingInterval passes through to the transport's keepalive cadence
 	// (tests shrink it; it must stay ≪ LossWatchdog — see fastSessionOpts).
 	PingInterval time.Duration
-	Logger       *slog.Logger
+	// AudioDemandTTL bounds an audio demand without a refreshing audio_on
+	// (a dead preview consumer must not pin the radio session). 0 = 60 s.
+	AudioDemandTTL time.Duration
+	// AudioSink receives the demodulated audio PCM chunks while the audio
+	// stream is open (the main wiring publishes them to the preview host).
+	// nil = audio demand connects but no PCM is delivered.
+	AudioSink func([]byte)
+	Logger    *slog.Logger
 }
 
 // Snapshot is the lifecycle truth for the /state assembly (U5): the
-// session state, the observed failure fact, and the hold (armed) flag.
+// capture-session state and the observed failure fact.
 type Snapshot struct {
 	SessionState string
 	Err          string
-	Hold         bool
+	AudioDemand  bool
 	RadioName    string
 	// ConnectAttempts is the cumulative count of Dial attempts since the
 	// session was created (diagnostics; the attempt-policy tests pin it).
@@ -80,33 +89,29 @@ var ErrSessionStopped = errors.New("radio: session manager stopped")
 type demand struct {
 	fn    func(*civ.Client) error
 	errCh chan error
-	ride  bool // telemetry rider: runs only while live, never resets idle
 }
 
-// Session is the on-demand state machine. Create with NewSession, run Run,
-// drive it with Demand/SetHold.
+// Session is the on-demand capture-session state machine. Create with
+// NewSession, run Run, drive it with SetAudioDemand.
 type Session struct {
 	opts SessionOptions
 	log  *slog.Logger
 
-	demands chan demand
-	holdCh  chan holdReq
-	stopped chan struct{}
-	runDone chan struct{}
+	demands  chan demand
+	audioCh  chan audioReq
+	stopped  chan struct{}
+	runDone  chan struct{}
 
-	mu       sync.Mutex
-	snap     Snapshot
-	hold     bool
-	onLive   func(ctx context.Context, c *civ.Client) error
-	onLoss   func(err error)
-	client   *civ.Client
-	routeCh  chan struct{} // closed when the routed client is torn down
-	notifyCh chan struct{}
-	transCh  chan civ.Transceive
-	replyCh  chan civ.Frame // read replies, consumed by roundTrip
+	mu           sync.Mutex
+	snap         Snapshot
+	audioDemand  bool
+	client       *civ.Client
+	routeCh      chan struct{} // closed when the frame drainer is torn down
+	audioRouteCh chan struct{} // same, for the audio PCM router
+	notifyCh     chan struct{}
 }
 
-type holdReq struct {
+type audioReq struct {
 	on  bool
 	err chan error
 }
@@ -131,43 +136,23 @@ func NewSession(opts SessionOptions) *Session {
 	if opts.HandshakeTO <= 0 {
 		opts.HandshakeTO = 2 * time.Second
 	}
+	if opts.AudioDemandTTL <= 0 {
+		opts.AudioDemandTTL = 60 * time.Second
+	}
 	return &Session{
 		opts:     opts,
 		log:      opts.Logger.With("component", "radio-session"),
 		demands:  make(chan demand, 16),
-		holdCh:   make(chan holdReq, 1),
+		audioCh:  make(chan audioReq, 1),
 		stopped:  make(chan struct{}),
 		runDone:  make(chan struct{}),
 		notifyCh: make(chan struct{}, 1),
-		transCh:  make(chan civ.Transceive, 64),
-		replyCh:  make(chan civ.Frame, 8),
 	}
-}
-
-// OnLive registers the post-reconnect hook (the safety core reissues an
-// outstanding PTT-off here — plan state machine, live -> connecting with
-// work pending). One hook; last registration wins.
-func (s *Session) OnLive(fn func(ctx context.Context, c *civ.Client) error) {
-	s.mu.Lock()
-	s.onLive = fn
-	s.mu.Unlock()
-}
-
-// OnLoss registers the session-loss hook (the safety core disarms and
-// schedules the safety-driven PTT-off delivery here, R2/R12).
-func (s *Session) OnLoss(fn func(err error)) {
-	s.mu.Lock()
-	s.onLoss = fn
-	s.mu.Unlock()
 }
 
 // Notify returns a channel that receives a nudge on every state change
 // (coalesced — the /state assembly republishes on each).
 func (s *Session) Notify() <-chan struct{} { return s.notifyCh }
-
-// Transceives returns the parsed inbound transceive stream (freq/mode/tx
-// events from the radio; unsupported-mode events dropped per R7).
-func (s *Session) Transceives() <-chan civ.Transceive { return s.transCh }
 
 // Snapshot returns the current lifecycle truth.
 func (s *Session) Snapshot() Snapshot {
@@ -176,26 +161,27 @@ func (s *Session) Snapshot() Snapshot {
 	return s.snap
 }
 
-// SetHold sets/clears the armed hold (R11): setting it is a connect demand
-// (arm-while-idle is the connect trigger); clearing it releases the
-// session to the idle timer. Returns the connect failure when the hold's
-// connect demand fails (the arm cmd is rejected, hold stays false — the
-// operator re-arms, R2).
-func (s *Session) SetHold(ctx context.Context, on bool) error {
+// SetAudioDemand sets/clears the audio demand: on = connect (when idle) and
+// open the audio receive stream; off = close it. The demand is TTL-bounded
+// (AudioDemandTTL) — consumers refresh it with repeated audio_on — so a dead
+// consumer never pins the radio session (KTD-2). A connect failure while
+// setting the demand rejects the cmd; the demand itself is NOT set in that
+// case (the operator retries). This is the session's only hold source: no
+// LAN command path exists anymore (receive-only posture, 2026-09).
+func (s *Session) SetAudioDemand(ctx context.Context, on bool) error {
 	select {
 	case <-s.stopped:
 		return ErrSessionStopped
 	default:
 	}
 	if on {
-		_, err := s.connectAndRun(ctx, func(*civ.Client) error { return nil })
-		if err != nil {
+		if _, err := s.connectAndRun(ctx, func(*civ.Client) error { return nil }); err != nil {
 			return err
 		}
 	}
 	done := make(chan error, 1)
 	select {
-	case s.holdCh <- holdReq{on: on, err: done}:
+	case s.audioCh <- audioReq{on: on, err: done}:
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-s.stopped:
@@ -209,34 +195,57 @@ func (s *Session) SetHold(ctx context.Context, on bool) error {
 	}
 }
 
-// Demand ensures a live session and runs fn against it (the work-demand
-// primitive everything above the session goes through). A connect failure
-// rejects the demand with the observed fact (R2).
-func (s *Session) Demand(ctx context.Context, fn func(*civ.Client) error) error {
-	_, err := s.connectAndRun(ctx, fn)
-	return err
+// audioDemanded reports the audio demand under the state mutex.
+func (s *Session) audioDemanded() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.audioDemand
 }
 
-// Ride runs fn against the CURRENT live session without ever opening one
-// and without restarting the idle clock (KTD-2/R2: telemetry is a free
-// rider, never work — a demanding poll would keep the session open around
-// the clock and starve manual wfview). When the session is not live, Ride
-// is a quiet no-op (nil): finding nothing to ride is the expected outcome,
-// not a failure.
-func (s *Session) Ride(ctx context.Context, fn func(*civ.Client) error) error {
-	d := demand{fn: fn, errCh: make(chan error, 1), ride: true}
-	select {
-	case s.demands <- d:
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-s.stopped:
-		return ErrSessionStopped
+// ensureAudio opens the audio receive stream + PCM router on the live client
+// when the demand is set (post-connect and post-audio_on). Failures are
+// logged, never fatal: audio is auxiliary and the next heartbeat retries.
+func (s *Session) ensureAudio() {
+	if !s.audioDemanded() {
+		return
 	}
-	select {
-	case err := <-d.errCh:
-		return err
-	case <-ctx.Done():
-		return ctx.Err()
+	s.mu.Lock()
+	c := s.client
+	sink := s.opts.AudioSink
+	routeCh := s.audioRouteCh
+	s.mu.Unlock()
+	if c == nil {
+		return
+	}
+	if err := c.OpenAudio(); err != nil {
+		s.log.Warn("audio stream open failed", "err", err)
+		return
+	}
+	if routeCh != nil {
+		return // router already running for this client
+	}
+	s.mu.Lock()
+	s.audioRouteCh = make(chan struct{})
+	routeCh = s.audioRouteCh
+	s.mu.Unlock()
+	go s.routeAudio(c, routeCh, sink)
+}
+
+// routeAudio pumps PCM chunks from the live client's audio stream to the
+// configured sink until the session or the audio stream ends.
+func (s *Session) routeAudio(c *civ.Client, done chan struct{}, sink func([]byte)) {
+	for {
+		select {
+		case <-done:
+			return
+		case pcm, ok := <-c.AudioFrames():
+			if !ok {
+				return // audio stream closed (demand off, loss, or shutdown)
+			}
+			if sink != nil {
+				sink(pcm)
+			}
+		}
 	}
 }
 
@@ -295,6 +304,8 @@ func (s *Session) Run(ctx context.Context) error {
 	var idleC <-chan time.Time
 	var decayTimer *time.Timer
 	var decayC <-chan time.Time
+	var audioTTLTimer *time.Timer
+	var audioTTLC <-chan time.Time
 	stopIdle := func() {
 		if idleTimer != nil {
 			idleTimer.Stop()
@@ -311,6 +322,14 @@ func (s *Session) Run(ctx context.Context) error {
 	}
 	defer stopIdle()
 	defer stopDecay()
+	stopAudioTTL := func() {
+		if audioTTLTimer != nil {
+			audioTTLTimer.Stop()
+			audioTTLTimer = nil
+			audioTTLC = nil
+		}
+	}
+	defer stopAudioTTL()
 
 	s.setState(StateIdle, "")
 
@@ -323,23 +342,12 @@ func (s *Session) Run(ctx context.Context) error {
 			s.mu.Lock()
 			live := s.snap.SessionState == StateLive && s.client != nil
 			s.mu.Unlock()
-			if d.ride && !live {
-				// A telemetry rider never opens a session and never wakes
-				// the state machine for one (KTD-2/R2).
-				d.errCh <- nil
-				continue
-			}
 			if live {
 				s.runDemand(d)
-				if d.ride {
-					// Telemetry never restarts the idle clock — the session
-					// decays on schedule even while polls continue (KTD-2).
-					continue
-				}
-				// This was work: restart the idle clock (keepalives never
-				// reach this path).
+				// This was work: restart the idle clock unless the audio
+				// demand holds the session open.
 				stopIdle()
-				if !s.held() {
+				if !s.audioDemanded() {
 					idleTimer = time.NewTimer(s.opts.IdleTimeout)
 					idleC = idleTimer.C
 				}
@@ -351,34 +359,76 @@ func (s *Session) Run(ctx context.Context) error {
 			err := s.connectWithRetries(ctx)
 			if err != nil {
 				d.errCh <- err // reject with the observed fact (R2)
+				// A failed connect arms the decay: a stale fault must not
+				// read as current when nobody retries (R3).
+				decayTimer = time.NewTimer(s.opts.DecayTimeout)
+				decayC = decayTimer.C
 				continue
 			}
 			s.runDemand(d)
 			stopIdle()
-			if !s.held() {
+			if !s.audioDemanded() {
 				idleTimer = time.NewTimer(s.opts.IdleTimeout)
 				idleC = idleTimer.C
 			}
+			s.ensureAudio()
 
-		case h := <-s.holdCh:
-			s.mu.Lock()
-			s.hold = h.on
-			s.snap.Hold = h.on
-			s.mu.Unlock()
-			s.notify()
-			h.err <- nil
-			if h.on {
-				stopIdle() // armed holds the session open (R11)
-			} else if s.live() {
-				// Disarm with no pending traffic starts the idle clock.
-				stopIdle()
-				idleTimer = time.NewTimer(s.opts.IdleTimeout)
-				idleC = idleTimer.C
-			}
+			case ar := <-s.audioCh:
+				s.mu.Lock()
+				s.audioDemand = ar.on
+				s.snap.AudioDemand = ar.on
+				s.mu.Unlock()
+				s.notify()
+				ar.err <- nil
+				if ar.on {
+					// The audio demand holds the session open; audio_on is
+					// heartbeat-refreshed by the consumer and expires via the
+					// TTL — a dead consumer never pins the radio (KTD-2).
+					stopIdle()
+					stopAudioTTL()
+					audioTTLTimer = time.NewTimer(s.opts.AudioDemandTTL)
+					audioTTLC = audioTTLTimer.C
+					if s.live() {
+						s.ensureAudio()
+					}
+				} else {
+					stopAudioTTL()
+					if s.live() {
+						s.mu.Lock()
+						c := s.client
+						s.mu.Unlock()
+						if c != nil {
+							c.CloseAudio()
+						}
+					}
+					if s.live() {
+						stopIdle()
+						idleTimer = time.NewTimer(s.opts.IdleTimeout)
+						idleC = idleTimer.C
+					}
+				}
+
+			case <-audioTTLC:
+				// Audio demand expired without a refreshing audio_on: close
+				// the audio stream and release the session to the idle clock.
+				s.mu.Lock()
+				s.audioDemand = false
+				s.snap.AudioDemand = false
+				c := s.client
+				s.mu.Unlock()
+				s.notify()
+				if c != nil {
+					c.CloseAudio()
+				}
+				if s.live() {
+					stopIdle()
+					idleTimer = time.NewTimer(s.opts.IdleTimeout)
+					idleC = idleTimer.C
+				}
 
 		case <-idleC:
-			// Live without work and not held: disconnect politely (R1) —
-			// the radio's session goes back to manual wfview use.
+			// Live without work: disconnect politely (R1) — the radio's
+			// session goes back to manual wfview use.
 			s.log.Info("idle timeout, disconnecting (session free for wfview)")
 			s.closeClient()
 			stopIdle()
@@ -395,26 +445,16 @@ func (s *Session) Run(ctx context.Context) error {
 		case err := <-s.lostC():
 			// Involuntary session loss (radio reboot, wfview eviction,
 			// network): fields-omitted republish is the /state assembly's
-			// job on the notify below; the hold drops (fail-disarmed, R11)
-			// and the full re-login happens on the next demand.
+			// job on the notify below; the audio demand SURVIVES (the next
+			// TTL refresh reconnects and re-opens the stream) and the full
+			// re-login happens on that next demand.
 			s.closeClient()
 			stopIdle()
-			held := s.held()
-			s.mu.Lock()
-			s.hold = false
-			s.snap.Hold = false
-			s.mu.Unlock()
 			s.setState(StateError, err.Error())
 			decayTimer = time.NewTimer(s.opts.DecayTimeout)
 			decayC = decayTimer.C
-			s.mu.Lock()
-			fn := s.onLoss
-			s.mu.Unlock()
-			if fn != nil {
-				fn(err)
-			}
-			if held {
-				s.log.Warn("session hold dropped on loss (fail-disarmed)", "err", err)
+			if s.audioDemanded() {
+				s.log.Warn("capture session lost; audio demand retained (reconnects on refresh)", "err", err)
 			}
 		}
 	}
@@ -436,12 +476,6 @@ func (s *Session) live() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.snap.SessionState == StateLive && s.client != nil
-}
-
-func (s *Session) held() bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.hold
 }
 
 func (s *Session) snapshot() Snapshot {
@@ -479,6 +513,7 @@ func (s *Session) connectWithRetries(ctx context.Context) error {
 			Host:            s.opts.Host,
 			ControlPort:     s.opts.ControlPort,
 			CIVPort:         s.opts.CIVPort,
+			AudioPort:       s.opts.AudioPort,
 			Username:        s.opts.Username,
 			Password:        s.opts.Password,
 			AreYouThere:     s.opts.AreYouThere,
@@ -486,6 +521,7 @@ func (s *Session) connectWithRetries(ctx context.Context) error {
 			HandshakeBudget: s.opts.HandshakeBudget,
 			LossWatchdog:    s.opts.LossWatchdog,
 			PingInterval:    s.opts.PingInterval,
+			NoCIVData:       true, // receive-only: no LAN CI-V at all (2026-09 pivot)
 			Logger:          s.log,
 		})
 		if err != nil {
@@ -509,30 +545,16 @@ func (s *Session) connectWithRetries(ctx context.Context) error {
 		s.mu.Unlock()
 		s.setState(StateLive, "")
 		s.setRadioName(c.RadioName())
-		go s.routeFrames(c, routeCh)
-		s.fireOnLive(ctx, c)
+		go s.drainFrames(c, routeCh)
 		return nil
 	}
 	s.setState(StateError, lastErr.Error())
 	return lastErr
 }
 
-// fireOnLive runs the safety hook (PTT-off first on reconnect) after a
-// successful handshake, before any pending demand executes.
-func (s *Session) fireOnLive(ctx context.Context, c *civ.Client) {
-	s.mu.Lock()
-	fn := s.onLive
-	s.mu.Unlock()
-	if fn != nil {
-		if err := fn(ctx, c); err != nil {
-			s.log.Warn("on-live hook failed", "err", err)
-		}
-	}
-}
-
-// runDemand executes one demand against the live client. Replies from the
-// previous command are drained first — the demand path is serialized, so
-// the single reply slot always belongs to the current command.
+// runDemand executes one demand against the live client. The demand path
+// is serialized (one Run goroutine), so no reply-slot bookkeeping is
+// needed anymore — there are no command round-trips left.
 func (s *Session) runDemand(d demand) {
 	s.mu.Lock()
 	c := s.client
@@ -541,133 +563,42 @@ func (s *Session) runDemand(d demand) {
 		d.errCh <- errors.New("radio: no live session")
 		return
 	}
-	for {
-		select {
-		case <-s.replyCh:
-		default:
-		}
-		break
-	}
 	d.errCh <- d.fn(c)
 }
 
-// routeFrames reads the live client's frames until the session ends:
-// read replies go to the round-trip waiter, transceive events to the
-// bus-facing stream (unsupported modes dropped, R7).
-func (s *Session) routeFrames(c *civ.Client, done chan struct{}) {
+// drainFrames reads the live client's frame channel until the session
+// ends. With LAN CI-V gone there is nothing to route — but the transport
+// keeps streaming radio-side frames (transceive broadcasts, ping
+// leftovers) and its buffers must stay drained or the client stalls.
+func (s *Session) drainFrames(c *civ.Client, done chan struct{}) {
 	for {
 		select {
 		case <-done:
 			return
-		case raw, ok := <-c.Frames():
+		case _, ok := <-c.Frames():
 			if !ok {
 				return
 			}
-			f, err := civ.ParseFrame(raw)
-			if err != nil {
-				s.log.Debug("dropping unparseable frame", "err", err)
-				continue
-			}
-			if f.Direct {
-				// A direct reply (E0 A2) routes to the (serialized) command
-				// waiter regardless of terminator — real firmware answers
-				// reads with FD-terminated frames (e.g. FE FE E0 A2 15 02
-				// <hi> <lo> FD) and sets with the bare FB/FA acknowledge
-				// (bench 2026-09-20); keying routing on the terminator
-				// dropped every read reply.
-				select {
-				case s.replyCh <- f:
-				default:
-					s.log.Warn("reply slot full, dropping reply", "cmd", f.Cmd)
-				}
-				continue
-			}
-			tr, ok, err := civ.ParseTransceive(f)
-			if err != nil {
-				// Unsupported-mode events: consumed, omitted (R7).
-				continue
-			}
-			if !ok {
-				continue // unrelated frames
-			}
-			select {
-			case s.transCh <- tr:
-			default:
-				s.log.Warn("transceive stream full, dropping oldest event")
-				select {
-				case <-s.transCh:
-				default:
-				}
-				select {
-				case s.transCh <- tr:
-				default:
-				}
-			}
-		}
-	}
-}
-
-// RoundTrip sends one command frame and waits for its reply (FB/FA), which
-// the frame router delivers on replyCh. NG becomes the typed rejection.
-// Callers serialize through the demand path.
-func (s *Session) RoundTrip(ctx context.Context, c *civ.Client, frame []byte, wait time.Duration) (civ.Frame, error) {
-	if err := c.SendCIV(frame); err != nil {
-		return civ.Frame{}, fmt.Errorf("radio: send: %w", err)
-	}
-	deadline := time.After(wait)
-	// Sub-command queries sharing a command byte (15 02 / 15 12 / 15 13)
-	// are told apart by the reply's repeated FIRST sub byte — the real
-	// radio echoes it (bench 2026-09-20). A trailing read-placeholder byte
-	// (07 d2 00 → 07 d2 <value>) is NOT echoed verbatim, so only the first
-	// sub byte is matched.
-	wantSub := frame[5 : len(frame)-1]
-	for {
-		select {
-		case f := <-s.replyCh:
-			// Calls are serialized, so a bare FB/FA acknowledge (the real
-			// radio answers sets with FE FE E0 A2 FB — no command echo)
-			// necessarily answers the pending command. Everything else must
-			// carry the sent command byte and the discriminating sub byte.
-			isAck := f.Cmd == civ.TerminatorOK || f.Cmd == civ.TerminatorNG
-			matches := f.Cmd == frame[4] &&
-				(len(wantSub) == 0 || bytes.HasPrefix(f.Sub, wantSub[:1]))
-			if !matches && !isAck {
-				continue // a late reply to an earlier command
-			}
-			if f.IsNG() {
-				return civ.Frame{}, f.AsNG()
-			}
-			return f, nil
-		case <-deadline:
-			return civ.Frame{}, fmt.Errorf("radio: no reply to command %02x within %s", frame[4], wait)
-		case <-ctx.Done():
-			return civ.Frame{}, ctx.Err()
-		case e := <-c.Lost:
-			// Run owns the loss transition (see closeClient's doc) and Lost
-			// delivers exactly once — an in-flight RoundTrip that observes
-			// the loss must RE-QUEUE it or the state machine never sees the
-			// loss and the session stays zombie-live (a watchdog trip or any
-			// demand racing the radio dying hits this).
-			select {
-			case c.Lost <- e:
-			default:
-			}
-			return civ.Frame{}, errors.New("radio: session lost awaiting reply")
 		}
 	}
 }
 
 // closeClient tears the live client down (idempotent) and stops its frame
-// router. Run is the only reader of client.Lost.
+// drainer. Run is the only reader of client.Lost.
 func (s *Session) closeClient() {
 	s.mu.Lock()
 	c := s.client
 	s.client = nil
 	routeCh := s.routeCh
 	s.routeCh = nil
+	audioRouteCh := s.audioRouteCh
+	s.audioRouteCh = nil
 	s.mu.Unlock()
 	if routeCh != nil {
 		close(routeCh)
+	}
+	if audioRouteCh != nil {
+		close(audioRouteCh)
 	}
 	if c != nil {
 		c.Close()

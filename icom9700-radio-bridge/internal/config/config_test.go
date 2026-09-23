@@ -51,17 +51,17 @@ func TestDefaults(t *testing.T) {
 	if cfg.Session.IdleTimeoutDur != 120*time.Second {
 		t.Errorf("default idle_timeout = %s, want 120s", cfg.Session.IdleTimeoutDur)
 	}
-	if cfg.Session.TXWatchdogDur != 180*time.Second {
-		t.Errorf("default tx_watchdog = %s, want 180s", cfg.Session.TXWatchdogDur)
-	}
 	if cfg.Session.MaxAttempts != 3 {
 		t.Errorf("default max_attempts = %d, want 3", cfg.Session.MaxAttempts)
 	}
 	if cfg.Session.AttemptSpacingDur != 30*time.Second {
 		t.Errorf("default attempt_spacing = %s, want 30s", cfg.Session.AttemptSpacingDur)
 	}
-	if cfg.Radio.PollIntervalDur != time.Second {
-		t.Errorf("default poll_interval = %s, want 1s", cfg.Radio.PollIntervalDur)
+	if cfg.Serial.Baud != 115200 {
+		t.Errorf("default serial.baud = %d, want 115200", cfg.Serial.Baud)
+	}
+	if cfg.Serial.MeterIntervalDur != 500*time.Millisecond {
+		t.Errorf("default serial.meter_interval = %s, want 500ms", cfg.Serial.MeterIntervalDur)
 	}
 	if cfg.Log.Level != "info" {
 		t.Errorf("default log level = %q, want info", cfg.Log.Level)
@@ -98,15 +98,14 @@ func TestExampleConfigParses(t *testing.T) {
 		t.Errorf("mqtt user = %q, want hf", cfg.MQTT.User)
 	}
 	if cfg.Session.IdleTimeoutDur != 120*time.Second ||
-		cfg.Session.TXWatchdogDur != 180*time.Second ||
 		cfg.Session.MaxAttempts != 3 ||
 		cfg.Session.AttemptSpacingDur != 30*time.Second {
-		t.Errorf("session policy = %s/%s/%d/%s, want 120s/180s/3/30s",
-			cfg.Session.IdleTimeoutDur, cfg.Session.TXWatchdogDur,
+		t.Errorf("session policy = %s/%d/%s, want 120s/3/30s",
+			cfg.Session.IdleTimeoutDur,
 			cfg.Session.MaxAttempts, cfg.Session.AttemptSpacingDur)
 	}
-	if cfg.Radio.PollIntervalDur != time.Second {
-		t.Errorf("poll_interval = %s, want 1s", cfg.Radio.PollIntervalDur)
+	if cfg.Serial.MeterIntervalDur != 500*time.Millisecond {
+		t.Errorf("serial.meter_interval = %s, want 500ms", cfg.Serial.MeterIntervalDur)
 	}
 	if cfg.MQTT.Password != "" || cfg.CIV.Password != "" {
 		t.Errorf("passwords must never come from the TOML, got mqtt=%q civ=%q",
@@ -267,9 +266,9 @@ func TestInvalidDurationRejected(t *testing.T) {
 		value string
 	}{
 		{"idle_timeout", "session.idle_timeout", "fast"},
-		{"tx_watchdog", "session.tx_watchdog", "180"},
 		{"attempt_spacing", "session.attempt_spacing", "soon"},
-		{"poll_interval", "radio.poll_interval", "1 h"},
+		{"meter_interval", "serial.meter_interval", "soon"},
+		{"demand_ttl", "audio.demand_ttl", "60"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -348,11 +347,10 @@ func TestValidateRejectsNonPositiveDurations(t *testing.T) {
 		want string
 	}{
 		{"idle_timeout", func(c Config) Config { c.Session.IdleTimeoutDur = 0; return c }, "session.idle_timeout"},
-		{"tx_watchdog", func(c Config) Config { c.Session.TXWatchdogDur = 0; return c }, "session.tx_watchdog"},
 		{"max_attempts", func(c Config) Config { c.Session.MaxAttempts = 0; return c }, "session.max_attempts"},
 		{"attempt_spacing", func(c Config) Config { c.Session.AttemptSpacingDur = 0; return c }, "session.attempt_spacing"},
 		{"error_decay", func(c Config) Config { c.Session.ErrorDecayDur = 0; return c }, "session.error_decay"},
-		{"poll_interval", func(c Config) Config { c.Radio.PollIntervalDur = 0; return c }, "radio.poll_interval"},
+		{"meter_interval", func(c Config) Config { c.Serial.MeterIntervalDur = 0; return c }, "serial.meter_interval"},
 	}
 	for _, tc := range cases {
 		cfg := Defaults()

@@ -1,23 +1,19 @@
 // Package bridge is the four-plane MQTT surface for the muehle/uhf/radio
-// slot (plan U5): the station integration model's planes over ONE paho
-// connection, lifted from the spid-ercm mqttslot template (the newest gate
-// set) and adapted to the on-demand radio session:
+// slot (plan U5), lifted from the spid-ercm mqttslot template (the newest
+// gate set) and adapted to the receive-only radio posture (2026-09 pivot):
 //
 //	/meta    retained birth certificate (role `radio`, capabilities, the
-//	         READ-ONLY expose — no PTT/arm widgets in HA, v1)
-//	/state   retained hybrid snapshot (R5): top-level active-TX fields +
-//	         main/sub detail + session/armed/meters, per-state payload rules
-//	         (R6), poll-tick cadence with dedup + freshness heartbeat (KTD14
-//	         / pol-ctrl precedent), meters dedup'd to <= 1 Hz (KTD-8)
+//	         READ-ONLY expose — no control fields at all)
+//	/state   retained snapshot: capture-session state + audio/monitor
+//	         demands + serial-CIV telemetry (on change, dedup'd, 60 s
+//	         freshness heartbeat, KTD14)
 //	/status  retained online|offline LWT, self-published offline on clean exit
 //	/cmd     one-shot actions (KTD6): QoS-0 subscription, ts gate, 4 KB size
 //	         gate, clear-after-execute-or-reject with the echo guard, clipped
-//	         rejections
-//
-// PTT is safety-gated HERE: the armed ∧ live gate at dispatch (R10) plus
-// the U6 safety core (safety.go — max-TX watchdog, MQTT-loss disarm +
-// out-of-band PTT-off, session-loss fail-disarm with safety-driven
-// redelivery).
+//	         rejections. Exactly five actions survive: audio_on, audio_off,
+//	         power_on, monitor_on, monitor_off. There is no LAN CI-V command
+//	         path anymore — remote TX control was removed (see
+//	         docs/known-issues.md for the history).
 package bridge
 
 import (
@@ -35,6 +31,46 @@ import (
 
 	"icom9700-radio-bridge/internal/radio"
 )
+
+// stateHeartbeat bounds how stale the retained /state ts may get while the
+// snapshot is unchanged (the KTD14 always-fresh-ts rule, the pol-ctrl 60 s
+// precedent). Telemetry updates republish out-of-band; this is only the
+// unchanged-snapshot refresh.
+const stateHeartbeat = 60 * time.Second
+
+// RadioState is the serial CI-V monitor's telemetry snapshot: every value
+// observed (serial reads / transceive broadcasts), never extrapolated. The
+// /state assembly omits it entirely while the monitor is off.
+type RadioState struct {
+	Responding bool // the radio answers CI-V (false = live-but-deaf / standby / serial down)
+	FreqHz     uint64
+	Band       string
+	Mode       string
+	Satellite  bool
+	SMeter     *int
+	SWR        *int
+	ALC        *int
+	TXPower    *int // populated only if the bench proves the CI-V read
+}
+
+// Monitor is the serial CI-V telemetry reader surface (implemented by
+// internal/civserial; a fake in tests). nil Options.Monitor = no serial
+// port configured: the monitor_* and power_on cmds are rejected with the
+// observed fact.
+type Monitor interface {
+	// SetMonitor toggles the telemetry reader. Sticky — no TTL: the serial
+	// wire is dedicated to this process, there is nothing to release.
+	SetMonitor(on bool) error
+	// Wake transient-opens the serial port to send the power-on frame
+	// (a standby radio answers no ack — blind send).
+	Wake(ctx context.Context) error
+	// Snapshot returns the latest telemetry.
+	Snapshot() RadioState
+	// Updates nudges on every telemetry change (coalesced).
+	Updates() <-chan struct{}
+	// Close shuts the monitor down.
+	Close()
+}
 
 // Options wires the slot. Every address and identity field comes from the
 // bridge config — no site, station or location constant lives here (§8.1
@@ -57,19 +93,13 @@ type Options struct {
 	// it only enriches it).
 	DeviceModel string
 
-	// Manager is the radio session manager (U4). The bridge owns no CI-V
-	// path of its own — everything goes through Demand/SetHold.
+	// Manager is the radio capture-session manager (U4). The bridge owns no
+	// CI-V path of its own — everything goes through SetAudioDemand.
 	Manager *radio.Manager
 
-	// PollInterval is the /state snapshot tick (config radio.poll_interval);
-	// meters ride the same tick, dedup'd to <= 1 Hz into the retained
-	// snapshot (KTD-8).
-	PollInterval time.Duration
-
-	// TXWatchdog is the max-TX bound (config session.tx_watchdog, U6/
-	// KTD-5): a PTT left keyed longer than this is forced off and the armed
-	// permit drops. <= 0 takes the 180 s default.
-	TXWatchdog time.Duration
+	// Monitor is the serial CI-V telemetry reader. nil = no serial port
+	// configured (monitor_* / power_on cmds rejected with the fact).
+	Monitor Monitor
 
 	Logger *slog.Logger
 }
@@ -93,27 +123,17 @@ type Bridge struct {
 
 	stopOnce sync.Once
 
-	// radio is the cached CI-V truth (poll + transceive folding); the mu
-	// guard covers it together with the dedup snapshot, the armed permit,
-	// the safety-core state and the rejection error. Held only briefly;
-	// never across a publish.
-	mu           sync.Mutex
-	radio        radioState
-	sessionState string
-	hasLast      bool
-	last         snap
-	lastPub      time.Time
-	armed        bool
-	cmdErr       string
+	// radio is the serial monitor's latest telemetry; mu guards it together
+	// with the dedup snapshot, the monitor flag and the rejection error.
+	// Held only briefly; never across a publish.
+	mu        sync.Mutex
+	monitorOn bool
+	radio     RadioState
+	cmdErr    string
 
-	// Safety core (U6): pendingOff is a PTT-off the radio never confirmed —
-	// the OnLive hook re-issues it with priority on the next handshake and
-	// the redelivery loop keeps series armed until it lands; txWatchdog is
-	// the rearmable max-TX bound (KTD-5); redelivering guards against
-	// stacked redelivery series. All live under mu.
-	pendingOff    bool
-	redelivering  bool
-	txWatchdog    *time.Timer
+	hasLast bool
+	last    snap
+	lastPub time.Time
 }
 
 // mqClient is the publish/subscribe surface the bridge needs — the paho
@@ -134,13 +154,10 @@ func New(o Options) (*Bridge, error) {
 	if o.Manager == nil {
 		return nil, fmt.Errorf("bridge: no radio manager wired")
 	}
-	if o.PollInterval <= 0 {
-		return nil, fmt.Errorf("bridge: poll interval must be > 0")
-	}
 	if o.Logger == nil {
 		o.Logger = slog.Default()
 	}
-	b := &Bridge{
+	return &Bridge{
 		opts: o,
 		mgr:  o.Manager,
 		log:  o.Logger.With("component", "bridge"),
@@ -150,11 +167,7 @@ func New(o Options) (*Bridge, error) {
 		metaTopic:   schema.MetaTopic(o.Site, o.Station, o.Slot),
 		stateTopic:  schema.StateTopic(o.Site, o.Station, o.Slot),
 		cmdTopic:    schema.CmdTopic(o.Site, o.Station, o.Slot),
-	}
-	// The U6 safety hooks: session loss and reconnect redelivery. The armed
-	// permit starts false (fail-disarmed on boot, R11).
-	b.installSafety()
-	return b, nil
+	}, nil
 }
 
 // wireClient installs the client (fake in tests, paho adapter in Start)
@@ -237,9 +250,9 @@ func (b *Bridge) Start(ctx context.Context) error {
 		opts.SetPassword(b.opts.Password)
 	}
 	opts.SetConnectionLostHandler(func(_ paho.Client, err error) {
-		// U6 loss-of-plane rule: disarm + out-of-band PTT-off attempt; the
-		// handler itself stays cheap (paho goroutine).
-		b.onMqttLoss(err)
+		// paho auto-reconnects; there is no radio-side safety action to
+		// take (no TX path exists — receive-only posture).
+		log.Warn("mqtt connection lost", "err", err)
 	})
 	opts.SetOnConnectHandler(func(cl paho.Client) {
 		log.Info("mqtt connected", "broker", b.opts.Broker)
@@ -264,31 +277,32 @@ func (b *Bridge) Start(ctx context.Context) error {
 	return nil
 }
 
-// Run drives the /state poll tick until the context is done. The radio
+// Run drives the /state heartbeat until the context is done. The radio
 // manager's Run is the caller's concern (main starts both).
 func (b *Bridge) Run() {
-	// Session transitions republish out-of-band (the poll tick alone would
-	// leave a session drop visible for up to a full interval).
+	// State changes republish out-of-band (the heartbeat alone would leave
+	// a demand flip or telemetry change visible for up to a full interval).
 	go b.followSession()
-	go b.followTransceives()
+	if b.opts.Monitor != nil {
+		go b.followMonitor()
+	}
 
 	b.publishState(false) // immediate first snapshot
-	ticker := time.NewTicker(b.opts.PollInterval)
+	ticker := time.NewTicker(stateHeartbeat)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-b.ctx.Done():
 			return
 		case <-ticker.C:
-			b.poll()
-			b.publishState(false)
+			b.publishState(false) // unchanged snapshot -> fresh ts only
 		}
 	}
 }
 
 // followSession republishes /state on every session state change (idle /
 // connecting / live / error) — the session_state field is the consumer
-// contract (R16) and must not wait for the poll tick.
+// contract (R16) and must not wait for the heartbeat.
 func (b *Bridge) followSession() {
 	notify := b.mgr.Notify()
 	for {
@@ -301,16 +315,15 @@ func (b *Bridge) followSession() {
 	}
 }
 
-// followTransceives folds inbound transceive events (freq/mode/tx) into the
-// cached radio state between polls.
-func (b *Bridge) followTransceives() {
-	trs := b.mgr.Transceives()
+// followMonitor republishes /state on every serial telemetry change.
+func (b *Bridge) followMonitor() {
+	updates := b.opts.Monitor.Updates()
 	for {
 		select {
 		case <-b.ctx.Done():
 			return
-		case tr := <-trs:
-			b.foldTransceive(tr)
+		case <-updates:
+			b.publishState(false)
 		}
 	}
 }
@@ -326,7 +339,9 @@ func (b *Bridge) Close() {
 		if b.cancel != nil {
 			b.cancel()
 		}
-		b.safetyClose()
+		if b.opts.Monitor != nil {
+			b.opts.Monitor.Close()
+		}
 		if b.cli != nil && b.cli.isConnected() {
 			b.cli.publish(b.statusTopic, 1, true, []byte("offline"))
 			b.cli.disconnect(250)

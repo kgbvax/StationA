@@ -16,5 +16,6 @@ use (
 	./spid-ercm-rotator-bridge
 	./testui
 	./ultrabridge
+	./vhfcam-restream
 	./wrc-rotator-bridge
 )

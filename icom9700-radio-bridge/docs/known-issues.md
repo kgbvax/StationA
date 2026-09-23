@@ -4,6 +4,13 @@ Component register (station-wide cross-cutting items live in `../docs/known-issu
 
 ## [safety-gap] IC-9700 firmware ignores CI-V PTT-off after the keying session dies — unkey requires a power cycle (gate 5, NO-GO)
 
+> **RESOLVED-MOOT, 2026-09-23 (receive-only pivot):** LAN TX control was removed
+> entirely from this bridge — there is no CI-V PTT path left (LAN or otherwise; the
+> `/cmd` action set is audio_on/audio_off/power_on/monitor_on/monitor_off). This
+> entry stays as the historical record of the bench finding that drove the pivot.
+> The firmware behavior still matters for ANY future serial-CIV TX control: it must
+> be re-proven on serial before a TX path is ever re-introduced.
+
 Commissioning bench, 2026-09-20/21 (firmware as shipped; radio `uhf.kgbvax.net`):
 
 - Keyed the radio via CI-V (`1C 00 01`) on a live LAN session, then blackholed the

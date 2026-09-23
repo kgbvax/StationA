@@ -194,3 +194,9 @@ func CmdSetTransceive(on bool) []byte {
 	}
 	return BuildFrame(CivCmdSetTransceive, []byte{SubTransceiveToggle, 0x01, v})
 }
+
+// CmdPowerOn builds the IC-9700 remote wake `1A 05 02 01` (standby -> ON).
+// Sent blind: a standby radio answers no CI-V ack, so there is no
+// round-trip. The frame bytes are configurable (audio.power_on_frame) —
+// this builder is the documented default.
+func CmdPowerOn() []byte { return BuildFrame(CivCmdPower, []byte{0x05, 0x02, 0x01}) }

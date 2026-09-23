@@ -1,7 +1,6 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../../mqtt/mqtt_service.dart';
@@ -11,48 +10,25 @@ import '../theme.dart';
 import 'card_container.dart';
 import 'status_tag.dart';
 
-/// IC-9700 radio surface (U7): the `muehle/uhf/radio` slot published by
-/// icom9700-radio-bridge, on the UHF tab.
+/// IC-9700 radio surface (U7), receive-only (2026-09 pivot): an audio
+/// capture toggle, an optional serial CI-V monitor toggle, and the
+/// read-only readout (freq / mode / meters). Nothing here keys or steers
+/// the radio — remote TX was removed from bridge and console; if control
+/// ever returns it will be serial CI-V, not LAN.
 ///
-/// Deliberate deviations from the pol-ctrl contract, per the plan's
-/// on-demand session model:
-///
-/// - The readout ALWAYS renders — idle/connecting/live/error is the panel's
-///   core value, not a fault. The OFFLINE tag renders whenever the slot is
-///   not reachable over /status (bridge LWT); the session-state tag renders
-///   only while it is: a dead bridge leaves a retained snapshot whose
-///   session state must not read as current.
-/// - ARM/DISARM gates on bridge liveness ONLY (store.linkUp && /status
-///   online) — never slot.isOnline, which folds in device_online, and
-///   device_online:false is the HEALTHY idle here (R16). Arm-while-idle is
-///   the bridge's connect trigger (R1); gating the toggle on live, or on
-///   device_online, would make the loop unreachable from the panel. PTT and
-///   tuning gate on armed ∧ session_state=live (R10).
-/// - Arm is a pending-confirm toggle; PTT is hold-to-talk — keying
-///   publishes on pointer-down and unkeys on pointer-up/cancel (and at
-///   dispose, as a belt-and-suspenders against tab switches mid-hold).
-///   Each flip records the /state.ts it was keyed against and clears on
-///   the first /state with a different ts (the tx flip or /state.error
-///   renders from that readback). A 5 s local timeout reverts to a "no
-///   bus confirmation" ERR tag. The readout comes from /state readback
-///   only — never tap optimism (KTD15).
-///
-/// Publishes one-shot cmds (cmdRetain['muehle/uhf/radio'] = false) with the
-/// per-VFO value-key payload builders from wiring.dart. sat_mode,
-/// set_preamp, set_attenuator, set_data and set_power are out of panel for
-/// v1 (the bus actions remain per icom9700-radio-bridge/docs/mqtt-api.md).
+/// Contract notes kept from the old panel: the readout ALWAYS renders —
+/// an OFFLINE tag shows whenever the slot is unreachable over /status
+/// (bridge LWT). The toggles are pending-confirm: the tap records the
+/// /state.ts it keyed against and clears on the first /state with a
+/// different ts (the demand flip or /state.error renders from that
+/// readback); a 5 s local timeout reverts to a "no bus confirmation" ERR
+/// tag. The readout comes from /state readback only — never tap optimism
+/// (KTD15). One-shot publishes (cmdRetain['muehle/uhf/radio'] = false).
 class UhfRadioPanel extends StatefulWidget {
   const UhfRadioPanel({super.key});
 
   static const _slot = 'uhf/radio';
   static const _address = 'muehle/uhf/radio';
-
-  /// Canonical settable modes (mqtt-api.md set_mode: cw|usb|lsb|am|fm;
-  /// `data` is the set_data modifier — out of panel v1).
-  static const _modes = ['cw', 'usb', 'lsb', 'am', 'fm'];
-
-  /// Frequency stepper quantum: 5 kHz — the satellite (Doppler) step.
-  static const _stepHz = 5000;
 
   @override
   State<UhfRadioPanel> createState() => _UhfRadioPanelState();
@@ -68,58 +44,32 @@ class _Pending {
 
 class _UhfRadioPanelState extends State<UhfRadioPanel> {
   static const _confirmWindow = Duration(seconds: 5);
-  static const _noConfirmArm = 'no bus confirmation (arm)';
-  static const _noConfirmPtt = 'no bus confirmation (ptt)';
-
-  final _freqControllers = <String, TextEditingController>{
-    'main': TextEditingController(),
-    'sub': TextEditingController(),
-  };
+  static const _noConfirmCapture = 'no bus confirmation (capture)';
+  static const _noConfirmMonitor = 'no bus confirmation (monitor)';
 
   BusStore? _store;
-  MqttService? _mqtt;
   Timer? _confirmTimer;
 
-  _Pending? _armPending;
-  _Pending? _pttPending;
-
-  /// True between pointer-down and pointer-up on the PTT button — the
-  /// momentary half of hold-to-talk. Drives the pressed chrome and the
-  /// dispose-time safety unkey.
-  bool _pttHeld = false;
+  _Pending? _capturePending;
+  _Pending? _monitorPending;
 
   /// The 5 s timeout's ERR text (bus error outranks it in the render), and
   /// the /state.ts it was raised against — any newer snapshot proves the
-  /// bus is alive again and clears the complaint, even though the timeout
-  /// already consumed the pending.
+  /// bus is alive again and clears the complaint.
   String? _localErr;
   String? _localErrTs;
 
   @override
   void initState() {
     super.initState();
-    // References the timer callback and the dispose-time safety unkey need
-    // (build uses context.watch; no listener — _settle runs at the top of
-    // build instead).
+    // The store reference the timer callback needs (build uses context.watch;
+    // no listener — _settle runs at the top of build instead).
     _store = context.read<BusStore>();
-    _mqtt = context.read<MqttService>();
   }
 
   @override
   void dispose() {
     _confirmTimer?.cancel();
-    // Safety unkey: the panel must never go away while keyed (tab switch,
-    // teardown) — PTT is momentary, the radio has to follow.
-    if (_pttHeld) {
-      _mqtt?.publish(
-        cmdTopic(UhfRadioPanel._slot),
-        uhfRadioPttPayload('off'),
-        retain: cmdRetain[UhfRadioPanel._address]!,
-      );
-    }
-    for (final c in _freqControllers.values) {
-      c.dispose();
-    }
     super.dispose();
   }
 
@@ -132,49 +82,38 @@ class _UhfRadioPanelState extends State<UhfRadioPanel> {
     if (store == null) return false;
     final ts = _stateTs(store);
     var changed = false;
-    if (_armPending != null && ts != _armPending!.tsAtTap) {
-      _armPending = null;
+    if (_capturePending != null && ts != _capturePending!.tsAtTap) {
+      _capturePending = null;
       changed = true;
     }
-    if (_pttPending != null && ts != _pttPending!.tsAtTap) {
-      _pttPending = null;
+    if (_monitorPending != null && ts != _monitorPending!.tsAtTap) {
+      _monitorPending = null;
       changed = true;
     }
-    if (_localErr != null && _localErrTs != ts) {
+    if (_localErr != null && ts != _localErrTs) {
       _localErr = null;
       _localErrTs = null;
       changed = true;
     }
-    return changed;
-  }
-
-  /// The 5 s local timeout: a pending still keyed against the tap's ts has
-  /// seen no confirmation — revert it into the no-confirmation ERR tag. A
-  /// pending that settled meanwhile is skipped (one timer serves both
-  /// toggles; only the latest tap re-arms it).
-  void _onConfirmTimeout() {
-    final store = _store;
-    if (store == null) return;
-    final ts = _stateTs(store);
-    var changed = false;
-    if (_armPending != null && ts == _armPending!.tsAtTap) {
-      _armPending = null;
-      _localErr = _noConfirmArm;
-      _localErrTs = ts;
-      changed = true;
-    }
-    if (_pttPending != null && ts == _pttPending!.tsAtTap) {
-      _pttPending = null;
-      _localErr = _noConfirmPtt;
-      _localErrTs = ts;
-      changed = true;
-    }
     if (changed) setState(() {});
+    return changed;
   }
 
   void _restartConfirmTimer() {
     _confirmTimer?.cancel();
-    _confirmTimer = Timer(_confirmWindow, _onConfirmTimeout);
+    _confirmTimer = Timer(_confirmWindow, () {
+      if (_capturePending != null) {
+        _localErr = _noConfirmCapture;
+        _localErrTs = _capturePending!.tsAtTap;
+        _capturePending = null;
+      }
+      if (_monitorPending != null) {
+        _localErr = _noConfirmMonitor;
+        _localErrTs = _monitorPending!.tsAtTap;
+        _monitorPending = null;
+      }
+      if (mounted) setState(() {});
+    });
   }
 
   String? _stateTs(BusStore store) {
@@ -182,87 +121,64 @@ class _UhfRadioPanelState extends State<UhfRadioPanel> {
     return v is String ? v : null;
   }
 
-  void _tapArm(MqttService mqtt, {required bool armed, required String? ts}) {
-    _armPending = _Pending(ts);
-    if (_localErr == _noConfirmArm) {
-      _localErr = null;
-      _localErrTs = null;
-    }
-    _restartConfirmTimer();
-    mqtt.publish(
-      cmdTopic(UhfRadioPanel._slot),
-      armed ? uhfRadioDisarmPayload() : uhfRadioArmPayload(),
-      retain: cmdRetain[UhfRadioPanel._address]!,
-    );
-    setState(() {});
-  }
-
-  /// Hold-to-talk: pointer-down keys the radio, pointer-up/cancel unkeys.
-  /// The publishes follow the gesture, not a toggle state — the tx readback
-  /// stays the sole truth for the chip (mqtt-api.md).
-  void _pttDown(String? ts) {
-    if (_pttHeld) return; // repeated down without an up (multi-touch)
-    _pttHeld = true;
-    _pttPending = _Pending(ts);
-    if (_localErr == _noConfirmPtt) {
-      _localErr = null;
-      _localErrTs = null;
-    }
-    _restartConfirmTimer();
-    _mqtt?.publish(
-      cmdTopic(UhfRadioPanel._slot),
-      uhfRadioPttPayload('on'),
-      retain: cmdRetain[UhfRadioPanel._address]!,
-    );
-    setState(() {});
-  }
-
-  void _pttUp() {
-    if (!_pttHeld) return;
-    _pttHeld = false;
-    // The unkey gets its own confirmation window: a dead bus with a keyed
-    // PA is exactly what the ERR must surface.
+  void _sendToggle({required bool on, required _Pending? pending, required String noConfirmText, required String payload}) {
     final store = _store;
-    _pttPending = _Pending(store == null ? null : _stateTs(store));
+    if (store == null) return;
+    // Record the pending against the ts we published under; the demand
+    // flip or /state.error settles it (KTD15 — the readback is the truth).
+    final p = _Pending(_stateTs(store));
+    if (identical(pending, _capturePending)) {
+      _capturePending = p;
+      if (_localErr == _noConfirmCapture) {
+        _localErr = null;
+        _localErrTs = null;
+      }
+    } else {
+      _monitorPending = p;
+      if (_localErr == _noConfirmMonitor) {
+        _localErr = null;
+        _localErrTs = null;
+      }
+    }
     _restartConfirmTimer();
-    _mqtt?.publish(
-      cmdTopic(UhfRadioPanel._slot),
-      uhfRadioPttPayload('off'),
-      retain: cmdRetain[UhfRadioPanel._address]!,
-    );
+    context.read<MqttService>().publish(
+          cmdTopic(UhfRadioPanel._slot),
+          payload,
+          retain: cmdRetain[UhfRadioPanel._address]!,
+        );
     setState(() {});
   }
 
   @override
   Widget build(BuildContext context) {
     final store = context.watch<BusStore>();
-    final mqtt = context.read<MqttService>();
     _settle(); // pending/timeout bookkeeping against the fresh snapshot
 
     const address = UhfRadioPanel._address;
     final slot = store.slots[address];
-    // Bridge liveness ONLY — see the class doc for why device_online is
-    // excluded from the arm gate (R16: false is the healthy idle here).
+    // Bridge liveness ONLY — the audio demand is the session's connect
+    // trigger; a healthy idle publishes device_online:false by design (R16).
     final bridgeUp = (slot?.bridgeOnline ?? false) && store.linkUp;
 
-    final sessionState = store.stateValueAs<String>(address, 'session_state');
-    final live = sessionState == 'live';
-    final armed = store.stateValueAs<bool>(address, 'armed') ?? false;
-    final tx = store.stateValueAs<String>(address, 'tx') ?? 'rx';
-    final selectedVfo = store.stateValueAs<String>(address, 'selected_vfo');
+    final sessionState =
+        store.stateValueAs<String>(address, 'session_state') ?? 'idle';
+    final audioDemand =
+        store.stateValueAs<bool>(address, 'audio_demand') ?? false;
+    final monitor = store.stateValueAs<bool>(address, 'monitor') ?? false;
+    final responding =
+        store.stateValueAs<bool>(address, 'radio_responding') ?? false;
     final satellite = store.stateValueAs<bool>(address, 'satellite') ?? false;
-    final ts = _stateTs(store);
+    final freqHz = store.stateValueAs<num>(address, 'freq_hz')?.toInt();
+    final band = store.stateValueAs<String>(address, 'band');
+    final mode = store.stateValueAs<String>(address, 'mode');
+    final sMeter = store.stateValueAs<int>(address, 's_meter');
+    final swr = store.stateValueAs<int>(address, 'swr');
+    final alc = store.stateValueAs<int>(address, 'alc');
+    final txPower = store.stateValueAs<int>(address, 'tx_power');
 
     // Bus truth outranks the local timeout text (pol-ctrl ERR pattern).
     final busErr = slot?.state?['error'];
     final errText = busErr is String && busErr.isNotEmpty ? busErr : _localErr;
-
-    // R10 gate: tuning and PTT need the permit AND a live session. PTT is
-    // momentary — a pending confirm must never block re-keying (or the
-    // unkey on release), so only the arm toggle pends itself out.
-    final tuneEnabled = bridgeUp && armed && live;
-    final armEnabled = bridgeUp && _armPending == null;
-    final pttEnabled = tuneEnabled;
 
     return CardContainer(
       child: Column(
@@ -285,9 +201,10 @@ class _UhfRadioPanelState extends State<UhfRadioPanel> {
           _sessionRow(
             bridgeUp: bridgeUp,
             sessionState: sessionState,
-            armed: armed,
-            tx: tx,
+            audioDemand: audioDemand,
+            monitor: monitor,
             satellite: satellite,
+            responding: responding,
           ),
           if (errText != null) ...[
             const SizedBox(height: 4),
@@ -299,81 +216,79 @@ class _UhfRadioPanelState extends State<UhfRadioPanel> {
             ),
           ],
           const SizedBox(height: 10),
-          _vfoSection(
-            store: store,
-            mqtt: mqtt,
-            vfo: 'main',
-            label: 'MAIN',
-            selected: selectedVfo == 'main',
-            detail: _vfoMap(store, 'main'),
-            enabled: tuneEnabled,
-          ),
-          Divider(height: 20, thickness: 1, color: AppTheme.cardLine),
-          _vfoSection(
-            store: store,
-            mqtt: mqtt,
-            vfo: 'sub',
-            label: 'SUB',
-            selected: selectedVfo == 'sub',
-            detail: _vfoMap(store, 'sub'),
-            enabled: tuneEnabled,
-          ),
-          if (live) ...[
-            const SizedBox(height: 8),
-            _metersRow(store),
-          ],
-          const SizedBox(height: 10),
           Row(
             children: [
               Expanded(
                 child: ElevatedButton(
-                  key: const ValueKey('uhf-arm-btn'),
-                  onPressed:
-                      armEnabled ? () => _tapArm(mqtt, armed: armed, ts: ts) : null,
-                  style: AppTheme.actionButton(active: armed),
-                  child: Text(armed ? 'DISARM' : 'ARM',
-                      style: AppTheme.mono(13, weight: FontWeight.w800)),
+                  key: const ValueKey('uhf-capture-btn'),
+                  onPressed: bridgeUp
+                      ? () => _sendToggle(
+                          on: !audioDemand,
+                          pending: _capturePending,
+                          noConfirmText: _noConfirmCapture,
+                          payload: audioDemand
+                              ? uhfRadioAudioOffPayload()
+                              : uhfRadioAudioOnPayload())
+                      : null,
+                  style: AppTheme.actionButton(active: audioDemand),
+                  child: Text(
+                    audioDemand ? 'CAPTURE: ON' : 'CAPTURE: OFF',
+                    style: AppTheme.mono(13, weight: FontWeight.w800),
+                  ),
                 ),
               ),
               const SizedBox(width: 8),
               Expanded(
-                // Hold-to-talk: the ElevatedButton is chrome and gesture-arena
-                // owner only; keying/unkeying rides the raw pointer events so
-                // the unkey fires even if the finger drifts off the button.
-                child: Listener(
-                  onPointerDown: (_) {
-                    if (pttEnabled) _pttDown(ts);
-                  },
-                  onPointerUp: (_) => _pttUp(),
-                  onPointerCancel: (_) => _pttUp(),
-                  child: ElevatedButton(
-                    key: const ValueKey('uhf-ptt-btn'),
-                    onPressed: pttEnabled ? () {} : null,
-                    style: AppTheme.actionButton(
-                        danger: true, dangerActive: tx == 'tx' || _pttHeld),
-                    child: Text('PTT', style: AppTheme.mono(13, weight: FontWeight.w800)),
+                child: ElevatedButton(
+                  key: const ValueKey('uhf-monitor-btn'),
+                  onPressed: bridgeUp
+                      ? () => _sendToggle(
+                          on: !monitor,
+                          pending: _monitorPending,
+                          noConfirmText: _noConfirmMonitor,
+                          payload: monitor
+                              ? uhfRadioMonitorOffPayload()
+                              : uhfRadioMonitorOnPayload())
+                      : null,
+                  style: AppTheme.actionButton(amberActive: monitor),
+                  child: Text(
+                    monitor ? 'MONITOR: ON' : 'MONITOR: OFF',
+                    style: AppTheme.mono(13, weight: FontWeight.w800),
                   ),
                 ),
               ),
             ],
+          ),
+          const SizedBox(height: 10),
+          _readout(
+            monitor: monitor,
+            responding: responding,
+            freqHz: freqHz,
+            band: band,
+            mode: mode,
+            sMeter: sMeter,
+            swr: swr,
+            alc: alc,
+            txPower: txPower,
+            satellite: satellite,
           ),
         ],
       ),
     );
   }
 
-  /// Session liveness row: the session-state tag ONLY while the slot is
+  /// Session liveness row: the capture-state tag ONLY while the slot is
   /// reachable over /status (a dead bridge leaves a retained snapshot whose
-  /// IDLE/LIVE must not read as current — OFFLINE wins), the RX/TX chip from
-  /// the string-enum readback (dvk pattern), and the ARMED / SAT tags.
+  /// IDLE/LIVE must not read as current — OFFLINE wins), plus the demand
+  /// chips and the read-only SAT tag (same liveness gate).
   Widget _sessionRow({
     required bool bridgeUp,
-    required String? sessionState,
-    required bool armed,
-    required String tx,
+    required String sessionState,
+    required bool audioDemand,
+    required bool monitor,
     required bool satellite,
+    required bool responding,
   }) {
-    final live = sessionState == 'live';
     final (tag, color) = switch (sessionState) {
       'live' => ('LIVE', AppTheme.green),
       'connecting' => ('CONNECTING', AppTheme.amber),
@@ -381,210 +296,74 @@ class _UhfRadioPanelState extends State<UhfRadioPanel> {
       'idle' => ('IDLE', AppTheme.txtMute),
       _ => ('—', AppTheme.txtMute),
     };
-    return Row(
+    return Wrap(
+      spacing: 6,
+      runSpacing: 4,
+      crossAxisAlignment: WrapCrossAlignment.center,
       children: [
         if (bridgeUp) StatusTag(label: tag, color: color),
-        if (bridgeUp && live) ...[
-          // Dead-bridge retained snapshots must not read as current TX/RX
-          // state — the whole row gates on bridge liveness (review finding).
-          const SizedBox(width: 6),
-          StatusTag(
-            label: tx == 'tx' ? 'TX' : 'RX',
-            color: tx == 'tx' ? AppTheme.red : AppTheme.green,
-          ),
-        ],
-        if (armed) ...[
-          const SizedBox(width: 6),
-          StatusTag(label: 'ARMED', color: AppTheme.amber),
-        ],
-        if (satellite) ...[
-          const SizedBox(width: 6),
-          StatusTag(label: 'SAT', color: AppTheme.accent),
-        ],
+        if (bridgeUp && audioDemand) StatusTag(label: 'CAPTURE', color: AppTheme.accent),
+        if (bridgeUp && monitor) StatusTag(label: 'MONITOR', color: AppTheme.amber),
+        if (bridgeUp && monitor && !responding)
+          StatusTag(label: 'STANDBY', color: AppTheme.amber),
+        if (bridgeUp && satellite) StatusTag(label: 'SAT', color: AppTheme.accent),
       ],
     );
   }
 
-  /// One VFO: readout (SEL marker from /state.selected_vfo readback), the
-  /// freq entry (text field + steppers, the sat-rotator pattern) and the
-  /// mode button row (the pol-ctrl pattern). The field stays editable while
-  /// gated so the next target can be pre-typed; steppers/SET/mode taps gate
-  /// on [enabled] (armed ∧ live ∧ bridge up).
-  Widget _vfoSection({
-    required BusStore store,
-    required MqttService mqtt,
-    required String vfo,
-    required String label,
-    required bool selected,
-    required Map<String, dynamic>? detail,
-    required bool enabled,
+  /// The read-only readout (monitor-gated): freq/mode/meters from /state —
+  /// omitted while the monitor is off or the radio is deaf, never zeroed,
+  /// never frozen.
+  Widget _readout({
+    required bool monitor,
+    required bool responding,
+    required int? freqHz,
+    required String? band,
+    required String? mode,
+    required int? sMeter,
+    required int? swr,
+    required int? alc,
+    required int? txPower,
+    required bool satellite,
   }) {
-    final controller = _freqControllers[vfo]!;
-    final parsed = int.tryParse(controller.text.trim());
-    final currentHz = _asHz(detail?['freq_hz']);
-    final activeMode = _asStr(detail?['mode']);
-    final band = _asStr(detail?['band']);
-
-    void publishFreq() {
-      final hz = int.tryParse(controller.text.trim());
-      if (hz == null) return;
-      mqtt.publish(
-        cmdTopic(UhfRadioPanel._slot),
-        uhfRadioSetFreqPayload(hz, vfo),
-        retain: cmdRetain[UhfRadioPanel._address]!,
-      );
+    final dashes = AppTheme.mono(20, weight: FontWeight.w600, color: AppTheme.txtMute);
+    if (!monitor) {
+      return Text('monitor off', style: AppTheme.mono(12, color: AppTheme.txtMute));
     }
-
-    void step(int dir) {
-      if (!enabled) return;
-      // Step from the typed value; fall back to the live readback so an
-      // empty field still steps from somewhere (sat-rotator pattern).
-      final base = parsed ?? currentHz ?? 0;
-      controller.text = (base + dir * UhfRadioPanel._stepHz).toString();
-      setState(() {});
+    if (!responding) {
+      return Text('radio standby / serial down',
+          style: AppTheme.mono(12, color: AppTheme.txtMute));
     }
-
-    final modeButtons = <Widget>[];
-    for (var i = 0; i < UhfRadioPanel._modes.length; i++) {
-      if (i > 0) modeButtons.add(const SizedBox(width: 4));
-      final m = UhfRadioPanel._modes[i];
-      modeButtons.add(Expanded(
-        child: ElevatedButton(
-          key: ValueKey('uhf-$vfo-mode-$m'),
-          onPressed: enabled
-              ? () => mqtt.publish(
-                    cmdTopic(UhfRadioPanel._slot),
-                    uhfRadioSetModePayload(m, vfo),
-                    retain: cmdRetain[UhfRadioPanel._address]!,
-                  )
-              : null,
-          style: AppTheme.actionButton(active: activeMode == m),
-          child: Text(m.toUpperCase(),
-              style: AppTheme.mono(12, weight: FontWeight.w800)),
-        ),
-      ));
-    }
-
+    final meters = <String>[
+      if (sMeter != null) 'S $sMeter',
+      if (txPower != null) 'PWR $txPower',
+      if (swr != null) 'SWR $swr',
+      if (alc != null) 'ALC $alc',
+    ];
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          children: [
-            Text(label,
-                style: AppTheme.mono(12,
-                    weight: FontWeight.w700,
-                    letterSpacing: 0.14,
-                    color: AppTheme.txtMute)),
-            const SizedBox(width: 8),
-            if (selected) StatusTag(label: 'SEL', color: AppTheme.accent),
-            const Spacer(),
-            Text(
-              currentHz != null ? '${_fmtMhz(currentHz)} MHz' : '—',
-              style: AppTheme.mono(20, weight: FontWeight.w700),
-            ),
-            const SizedBox(width: 8),
-            Text(
-              (activeMode ?? '—').toUpperCase(),
-              style: AppTheme.mono(13, weight: FontWeight.w700, color: AppTheme.accent),
-            ),
-            if (band != null) ...[
-              const SizedBox(width: 8),
-              Text(band.toUpperCase(),
-                  style: AppTheme.mono(12,
-                      color: AppTheme.txtMute, weight: FontWeight.w600)),
-            ],
-          ],
+        Text(
+          freqHz != null ? _fmtMhz(freqHz) : '---.---',
+          style: freqHz != null
+              ? AppTheme.display(30, weight: FontWeight.w700, color: AppTheme.txt)
+              : dashes,
         ),
-        const SizedBox(height: 8),
-        Row(
-          children: [
-            _stepButton(vfo: vfo, dir: -1, enabled: enabled, onStep: step),
-            const SizedBox(width: 6),
-            SizedBox(
-              width: 130,
-              child: TextField(
-                key: ValueKey('uhf-$vfo-freq-input'),
-                controller: controller,
-                onChanged: (_) => setState(() {}),
-                keyboardType: TextInputType.number,
-                inputFormatters: [
-                  FilteringTextInputFormatter.allow(RegExp(r'^\d*')),
-                ],
-                style: AppTheme.mono(15, weight: FontWeight.w600),
-                decoration: InputDecoration(
-                  hintText: 'Hz',
-                  hintStyle: AppTheme.mono(13, color: AppTheme.txtFaint),
-                  isDense: true,
-                  contentPadding:
-                      const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
-                  enabledBorder: OutlineInputBorder(
-                    borderSide: BorderSide(color: AppTheme.cardLineHi),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderSide: BorderSide(color: AppTheme.green),
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(width: 6),
-            _stepButton(vfo: vfo, dir: 1, enabled: enabled, onStep: step),
-            const Spacer(),
-            ElevatedButton(
-              key: ValueKey('uhf-$vfo-freq-set'),
-              onPressed: parsed != null && enabled ? publishFreq : null,
-              style: AppTheme.actionButton(),
-              child: Text('SET', style: AppTheme.mono(12, weight: FontWeight.w800)),
-            ),
-          ],
+        const SizedBox(height: 2),
+        Text(
+          [if (band != null && band.isNotEmpty) band.toUpperCase(), if (mode != null) mode.toUpperCase(), if (satellite) 'SAT']
+              .join(' · '),
+          style: AppTheme.mono(12, color: AppTheme.txtMute),
         ),
-        const SizedBox(height: 6),
-        Row(children: modeButtons),
+        if (meters.isNotEmpty) ...[
+          const SizedBox(height: 4),
+          Text(meters.join(' · '), style: AppTheme.mono(12, color: AppTheme.txt)),
+        ],
       ],
     );
   }
 
-  /// Raw 0-255 meter readbacks (mqtt-api.md: present when read, live only).
-  Widget _metersRow(BusStore store) {
-    String m(String key) =>
-        _asNum(store.stateValue(UhfRadioPanel._address, key))?.toString() ?? '—';
-    return Text(
-      'S ${m('s_meter')} · PWR ${m('tx_power')} · SWR ${m('swr')} · ALC ${m('alc')}',
-      style: AppTheme.mono(12, color: AppTheme.txtMute, weight: FontWeight.w600),
-    );
+  String _fmtMhz(int hz) {
+    return '${(hz / 1000000.0).toStringAsFixed(3)} MHz';
   }
-
-  Widget _stepButton({
-    required String vfo,
-    required int dir,
-    required bool enabled,
-    required void Function(int) onStep,
-  }) {
-    return SizedBox(
-      width: 44,
-      height: 48,
-      child: ElevatedButton(
-        key: ValueKey('uhf-$vfo-step-${dir > 0 ? 'up' : 'down'}'),
-        onPressed: enabled ? () => onStep(dir) : null,
-        style: AppTheme.actionButton().copyWith(
-          padding: const WidgetStatePropertyAll(EdgeInsets.zero),
-        ),
-        child: Icon(dir > 0 ? Icons.add : Icons.remove, size: 18, color: AppTheme.txt),
-      ),
-    );
-  }
-
-  // --- safe accessors (the sat-panel lesson: a type-confused payload
-  // degrades to a dash, never a TypeError out of build) ---
-
-  Map<String, dynamic>? _vfoMap(BusStore store, String key) {
-    final v = store.stateValue(UhfRadioPanel._address, key);
-    return v is Map<String, dynamic> ? v : null;
-  }
-
-  static int? _asHz(dynamic v) => v is int ? v : (v is num ? v.toInt() : null);
-  static num? _asNum(dynamic v) => v is num ? v : null;
-  static String? _asStr(dynamic v) => v is String ? v : null;
-
-  static String _fmtMhz(int hz) => (hz / 1e6).toStringAsFixed(3);
 }
-

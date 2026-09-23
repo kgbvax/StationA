@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"net"
+	"sync/atomic"
 	"time"
 )
 
@@ -15,9 +16,15 @@ import (
 // carries the framed CI-V bytes. (kappanhang streamCommon/pkt0, with the
 // globals made per-client state.)
 type udpStream struct {
-	cli  *Client
-	name string
-	conn *net.UDPConn
+	cli   *Client
+	name  string
+	conn  *net.UDPConn
+	quiet atomic.Bool // set before a deliberate local close: reader exits without a loss report
+	// lossIsolated marks an auxiliary stream whose read/write errors must NOT
+	// end the session (the audio stream: a refused audio port is an audio
+	// problem, not a radio problem — the control stream owns liveness).
+	lossIsolated atomic.Bool
+	closed       chan struct{} // closed by CloseAudio: wakes the audio pump for teardown
 
 	localSID  uint32
 	remoteSID uint32
@@ -48,9 +55,10 @@ func (c *Client) dialStream(name string, radioPort, localPort int) (*udpStream, 
 		return nil, fmt.Errorf("dial %s udp %d->%d: %w", name, localPort, radioPort, err)
 	}
 	s := &udpStream{
-		cli:  c,
-		name: name,
-		conn: conn,
+		cli:    c,
+		name:   name,
+		conn:   conn,
+		closed: make(chan struct{}),
 		// The tracked sequence starts at 1 (wfview uint16_t sendSeq = 1).
 		// A first tracked packet at seq 0 reads as a stale packet on real
 		// IC-9700 firmware — it answered our seq-0 login with the 20-byte
@@ -73,11 +81,15 @@ func (s *udpStream) startReader() {
 		for {
 			n, err := s.conn.Read(buf)
 			if err != nil {
-				// Socket closed by Close(): a clean shutdown, not a loss.
+				// Socket closed deliberately (Close/quiet teardown): a clean
+				// shutdown, not a loss.
 				select {
 				case <-s.cli.done:
 					return
 				default:
+				}
+				if s.quiet.Load() || s.lossIsolated.Load() {
+					return
 				}
 				s.cli.lose(fmt.Errorf("%s stream read: %w", s.name, err))
 				return
@@ -158,7 +170,9 @@ func (s *udpStream) retransmitOne(seq uint16) {
 // send writes a datagram (untracked).
 func (s *udpStream) send(p []byte) error {
 	if _, err := s.conn.Write(p); err != nil {
-		s.cli.lose(fmt.Errorf("%s stream write: %w", s.name, err))
+		if !s.lossIsolated.Load() {
+			s.cli.lose(fmt.Errorf("%s stream write: %w", s.name, err))
+		}
 		return err
 	}
 	return nil
