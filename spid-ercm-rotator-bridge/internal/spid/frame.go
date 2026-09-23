@@ -118,21 +118,20 @@ func decodeStatusReply(b []byte) (float64, error) {
 		}
 	}
 	u := int(b[1])*100 + int(b[2])*10 + int(b[3])
-	if u < 360 {
-		// az is u − 360; a u below the 360 offset claims a negative azimuth,
-		// which no physical rotor reports — treat it as the encoding
-		// violation it is, never as a position (the codec's never-misread
-		// posture).
-		return 0, fmt.Errorf("status reply az u=%d below the 360 offset — encoding violation", u)
-	}
-	az := float64(u - 360)
-	if az >= 360 {
-		// Controllers with a continuous position register keep counting past
-		// north when a shortest-path slew crosses 0° (observed live
-		// 2026-09-20: 271°→89° through north reported as 449). The geometry
-		// is right, only the report is unwrapped — normalize into [0, 360)
-		// so the deadband/moving math and /state stay in degrees.
-		az = math.Mod(az, 360)
+	// The controller's position register is a continuous count with the 360
+	// offset, wrapped modulo 720 by the firmware. Observed live 2026-09-20:
+	// a shortest-path slew through north reported 449 for 89° (u ≥ 720 was
+	// not involved); observed live 2026-09-23: a pass slew that ran the long
+	// way through north reported u=180..226 CLIMBING for a ~180° target —
+	// the count had wrapped from the [360, 720) offset band into [0, 360).
+	// A u below 360 is therefore a wrapped position, not an encoding
+	// violation: accept the full register range and normalize into [0, 360)
+	// so the deadband/moving math and /state stay in degrees. Frame-level
+	// corruption is already caught above (length, header, terminator, digit
+	// range) — the never-misread posture lives there, not here.
+	az := math.Mod(float64(u-360), 360)
+	if az < 0 {
+		az += 360
 	}
 	return az, nil
 }
