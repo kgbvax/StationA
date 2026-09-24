@@ -6,6 +6,7 @@ import 'store/bus_store.dart';
 import 'store/credential_store.dart';
 import 'mqtt/mqtt_service.dart';
 import 'dxspot/dxspot_service.dart';
+import 'vhfcam/vhfcam_service.dart';
 import 'ui/theme.dart';
 import 'ui/screens/console_screen.dart';
 import 'ui/screens/setup_screen.dart';
@@ -49,6 +50,7 @@ class _AppRootState extends State<_AppRoot> with WidgetsBindingObserver {
   final _store = BusStore();
   late final MqttService _mqtt;
   final _dxSpot = DxSpotService();
+  final _vhfcam = VhfcamService();
   bool _ready = false;
   bool _showConsole = false;
   String? _bootHost;
@@ -111,6 +113,11 @@ class _AppRootState extends State<_AppRoot> with WidgetsBindingObserver {
       callsign: values['station_callsign'],
     );
     _dxSpot.start();
+    // The antenna-cam feed is bus-independent (plain HTTP to the preview
+    // server); start its poll loop with the stored base URL, like the DX
+    // overlay above.
+    _vhfcam.configure(baseUrl: values['vhfcam_base_url'] ?? defaultVhfcamBaseUrl);
+    _vhfcam.start();
     if (host != null && port != null && user != null && pass != null && pass.isNotEmpty) {
       _bootHost = host;
       _bootPort = port;
@@ -143,6 +150,7 @@ class _AppRootState extends State<_AppRoot> with WidgetsBindingObserver {
     WidgetsBinding.instance.removeObserver(this);
     _store.removeListener(_onBusStoreUpdate);
     _dxSpot.dispose();
+    _vhfcam.dispose();
     _mqtt.dispose();
     super.dispose();
   }
@@ -153,6 +161,7 @@ class _AppRootState extends State<_AppRoot> with WidgetsBindingObserver {
       providers: [
         ChangeNotifierProvider<BusStore>.value(value: _store),
         ChangeNotifierProvider<DxSpotService>.value(value: _dxSpot),
+        ChangeNotifierProvider<VhfcamService>.value(value: _vhfcam),
         Provider<MqttService>.value(value: _mqtt),
       ],
       child: ValueListenableBuilder<AppColorScheme>(

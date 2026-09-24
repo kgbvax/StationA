@@ -17,6 +17,8 @@ import '../widgets/sat_rotator_panel.dart';
 import '../widgets/uhf_radio_panel.dart';
 import '../widgets/pol_ctrl_panel.dart';
 import '../widgets/climate_panel.dart';
+import '../widgets/cam_feed_panel.dart';
+import '../widgets/cam_radio_controls.dart';
 import '../widgets/faults_bar.dart';
 import '../widgets/dx_config_sheet.dart';
 
@@ -111,6 +113,8 @@ class _PageContent extends StatelessWidget {
         return _StationPage(key: schemeKey, onSelect: onSelect, onScheme: onScheme);
       case 'uhf':
         return _UhfPage(key: schemeKey, onSelect: onSelect, onScheme: onScheme);
+      case 'cam':
+        return _CamPage(key: schemeKey, onSelect: onSelect, onScheme: onScheme);
       case 'hf':
       default:
         return _HfPage(key: schemeKey, onSelect: onSelect, onScheme: onScheme);
@@ -216,6 +220,11 @@ class _TabletShell extends StatelessWidget {
   /// Panels pinned under the map in the left pane (HF: ultrabeam + antenna).
   final List<Widget> leftUnderMap;
 
+  /// Optional content pinned ABOVE the map in the left pane (CAM: the video
+  /// feed) — the map keeps whatever height is left below it. The chrome stays
+  /// put either way; only the left pane's split changes on that page.
+  final Widget? leftTop;
+
   /// Panels scrolled in the right rail below the top bar.
   final List<Widget> rightChildren;
 
@@ -226,6 +235,7 @@ class _TabletShell extends StatelessWidget {
     required this.rotator,
     this.initialMapProjection = DxProjection.azimuth,
     this.initialMapZoom,
+    this.leftTop,
     this.leftUnderMap = const [],
     required this.rightChildren,
   });
@@ -247,6 +257,7 @@ class _TabletShell extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
+                    if (leftTop != null) leftTop!,
                     Expanded(
                       child: Container(
                         decoration: BoxDecoration(
@@ -422,6 +433,65 @@ class _UhfPage extends StatelessWidget {
   }
 }
 
+class _CamPage extends StatelessWidget {
+  final ValueChanged<String> onSelect;
+  final ValueChanged<AppColorScheme> onScheme;
+
+  const _CamPage({
+    super.key,
+    required this.onSelect,
+    required this.onScheme,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    // The antenna camera (vhfcam-restream preview) is the page's primary
+    // object: the feed takes the left pane's top slot at full width (see
+    // _TabletShell.leftTop) with the DX map keeping the rest below it — its
+    // az dial reads the VHF array the camera is watching. The right rail is
+    // the IC-9700 audio-chain surface mirrored from the :8083 page. The cam
+    // server is bus-independent and ad hoc, so this page adds no faults-bar
+    // slots; its own panels carry the offline states.
+    final isPhone = MediaQuery.of(context).size.shortestSide < 600;
+
+    if (isPhone) {
+      return Container(
+        color: AppTheme.page,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _PageTopBar(page: 'cam', onSelect: onSelect, onScheme: onScheme),
+            Expanded(
+              child: SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: const [
+                    CamFeedPanel(),
+                    CamRadioControls(),
+                    SizedBox(height: 40),
+                    FaultsBar(),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return _TabletShell(
+      page: 'cam',
+      onSelect: onSelect,
+      onScheme: onScheme,
+      rotator: vhfRotator,
+      leftTop: const CamFeedPanel(),
+      rightChildren: const [
+        CamRadioControls(),
+      ],
+    );
+  }
+}
+
 class _PageTopBar extends StatelessWidget {
   final String page;
   final ValueChanged<String> onSelect;
@@ -449,6 +519,7 @@ class _PageTopBar extends StatelessWidget {
           _Tab('Station', 'station', page == 'station', onSelect),
           _Tab('HF', 'hf', page == 'hf', onSelect),
           _Tab('UHF', 'uhf', page == 'uhf', onSelect),
+          _Tab('CAM', 'cam', page == 'cam', onSelect),
           _SchemePicker(onScheme: onScheme),
           const _DxSettingsButton(),
           _ConnectionIndicator(mqtt: mqtt),
@@ -564,7 +635,7 @@ class _DxSettingsButton extends StatelessWidget {
           borderRadius: BorderRadius.circular(4),
         ),
         child: Tooltip(
-          message: 'DX overlay settings',
+          message: 'Overlay / cam settings',
           child: Icon(Icons.tune, size: 20, color: AppTheme.txt),
         ),
       ),

@@ -25,6 +25,7 @@ class CredentialStore {
       'station_locator': prefs.getString('station_locator'),
       'horstreporter_base_url': prefs.getString('horstreporter_base_url'),
       'station_callsign': prefs.getString('station_callsign'),
+      'vhfcam_base_url': prefs.getString('vhfcam_base_url'),
     };
   }
 

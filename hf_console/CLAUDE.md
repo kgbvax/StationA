@@ -16,8 +16,12 @@ See `../sas/tablet_console_hybrid_preview.html` for the approved high-fidelity r
 - `lib/store/wiring.dart` — `ANTENNA_MAP`, `CMD_RETAIN`, cmd payload builders, value-key deviations
 - `lib/ui/theme.dart` — color/type tokens, `AppTheme.bandColor(...)` for the
   compass (see below)
-- `lib/ui/screens/console_screen.dart` — single-screen layout
+- `lib/ui/screens/console_screen.dart` — single-screen layout (Station/HF/UHF/CAM pseudo-tabs)
 - `lib/ui/widgets/*.dart` — compass, PA meter, tuner, antenna, power, climate, tx indicator, confirm dialog
+- `lib/vhfcam/*.dart` — antenna-cam feed client: HLS player state + poller for
+  vhfcam-restream's preview server (`:8083` on shari). Bus-independent HTTP;
+  `muehle/hf/vhfcam` is deliberately NOT in `expectedSlots` — the cam is an
+  ad-hoc accessory (installed disabled-at-boot), its silence is not a station fault.
 - `lib/dxspot/world_geometry.dart` — singleton loader for the bundled
   Natural Earth 50m coastline outlines (`assets/geo/world.geojson`,
   ~3 MB raw / ~1 MB gzipped). Lazy-loads once at startup; the compass
@@ -34,6 +38,22 @@ Create a dedicated broker user `console` with narrow ACL:
 - publish: `muehle/+/cmd`
 
 Do NOT reuse the broad `hf` user; do not embed station-wide credentials in the APK.
+
+## Antenna cam (CAM tab)
+
+The CAM tab plays vhfcam-restream's live HLS preview (`/hls/live.m3u8` on the
+cam server, default `http://192.168.1.139:8083`) and mirrors its radio-audio
+controls (`POST /api/cmd/{audio_on,audio_off,power_on}` — audio_on takes the
+IC-9700 CI-V session, exactly like the :8083 reference page). Two deliberate
+platform notes:
+
+- The base URL is a user setting, key `vhfcam_base_url` (CredentialStore,
+  editable in the gear sheet, default `http://192.168.1.139:8083`).
+- `macos/Runner/Info.plist` carries `NSAppTransportSecurity →
+  NSAllowsLocalNetworking` — AVPlayer refuses the cleartext LAN URL without
+  it. This is the LAN-scoped exception and deliberately NOT set on iOS
+  (see the iPhone section); the web build gets a placeholder instead of the
+  feed (no HLS/TS decoder in the browser player).
 
 ## Band colors (horstreporter convention)
 

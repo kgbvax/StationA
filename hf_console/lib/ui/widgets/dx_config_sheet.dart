@@ -1,21 +1,24 @@
-// dx_config_sheet.dart — in-console editor for the DX-overlay settings
-// (station Maidenhead locator + horstreporter base URL).
+// dx_config_sheet.dart — in-console editor for the non-broker settings: the
+// DX-overlay pair (station Maidenhead locator + horstreporter base URL) and
+// the antenna-cam base URL (vhfcam-restream's preview server).
 //
 // The full setup screen only shows when broker credentials are missing, so an
 // already-provisioned tablet (creds stored) boots straight to the console and has
-// no way to reach the locator/URL fields added for the DX overlay. This sheet is
-// reachable from a gear in the top bar and edits ONLY the DX-overlay keys — broker
-// credentials are left untouched.
+// no way to reach these fields otherwise. This sheet is reachable from a gear in
+// the top bar and edits ONLY the overlay/cam keys — broker credentials are left
+// untouched.
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../store/credential_store.dart';
 import '../../dxspot/dxspot_service.dart';
+import '../../vhfcam/vhfcam_service.dart';
 import '../theme.dart';
 
-/// Opens a modal dialog to edit the station locator and horstreporter URL, then
-/// live-applies them to the running [DxSpotService] (configure + restart).
+/// Opens a modal dialog to edit the station locator, horstreporter URL and
+/// antenna-cam URL, then live-applies them to the running services (configure
+/// + restart for the DX overlay; configure for the cam service).
 Future<void> showDxConfigSheet(BuildContext context) async {
   await showDialog<void>(
     context: context,
@@ -34,6 +37,7 @@ class _DxConfigDialogState extends State<_DxConfigDialog> {
   final _storage = CredentialStore();
   final _locator = TextEditingController();
   final _url = TextEditingController(text: 'https://horstreporter.kgbvax.net');
+  final _camUrl = TextEditingController(text: defaultVhfcamBaseUrl);
   bool _loading = true;
 
   @override
@@ -48,6 +52,7 @@ class _DxConfigDialogState extends State<_DxConfigDialog> {
     setState(() {
       _locator.text = values['station_locator'] ?? '';
       _url.text = values['horstreporter_base_url'] ?? 'https://horstreporter.kgbvax.net';
+      _camUrl.text = values['vhfcam_base_url'] ?? defaultVhfcamBaseUrl;
       _loading = false;
     });
   }
@@ -55,14 +60,19 @@ class _DxConfigDialogState extends State<_DxConfigDialog> {
   Future<void> _save() async {
     final locator = _locator.text.trim().toUpperCase();
     final baseUrl = _url.text.trim();
+    final camUrl = _camUrl.text.trim();
     await _storage.writeAll({
       'station_locator': locator,
       'horstreporter_base_url': baseUrl,
+      'vhfcam_base_url': camUrl,
     });
     if (!mounted) return;
     final dx = context.read<DxSpotService>();
     dx.configure(baseUrl: baseUrl, locator: locator);
     dx.restart();
+    // The cam service re-polls and re-probes immediately under the new URL;
+    // the feed panel reacts through its listener.
+    context.read<VhfcamService>().configure(baseUrl: camUrl);
     Navigator.of(context).pop();
   }
 
@@ -83,7 +93,7 @@ class _DxConfigDialogState extends State<_DxConfigDialog> {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Text('DX OVERLAY', style: AppTheme.display(16, weight: FontWeight.w700)),
+                  Text('OVERLAY & CAM', style: AppTheme.display(16, weight: FontWeight.w700)),
                   const SizedBox(height: 4),
                   Text('Locator enables the compass DX-spot projection.',
                       style: AppTheme.body(11, color: AppTheme.txtMute)),
@@ -91,6 +101,8 @@ class _DxConfigDialogState extends State<_DxConfigDialog> {
                   _field('Station locator', _locator, hint: 'e.g. JN58sd'),
                   const SizedBox(height: 12),
                   _field('Horstreporter URL', _url, hint: 'https://…'),
+                  const SizedBox(height: 12),
+                  _field('Antenna cam URL', _camUrl, hint: 'http://…:8083'),
                   const SizedBox(height: 16),
                   Row(
                     mainAxisAlignment: MainAxisAlignment.end,

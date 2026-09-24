@@ -28,5 +28,14 @@
 	<string>MainMenu</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
+	<!-- The antenna-cam HLS feed (AVPlayer) is plain HTTP on the shack LAN
+	     (vhfcam-restream on shari :8083). NSAllowsLocalNetworking is the
+	     LAN-scoped ATS exception — unlike the NSAllowsArbitraryLoads the iOS
+	     build deliberately avoids (raw-TCP MQTT bypasses ATS there). -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
 </dict>
 </plist>
