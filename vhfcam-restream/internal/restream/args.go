@@ -72,6 +72,7 @@ func buildInputsAndOverlay(cfg *config.Config, sourceURL string) (args []string,
 			"-ac", "1",
 			"-i", RadioAudioInputURL(cfg.Preview.RadioAudio),
 		)
+		audioMap = "1:a:0"
 	}
 
 	// The logo rides the overlay toggle: enabled + configured opens the
