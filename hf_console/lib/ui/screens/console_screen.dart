@@ -16,7 +16,6 @@ import '../widgets/rotator_presets_bar.dart';
 import '../widgets/sat_rotator_panel.dart';
 import '../widgets/uhf_radio_panel.dart';
 import '../widgets/pol_ctrl_panel.dart';
-import '../widgets/climate_panel.dart';
 import '../widgets/cam_feed_panel.dart';
 import '../widgets/cam_radio_controls.dart';
 import '../widgets/faults_bar.dart';
@@ -42,10 +41,18 @@ class _ConsoleScreenState extends State<ConsoleScreen> {
     context.read<DxSpotService>().setBands(page == 'uhf' ? _uhfBands : null);
   }
 
-  void _setScheme(AppColorScheme scheme) => setState(() => AppTheme.setScheme(scheme));
-
   @override
   Widget build(BuildContext context) {
+    // Panels read AppTheme's static tokens directly, so a scheme change (made
+    // in the settings dialog) must rebuild the whole screen; the key below
+    // also resets page state that caches colours.
+    return ValueListenableBuilder<AppColorScheme>(
+      valueListenable: AppTheme.notifier,
+      builder: (context, _, _) => _build(context),
+    );
+  }
+
+  Widget _build(BuildContext context) {
     return Container(
       color: AppTheme.page,
       child: Column(
@@ -57,7 +64,6 @@ class _ConsoleScreenState extends State<ConsoleScreen> {
             child: _PageContent(
               page: _page,
               onSelect: _setPage,
-              onScheme: _setScheme,
             ),
           ),
         ],
@@ -97,12 +103,10 @@ class LinkStatusBanner extends StatelessWidget {
 class _PageContent extends StatelessWidget {
   final String page;
   final ValueChanged<String> onSelect;
-  final ValueChanged<AppColorScheme> onScheme;
 
   const _PageContent({
     required this.page,
     required this.onSelect,
-    required this.onScheme,
   });
 
   @override
@@ -110,26 +114,24 @@ class _PageContent extends StatelessWidget {
     final schemeKey = ValueKey(AppTheme.selected);
     switch (page) {
       case 'station':
-        return _StationPage(key: schemeKey, onSelect: onSelect, onScheme: onScheme);
+        return _StationPage(key: schemeKey, onSelect: onSelect);
       case 'uhf':
-        return _UhfPage(key: schemeKey, onSelect: onSelect, onScheme: onScheme);
+        return _UhfPage(key: schemeKey, onSelect: onSelect);
       case 'cam':
-        return _CamPage(key: schemeKey, onSelect: onSelect, onScheme: onScheme);
+        return _CamPage(key: schemeKey, onSelect: onSelect);
       case 'hf':
       default:
-        return _HfPage(key: schemeKey, onSelect: onSelect, onScheme: onScheme);
+        return _HfPage(key: schemeKey, onSelect: onSelect);
     }
   }
 }
 
 class _HfPage extends StatelessWidget {
   final ValueChanged<String> onSelect;
-  final ValueChanged<AppColorScheme> onScheme;
 
   const _HfPage({
     super.key,
     required this.onSelect,
-    required this.onScheme,
   });
 
   @override
@@ -146,7 +148,7 @@ class _HfPage extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            _PageTopBar(page: 'hf', onSelect: onSelect, onScheme: onScheme),
+            _PageTopBar(page: 'hf', onSelect: onSelect),
             Expanded(
               flex: 5,
               child: Container(
@@ -184,7 +186,6 @@ class _HfPage extends StatelessWidget {
     return _TabletShell(
       page: 'hf',
       onSelect: onSelect,
-      onScheme: onScheme,
       rotator: hfRotator,
       leftUnderMap: const [UltrabeamPanel(), AntennaPanel()],
       rightChildren: const [
@@ -205,7 +206,6 @@ class _HfPage extends StatelessWidget {
 class _TabletShell extends StatelessWidget {
   final String page;
   final ValueChanged<String> onSelect;
-  final ValueChanged<AppColorScheme> onScheme;
 
   /// Which rotator the left pane's compass dial reads: the HF rotator on the
   /// HF page, the VHF az-rotator on the UHF page, none on Station.
@@ -231,7 +231,6 @@ class _TabletShell extends StatelessWidget {
   const _TabletShell({
     required this.page,
     required this.onSelect,
-    required this.onScheme,
     required this.rotator,
     this.initialMapProjection = DxProjection.azimuth,
     this.initialMapZoom,
@@ -290,7 +289,7 @@ class _TabletShell extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    _PageTopBar(page: page, onSelect: onSelect, onScheme: onScheme),
+                    _PageTopBar(page: page, onSelect: onSelect),
                     Expanded(
                       child: SingleChildScrollView(
                         child: Column(
@@ -313,12 +312,10 @@ class _TabletShell extends StatelessWidget {
 
 class _StationPage extends StatelessWidget {
   final ValueChanged<String> onSelect;
-  final ValueChanged<AppColorScheme> onScheme;
 
   const _StationPage({
     super.key,
     required this.onSelect,
-    required this.onScheme,
   });
 
   @override
@@ -333,14 +330,13 @@ class _StationPage extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            _PageTopBar(page: 'station', onSelect: onSelect, onScheme: onScheme),
+            _PageTopBar(page: 'station', onSelect: onSelect),
             Expanded(
               child: SingleChildScrollView(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: const [
                     PowerPanel(),
-                    ClimatePanel(),
                     SizedBox(height: 40),
                     FaultsBar(),
                   ],
@@ -355,13 +351,11 @@ class _StationPage extends StatelessWidget {
     return _TabletShell(
       page: 'station',
       onSelect: onSelect,
-      onScheme: onScheme,
       // Station infrastructure page: the map is a bare DX compass — no
       // rotator needle, azimuth chip, presets or aim affordances.
       rotator: null,
       rightChildren: const [
         PowerPanel(),
-        ClimatePanel(),
       ],
     );
   }
@@ -369,12 +363,10 @@ class _StationPage extends StatelessWidget {
 
 class _UhfPage extends StatelessWidget {
   final ValueChanged<String> onSelect;
-  final ValueChanged<AppColorScheme> onScheme;
 
   const _UhfPage({
     super.key,
     required this.onSelect,
-    required this.onScheme,
   });
 
   @override
@@ -395,7 +387,7 @@ class _UhfPage extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            _PageTopBar(page: 'uhf', onSelect: onSelect, onScheme: onScheme),
+            _PageTopBar(page: 'uhf', onSelect: onSelect),
             Expanded(
               child: SingleChildScrollView(
                 child: Column(
@@ -420,7 +412,6 @@ class _UhfPage extends StatelessWidget {
     return _TabletShell(
       page: 'uhf',
       onSelect: onSelect,
-      onScheme: onScheme,
       rotator: vhfRotator,
       initialMapProjection: DxProjection.mercator,
       initialMapZoom: 4.0,
@@ -435,12 +426,10 @@ class _UhfPage extends StatelessWidget {
 
 class _CamPage extends StatelessWidget {
   final ValueChanged<String> onSelect;
-  final ValueChanged<AppColorScheme> onScheme;
 
   const _CamPage({
     super.key,
     required this.onSelect,
-    required this.onScheme,
   });
 
   @override
@@ -460,7 +449,7 @@ class _CamPage extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            _PageTopBar(page: 'cam', onSelect: onSelect, onScheme: onScheme),
+            _PageTopBar(page: 'cam', onSelect: onSelect),
             Expanded(
               child: SingleChildScrollView(
                 child: Column(
@@ -482,7 +471,6 @@ class _CamPage extends StatelessWidget {
     return _TabletShell(
       page: 'cam',
       onSelect: onSelect,
-      onScheme: onScheme,
       rotator: vhfRotator,
       leftTop: const CamFeedPanel(),
       rightChildren: const [
@@ -495,12 +483,10 @@ class _CamPage extends StatelessWidget {
 class _PageTopBar extends StatelessWidget {
   final String page;
   final ValueChanged<String> onSelect;
-  final ValueChanged<AppColorScheme> onScheme;
 
   const _PageTopBar({
     required this.page,
     required this.onSelect,
-    required this.onScheme,
   });
 
   @override
@@ -520,7 +506,6 @@ class _PageTopBar extends StatelessWidget {
           _Tab('HF', 'hf', page == 'hf', onSelect),
           _Tab('UHF', 'uhf', page == 'uhf', onSelect),
           _Tab('CAM', 'cam', page == 'cam', onSelect),
-          _SchemePicker(onScheme: onScheme),
           const _DxSettingsButton(),
           _ConnectionIndicator(mqtt: mqtt),
           const _OnlineTag(),
@@ -635,42 +620,10 @@ class _DxSettingsButton extends StatelessWidget {
           borderRadius: BorderRadius.circular(4),
         ),
         child: Tooltip(
-          message: 'Overlay / cam settings',
+          message: 'Settings',
           child: Icon(Icons.tune, size: 20, color: AppTheme.txt),
         ),
       ),
-    );
-  }
-}
-
-class _SchemePicker extends StatelessWidget {
-  final ValueChanged<AppColorScheme> onScheme;
-
-  const _SchemePicker({required this.onScheme});
-
-  @override
-  Widget build(BuildContext context) {
-    final schemes = [
-      (AppColorScheme.dc, 'DC'),
-      (AppColorScheme.paper, 'PA'),
-      (AppColorScheme.aether, 'AE'),
-    ];
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: schemes.map((s) {
-        final active = AppTheme.selected == s.$1;
-        return Padding(
-          padding: const EdgeInsets.only(left: 4),
-          child: ElevatedButton(
-            onPressed: () => onScheme(s.$1),
-            style: AppTheme.actionButton(active: active).copyWith(
-              minimumSize: const WidgetStatePropertyAll(Size(40, 32)),
-              padding: const WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: 8, vertical: 4)),
-            ),
-            child: Text(s.$2, style: AppTheme.mono(10, weight: FontWeight.w700)),
-          ),
-        );
-      }).toList(),
     );
   }
 }

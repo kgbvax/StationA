@@ -1,5 +1,5 @@
 // dx_config_sheet.dart — in-console editor for the non-broker settings: the
-// DX-overlay pair (station Maidenhead locator + horstreporter base URL) and
+// colour scheme (applied live, not on SAVE), the DX-overlay pair (station Maidenhead locator + horstreporter base URL) and
 // the antenna-cam base URL (vhfcam-restream's preview server).
 //
 // The full setup screen only shows when broker credentials are missing, so an
@@ -93,8 +93,10 @@ class _DxConfigDialogState extends State<_DxConfigDialog> {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Text('OVERLAY & CAM', style: AppTheme.display(16, weight: FontWeight.w700)),
-                  const SizedBox(height: 4),
+                  Text('SETTINGS', style: AppTheme.display(16, weight: FontWeight.w700)),
+                  const SizedBox(height: 12),
+                  _schemeRow(),
+                  const SizedBox(height: 16),
                   Text('Locator enables the compass DX-spot projection.',
                       style: AppTheme.body(11, color: AppTheme.txtMute)),
                   const SizedBox(height: 16),
@@ -122,6 +124,31 @@ class _DxConfigDialogState extends State<_DxConfigDialog> {
                 ],
               ),
       ),
+    );
+  }
+
+  /// Colour-scheme picker. Applies immediately (the console rebuilds behind
+  /// the dialog); setState repaints the dialog itself in the new scheme.
+  Widget _schemeRow() {
+    const schemes = [
+      (AppColorScheme.dc, 'Dark'),
+      (AppColorScheme.paper, 'Paper'),
+      (AppColorScheme.aether, 'Aether'),
+    ];
+    return Row(
+      children: [
+        for (final (scheme, label) in schemes)
+          Expanded(
+            child: Padding(
+              padding: EdgeInsets.only(right: scheme == schemes.last.$1 ? 0 : 6),
+              child: ElevatedButton(
+                onPressed: () => setState(() => AppTheme.setScheme(scheme)),
+                style: AppTheme.actionButton(active: AppTheme.selected == scheme),
+                child: Text(label),
+              ),
+            ),
+          ),
+      ],
     );
   }
 

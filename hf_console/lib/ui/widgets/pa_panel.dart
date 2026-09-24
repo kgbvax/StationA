@@ -172,7 +172,7 @@ class _PaPanelState extends State<PaPanel> {
                       value: fwd,
                       max: 1200,
                       unit: 'W FWD',
-                      labels: const ['0', '500', '1000', '1200'],
+                      ticks: const [(0, '0'), (500, '500'), (1000, '1000'), (1200, '1200')],
                       fillColor: AppTheme.green,
                       compact: true,
                       // Always non-null: a marker that vanished at zero would
@@ -203,9 +203,12 @@ class _PaPanelState extends State<PaPanel> {
                   Expanded(
                     child: _Meter(
                       value: swr,
+                      // SWR cannot go below 1.0 — the scale starts there, so
+                      // a perfect match reads as an empty bar.
+                      min: 1.0,
                       max: 4.0,
                       unit: 'SWR',
-                      labels: const ['1.0', '1.5', '3.0', '4.0'],
+                      ticks: const [(1.0, '1.0'), (1.5, '1.5'), (3.0, '3.0'), (4.0, '4.0')],
                       fillColor: AppTheme.amber,
                       compact: true,
                     ),
@@ -274,13 +277,17 @@ double _percentile(List<double> sorted, double p) {
 
 class _Meter extends StatelessWidget {
   final double value;
+  final double min;
   final double max;
   final String unit;
-  final List<String> labels;
+
+  /// Scale labels as (value, text). Each label sits at its value's true
+  /// position on the bar, so the ticks line up with the fill and markers.
+  final List<(double, String)> ticks;
   final Color fillColor;
   final bool compact;
 
-  /// Optional peak/percentile markers, as fractions of [max] (0..1). A non-null
+  /// Optional peak/percentile markers, as fractions of the scale (0..1). A non-null
   /// [markerTop] draws a downward triangle above the bar; [markerBottom] draws
   /// an upward triangle below it. Marker rows are reserved only while a
   /// marker is non-null, so a meter whose markers toggle to null at zero
@@ -292,9 +299,10 @@ class _Meter extends StatelessWidget {
 
   const _Meter({
     required this.value,
+    this.min = 0,
     required this.max,
     required this.unit,
-    required this.labels,
+    required this.ticks,
     required this.fillColor,
     this.compact = false,
     this.markerTop,
@@ -308,7 +316,7 @@ class _Meter extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final fraction = (value / max).clamp(0.0, 1.0);
+    final fraction = _fractionOf(value);
     final valueStyle = AppTheme.mono(compact ? 18 : 24, weight: FontWeight.w700);
     final unitStyle = AppTheme.mono(compact ? 11 : 13, color: AppTheme.txtFaint);
     final labelStyle = AppTheme.mono(compact ? 9 : 11, color: AppTheme.txtFaint);
@@ -376,13 +384,24 @@ class _Meter extends StatelessWidget {
           ),
         ),
         SizedBox(height: compact ? 2 : 3),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: labels.map((l) => Text(l, style: labelStyle)).toList(),
+        // Alignment(-1 + 2f) anchors the label's own f-point at f of the
+        // width: the first label stays flush left, the last flush right,
+        // and a middle label lands within a few px of its true position.
+        Stack(
+          children: [
+            for (final (v, text) in ticks)
+              Align(
+                alignment: Alignment(-1 + 2 * _fractionOf(v), 0),
+                heightFactor: 1,
+                child: Text(text, style: labelStyle),
+              ),
+          ],
         ),
       ],
     );
   }
+
+  double _fractionOf(double v) => ((v - min) / (max - min)).clamp(0.0, 1.0);
 
   double _markerLeft(double fraction, double width) {
     if (width <= _markerSize) return 0;

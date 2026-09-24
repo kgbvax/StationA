@@ -33,6 +33,10 @@ class TestHarness extends StatelessWidget {
     // widget tests must not leave a pending timer at teardown.
     busStore.markConnected(scheduleGraceNotify: false);
     final fakeMqtt = mqtt ?? FakeMqttService(busStore);
+    // Keep the service's link flag in step with the store, as the real
+    // MqttService does — otherwise the LINK DOWN banner and the device
+    // chip disagree in every rendered test.
+    fakeMqtt.connected.value = true;
     final dx = dxSpot ?? DxSpotService();
     return MultiProvider(
       providers: [

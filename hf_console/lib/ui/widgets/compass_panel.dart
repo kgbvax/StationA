@@ -213,8 +213,15 @@ class _CompassBody extends StatelessWidget {
         final maxW = constraints.maxWidth;
         final maxH = constraints.maxHeight;
 
+        // Narrow (phone) panels can't fit the map chrome (top-left, owned by
+        // DxMapContainer) and the zoom badge + azimuth chip (top-right) on
+        // one edge: they collided and the chip sat on the N label. There
+        // the zoom badge is dropped (the +/- stepper still shows the
+        // control) and a strip is reserved above the disc for the chips.
+        final narrow = maxW < 520;
+
         // Space reserved around the disc for the overlay chrome.
-        const chromePadding = EdgeInsets.fromLTRB(8, 6, 8, 6);
+        final chromePadding = EdgeInsets.fromLTRB(8, narrow ? 38 : 6, 8, 6);
         final innerW = (maxW - chromePadding.horizontal).clamp(0.0, double.infinity);
         final innerH = (maxH - chromePadding.vertical).clamp(0.0, double.infinity);
 
@@ -327,11 +334,11 @@ class _CompassBody extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  _ZoomBadge(zoom: zoom),
+                  if (!narrow) _ZoomBadge(zoom: zoom),
                   // No rotator surface (Station page): no azimuth read-out —
                   // the compass is a plain DX map there.
                   if (rotator != null) ...[
-                    const SizedBox(width: 6),
+                    if (!narrow) const SizedBox(width: 6),
                     IgnorePointer(
                       child: _AzimuthChip(
                         parts: azimuthParts,

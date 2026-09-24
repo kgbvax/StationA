@@ -17,7 +17,7 @@ See `../sas/tablet_console_hybrid_preview.html` for the approved high-fidelity r
 - `lib/ui/theme.dart` — color/type tokens, `AppTheme.bandColor(...)` for the
   compass (see below)
 - `lib/ui/screens/console_screen.dart` — single-screen layout (Station/HF/UHF/CAM pseudo-tabs)
-- `lib/ui/widgets/*.dart` — compass, PA meter, tuner, antenna, power, climate, tx indicator, confirm dialog
+- `lib/ui/widgets/*.dart` — compass, PA meter, tuner, antenna, power, tx indicator, confirm dialog
 - `lib/vhfcam/*.dart` — antenna-cam feed client: HLS player state + poller for
   vhfcam-restream's preview server (`:8083` on shari). Bus-independent HTTP;
   `muehle/hf/vhfcam` is deliberately NOT in `expectedSlots` — the cam is an
