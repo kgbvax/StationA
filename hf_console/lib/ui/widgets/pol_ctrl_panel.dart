@@ -6,6 +6,7 @@ import '../../store/bus_store.dart';
 import '../../store/wiring.dart';
 import '../theme.dart';
 import 'card_container.dart';
+import 'pol_glyph.dart';
 import 'status_pill.dart';
 
 /// X-Quad polarization surface (U11): the Tier-2 four-state control for the
@@ -40,6 +41,8 @@ class PolCtrlPanel extends StatelessWidget {
 
   /// Canonical vocabulary (m5stamp-pol-ctrl /meta capabilities.polarizations).
   static const _pols = ['h', 'v', 'cl', 'cr'];
+  /// Short button labels; the long names are for the readout.
+  static const _short = {'h': 'H', 'v': 'V', 'cl': 'LHCP', 'cr': 'RHCP'};
   static const _labels = {
     'h': 'HORIZONTAL',
     'v': 'VERTICAL',
@@ -75,13 +78,32 @@ class PolCtrlPanel extends StatelessWidget {
     for (var i = 0; i < _pols.length; i++) {
       if (i > 0) buttons.add(const SizedBox(width: 6));
       final p = _pols[i];
+      final active = pol == p;
+      // The glyph takes the button's foreground colour (dark on the active
+      // accent fill, faint when disabled) so it reads like the label.
+      final fg = !online
+          ? AppTheme.txtFaint
+          : active
+              ? AppTheme.activeButtonText
+              : AppTheme.txt;
       buttons.add(Expanded(
         child: ElevatedButton(
           key: ValueKey('pol-btn-$p'),
           onPressed: online ? () => setPol(p) : null,
-          style: AppTheme.actionButton(active: pol == p),
-          child: Text(p.toUpperCase(),
-              style: AppTheme.mono(13, weight: FontWeight.w800)),
+          style: AppTheme.actionButton(active: active).copyWith(
+            padding: const WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: 4, vertical: 8)),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              PolGlyph(pol: p, color: fg, size: 26),
+              const SizedBox(height: 4),
+              FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text(_short[p]!, maxLines: 1, style: AppTheme.mono(12, weight: FontWeight.w800)),
+              ),
+            ],
+          ),
         ),
       ));
     }
@@ -103,6 +125,10 @@ class PolCtrlPanel extends StatelessWidget {
           const SizedBox(height: 12),
           Row(
             children: [
+              if (PolGlyph.supports(pol)) ...[
+                PolGlyph(key: const ValueKey('pol-readout-glyph'), pol: pol!, color: AppTheme.accent, size: 34),
+                const SizedBox(width: 10),
+              ],
               Text(
                 phaseLabel,
                 style: AppTheme.mono(20, weight: FontWeight.w700),

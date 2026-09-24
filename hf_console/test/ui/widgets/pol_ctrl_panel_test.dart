@@ -394,5 +394,19 @@ void main() {
       expect(jsonDecode(mqtt.publishes.single.payload),
           {'action': 'set_pol', 'value': 'h'});
     });
+  
+    testWidgets('readout shows the glyph only for a known phase', (tester) async {
+      final store = BusStore()..setPolCtrl(pol: 'cr');
+      await tester.pumpWidget(TestHarness(store: store, child: const PolCtrlPanel()));
+      await tester.pump();
+      expect(find.byKey(const ValueKey('pol-readout-glyph')), findsOneWidget);
+      for (final l in ['H', 'V', 'LHCP', 'RHCP']) {
+        expect(find.text(l), findsOneWidget);
+      }
+
+      store.setPolCtrl(pol: 'xx');
+      await tester.pump();
+      expect(find.byKey(const ValueKey('pol-readout-glyph')), findsNothing);
+    });
   });
 }
