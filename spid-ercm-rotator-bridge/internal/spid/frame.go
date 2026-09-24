@@ -153,6 +153,15 @@ func encodeAck() []byte {
 	return []byte{startByte, 0, 0, 0, endByte}
 }
 
+// encodeStatusRegister builds a status reply carrying the RAW register count
+// u directly — the mod-720 continuous count as the controller reports it
+// (see decodeStatusReply). It is the scripting counterpart the mock uses to
+// replay the wrap bands live hardware produced: the below-offset climb
+// (u=180..226, 2026-09-23) and the exact-zero corner (u=000).
+func encodeStatusRegister(u int) []byte {
+	return []byte{startByte, byte(u / 100), byte((u / 10) % 10), byte(u % 10), endByte}
+}
+
 // isCommandAck reports whether a scanned reply frame is the all-zero
 // stop/ack reply, as opposed to a status reply. A genuine status reply of
 // all-zero digits would mean the wrapped register landed exactly on count 0

@@ -53,6 +53,12 @@ func (m *Mock) Close() { m.dev.close() }
 // SetAz sets the canned position the controller answers status requests with.
 func (m *Mock) SetAz(az float64) { m.dev.setAz(az) }
 
+// SetAzRegister scripts the RAW status register (0-999) — the mod-720 count
+// exactly as the controller reports it — so bench and CI can replay the
+// below-offset wrap band (u=180..226, live 2026-09-23) and the exact-zero
+// corner. Cleared by SetAz.
+func (m *Mock) SetAzRegister(u int) { m.dev.setAzRegister(u) }
+
 // Target returns the last azimuth the device was commanded to.
 func (m *Mock) Target() float64 { return m.dev.commandedAz() }
 
@@ -81,8 +87,10 @@ func (m *Mock) InjectError(err error) { m.dev.injectError(err) }
 type mockController struct {
 	mu      sync.Mutex
 	az      float64 // canned position (SetAz / last commanded)
+	rawU    int     // >= 0: canned RAW register count for status replies (SetAzRegister)
 	target  float64
 	frames  [][]byte
+	replies [][]byte // one entry per frame: the reply sent (nil = silent)
 	times   []time.Time
 	conns   int
 	current *memPort
@@ -92,7 +100,7 @@ type mockController struct {
 }
 
 func newMockController() *mockController {
-	c := &mockController{acceptCh: make(chan *memPort, 4)}
+	c := &mockController{rawU: -1, acceptCh: make(chan *memPort, 4)}
 	go c.serve()
 	return c
 }
@@ -150,11 +158,16 @@ func (c *mockController) handleFrames(p *memPort, pending []byte) []byte {
 			c.az = az // instant slew: the mock parks at the commanded position
 			// SET is documented silent (rot2proG spec) — no reply.
 		case kStatus:
-			reply = encodeStatusReply(c.az)
+			if c.rawU >= 0 {
+				reply = encodeStatusRegister(c.rawU)
+			} else {
+				reply = encodeStatusReply(c.az)
+			}
 		case kStop:
 			// Position stays wherever it is.
 			reply = encodeAck() // spec: STOP answers (zeros in ROT1 mode)
 		}
+		c.replies = append(c.replies, reply)
 		c.mu.Unlock()
 
 		if reply != nil {
@@ -183,6 +196,13 @@ func (c *mockController) setAz(az float64) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.az = az
+	c.rawU = -1
+}
+
+func (c *mockController) setAzRegister(u int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.rawU = u
 }
 
 func (c *mockController) commandedAz() float64 {
@@ -196,6 +216,17 @@ func (c *mockController) writes() [][]byte {
 	defer c.mu.Unlock()
 	out := make([][]byte, len(c.frames))
 	copy(out, c.frames)
+	return out
+}
+
+// Replies returns every reply the controller sent, aligned with Writes
+// (nil entries = silent commands).
+func (m *Mock) Replies() [][]byte {
+	c := m.dev
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := make([][]byte, len(c.replies))
+	copy(out, c.replies)
 	return out
 }
 
@@ -251,10 +282,9 @@ type memWire struct {
 
 // memPort is one end of a memWire.
 type memPort struct {
-	w           *memWire
-	in          <-chan []byte
-	out         chan []byte
-	readTimeout time.Duration
+	w   *memWire
+	in  <-chan []byte
+	out chan []byte
 }
 
 func newMemWire() (driverEnd, deviceEnd *memPort) {
@@ -267,21 +297,7 @@ func newMemWire() (driverEnd, deviceEnd *memPort) {
 		&memPort{w: w, in: w.aToB, out: w.bToA}
 }
 
-// SetReadTimeout gives the wire the bounded-read capability the driver owner
-// configures on real serial ports (readTimeoutSetter): a read with no data
-// once the timeout lapsed returns (0, nil), exactly like go.bug.st/serial.
-func (p *memPort) SetReadTimeout(d time.Duration) error {
-	p.readTimeout = d
-	return nil
-}
-
 func (p *memPort) Read(b []byte) (int, error) {
-	var deadline <-chan time.Time
-	if p.readTimeout > 0 {
-		timer := time.NewTimer(p.readTimeout)
-		defer timer.Stop()
-		deadline = timer.C
-	}
 	for {
 		p.w.mu.Lock()
 		if p.w.failErr != nil {
@@ -299,8 +315,6 @@ func (p *memPort) Read(b []byte) (int, error) {
 		case data := <-in:
 			return copy(b, data), nil
 		case <-changed:
-		case <-deadline:
-			return 0, nil
 		}
 	}
 }
