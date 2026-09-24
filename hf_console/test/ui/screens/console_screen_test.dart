@@ -8,6 +8,38 @@ import '../../support/fixtures.dart';
 import '../../support/test_harness.dart';
 
 void main() {
+  group('RF annunciator', () {
+    Future<void> pumpWith(WidgetTester tester, BusStore store) async {
+      await tester.binding.setSurfaceSize(const Size(3600, 2400));
+      await tester.pumpWidget(TestHarness(store: store, mqtt: FakeMqttService(store), child: const ConsoleScreen()));
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+
+    testWidgets('RX: dim RX tile', (tester) async {
+      final store = BusStore()..setRadio()..setPaHealthy();
+      await pumpWith(tester, store);
+      expect(find.descendant(of: find.byKey(const ValueKey('rf-annunciator')), matching: find.text('RX')), findsOneWidget);
+    });
+
+    testWidgets('radio TX lights TX', (tester) async {
+      final store = BusStore()..setRadio(tx: 'tx');
+      await pumpWith(tester, store);
+      expect(find.descendant(of: find.byKey(const ValueKey('rf-annunciator')), matching: find.text('TX')), findsOneWidget);
+    });
+
+    testWidgets('PA keyed alone still counts as TX', (tester) async {
+      final store = BusStore()..setRadio()..setPaTransmitting();
+      await pumpWith(tester, store);
+      expect(find.descendant(of: find.byKey(const ValueKey('rf-annunciator')), matching: find.text('TX')), findsOneWidget);
+    });
+
+    testWidgets('tune carrier alone shows TUNE', (tester) async {
+      final store = BusStore()..setRadio(tuning: true);
+      await pumpWith(tester, store);
+      expect(find.descendant(of: find.byKey(const ValueKey('rf-annunciator')), matching: find.text('TUNE')), findsOneWidget);
+    });
+  });
+
   group('ConsoleScreen layout', () {
     testWidgets('HF page renders all main modules at 1920x1200', (tester) async {
       final store = BusStore();
@@ -27,9 +59,11 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
 
       // Module titles visible in the HF layout (CardHeader renders uppercase).
-      expect(find.textContaining('PA · ACOM 1200S'), findsWidgets);
-      expect(find.textContaining('TUNER · ATR-1000'), findsWidgets);
-      expect(find.textContaining('TRX · FLEX-8400'), findsWidgets);
+      // Titles carry the role; the status pill carries the device name.
+      expect(find.text('PA'), findsOneWidget);
+      expect(find.text('TUNER'), findsOneWidget);
+      expect(find.text('TRX'), findsOneWidget);
+      expect(find.textContaining('ACOM 1200S'), findsWidgets);
       expect(find.textContaining('ULTRABEAM'), findsWidgets);
       // The routing panel has no header row anymore; its GND port
       // button is the module's marker.

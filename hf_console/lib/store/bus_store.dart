@@ -6,6 +6,9 @@ import 'package:flutter/foundation.dart';
 
 import 'wiring.dart' show expectedSlots;
 
+/// Whether an HF carrier is up, as far as the bus can tell.
+enum RfState { rx, tune, tx }
+
 class Slot {
   final String address;
   Map<String, dynamic>? meta;
@@ -348,5 +351,18 @@ class BusStore extends ChangeNotifier {
     final v = stateValue(address, key);
     if (v is T) return v;
     return null;
+  }
+
+  /// RF reported on any of three independent paths: the radio's tx bit, its
+  /// tune carrier, and the PA's own keyed telemetry (the same paths the
+  /// cold-switch guard reads, R4.3). [RfState.tune] only when the tune
+  /// carrier is the sole path; any tx report wins. Reads last-known state —
+  /// a stale TX is still shown, the LINK DOWN banner says it may be stale.
+  RfState get rfState {
+    final radioTx = stateValueAs<String>('muehle/hf/radio', 'tx') == 'tx';
+    final paKeyed = stateValueAs<String>('muehle/hf/pa', 'keyed') == 'tx';
+    if (radioTx || paKeyed) return RfState.tx;
+    if (stateValueAs<bool>('muehle/hf/radio', 'tuning') == true) return RfState.tune;
+    return RfState.rx;
   }
 }

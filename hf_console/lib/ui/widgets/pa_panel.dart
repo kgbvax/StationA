@@ -151,7 +151,7 @@ class _PaPanelState extends State<PaPanel> {
         mainAxisSize: MainAxisSize.min,
         children: [
           CardHeader(
-            title: 'PA · ACOM 1200S',
+            title: 'PA',
             trailing: StatusPill(
               slots: const ['muehle/hf/pa'],
               label: 'ACOM 1200S',

@@ -42,7 +42,7 @@ class AntennaPanel extends StatelessWidget {
     final radioTuning = store.stateValueAs<bool>('muehle/hf/radio', 'tuning');
     final paKeyed = store.stateValueAs<String>('muehle/hf/pa', 'keyed');
     final rfSafe = radioOnline && radioTx == 'rx' && radioTuning != true && paKeyed != 'tx';
-    final rfOn = radioTx == 'tx' || radioTuning == true || paKeyed == 'tx';
+    final rfOn = store.rfState != RfState.rx;
     // No fabricated 'auto': with the reconciler offline or absent (it may not
     // even be deployed), the operator drives the switch directly and the
     // header must say so instead of asserting a policy nobody enforces.

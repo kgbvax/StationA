@@ -51,7 +51,7 @@ class TunerPanel extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           CardHeader(
-            title: 'Tuner · ATR-1000',
+            title: 'Tuner',
             trailing: StatusPill(
               slots: const ['muehle/hf/tuner'],
               label: 'ATR-1000',

@@ -502,10 +502,8 @@ class _PageTopBar extends StatelessWidget {
         spacing: 10,
         runSpacing: 6,
         children: [
-          _Tab('Station', 'station', page == 'station', onSelect),
-          _Tab('HF', 'hf', page == 'hf', onSelect),
-          _Tab('UHF', 'uhf', page == 'uhf', onSelect),
-          _Tab('CAM', 'cam', page == 'cam', onSelect),
+          const _RfAnnunciator(),
+          _PageNav(page: page, onSelect: onSelect),
           const _DxSettingsButton(),
           _ConnectionIndicator(mqtt: mqtt),
           const _OnlineTag(),
@@ -556,25 +554,116 @@ class _ConnectionIndicator extends StatelessWidget {
   }
 }
 
-class _Tab extends StatelessWidget {
-  final String label;
+/// Page navigation. Deliberately NOT drawn as action buttons: condensed
+/// display type, no outline, the active page carried by an accent underline
+/// — a tap that changes the view must not look like a tap that keys a PA.
+class _PageNav extends StatelessWidget {
   final String page;
-  final bool active;
   final ValueChanged<String> onSelect;
 
-  const _Tab(this.label, this.page, this.active, this.onSelect);
+  const _PageNav({required this.page, required this.onSelect});
+
+  static const _pages = [
+    ('Station', 'station'),
+    ('HF', 'hf'),
+    ('UHF', 'uhf'),
+    ('CAM', 'cam'),
+  ];
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(right: 6),
-      child: ElevatedButton(
-        onPressed: () => onSelect(page),
-        style: AppTheme.actionButton(active: active).copyWith(
-          padding: const WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: 18, vertical: 8)),
-          minimumSize: const WidgetStatePropertyAll(Size(64, 40)),
+    return Container(
+      decoration: BoxDecoration(
+        border: Border(bottom: BorderSide(color: AppTheme.cardLine)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          for (final (label, id) in _pages)
+            _NavTab(label: label, active: page == id, onTap: () => onSelect(id)),
+        ],
+      ),
+    );
+  }
+}
+
+class _NavTab extends StatelessWidget {
+  final String label;
+  final bool active;
+  final VoidCallback onTap;
+
+  const _NavTab({required this.label, required this.active, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    // Phones: smaller type so the nav fits on the annunciator's row.
+    final isPhone = MediaQuery.of(context).size.shortestSide < 600;
+    return Semantics(
+      selected: active,
+      button: true,
+      child: InkWell(
+        onTap: onTap,
+        child: Container(
+          constraints: const BoxConstraints(minHeight: 48, minWidth: 48),
+          padding: EdgeInsets.symmetric(horizontal: isPhone ? 10 : 16),
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: active ? AppTheme.pane : null,
+            border: Border(
+              bottom: BorderSide(color: active ? AppTheme.accent : Colors.transparent, width: 3),
+            ),
+          ),
+          child: Text(
+            label,
+            style: AppTheme.display(
+              isPhone ? 16 : 20,
+              color: active ? AppTheme.txt : AppTheme.txtMute,
+              weight: active ? FontWeight.w700 : FontWeight.w600,
+            ),
+          ),
         ),
-        child: Text(label),
+      ),
+    );
+  }
+}
+
+/// Annunciator tile, first in the top bar: dim RX while no carrier is up,
+/// lit solid red TX / TUNE while any RF path reports one (see
+/// [BusStore.rfState]). Always present, so the bar never reflows on key-up.
+class _RfAnnunciator extends StatelessWidget {
+  const _RfAnnunciator();
+
+  @override
+  Widget build(BuildContext context) {
+    final rf = context.select<BusStore, RfState>((s) => s.rfState);
+    final lit = rf != RfState.rx;
+    final label = switch (rf) {
+      RfState.tx => 'TX',
+      RfState.tune => 'TUNE',
+      RfState.rx => 'RX',
+    };
+    return Container(
+      key: const ValueKey('rf-annunciator'),
+      // No Container.alignment: inside the top bar's Wrap that would
+      // stretch the tile to the full row width. Center with factors 1
+      // sizes it to its label (floored by the min constraints).
+      constraints: const BoxConstraints(minWidth: 72, minHeight: 48),
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      decoration: BoxDecoration(
+        color: lit ? AppTheme.red : AppTheme.pane,
+        border: Border.all(color: lit ? AppTheme.red : AppTheme.cardLine),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Center(
+        widthFactor: 1,
+        heightFactor: 1,
+        child: Text(
+          label,
+          style: AppTheme.display(20,
+              color: lit ? AppTheme.activeButtonText : AppTheme.txtFaint,
+              weight: FontWeight.w700,
+              letterSpacing: 0.1),
+        ),
       ),
     );
   }

@@ -27,7 +27,7 @@ class DvkPanel extends StatelessWidget {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text('TRX · FLEX-8400'.toUpperCase(),
+              Text('TRX',
                   style: AppTheme.mono(12, weight: FontWeight.w700, letterSpacing: 0.14, color: AppTheme.txtMute)),
               // A live transmit is the one TRX state that must surface even
               // with the readout pill gone — the DVK buttons don't show it.
