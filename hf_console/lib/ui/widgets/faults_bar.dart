@@ -4,7 +4,11 @@ import '../../store/bus_store.dart';
 import '../theme.dart';
 
 class FaultsBar extends StatelessWidget {
-  const FaultsBar({super.key});
+  /// Show every row and fill the given height (Station page — the station
+  /// health view) instead of the last three rows in a fixed strip.
+  final bool expanded;
+
+  const FaultsBar({super.key, this.expanded = false});
 
   @override
   Widget build(BuildContext context) {
@@ -64,7 +68,7 @@ class FaultsBar extends StatelessWidget {
       if (pri != 0) return pri;
       return b.at.compareTo(a.at);
     });
-    final visible = faults.take(3).toList();
+    final visible = expanded ? faults : faults.take(3).toList();
     final activeCount = faults.where((f) => f.active).length;
 
     return Container(
@@ -72,7 +76,7 @@ class FaultsBar extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
-        mainAxisSize: MainAxisSize.min,
+        mainAxisSize: expanded ? MainAxisSize.max : MainAxisSize.min,
         children: [
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -84,6 +88,13 @@ class FaultsBar extends StatelessWidget {
           const SizedBox(height: 6),
           if (visible.isEmpty)
             _FaultRow(fault: _Fault(time, now, 'No faults or offline devices', active: false))
+          else if (expanded)
+            Expanded(
+              child: ListView(
+                padding: EdgeInsets.zero,
+                children: [for (final f in visible) _FaultRow(fault: f)],
+              ),
+            )
           else
             ...visible.map((f) => _FaultRow(fault: f)),
         ],

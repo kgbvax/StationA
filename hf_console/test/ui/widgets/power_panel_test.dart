@@ -62,5 +62,27 @@ void main() {
       expect(mqtt.publishes.first.topic, 'muehle/hf/power-seq/cmd');
       expect(mqtt.publishes.first.payload, contains('start'));
     });
+
+    testWidgets('shows the current step while the sequence starts', (tester) async {
+      final store = BusStore();
+      store.setPower();
+      store.applyState('muehle/hf/power-seq', {'phase': 'starting', 'step': 'psu-on', 'device_online': true});
+      await tester.pumpWidget(TestHarness(store: store, child: const PowerPanel()));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.text('STARTING'), findsOneWidget);
+      expect(find.byKey(const ValueKey('seq-step')), findsOneWidget);
+      expect(find.text('psu-on'), findsOneWidget);
+    });
+
+    testWidgets('no step line once running', (tester) async {
+      final store = BusStore();
+      store.setPower();
+      store.applyState('muehle/hf/power-seq', {'phase': 'running', 'step': '', 'device_online': true});
+      await tester.pumpWidget(TestHarness(store: store, child: const PowerPanel()));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.byKey(const ValueKey('seq-step')), findsNothing);
+    });
   });
 }

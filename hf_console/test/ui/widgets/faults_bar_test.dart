@@ -1,3 +1,4 @@
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hf_console/store/bus_store.dart';
 import 'package:hf_console/ui/widgets/faults_bar.dart';
@@ -129,6 +130,23 @@ void main() {
 
         expect(find.textContaining('PSU OFF'), findsNothing);
       });
+    });
+
+    testWidgets('strip shows 3 rows; expanded shows every row', (tester) async {
+      final store = BusStore();
+      for (final a in ['muehle/hf/radio', 'muehle/hf/pa', 'muehle/hf/tuner', 'muehle/hf/rotator']) {
+        store.setBridgeOffline(a);
+      }
+      await tester.pumpWidget(TestHarness(store: store, child: const FaultsBar()));
+      await tester.pump();
+      expect(find.textContaining('bridge down'), findsNWidgets(3));
+
+      await tester.pumpWidget(TestHarness(
+        store: store,
+        child: const SizedBox(height: 400, child: FaultsBar(expanded: true)),
+      ));
+      await tester.pump();
+      expect(find.textContaining('bridge down'), findsNWidgets(4));
     });
   });
 }

@@ -130,7 +130,9 @@ class _MicProfileRowState extends State<MicProfileRow> {
         const SizedBox(width: 6),
         Expanded(
           child: Text(
-            has ? active : '—',
+            // Empty until the first load from the console: SmartSDR reports
+            // no active mic profile, the bridge only tracks its own loads.
+            has ? active : 'none loaded',
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: AppTheme.mono(11,
@@ -156,10 +158,13 @@ class _MicProfileRowState extends State<MicProfileRow> {
       ),
       child: FittedBox(
         fit: BoxFit.scaleDown,
+        // An unbound button says what a tap does (pick a profile to bind),
+        // in the muted colour so it doesn't read as a loaded profile.
         child: Text(
-          bound ? name : '—',
+          bound ? name : 'Assign',
           maxLines: 1,
-          style: AppTheme.mono(13, weight: FontWeight.w600),
+          style: AppTheme.mono(13,
+              weight: FontWeight.w600, color: bound || !online ? null : AppTheme.txtMute),
         ),
       ),
     );

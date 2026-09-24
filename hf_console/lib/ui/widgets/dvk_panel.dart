@@ -62,23 +62,55 @@ class DvkPanel extends StatelessWidget {
         final mqtt = context.read<MqttService>();
 
         const bands = ['80', '40', '20', '17', '15', '12', '10'];
-        return Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: bands.map((band) {
-            final full = '${band}m';
-            final active = currentBand == full;
-            return ElevatedButton(
-              onPressed: online ? () => mqtt.publish(topic, radioSetBandPayload(full), retain: false) : null,
-              style: AppTheme.actionButton(active: active).copyWith(
-                minimumSize: const WidgetStatePropertyAll(Size(84, 48)),
-                padding: const WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: 12, vertical: 8)),
+        // One row of equal-width buttons (a Wrap split 5 + 2 on the tablet).
+        // Each carries a short underline in its horstreporter band colour
+        // (AppTheme.bandColor, fixed across themes) so a band button and the
+        // spot dots of that band on the map read as the same thing.
+        return Row(
+          children: [
+            for (final (i, band) in bands.indexed)
+              Expanded(
+                child: Padding(
+                  padding: EdgeInsets.only(right: i < bands.length - 1 ? 6 : 0),
+                  child: _bandButton(
+                    '${band}m',
+                    active: currentBand == '${band}m',
+                    onPressed: online
+                        ? () => mqtt.publish(topic, radioSetBandPayload('${band}m'), retain: false)
+                        : null,
+                  ),
+                ),
               ),
-              child: Text(full),
-            );
-          }).toList(),
+          ],
         );
       },
+    );
+  }
+
+  Widget _bandButton(String band, {required bool active, VoidCallback? onPressed}) {
+    final stripe = AppTheme.bandColor(band);
+    return ElevatedButton(
+      onPressed: onPressed,
+      style: AppTheme.actionButton(active: active).copyWith(
+        minimumSize: const WidgetStatePropertyAll(Size(0, 48)),
+        padding: const WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: 4, vertical: 6)),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          FittedBox(fit: BoxFit.scaleDown, child: Text(band, maxLines: 1)),
+          const SizedBox(height: 3),
+          Container(
+            key: ValueKey('band-stripe-$band'),
+            width: 18,
+            height: 3,
+            decoration: BoxDecoration(
+              color: onPressed == null ? AppTheme.blend(stripe, 0.35) : stripe,
+              borderRadius: BorderRadius.circular(1.5),
+            ),
+          ),
+        ],
+      ),
     );
   }
 

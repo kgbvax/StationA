@@ -31,6 +31,8 @@ class PowerPanel extends StatelessWidget {
     final seqOnline = (seq?.isOnline ?? false) && store.linkUp;
     final seqPhase = store.stateValueAs<String>('muehle/hf/power-seq', 'phase') ?? 'idle';
     final seqFault = store.stateValueAs<String>('muehle/hf/power-seq', 'fault') ?? '';
+    // The step within starting/stopping (e.g. `psu-on`); "" at idle/running.
+    final seqStep = store.stateValueAs<String>('muehle/hf/power-seq', 'step') ?? '';
 
     void setMaster(bool on) {
       if (!masterOnline) return;
@@ -115,53 +117,62 @@ class PowerPanel extends StatelessWidget {
           Padding(
             // Top padding clears the corner-overlaid status pill.
             padding: const EdgeInsets.fromLTRB(12, 26, 12, 10),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.center,
+            // Two rows: the sequencer (START/STOP + phase readout), then all
+            // four relays. The relays used to share one row with a sideways
+            // scroll that hid TRX and PA off-screen on the tablet.
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                ElevatedButton(
-                  onPressed: seqOnline && !seqRunning ? startStation : null,
-                  style: AppTheme.actionButton().copyWith(
-                    backgroundColor: const WidgetStatePropertyAll(Color(0x1E5CCB8A)),
-                    foregroundColor: WidgetStatePropertyAll(AppTheme.green),
-                    side: WidgetStatePropertyAll(BorderSide(color: AppTheme.green)),
-                    minimumSize: const WidgetStatePropertyAll(Size(76, 57)),
-                    padding: const WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: 10, vertical: 10)),
-                  ),
-                  child: const Text('START\nSTATION'),
-                ),
-                const SizedBox(width: 8),
-                ElevatedButton(
-                  onPressed: seqOnline ? stopStation : null,
-                  style: AppTheme.actionButton(danger: true).copyWith(
-                    minimumSize: const WidgetStatePropertyAll(Size(76, 57)),
-                    padding: const WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: 10, vertical: 10)),
-                  ),
-                  child: const Text('STOP\nSTATION'),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: Row(
-                      children: [
-                        _Relay(name: 'MAINS', on: masterOn, online: masterOnline, onToggle: setMaster),
-                        const SizedBox(width: 8),
-                        _Relay(name: 'PSU 13.8V', on: psuOn, online: psuOnline, onToggle: setPsu),
-                        const SizedBox(width: 8),
-                        _Relay(name: 'TRX', on: trxOn, online: switchOnline, onToggle: setTrx),
-                        const SizedBox(width: 8),
-                        _Relay(name: 'PA', on: paOn, online: switchOnline, onToggle: setPa),
-                      ],
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  mainAxisAlignment: MainAxisAlignment.center,
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
-                    Text('SEQUENCE', style: AppTheme.mono(10, color: AppTheme.txtFaint, letterSpacing: 0.12)),
-                    Text(seqLabel, style: AppTheme.mono(14, color: seqColor, weight: FontWeight.w700)),
+                    ElevatedButton(
+                      onPressed: seqOnline && !seqRunning ? startStation : null,
+                      style: AppTheme.actionButton().copyWith(
+                        backgroundColor: const WidgetStatePropertyAll(Color(0x1E5CCB8A)),
+                        foregroundColor: WidgetStatePropertyAll(AppTheme.green),
+                        side: WidgetStatePropertyAll(BorderSide(color: AppTheme.green)),
+                        minimumSize: const WidgetStatePropertyAll(Size(76, 57)),
+                        padding: const WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: 10, vertical: 10)),
+                      ),
+                      child: const Text('START\nSTATION'),
+                    ),
+                    const SizedBox(width: 8),
+                    ElevatedButton(
+                      onPressed: seqOnline ? stopStation : null,
+                      style: AppTheme.actionButton(danger: true).copyWith(
+                        minimumSize: const WidgetStatePropertyAll(Size(76, 57)),
+                        padding: const WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: 10, vertical: 10)),
+                      ),
+                      child: const Text('STOP\nSTATION'),
+                    ),
+                    const SizedBox(width: 16),
+                    Flexible(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text('SEQUENCE', style: AppTheme.mono(10, color: AppTheme.txtFaint, letterSpacing: 0.12)),
+                          Text(seqLabel, style: AppTheme.mono(14, color: seqColor, weight: FontWeight.w700)),
+                          if (seqFault.isEmpty && const {'starting', 'stopping'}.contains(seqPhase) && seqStep.isNotEmpty)
+                            Text(seqStep,
+                                key: const ValueKey('seq-step'),
+                                overflow: TextOverflow.ellipsis,
+                                style: AppTheme.mono(11, color: AppTheme.txtMute)),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    _Relay(name: 'MAINS', on: masterOn, online: masterOnline, onToggle: setMaster),
+                    _Relay(name: 'PSU 13.8V', on: psuOn, online: psuOnline, onToggle: setPsu),
+                    _Relay(name: 'TRX', on: trxOn, online: switchOnline, onToggle: setTrx),
+                    _Relay(name: 'PA', on: paOn, online: switchOnline, onToggle: setPa),
                   ],
                 ),
               ],

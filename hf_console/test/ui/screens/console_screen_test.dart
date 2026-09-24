@@ -40,6 +40,31 @@ void main() {
     });
   });
 
+  group('TRX band row', () {
+    testWidgets('seven bands on one row, each with its band-colour stripe', (tester) async {
+      final store = BusStore()..setRadio();
+      await tester.binding.setSurfaceSize(const Size(3600, 2400));
+      await tester.pumpWidget(TestHarness(store: store, mqtt: FakeMqttService(store), child: const ConsoleScreen()));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      final ys = {
+        for (final b in ['80m', '40m', '20m', '17m', '15m', '12m', '10m'])
+          tester.getCenter(find.text(b)).dy.round()
+      };
+      expect(ys, hasLength(1));
+      expect(find.byKey(const ValueKey('band-stripe-20m')), findsOneWidget);
+    });
+
+    testWidgets('unbound mic buttons say Assign', (tester) async {
+      final store = BusStore()..setRadio();
+      await tester.binding.setSurfaceSize(const Size(3600, 2400));
+      await tester.pumpWidget(TestHarness(store: store, mqtt: FakeMqttService(store), child: const ConsoleScreen()));
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.text('Assign'), findsNWidgets(3));
+      expect(find.text('none loaded'), findsOneWidget);
+    });
+  });
+
   group('ConsoleScreen layout', () {
     testWidgets('HF page renders all main modules at 1920x1200', (tester) async {
       final store = BusStore();

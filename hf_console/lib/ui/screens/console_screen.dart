@@ -228,6 +228,10 @@ class _TabletShell extends StatelessWidget {
   /// Panels scrolled in the right rail below the top bar.
   final List<Widget> rightChildren;
 
+  /// The fault list takes all the space under [rightChildren] and shows
+  /// every row (Station page), instead of the 3-row strip at the bottom.
+  final bool expandFaults;
+
   const _TabletShell({
     required this.page,
     required this.onSelect,
@@ -237,6 +241,7 @@ class _TabletShell extends StatelessWidget {
     this.leftTop,
     this.leftUnderMap = const [],
     required this.rightChildren,
+    this.expandFaults = false,
   });
 
   @override
@@ -290,15 +295,20 @@ class _TabletShell extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     _PageTopBar(page: page, onSelect: onSelect),
-                    Expanded(
-                      child: SingleChildScrollView(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: rightChildren,
+                    if (expandFaults) ...[
+                      ...rightChildren,
+                      const Expanded(child: FaultsBar(expanded: true)),
+                    ] else ...[
+                      Expanded(
+                        child: SingleChildScrollView(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: rightChildren,
+                          ),
                         ),
                       ),
-                    ),
-                    const FaultsBar(),
+                      const FaultsBar(),
+                    ],
                   ],
                 ),
               ),
@@ -357,6 +367,9 @@ class _StationPage extends StatelessWidget {
       rightChildren: const [
         PowerPanel(),
       ],
+      // Station page = station health: the space under the power card goes
+      // to the full fault list.
+      expandFaults: true,
     );
   }
 }

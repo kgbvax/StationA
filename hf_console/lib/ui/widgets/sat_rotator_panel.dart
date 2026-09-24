@@ -91,21 +91,42 @@ class SatRotatorPanel extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 12),
-          _AxisControl(
-            axis: 'az',
-            label: 'AZIMUTH',
-            slotName: _azSlot,
-            slot: az,
-            online: azOnline,
-          ),
-          Divider(height: 24, thickness: 1, color: AppTheme.cardLine),
-          _AxisControl(
-            axis: 'el',
-            label: 'ELEVATION',
-            slotName: _elSlot,
-            slot: el,
-            online: elOnline,
-          ),
+          // Wide cards (tablet) put the two axes side by side: stacked, the
+          // UHF column overflowed the tablet and hid the polarization card.
+          LayoutBuilder(builder: (context, constraints) {
+            final azCtl = _AxisControl(
+              axis: 'az',
+              label: 'AZIMUTH',
+              slotName: _azSlot,
+              slot: az,
+              online: azOnline,
+            );
+            final elCtl = _AxisControl(
+              axis: 'el',
+              label: 'ELEVATION',
+              slotName: _elSlot,
+              slot: el,
+              online: elOnline,
+            );
+            if (constraints.maxWidth >= 480) {
+              return Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(child: azCtl),
+                  const SizedBox(width: 16),
+                  Expanded(child: elCtl),
+                ],
+              );
+            }
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                azCtl,
+                Divider(height: 24, thickness: 1, color: AppTheme.cardLine),
+                elCtl,
+              ],
+            );
+          }),
           const SizedBox(height: 16),
           // The e-stop: full-width, red, unmissable. Never disabled while
           // any axis is operable — it must outlive one dead serial port.
@@ -287,8 +308,9 @@ class _AxisControlState extends State<_AxisControl> {
           children: [
             _stepButton(dir: -1, onStep: () => step(-1)),
             const SizedBox(width: 6),
-            SizedBox(
-              width: 96,
+            // The input takes the slack, so GOTO sits next to its own
+            // steppers in both the stacked and the side-by-side layout.
+            Expanded(
               child: TextField(
                 key: ValueKey('sat-${widget.axis}-input'),
                 controller: _controller,
@@ -316,13 +338,13 @@ class _AxisControlState extends State<_AxisControl> {
             ),
             const SizedBox(width: 6),
             _stepButton(dir: 1, onStep: () => step(1)),
-            const Spacer(),
+            const SizedBox(width: 8),
             ElevatedButton(
               key: ValueKey('sat-${widget.axis}-goto'),
               onPressed: gotoEnabled ? publishGoto : null,
               style: AppTheme.actionButton().copyWith(
                 padding: const WidgetStatePropertyAll(
-                  EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                  EdgeInsets.symmetric(horizontal: 14, vertical: 12),
                 ),
               ),
               child: Text('GOTO', style: AppTheme.mono(12, weight: FontWeight.w800)),
