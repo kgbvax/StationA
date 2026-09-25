@@ -99,14 +99,16 @@ class DvkPanel extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           FittedBox(fit: BoxFit.scaleDown, child: Text(band, maxLines: 1)),
-          const SizedBox(height: 3),
+          const SizedBox(height: 4),
+          // Full button width, 6 px tall: a short 3 px dash was too small to
+          // tell the band colours apart at arm's length on the tablet.
           Container(
             key: ValueKey('band-stripe-$band'),
-            width: 18,
-            height: 3,
+            width: double.infinity,
+            height: 6,
             decoration: BoxDecoration(
               color: onPressed == null ? AppTheme.blend(stripe, 0.35) : stripe,
-              borderRadius: BorderRadius.circular(1.5),
+              borderRadius: BorderRadius.circular(3),
             ),
           ),
         ],
