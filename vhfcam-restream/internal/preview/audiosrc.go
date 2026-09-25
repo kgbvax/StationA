@@ -41,10 +41,11 @@ func (s *AudioSourceStatus) Alive() bool {
 	return ts != 0 && time.Since(time.Unix(0, ts)) < 3*time.Second
 }
 
-// StartAudioSource binds udpAddr (bridge PCM in), listens on tcpAddr (the
-// ffmpeg input, one client — newest wins) and pumps a constant-rate stream.
-// Runs until ctx is done; UDP errors are logged and retried. status (may be
-// nil) is stamped on every real datagram.
+// StartAudioSource binds udpAddr (bridge PCM in), listens on tcpAddr (ffmpeg
+// inputs — multiple allowed: every sink ffmpeg gets its own connection) and
+// pumps a constant-rate stream to each. Runs until ctx is done; UDP errors
+// are logged and retried. status (may be nil) is stamped on every real
+// datagram.
 func StartAudioSource(ctx context.Context, udpAddr, tcpAddr string, status *AudioSourceStatus, log interface{ Warn(string, ...any) }) error {
 	udp, err := net.ListenPacket("udp", udpAddr)
 	if err != nil {
@@ -88,9 +89,11 @@ func StartAudioSource(ctx context.Context, udpAddr, tcpAddr string, status *Audi
 		}
 	}()
 
-	// Accept loop: one connected ffmpeg at a time — a new client replaces
-	// the old one (the preview restarts on every config reload).
-	connCh := make(chan net.Conn, 1)
+	// Accept loop: multiple ffmpeg inputs are clients here (the YouTube sink
+	// and the preview both read the radio audio) — each connection is
+	// registered and fanned out to.
+	clients := make(map[net.Conn]struct{})
+	var cmu sync.Mutex
 	go func() {
 		for {
 			c, err := ln.Accept()
@@ -103,15 +106,9 @@ func StartAudioSource(ctx context.Context, udpAddr, tcpAddr string, status *Audi
 				time.Sleep(time.Second)
 				continue
 			}
-			for {
-				select {
-				case old := <-connCh:
-					old.Close()
-				default:
-				}
-				break
-			}
-			connCh <- c
+			cmu.Lock()
+			clients[c] = struct{}{}
+			cmu.Unlock()
 			log.Warn("radio audio client connected", "remote", c.RemoteAddr().String())
 		}
 	}()
@@ -119,23 +116,16 @@ func StartAudioSource(ctx context.Context, udpAddr, tcpAddr string, status *Audi
 	silence := make([]byte, tickBytes) // zeros
 	t := time.NewTicker(tickInterval)
 	defer t.Stop()
-	var client net.Conn
 	for {
 		select {
 		case <-ctx.Done():
-			if client != nil {
-				client.Close()
+			cmu.Lock()
+			for c := range clients {
+				c.Close()
 			}
+			cmu.Unlock()
 			return nil
-		case c := <-connCh:
-			if client != nil {
-				client.Close()
-			}
-			client = c
 		case <-t.C:
-			if client == nil {
-				continue
-			}
 			mu.Lock()
 			n := len(buf)
 			if n > tickBytes {
@@ -150,10 +140,14 @@ func StartAudioSource(ctx context.Context, udpAddr, tcpAddr string, status *Audi
 			if n < tickBytes {
 				out = append(append([]byte{}, out...), silence[:tickBytes-n]...)
 			}
-			if _, err := client.Write(out); err != nil {
-				client.Close()
-				client = nil
+			cmu.Lock()
+			for c := range clients {
+				if _, err := c.Write(out); err != nil {
+					delete(clients, c)
+					c.Close()
+				}
 			}
+			cmu.Unlock()
 		}
 	}
 }

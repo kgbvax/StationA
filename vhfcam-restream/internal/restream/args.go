@@ -15,12 +15,17 @@ import (
 
 // BuildArgs assembles the ffmpeg invocation for the YouTube sink.
 func BuildArgs(cfg *config.Config, sourceURL string) []string {
-	args := buildInputArgs(cfg, sourceURL)
-	args = append(args, "-map", "0:v:0", "-map", "0:a:0")
-	if vf := BuildVideoFilter(cfg); vf != "" {
+	inputs, vmap, fc, audioMap := buildInputsAndOverlay(cfg, sourceURL)
+	transcode := fc != ""
+	args := append(inputs, "-map", vmap, "-map", audioMap)
+	if fc != "" {
+		// The bar is part of the filter complex when the logo rides along.
+		args = append(args, "-filter_complex", fc)
+	} else if vf := BuildVideoFilter(cfg); vf != "" {
 		args = append(args, "-vf", vf)
+		transcode = true
 	}
-	return append(args, youtubeOutputArgs(cfg)...)
+	return append(args, youtubeOutputArgs(cfg, transcode)...)
 }
 
 // BuildPreviewArgs assembles the ffmpeg invocation for the local HLS preview
@@ -30,8 +35,36 @@ func BuildArgs(cfg *config.Config, sourceURL string) []string {
 // audio (fed by the preview's silence-filling source) and the camera's own
 // audio track is replaced by it.
 func BuildPreviewArgs(cfg *config.Config, sourceURL string) []string {
-	args := buildInputArgs(cfg, sourceURL)
-	audioMap := "0:a:0"
+	inputs, vmap, fc, audioMap := buildInputsAndOverlay(cfg, sourceURL)
+	transcode := fc != ""
+	args := append(inputs, "-map", vmap, "-map", audioMap)
+	if fc != "" {
+		// The bar is part of the filter complex when the logo rides along.
+		args = append(args, "-filter_complex", fc)
+	} else if vf := BuildVideoFilter(cfg); vf != "" {
+		args = append(args, "-vf", vf)
+		transcode = true
+	}
+	return append(args, previewOutputArgs(cfg, transcode)...)
+}
+
+// buildInputsAndOverlay assembles the input section (global flags, camera,
+// optional radio PCM and logo image) and returns the input args, the video
+// label for the sink's -map ("0:v" plainly, "[vout]" through the filter
+// complex), the audio label ("0:a:0" camera track, or "1:a:0" radio PCM when
+// radio_audio is configured) and the filter_complex itself ("" when none).
+//
+// The cameras emit H.264 video plus two audio tracks (AAC mono and Opus
+// stereo); ffmpeg's default selection would pick the 2-channel Opus track,
+// which RTMP/FLV cannot carry — audio is always mapped explicitly per sink.
+func buildInputsAndOverlay(cfg *config.Config, sourceURL string) (args []string, vmap, fc, audioMap string) {
+	args = []string{
+		"-hide_banner",
+		"-loglevel", "warning",
+		"-nostdin",
+		"-rtsp_transport", cfg.RTSPTransport,
+		"-i", sourceURL,
+	}
 	if cfg.Preview.RadioAudio != "" {
 		args = append(args,
 			"-f", "s16le",
@@ -41,11 +74,37 @@ func BuildPreviewArgs(cfg *config.Config, sourceURL string) []string {
 		)
 		audioMap = "1:a:0"
 	}
-	args = append(args, "-map", "0:v:0", "-map", audioMap)
-	if vf := BuildVideoFilter(cfg); vf != "" {
-		args = append(args, "-vf", vf)
+
+	// The logo rides the overlay toggle: enabled + configured opens the
+	// filtergraph path (which forces the transcode), otherwise plain maps.
+	vmap = "0:v"
+	audioMap = "0:a:0"
+	if !cfg.Overlay.Enabled || cfg.Overlay.Logo == "" {
+		return args, vmap, fc, audioMap
 	}
-	return append(args, previewOutputArgs(cfg)...)
+
+	logoIdx := 0
+	for _, a := range args {
+		if a == "-i" {
+			logoIdx++
+		}
+	}
+	args = append(args, "-i", cfg.Overlay.Logo)
+
+	bar := BuildVideoFilter(cfg)
+	barSrc := "0:v"
+	chain := ""
+	if bar != "" {
+		chain = fmt.Sprintf("[0:v]%s[bar];", bar)
+		barSrc = "bar"
+	}
+	// Bottom-left corner: the dragon sits directly above the data bar
+	// (bar height = fontsize + 2×margin), scaled to 140 px height.
+	barH := cfg.Overlay.FontSize + 2*cfg.Overlay.Margin
+	fc = fmt.Sprintf("%s[%d:v]scale=-1:140,colorkey=black:0.1:0[dl];[%s][dl]overlay=x=%d:y=main_h-%d-140[vout]",
+		chain, logoIdx, barSrc, cfg.Overlay.Margin, cfg.Overlay.Margin+barH)
+	vmap = "[vout]"
+	return args, vmap, fc, audioMap
 }
 
 // RadioAudioInputURL derives the ffmpeg input from the configured UDP bind
@@ -59,26 +118,11 @@ func RadioAudioInputURL(bindAddr string) string {
 	return "tcp://127.0.0.1:" + port
 }
 
-// buildInputArgs covers global flags, the camera input and its transport.
-// Stream selection and filtering are per-sink (maps and -vf are output
-// options). The cameras emit H.264 video plus two audio tracks (AAC mono and
-// Opus stereo) — the audio track a sink maps is always explicit, because
-// ffmpeg's default selection would pick the 2-channel Opus track, which
-// RTMP/FLV cannot carry.
-func buildInputArgs(cfg *config.Config, sourceURL string) []string {
-	return []string{
-		"-hide_banner",
-		"-loglevel", "warning",
-		"-nostdin",
-		"-rtsp_transport", cfg.RTSPTransport,
-		"-i", sourceURL,
-	}
-}
-
 // videoCodecArgs returns the video codec arguments: a software x264 transcode
-// when the overlay needs burning in, otherwise a straight copy.
-func videoCodecArgs(cfg *config.Config) []string {
-	if BuildVideoFilter(cfg) != "" {
+// when a filtergraph needs burning in (overlay bar or logo), otherwise a
+// straight copy.
+func videoCodecArgs(cfg *config.Config, transcode bool) []string {
+	if transcode {
 		return []string{
 			"-c:v", "libx264",
 			"-preset", "superfast",
@@ -92,8 +136,8 @@ func videoCodecArgs(cfg *config.Config) []string {
 	return []string{"-c:v", cfg.VideoCodec}
 }
 
-func youtubeOutputArgs(cfg *config.Config) []string {
-	args := videoCodecArgs(cfg)
+func youtubeOutputArgs(cfg *config.Config, transcode bool) []string {
+	args := videoCodecArgs(cfg, transcode)
 	return append(args,
 		"-c:a", cfg.AudioCodec,
 		"-flvflags", "no_duration_filesize",
@@ -104,9 +148,9 @@ func youtubeOutputArgs(cfg *config.Config) []string {
 	)
 }
 
-func previewOutputArgs(cfg *config.Config) []string {
+func previewOutputArgs(cfg *config.Config, transcode bool) []string {
 	p := &cfg.Preview
-	args := videoCodecArgs(cfg)
+	args := videoCodecArgs(cfg, transcode)
 	return append(args,
 		"-c:a", cfg.AudioCodec,
 		"-stats_period", "5",
@@ -120,32 +164,33 @@ func previewOutputArgs(cfg *config.Config) []string {
 	)
 }
 
-// BuildVideoFilter returns the -vf drawtext chain for the operational-data
-// overlay, or "" when the overlay is disabled. Each field is its own drawtext
-// with reload=1 reading a textfile the overlay writer keeps current; the TX
-// line is red and simply goes empty when not transmitting.
+// BuildVideoFilter returns the bottom-bar drawtext chain for the
+// operational-data overlay, or "" when the overlay is disabled. AZ, EL and
+// frequency share one line at the bottom edge; the red TX indicator is
+// right-aligned on the same line and simply goes empty when not
+// transmitting. Each field is its own drawtext with reload=1 reading a
+// textfile the overlay writer keeps current.
 func BuildVideoFilter(cfg *config.Config) string {
 	o := &cfg.Overlay
 	if !o.Enabled {
 		return ""
 	}
-	lineH := o.FontSize + 8
-	panelW := o.FontSize * 13
-	panelH := o.Margin*2 + 4*lineH
-	txX := panelW - o.Margin - 2*o.FontSize
-	txY := panelH - o.Margin - o.FontSize
+	fs := o.FontSize
+	m := o.Margin
+	barH := fs + 2*m
+	textY := "main_h-" + strconv.Itoa(fs+m)
 
-	dt := func(name, color string, x, y int) string {
+	dt := func(file, color, x string) string {
 		return fmt.Sprintf(
-			"drawtext=fontfile=%s:textfile=%s/%s.txt:reload=1:fontcolor=%s:fontsize=%d:x=%d:y=%d",
-			o.FontFile, o.Dir, name, color, o.FontSize, x, y)
+			"drawtext=fontfile=%s:textfile=%s/%s.txt:reload=1:fontcolor=%s:fontsize=%d:x=%s:y=%s",
+			o.FontFile, o.Dir, file, color, fs, x, textY)
 	}
 	parts := []string{
-		fmt.Sprintf("drawbox=x=0:y=0:w=%d:h=%d:color=black@0.5:t=fill", panelW, panelH),
-		dt("az", "white", o.Margin, o.Margin),
-		dt("el", "white", o.Margin, o.Margin+lineH),
-		dt("freq", "white", o.Margin, o.Margin+2*lineH),
-		dt("tx", "red", txX, txY),
+		fmt.Sprintf("drawbox=x=0:y=ih-%d:w=iw:h=%d:color=black@0.5:t=fill", barH, barH),
+		dt("az", "white", strconv.Itoa(m)),
+		dt("el", "white", strconv.Itoa(m+6*fs)),
+		dt("freq", "white", strconv.Itoa(m+12*fs)),
+		dt("tx", "red", "main_w-tw-"+strconv.Itoa(m)),
 	}
 	return strings.Join(parts, ",")
 }

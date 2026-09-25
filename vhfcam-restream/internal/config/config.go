@@ -73,13 +73,18 @@ type PreviewConfig struct {
 	// audio track. When set, the preview audio is the RADIO's audio — a
 	// 20 ms silence-fill keeps the pipeline alive when the radio is off —
 	// and the bridge receives audio_on heartbeats on RadioAudioCmdTopic.
-	RadioAudio        string `toml:"radio_audio"`
+	RadioAudio         string `toml:"radio_audio"`
 	RadioAudioCmdTopic string `toml:"radio_audio_cmd_topic"`
 }
 
 // OverlayConfig configures the MQTT-fed drawtext overlay.
 type OverlayConfig struct {
 	Enabled bool `toml:"enabled"`
+
+	// Logo is a PNG overlaid in the top-left corner of the video (the
+	// embedded station dragon ships at /run/vhfcam-restream/dragon.png —
+	// main materializes it at startup). Empty = no logo.
+	Logo string `toml:"logo"`
 
 	MQTTBroker   string `toml:"mqtt_broker"`
 	MQTTUser     string `toml:"mqtt_user"`
@@ -129,6 +134,7 @@ func Default() Config {
 		},
 		Overlay: OverlayConfig{
 			Enabled:      false,
+			Logo:         "/run/vhfcam-restream/dragon.png",
 			MQTTBroker:   "tcp://192.168.1.50:1883",
 			MQTTUser:     "hf",
 			Site:         "muehle",

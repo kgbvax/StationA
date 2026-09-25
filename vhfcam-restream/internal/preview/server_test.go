@@ -119,7 +119,7 @@ func TestRadioCmdEndpoints(t *testing.T) {
 	})
 	h := s.Handler()
 
-	for _, action := range []string{"audio_on", "audio_off", "power_on"} {
+	for _, action := range []string{"audio_on", "audio_off", "power_on", "yt_start", "yt_stop"} {
 		req := httptest.NewRequest(http.MethodPost, "/api/cmd/"+action, nil)
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
@@ -128,7 +128,7 @@ func TestRadioCmdEndpoints(t *testing.T) {
 		}
 	}
 	mu.Lock()
-	if strings.Join(got, ",") != "audio_on,audio_off,power_on" {
+	if strings.Join(got, ",") != "audio_on,audio_off,power_on,yt_start,yt_stop" {
 		t.Errorf("cmdFn got %v", got)
 	}
 	mu.Unlock()
