@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hf_console/store/bus_store.dart';
 import 'package:hf_console/ui/screens/console_screen.dart';
+import 'package:hf_console/ui/widgets/cam_record_controls.dart';
 import 'package:hf_console/ui/widgets/dx_map_container.dart';
 import '../../support/fake_mqtt_service.dart';
 import '../../support/fixtures.dart';
@@ -62,6 +63,44 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
       expect(find.text('Assign'), findsNWidgets(3));
       expect(find.text('none loaded'), findsOneWidget);
+    });
+  });
+
+  group('VHF map module', () {
+    for (final page in ['UHF', 'CAM']) {
+      testWidgets('$page tab (tablet) shows the Mercator-only VHF map with E-STOP', (tester) async {
+        final store = BusStore()..setSatRotator('muehle/uhf/az-rotator', axis: 'az', pos: 45);
+        await tester.binding.setSurfaceSize(const Size(3600, 2400));
+        await tester.pumpWidget(TestHarness(store: store, mqtt: FakeMqttService(store), child: const ConsoleScreen()));
+        await tester.pump(const Duration(milliseconds: 100));
+        await tester.tap(find.text(page));
+        await tester.pump(const Duration(milliseconds: 100));
+
+        final map = tester.widget<DxMapContainer>(find.byType(DxMapContainer));
+        expect(map.mercatorOnly, isTrue);
+        expect(map.rotatorOverlay, isTrue);
+        expect(find.text('E-STOP'), findsOneWidget);
+      });
+    }
+
+    testWidgets('HF tab keeps the switchable HF map', (tester) async {
+      final store = BusStore()..setRotator(az: 120);
+      await tester.binding.setSurfaceSize(const Size(3600, 2400));
+      await tester.pumpWidget(TestHarness(store: store, mqtt: FakeMqttService(store), child: const ConsoleScreen()));
+      await tester.pump(const Duration(milliseconds: 100));
+      final map = tester.widget<DxMapContainer>(find.byType(DxMapContainer));
+      expect(map.mercatorOnly, isFalse);
+      expect(find.text('E-STOP'), findsNothing);
+    });
+
+    testWidgets('phone CAM tab has exactly one recording card', (tester) async {
+      final store = BusStore();
+      await tester.binding.setSurfaceSize(const Size(1170, 2532)); // dpr 3 → 390×844
+      await tester.pumpWidget(TestHarness(store: store, mqtt: FakeMqttService(store), child: const ConsoleScreen()));
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.tap(find.text('CAM'));
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.byType(CamRecordControls), findsOneWidget);
     });
   });
 

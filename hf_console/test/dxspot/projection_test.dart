@@ -123,4 +123,30 @@ void main() {
       expect(p, isNull);
     });
   });
+
+  group('great-circle helpers', () {
+    const lengerich = (lat: 52.187, lng: 7.866);
+    const muenster = (lat: 51.962, lng: 7.626);
+
+    test('Lengerich to Münster: about 30 km, bearing about 214°', () {
+      expect(distanceKm(lengerich, muenster), closeTo(30.0, 1.5));
+      expect(initialBearing(lengerich, muenster), closeTo(214, 2));
+    });
+
+    test('cardinal bearings', () {
+      const o = (lat: 0.0, lng: 0.0);
+      expect(initialBearing(o, (lat: 1.0, lng: 0.0)), closeTo(0, 1e-9));
+      expect(initialBearing(o, (lat: 0.0, lng: 1.0)), closeTo(90, 1e-9));
+      expect(initialBearing(o, (lat: -1.0, lng: 0.0)), closeTo(180, 1e-9));
+      expect(initialBearing(o, (lat: 0.0, lng: -1.0)), closeTo(270, 1e-9));
+    });
+
+    test('destinationPoint round-trips bearing and distance', () {
+      for (final brg in [0.0, 45.0, 137.0, 214.0, 300.0]) {
+        final p = destinationPoint(lengerich, brg, 500);
+        expect(distanceKm(lengerich, p), closeTo(500, 0.01));
+        expect(initialBearing(lengerich, p), closeTo(brg, 0.01));
+      }
+    });
+  });
 }

@@ -15,9 +15,11 @@ import 'package:provider/provider.dart';
 
 import '../../dxspot/dxspot_service.dart';
 import '../../dxspot/mercator_projection.dart';
+import '../../dxspot/places.dart';
 import '../../dxspot/projection.dart';
 import '../../dxspot/ring_subpaths.dart';
 import '../../dxspot/world_geometry.dart';
+import '../../mqtt/mqtt_service.dart';
 import '../../store/bus_store.dart';
 import 'band_legend.dart';
 import '../../store/selected_spot.dart';
@@ -25,8 +27,8 @@ import '../../store/wiring.dart';
 import '../theme.dart';
 import 'rotator_presets_bar.dart';
 
-const double _kMercatorZoomMin = 1.0;
-const double _kMercatorZoomMax = 12.0;
+const double kMercatorZoomMin = 1.0;
+const double kMercatorZoomMax = 12.0;
 const double _kMercatorZoomDefault = 2.5;
 const double _kMercatorZoomStep = 0.5;
 
@@ -44,11 +46,23 @@ class MercatorMapPanel extends StatefulWidget {
   /// Zoom the map opens with; `null` falls back to [_kMercatorZoomDefault].
   final double? initialZoom;
 
+  /// Zoom range of this panel (the VHF module zooms in to town level).
+  final double minZoom;
+  final double maxZoom;
+
+  /// Draw [rotator]'s beam, aim it by tap and show an E-STOP (the VHF/UHF
+  /// module). Off for the HF Mercator view: the HF beam depends on the
+  /// Ultrabeam direction mode, which only the compass models.
+  final bool rotatorOverlay;
+
   const MercatorMapPanel({
     super.key,
     this.showPresets = true,
     this.rotator = hfRotator,
     this.initialZoom,
+    this.minZoom = kMercatorZoomMin,
+    this.maxZoom = kMercatorZoomMax,
+    this.rotatorOverlay = false,
   });
 
   @override
@@ -63,6 +77,7 @@ class _MercatorMapPanelState extends State<MercatorMapPanel> {
   double? _centerLat;
   double? _centerLng;
   List<List<LatLng>>? _rings;
+  List<Place> _places = Places.instance.loaded;
   // Aging tick for the selected-station marker (dim/hide as the keyed call
   // grows old) — a quiet band produces no other rebuilds, so keep a slow
   // one alive.
@@ -86,10 +101,12 @@ class _MercatorMapPanelState extends State<MercatorMapPanel> {
   Future<void> _loadGeometry() async {
     final rings = await WorldGeometry.instance.load();
     if (mounted) setState(() => _rings = rings);
+    final places = await Places.instance.load();
+    if (mounted) setState(() => _places = places);
   }
 
   void _setZoom(double z) {
-    final clamped = z.clamp(_kMercatorZoomMin, _kMercatorZoomMax);
+    final clamped = z.clamp(widget.minZoom, widget.maxZoom);
     if (clamped == _zoom) return;
     setState(() => _zoom = clamped);
   }
@@ -138,6 +155,18 @@ class _MercatorMapPanelState extends State<MercatorMapPanel> {
     final lat = _centerLat ?? qthLat ?? 0.0;
     final lng = _centerLng ?? qthLng ?? 0.0;
 
+    // Rotator overlay (VHF module): beam, target line, tap-to-aim, E-STOP.
+    // Gated exactly like the compass: the bridge's /status and our link.
+    final surface = widget.rotatorOverlay ? widget.rotator : null;
+    final rotatorOnline = surface != null && (store.slots[surface.stateSlot]?.isOnline ?? false) && store.linkUp;
+    final az = surface == null ? null : store.stateValueAs<num>(surface.stateSlot, 'az')?.toDouble();
+    final targetAz = surface == null ? null : store.stateValueAs<num>(surface.stateSlot, surface.targetKey)?.toDouble();
+    final qth = (qthLat != null && qthLng != null) ? (lat: qthLat, lng: qthLng) : null;
+    final beam = (surface != null && az != null && qth != null)
+        ? (qth: qth, az: az, target: targetAz, half: surface.beamHalfWidthDeg, online: rotatorOnline)
+        : null;
+    final mqtt = context.read<MqttService>();
+
     return LayoutBuilder(
       builder: (context, constraints) {
         final size = Size(constraints.maxWidth, constraints.maxHeight);
@@ -151,6 +180,17 @@ class _MercatorMapPanelState extends State<MercatorMapPanel> {
         return ClipRect(
           child: GestureDetector(
             onPanUpdate: (d) => _panBy(-d.delta.dx, -d.delta.dy, size),
+            // Tap aims the rotator at the great-circle bearing of the tapped
+            // point — the Mercator twin of the compass disc's tap-to-aim.
+            onTapUp: (rotatorOnline && qth != null)
+                ? (d) {
+                    final p = proj.unproject(d.localPosition.dx, d.localPosition.dy);
+                    if (p == null) return;
+                    final brg = initialBearing(qth, (lat: p.lat, lng: p.lng));
+                    mqtt.publish(cmdTopic(surface.cmdSlot), surface.aimPayload(brg.roundToDouble()),
+                        retain: cmdRetain[surface.stateSlot] ?? false);
+                  }
+                : null,
             child: Listener(
               onPointerSignal: (event) {
                 if (event is PointerScrollEvent) {
@@ -175,6 +215,8 @@ class _MercatorMapPanelState extends State<MercatorMapPanel> {
                       qthLng: qthLng,
                       selected: selectedLive ? selected : null,
                       selectedAgeSeconds: selectedAge,
+                      places: _places,
+                      beam: beam,
                     ),
                     child: SizedBox.expand(),
                   ),
@@ -183,6 +225,8 @@ class _MercatorMapPanelState extends State<MercatorMapPanel> {
                     right: 12,
                     child: _ZoomControls(
                       zoom: _zoom,
+                      minZoom: widget.minZoom,
+                      maxZoom: widget.maxZoom,
                       onZoomIn: () => _setZoom(_zoom + _kMercatorZoomStep),
                       onZoomOut: () => _setZoom(_zoom - _kMercatorZoomStep),
                       onReset: () {
@@ -199,12 +243,28 @@ class _MercatorMapPanelState extends State<MercatorMapPanel> {
                   // Direction presets, stacked directly above the zoom row
                   // on the right map edge (tablet layout only, HF rotator
                   // only — the headings are HF big-DX targets).
-                  if (widget.showPresets && (widget.rotator?.showPresets ?? false))
+                  if (widget.showPresets && surface == null && (widget.rotator?.showPresets ?? false))
                     Positioned(
                       right: 12,
                       // Clears the zoom row: bottom 12 + ~32-high row + 4 gap.
                       bottom: 48,
                       child: const RotatorPresetsRail(),
+                    ),
+                  // VHF module: E-STOP halts every axis of the surface (az + el),
+                  // same place as the HF STOP.
+                  if (surface != null)
+                    Positioned(
+                      right: 12,
+                      bottom: 48,
+                      child: RotatorPresetsRail(rotator: surface, label: 'E-STOP'),
+                    ),
+                  if (surface != null)
+                    Positioned(
+                      top: 8,
+                      right: 8,
+                      child: IgnorePointer(
+                        child: _HeadingChip(az: az, target: targetAz, online: rotatorOnline, hasQth: qth != null),
+                      ),
                     ),
                   // Band key, left rail — same geometry as the compass panel's.
                   // Makes the band contract visible: on the UHF page the feed
@@ -237,12 +297,16 @@ class _MercatorMapPanelState extends State<MercatorMapPanel> {
 
 class _ZoomControls extends StatelessWidget {
   final double zoom;
+  final double minZoom;
+  final double maxZoom;
   final VoidCallback onZoomIn;
   final VoidCallback onZoomOut;
   final VoidCallback onReset;
 
   const _ZoomControls({
     required this.zoom,
+    required this.minZoom,
+    required this.maxZoom,
     required this.onZoomIn,
     required this.onZoomOut,
     required this.onReset,
@@ -259,9 +323,9 @@ class _ZoomControls extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          _ZoomButton(icon: Icons.remove, onTap: onZoomOut, enabled: zoom > _kMercatorZoomMin + 1e-9),
+          _ZoomButton(icon: Icons.remove, onTap: onZoomOut, enabled: zoom > minZoom + 1e-9),
           _ZoomButton(icon: Icons.my_location, onTap: onReset),
-          _ZoomButton(icon: Icons.add, onTap: onZoomIn, enabled: zoom < _kMercatorZoomMax - 1e-9),
+          _ZoomButton(icon: Icons.add, onTap: onZoomIn, enabled: zoom < maxZoom - 1e-9),
         ],
       ),
     );
@@ -295,6 +359,54 @@ class _ZoomButton extends StatelessWidget {
   }
 }
 
+/// Rotator read-out on the VHF map: where the array points, where it is
+/// going, or why tapping will not aim it.
+class _HeadingChip extends StatelessWidget {
+  final double? az;
+  final double? target;
+  final bool online;
+  final bool hasQth;
+
+  const _HeadingChip({required this.az, required this.target, required this.online, required this.hasQth});
+
+  @override
+  Widget build(BuildContext context) {
+    final String text;
+    final Color color;
+    if (!online) {
+      text = 'AZ ROTATOR OFFLINE';
+      color = AppTheme.red;
+    } else if (!hasQth) {
+      text = 'SET STATION LOCATOR TO AIM';
+      color = AppTheme.amber;
+    } else {
+      final a = az == null ? '---' : '${az!.round()}°';
+      final t = target;
+      final moving = az != null && t != null && _angleDiff(t, az!) > 2;
+      text = moving ? 'AZ $a → ${t.round()}°' : 'AZ $a · TAP TO AIM';
+      color = AppTheme.accent;
+    }
+    return Container(
+      key: const ValueKey('vhf-heading-chip'),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: AppTheme.card.withValues(alpha: 0.85),
+        border: Border.all(color: color),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Text(text, style: AppTheme.mono(11, color: color, weight: FontWeight.w700)),
+    );
+  }
+}
+
+double _angleDiff(double a, double b) {
+  final d = (a - b).abs() % 360;
+  return d > 180 ? 360 - d : d;
+}
+
+/// Rotator beam for the painter: QTH, pointing and commanded azimuth.
+typedef MercatorBeam = ({LatLng qth, double az, double? target, double half, bool online});
+
 class _MercatorPainter extends CustomPainter {
   final MercatorProjection projection;
   final bool isDark;
@@ -306,6 +418,8 @@ class _MercatorPainter extends CustomPainter {
   final double? qthLng;
   final SelectedSpot? selected;
   final int selectedAgeSeconds;
+  final List<Place> places;
+  final MercatorBeam? beam;
 
   _MercatorPainter({
     required this.projection,
@@ -318,6 +432,8 @@ class _MercatorPainter extends CustomPainter {
     required this.qthLng,
     this.selected,
     this.selectedAgeSeconds = 0,
+    this.places = const [],
+    this.beam,
   });
 
   @override
@@ -337,6 +453,13 @@ class _MercatorPainter extends CustomPainter {
     for (final sq in gridSquares) {
       _drawGridSquare(canvas, sq);
     }
+
+    // 3b. Place names (towns to aim at when zoomed in)
+    _drawPlaces(canvas, size);
+
+    // 3c. Rotator beam, boom and target line (VHF module)
+    final b = beam;
+    if (b != null) _drawBeam(canvas, size, b);
 
     // 4. Spot dots
     for (final spot in spots) {
@@ -402,6 +525,98 @@ class _MercatorPainter extends CustomPainter {
         _drawLabel(canvas, sel.call, p.x + 12, p.y - 12, color);
       }
     }
+  }
+
+  /// Cities from the bundled Natural Earth layer, thinned by zoom (only
+  /// important places when zoomed out) and by label overlap (most important
+  /// first — the asset is sorted that way).
+  void _drawPlaces(Canvas canvas, Size size) {
+    if (places.isEmpty) return;
+    final maxRank = Places.maxRankForZoom(projection.zoom);
+    final taken = <Rect>[];
+    final dot = Paint()..color = AppTheme.txtMute;
+    for (final pl in places) {
+      if (pl.rank > maxRank) continue;
+      final p = projection.project(pl.pos.lat, pl.pos.lng);
+      if (p == null || p.x < -40 || p.y < -20 || p.x > size.width + 40 || p.y > size.height + 20) continue;
+      final tp = TextPainter(
+        text: TextSpan(text: pl.name, style: AppTheme.body(10, color: AppTheme.txtMute)),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      final rect = Rect.fromLTWH(p.x - 3, p.y - tp.height / 2, tp.width + 10, tp.height);
+      if (taken.any((r) => r.overlaps(rect))) continue;
+      taken.add(rect);
+      canvas.drawCircle(Offset(p.x, p.y), 2.2, dot);
+      tp.paint(canvas, Offset(p.x + 5, p.y - tp.height / 2));
+    }
+  }
+
+  /// Beam wedge along great circles from the QTH (az ± half) out to the
+  /// farthest viewport corner, the boom line on az and a faint target line
+  /// while turning — the compass rules, drawn in Mercator.
+  void _drawBeam(Canvas canvas, Size size, MercatorBeam b) {
+    Offset? pt(LatLng ll) {
+      final p = projection.project(ll.lat, ll.lng);
+      return p == null ? null : Offset(p.x, p.y);
+    }
+
+    final origin = pt(b.qth);
+    if (origin == null) return;
+    var reach = 50.0;
+    for (final c in [Offset.zero, Offset(size.width, 0), Offset(0, size.height), Offset(size.width, size.height)]) {
+      final ll = projection.unproject(c.dx, c.dy);
+      if (ll != null) reach = math.max(reach, distanceKm(b.qth, (lat: ll.lat, lng: ll.lng)));
+    }
+    reach = math.min(reach * 1.1, 5000);
+
+    List<Offset> ray(double brg) {
+      final out = <Offset>[];
+      for (var i = 1; i <= 24; i++) {
+        final o = pt(destinationPoint(b.qth, brg, reach * i / 24));
+        if (o != null) out.add(o);
+      }
+      return out;
+    }
+
+    final wedge = Path()..moveTo(origin.dx, origin.dy);
+    for (final o in ray(b.az - b.half)) {
+      wedge.lineTo(o.dx, o.dy);
+    }
+    for (var a = b.az - b.half; a <= b.az + b.half; a += 2) {
+      final o = pt(destinationPoint(b.qth, a, reach));
+      if (o != null) wedge.lineTo(o.dx, o.dy);
+    }
+    for (final o in ray(b.az + b.half).reversed) {
+      wedge.lineTo(o.dx, o.dy);
+    }
+    wedge.close();
+    final alpha = b.online ? 0.30 : 0.12;
+    canvas.drawPath(wedge, Paint()..color = AppTheme.blend(AppTheme.accent, alpha));
+
+    void line(double brg, Paint paint) {
+      final path = Path()..moveTo(origin.dx, origin.dy);
+      for (final o in ray(brg)) {
+        path.lineTo(o.dx, o.dy);
+      }
+      canvas.drawPath(path, paint);
+    }
+
+    final t = b.target;
+    if (t != null && _angleDiff(t, b.az) > 5) {
+      line(
+          t,
+          Paint()
+            ..color = AppTheme.blend(AppTheme.accent, 0.55)
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 1.5);
+    }
+    line(
+        b.az,
+        Paint()
+          ..color = AppTheme.accent
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2.5
+          ..strokeCap = StrokeCap.round);
   }
 
   /// Callsign label on a small dark pill so it reads on any land fill.
@@ -546,6 +761,8 @@ class _MercatorPainter extends CustomPainter {
         oldDelegate.gridSquares.length != gridSquares.length ||
         oldDelegate.spots.length != spots.length ||
         oldDelegate.filter != filter ||
+        oldDelegate.places.length != places.length ||
+        oldDelegate.beam != beam ||
         // Selected-station marker: identity change (new call/source) or a
         // half-minute age bucket (the dim-out).
         _selectedKey(oldDelegate.selected, oldDelegate.selectedAgeSeconds) !=

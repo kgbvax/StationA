@@ -212,11 +212,9 @@ class _TabletShell extends StatelessWidget {
   /// HF page, the VHF az-rotator on the UHF page, none on Station.
   final RotatorSurface? rotator;
 
-  /// Projection the left pane's map opens with (UHF: Mercator).
-  final DxProjection initialMapProjection;
-
-  /// Zoom the Mercator map opens with (UHF: 4×).
-  final double? initialMapZoom;
+  /// The left pane shows the VHF/UHF map module ([DxMapContainer.vhf]:
+  /// Mercator only, UHF beam, tap-to-aim, E-STOP) instead of the HF map.
+  final bool vhfMap;
 
   /// Panels pinned under the map in the left pane (HF: ultrabeam + antenna).
   final List<Widget> leftUnderMap;
@@ -237,8 +235,7 @@ class _TabletShell extends StatelessWidget {
     required this.page,
     required this.onSelect,
     required this.rotator,
-    this.initialMapProjection = DxProjection.azimuth,
-    this.initialMapZoom,
+    this.vhfMap = false,
     this.leftTop,
     this.leftUnderMap = const [],
     required this.rightChildren,
@@ -272,11 +269,9 @@ class _TabletShell extends StatelessWidget {
                         // Tablet: direction presets live on the map's right
                         // edge (above the +/- zoom stepper) — the column no
                         // longer spends a footer row on them.
-                        child: DxMapContainer(
-                          rotator: rotator,
-                          initialProjection: initialMapProjection,
-                          initialMercatorZoom: initialMapZoom,
-                        ),
+                        child: vhfMap
+                            ? const DxMapContainer.vhf()
+                            : DxMapContainer(rotator: rotator),
                       ),
                     ),
                     ...leftUnderMap,
@@ -403,6 +398,17 @@ class _UhfPage extends StatelessWidget {
           children: [
             _PageTopBar(page: 'uhf', onSelect: onSelect),
             Expanded(
+              flex: 5,
+              child: Container(
+                decoration: BoxDecoration(
+                  color: AppTheme.pane,
+                  border: Border(bottom: BorderSide(color: AppTheme.cardLine)),
+                ),
+                child: const DxMapContainer.vhf(showPresets: false),
+              ),
+            ),
+            Expanded(
+              flex: 6,
               child: SingleChildScrollView(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -427,8 +433,7 @@ class _UhfPage extends StatelessWidget {
       page: 'uhf',
       onSelect: onSelect,
       rotator: vhfRotator,
-      initialMapProjection: DxProjection.mercator,
-      initialMapZoom: 4.0,
+      vhfMap: true,
       rightChildren: const [
         UhfRadioPanel(),
         SatRotatorPanel(),
@@ -471,8 +476,7 @@ class _CamPage extends StatelessWidget {
                   children: const [
                     CamFeedPanel(),
                     CamRecordControls(),
-                    CamRecordControls(),
-        CamRadioControls(),
+                    CamRadioControls(),
                     SizedBox(height: 40),
                     FaultsBar(),
                   ],
@@ -488,6 +492,7 @@ class _CamPage extends StatelessWidget {
       page: 'cam',
       onSelect: onSelect,
       rotator: vhfRotator,
+      vhfMap: true,
       leftTop: const CamFeedPanel(),
       rightChildren: const [
         CamRecordControls(),

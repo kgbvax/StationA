@@ -157,3 +157,32 @@ class Aeqd {
     return (x: width / 2 + n.x * scale, y: height / 2 - n.y * scale);
   }
 }
+/// Great-circle initial bearing from [from] to [to], degrees 0..360 (true
+/// north, clockwise) — where a rotator at [from] must point.
+double initialBearing(LatLng from, LatLng to) {
+  final p1 = _degToRad(from.lat), p2 = _degToRad(to.lat);
+  final dl = _degToRad(to.lng - from.lng);
+  final y = math.sin(dl) * math.cos(p2);
+  final x = math.cos(p1) * math.sin(p2) - math.sin(p1) * math.cos(p2) * math.cos(dl);
+  final deg = math.atan2(y, x) * 180.0 / math.pi;
+  return (deg + 360.0) % 360.0;
+}
+
+/// Great-circle distance between two points, km.
+double distanceKm(LatLng a, LatLng b) {
+  final p1 = _degToRad(a.lat), p2 = _degToRad(b.lat);
+  final dp = p2 - p1, dl = _degToRad(b.lng - a.lng);
+  final h = math.sin(dp / 2) * math.sin(dp / 2) + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) * math.sin(dl / 2);
+  return 2 * earthRadiusKm * math.asin(math.min(1.0, math.sqrt(h)));
+}
+
+/// The point [km] away from [from] along the great circle leaving at
+/// [bearingDeg]. Longitude is wrapped to -180..180.
+LatLng destinationPoint(LatLng from, double bearingDeg, double km) {
+  final d = km / earthRadiusKm;
+  final th = _degToRad(bearingDeg);
+  final p1 = _degToRad(from.lat), l1 = _degToRad(from.lng);
+  final p2 = math.asin(math.sin(p1) * math.cos(d) + math.cos(p1) * math.sin(d) * math.cos(th));
+  final l2 = l1 + math.atan2(math.sin(th) * math.sin(d) * math.cos(p1), math.cos(d) - math.sin(p1) * math.sin(p2));
+  return (lat: p2 * 180.0 / math.pi, lng: _wrapPi(l2) * 180.0 / math.pi);
+}

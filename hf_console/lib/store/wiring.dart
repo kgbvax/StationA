@@ -121,12 +121,23 @@ class RotatorSurface {
   /// The /cmd payload that aims this rotator at [deg].
   final String Function(double deg) aimPayload;
 
+  /// Every cmd slot the map's STOP / E-STOP halts (the VHF array stops
+  /// both axes, like the sat panel's STOP), and the payload it sends.
+  final List<String> stopSlots;
+  final String Function() stopPayload;
+
+  /// Half the drawn main-lobe width, degrees (visual only).
+  final double beamHalfWidthDeg;
+
   const RotatorSurface(
     this.stateSlot,
     this.cmdSlot, {
     required this.targetKey,
     required this.showPresets,
     required this.aimPayload,
+    required this.stopSlots,
+    required this.stopPayload,
+    required this.beamHalfWidthDeg,
   });
 }
 
@@ -136,6 +147,9 @@ const RotatorSurface hfRotator = RotatorSurface(
   targetKey: 'target_az',
   showPresets: true,
   aimPayload: rotatorAzPayload,
+  stopSlots: ['hf/rotator'],
+  stopPayload: rotatorStopPayload,
+  beamHalfWidthDeg: 30,
 );
 
 /// The VHF array azimuth: `muehle/uhf/az-rotator` /state keys `az` / `target`
@@ -146,6 +160,10 @@ const RotatorSurface vhfRotator = RotatorSurface(
   targetKey: 'target',
   showPresets: false,
   aimPayload: satRotatorGotoPayload,
+  stopSlots: ['uhf/az-rotator', 'uhf/el-rotator'],
+  stopPayload: satRotatorStopPayload,
+  // X-Quad main lobe, roughly ±20° at the -3 dB points.
+  beamHalfWidthDeg: 20,
 );
 
 String rotatorStopPayload() => jsonEncode({'action': 'stop'});

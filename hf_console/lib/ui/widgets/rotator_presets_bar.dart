@@ -21,7 +21,10 @@ import '../theme.dart';
 /// Disabled when the rotator bridge is offline — same gating as the
 /// tap-to-aim gesture on the disc, so the two surfaces stay in sync.
 class RotatorPresetsBar extends StatelessWidget {
-  const RotatorPresetsBar({super.key});
+  /// Which rotator STOP halts (default: the HF rotator).
+  final RotatorSurface rotator;
+
+  const RotatorPresetsBar({super.key, this.rotator = hfRotator});
 
   @override
   Widget build(BuildContext context) {
@@ -37,7 +40,7 @@ class RotatorPresetsBar extends StatelessWidget {
         alignment: WrapAlignment.center,
         crossAxisAlignment: WrapCrossAlignment.center,
         children: [
-          for (final a in _presetActions(context))
+          for (final a in _presetActions(context, rotator, 'STOP'))
             _Preset(a.label, danger: a.danger, onPressed: a.onPressed),
         ],
       ),
@@ -50,11 +53,18 @@ class RotatorPresetsBar extends StatelessWidget {
 /// (Mercator) and uses the same translucent card chrome as the rest of the
 /// map overlay, so it reads as map chrome rather than a panel.
 class RotatorPresetsRail extends StatelessWidget {
-  const RotatorPresetsRail({super.key});
+  /// Which rotator STOP halts (default: the HF rotator). The VHF surface
+  /// stops both sat axes.
+  final RotatorSurface rotator;
+
+  /// Button label: "STOP" on the HF compass, "E-STOP" on the VHF map.
+  final String label;
+
+  const RotatorPresetsRail({super.key, this.rotator = hfRotator, this.label = 'STOP'});
 
   @override
   Widget build(BuildContext context) {
-    final actions = _presetActions(context);
+    final actions = _presetActions(context, rotator, label);
     return Container(
       padding: const EdgeInsets.all(4),
       decoration: BoxDecoration(
@@ -89,18 +99,23 @@ class _PresetAction {
 }
 
 /// The stop action, gated on rotator-bridge liveness — shared by the
-/// horizontal bar and the map-edge rail so the two stay in sync.
-List<_PresetAction> _presetActions(BuildContext context) {
+/// horizontal bar and the map-edge rail so the two stay in sync. Enabled
+/// while any of the surface's stop slots is online (the sat panel rule: an
+/// e-stop must outlive one dead axis); it stops every slot.
+List<_PresetAction> _presetActions(BuildContext context, RotatorSurface rotator, String label) {
   final store = context.watch<BusStore>();
   final mqtt = context.read<MqttService>();
-  final rotatorOnline = (store.slots['muehle/hf/rotator']?.isOnline ?? false) && store.linkUp;
+  final anyOnline = store.linkUp &&
+      rotator.stopSlots.any((slot) => store.slots['muehle/$slot']?.isOnline ?? false);
 
   void sendStop() {
-    mqtt.publish(cmdTopic('hf/rotator'), rotatorStopPayload(), retain: false);
+    for (final slot in rotator.stopSlots) {
+      mqtt.publish(cmdTopic(slot), rotator.stopPayload(), retain: cmdRetain['muehle/$slot'] ?? false);
+    }
   }
 
   return [
-    _PresetAction('STOP', danger: true, onPressed: rotatorOnline ? sendStop : null),
+    _PresetAction(label, danger: true, onPressed: anyOnline ? sendStop : null),
   ];
 }
 

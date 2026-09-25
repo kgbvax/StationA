@@ -97,10 +97,27 @@ class _DxConfigDialogState extends State<_DxConfigDialog> {
                   const SizedBox(height: 12),
                   _schemeRow(),
                   const SizedBox(height: 16),
-                  Text('Locator enables the compass DX-spot projection.',
+                  Text('The locator places the station on the maps and is the rotators\' aiming origin.',
                       style: AppTheme.body(11, color: AppTheme.txtMute)),
                   const SizedBox(height: 16),
-                  _field('Station locator', _locator, hint: 'e.g. JN58sd'),
+                  _field('Station locator', _locator, hint: '6 characters, e.g. JO32WE'),
+                  // Bearings to nearby targets come from this position: a
+                  // 4-character square is 2°×1° — tens of km off.
+                  ValueListenableBuilder<TextEditingValue>(
+                    valueListenable: _locator,
+                    builder: (context, v, _) {
+                      final n = v.text.trim().length;
+                      if (n == 0 || n >= 6) return const SizedBox.shrink();
+                      return Padding(
+                        padding: const EdgeInsets.only(top: 4),
+                        child: Text(
+                          'Use 6 characters: with $n, map bearings to nearby targets are off by tens of km.',
+                          key: const ValueKey('locator-precision-warning'),
+                          style: AppTheme.body(11, color: AppTheme.amber),
+                        ),
+                      );
+                    },
+                  ),
                   const SizedBox(height: 12),
                   _field('Horstreporter URL', _url, hint: 'https://…'),
                   const SizedBox(height: 12),

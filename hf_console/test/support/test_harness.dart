@@ -4,6 +4,7 @@ import 'package:hf_console/mqtt/mqtt_service.dart';
 import 'package:hf_console/store/bus_store.dart';
 import 'package:hf_console/dxspot/dxspot_service.dart';
 import 'package:hf_console/ui/theme.dart';
+import 'package:hf_console/vhfcam/vhfcam_service.dart';
 import 'fake_mqtt_service.dart';
 
 /// Wraps a widget with the providers it needs for isolated widget tests.
@@ -16,6 +17,7 @@ class TestHarness extends StatelessWidget {
   final BusStore? store;
   final FakeMqttService? mqtt;
   final DxSpotService? dxSpot;
+  final VhfcamService? vhfcam;
 
   const TestHarness({
     super.key,
@@ -23,6 +25,7 @@ class TestHarness extends StatelessWidget {
     this.store,
     this.mqtt,
     this.dxSpot,
+    this.vhfcam,
   });
 
   @override
@@ -42,6 +45,8 @@ class TestHarness extends StatelessWidget {
       providers: [
         ChangeNotifierProvider<BusStore>.value(value: busStore),
         ChangeNotifierProvider<DxSpotService>.value(value: dx),
+        // Never polled under test (the poll loop only runs after start()).
+        ChangeNotifierProvider<VhfcamService>.value(value: vhfcam ?? VhfcamService()),
         Provider<MqttService>.value(value: fakeMqtt),
       ],
       child: MaterialApp(

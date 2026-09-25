@@ -47,6 +47,9 @@ class HorstKevin extends StatelessWidget {
   }
 }
 
+/// Opening zoom of the VHF map module (≈ 400 km across on a tablet).
+const double kVhfMapZoom = 7.0;
+
 class DxMapContainer extends StatefulWidget {
   /// Whether the map panels overlay the direction-preset rail on their right
   /// edge (tablet). Phones pass false and keep the horizontal presets bar in
@@ -65,20 +68,39 @@ class DxMapContainer extends StatefulWidget {
   /// Zoom the Mercator view opens with; `null` uses the panel default.
   final double? initialMercatorZoom;
 
+  /// Mercator only, no projection toggle (the VHF module).
+  final bool mercatorOnly;
+
+  /// Mercator draws [rotator]'s beam, aims it by tap and shows an E-STOP.
+  final bool rotatorOverlay;
+
   const DxMapContainer({
     super.key,
     this.showPresets = true,
     this.rotator = hfRotator,
     this.initialProjection = DxProjection.azimuth,
     this.initialMercatorZoom,
+    this.mercatorOnly = false,
+    this.rotatorOverlay = false,
   });
+
+  /// The VHF/UHF map module (CAM and UHF tabs): Mercator only, opening at
+  /// zoom 7 on the station, the UHF az rotator's beam, tap-to-aim and an
+  /// E-STOP for both sat axes. Zooms in to town level (up to 12) so a
+  /// target ~30 km away can be picked out.
+  const DxMapContainer.vhf({super.key, this.showPresets = true})
+      : rotator = vhfRotator,
+        initialProjection = DxProjection.mercator,
+        initialMercatorZoom = kVhfMapZoom,
+        mercatorOnly = true,
+        rotatorOverlay = true;
 
   @override
   State<DxMapContainer> createState() => _DxMapContainerState();
 }
 
 class _DxMapContainerState extends State<DxMapContainer> {
-  late DxProjection _projection = widget.initialProjection;
+  late DxProjection _projection = widget.mercatorOnly ? DxProjection.mercator : widget.initialProjection;
 
   // Aging tick for the dragon lift: the dragon must drop back to its corner
   // when the keyed selection expires (15 min), which on a quiet band happens
@@ -118,6 +140,7 @@ class _DxMapContainerState extends State<DxMapContainer> {
                 showPresets: widget.showPresets,
                 rotator: widget.rotator,
                 initialZoom: widget.initialMercatorZoom,
+                rotatorOverlay: widget.rotatorOverlay,
               ),
         // Top-left: the compass panel's own chrome (zoom badge, azimuth
         // chip) owns the top-right corner — overlaying the filter/projection
@@ -128,7 +151,7 @@ class _DxMapContainerState extends State<DxMapContainer> {
           child: _MapChrome(
             projection: _projection,
             filter: dx.filter,
-            onProjectionChanged: (p) => setState(() => _projection = p),
+            onProjectionChanged: widget.mercatorOnly ? null : (p) => setState(() => _projection = p),
           ),
         ),
         // Lower-left corner resident. Taps and drags must reach the map —
@@ -150,7 +173,8 @@ class _DxMapContainerState extends State<DxMapContainer> {
 class _MapChrome extends StatelessWidget {
   final DxProjection projection;
   final DxSpotFilter filter;
-  final ValueChanged<DxProjection> onProjectionChanged;
+  /// Null hides the projection toggle (Mercator-only map).
+  final ValueChanged<DxProjection>? onProjectionChanged;
 
   const _MapChrome({
     required this.projection,
@@ -180,11 +204,13 @@ class _MapChrome extends StatelessWidget {
             style: AppTheme.body(12, color: AppTheme.txt, weight: FontWeight.w500),
           ),
         ),
-        const SizedBox(width: 6),
-        _ProjectionToggle(
-          projection: projection,
-          onChanged: onProjectionChanged,
-        ),
+        if (onProjectionChanged case final onChanged?) ...[
+          const SizedBox(width: 6),
+          _ProjectionToggle(
+            projection: projection,
+            onChanged: onChanged,
+          ),
+        ],
       ],
     );
   }
