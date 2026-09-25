@@ -212,7 +212,7 @@ class _CamFeedPanelState extends State<CamFeedPanel> {
             children: [
               _ReadoutChip(label: 'AZ', value: az == null ? null : '${az.toStringAsFixed(1)}°'),
               _ReadoutChip(label: 'EL', value: el == null ? null : '${el.toStringAsFixed(1)}°'),
-              _ReadoutChip(label: 'FREQ', value: freqHz == null ? null : (freqHz / 1e6).toStringAsFixed(3)),
+              _ReadoutChip(label: 'FREQ', value: freqHz == null ? null : '${(freqHz / 1e6).toStringAsFixed(3)} MHz'),
             ],
           ),
         ],
@@ -231,7 +231,7 @@ class _StatusChip extends StatelessWidget {
     final (text, color) = switch (state) {
       _FeedState.live => ('LIVE', AppTheme.green),
       _FeedState.connecting => ('CONNECTING', AppTheme.amber),
-      _FeedState.sinkStopped => ('SINK OFF', AppTheme.amber),
+      _FeedState.sinkStopped => ('STREAM OFF', AppTheme.amber),
       _FeedState.serverOffline => ('CAM OFFLINE', AppTheme.red),
       _FeedState.web => ('WEB', AppTheme.txtMute),
     };
@@ -278,11 +278,11 @@ class _OfflineState extends StatelessWidget {
     final (title, sub) = switch (state) {
       _FeedState.serverOffline => (
           'CAM SERVER OFFLINE',
-          'no answer from $baseUrl — is vhfcam-restream running?',
+          'no answer from $baseUrl — start it on shari: sudo systemctl start vhfcam-restream',
         ),
       _FeedState.sinkStopped => (
-          'PREVIEW SINK STOPPED',
-          'start it ad hoc: sudo systemctl start vhfcam-restream (on shari)',
+          'CAMERA STREAM STOPPED',
+          'the cam server answers but sends no video — start it on shari: sudo systemctl start vhfcam-restream',
         ),
       _FeedState.web => (
           'VIDEO NEEDS THE APP',

@@ -40,7 +40,7 @@ class RotatorPresetsBar extends StatelessWidget {
         alignment: WrapAlignment.center,
         crossAxisAlignment: WrapCrossAlignment.center,
         children: [
-          for (final a in _presetActions(context, rotator, 'STOP'))
+          for (final a in _presetActions(context, rotator))
             _Preset(a.label, danger: a.danger, onPressed: a.onPressed),
         ],
       ),
@@ -57,14 +57,11 @@ class RotatorPresetsRail extends StatelessWidget {
   /// stops both sat axes.
   final RotatorSurface rotator;
 
-  /// Button label: "STOP" on the HF compass, "E-STOP" on the VHF map.
-  final String label;
-
-  const RotatorPresetsRail({super.key, this.rotator = hfRotator, this.label = 'STOP'});
+  const RotatorPresetsRail({super.key, this.rotator = hfRotator});
 
   @override
   Widget build(BuildContext context) {
-    final actions = _presetActions(context, rotator, label);
+    final actions = _presetActions(context, rotator);
     return Container(
       padding: const EdgeInsets.all(4),
       decoration: BoxDecoration(
@@ -101,8 +98,9 @@ class _PresetAction {
 /// The stop action, gated on rotator-bridge liveness — shared by the
 /// horizontal bar and the map-edge rail so the two stay in sync. Enabled
 /// while any of the surface's stop slots is online (the sat panel rule: an
-/// e-stop must outlive one dead axis); it stops every slot.
-List<_PresetAction> _presetActions(BuildContext context, RotatorSurface rotator, String label) {
+/// e-stop must outlive one dead axis); it stops every slot. Labelled STOP
+/// everywhere — the same action as the sat panel's STOP key, so one name.
+List<_PresetAction> _presetActions(BuildContext context, RotatorSurface rotator) {
   final store = context.watch<BusStore>();
   final mqtt = context.read<MqttService>();
   final anyOnline = store.linkUp &&
@@ -115,7 +113,7 @@ List<_PresetAction> _presetActions(BuildContext context, RotatorSurface rotator,
   }
 
   return [
-    _PresetAction(label, danger: true, onPressed: anyOnline ? sendStop : null),
+    _PresetAction('STOP', danger: true, onPressed: anyOnline ? sendStop : null),
   ];
 }
 

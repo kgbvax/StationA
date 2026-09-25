@@ -50,7 +50,7 @@ class MercatorMapPanel extends StatefulWidget {
   final double minZoom;
   final double maxZoom;
 
-  /// Draw [rotator]'s beam, aim it by tap and show an E-STOP (the VHF/UHF
+  /// Draw [rotator]'s beam, aim it by tap and show a STOP (the VHF/UHF
   /// module). Off for the HF Mercator view: the HF beam depends on the
   /// Ultrabeam direction mode, which only the compass models.
   final bool rotatorOverlay;
@@ -155,7 +155,7 @@ class _MercatorMapPanelState extends State<MercatorMapPanel> {
     final lat = _centerLat ?? qthLat ?? 0.0;
     final lng = _centerLng ?? qthLng ?? 0.0;
 
-    // Rotator overlay (VHF module): beam, target line, tap-to-aim, E-STOP.
+    // Rotator overlay (VHF module): beam, target line, tap-to-aim, STOP.
     // Gated exactly like the compass: the bridge's /status and our link.
     final surface = widget.rotatorOverlay ? widget.rotator : null;
     final rotatorOnline = surface != null && (store.slots[surface.stateSlot]?.isOnline ?? false) && store.linkUp;
@@ -250,13 +250,13 @@ class _MercatorMapPanelState extends State<MercatorMapPanel> {
                       bottom: 48,
                       child: const RotatorPresetsRail(),
                     ),
-                  // VHF module: E-STOP halts every axis of the surface (az + el),
+                  // VHF module: STOP halts every axis of the surface (az + el),
                   // same place as the HF STOP.
                   if (surface != null)
                     Positioned(
                       right: 12,
                       bottom: 48,
-                      child: RotatorPresetsRail(rotator: surface, label: 'E-STOP'),
+                      child: RotatorPresetsRail(rotator: surface),
                     ),
                   if (surface != null)
                     Positioned(

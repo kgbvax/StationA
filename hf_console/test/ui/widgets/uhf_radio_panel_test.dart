@@ -50,7 +50,7 @@ void main() {
       expect(find.text('145.800 MHz'), findsOneWidget);
       expect(find.textContaining('2M'), findsOneWidget);
       expect(find.textContaining('FM'), findsOneWidget);
-      expect(find.textContaining('S 120'), findsOneWidget);
+      expect(find.textContaining('S9'), findsOneWidget);
       expect(find.textContaining('SWR 12'), findsOneWidget);
     });
 
@@ -155,7 +155,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('ERR'), findsOneWidget);
-      expect(find.text('no bus confirmation (capture)'), findsOneWidget);
+      expect(find.text('no bus confirmation (radio audio)'), findsOneWidget);
     });
   });
 
@@ -177,7 +177,7 @@ void main() {
       expect(btn(tester, 'uhf-monitor-btn').onPressed, isNotNull);
     });
 
-    testWidgets('SAT tag renders from the read-only satellite field',
+    testWidgets('SAT renders on the band line from the read-only satellite field',
         (tester) async {
       final store = BusStore();
       final mqtt = FakeMqttService(store);
@@ -191,7 +191,7 @@ void main() {
       await pumpPanel(tester, store: store, mqtt: mqtt);
       await tester.pumpAndSettle();
 
-      expect(find.text('SAT'), findsOneWidget);
+      expect(find.textContaining('SAT'), findsOneWidget);
     });
 
     testWidgets('dead bridge: OFFLINE tag, both toggles disabled',
@@ -259,5 +259,14 @@ void main() {
       // And nothing in the app can produce a control payload anymore —
       // that is pinned by the wiring tests (builders deleted).
     });
+  });
+
+  test('S-meter raw 0-255 reads as S-units (Icom: S9 = 120, S9+60 = 241)', () {
+    expect(sUnits(0), 'S0');
+    expect(sUnits(42), 'S3');
+    expect(sUnits(120), 'S9');
+    expect(sUnits(160), 'S9+20');
+    expect(sUnits(241), 'S9+60');
+    expect(sUnits(255), 'S9+70');
   });
 }

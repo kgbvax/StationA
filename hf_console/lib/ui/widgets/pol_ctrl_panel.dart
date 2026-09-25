@@ -116,7 +116,9 @@ class PolCtrlPanel extends StatelessWidget {
             title: 'X-QUAD POLARIZATION',
             trailing: StatusPill(
               slots: const ['muehle/uhf/pol-ctrl'],
-              label: 'X-Quad',
+              // Fallback when /meta has no expose name: the controller, not
+              // the card title again.
+              label: 'StamPLC #2',
               suffix: errorText != null ? 'ERR' : null,
               suffixColor: AppTheme.red,
               stickySuffix: true, // ERR survives a dead link
@@ -134,10 +136,15 @@ class PolCtrlPanel extends StatelessWidget {
                 style: AppTheme.mono(20, weight: FontWeight.w700),
               ),
               const Spacer(),
-              Text(
-                'SHARED · BOTH X-QUADS',
-                style: AppTheme.mono(10,
-                    color: AppTheme.txtFaint, weight: FontWeight.w600),
+              // Flexible: on a narrow card the note ellipsizes instead of
+              // running past the card edge.
+              Flexible(
+                child: Text(
+                  'both X-Quads',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppTheme.mono(10, color: AppTheme.txtFaint, weight: FontWeight.w600),
+                ),
               ),
             ],
           ),

@@ -62,7 +62,7 @@ class _CamRadioControlsState extends State<CamRadioControls> {
         mainAxisSize: MainAxisSize.min,
         children: [
           CardHeader(
-            title: 'IC-9700 RADIO AUDIO',
+            title: 'RADIO AUDIO',
             trailing: _ServerTag(online: svc.serverOnline),
           ),
           const SizedBox(height: 10),
@@ -79,27 +79,41 @@ class _CamRadioControlsState extends State<CamRadioControls> {
             Text(status.hint, style: AppTheme.mono(10, color: AppTheme.txtFaint), maxLines: 2, overflow: TextOverflow.ellipsis),
           ],
           const SizedBox(height: 12),
-          _ControlButton(
-            label: 'RADIO AUDIO ON',
-            active: status?.audioStream ?? false,
-            onPressed: enabled ? () => _send('audio_on') : null,
+          // ON/OFF share a row: they are one switch the server exposes as two
+          // commands (other holders — a recording — can keep audio on after
+          // OFF, so this is not drawn as a single toggle). POWER ON is the
+          // occasional cold-start action and sits apart below.
+          Row(
+            children: [
+              Expanded(
+                child: _ControlButton(
+                  label: 'RADIO AUDIO ON',
+                  active: status?.audioStream ?? false,
+                  onPressed: enabled ? () => _send('audio_on') : null,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: _ControlButton(
+                  label: 'RADIO AUDIO OFF',
+                  active: false,
+                  onPressed: enabled ? () => _send('audio_off') : null,
+                ),
+              ),
+            ],
           ),
-          const SizedBox(height: 8),
-          _ControlButton(
-            label: 'RADIO AUDIO OFF',
-            active: false,
-            onPressed: enabled ? () => _send('audio_off') : null,
+          const SizedBox(height: 6),
+          Text(
+            'While radio audio is on, the console holds the IC-9700 CI-V session: '
+            'wfview at the desk cannot control the radio until audio is off '
+            '(or 60 s after the last keep-alive).',
+            style: AppTheme.mono(10, color: AppTheme.txtFaint),
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 12),
           _ControlButton(
             label: 'RADIO POWER ON',
             active: false,
             onPressed: enabled ? () => _send('power_on') : null,
-          ),
-          const SizedBox(height: 10),
-          Text(
-            'audio_on holds the IC-9700 CI-V session (60 s TTL) — wfview at the desk yields while held.',
-            style: AppTheme.mono(10, color: AppTheme.txtFaint),
           ),
         ],
       ),
@@ -178,7 +192,7 @@ class _ControlButton extends StatelessWidget {
       style: AppTheme.actionButton(active: active).copyWith(
         minimumSize: const WidgetStatePropertyAll(Size(64, 48)),
       ),
-      child: Align(alignment: Alignment.centerLeft, child: Text(label)),
+      child: FittedBox(fit: BoxFit.scaleDown, child: Text(label, maxLines: 1)),
     );
   }
 }

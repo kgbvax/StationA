@@ -57,8 +57,8 @@ void main() {
 
     await tester.pumpWidget(_wrap(const CamFeedPanel(), vhfcam: svc));
 
-    expect(find.text('PREVIEW SINK STOPPED'), findsOneWidget);
-    expect(find.text('● SINK OFF'), findsOneWidget);
+    expect(find.text('CAMERA STREAM STOPPED'), findsOneWidget);
+    expect(find.text('● STREAM OFF'), findsOneWidget);
     expect(find.text('RETRY'), findsOneWidget);
   });
 
@@ -127,7 +127,7 @@ void main() {
     expect(find.text('This cam server cannot record (older version).'), findsOneWidget);
   });
 
-  testWidgets('record card: recording → STOP, REC badge with elapsed time, progress line', (tester) async {
+  testWidgets('record card: recording → STOP and progress line (the REC badge lives on the feed)', (tester) async {
     final svc = VhfcamService()
       ..seedStatus(
           online: true,
@@ -136,15 +136,14 @@ void main() {
     await tester.pumpWidget(_wrap(const CamRecordControls(), vhfcam: svc));
     expect(find.text('STOP RECORDING'), findsOneWidget);
     expect(recButton(tester).onPressed, isNotNull);
-    expect(find.text('● REC 04:12'), findsOneWidget);
+    expect(find.byKey(const ValueKey('rec-badge')), findsNothing);
     expect(find.text('04:12 recorded · 25:48 left · free 41.2 GB'), findsOneWidget);
   });
 
-  testWidgets('record card: finalizing → SAVING badge, button disabled', (tester) async {
+  testWidgets('record card: finalizing → button disabled, saving line', (tester) async {
     final svc = VhfcamService()
       ..seedStatus(online: true, stream: true, status: withRec(const RecStatus(enabled: true, state: 'finalizing', name: 'x.mp4')));
     await tester.pumpWidget(_wrap(const CamRecordControls(), vhfcam: svc));
-    expect(find.text('SAVING'), findsOneWidget);
     expect(recButton(tester).onPressed, isNull);
     expect(find.text('Saving x.mp4…'), findsOneWidget);
   });

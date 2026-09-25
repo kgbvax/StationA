@@ -48,7 +48,7 @@ Two map modules share `DxMapContainer`:
 - **VHF/UHF** (`DxMapContainer.vhf()`, UHF + CAM tabs): Mercator only, opens at
   zoom 7 on the station (up to 12), draws the UHF az rotator's great-circle
   beam (±20°) and target line, aims by tap (great-circle bearing from the
-  station, `goto` to `uhf/az-rotator`), and carries an E-STOP that stops both
+  station, `goto` to `uhf/az-rotator`), and carries a STOP that stops both
   sat axes. Bearings are only as good as the station locator — use 6
   characters (the settings dialog warns on 4).
 

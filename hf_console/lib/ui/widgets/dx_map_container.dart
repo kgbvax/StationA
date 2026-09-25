@@ -71,7 +71,7 @@ class DxMapContainer extends StatefulWidget {
   /// Mercator only, no projection toggle (the VHF module).
   final bool mercatorOnly;
 
-  /// Mercator draws [rotator]'s beam, aims it by tap and shows an E-STOP.
+  /// Mercator draws [rotator]'s beam, aims it by tap and shows a STOP.
   final bool rotatorOverlay;
 
   const DxMapContainer({
@@ -86,7 +86,7 @@ class DxMapContainer extends StatefulWidget {
 
   /// The VHF/UHF map module (CAM and UHF tabs): Mercator only, opening at
   /// zoom 7 on the station, the UHF az rotator's beam, tap-to-aim and an
-  /// E-STOP for both sat axes. Zooms in to town level (up to 12) so a
+  /// STOP for both sat axes. Zooms in to town level (up to 12) so a
   /// target ~30 km away can be picked out.
   const DxMapContainer.vhf({super.key, this.showPresets = true})
       : rotator = vhfRotator,

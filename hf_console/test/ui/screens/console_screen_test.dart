@@ -68,7 +68,7 @@ void main() {
 
   group('VHF map module', () {
     for (final page in ['UHF', 'CAM']) {
-      testWidgets('$page tab (tablet) shows the Mercator-only VHF map with E-STOP', (tester) async {
+      testWidgets('$page tab (tablet) shows the Mercator-only VHF map with its STOP', (tester) async {
         final store = BusStore()..setSatRotator('muehle/uhf/az-rotator', axis: 'az', pos: 45);
         await tester.binding.setSurfaceSize(const Size(3600, 2400));
         await tester.pumpWidget(TestHarness(store: store, mqtt: FakeMqttService(store), child: const ConsoleScreen()));
@@ -79,7 +79,7 @@ void main() {
         final map = tester.widget<DxMapContainer>(find.byType(DxMapContainer));
         expect(map.mercatorOnly, isTrue);
         expect(map.rotatorOverlay, isTrue);
-        expect(find.text('E-STOP'), findsOneWidget);
+        expect(find.descendant(of: find.byType(DxMapContainer), matching: find.text('STOP')), findsOneWidget);
       });
     }
 
@@ -97,7 +97,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
       final map = tester.widget<DxMapContainer>(find.byType(DxMapContainer));
       expect(map.mercatorOnly, isFalse);
-      expect(find.text('E-STOP'), findsNothing);
+      expect(map.rotatorOverlay, isFalse);
     });
 
     testWidgets('phone CAM tab has exactly one recording card', (tester) async {

@@ -1,5 +1,5 @@
 // vhf_map_test.dart — the VHF/UHF map module (DxMapContainer.vhf): Mercator
-// only, UHF az beam, tap-to-aim on the great-circle bearing, E-STOP for both
+// only, UHF az beam, tap-to-aim on the great-circle bearing, STOP for both
 // sat axes, town-level zoom.
 
 import 'dart:convert';
@@ -58,7 +58,7 @@ void main() {
     expect(find.byIcon(Icons.explore), findsNothing);
     expect(find.byIcon(Icons.map), findsNothing);
     expect(find.text('AZ 90° · TAP TO AIM'), findsOneWidget);
-    expect(find.text('E-STOP'), findsOneWidget);
+    expect(find.text('STOP'), findsOneWidget);
   });
 
   testWidgets('tapping Münster aims the UHF az rotator at the great-circle bearing', (tester) async {
@@ -83,9 +83,9 @@ void main() {
     expect(find.text('AZ ROTATOR OFFLINE'), findsOneWidget);
   });
 
-  testWidgets('E-STOP stops both sat axes, unretained', (tester) async {
+  testWidgets('STOP stops both sat axes, unretained', (tester) async {
     final (_, mqtt) = await _pump(tester);
-    await tester.tap(find.text('E-STOP'));
+    await tester.tap(find.text('STOP'));
     await tester.pump();
     final topics = mqtt.publishes.map((p) => p.topic).toSet();
     expect(topics, {'muehle/uhf/az-rotator/cmd', 'muehle/uhf/el-rotator/cmd'});

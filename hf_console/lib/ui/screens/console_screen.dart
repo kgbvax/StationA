@@ -218,7 +218,7 @@ class _TabletShell extends StatelessWidget {
   final RotatorSurface? rotator;
 
   /// The left pane shows the VHF/UHF map module ([DxMapContainer.vhf]:
-  /// Mercator only, UHF beam, tap-to-aim, E-STOP) instead of the HF map.
+  /// Mercator only, UHF beam, tap-to-aim, STOP) instead of the HF map.
   final bool vhfMap;
 
   /// Panels pinned under the map in the left pane (HF: ultrabeam + antenna).

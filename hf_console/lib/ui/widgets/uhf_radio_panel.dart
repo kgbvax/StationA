@@ -44,7 +44,7 @@ class _Pending {
 
 class _UhfRadioPanelState extends State<UhfRadioPanel> {
   static const _confirmWindow = Duration(seconds: 5);
-  static const _noConfirmCapture = 'no bus confirmation (capture)';
+  static const _noConfirmCapture = 'no bus confirmation (radio audio)';
   static const _noConfirmMonitor = 'no bus confirmation (monitor)';
 
   BusStore? _store;
@@ -185,26 +185,14 @@ class _UhfRadioPanelState extends State<UhfRadioPanel> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           CardHeader(
-            title: 'UHF RADIO · IC-9700',
-            trailing: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (errText != null) ...[
-                  StatusTag(label: 'ERR', color: AppTheme.red),
-                  const SizedBox(width: 4),
-                ],
-                if (!bridgeUp) StatusTag(label: 'OFFLINE', color: AppTheme.txtMute),
-              ],
+            title: 'UHF RADIO',
+            trailing: _headerTags(
+              bridgeUp: bridgeUp,
+              sessionState: sessionState,
+              monitor: monitor,
+              responding: responding,
+              hasErr: errText != null,
             ),
-          ),
-          const SizedBox(height: 10),
-          _sessionRow(
-            bridgeUp: bridgeUp,
-            sessionState: sessionState,
-            audioDemand: audioDemand,
-            monitor: monitor,
-            satellite: satellite,
-            responding: responding,
           ),
           if (errText != null) ...[
             const SizedBox(height: 4),
@@ -232,7 +220,7 @@ class _UhfRadioPanelState extends State<UhfRadioPanel> {
                       : null,
                   style: AppTheme.actionButton(active: audioDemand),
                   child: Text(
-                    audioDemand ? 'CAPTURE: ON' : 'CAPTURE: OFF',
+                    audioDemand ? 'RADIO AUDIO: ON' : 'RADIO AUDIO: OFF',
                     style: AppTheme.mono(13, weight: FontWeight.w800),
                   ),
                 ),
@@ -250,7 +238,7 @@ class _UhfRadioPanelState extends State<UhfRadioPanel> {
                               ? uhfRadioMonitorOffPayload()
                               : uhfRadioMonitorOnPayload())
                       : null,
-                  style: AppTheme.actionButton(amberActive: monitor),
+                  style: AppTheme.actionButton(active: monitor),
                   child: Text(
                     monitor ? 'MONITOR: ON' : 'MONITOR: OFF',
                     style: AppTheme.mono(13, weight: FontWeight.w800),
@@ -277,17 +265,18 @@ class _UhfRadioPanelState extends State<UhfRadioPanel> {
     );
   }
 
-  /// Session liveness row: the capture-state tag ONLY while the slot is
+  /// Header tags: the capture-session state ONLY while the slot is
   /// reachable over /status (a dead bridge leaves a retained snapshot whose
-  /// IDLE/LIVE must not read as current — OFFLINE wins), plus the demand
-  /// chips and the read-only SAT tag (same liveness gate).
-  Widget _sessionRow({
+  /// IDLE/LIVE must not read as current — OFFLINE wins), STANDBY while the
+  /// monitor is on but the radio is deaf, ERR, OFFLINE. The audio/monitor
+  /// demands are NOT repeated here — the toggle fills carry them — and SAT
+  /// rides the readout's band line.
+  Widget _headerTags({
     required bool bridgeUp,
     required String sessionState,
-    required bool audioDemand,
     required bool monitor,
-    required bool satellite,
     required bool responding,
+    required bool hasErr,
   }) {
     final (tag, color) = switch (sessionState) {
       'live' => ('LIVE', AppTheme.green),
@@ -297,16 +286,15 @@ class _UhfRadioPanelState extends State<UhfRadioPanel> {
       _ => ('—', AppTheme.txtMute),
     };
     return Wrap(
-      spacing: 6,
+      spacing: 4,
       runSpacing: 4,
       crossAxisAlignment: WrapCrossAlignment.center,
       children: [
         if (bridgeUp) StatusTag(label: tag, color: color),
-        if (bridgeUp && audioDemand) StatusTag(label: 'CAPTURE', color: AppTheme.accent),
-        if (bridgeUp && monitor) StatusTag(label: 'MONITOR', color: AppTheme.amber),
         if (bridgeUp && monitor && !responding)
           StatusTag(label: 'STANDBY', color: AppTheme.amber),
-        if (bridgeUp && satellite) StatusTag(label: 'SAT', color: AppTheme.accent),
+        if (hasErr) StatusTag(label: 'ERR', color: AppTheme.red),
+        if (!bridgeUp) StatusTag(label: 'OFFLINE', color: AppTheme.txtMute),
       ],
     );
   }
@@ -335,7 +323,7 @@ class _UhfRadioPanelState extends State<UhfRadioPanel> {
           style: AppTheme.mono(12, color: AppTheme.txtMute));
     }
     final meters = <String>[
-      if (sMeter != null) 'S $sMeter',
+      if (sMeter != null) sUnits(sMeter),
       if (txPower != null) 'PWR $txPower',
       if (swr != null) 'SWR $swr',
       if (alc != null) 'ALC $alc',
@@ -366,4 +354,17 @@ class _UhfRadioPanelState extends State<UhfRadioPanel> {
   String _fmtMhz(int hz) {
     return '${(hz / 1000000.0).toStringAsFixed(3)} MHz';
   }
+}
+
+/// Icom CI-V S-meter reading (`15 02`, 0-255) as S-units: 0 = S0, 120 = S9
+/// (linear, ~13.3 per S-unit), 241 = S9+60 dB (linear above S9). The raw
+/// number on the bus is never shown — "S 42" read as a bogus S-unit.
+@visibleForTesting
+String sUnits(int raw) {
+  final r = raw.clamp(0, 255);
+  if (r <= 120) return 'S${(r * 9 / 120).round()}';
+  final db = ((r - 120) * 60 / 121).round();
+  // Icom meters step in 10 dB above S9; round to the nearest 10.
+  final db10 = (db / 10).round() * 10;
+  return db10 == 0 ? 'S9' : 'S9+$db10';
 }

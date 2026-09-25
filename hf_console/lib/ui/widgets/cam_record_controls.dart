@@ -80,10 +80,10 @@ class _CamRecordControlsState extends State<CamRecordControls> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         mainAxisSize: MainAxisSize.min,
         children: [
-          CardHeader(
-            title: 'RECORDING',
-            trailing: rec == null ? null : RecBadge(rec: rec),
-          ),
+          // No REC badge here: the feed header carries it (camcorder
+          // convention, visible beside or above this card on every layout),
+          // and the button + progress line below already say "recording".
+          const CardHeader(title: 'RECORDING'),
           const SizedBox(height: 10),
           SizedBox(
             height: 48,
@@ -125,7 +125,7 @@ class _CamRecordControlsState extends State<CamRecordControls> {
 }
 
 /// REC state badge: red `● REC mm:ss` while recording, amber while saving.
-/// Also shown over the cam feed header.
+/// Shown on the cam feed header.
 class RecBadge extends StatelessWidget {
   final RecStatus rec;
 

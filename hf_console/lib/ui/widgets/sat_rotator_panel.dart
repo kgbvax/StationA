@@ -102,7 +102,9 @@ class SatRotatorPanel extends StatelessWidget {
             title: 'SAT ROTATORS',
             trailing: StatusPill(
               slots: const [_azAddress, _elAddress],
-              label: 'Rotators',
+              // The two controllers, like the HF cards' device names — the
+              // card title already says "rotators".
+              label: 'SPID + ERC-M',
               useMetaName: false,
               suffix: pillSuffix.isEmpty ? null : pillSuffix,
               suffixColor: pillColor,
@@ -317,7 +319,9 @@ class _AxisControlState extends State<_AxisControl> {
                   color: AppTheme.txtMute),
             ),
             const SizedBox(width: 10),
-            if (moving) StatusTag(label: 'MOVING', color: AppTheme.amber),
+            // Red like the card pill (station convention: a moving antenna
+            // is the shouting state) — this one says WHICH axis.
+            if (moving) StatusTag(label: 'MOVING', color: AppTheme.red),
             if (errorText != null) ...[
               StatusTag(label: 'ERR', color: AppTheme.red),
               const SizedBox(width: 4),
