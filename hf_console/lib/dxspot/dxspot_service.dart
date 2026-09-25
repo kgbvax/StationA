@@ -223,8 +223,8 @@ class DxSpotService extends ChangeNotifier {
     }
   }
 
-  /// Restrict the subscription to these canonical bands (the UHF page asks
-  /// for {'2m','70cm'}); null/empty = every band the feed carries. The
+  /// Restrict the subscription to these canonical bands (the UHF and CAM
+  /// pages ask for {'6m','2m','70cm'}); null/empty = every band the feed carries. The
   /// narrowing happens SERVER-side: horstreporter's `enabled_bands` stream
   /// parameter drops non-matching spots before serialization, so the device
   /// never downloads or parses them. A change re-dials immediately — the SSE

@@ -22,6 +22,16 @@ import '../widgets/cam_record_controls.dart';
 import '../widgets/faults_bar.dart';
 import '../widgets/dx_config_sheet.dart';
 
+// The DX-spot subscription follows the active page: the UHF and CAM maps
+// (both read the VHF array) show 6m/2m/70cm only, and horstreporter drops
+// every other band server-side (`enabled_bands` stream parameter) — the
+// device never downloads them. null = every band (HF, Station).
+const Set<String> _vhfBands = {'6m', '2m', '70cm'};
+
+@visibleForTesting
+Set<String>? dxBandsForPage(String page) =>
+    (page == 'uhf' || page == 'cam') ? _vhfBands : null;
+
 class ConsoleScreen extends StatefulWidget {
   const ConsoleScreen({super.key});
 
@@ -32,14 +42,9 @@ class ConsoleScreen extends StatefulWidget {
 class _ConsoleScreenState extends State<ConsoleScreen> {
   String _page = 'hf';
 
-  // The DX-spot subscription follows the active page: the UHF dial reads
-  // 2m/70cm only, and horstreporter drops every other band server-side
-  // (`enabled_bands` stream parameter) — the device never downloads them.
-  static const Set<String> _uhfBands = {'2m', '70cm'};
-
   void _setPage(String page) {
     setState(() => _page = page);
-    context.read<DxSpotService>().setBands(page == 'uhf' ? _uhfBands : null);
+    context.read<DxSpotService>().setBands(dxBandsForPage(page));
   }
 
   @override

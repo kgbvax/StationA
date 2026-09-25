@@ -83,6 +83,13 @@ void main() {
       });
     }
 
+    test('UHF and CAM maps subscribe to 6m/2m/70cm only; HF and Station to every band', () {
+      expect(dxBandsForPage('uhf'), {'6m', '2m', '70cm'});
+      expect(dxBandsForPage('cam'), {'6m', '2m', '70cm'});
+      expect(dxBandsForPage('hf'), isNull);
+      expect(dxBandsForPage('station'), isNull);
+    });
+
     testWidgets('HF tab keeps the switchable HF map', (tester) async {
       final store = BusStore()..setRotator(az: 120);
       await tester.binding.setSurfaceSize(const Size(3600, 2400));
