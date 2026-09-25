@@ -58,6 +58,10 @@ func BuildPreviewArgs(cfg *config.Config, sourceURL string) []string {
 // stereo); ffmpeg's default selection would pick the 2-channel Opus track,
 // which RTMP/FLV cannot carry — audio is always mapped explicitly per sink.
 func buildInputsAndOverlay(cfg *config.Config, sourceURL string) (args []string, vmap, fc, audioMap string) {
+	// Defaults first: the radio branch below overrides audioMap, and nothing
+	// after it may reset it (it once did — every sink carried camera audio).
+	vmap = "0:v"
+	audioMap = "0:a:0"
 	args = []string{
 		"-hide_banner",
 		"-loglevel", "warning",
@@ -77,8 +81,6 @@ func buildInputsAndOverlay(cfg *config.Config, sourceURL string) (args []string,
 
 	// The logo rides the overlay toggle: enabled + configured opens the
 	// filtergraph path (which forces the transcode), otherwise plain maps.
-	vmap = "0:v"
-	audioMap = "0:a:0"
 	if !cfg.Overlay.Enabled || cfg.Overlay.Logo == "" {
 		return args, vmap, fc, audioMap
 	}

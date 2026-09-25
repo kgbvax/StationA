@@ -149,3 +149,37 @@ func TestRedactURL(t *testing.T) {
 		t.Errorf("RedactURL garbage = %q", got)
 	}
 }
+
+// With radio_audio set, every sink must map the radio PCM input (index 1),
+// with or without the overlay/logo filtergraph — never the camera audio.
+func TestRadioAudioIsMapped(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		overlay bool
+		logo    string
+	}{
+		{"plain", false, ""},
+		{"overlay bar only", true, ""},
+		{"overlay with logo", true, "/run/vhfcam-restream/dragon.png"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := testCfg()
+			cfg.Preview.RadioAudio = ":45031"
+			cfg.Overlay.Enabled = tc.overlay
+			cfg.Overlay.Logo = tc.logo
+			src, _ := cfg.EffectiveSource()
+			for sink, args := range map[string][]string{
+				"youtube": BuildArgs(cfg, src),
+				"preview": BuildPreviewArgs(cfg, src),
+			} {
+				joined := strings.Join(args, " ")
+				if !strings.Contains(joined, "-map 1:a:0") {
+					t.Errorf("%s: radio audio not mapped:\n%s", sink, joined)
+				}
+				if strings.Contains(joined, "-map 0:a:0") {
+					t.Errorf("%s: camera audio mapped despite radio_audio:\n%s", sink, joined)
+				}
+			}
+		})
+	}
+}
