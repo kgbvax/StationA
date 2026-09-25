@@ -3,9 +3,11 @@
 # Deploy vhfcam-restream to the Raspberry Pi (shari) and install it as a
 # systemd service.
 #
-# vhfcam-restream is a network-only ffmpeg supervisor: it pulls the camera's
-# RTSPS stream and pushes it to YouTube Live over RTMP. No serial device, no
-# HTTP server, no local disk writes — the unit can run under a strict sandbox.
+# vhfcam-restream is an ffmpeg supervisor: it pulls the camera's RTSPS stream
+# and pushes it to YouTube Live over RTMP, plus a LAN HLS preview (:8083).
+# No serial device. Its only persistent disk writes are recordings of the
+# preview, under the StateDirectory (/var/lib/vhfcam-restream/recordings) —
+# the unit can run under a strict sandbox.
 #
 # Usage:
 #   SOURCE_URL=... YT_STREAM_KEY=... ./deploy.sh
@@ -192,7 +194,7 @@ User=${SERVICE_USER}
 Group=${SERVICE_USER}
 # systemd owns /etc/vhfcam-restream (created 0755, owned by the service user).
 ConfigurationDirectory=${SERVICE_NAME}
-# A writable state dir (unused today, reserved for future on-disk state).
+# Writable state dir: preview recordings live in <state>/recordings.
 StateDirectory=${SERVICE_NAME}
 # Overlay textfiles live on tmpfs under /run (drawtext reads them each frame);
 # RuntimeDirectory creates it owned by the service user, ReadWritePaths opens
@@ -201,8 +203,8 @@ RuntimeDirectory=${SERVICE_NAME}
 ReadWritePaths=/var/lib/${SERVICE_NAME} /run/${SERVICE_NAME}
 
 # Hardening. vhfcam-restream needs only outbound TCP (camera 7441 TLS/SRTP,
-# YouTube 1935 RTMP) and /usr/bin/ffmpeg — no serial, no disk, no elevated
-# capabilities — so the sandbox can be strict.
+# YouTube 1935 RTMP), /usr/bin/ffmpeg and its state dir for recordings — no
+# serial, no elevated capabilities — so the sandbox can be strict.
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true

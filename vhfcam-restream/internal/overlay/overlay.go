@@ -275,8 +275,8 @@ func (o *Overlay) render(now time.Time) map[string]string {
 	// e.g. radio in standby); a carried-over or zero value must never render
 	// as a real frequency.
 	radioOK := up && radUp && radio.online && now.Sub(radio.at) <= staleAfter
-	if radioOK && radio.freqPresent && radio.freqHz > 0 {
-		texts["freq"] = fmt.Sprintf("%.3f MHz", float64(radio.freqHz)/1e6)
+	if hz, ok := freshFreq(radioOK, radio); ok {
+		texts["freq"] = fmt.Sprintf("%.3f MHz", float64(hz)/1e6)
 	} else {
 		texts["freq"] = "FREQ ---"
 	}
@@ -284,6 +284,27 @@ func (o *Overlay) render(now time.Time) map[string]string {
 		texts["tx"] = "TX"
 	}
 	return texts
+}
+
+// freshFreq is the one rule for "the frequency is known": the radio slot is
+// fresh and its snapshot carried a real freq_hz. Shared by the overlay text
+// and FreqHz so the burned-in value and a recording's file name agree.
+func freshFreq(radioOK bool, r radioReading) (int64, bool) {
+	if radioOK && r.freqPresent && r.freqHz > 0 {
+		return r.freqHz, true
+	}
+	return 0, false
+}
+
+// FreqHz is the radio frequency as the overlay would show it now; ok=false
+// when the overlay would show "FREQ ---".
+func (o *Overlay) FreqHz() (int64, bool) {
+	staleAfter := time.Duration(o.cfgFn().StaleAfterS * float64(time.Second))
+	o.mu.Lock()
+	radio, radUp, up := o.radio, o.radUp, o.up
+	o.mu.Unlock()
+	radioOK := up && radUp && radio.online && time.Since(radio.at) <= staleAfter
+	return freshFreq(radioOK, radio)
 }
 
 func (o *Overlay) writeTexts(texts map[string]string) error {

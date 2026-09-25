@@ -92,7 +92,8 @@ load ~+0.8; keep the HD profile clean — 1080p software x264 is not budgeted).
 ## Sinks
 
 The app runs **two independent sinks** (separate ffmpeg processes, each with
-its own supervisor, restart backoff and stall watchdog):
+its own supervisor, restart backoff and stall watchdog), plus the recorder,
+which copies the preview's segments (see Recording):
 
 1. **YouTube RTMP push** (`youtube_enabled`, default true) — the original sink.
 2. **Local HLS preview** (`[preview] enabled`, default true) — a second ffmpeg
@@ -110,12 +111,52 @@ its own supervisor, restart backoff and stall watchdog):
    S16LE/48 kHz/mono UDP datagrams; `internal/preview.StartAudioSource` binds
    the UDP address, silence-fills at 10 ms cadence and feeds the preview
    ffmpeg over loopback TCP (`-f s16le -i tcp://127.0.0.1:<port>`, mapped
-   `1:a:0`) — radio off = silence, never a stalled preview. The bridge only
+   `1:a:0` in both sinks — until 2026-09-25 a reset in
+   `buildInputsAndOverlay` silently mapped the camera audio instead;
+   `TestRadioAudioIsMapped` guards it) — radio off = silence, never a
+   stalled preview. The bridge only
    streams on demand: this app heartbeats `audio_on` (20 s cadence) to
    `radio_audio_cmd_topic` — **opt-in, default OFF** (2026-09: capture starts
    only when the page's connect button is clicked; a restart clears the
    demand); the bridge-side demand is TTL-bounded (60 s) so a dead preview
    releases the radio's session to manual wfview (KTD-2).
+
+## Recording
+
+The preview page (and the hf_console CAM tab) can record what the preview
+shows — overlay + radio audio — as MP4 (`internal/recorder`, `[record]`).
+
+- **No extra encode, no ffmpeg while recording.** The recorder follows the
+  preview's `live.m3u8` every second and appends each finished MPEG-TS
+  segment byte-for-byte to `<record.dir>/.inprogress/<name>/partNNN.ts`
+  (pre-roll: the last 3 segments ≈ what the page shows). On stop, one
+  `ffmpeg -f concat … -c copy` remuxes the parts into `<name>.mp4`; if that
+  fails the parts are kept as `.ts`. A preview ffmpeg restart (sequence runs
+  backwards, or a copied segment name reappears with a new mtime) starts a
+  new part; concat shifts the timestamps.
+- **Crash-safe.** Parts are append-only TS; leftovers in `.inprogress` are
+  finalized at the next startup (`stop_reason = recovered`). SIGTERM
+  finalizes an active recording (20 s bound) before the process exits.
+- **Limits.** Auto-stop after `max_minutes` (30) and when free space on the
+  recordings filesystem drops below `min_free_gb` (8, checked every 5 s).
+  A start needs `min_free_gb` plus room for a full-length recording twice
+  (TS parts + MP4 during the remux, ≈1.2 GB at 30 min). The oldest finished
+  recordings are deleted to stay under `max_total_gb` (5 ≈ eight 30-min
+  recordings) — never to make free space. The cap must stay below what the
+  floor leaves usable, or rotation never runs and starts get refused
+  instead: shari's 29 GB SD card had 15 GB free (2026-09-25).
+- **Radio audio.** A recording holds the radio-audio demand (holder
+  `recording`, `internal/preview/demand.go`); the page's disconnect only
+  releases the page's hold, so it cannot cut audio out of a recording.
+- **Names.** `vhfcam_<UTC start>[_<freq>MHz][_n].mp4`, e.g.
+  `vhfcam_2026-09-25T1812Z_435.000MHz.mp4`; the frequency is the overlay's
+  (`Overlay.FreqHz`, same freshness rule as the burned-in text).
+- **API.** `POST /api/rec/start|stop` (409 busy / not recording, 507 low
+  disk, 503 no preview or disabled), `GET /api/rec` (status + files),
+  `GET|DELETE /api/rec/files/{name}` (strict name regex, regular files only,
+  Range downloads). The `rec` block also rides `GET /api/radio-status`.
+- Defaults come from `config.Default()`, so the seeded device config needs no
+  edit; the unit's StateDirectory already allows the path.
 
 ## Ops
 

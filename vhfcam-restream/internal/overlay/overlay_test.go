@@ -202,3 +202,23 @@ func TestRadioLinkRespondingDeploySkew(t *testing.T) {
 		t.Error("bridge-published radio_responding=false overridden by freq presence")
 	}
 }
+
+// FreqHz agrees with the burned-in text: known only while the radio slot is
+// fresh and the snapshot carries a frequency.
+func TestFreqHzMatchesOverlay(t *testing.T) {
+	o, _ := newTestOverlay(t)
+	if _, ok := o.FreqHz(); ok {
+		t.Error("freq known before any data")
+	}
+	now := time.Now()
+	o.setUp(true)
+	o.applyStatus(statusOf(testCfg("").TopicRadio), "online")
+	o.apply(testCfg("").TopicRadio, []byte(`{"freq_hz":435100000,"device_online":true,"ts":"`+now.Format(time.RFC3339)+`"}`))
+	if hz, ok := o.FreqHz(); !ok || hz != 435100000 {
+		t.Errorf("FreqHz = %d, %v", hz, ok)
+	}
+	o.applyStatus(statusOf(testCfg("").TopicRadio), "offline")
+	if _, ok := o.FreqHz(); ok {
+		t.Error("freq known with the radio bridge offline")
+	}
+}

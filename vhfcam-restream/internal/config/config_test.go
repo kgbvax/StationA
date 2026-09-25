@@ -130,3 +130,48 @@ func TestValidateCases(t *testing.T) {
 		t.Error("restart_max < restart_min should fail")
 	}
 }
+
+// A seeded file without [record] (every existing device config) must get the
+// recording defaults.
+func TestRecordDefaultsWhenSectionMissing(t *testing.T) {
+	path := writeTemp(t, `
+source_url = "rtsps://cam:7441/SD"
+stream_key = "k"
+`)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	r := cfg.Record
+	if !r.Enabled || r.Dir != "/var/lib/vhfcam-restream/recordings" || r.MaxMinutes != 30 ||
+		r.MinFreeGB != 8 || r.MaxTotalGB != 5 {
+		t.Errorf("record defaults = %+v", r)
+	}
+}
+
+func TestRecordValidate(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		mod  func(*RecordConfig)
+		ok   bool
+	}{
+		{"defaults", func(*RecordConfig) {}, true},
+		{"disabled ignores bad values", func(r *RecordConfig) { r.Enabled = false; r.MaxMinutes = 0 }, true},
+		{"empty dir", func(r *RecordConfig) { r.Dir = "" }, false},
+		{"zero minutes", func(r *RecordConfig) { r.MaxMinutes = 0 }, false},
+		{"too many minutes", func(r *RecordConfig) { r.MaxMinutes = 241 }, false},
+		{"negative free", func(r *RecordConfig) { r.MinFreeGB = -1 }, false},
+		{"zero cap", func(r *RecordConfig) { r.MaxTotalGB = 0 }, false},
+		{"fractional sizes", func(r *RecordConfig) { r.MinFreeGB = 0.5; r.MaxTotalGB = 1.5 }, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := Default()
+			c.SourceURL = "rtsps://cam/stream"
+			c.StreamKey = "k"
+			tc.mod(&c.Record)
+			if err := c.Validate(); (err == nil) != tc.ok {
+				t.Errorf("Validate() err = %v, want ok=%v", err, tc.ok)
+			}
+		})
+	}
+}

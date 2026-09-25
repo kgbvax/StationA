@@ -56,7 +56,20 @@ type Config struct {
 	// built-in HTTP server serves it to LAN browsers.
 	Preview PreviewConfig `toml:"preview"`
 
+	// Recording of the preview stream (internal/recorder): the recorder
+	// copies the preview's HLS segments, so it needs preview.enabled.
+	Record RecordConfig `toml:"record"`
+
 	LogLevel string `toml:"log_level"`
+}
+
+// RecordConfig configures recordings of the preview stream.
+type RecordConfig struct {
+	Enabled    bool    `toml:"enabled"`
+	Dir        string  `toml:"dir"`          // finished recordings + .inprogress/ (persistent disk, not tmpfs)
+	MaxMinutes int     `toml:"max_minutes"`  // a recording stops itself after this long
+	MinFreeGB  float64 `toml:"min_free_gb"`  // refuse to start / stop when free space on dir drops below
+	MaxTotalGB float64 `toml:"max_total_gb"` // oldest recordings are deleted to keep dir under this
 }
 
 // PreviewConfig configures the local HLS preview sink.
@@ -131,6 +144,13 @@ func Default() Config {
 			HlsTimeS:           2,
 			ListSize:           6,
 			RadioAudioCmdTopic: "muehle/uhf/radio/cmd",
+		},
+		Record: RecordConfig{
+			Enabled:    true,
+			Dir:        "/var/lib/vhfcam-restream/recordings",
+			MaxMinutes: 30,
+			MinFreeGB:  8,
+			MaxTotalGB: 5,
 		},
 		Overlay: OverlayConfig{
 			Enabled:      false,
@@ -211,6 +231,22 @@ func (c *Config) Validate() error {
 	}
 	if c.Preview.Enabled && (c.Preview.Dir == "" || c.Preview.HlsTimeS <= 0 || c.Preview.ListSize <= 0) {
 		return fmt.Errorf("config: preview.dir, preview.hls_time_s and preview.hls_list_size must be set when enabled")
+	}
+	return c.Record.validate()
+}
+
+func (r *RecordConfig) validate() error {
+	if !r.Enabled {
+		return nil
+	}
+	if r.Dir == "" {
+		return fmt.Errorf("config: record.dir must be set when record.enabled")
+	}
+	if r.MaxMinutes < 1 || r.MaxMinutes > 240 {
+		return fmt.Errorf("config: record.max_minutes must be 1..240, got %d", r.MaxMinutes)
+	}
+	if r.MinFreeGB < 0 || r.MaxTotalGB <= 0 {
+		return fmt.Errorf("config: record.min_free_gb must be >= 0 and record.max_total_gb > 0")
 	}
 	return nil
 }

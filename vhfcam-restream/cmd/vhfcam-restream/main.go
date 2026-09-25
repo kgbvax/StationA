@@ -26,6 +26,7 @@ import (
 	"vhfcam-restream/internal/config"
 	"vhfcam-restream/internal/overlay"
 	"vhfcam-restream/internal/preview"
+	"vhfcam-restream/internal/recorder"
 	"vhfcam-restream/internal/restream"
 )
 
@@ -115,6 +116,13 @@ func main() {
 	// config youtube_enabled is the boot default.
 	ytEnabled := &atomic.Bool{}
 	ytEnabled.Store(cfg.YoutubeEnabled)
+	// Radio-audio demand holders: the page's connect button and a running
+	// recording. The radio audio flows while anyone holds it.
+	demand := &preview.AudioDemand{}
+	// Recorder: follows the preview's HLS; wired to the demand below.
+	rec := recorder.New(func() config.Config { return *curCfg.Load() },
+		logger.With("component", componentName, "subcomponent", "recorder")).
+		WithFreq(ov.FreqHz)
 	pvSrv := preview.NewServer(func() config.PreviewConfig { return curCfg.Load().Preview },
 		nil,
 		logger.With("component", componentName, "subcomponent", "preview")).
@@ -122,8 +130,10 @@ func main() {
 			rl := ov.RadioLink()
 			st := preview.ComputeStatus(rl.BridgeOnline, rl.DeviceOnline, rl.Responding, audioStatus.Alive())
 			st.Youtube = ytEnabled.Load()
+			st.AudioHolders = demand.Holders()
 			return st
-		})
+		}).
+		WithRecorder(rec)
 	go func() {
 		if err := pvSrv.ListenAndServe(ctx); err != nil {
 			logger.Error("preview http server", "err", err)
@@ -187,11 +197,10 @@ func main() {
 	// heartbeat audio_on to the radio bridge (the demand is TTL-bounded
 	// there — the heartbeat is what keeps the radio's audio flowing); on
 	// shutdown, release it. The MQTT connection comes from the overlay.
-	// The web-page controls flip audioDemandOn: capture is OPT-IN — it
-	// starts OFF (2026-09) and only the page's connect button starts the
-	// heartbeat; disconnect stops it until the operator clicks again.
-	audioDemandOn := &atomic.Bool{}
-	audioDemandOn.Store(false)
+	// Capture is OPT-IN — it starts OFF (2026-09): the heartbeat runs only
+	// while a holder wants it (the page's connect button, or a recording).
+	// The page's disconnect releases only the page's hold, so it never cuts
+	// the audio out of a running recording.
 	radioPublish := func(action string) error {
 		c := ov.Client()
 		if c == nil {
@@ -218,9 +227,12 @@ func main() {
 	pvSrv.WithCmd(func(action string) error {
 		switch action {
 		case "audio_on":
-			audioDemandOn.Store(true)
+			demand.Set(preview.HolderPage, true)
 		case "audio_off":
-			audioDemandOn.Store(false)
+			if _, after := demand.Set(preview.HolderPage, false); after {
+				logger.Info("page released radio audio; still held", "holders", demand.Holders())
+				return nil
+			}
 		case "yt_start":
 			ytEnabled.Store(true)
 			ytSup.Reload()
@@ -236,13 +248,24 @@ func main() {
 		if !curCfg.Load().Preview.Enabled || curCfg.Load().Preview.RadioAudio == "" {
 			return
 		}
-		if on && !audioDemandOn.Load() {
-			return // operator disconnected via the page — heartbeat stays off
+		if on && !demand.On() {
+			return // nobody holds the audio — heartbeat stays off
 		}
 		if err := radioPublish(map[bool]string{true: "audio_on", false: "audio_off"}[on]); err != nil {
 			logger.Warn("radio audio demand publish failed", "err", err)
 		}
 	}
+	// A recording holds the radio audio for its whole duration; audio_on
+	// goes out at once instead of waiting for the next heartbeat.
+	rec.WithOnActive(func(active bool) {
+		before, after := demand.Set(preview.HolderRecording, active)
+		switch {
+		case !before && after:
+			audioDemand(true)
+		case before && !after:
+			audioDemand(false)
+		}
+	})
 	go func() {
 		// Let MQTT connect, then clear any stale demand from before the
 		// restart (capture is opt-in — it must not outlive a restart).
@@ -261,6 +284,11 @@ func main() {
 		}
 	}()
 
+	// Recorder: finalizes leftovers first, then records on demand; on
+	// shutdown it finalizes an active recording (bounded) before returning.
+	recDone := make(chan struct{})
+	go func() { _ = rec.Run(ctx); close(recDone) }()
+
 	// Run both sinks until shutdown; a sink-level failure never takes the
 	// other one down (each supervisor loops on its own).
 	done := make(chan error, 2)
@@ -270,6 +298,7 @@ func main() {
 		logger.Error("supervisor terminated", "err", err)
 		os.Exit(1)
 	}
+	<-recDone // the active recording is saved before the process exits
 	logger.Info("shutdown complete")
 }
 
