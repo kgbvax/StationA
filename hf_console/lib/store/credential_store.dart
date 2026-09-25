@@ -3,6 +3,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'uhf_park.dart';
+
 class CredentialStore {
   final _secure = const FlutterSecureStorage();
 
@@ -26,6 +28,8 @@ class CredentialStore {
       'horstreporter_base_url': prefs.getString('horstreporter_base_url'),
       'station_callsign': prefs.getString('station_callsign'),
       'vhfcam_base_url': prefs.getString('vhfcam_base_url'),
+      UhfPark.azKey: prefs.getString(UhfPark.azKey),
+      UhfPark.elKey: prefs.getString(UhfPark.elKey),
     };
   }
 

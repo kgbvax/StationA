@@ -11,6 +11,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hf_console/store/bus_store.dart';
+import 'package:hf_console/store/uhf_park.dart';
 import 'package:hf_console/ui/widgets/sat_rotator_panel.dart';
 import '../../support/fake_mqtt_service.dart';
 import '../../support/fixtures.dart';
@@ -428,6 +429,79 @@ void main() {
 
       expect(find.text('ERR'), findsNothing);
       expect(find.text('60°'), findsOneWidget);
+    });
+  });
+
+  group('park', () {
+    tearDown(() => UhfPark.notifier.value = (az: UhfPark.defaultAz, el: UhfPark.defaultEl));
+
+    testWidgets('sends both axes to the default park position (200° / 3°), non-retained',
+        (tester) async {
+      final store = BusStore();
+      final mqtt = FakeMqttService(store);
+      store.setSatRotator(azAddress, axis: 'az', pos: 45);
+      store.setSatRotator(elAddress, axis: 'el', pos: 10);
+
+      await pumpPanel(tester, store: store, mqtt: mqtt);
+      expect(find.text('PARK 200° / 3°'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('sat-park')));
+      await tester.pumpAndSettle();
+
+      expect(mqtt.publishes.map((r) => r.topic),
+          ['muehle/uhf/az-rotator/cmd', 'muehle/uhf/el-rotator/cmd']);
+      expect(mqtt.publishes.map((r) => jsonDecode(r.payload)), [
+        {'action': 'goto', 'value': '200.0'},
+        {'action': 'goto', 'value': '3.0'},
+      ]);
+      expect(mqtt.publishes.map((r) => r.retain), [false, false]);
+    });
+
+    testWidgets('follows the configured position', (tester) async {
+      final store = BusStore();
+      final mqtt = FakeMqttService(store);
+      store.setSatRotator(azAddress, axis: 'az', pos: 45);
+      store.setSatRotator(elAddress, axis: 'el', pos: 10);
+
+      await pumpPanel(tester, store: store, mqtt: mqtt);
+      UhfPark.notifier.value = (az: 180.5, el: 0);
+      await tester.pumpAndSettle();
+      expect(find.text('PARK 180.5° / 0°'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('sat-park')));
+      await tester.pumpAndSettle();
+
+      expect(mqtt.publishes.map((r) => jsonDecode(r.payload)['value']), ['180.5', '0.0']);
+    });
+
+    testWidgets('only operable axes are sent; link down disables PARK', (tester) async {
+      final store = BusStore();
+      final mqtt = FakeMqttService(store);
+      store.setSatRotator(azAddress, axis: 'az', pos: 45);
+      store.setSatRotator(elAddress, axis: 'el', pos: 10);
+      store.setDeviceOffline(elAddress);
+
+      await pumpPanel(tester, store: store, mqtt: mqtt);
+      await tester.tap(find.byKey(const ValueKey('sat-park')));
+      await tester.pumpAndSettle();
+      expect(mqtt.publishes.map((r) => r.topic), ['muehle/uhf/az-rotator/cmd']);
+
+      store.markDisconnected();
+      await tester.pumpAndSettle();
+      expect(button(tester, find.byKey(const ValueKey('sat-park'))).onPressed, isNull);
+    });
+  });
+
+  group('UhfPark settings parsing', () {
+    test('accepts az 0–360 and el 0–90; anything else falls back to the defaults', () {
+      expect(UhfPark.parseAz('200'), 200);
+      expect(UhfPark.parseAz('361'), isNull);
+      expect(UhfPark.parseEl('3'), 3);
+      expect(UhfPark.parseEl('-1'), isNull);
+      expect(UhfPark.parseEl('abc'), isNull);
+
+      UhfPark.load({UhfPark.azKey: '90', UhfPark.elKey: 'x'});
+      expect(UhfPark.notifier.value, (az: 90.0, el: UhfPark.defaultEl));
+      UhfPark.load({});
+      expect(UhfPark.notifier.value, (az: 200.0, el: 3.0));
     });
   });
 }

@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 
 import '../../mqtt/mqtt_service.dart';
 import '../../store/bus_store.dart';
+import '../../store/uhf_park.dart';
 import '../../store/wiring.dart';
 import '../theme.dart';
 import 'card_container.dart';
@@ -27,6 +28,9 @@ import 'status_tag.dart';
 /// `{'action':'stop'}` to BOTH slots' /cmd topics — R8's bridge semantics
 /// halt both axes from either topic, so the dual publish is belt-and-braces
 /// against a dead slot path.
+///
+/// PARK sends every operable axis to the park position set in Settings
+/// ([UhfPark]; this station: az 200°, el 3°) as ordinary goto commands.
 ///
 /// Goto targets are validated client-side against the axis travel limits in
 /// /meta `capabilities.limits` (inclusive); with no /meta yet the panel
@@ -67,6 +71,20 @@ class SatRotatorPanel extends StatelessWidget {
         mqtt.publish(
           cmdTopic(slot),
           satRotatorStopPayload(),
+          retain: cmdRetain[address]!,
+        );
+      }
+    }
+
+    void sendPark(({double az, double el}) park) {
+      for (final (slot, address, online, deg) in [
+        (_azSlot, _azAddress, azOnline, park.az),
+        (_elSlot, _elAddress, elOnline, park.el),
+      ]) {
+        if (!online) continue;
+        mqtt.publish(
+          cmdTopic(slot),
+          satRotatorGotoPayload(deg),
           retain: cmdRetain[address]!,
         );
       }
@@ -128,20 +146,54 @@ class SatRotatorPanel extends StatelessWidget {
             );
           }),
           const SizedBox(height: 16),
-          // The e-stop: full-width, red, unmissable. Never disabled while
-          // any axis is operable — it must outlive one dead serial port.
-          ElevatedButton(
-            key: const ValueKey('sat-stop'),
-            onPressed: stopEnabled ? sendStop : null,
-            style: AppTheme.actionButton(danger: true, fullWidth: true).copyWith(
-              padding: const WidgetStatePropertyAll(
-                EdgeInsets.symmetric(vertical: 14),
-              ),
-            ),
-            child: Text(
-              'STOP',
-              style: AppTheme.mono(16,
-                  color: AppTheme.txt, weight: FontWeight.w800, letterSpacing: 0.2),
+          // IntrinsicHeight: PARK and STOP share one height (the Column gives
+          // the row no height bound to stretch into otherwise).
+          IntrinsicHeight(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Expanded(
+                  child: ValueListenableBuilder<({double az, double el})>(
+                    valueListenable: UhfPark.notifier,
+                    builder: (context, park, _) => ElevatedButton(
+                      key: const ValueKey('sat-park'),
+                      onPressed: (azOnline || elOnline) ? () => sendPark(park) : null,
+                      style: AppTheme.actionButton().copyWith(
+                        padding: const WidgetStatePropertyAll(
+                          EdgeInsets.symmetric(horizontal: 8, vertical: 14),
+                        ),
+                      ),
+                      child: Text(
+                        'PARK ${_fmtDeg(park.az)}° / ${_fmtDeg(park.el)}°',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: AppTheme.mono(14, weight: FontWeight.w800),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                // The e-stop: red, unmissable, the wider of the two. Never
+                // disabled while any axis is operable — it must outlive one
+                // dead serial port.
+                Expanded(
+                  flex: 2,
+                  child: ElevatedButton(
+                    key: const ValueKey('sat-stop'),
+                    onPressed: stopEnabled ? sendStop : null,
+                    style: AppTheme.actionButton(danger: true, fullWidth: true).copyWith(
+                      padding: const WidgetStatePropertyAll(
+                        EdgeInsets.symmetric(vertical: 14),
+                      ),
+                    ),
+                    child: Text(
+                      'STOP',
+                      style: AppTheme.mono(16,
+                          color: AppTheme.txt, weight: FontWeight.w800, letterSpacing: 0.2),
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
         ],
