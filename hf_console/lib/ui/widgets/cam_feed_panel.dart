@@ -33,6 +33,7 @@ import 'package:video_player/video_player.dart';
 import '../../store/bus_store.dart';
 import '../../vhfcam/vhfcam_service.dart';
 import '../theme.dart';
+import 'cam_record_controls.dart';
 
 class CamFeedPanel extends StatefulWidget {
   const CamFeedPanel({super.key});
@@ -175,6 +176,10 @@ class _CamFeedPanelState extends State<CamFeedPanel> {
             children: [
               Text('ANTENNA CAM', style: AppTheme.mono(12, weight: FontWeight.w700, letterSpacing: 0.14, color: AppTheme.txtMute)),
               const Spacer(),
+              if (svc.status?.rec case final rec?) ...[
+                RecBadge(rec: rec),
+                const SizedBox(width: 6),
+              ],
               _StatusChip(state: state),
               if (state == _FeedState.live) ...[
                 const SizedBox(width: 8),

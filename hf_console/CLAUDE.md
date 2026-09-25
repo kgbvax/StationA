@@ -44,8 +44,12 @@ Do NOT reuse the broad `hf` user; do not embed station-wide credentials in the A
 The CAM tab plays vhfcam-restream's live HLS preview (`/hls/live.m3u8` on the
 cam server, default `http://192.168.1.139:8083`) and mirrors its radio-audio
 controls (`POST /api/cmd/{audio_on,audio_off,power_on}` — audio_on takes the
-IC-9700 CI-V session, exactly like the :8083 reference page). Two deliberate
-platform notes:
+IC-9700 CI-V session, exactly like the :8083 reference page). Its RECORDING
+card starts/stops a server-side recording of the preview (`POST
+/api/rec/start|stop`; progress = the `rec` block of `/api/radio-status`, a
+REC badge also sits on the feed header). The server enforces the limits and
+holds the radio audio while recording; downloads happen on the :8083 page.
+Two deliberate platform notes:
 
 - The base URL is a user setting, key `vhfcam_base_url` (CredentialStore,
   editable in the gear sheet, default `http://192.168.1.139:8083`).

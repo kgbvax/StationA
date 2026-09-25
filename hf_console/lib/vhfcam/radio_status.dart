@@ -11,6 +11,8 @@
 // on|off|unk, radio on|warn|unk, audio on|off. Unknown keys are preserved so a
 // future fourth LED still renders.
 
+import 'rec_status.dart';
+
 class RadioStatus {
   /// icom9700-radio-bridge reachable (its /status LWT is fresh).
   final bool bridgeOnline;
@@ -30,6 +32,12 @@ class RadioStatus {
   /// LED name → server state string (`on`/`off`/`warn`/`unk`).
   final Map<String, String> leds;
 
+  /// Who keeps the radio audio on (`page`, `recording`).
+  final List<String> audioHolders;
+
+  /// Recorder state; null when the server has no recorder (older build).
+  final RecStatus? rec;
+
   const RadioStatus({
     required this.bridgeOnline,
     required this.sessionHeld,
@@ -37,6 +45,8 @@ class RadioStatus {
     required this.audioStream,
     required this.hint,
     required this.leds,
+    this.audioHolders = const [],
+    this.rec,
   });
 
   factory RadioStatus.fromJson(Map<String, dynamic> json) {
@@ -61,6 +71,10 @@ class RadioStatus {
         'radio': led('radio'),
         'audio': led('audio'),
       },
+      audioHolders: json['audio_holders'] is List
+          ? [for (final h in json['audio_holders'] as List) if (h is String) h]
+          : const [],
+      rec: RecStatus.tryParse(json['rec']),
     );
   }
 }

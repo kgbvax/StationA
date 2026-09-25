@@ -9,6 +9,10 @@
 //                            started ad hoc, so 404 is a *normal* state
 //   POST /api/cmd/{action}   audio_on | audio_off | power_on (allowlist; the
 //                            server translates these to muehle/uhf/radio/cmd)
+//   POST /api/rec/start|stop record the preview (overlay + radio audio); the
+//                            progress rides /api/radio-status as `rec`.
+//                            Recordings are listed and downloaded on the
+//                            :8083 page ([recordingsUrl]).
 //
 // Tolerant by design: the cam is an ad-hoc accessory, not a station slot, so
 // an unreachable server is a UI state, never a fault-bar entry and never a
@@ -52,6 +56,9 @@ class VhfcamService extends ChangeNotifier {
 
   /// Live playlist URL for the player.
   String get hlsUrl => '$_baseUrl/hls/live.m3u8';
+
+  /// The server page's recordings list (download / delete happen there).
+  String get recordingsUrl => '$_baseUrl/#rec';
 
   /// Re-points the service (gear-sheet live-apply). An empty value restores
   /// the shack default.
@@ -150,6 +157,18 @@ class VhfcamService extends ChangeNotifier {
     // feedback is the poll result, and 2 s of stale LED reads as a dead button.
     _tick();
     return ok;
+  }
+
+  /// Starts or stops a recording on the server. Returns the server's reason
+  /// when it refused (e.g. low disk), null on success.
+  Future<String?> setRecording(bool on) async {
+    if (!serverOnline) return 'cam server offline';
+    final ok = await vhfcamHttpPost('$_baseUrl/api/rec/${on ? 'start' : 'stop'}', _requestTimeout);
+    // The refusal reason is in the status block's last_error after the poll.
+    await _tick();
+    if (ok) return null;
+    final err = _status?.rec?.lastError ?? '';
+    return err.isNotEmpty ? err : 'the cam server refused';
   }
 
   @override

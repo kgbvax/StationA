@@ -18,6 +18,7 @@ import '../widgets/uhf_radio_panel.dart';
 import '../widgets/pol_ctrl_panel.dart';
 import '../widgets/cam_feed_panel.dart';
 import '../widgets/cam_radio_controls.dart';
+import '../widgets/cam_record_controls.dart';
 import '../widgets/faults_bar.dart';
 import '../widgets/dx_config_sheet.dart';
 
@@ -469,7 +470,9 @@ class _CamPage extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: const [
                     CamFeedPanel(),
-                    CamRadioControls(),
+                    CamRecordControls(),
+                    CamRecordControls(),
+        CamRadioControls(),
                     SizedBox(height: 40),
                     FaultsBar(),
                   ],
@@ -487,6 +490,7 @@ class _CamPage extends StatelessWidget {
       rotator: vhfRotator,
       leftTop: const CamFeedPanel(),
       rightChildren: const [
+        CamRecordControls(),
         CamRadioControls(),
       ],
     );

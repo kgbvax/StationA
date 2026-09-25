@@ -45,4 +45,27 @@ void main() {
     expect(s.hint, isEmpty);
     expect(s.leds['bridge'], 'unk');
   });
+
+  test('parses the rec block and audio holders', () {
+    final s = RadioStatus.fromJson(jsonDecode('''
+      {"leds": {}, "audio_holders": ["recording"],
+       "rec": {"enabled": true, "state": "recording", "name": "vhfcam_2026-09-25T1812Z_435.000MHz.mp4",
+               "elapsed_s": 252, "remaining_s": 1548, "max_s": 1800, "free_bytes": 41200000000,
+               "min_free_bytes": 8000000000, "stalled": false}}
+    ''') as Map<String, dynamic>);
+    expect(s.audioHolders, ['recording']);
+    expect(s.rec, isNotNull);
+    expect(s.rec!.recording, isTrue);
+    expect(s.rec!.elapsedS, 252);
+    expect(s.rec!.remainingS, 1548);
+    expect(s.rec!.freeBytes, 41200000000);
+  });
+
+  test('missing or malformed rec block is null, never a guessed idle', () {
+    RadioStatus parse(String json) => RadioStatus.fromJson(jsonDecode(json) as Map<String, dynamic>);
+    expect(parse('{"leds": {}}').rec, isNull);
+    expect(parse('{"leds": {}, "rec": "yes"}').rec, isNull);
+    expect(parse('{"leds": {}, "rec": {"elapsed_s": 3}}').rec, isNull);
+    expect(parse('{"leds": {}}').audioHolders, isEmpty);
+  });
 }
