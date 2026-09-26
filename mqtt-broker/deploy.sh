@@ -101,11 +101,16 @@ sudo install -d -o mosquitto -g mosquitto -m 0755 /var/lib/mosquitto
 sudo install -d -o mosquitto -g mosquitto -m 0755 /var/log/mosquitto
 
 # Seed mosquitto.conf ONCE (0600 — it will hold remote_password after the
-# operator edits it, so treat it as a secret file from the start).
-if [ -e "$CONF_FILE" ]; then
-  echo "   mosquitto.conf exists at $CONF_FILE -- leaving it untouched (seed-once)."
+# operator edits it, so treat it as a secret file from the start). The apt
+# package ships a stock commented-out mosquitto.conf, so mere existence does
+# not mean "seeded": only a conf that actually activates our auth counts.
+if [ -e "$CONF_FILE" ] && grep -q '^password_file' "$CONF_FILE"; then
+  echo "   mosquitto.conf exists at $CONF_FILE and is seeded -- leaving it untouched (seed-once)."
   echo "   !! If this is the first deploy, set 'remote_password' under [bridge-to-ha] in $CONF_FILE."
 else
+  if [ -e "$CONF_FILE" ]; then
+    echo "   replacing stock/unseeded $CONF_FILE with the station seed."
+  fi
   sudo install -o mosquitto -g mosquitto -m 0600 "$SEED_CONF" "$CONF_FILE"
   echo "   seeded mosquitto.conf at $CONF_FILE (0600, owner mosquitto)."
   echo "   !! Set 'remote_password <value>' under [bridge-to-ha] in $CONF_FILE (HA-side bridge account password)."
