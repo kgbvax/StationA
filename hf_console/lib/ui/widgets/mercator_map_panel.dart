@@ -404,6 +404,14 @@ double _angleDiff(double a, double b) {
   return d > 180 ? 360 - d : d;
 }
 
+/// Grid-square fill strength by Mercator zoom: full up to zoom 4 (squares
+/// are small there), falling linearly to 30 % at zoom 8 and closer.
+double gridZoomFade(double zoom) {
+  if (zoom <= 4) return 1.0;
+  if (zoom >= 8) return 0.3;
+  return 1.0 - (zoom - 4) / 4 * 0.7;
+}
+
 /// Rotator beam for the painter: QTH, pointing and commanded azimuth.
 typedef MercatorBeam = ({LatLng qth, double az, double? target, double half, bool online});
 
@@ -650,7 +658,11 @@ class _MercatorPainter extends CustomPainter {
       ..close();
 
     final color = AppTheme.bandColor(sq.dominantBand);
-    final opacity = AppTheme.gridSnrOpacity(sq.score);
+    // Zoomed in, a 4-char square (2°×1°) covers much of the map; fade it so
+    // coastlines, towns and the beam stay readable. The outline fades less,
+    // keeping the square's extent visible.
+    final fade = gridZoomFade(projection.zoom);
+    final opacity = AppTheme.gridSnrOpacity(sq.score) * fade;
     canvas.drawPath(
       path,
       Paint()
@@ -660,7 +672,7 @@ class _MercatorPainter extends CustomPainter {
     canvas.drawPath(
       path,
       Paint()
-        ..color = color.withValues(alpha: math.min(1.0, opacity + 0.2))
+        ..color = color.withValues(alpha: math.min(1.0, AppTheme.gridSnrOpacity(sq.score) + 0.2) * math.max(fade, 0.5))
         ..style = PaintingStyle.stroke
         ..strokeWidth = 0.6,
     );

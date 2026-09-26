@@ -36,4 +36,13 @@ void main() {
     expect(find.byType(MercatorMapPanel), findsOneWidget);
     expect(dx.spots.length, 1);
   });
+
+  test('grid squares fade as the map zooms in', () {
+    expect(gridZoomFade(2.5), 1.0);
+    expect(gridZoomFade(4), 1.0);
+    expect(gridZoomFade(6), closeTo(0.65, 1e-9));
+    expect(gridZoomFade(7), closeTo(0.475, 1e-9));
+    expect(gridZoomFade(8), 0.3);
+    expect(gridZoomFade(12), 0.3);
+  });
 }
