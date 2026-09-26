@@ -143,14 +143,23 @@ func CmdReadSWR() []byte    { return BuildFrame(CivCmdReadMeter, []byte{SubSWR})
 func CmdReadALC() []byte    { return BuildFrame(CivCmdReadMeter, []byte{SubALC}) }
 
 // ParseMeter decodes an 0-255 meter value (S-meter: S9 = 120). Real
-// firmware answers `15 <sub> <hi> <lo>` (two bytes, big-endian, bench
-// 2026-09-20); the fake's single-byte legacy form is still accepted.
+// firmware answers `15 <sub> <hi> <lo>` (two bytes, bench 2026-09-20) as
+// four BCD digits "0000".."0255" — `01 20` is 120 (S9), NOT 0x0120 = 288.
+// The fake's single-byte legacy form is still accepted as a plain value.
 func ParseMeter(data []byte) (int, error) {
 	switch len(data) {
 	case 1:
 		return int(data[0]), nil
 	case 2:
-		return int(data[0])<<8 | int(data[1]), nil
+		v := 0
+		for i, b := range data {
+			hi, lo := int(b>>4), int(b&0x0f)
+			if hi > 9 || lo > 9 {
+				return 0, fmt.Errorf("civ: invalid meter BCD digit in byte %d (%02x)", i, b)
+			}
+			v = v*100 + hi*10 + lo
+		}
+		return v, nil
 	default:
 		return 0, fmt.Errorf("civ: meter reply must be 1-2 bytes, got %d", len(data))
 	}

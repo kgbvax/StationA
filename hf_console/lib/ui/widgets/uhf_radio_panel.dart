@@ -325,8 +325,8 @@ class _UhfRadioPanelState extends State<UhfRadioPanel> {
     final meters = <String>[
       if (sMeter != null) sUnits(sMeter),
       if (txPower != null) 'PWR $txPower',
-      if (swr != null) 'SWR $swr',
-      if (alc != null) 'ALC $alc',
+      if (swr != null) swrText(swr),
+      if (alc != null) alcText(alc),
     ];
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -367,4 +367,32 @@ String sUnits(int raw) {
   // Icom meters step in 10 dB above S9; round to the nearest 10.
   final db10 = (db / 10).round() * 10;
   return db10 == 0 ? 'S9' : 'S9+$db10';
+}
+
+/// Icom SWR meter (`15 12`, 0-255) as a ratio: 0 = 1.0, 48 = 1.5, 80 = 2.0,
+/// 120 = 3.0 (piecewise linear between those points). The radio's scale
+/// ends at 3.0 — above it the meter is off the scale, shown as ">3.0".
+@visibleForTesting
+String swrText(int raw) {
+  const points = [(0, 1.0), (48, 1.5), (80, 2.0), (120, 3.0)];
+  final r = raw.clamp(0, 255);
+  if (r > 120) return 'SWR >3.0';
+  for (var i = 1; i < points.length; i++) {
+    final (x1, y1) = points[i];
+    if (r <= x1) {
+      final (x0, y0) = points[i - 1];
+      final v = y0 + (r - x0) * (y1 - y0) / (x1 - x0);
+      return 'SWR ${v.toStringAsFixed(1)}';
+    }
+  }
+  return 'SWR 3.0';
+}
+
+/// Icom ALC meter (`15 13`, 0-255): 0-120 is the ALC zone, shown as a
+/// percentage of it; above 120 the drive is past the zone ("OVER").
+@visibleForTesting
+String alcText(int raw) {
+  final r = raw.clamp(0, 255);
+  if (r > 120) return 'ALC OVER';
+  return 'ALC ${(r * 100 / 120).round()}%';
 }

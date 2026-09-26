@@ -51,7 +51,7 @@ void main() {
       expect(find.textContaining('2M'), findsOneWidget);
       expect(find.textContaining('FM'), findsOneWidget);
       expect(find.textContaining('S9'), findsOneWidget);
-      expect(find.textContaining('SWR 12'), findsOneWidget);
+      expect(find.textContaining('SWR 1.1'), findsOneWidget);
     });
 
     testWidgets('monitor off hides the readout entirely', (tester) async {
@@ -268,5 +268,21 @@ void main() {
     expect(sUnits(160), 'S9+20');
     expect(sUnits(241), 'S9+60');
     expect(sUnits(255), 'S9+70');
+  });
+
+  test('SWR raw 0-255 reads as a ratio (Icom: 48 = 1.5, 80 = 2.0, 120 = 3.0)', () {
+    expect(swrText(0), 'SWR 1.0');
+    expect(swrText(48), 'SWR 1.5');
+    expect(swrText(64), 'SWR 1.8');
+    expect(swrText(80), 'SWR 2.0');
+    expect(swrText(120), 'SWR 3.0');
+    expect(swrText(121), 'SWR >3.0');
+  });
+
+  test('ALC raw 0-255 reads as % of the ALC zone (0-120), OVER above it', () {
+    expect(alcText(0), 'ALC 0%');
+    expect(alcText(60), 'ALC 50%');
+    expect(alcText(120), 'ALC 100%');
+    expect(alcText(121), 'ALC OVER');
   });
 }

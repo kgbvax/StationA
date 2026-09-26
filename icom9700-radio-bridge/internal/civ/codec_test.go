@@ -380,3 +380,28 @@ func TestParseFrameStrict(t *testing.T) {
 		t.Errorf("ID ack parse: %v", err)
 	}
 }
+
+// Meter replies are four BCD digits "0000".."0255": the S9 reading `01 20`
+// is 120, not 0x0120 = 288.
+func TestParseMeterBCD(t *testing.T) {
+	cases := []struct {
+		in   []byte
+		want int
+	}{
+		{[]byte{0x00, 0x00}, 0},
+		{[]byte{0x00, 0x42}, 42},
+		{[]byte{0x01, 0x20}, 120},
+		{[]byte{0x02, 0x41}, 241},
+		{[]byte{0x02, 0x55}, 255},
+		{[]byte{0x78}, 0x78}, // fake's single-byte legacy form: plain value
+	}
+	for _, c := range cases {
+		got, err := ParseMeter(c.in)
+		if err != nil || got != c.want {
+			t.Errorf("ParseMeter(% x) = %d, %v; want %d", c.in, got, err, c.want)
+		}
+	}
+	if _, err := ParseMeter([]byte{0x01, 0x2a}); err == nil {
+		t.Error("ParseMeter accepted a non-BCD nibble")
+	}
+}

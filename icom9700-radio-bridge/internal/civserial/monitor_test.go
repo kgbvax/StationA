@@ -233,12 +233,12 @@ func TestMeterPollReply(t *testing.T) {
 	h := newSH(t, 0)
 	p := h.monitorOn()
 
-	// Reply to the first S-meter poll (15 02): value 0x0078 = 120. Real
+	// Reply to the first S-meter poll (15 02): BCD "0120" = 120 (S9). Real
 	// firmware repeats the sub bytes — the reply carries them (bench).
 	waitSH(t, "s-meter poll sent", time.Second, func() bool {
 		return hasFrame(p.wroteFrames(), civ.CmdReadSMeter())
 	})
-	p.feed(radioReply(0x15, []byte{0x02, 0x00, 0x78}))
+	p.feed(radioReply(0x15, []byte{0x02, 0x01, 0x20}))
 	waitSH(t, "s-meter folded", time.Second, func() bool {
 		st := h.m.Snapshot()
 		return st.SMeter != nil && *st.SMeter == 120
@@ -246,7 +246,7 @@ func TestMeterPollReply(t *testing.T) {
 
 	// Same value again: no update nudge (dedupe).
 	drain(h.m.Updates())
-	p.feed(radioReply(0x15, []byte{0x02, 0x00, 0x78}))
+	p.feed(radioReply(0x15, []byte{0x02, 0x01, 0x20}))
 	time.Sleep(120 * time.Millisecond)
 	select {
 	case <-h.m.Updates():
