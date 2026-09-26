@@ -106,17 +106,18 @@ void main() {
       expect(find.textContaining('REFL'), findsNothing);
     });
 
-    testWidgets('draws peak and percentile markers while transmitting', (tester) async {
+    testWidgets('draws one held peak marker per meter', (tester) async {
       final store = BusStore();
       final mqtt = FakeMqttService(store);
       store.setPaTransmitting(fwd: 800, rfl: 20);
 
       await tester.pumpWidget(TestHarness(store: store, mqtt: mqtt, child: const PaPanel()));
-      await tester.pumpAndSettle();
+      await tester.pump();
 
-      // Two triangle markers: peak above the bar, 95th-percentile below it.
+      // One peak triangle above each bar; the old percentile marker is gone.
       expect(find.byKey(const ValueKey('pa-fwd-peak')), findsOneWidget);
-      expect(find.byKey(const ValueKey('pa-fwd-p95')), findsOneWidget);
+      expect(find.byKey(const ValueKey('pa-swr-peak')), findsOneWidget);
+      expect(find.byKey(const ValueKey('pa-fwd-p95')), findsNothing);
     });
 
     testWidgets('shows PA RELAY OFF when the remote-on relay is open', (tester) async {
@@ -149,46 +150,76 @@ void main() {
       expect(find.textContaining('PA RELAY OFF'), findsNothing);
     });
 
-    testWidgets('peak markers decay slowly after unkeying', (tester) async {
+    testWidgets('bar releases and peak marker holds, then decays slowly', (tester) async {
       final store = BusStore();
       final mqtt = FakeMqttService(store);
       store.setPaTransmitting(fwd: 800, rfl: 20);
 
       await tester.pumpWidget(TestHarness(store: store, mqtt: mqtt, child: const PaPanel()));
-      await tester.pumpAndSettle();
-
-      // Unkey: live power drops to zero, but the held peak marker must not.
-      store.applyState('muehle/hf/pa', {
-        'mode': 'operate',
-        'keyed': 'rx',
-        'fault': 'none',
-        'error': '',
-        'temp_c': 38.5,
-        'fwd_power_w': 0,
-        'rfl_power_w': 20,
-        'swr': 1.1,
-        'pa_state': 'OPR/RX',
-        'power': 'on',
-        'device_online': true,
-        'ts': '2026-08-20T14:30:00.000000',
-      });
       await tester.pump();
 
-      // ~2 s after unkeying the marker is still on the meter, partway down
-      // (800 W drains at 1200 W / 5 s = 240 W per second).
-      await tester.pump(const Duration(seconds: 2));
-      expect(find.byKey(const ValueKey('pa-fwd-peak')), findsOneWidget);
+      final peak = find.byKey(const ValueKey('pa-fwd-peak'));
+      double peakX() => tester.getTopLeft(peak).dx;
+      final atPeak = peakX();
 
-      // A full-scale peak would take ~5 s; 800 W is gone well before that.
-      // At zero the markers park at the origin instead of disappearing —
-      // removing them would drop their reserved rows and jump the layout.
-      await tester.pump(const Duration(seconds: 4));
-      expect(find.byKey(const ValueKey('pa-fwd-peak')), findsOneWidget);
-      expect(find.byKey(const ValueKey('pa-fwd-p95')), findsOneWidget);
-      // The meter's bar+marker stack keeps its full height at zero
-      // (compact bar 8 + two 7 px marker rows with 1 px gaps).
+      // Unkey: live power drops to zero.
+      store.applyState('muehle/hf/pa', _rx);
+      await tester.pump();
+
+      // The readout (and bar) release instead of snapping to zero.
+      expect(find.text('0.0 W FWD'), findsNothing);
+
+      // Held at the peak for 2 s…
+      await tester.pump(const Duration(milliseconds: 1500));
+      expect(peakX(), atPeak);
+      // …by then the bar has released to zero.
+      await tester.pump(const Duration(milliseconds: 1500));
+      expect(find.text('0.0 W FWD'), findsOneWidget);
+
+      // …then drains slowly (1200 W / 10 s): partway down at 4 s.
+      await tester.pump(const Duration(seconds: 1));
+      final mid = peakX();
+      expect(mid, lessThan(atPeak));
+
+      // 800 W is gone by ~9 s; at zero the marker parks at the origin
+      // instead of disappearing — removing it would jump the layout.
+      await tester.pump(const Duration(seconds: 6));
+      expect(peakX(), lessThan(mid));
+      expect(peak, findsOneWidget);
+      // Stack keeps its height at zero: compact bar 8 + one 7 px marker row + 1 px gap.
       final stackSize = tester.getSize(find.byKey(const ValueKey('pa-meter-stack')).first);
-      expect(stackSize.height, 8.0 + 2 * (7.0 + 1.0));
+      expect(stackSize.height, 8.0 + 7.0 + 1.0);
+    });
+
+    testWidgets('bar and peak rise instantly', (tester) async {
+      final store = BusStore();
+      final mqtt = FakeMqttService(store);
+      store.setPaTransmitting(fwd: 200, rfl: 5);
+
+      await tester.pumpWidget(TestHarness(store: store, mqtt: mqtt, child: const PaPanel()));
+      await tester.pump();
+      final low = tester.getTopLeft(find.byKey(const ValueKey('pa-fwd-peak'))).dx;
+
+      store.applyState('muehle/hf/pa', {'fwd_power_w': 800});
+      await tester.pump();
+
+      expect(find.text('800 W FWD'), findsOneWidget);
+      expect(tester.getTopLeft(find.byKey(const ValueKey('pa-fwd-peak'))).dx, greaterThan(low));
     });
   });
 }
+
+const _rx = {
+  'mode': 'operate',
+  'keyed': 'rx',
+  'fault': 'none',
+  'error': '',
+  'temp_c': 38.5,
+  'fwd_power_w': 0,
+  'rfl_power_w': 20,
+  'swr': 1.1,
+  'pa_state': 'OPR/RX',
+  'power': 'on',
+  'device_online': true,
+  'ts': '2026-08-20T14:30:00.000000',
+};

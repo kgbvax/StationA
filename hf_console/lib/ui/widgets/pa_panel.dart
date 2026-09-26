@@ -20,60 +20,25 @@ class PaPanel extends StatefulWidget {
 }
 
 class _PaPanelState extends State<PaPanel> {
-  // Rolling 1-second window of forward-power samples, used to draw the peak
-  // (max) and 95th-percentile markers on the FWD meter. Timestamped via
-  // package:clock so widget tests advance the window with tester.pump.
-  final List<_FwdSample> _fwdSamples = [];
+  // Meter ballistics: instant attack, slow release on the bars, and a held
+  // peak marker, so a speech/FT8 envelope reads steadily instead of
+  // jumping with every /state update.
+  final _fwd = _Ballistics(min: 0, max: 1200);
+  final _swr = _Ballistics(min: 1.0, max: 4.0);
 
-  // Peak-hold ballistics: the markers snap up instantly to the window maxima
-  // and then decay linearly at a rate that drains a full-scale (1200 W) peak
-  // in ~5 s, instead of vanishing the moment the sample window rolls over.
-  static const double _meterFullScale = 1200;
-  static const double _peakDecayPerSecond = _meterFullScale / 5; // 240 W/s
-  // ~30 fps: the markers glide down instead of stepping. Only runs while a
-  // marker stands above the live reading, so the cost is bounded to decays.
+  // ~30 fps: bars and markers glide down instead of stepping. Only runs while
+  // something still settles, so the cost is bounded to decays.
   static const Duration _decayInterval = Duration(milliseconds: 33);
-
-  double _lastFwd = 0;
-  double _peakHold = 0;
-  double _p95Hold = 0;
   Timer? _decayTimer;
   // Anchor for elapsed-time decay: the step is derived from how long the
   // last tick actually took, so timer jitter never changes the drain rate.
   DateTime? _lastDecayAt;
 
-  void _recordFwd(double fwd) {
-    final now = clock.now();
-    if (_fwdSamples.isNotEmpty && _fwdSamples.last.v == fwd) {
-      // Constant value: refresh the timestamp so it stays "present" in the
-      // window even when the amp holds a steady power level.
-      _fwdSamples.last.t = now;
-    } else {
-      _fwdSamples.add(_FwdSample(now, fwd));
-    }
-    final cutoff = now.subtract(const Duration(seconds: 1));
-    _fwdSamples.removeWhere((s) => s.t.isBefore(cutoff));
-    _peakHold = math.max(_peakHold, _maxOverWindow());
-    _p95Hold = math.max(_p95Hold, _p95OverWindow());
-    _syncDecayTimer();
-  }
-
-  double _maxOverWindow() {
-    if (_fwdSamples.isEmpty) return 0;
-    return _fwdSamples.map((s) => s.v).reduce((a, b) => a > b ? a : b);
-  }
-
-  double _p95OverWindow() {
-    if (_fwdSamples.isEmpty) return 0;
-    final vals = _fwdSamples.map((s) => s.v).toList()..sort();
-    return _percentile(vals, 0.95);
-  }
-
-  /// Keep the decay timer running exactly while a held marker still stands
-  /// above the live power; once both markers have come down to the reading
-  /// the timer stops until the next burst.
+  /// Keep the decay timer running exactly while a bar or marker still
+  /// stands above the live reading; once everything has settled the timer
+  /// stops until the next burst.
   void _syncDecayTimer() {
-    if (_peakHold > _lastFwd || _p95Hold > _lastFwd) {
+    if (_fwd.settling || _swr.settling) {
       if (_decayTimer == null) {
         _lastDecayAt = clock.now();
         _decayTimer = Timer.periodic(_decayInterval, (_) => _decayTick());
@@ -92,10 +57,8 @@ class _PaPanelState extends State<PaPanel> {
     _lastDecayAt = now;
     final dt = now.difference(last).inMicroseconds / 1e6;
     setState(() {
-      // Decay toward the live reading, never below it — a new transmission
-      // takes the marker over immediately.
-      _peakHold = math.max(_lastFwd, _peakHold - _peakDecayPerSecond * dt);
-      _p95Hold = math.max(_lastFwd, _p95Hold - _peakDecayPerSecond * dt);
+      _fwd.tick(dt, now);
+      _swr.tick(dt, now);
     });
     _syncDecayTimer();
   }
@@ -128,10 +91,10 @@ class _PaPanelState extends State<PaPanel> {
     final paRelayState = store.stateValueAs<String>('muehle/hf/switch', 'pa');
     final paPower = store.stateValueAs<String>('muehle/hf/pa', 'power');
 
-    _lastFwd = fwd;
-    _recordFwd(fwd);
-    final maxFwd = _peakHold;
-    final p95Fwd = _p95Hold;
+    final now = clock.now();
+    _fwd.sample(fwd, now);
+    _swr.sample(swr, now);
+    _syncDecayTimer();
 
     final (suffix, suffixColor) =
         _paState(keyed, fault, error, paRelayState, paPower) ?? ('', null);
@@ -169,7 +132,7 @@ class _PaPanelState extends State<PaPanel> {
                 children: [
                   Expanded(
                     child: _Meter(
-                      value: fwd,
+                      value: _fwd.bar,
                       max: 1200,
                       unit: 'W FWD',
                       ticks: const [(0, '0'), (500, '500'), (1000, '1000'), (1200, '1200')],
@@ -178,10 +141,8 @@ class _PaPanelState extends State<PaPanel> {
                       // Always non-null: a marker that vanished at zero would
                       // remove its reserved row and jump the layout. At zero
                       // the triangle parks at the origin instead.
-                      markerTop: maxFwd / 1200,
-                      markerBottom: p95Fwd / 1200,
-                      markerTopColor: AppTheme.txt,
-                      markerBottomColor: AppTheme.accent,
+                      marker: _fwd.peakFraction,
+                      markerKey: const ValueKey('pa-fwd-peak'),
                     ),
                   ),
                   const SizedBox(width: 10),
@@ -202,7 +163,7 @@ class _PaPanelState extends State<PaPanel> {
                 children: [
                   Expanded(
                     child: _Meter(
-                      value: swr,
+                      value: _swr.bar,
                       // SWR cannot go below 1.0 — the scale starts there, so
                       // a perfect match reads as an empty bar.
                       min: 1.0,
@@ -211,6 +172,8 @@ class _PaPanelState extends State<PaPanel> {
                       ticks: const [(1.0, '1.0'), (1.5, '1.5'), (3.0, '3.0'), (4.0, '4.0')],
                       fillColor: AppTheme.amber,
                       compact: true,
+                      marker: _swr.peakFraction,
+                      markerKey: const ValueKey('pa-swr-peak'),
                     ),
                   ),
                   const SizedBox(width: 10),
@@ -256,23 +219,55 @@ class _PaPanelState extends State<PaPanel> {
   }
 }
 
-/// One forward-power sample with its arrival time.
-class _FwdSample {
-  DateTime t;
-  final double v;
-  _FwdSample(this.t, this.v);
-}
+/// Peak-reading meter ballistics for one scale.
+///
+/// The bar rises instantly and releases exponentially toward the live
+/// reading. The peak marker rises instantly, holds for [holdTime], then
+/// drains linearly (full scale in [peakDrainTime]) — never below the bar.
+class _Ballistics {
+  final double min;
+  final double max;
 
-/// Linear-interpolation percentile (numpy default) over an already-sorted list.
-double _percentile(List<double> sorted, double p) {
-  if (sorted.isEmpty) return 0;
-  if (sorted.length == 1) return sorted.first;
-  final idx = p * (sorted.length - 1);
-  final lower = idx.floor();
-  final upper = idx.ceil();
-  if (lower == upper) return sorted[lower];
-  final frac = idx - lower;
-  return sorted[lower] + frac * (sorted[upper] - sorted[lower]);
+  static const double releaseTau = 0.6; // s
+  static const Duration holdTime = Duration(seconds: 2);
+  static const double peakDrainTime = 10; // s for a full-scale peak
+
+  double _live;
+  double bar;
+  double peak;
+  DateTime? _peakAt;
+
+  _Ballistics({required this.min, required this.max})
+      : _live = min,
+        bar = min,
+        peak = min;
+
+  double get _span => max - min;
+
+  /// Peak position as a fraction of the scale (0..1).
+  double get peakFraction => ((peak - min) / _span).clamp(0.0, 1.0);
+
+  /// True while the bar or marker still stands above where it will settle.
+  bool get settling => bar > _live || peak > bar;
+
+  void sample(double live, DateTime now) {
+    _live = live;
+    if (live > bar) bar = live;
+    if (live >= peak) {
+      peak = live;
+      _peakAt = now;
+    }
+  }
+
+  void tick(double dt, DateTime now) {
+    if (bar > _live) {
+      bar = _live + (bar - _live) * math.exp(-dt / releaseTau);
+      if (bar - _live < 0.005 * _span) bar = _live;
+    }
+    final held = _peakAt != null && now.difference(_peakAt!) < holdTime;
+    if (!held) peak -= _span / peakDrainTime * dt;
+    if (peak < bar) peak = bar;
+  }
 }
 
 class _Meter extends StatelessWidget {
@@ -287,15 +282,12 @@ class _Meter extends StatelessWidget {
   final Color fillColor;
   final bool compact;
 
-  /// Optional peak/percentile markers, as fractions of the scale (0..1). A non-null
-  /// [markerTop] draws a downward triangle above the bar; [markerBottom] draws
-  /// an upward triangle below it. Marker rows are reserved only while a
-  /// marker is non-null, so a meter whose markers toggle to null at zero
-  /// would jump its layout — pass 0 there and the marker parks at the origin.
-  final double? markerTop;
-  final double? markerBottom;
-  final Color? markerTopColor;
-  final Color? markerBottomColor;
+  /// Optional peak marker, as a fraction of the scale (0..1): a downward
+  /// triangle above the bar. Its row is reserved only while [marker] is
+  /// non-null, so a meter whose marker toggles to null at zero would jump
+  /// its layout — pass 0 there and the marker parks at the origin.
+  final double? marker;
+  final Key? markerKey;
 
   const _Meter({
     required this.value,
@@ -305,10 +297,8 @@ class _Meter extends StatelessWidget {
     required this.ticks,
     required this.fillColor,
     this.compact = false,
-    this.markerTop,
-    this.markerBottom,
-    this.markerTopColor,
-    this.markerBottomColor,
+    this.marker,
+    this.markerKey,
   });
 
   static const double _markerSize = 7;
@@ -322,9 +312,8 @@ class _Meter extends StatelessWidget {
     final labelStyle = AppTheme.mono(compact ? 9 : 11, color: AppTheme.txtFaint);
     final barHeight = compact ? 8.0 : 12.0;
 
-    final hasMarkers = markerTop != null || markerBottom != null;
-    final markerSpace = hasMarkers ? _markerSize + _markerGap : 0.0;
-    final stackHeight = barHeight + 2 * markerSpace;
+    final markerSpace = marker != null ? _markerSize + _markerGap : 0.0;
+    final stackHeight = barHeight + markerSpace;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -366,17 +355,11 @@ class _Meter extends StatelessWidget {
                       ),
                     ),
                   ),
-                  if (markerTop != null)
+                  if (marker != null)
                     Positioned(
                       top: 0,
-                      left: _markerLeft(markerTop!, w),
-                      child: _TriangleMarker(key: const ValueKey('pa-fwd-peak'), color: markerTopColor ?? AppTheme.txt, pointDown: true, size: _markerSize),
-                    ),
-                  if (markerBottom != null)
-                    Positioned(
-                      bottom: 0,
-                      left: _markerLeft(markerBottom!, w),
-                      child: _TriangleMarker(key: const ValueKey('pa-fwd-p95'), color: markerBottomColor ?? AppTheme.accent, pointDown: false, size: _markerSize),
+                      left: _markerLeft(marker!, w),
+                      child: _TriangleMarker(key: markerKey, color: AppTheme.txt, pointDown: true, size: _markerSize),
                     ),
                 ],
               );
