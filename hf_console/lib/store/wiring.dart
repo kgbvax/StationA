@@ -19,6 +19,9 @@ const cmdRetain = {
   'muehle/hf/ant-ctrl': true,
   'muehle/hf/ant-switch': true,
   'muehle/hf/antenna-select': true,
+  // beamsteer smart-rotation toggle — retained steady state, so
+  // enable/disable survives a beamsteer restart.
+  'muehle/hf/beam-steer': true,
   // one-shot
   'muehle/hf/pa': false,
   'muehle/hf/rotator': false,
@@ -59,6 +62,7 @@ const expectedSlots = [
   'muehle/hf/switch',
   'muehle/hf/pa-arm',
   'muehle/hf/antenna-select',
+  'muehle/hf/beam-steer',
   'muehle/hf/pa',
   'muehle/hf/rotator',
   'muehle/hf/tuner',
@@ -223,6 +227,11 @@ String antCtrlBandPayload(String band) => cmdPayload('band', band);
 
 String antCtrlRetractPayload() => jsonEncode({'action': 'retract'});
 
+// --- Smart rotation (beamsteer) ------------------------------------------------
+
+String beamSteerEnablePayload(bool enabled) =>
+    jsonEncode({'action': enabled ? 'enable' : 'disable'});
+
 // --- PA ----------------------------------------------------------------------
 
 String paSetModePayload(String mode) => cmdPayload('set_mode', mode);
@@ -252,4 +261,5 @@ String dvkStopPayload([int? id]) =>
 
 String radioSetBandPayload(String band) => cmdPayload('set_band', band);
 
-String radioSetMicProfilePayload(String name) => cmdPayload('set_mic_profile', name);
+String radioSetMicProfilePayload(String name) =>
+    cmdPayload('set_mic_profile', name);

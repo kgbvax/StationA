@@ -5,7 +5,7 @@ shared documentation **and** all component projects as subdirectories. The Go
 components are a [Go workspace](https://go.dev/ref/mod#workspaces) tied together by a
 root `go.work`; each component keeps its own `go.mod` (per-module, independently
 `go build`/`go test`-able). A shared module, `codeberg.org/kgbvax/stationa/shared`,
-holds cross-cutting plumbing (`shared/mqtt`, `shared/schema`, later `shared/config`);
+holds cross-cutting plumbing (`shared/mqtt`, `shared/schema`, `shared/pstrotator`, later `shared/config`);
 every Go component imports it via a `replace … => ../shared` so each stays self-building
 without the workspace. Bridges import `shared/` but never another bridge's `internal/`
 — enforced by Go's `internal/` visibility rule across separate modules, not just
@@ -35,6 +35,7 @@ separate per-component remotes to push to.
 | m5stamp-pol-ctrl | `m5stamp-pol-ctrl/` | M5 Stamp PLC #2 firmware → `uhf/pol-ctrl` (X-Quad polarization, ESPHome) |
 | powerseq | `powerseq/` | Startup/shutdown sequencer → `hf/power-seq` (ordered, delay + liveness confirmations) |
 | antennaselect | `antennaselect/` | Antenna-selection reconciler (core implemented) |
+| beamsteer | `beamsteer/` | Smart rotation → `hf/beam-steer`: PstRotator UDP emulator (:12050) for the contest logger; station behind → Ultrabeam 180° flip, outside both lobes → rotate to the cheaper lobe (±30°, bi-dir ±45° no flips); toggle = hf_console Ultrabeam `SMART` |
 | hadiscovery | `hadiscovery/` | Home Assistant discovery consumer (reads `/meta` `expose`, renders HA discovery) |
 | pelcobridge2 | `pelcobridge2/` | UHF rotator TUI + rotctld server (Pelco-D/P pan/tilt head over RS-485) |
 | spid-ercm-rotator-bridge | `spid-ercm-rotator-bridge/` | Sat-ops az/el rotator bridge → `uhf/az-rotator` (SPID) + `uhf/el-rotator` (GS-500 via ERC-M); rotctld :4534 + PstRotator UDP :12041 listeners (free motion, no arming gate) |
@@ -68,6 +69,7 @@ and `go work sync` operate over the whole workspace at once.
 | `muehle/hf/rotator` | wrc-rotator-bridge | Yaesu G-450DC via AF6SA WRC, websocket |
 | `muehle/hf/tuner` | atr1k-tuner-bridge | ATR-1000 ATU, wifi (binary WebSocket) |
 | `muehle/hf/spots` | logger-spot-bridge | DXLog/Log4OM broadcasts (LAN-wide UDP) → operator-keyed station feed (role `bandmap`; systemd service on shari since 2026-09-16) |
+| `muehle/hf/beam-steer` | beamsteer | logic slot — no device (runs on shari); logger PstRotator UDP :12050 → `hf/rotator` + `hf/ant-ctrl` direction |
 | `muehle/hf/power-seq` | powerseq | logic slot — no device (runs on shari); startup/shutdown sequencer |
 | `muehle/uhf/pol-ctrl` | m5stamp-pol-ctrl | M5 Stamp PLC #2 — X-Quad polarization (ESPHome), wifi |
 | `muehle/uhf/radio` | icom9700-radio-bridge | Icom IC-9700 — RS-BA1 LAN session carries RX audio capture (demand-driven) + read-only serial CI-V telemetry; no remote TX (2026-09 pivot) |

@@ -1,0 +1,41 @@
+# beamsteer — example configuration
+#
+# On the target this lives at /etc/beamsteer/config.toml (0600, owned by the
+# service user); deploy.sh seeds it once. See
+# ../docs/conventions/config-and-secrets.md.
+
+# --- Deployment identity ------------------------------------------------------
+# Published in /meta (integration model §3). Required.
+location = "bauwagen"
+host     = "shari"
+
+# --- MQTT -------------------------------------------------------------------
+[mqtt]
+broker   = "tcp://127.0.0.1:1883"
+# client_id defaults to "<site>-<station>-<slot>" (model §8); set only to override.
+site     = "muehle"
+station  = "hf"
+slot     = "beam-steer"
+user     = "hf"
+password = ""            # set on the device; never on the command line
+
+# --- PstRotator emulation -----------------------------------------------------
+# Point the contest logger's PstRotator output at this host:port. Query
+# replies (AZ?) go to the sender's IP at port+1.
+[pstrotator]
+bind  = "0.0.0.0"
+port  = 12050
+# "manual" = "AZ:xxx.x<CR>" (PstRotator manual); "xml" =
+# "<PST><AZIMUTH>nnn</AZIMUTH></PST>" (what wrc-rotator-bridge answers).
+reply = "manual"
+
+# --- Decision parameters ------------------------------------------------------
+[steer]
+lobe_deg       = 30    # forward/reverse: station within ±30° of front or back = no rotation
+bidir_lobe_deg = 45    # bidirectional: ±45° front and back, never switches direction
+# Highest rotator target. The G-450 has a 360..450 overlap, but it is not yet
+# verified that /state.az reads above 360 there — keep 360 until it is.
+max_az         = 360
+rotator_slot   = "rotator"
+ant_ctrl_slot  = "ant-ctrl"
+radio_slot     = "radio"

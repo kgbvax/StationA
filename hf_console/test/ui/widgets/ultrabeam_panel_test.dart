@@ -181,5 +181,72 @@ void main() {
       expect(mqtt.publishes.length, 1);
       expect(mqtt.publishes.first.payload, contains('retract'));
     });
+
+    group('SMART toggle', () {
+      Future<void> pump(WidgetTester tester, BusStore store, FakeMqttService mqtt) async {
+        await tester.pumpWidget(TestHarness(store: store, mqtt: mqtt, child: const UltrabeamPanel()));
+        await tester.pumpAndSettle();
+      }
+
+      ElevatedButton smart(WidgetTester tester) =>
+          tester.widget<ElevatedButton>(find.widgetWithText(ElevatedButton, 'SMART'));
+
+      testWidgets('enables beamsteer with a retained cmd', (tester) async {
+        final store = BusStore();
+        final mqtt = FakeMqttService(store);
+        store.setUltrabeam();
+        store.setOnline('muehle/hf/beam-steer');
+        store.applyState('muehle/hf/beam-steer', {'enabled': false});
+        await pump(tester, store, mqtt);
+
+        await tester.tap(find.widgetWithText(ElevatedButton, 'SMART'));
+        await tester.pumpAndSettle();
+
+        expect(mqtt.publishes.length, 1);
+        expect(mqtt.publishes.first.topic, 'muehle/hf/beam-steer/cmd');
+        expect(mqtt.publishes.first.payload, '{"action":"enable"}');
+        expect(mqtt.publishes.first.retain, isTrue);
+      });
+
+      testWidgets('reflects enabled state, disables on tap, shows last reason', (tester) async {
+        final store = BusStore();
+        final mqtt = FakeMqttService(store);
+        store.setUltrabeam();
+        store.setOnline('muehle/hf/beam-steer');
+        store.applyState('muehle/hf/beam-steer', {
+          'enabled': true,
+          'last': {'bearing': 265, 'direction': 'reverse', 'reason': 'behind: switch to 180°'},
+        });
+        await pump(tester, store, mqtt);
+
+        expect(smart(tester).style!.backgroundColor!.resolve({}), AppTheme.accent);
+        expect(find.text('SMART · behind: switch to 180°'), findsOneWidget);
+
+        await tester.tap(find.widgetWithText(ElevatedButton, 'SMART'));
+        await tester.pumpAndSettle();
+        expect(mqtt.publishes.single.payload, '{"action":"disable"}');
+      });
+
+      testWidgets('disabled while beamsteer is offline, even with the controller up', (tester) async {
+        final store = BusStore();
+        final mqtt = FakeMqttService(store);
+        store.setUltrabeam();
+        store.setBridgeOffline('muehle/hf/beam-steer');
+        await pump(tester, store, mqtt);
+
+        expect(smart(tester).onPressed, isNull);
+        expect(find.textContaining('SMART ·'), findsNothing);
+      });
+
+      testWidgets('stays live while the elements move', (tester) async {
+        final store = BusStore();
+        final mqtt = FakeMqttService(store);
+        store.setUltrabeam(moving: true);
+        store.setOnline('muehle/hf/beam-steer');
+        await pump(tester, store, mqtt);
+
+        expect(smart(tester).onPressed, isNotNull);
+      });
+    });
   });
 }

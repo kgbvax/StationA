@@ -4,6 +4,7 @@ use (
 	./acom1200s-pa-bridge
 	./antennaselect
 	./atr1k-tuner-bridge
+	./beamsteer
 	./flexbridge
 	./hadiscovery
 	./hf-mqtt-capture
