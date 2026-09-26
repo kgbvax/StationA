@@ -79,4 +79,13 @@ void main() {
       expect(MercatorProjection.minZoomForHeight(512), closeTo(1.0, 0.001));
     });
   });
+
+  test('value equality, so the map painter can skip unchanged repaints', () {
+    const a = MercatorProjection(centerLat: 52.2, centerLng: 7.9, zoom: 7, width: 800, height: 600);
+    const b = MercatorProjection(centerLat: 52.2, centerLng: 7.9, zoom: 7, width: 800, height: 600);
+    const c = MercatorProjection(centerLat: 52.2, centerLng: 7.9, zoom: 7.5, width: 800, height: 600);
+    expect(a == b, isTrue);
+    expect(a.hashCode, b.hashCode);
+    expect(a == c, isFalse);
+  });
 }

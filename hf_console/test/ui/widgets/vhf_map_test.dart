@@ -115,4 +115,19 @@ void main() {
     expect(Places.parse('not json'), isEmpty);
     expect(Places.maxRankForZoom(kVhfMapZoom), greaterThanOrEqualTo(7), reason: 'Münster is visible at the opening zoom');
   });
+
+  testWidgets('unrelated bus traffic does not repaint the map; a rotator move does', (tester) async {
+    final (store, _) = await _pump(tester);
+    await tester.pump();
+    MercatorPainterDebug.paintCount = 0;
+    for (var i = 0; i < 20; i++) {
+      store.setPaTransmitting(fwd: 100.0 + i); // PA telemetry: many messages a second in the shack
+      await tester.pump();
+    }
+    expect(MercatorPainterDebug.paintCount, 0);
+
+    store.setSatRotator('muehle/uhf/az-rotator', axis: 'az', pos: 120, target: 120);
+    await tester.pump();
+    expect(MercatorPainterDebug.paintCount, greaterThan(0));
+  });
 }

@@ -202,23 +202,28 @@ class _MercatorMapPanelState extends State<MercatorMapPanel> {
               child: Stack(
                 fit: StackFit.expand,
                 children: [
-                  CustomPaint(
-                    size: size,
-                    painter: _MercatorPainter(
-                      projection: proj,
-                      isDark: !AppTheme.isLight,
-                      rings: _rings,
-                      gridSquares: dx.gridSquares,
-                      spots: dx.spots,
-                      filter: dx.filter,
-                      qthLat: qthLat,
-                      qthLng: qthLng,
-                      selected: selectedLive ? selected : null,
-                      selectedAgeSeconds: selectedAge,
-                      places: _places,
-                      beam: beam,
+                  // Own layer: chrome over the map (heading chip, rails) and
+                  // anything else sharing the parent layer must not drag the
+                  // whole map into every repaint.
+                  RepaintBoundary(
+                    child: CustomPaint(
+                      size: size,
+                      painter: _MercatorPainter(
+                        projection: proj,
+                        isDark: !AppTheme.isLight,
+                        rings: _rings,
+                        gridSquares: dx.gridSquares,
+                        spots: dx.spots,
+                        filter: dx.filter,
+                        qthLat: qthLat,
+                        qthLng: qthLng,
+                        selected: selectedLive ? selected : null,
+                        selectedAgeSeconds: selectedAge,
+                        places: _places,
+                        beam: beam,
+                      ),
+                      child: SizedBox.expand(),
                     ),
-                    child: SizedBox.expand(),
                   ),
                   Positioned(
                     bottom: 12,
@@ -415,6 +420,13 @@ double gridZoomFade(double zoom) {
 /// Rotator beam for the painter: QTH, pointing and commanded azimuth.
 typedef MercatorBeam = ({LatLng qth, double az, double? target, double half, bool online});
 
+/// Test hook: paint calls of the Mercator map painter.
+@visibleForTesting
+class MercatorPainterDebug {
+  static int get paintCount => _MercatorPainter.debugPaintCount;
+  static set paintCount(int v) => _MercatorPainter.debugPaintCount = v;
+}
+
 class _MercatorPainter extends CustomPainter {
   final MercatorProjection projection;
   final bool isDark;
@@ -444,8 +456,12 @@ class _MercatorPainter extends CustomPainter {
     this.beam,
   });
 
+  /// Paint calls, for the repaint-discipline test.
+  static int debugPaintCount = 0;
+
   @override
   void paint(Canvas canvas, Size size) {
+    debugPaintCount++;
     // 1. Background
     canvas.drawRect(
       Offset.zero & size,
@@ -547,16 +563,35 @@ class _MercatorPainter extends CustomPainter {
       if (pl.rank > maxRank) continue;
       final p = projection.project(pl.pos.lat, pl.pos.lng);
       if (p == null || p.x < -40 || p.y < -20 || p.x > size.width + 40 || p.y > size.height + 20) continue;
-      final tp = TextPainter(
-        text: TextSpan(text: pl.name, style: AppTheme.body(10, color: AppTheme.txtMute)),
-        textDirection: TextDirection.ltr,
-      )..layout();
+      final tp = _placeLabel(pl.name);
       final rect = Rect.fromLTWH(p.x - 3, p.y - tp.height / 2, tp.width + 10, tp.height);
       if (taken.any((r) => r.overlaps(rect))) continue;
       taken.add(rect);
       canvas.drawCircle(Offset(p.x, p.y), 2.2, dot);
       tp.paint(canvas, Offset(p.x + 5, p.y - tp.height / 2));
     }
+  }
+
+  // Laid-out city labels, reused across repaints (a label only depends on
+  // its name and the colour scheme). Reset when the scheme changes.
+  static final Map<String, TextPainter> _labelCache = {};
+  static AppColorScheme? _labelScheme;
+
+  static TextPainter _placeLabel(String name) {
+    if (_labelScheme != AppTheme.selected) {
+      for (final tp in _labelCache.values) {
+        tp.dispose();
+      }
+      _labelCache.clear();
+      _labelScheme = AppTheme.selected;
+    }
+    return _labelCache.putIfAbsent(
+      name,
+      () => TextPainter(
+        text: TextSpan(text: name, style: AppTheme.body(10, color: AppTheme.txtMute)),
+        textDirection: TextDirection.ltr,
+      )..layout(),
+    );
   }
 
   /// Beam wedge along great circles from the QTH (az ± half) out to the
@@ -770,8 +805,11 @@ class _MercatorPainter extends CustomPainter {
     return oldDelegate.projection != projection ||
         oldDelegate.isDark != isDark ||
         oldDelegate.rings != rings ||
-        oldDelegate.gridSquares.length != gridSquares.length ||
-        oldDelegate.spots.length != spots.length ||
+        // DxSpotService publishes a new list on every change, so identity
+        // is exact (length missed same-size updates once the projection
+        // stopped forcing a repaint on every rebuild).
+        !identical(oldDelegate.gridSquares, gridSquares) ||
+        !identical(oldDelegate.spots, spots) ||
         oldDelegate.filter != filter ||
         oldDelegate.places.length != places.length ||
         oldDelegate.beam != beam ||

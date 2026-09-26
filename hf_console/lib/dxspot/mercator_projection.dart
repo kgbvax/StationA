@@ -37,6 +37,20 @@ class MercatorProjection {
     required this.height,
   });
 
+  /// Value equality: the map painter's shouldRepaint compares projections,
+  /// and without this every rebuild (every bus message) repainted the map.
+  @override
+  bool operator ==(Object other) =>
+      other is MercatorProjection &&
+      other.centerLat == centerLat &&
+      other.centerLng == centerLng &&
+      other.zoom == zoom &&
+      other.width == width &&
+      other.height == height;
+
+  @override
+  int get hashCode => Object.hash(centerLat, centerLng, zoom, width, height);
+
   /// World width/height in metres at zoom 0.
   static double get worldSize => 2.0 * math.pi * _mercatorRadius;
 
