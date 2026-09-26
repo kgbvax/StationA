@@ -198,7 +198,7 @@ in `src/secrets.h` (gitignored):
 // src/secrets.h
 #define WIFI_SSID     "..."
 #define WIFI_PASSWORD "..."
-#define MQTT_HOST     "192.168.1.139"   // shack broker, LAN address (never 127.0.0.1)
+#define MQTT_HOST     "192.168.1.178"   // bw broker on scmino, LAN address (never 127.0.0.1)
 #define MQTT_PORT     1883
 #define MQTT_USER     "dial"            // narrow account, NOT the broad "hf" account
 #define MQTT_PASSWORD "..."
@@ -209,7 +209,7 @@ in `src/secrets.h` (gitignored):
 
 This is the **embedded-firmware secrets pattern** (like the ant-switch ESPHome
 `secrets.yaml`), distinct from the Go services' EnvironmentFile. The `dial`
-broker account must be added on shari (seed-once broker — hand-edit
+broker account must be added on scmino (seed-once broker — hand-edit
 `/etc/mosquitto/acl.conf` + `mosquitto_passwd`, restart mosquitto; see
 `../mqtt-broker/README.md`).
 

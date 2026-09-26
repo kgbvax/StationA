@@ -155,7 +155,7 @@ func Default() Config {
 		Overlay: OverlayConfig{
 			Enabled:      false,
 			Logo:         "/run/vhfcam-restream/dragon.png",
-			MQTTBroker:   "tcp://192.168.1.50:1883",
+			MQTTBroker:   "tcp://192.168.1.178:1883",
 			MQTTUser:     "hf",
 			Site:         "muehle",
 			Station:      "hf",

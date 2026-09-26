@@ -1,12 +1,14 @@
-# Shack-local Mosquitto broker — example config.
-# Lives at /etc/mosquitto/mosquitto.conf on shari (192.168.1.139), 0600, owned by
-# the mosquitto user. Seeded once by deploy.sh; edit on the device after that.
+# Bauwagen-local Mosquitto broker — example config.
+# Lives at /etc/mosquitto/mosquitto.conf on scmino (192.168.1.178, DNS alias
+# bwbroker), 0600, owned by the mosquitto user. Seeded once by deploy.sh; edit
+# on the device after that.
 # See README.md for the full two-broker topology and the topic-direction table.
 
 # --- listener ---------------------------------------------------------------
-# Listen on all interfaces so remote shack clients (Shelly plugs, M5 PLC,
-# ant-switch ESP, the console tablet) can reach it. shari-local Go services
-# connect via 127.0.0.1.
+# Listen on all interfaces so all clients reach it: the Go services (which run
+# on shari), the remote shack devices (Shelly plugs, M5 PLC, ant-switch ESP,
+# the console tablet), and workstations. Everyone connects via 192.168.1.178
+# (or the bwbroker name); only on-scmino processes use 127.0.0.1.
 listener 1883 0.0.0.0
 allow_anonymous false
 per_listener_settings false
@@ -15,7 +17,7 @@ acl_file /etc/mosquitto/acl.conf
 
 # --- persistence ------------------------------------------------------------
 # Required by the station model: retained /meta and /state must survive a
-# shari reboot so the bus re-seeds before the bridges reconnect.
+# broker-host (scmino) reboot so the bus re-seeds before the bridges reconnect.
 persistence true
 persistence_location /var/lib/mosquitto/
 autosave_interval 1800
@@ -31,7 +33,7 @@ log_type information
 # The HA broker is HA's own Mosquitto add-on; it stays untouched and keeps
 # serving HA's other MQTT devices. We only add a `stationa-bridge` account +
 # ACL there (see README.md "HA-side setup"). This connection block is a client
-# of the HA broker; it connects out from shari and replicates the muehle/#
+# of the HA broker; it connects out from scmino and replicates the muehle/#
 # namespace. Direction is split (no `both`) so message loops are structurally
 # impossible; `try_private true` (default) marks bridge-originated messages as
 # an extra loop guard.

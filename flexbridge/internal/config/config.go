@@ -58,7 +58,7 @@ func Defaults() Config {
 		RadioHost:   "",
 		RadioSerial: "",
 		MQTT: MQTTConfig{
-			Broker:          "tcp://127.0.0.1:1883",
+			Broker:          "tcp://192.168.1.178:1883",
 			ClientID:        "flexbridge",
 			DiscoveryPrefix: "homeassistant",
 			Slot:            "radio",

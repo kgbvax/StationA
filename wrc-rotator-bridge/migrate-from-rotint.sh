@@ -20,7 +20,7 @@
 # The stationa wrc-rotator-bridge defaults match rotint's hardcoded values for
 # everything except the broker: WRC ws://192.168.1.108/wsrotor, user hf,
 # GS-232 0.0.0.0:7373 are unchanged, but the broker is now the shack-local
-# Mosquitto on shari (tcp://127.0.0.1:1883, see docs/conventions/mqtt-topology.md)
+# Mosquitto on scmino (tcp://192.168.1.178:1883, see docs/conventions/mqtt-topology.md)
 # rather than rotint's tcp://192.168.1.50:1883. So deploy.sh's seed-once config.toml
 # is functionally equivalent modulo the broker repoint. The ONLY thing deploy.sh
 # cannot seed is the MQTT password — so this

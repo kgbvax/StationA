@@ -43,7 +43,7 @@ separate per-component remotes to push to.
 | logger-spot-bridge | `logger-spot-bridge/` | Shack-logger bridge (DXLog/Log4OM) → `hf/spots` — the operator-keyed station (call, position, beam bearing) |
 | testui | `testui/` | MQTT relay + schema-aware browser UI for the bus (not a slot; passive consumer + /cmd stimulator) |
 | vhfcam-restream | `vhfcam-restream/` | VHF cam (UniFi Protect RTSPS) multi-sink restreamer — YouTube Live + LAN web preview (:8083) with operational-data overlay (AZ/EL/freq/TX drawtext from the bus) and IC-9700 RX audio (demand-driven via icom9700-radio-bridge); web radio controls; Go supervisor around ffmpeg; MQTT consumer + minimal `/status`/`/state` planes (`muehle/hf/vhfcam`) |
-| mqtt-broker | `mqtt-broker/` | Shack-local Mosquitto broker on shari, bridged to the HA broker (infra — not a slot, not Go) |
+| mqtt-broker | `mqtt-broker/` | Bauwagen-local Mosquitto broker on scmino (`192.168.1.178`, alias `bwbroker`), bridged to the HA broker (infra — not a slot, not Go) |
 
 Each project has its own `CLAUDE.md` and is independently buildable (`go build`/`go test`
 from its own directory works without the workspace, via the `replace … => ../shared`).
@@ -111,10 +111,19 @@ sudo systemctl restart flexbridge
 sudo systemctl restart ultrabridge
 ```
 
-The MQTT broker is the **shack-local Mosquitto on shari** (`127.0.0.1:1883`
-for shari-local services, `192.168.1.139:1883` from the LAN), bridged to the
-Home Assistant broker at `192.168.1.50:1883`. See `mqtt-broker/` and
-`docs/conventions/mqtt-topology.md`.
+The MQTT broker is the **bauwagen-local Mosquitto on scmino**
+(`192.168.1.178:1883`, DNS alias `bwbroker`; the Go services on shari connect
+over the shack LAN), bridged to the Home Assistant broker at
+`192.168.1.50:1883`. See `mqtt-broker/` and `docs/conventions/mqtt-topology.md`.
+
+**scmino** (`192.168.1.178`, `scmino.local`, alias `bwbroker`) is a separate
+box that hosts only the broker:
+
+```bash
+ssh io@scmino.local
+sudo systemctl status mosquitto
+sudo cat /etc/mosquitto/mosquitto.conf   # seed-once; see mqtt-broker/
+```
 
 ---
 
@@ -145,28 +154,29 @@ from `flexbridge/`). Cross-cutting Go code, not docs, lives in the `shared/` mod
 
 ## MQTT broker access
 
-The station runs a **shack-local Mosquitto broker on shari** (`mqtt-broker/`),
+The station runs a **bauwagen-local Mosquitto broker on scmino**
+(`192.168.1.178`, alias `bwbroker`; `mqtt-broker/`),
 authoritative for the `muehle/#` namespace. A mosquitto `bridge` connection
 replicates it to the Home Assistant broker at `192.168.1.50:1883` (HA's own
 Mosquitto add-on), which stays untouched — it still serves HA's other MQTT
-devices. On-shari Go services talk to `127.0.0.1:1883`; remote clients (Shelly
-plugs, M5 PLC, ant-switch ESP, the console tablet, workstations) use
-`192.168.1.139:1883`. See `docs/conventions/mqtt-topology.md` for the full
+devices. All clients — the Go services on shari included — talk to
+`192.168.1.178:1883` (or `bwbroker:1883`); only on-scmino processes use
+loopback. See `docs/conventions/mqtt-topology.md` for the full
 topology, topic-direction table, and ACLs.
 
 Credentials: the `hf` (station services), `bridge` (HA bridge connection), and
-`console` (tablet) accounts are seeded once on shari in `/etc/mosquitto/passwd`
+`console` (tablet) accounts are seeded once on scmino in `/etc/mosquitto/passwd`
 (0600, owned by the mosquitto user). Do not pass credentials on the command
 line or in shell history.
 
-To inspect the bus from a workstation (the shack broker):
+To inspect the bus from a workstation (the bw broker):
 
 ```bash
-# Subscribe to all topics under muehle/ (shack broker on shari)
-mosquitto_sub -h 192.168.1.139 -u hf -P "$MQTT_PASSWORD" -t 'muehle/#' -v
+# Subscribe to all topics under muehle/ (bw broker on scmino)
+mosquitto_sub -h 192.168.1.178 -u hf -P "$MQTT_PASSWORD" -t 'muehle/#' -v
 
 # Watch a single slot
-mosquitto_sub -h 192.168.1.139 -u hf -P "$MQTT_PASSWORD" -t 'muehle/hf/radio/#' -v
+mosquitto_sub -h 192.168.1.178 -u hf -P "$MQTT_PASSWORD" -t 'muehle/hf/radio/#' -v
 ```
 
 The HA broker at `192.168.1.50:1883` receives the same `muehle/#` traffic via

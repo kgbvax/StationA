@@ -29,7 +29,7 @@
 #   HOST_NAME       host value            (default: shari)     [published in /meta]
 #   LOCATION        mqtt.location value   (default: bauwagen)
 #   LOG_LEVEL       log.level value       (default: info)
-#   MQTT_BROKER     mqtt.broker value     (default: tcp://127.0.0.1:1883)
+#   MQTT_BROKER     mqtt.broker value     (default: tcp://192.168.1.178:1883)
 #   MQTT_SITE       mqtt.site             (default: muehle)
 #   MQTT_STATION    mqtt.station          (default: uhf)
 #   MQTT_USER       mqtt.user             (default: hf)
@@ -88,7 +88,7 @@ PKG="./cmd/spid-ercm-rotator-bridge"
 HOST_NAME="${HOST_NAME:-shari}"
 LOCATION="${LOCATION:-bauwagen}"
 LOG_LEVEL="${LOG_LEVEL:-info}"
-MQTT_BROKER="${MQTT_BROKER:-tcp://127.0.0.1:1883}"
+MQTT_BROKER="${MQTT_BROKER:-tcp://192.168.1.178:1883}"
 MQTT_SITE="${MQTT_SITE:-muehle}"
 MQTT_STATION="${MQTT_STATION:-uhf}"
 MQTT_USER="${MQTT_USER:-hf}"

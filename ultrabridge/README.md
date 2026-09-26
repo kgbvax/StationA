@@ -17,7 +17,7 @@ go run ./cmd/ultrabridge -port /dev/cu.usbserial-XXXX
 
 Optional MQTT:
 
-go run ./cmd/ultrabridge -mqtt-broker tcp://127.0.0.1:1883
+go run ./cmd/ultrabridge -mqtt-broker tcp://192.168.1.178:1883
 
 ## Configuration
 
@@ -41,7 +41,7 @@ location    = "bauwagen"       # published in /meta
 host        = "shari"          # published in /meta
 
 [mqtt]
-broker           = "tcp://127.0.0.1:1883"  # empty -> MQTT disabled
+broker           = "tcp://192.168.1.178:1883"  # empty -> MQTT disabled
 site             = "muehle"
 station          = "hf"
 slot             = "ant-ctrl"              # canonical role (default)

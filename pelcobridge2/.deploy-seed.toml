@@ -33,7 +33,7 @@ max_el = 90.0
 enabled      = false
 # Shack-local broker per mqtt-topology (LAN clients → shari). Enable only
 # after the shari deploy, with PELCOBRIDGE2_MQTT_PASSWORD set in the shell.
-broker       = "tcp://192.168.1.139:1883"
+broker       = "tcp://192.168.1.178:1883"
 client_id    = ""          # default: muehle-uhf-rotator
 user         = "hf"
 password     = ""          # unused; env PELCOBRIDGE2_MQTT_PASSWORD wins

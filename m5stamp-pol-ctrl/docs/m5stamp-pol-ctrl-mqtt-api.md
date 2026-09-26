@@ -25,7 +25,7 @@ binds it to band, tracking, or any automatic policy (sat-ops plan R15).
 
 | Property | Value |
 |----------|-------|
-| Protocol | MQTT 3.1.1 (plain TCP, `192.168.1.139:1883` — the shack broker on shari) |
+| Protocol | MQTT 3.1.1 (plain TCP, `192.168.1.178:1883` — the bw broker on scmino) |
 | Authentication | Username/password (`hf` account) |
 | Clean session | **No** — persistent session; retained `/cmd` is re-delivered on every reconnect (self-heal) |
 | Auto-reconnect | yes (ESPHome MQTT client) |

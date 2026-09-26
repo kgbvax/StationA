@@ -106,7 +106,7 @@ func Default() Config {
 		},
 		MQTT: MQTT{
 			Enabled: false,
-			Broker:  "tcp://192.168.1.50:1883",
+			Broker:  "tcp://192.168.1.178:1883",
 			Site:    "muehle", Station: "uhf", Slot: "rotator",
 			DeviceModel: "PTS-303Z/3050DZ",
 			DeviceName:  "UHF Rotator",

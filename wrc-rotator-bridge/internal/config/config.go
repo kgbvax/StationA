@@ -105,7 +105,7 @@ func Defaults() Config {
 			Port:    12040,
 		},
 		MQTT: MQTTConfig{
-			Broker:          "tcp://127.0.0.1:1883",
+			Broker:          "tcp://192.168.1.178:1883",
 			ClientID:        "",
 			User:            "hf",
 			DiscoveryPrefix: "homeassistant",

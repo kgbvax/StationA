@@ -26,7 +26,7 @@
 #   HOST_NAME       host value            (default: shari)     [published in /meta]
 #   LOCATION        location value        (default: bauwagen)  [published in /meta]
 #   LOG_LEVEL       log.level value       (default: info)
-#   MQTT_BROKER     mqtt.broker value     (default: tcp://127.0.0.1:1883)
+#   MQTT_BROKER     mqtt.broker value     (default: tcp://192.168.1.178:1883)
 #   MQTT_SITE       mqtt.site             (default: muehle)
 #   MQTT_STATION    mqtt.station           (default: hf)
 #   MQTT_SLOT       mqtt.slot             (default: power-seq)
@@ -62,7 +62,7 @@ PKG="./cmd/powerseq"
 HOST_NAME="${HOST_NAME:-shari}"
 LOCATION="${LOCATION:-bauwagen}"
 LOG_LEVEL="${LOG_LEVEL:-info}"
-MQTT_BROKER="${MQTT_BROKER:-tcp://127.0.0.1:1883}"
+MQTT_BROKER="${MQTT_BROKER:-tcp://192.168.1.178:1883}"
 MQTT_SITE="${MQTT_SITE:-muehle}"
 MQTT_STATION="${MQTT_STATION:-hf}"
 MQTT_SLOT="${MQTT_SLOT:-power-seq}"

@@ -391,10 +391,11 @@ PRD 00 §7 items later resolved in code, recorded so nobody re-opens them:
   by reopening with a `reopenCooldown` (2 s throttle) instead of giving up
   permanently after one failure (`pelcobridge2/internal/control/engine.go`).
 - **Broker topology (PRD 00 §7.2).** Resolved in the docs and merged to main: the
-  shack-local Mosquitto on shari (192.168.1.139:1883) is authoritative for
+  bauwagen-local Mosquitto is authoritative for
   `muehle/#`, bridged to the HA broker at 192.168.1.50 (see
   `docs/conventions/mqtt-topology.md`). Deployment to shari was still pending as of
-  2026-09-03 per project memory.
+  2026-09-03 per project memory. Update 2026-09-26: the broker target moved from
+  shari to scmino (192.168.1.178, DNS alias `bwbroker`).
 - **Legacy bridge naming (PRD 00 §7.12).** Tracked in
   `docs/conventions/naming.md` (legacy → target: `flexbridge` → `flex-radio-bridge`,
   `ultrabridge` → `ultrabeam-ant-ctrl-bridge`); rename deferred because it touches

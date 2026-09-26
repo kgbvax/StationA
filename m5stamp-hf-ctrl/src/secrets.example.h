@@ -12,10 +12,10 @@
 #define WIFI_SSID "CHANGE_ME"
 #define WIFI_PASSWORD "CHANGE_ME"
 
-// MQTT broker — the shack broker on shari (192.168.1.139:1883); see
-// ../mqtt-broker/README.md. The M5 is a remote device, so it uses shari's LAN
-// address, not the 127.0.0.1 loopback the on-shari Go services use.
-#define MQTT_HOST "192.168.1.139"
+// MQTT broker — the bw broker on scmino (192.168.1.178:1883); see
+// ../mqtt-broker/README.md. The M5 is a remote device and uses the broker's
+// LAN address.
+#define MQTT_HOST "192.168.1.178"
 #define MQTT_PORT 1883
 #define MQTT_USER "hf"
 #define MQTT_PASSWORD "CHANGE_ME"

@@ -1,10 +1,10 @@
 # CLAUDE.md — mqtt-broker
 
-The **shack-local Mosquitto broker**, running on
-[shari](../CLAUDE.md) (`192.168.1.139`) and bridged to the Home Assistant broker
-at `192.168.1.50:1883`. It exists so the station keeps a working `muehle/#` bus
-even when the shack↔house link is down; HA is a consumer that catches up when the
-link returns.
+The **bauwagen-local Mosquitto broker**, running on
+[scmino](../CLAUDE.md) (`192.168.1.178`, DNS alias `bwbroker`) and bridged to the
+Home Assistant broker at `192.168.1.50:1883`. It exists so the station keeps a
+working `muehle/#` bus even when the shack↔house link is down; HA is a consumer
+that catches up when the link returns.
 
 This is **not a Go component** — no `go.mod`, not in `go.work`. It is plain
 config + a deploy script, like the ESPHome/PlatformIO projects:
@@ -13,7 +13,7 @@ config + a deploy script, like the ESPHome/PlatformIO projects:
 |------|---------|
 | `mosquitto.conf.example` | listener, persistence, password/acl files, the `connection bridge-to-ha` block with split topic directions |
 | `acl.conf.example` | `hf` / `bridge` / `console` / `dial` user ACLs |
-| `deploy.sh` | seed-once install to shari (apt, config, password db, systemd) |
+| `deploy.sh` | seed-once install to scmino (apt, config, password db, systemd) |
 | `README.md` | full topology, topic-direction table, ACLs, HA-side setup, operational behavior, verification |
 
 Read [`README.md`](README.md) first — it is the reference. The full broker
@@ -27,7 +27,7 @@ HF_MQTT_PASSWORD=... BRIDGE_MQTT_PASSWORD=... CONSOLE_MQTT_PASSWORD=... DIAL_MQT
 ```
 
 Then set `remote_password` under `connection bridge-to-ha` in
-`/etc/mosquitto/mosquitto.conf` on shari and `sudo systemctl restart mosquitto`.
+`/etc/mosquitto/mosquitto.conf` on scmino and `sudo systemctl restart mosquitto`.
 See README.md "HA-side setup" for the matching `stationa-bridge` account on the
 HA Mosquitto add-on.
 

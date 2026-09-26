@@ -35,8 +35,8 @@ func TestDefaults(t *testing.T) {
 	if cfg.Host != "shari" {
 		t.Errorf("default host = %q, want shari", cfg.Host)
 	}
-	if cfg.MQTT.Broker != "tcp://127.0.0.1:1883" {
-		t.Errorf("default broker = %q, want tcp://127.0.0.1:1883", cfg.MQTT.Broker)
+	if cfg.MQTT.Broker != "tcp://192.168.1.178:1883" {
+		t.Errorf("default broker = %q, want tcp://192.168.1.178:1883", cfg.MQTT.Broker)
 	}
 	if cfg.MQTT.Site != "muehle" || cfg.MQTT.Station != "uhf" {
 		t.Errorf("default site/station = %q/%q, want muehle/uhf", cfg.MQTT.Site, cfg.MQTT.Station)
@@ -154,7 +154,7 @@ func TestAbsentDefaultConfigUsesDefaults(t *testing.T) {
 	if cfg.Control.AZ.Deadband != 4.0 {
 		t.Errorf("az deadband = %v, want default 4.0", cfg.Control.AZ.Deadband)
 	}
-	if cfg.MQTT.Broker != "tcp://127.0.0.1:1883" || cfg.Host != "shari" {
+	if cfg.MQTT.Broker != "tcp://192.168.1.178:1883" || cfg.Host != "shari" {
 		t.Errorf("defaults not applied: broker %q, host %q", cfg.MQTT.Broker, cfg.Host)
 	}
 }

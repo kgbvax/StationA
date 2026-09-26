@@ -136,7 +136,7 @@ map, band allow-list, heartbeat window). Secrets live in `src/secrets.h`
 // src/secrets.h
 #define WIFI_SSID     "..."
 #define WIFI_PASSWORD "..."
-#define MQTT_HOST     "192.168.1.139"
+#define MQTT_HOST     "192.168.1.178"   // bw broker on scmino (never 127.0.0.1)
 #define MQTT_PORT     1883
 #define MQTT_USER     "hf"
 #define MQTT_PASSWORD "..."

@@ -21,7 +21,7 @@ import (
 // environment (PELCOBRIDGE2_MQTT_PASSWORD), never a flag.
 type Config struct {
 	Enabled  bool
-	Broker   string // e.g. tcp://192.168.1.50:1883
+	Broker   string // e.g. tcp://192.168.1.178:1883
 	ClientID string // defaults to <site>-<station>-<slot>
 	User     string
 	Password string
