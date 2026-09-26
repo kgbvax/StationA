@@ -87,10 +87,11 @@ class _AppRootState extends State<_AppRoot> with WidgetsBindingObserver {
   }
 
   void _onBusStoreUpdate() {
-    // Drive the DX-spot SNR filter from the live radio mode. Defaults to SSB
+    // Drive the DX-spot SNR filter from the live mode of the radio the visible
+    // map belongs to (HF rig, or the IC-9700 on UHF/CAM). Defaults to SSB
     // threshold when the radio is in a phone/data mode, switches to CW in cw,
     // and disables gating when no mode is known.
-    final mode = _store.stateValue('muehle/hf/radio', 'mode') as String?;
+    final mode = _store.stateValueAs<String>(_dxSpot.modeRadio, 'mode');
     _dxSpot.setMode(mode);
   }
 

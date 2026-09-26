@@ -110,95 +110,113 @@ class _UltrabeamPanelState extends State<UltrabeamPanel> {
       child: Stack(
         children: [
           Padding(
-            // Top padding clears the corner-overlaid status pill.
-            padding: const EdgeInsets.fromLTRB(12, 26, 12, 10),
-            child: Column(
+            // Top padding clears the corner-overlaid status pill — 32, not
+            // the 26 other cards use, because RETRACT sits directly under it.
+            padding: const EdgeInsets.fromLTRB(12, 32, 12, 10),
+            // RETRACT is pinned to the right edge, apart from the direction
+            // and mode buttons, so the emergency action is never reached by
+            // a slip off a neighbouring button.
+            child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
               children: [
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  crossAxisAlignment: WrapCrossAlignment.end,
-                  children: [
-                    // The three direction buttons share one width — sized for
-                    // 'FORWARD' at the action-button style with the tablet's
-                    // system font scale (88 dp wrapped at >1.0 scale). Wrap so
-                    // RETRACT drops to a second line on phone widths instead of
-                    // overflowing the row.
-                    _DirectionButton(
-                      width: 112,
-                      label: 'FORWARD',
-                      active: direction == 'forward',
-                      // Elements moving: lock taps so rapid presses can't queue
-                      // competing direction cmds against mid-travel motors —
-                      // the same lockout ultrabridge's own web UI applies.
-                      onPressed: (online && !moving) ? () => send(antCtrlDirectionPayload('forward')) : null,
-                    ),
-                    _DirectionButton(
-                      width: 112,
-                      label: '180°',
-                      active: direction == 'reverse',
-                      // Reverse is a deliberate but irregular state for the
-                      // Ultrabeam — amber pulse while engaged, not the cyan
-                      // "normal" highlight and not red error chrome.
-                      irregular: true,
-                      onPressed: (online && !moving && !on6m) ? () => send(antCtrlDirectionPayload('reverse')) : null,
-                    ),
-                    _DirectionButton(
-                      width: 112,
-                      label: 'BI-DIR',
-                      active: direction == 'bidirectional',
-                      onPressed: (online && !moving && !on6m)
-                          ? () => send(antCtrlDirectionPayload('bidirectional'))
-                          : null,
-                    ),
-                    ElevatedButton(
-                      // RETRACT stays pressable while moving — it is the emergency
-                      // action for an unexpected or stuck direction state, and
-                      // ultrabridge (web UI and handlers alike) keeps it available
-                      // during travel deliberately.
-                      onPressed: online ? () => send(antCtrlRetractPayload()) : null,
-                      style: AppTheme.actionButton(danger: true),
-                      child: const Text('RETRACT'),
-                    ),
-                    _DirectionButton(
-                      width: 112,
-                      label: 'SMART',
-                      active: smartOn,
-                      onPressed: steerOnline
-                          ? () => mqtt.publish(
-                              cmdTopic('hf/beam-steer'),
-                              beamSteerEnablePayload(!smartOn),
-                              retain: cmdRetain['muehle/hf/beam-steer']!,
-                            )
-                          : null,
-                    ),
-                  ],
-                ),
-                if (smartReason != null && smartReason.isNotEmpty)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 6),
-                    child: Text(
-                      'SMART · $smartReason',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: AppTheme.mono(11, color: AppTheme.txtMute),
-                    ),
+                Expanded(
+                  child: Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    crossAxisAlignment: WrapCrossAlignment.end,
+                    children: [
+                      // The three direction buttons share one width — sized for
+                      // 'FORWARD' at the action-button style with the tablet's
+                      // system font scale (88 dp wrapped at >1.0 scale). Wrap so
+                      // AUTO drops to a second line on phone widths instead of
+                      // overflowing the row.
+                      _DirectionButton(
+                        width: 112,
+                        label: 'FORWARD',
+                        active: direction == 'forward',
+                        // Elements moving: lock taps so rapid presses can't queue
+                        // competing direction cmds against mid-travel motors —
+                        // the same lockout ultrabridge's own web UI applies.
+                        onPressed: (online && !moving) ? () => send(antCtrlDirectionPayload('forward')) : null,
+                      ),
+                      _DirectionButton(
+                        width: 112,
+                        label: '180°',
+                        active: direction == 'reverse',
+                        // Reverse is a deliberate but irregular state for the
+                        // Ultrabeam — amber pulse while engaged, not the cyan
+                        // "normal" highlight and not red error chrome.
+                        irregular: true,
+                        onPressed: (online && !moving && !on6m) ? () => send(antCtrlDirectionPayload('reverse')) : null,
+                      ),
+                      _DirectionButton(
+                        width: 112,
+                        label: 'BI-DIR',
+                        active: direction == 'bidirectional',
+                        onPressed: (online && !moving && !on6m)
+                            ? () => send(antCtrlDirectionPayload('bidirectional'))
+                            : null,
+                      ),
+                      // AUTO (smart rotation) is a mode, not a direction: set apart from the
+                      // direction group like AUTO/MANUAL on the Ant switch row.
+                      const SizedBox(width: 12),
+                      _DirectionButton(
+                        width: 112,
+                        label: 'AUTO',
+                        active: smartOn,
+                        onPressed: steerOnline
+                            ? () => mqtt.publish(
+                                cmdTopic('hf/beam-steer'),
+                                beamSteerEnablePayload(!smartOn),
+                                retain: cmdRetain['muehle/hf/beam-steer']!,
+                              )
+                            : null,
+                      ),
+                    ],
                   ),
+                ),
+                const SizedBox(width: 8),
+                ElevatedButton(
+                  // RETRACT stays pressable while moving — it is the emergency
+                  // action for an unexpected or stuck direction state, and
+                  // ultrabridge (web UI and handlers alike) keeps it available
+                  // during travel deliberately.
+                  onPressed: online ? () => send(antCtrlRetractPayload()) : null,
+                  style: AppTheme.actionButton(danger: true),
+                  child: const Text('RETRACT'),
+                ),
               ],
             ),
           ),
           // The pill paints last so it sits on top of the card.
+          // The last smart-rotation decision rides in the pill's band, left
+          // of the pill: it comes and goes with every logger request, so it
+          // must never change the card's height (that shifted the compass).
           Positioned(
             top: 6,
+            left: 12,
             right: 10,
-            child: StatusPill(
-              slots: const ['muehle/hf/ant-ctrl'],
-              label: 'Ultrabeam',
-              info: pillBand.isEmpty ? null : pillBand,
-              suffix: suffix.isEmpty ? null : suffix,
-              suffixColor: suffixColor,
+            child: Row(
+              children: [
+                Expanded(
+                  child: smartReason == null || smartReason.isEmpty
+                      ? const SizedBox.shrink()
+                      : Text(
+                          'AUTO · $smartReason',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: AppTheme.mono(11, color: AppTheme.txtMute),
+                        ),
+                ),
+                const SizedBox(width: 8),
+                StatusPill(
+                  slots: const ['muehle/hf/ant-ctrl'],
+                  label: 'Ultrabeam',
+                  info: pillBand.isEmpty ? null : pillBand,
+                  suffix: suffix.isEmpty ? null : suffix,
+                  suffixColor: suffixColor,
+                ),
+              ],
             ),
           ),
         ],

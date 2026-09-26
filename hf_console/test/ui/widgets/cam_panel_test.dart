@@ -17,8 +17,10 @@ import 'package:hf_console/vhfcam/rec_status.dart';
 import 'package:hf_console/vhfcam/radio_status.dart';
 import 'package:hf_console/vhfcam/vhfcam_service.dart';
 
-Widget _wrap(Widget child, {required VhfcamService vhfcam}) {
-  final busStore = BusStore();
+import '../../support/fixtures.dart';
+
+Widget _wrap(Widget child, {required VhfcamService vhfcam, BusStore? store}) {
+  final busStore = store ?? BusStore();
   // Same link-up assumption as TestHarness; no grace timer (no pending timers
   // at teardown).
   busStore.markConnected(scheduleGraceNotify: false);
@@ -50,6 +52,20 @@ void main() {
     expect(find.text('AZ ---'), findsOneWidget);
     expect(find.text('EL ---'), findsOneWidget);
     expect(find.text('FREQ ---'), findsOneWidget);
+  });
+
+  testWidgets('feed panel: bus readouts accept whole numbers (the wire sends JSON ints)', (tester) async {
+    final svc = VhfcamService()..seedStatus(online: false);
+    final store = BusStore()
+      ..applyState('muehle/uhf/az-rotator', {'az': 200, 'ts': '2026-09-26T09:00:00Z'})
+      ..applyState('muehle/uhf/el-rotator', {'el': 15, 'ts': '2026-09-26T09:00:00Z'})
+      ..applyState('muehle/uhf/radio', {'freq_hz': 144300000, 'ts': '2026-09-26T09:00:00Z'});
+
+    await tester.pumpWidget(_wrap(const CamFeedPanel(), vhfcam: svc, store: store));
+
+    expect(find.text('AZ 200.0°'), findsOneWidget);
+    expect(find.text('EL 15.0°'), findsOneWidget);
+    expect(find.text('FREQ 144.300 MHz'), findsOneWidget);
   });
 
   testWidgets('feed panel: reachable server with stopped sink says so', (tester) async {

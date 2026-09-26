@@ -50,8 +50,7 @@ class RotatorPresetsBar extends StatelessWidget {
 
 /// Vertical direction-preset rail for the DX map's right edge (tablet
 /// layout). Sits directly above the +/- zoom stepper (compass) / zoom row
-/// (Mercator) and uses the same translucent card chrome as the rest of the
-/// map overlay, so it reads as map chrome rather than a panel.
+/// (Mercator). Unframed — the buttons' own chrome is enough over the map.
 class RotatorPresetsRail extends StatelessWidget {
   /// Which rotator STOP halts (default: the HF rotator). The VHF surface
   /// stops both sat axes.
@@ -62,27 +61,20 @@ class RotatorPresetsRail extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final actions = _presetActions(context, rotator);
-    return Container(
-      padding: const EdgeInsets.all(4),
-      decoration: BoxDecoration(
-        color: AppTheme.card.withValues(alpha: 0.85),
-        border: Border.all(color: AppTheme.cardLine),
-        borderRadius: BorderRadius.circular(4),
-      ),
-      // IntrinsicWidth so the stretch Column gets a finite width inside the
-      // unbounded Positioned — every button then shares the widest label.
-      child: IntrinsicWidth(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            for (int i = 0; i < actions.length; i++) ...[
-              _Preset(actions[i].label,
-                  danger: actions[i].danger, onPressed: actions[i].onPressed),
-              if (i < actions.length - 1) const SizedBox(height: 3),
-            ],
+    // No frame of its own: the buttons carry their own chrome, and a box
+    // around a single STOP read as a second, empty control.
+    // IntrinsicWidth so the stretch Column gets a finite width inside the
+    // unbounded Positioned — every button then shares the widest label.
+    return IntrinsicWidth(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          for (int i = 0; i < actions.length; i++) ...[
+            _Preset(actions[i].label, danger: actions[i].danger, onPressed: actions[i].onPressed),
+            if (i < actions.length - 1) const SizedBox(height: 3),
           ],
-        ),
+        ],
       ),
     );
   }

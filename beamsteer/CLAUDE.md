@@ -6,7 +6,7 @@ For each rotate request it picks the cheapest way to put an Ultrabeam lobe on th
 - **Station behind the beam:** flip the Ultrabeam 180°.
 - **Station outside both lobes:** rotate to whichever lobe needs the least rotator travel.
 
-When the toggle is off, requests pass straight through to the rotator. The operator toggle lives in the hf_console Ultrabeam panel (`SMART`).
+When the toggle is off, requests pass straight through to the rotator. The operator toggle lives in the hf_console Ultrabeam panel (`AUTO` — not the Ant switch row AUTO).
 
 API: `docs/beam-steer-mqtt-api.md`.
 

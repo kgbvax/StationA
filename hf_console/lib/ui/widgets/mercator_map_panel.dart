@@ -250,17 +250,18 @@ class _MercatorMapPanelState extends State<MercatorMapPanel> {
                   // only — the headings are HF big-DX targets).
                   if (widget.showPresets && surface == null && (widget.rotator?.showPresets ?? false))
                     Positioned(
-                      right: 12,
+                      // 16/52, not 12/48: the rail lost its 4 dp frame padding.
+                      right: 16,
                       // Clears the zoom row: bottom 12 + ~32-high row + 4 gap.
-                      bottom: 48,
+                      bottom: 52,
                       child: const RotatorPresetsRail(),
                     ),
                   // VHF module: STOP halts every axis of the surface (az + el),
                   // same place as the HF STOP.
                   if (surface != null)
                     Positioned(
-                      right: 12,
-                      bottom: 48,
+                      right: 16,
+                      bottom: 52,
                       child: RotatorPresetsRail(rotator: surface),
                     ),
                   if (surface != null)

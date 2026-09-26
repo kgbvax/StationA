@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../dxspot/dxspot_service.dart';
@@ -32,6 +34,13 @@ const Set<String> _vhfBands = {'6m', '2m', '70cm'};
 Set<String>? dxBandsForPage(String page) =>
     (page == 'uhf' || page == 'cam') ? _vhfBands : null;
 
+/// The radio whose mode sets the map's SNR gate: VHF spots follow the
+/// IC-9700, not whatever mode the HF rig happens to be in.
+@visibleForTesting
+String dxModeRadioForPage(String page) => (page == 'uhf' || page == 'cam')
+    ? DxSpotService.uhfRadioSlot
+    : DxSpotService.hfRadioSlot;
+
 class ConsoleScreen extends StatefulWidget {
   const ConsoleScreen({super.key});
 
@@ -44,7 +53,12 @@ class _ConsoleScreenState extends State<ConsoleScreen> {
 
   void _setPage(String page) {
     setState(() => _page = page);
-    context.read<DxSpotService>().setBands(dxBandsForPage(page));
+    final dx = context.read<DxSpotService>();
+    // Mode first: a band change re-dials, and the history replay is filtered
+    // with whatever threshold is set at that moment.
+    dx.modeRadio = dxModeRadioForPage(page);
+    dx.setMode(context.read<BusStore>().stateValueAs<String>(dx.modeRadio, 'mode'));
+    dx.setBands(dxBandsForPage(page));
   }
 
   @override
@@ -209,6 +223,9 @@ class _HfPage extends StatelessWidget {
 /// geometry on every page. Deliberate: a page switch must not move the
 /// toggles under the operator's hand, so the shell — not the page — owns the
 /// split (same compact-breakpoint fractions the HF page used to compute).
+/// Height the tablet rail keeps for the fault list: header plus three rows.
+const double _faultsMinHeight = 140;
+
 class _TabletShell extends StatelessWidget {
   final String page;
   final ValueChanged<String> onSelect;
@@ -299,17 +316,32 @@ class _TabletShell extends StatelessWidget {
                     if (expandFaults) ...[
                       ...rightChildren,
                       const Expanded(child: FaultsBar(expanded: true)),
-                    ] else ...[
+                    ] else
+                      // Cards at their natural height; the fault list takes
+                      // whatever is left instead of a fixed three-row strip
+                      // under a band of empty rail. The cards scroll only
+                      // when they would squeeze the faults below three rows.
                       Expanded(
-                        child: SingleChildScrollView(
-                          child: Column(
+                        child: LayoutBuilder(
+                          builder: (context, rail) => Column(
                             crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: rightChildren,
+                            children: [
+                              ConstrainedBox(
+                                constraints: BoxConstraints(
+                                  maxHeight: math.max(0, rail.maxHeight - _faultsMinHeight),
+                                ),
+                                child: SingleChildScrollView(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                                    children: rightChildren,
+                                  ),
+                                ),
+                              ),
+                              const Expanded(child: FaultsBar(expanded: true)),
+                            ],
                           ),
                         ),
                       ),
-                      const FaultsBar(),
-                    ],
                   ],
                 ),
               ),
@@ -522,18 +554,28 @@ class _PageTopBar extends StatelessWidget {
     return Container(
       color: AppTheme.card,
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-      child: Wrap(
-        alignment: WrapAlignment.start,
-        crossAxisAlignment: WrapCrossAlignment.center,
-        runAlignment: WrapAlignment.center,
-        spacing: 10,
-        runSpacing: 6,
+      // The RX/TX annunciator is pinned to the right edge: at the left,
+      // ahead of the page tabs, it read as one of the tabs.
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          Expanded(
+            child: Wrap(
+              alignment: WrapAlignment.start,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              runAlignment: WrapAlignment.center,
+              spacing: 10,
+              runSpacing: 6,
+              children: [
+                _PageNav(page: page, onSelect: onSelect),
+                const _DxSettingsButton(),
+                _ConnectionIndicator(mqtt: mqtt),
+                const _OnlineTag(),
+              ],
+            ),
+          ),
+          const SizedBox(width: 10),
           const _RfAnnunciator(),
-          _PageNav(page: page, onSelect: onSelect),
-          const _DxSettingsButton(),
-          _ConnectionIndicator(mqtt: mqtt),
-          const _OnlineTag(),
         ],
       ),
     );
@@ -654,7 +696,7 @@ class _NavTab extends StatelessWidget {
   }
 }
 
-/// Annunciator tile, first in the top bar: dim RX while no carrier is up,
+/// Annunciator tile, pinned to the right of the top bar: dim RX while no carrier is up,
 /// lit solid red TX / TUNE while any RF path reports one (see
 /// [BusStore.rfState]). Always present, so the bar never reflows on key-up.
 class _RfAnnunciator extends StatelessWidget {

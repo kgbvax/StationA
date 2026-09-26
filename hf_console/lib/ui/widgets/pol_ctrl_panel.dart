@@ -116,9 +116,10 @@ class PolCtrlPanel extends StatelessWidget {
             title: 'X-QUAD POLARIZATION',
             trailing: StatusPill(
               slots: const ['muehle/uhf/pol-ctrl'],
-              // Fallback when /meta has no expose name: the controller, not
-              // the card title again.
+              // The controller, not the card title again: the device's /meta
+              // name is "X-Quad polarization", so it is not used here.
               label: 'StamPLC #2',
+              useMetaName: false,
               suffix: errorText != null ? 'ERR' : null,
               suffixColor: AppTheme.red,
               stickySuffix: true, // ERR survives a dead link
@@ -135,14 +136,16 @@ class PolCtrlPanel extends StatelessWidget {
                 phaseLabel,
                 style: AppTheme.mono(20, weight: FontWeight.w700),
               ),
-              const Spacer(),
-              // Flexible: on a narrow card the note ellipsizes instead of
-              // running past the card edge.
-              Flexible(
+              const SizedBox(width: 12),
+              // Expanded + right-aligned: the note sits at the row's end (a
+              // Spacer beside a Flexible split the slack and parked it mid-row)
+              // and ellipsizes on a narrow card.
+              Expanded(
                 child: Text(
                   'both X-Quads',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.right,
                   style: AppTheme.mono(10, color: AppTheme.txtFaint, weight: FontWeight.w600),
                 ),
               ),

@@ -191,6 +191,33 @@ void main() {
       expect(stackSize.height, 8.0 + 7.0 + 1.0);
     });
 
+    testWidgets('peak marker drains one even step per frame (no stutter)', (tester) async {
+      final store = BusStore();
+      final mqtt = FakeMqttService(store);
+      store.setPaTransmitting(fwd: 1000, rfl: 20);
+
+      await tester.pumpWidget(TestHarness(store: store, mqtt: mqtt, child: const PaPanel()));
+      await tester.pump();
+      store.applyState('muehle/hf/pa', _rx);
+      await tester.pump();
+      // Past the 2 s hold and the bar's release: only the linear drain moves.
+      await tester.pump(const Duration(milliseconds: 2500));
+
+      final peak = find.byKey(const ValueKey('pa-fwd-peak'));
+      final xs = <double>[];
+      for (var i = 0; i < 12; i++) {
+        await tester.pump(const Duration(milliseconds: 16));
+        xs.add(tester.getTopLeft(peak).dx);
+      }
+      // Every 16 ms frame moves the marker, and by the same amount: the old
+      // 33 ms Timer moved it only on some frames, in uneven jumps.
+      final steps = [for (var i = 1; i < xs.length; i++) xs[i - 1] - xs[i]];
+      for (final s in steps) {
+        expect(s, greaterThan(0));
+        expect(s, closeTo(steps.first, 1e-6));
+      }
+    });
+
     testWidgets('bar and peak rise instantly', (tester) async {
       final store = BusStore();
       final mqtt = FakeMqttService(store);

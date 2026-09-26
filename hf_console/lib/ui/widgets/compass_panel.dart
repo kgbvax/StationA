@@ -400,12 +400,14 @@ class _CompassBody extends StatelessWidget {
             // bare Station-page compass) never shows the rail.
             if (showPresets && (rotator?.showPresets ?? false))
               Positioned(
-                right: 4,
+                // +4 on both offsets: the rail lost its 4 dp frame padding,
+                // so STOP keeps its old spot, flush with the stepper.
+                right: 8,
                 // Clears the stacked +/- stepper. The stepper buttons come
                 // out 48 dp high despite the `minimumSize` override (the
                 // theme's tap-target padding wins), so the stack is
                 // 4 + 2×48 + 2 ≈ 102 tall — measured in widget tests.
-                bottom: 108,
+                bottom: 112,
                 child: const RotatorPresetsRail(),
               ),
           ],

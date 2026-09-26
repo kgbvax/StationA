@@ -158,9 +158,11 @@ class _CamFeedPanelState extends State<CamFeedPanel> {
     final state = _stateFor(svc);
     final store = context.watch<BusStore>();
 
-    final az = store.stateValueAs<double>('muehle/uhf/az-rotator', 'az');
-    final el = store.stateValueAs<double>('muehle/uhf/el-rotator', 'el');
-    final freqHz = store.stateValueAs<int>('muehle/uhf/radio', 'freq_hz');
+    // <num>: the bridges publish whole degrees as JSON ints, which a <double>
+    // read rejects (the chips then showed dashes next to a live overlay).
+    final az = store.stateValueAs<num>('muehle/uhf/az-rotator', 'az')?.toDouble();
+    final el = store.stateValueAs<num>('muehle/uhf/el-rotator', 'el')?.toDouble();
+    final freqHz = store.stateValueAs<num>('muehle/uhf/radio', 'freq_hz');
 
     return Container(
       decoration: BoxDecoration(

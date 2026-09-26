@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hf_console/dxspot/dxspot_service.dart';
 import 'package:hf_console/store/bus_store.dart';
 import 'package:hf_console/ui/screens/console_screen.dart';
 import 'package:hf_console/ui/widgets/cam_record_controls.dart';
@@ -20,6 +21,14 @@ void main() {
       final store = BusStore()..setRadio()..setPaHealthy();
       await pumpWith(tester, store);
       expect(find.descendant(of: find.byKey(const ValueKey('rf-annunciator')), matching: find.text('RX')), findsOneWidget);
+    });
+
+    testWidgets('sits right of the page tabs, not ahead of them', (tester) async {
+      final store = BusStore()..setRadio()..setPaHealthy();
+      await pumpWith(tester, store);
+      final tile = tester.getRect(find.byKey(const ValueKey('rf-annunciator')));
+      final camTab = tester.getRect(find.text('CAM').first);
+      expect(tile.left, greaterThan(camTab.right));
     });
 
     testWidgets('radio TX lights TX', (tester) async {
@@ -88,6 +97,27 @@ void main() {
       expect(dxBandsForPage('cam'), {'6m', '2m', '70cm'});
       expect(dxBandsForPage('hf'), isNull);
       expect(dxBandsForPage('station'), isNull);
+    });
+
+    testWidgets('the SNR gate follows the IC-9700 on UHF/CAM and the HF rig elsewhere', (tester) async {
+      final store = BusStore()
+        ..setRadio(mode: 'cw')
+        ..applyState('muehle/uhf/radio', {'mode': 'fm'});
+      final dx = DxSpotService();
+      await tester.binding.setSurfaceSize(const Size(3600, 2400));
+      await tester.pumpWidget(TestHarness(store: store, mqtt: FakeMqttService(store), dxSpot: dx, child: const ConsoleScreen()));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      for (final (tab, radio, family) in [
+        ('UHF', 'muehle/uhf/radio', 'ssb'),
+        ('CAM', 'muehle/uhf/radio', 'ssb'),
+        ('HF', 'muehle/hf/radio', 'cw'),
+      ]) {
+        await tester.tap(find.text(tab));
+        await tester.pump(const Duration(milliseconds: 100));
+        expect(dx.modeRadio, radio, reason: tab);
+        expect(dx.filter.mode, family, reason: tab);
+      }
     });
 
     testWidgets('HF tab keeps the switchable HF map', (tester) async {

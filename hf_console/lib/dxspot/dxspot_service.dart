@@ -103,8 +103,9 @@ class DxSpotFilter {
     this.cwMinDb = -15,
   });
 
-  /// Map a canonical radio mode (from `muehle/hf/radio/state.mode`) onto the
-  /// SNR family used by the filter. SSB family = usb/lsb/am/fm/data; CW family
+  /// Map a canonical radio mode (the `mode` key of `muehle/hf/radio` or
+  /// `muehle/uhf/radio` /state — same vocabulary) onto the SNR family used by
+  /// the filter. SSB family = usb/lsb/am/fm/data; CW family
   /// = cw. Everything else disables gating.
   static String snrModeFor(String? radioMode) {
     final m = (radioMode ?? '').trim().toLowerCase();
@@ -162,6 +163,13 @@ class DxSpotService extends ChangeNotifier {
   int _backoff = _minBackoffSeconds;
   DxSpotFilter _filter = const DxSpotFilter();
   Set<String>? _enabledBands;
+
+  /// The radio slot whose /state `mode` drives the SNR gate ([setMode]): the
+  /// HF rig by default, the IC-9700 while the UHF/CAM pages show VHF spots.
+  String modeRadio = hfRadioSlot;
+
+  static const hfRadioSlot = 'muehle/hf/radio';
+  static const uhfRadioSlot = 'muehle/uhf/radio';
 
   DxSpotSource? _source;
   Timer? _reconnect;

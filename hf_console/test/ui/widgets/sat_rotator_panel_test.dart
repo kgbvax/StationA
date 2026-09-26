@@ -53,6 +53,18 @@ void main() {
       expect(find.text('MOVING'), findsOneWidget); // az only
     });
 
+    testWidgets('at rest on target the arrow and target are hidden', (tester) async {
+      final store = BusStore();
+      final mqtt = FakeMqttService(store);
+      store.setSatRotator(azAddress, axis: 'az', pos: 200, target: 200);
+      store.setSatRotator(elAddress, axis: 'el', pos: 1, target: 3);
+
+      await pumpPanel(tester, store: store, mqtt: mqtt);
+
+      expect(find.text('200°'), findsOneWidget); // position only
+      expect(find.text('3°'), findsOneWidget); // el still short of its target
+    });
+
     testWidgets('omitted readback renders a dash, not a fabricated position',
         (tester) async {
       final store = BusStore();

@@ -347,7 +347,9 @@ class _AxisControlState extends State<_AxisControl> {
               position != null ? '${_fmtDeg(position)}°' : '—',
               style: AppTheme.mono(20, weight: FontWeight.w700),
             ),
-            if (target != null) ...[
+            // The target only while the axis is heading somewhere else:
+            // "200° → 200°" at rest is noise.
+            if (target != null && (moving || position == null || (target - position).abs() >= 0.5)) ...[
               const SizedBox(width: 8),
               Text('→', style: AppTheme.mono(14, color: AppTheme.txtFaint)),
               const SizedBox(width: 8),

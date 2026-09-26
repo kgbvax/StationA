@@ -35,7 +35,7 @@ separate per-component remotes to push to.
 | m5stamp-pol-ctrl | `m5stamp-pol-ctrl/` | M5 Stamp PLC #2 firmware → `uhf/pol-ctrl` (X-Quad polarization, ESPHome) |
 | powerseq | `powerseq/` | Startup/shutdown sequencer → `hf/power-seq` (ordered, delay + liveness confirmations) |
 | antennaselect | `antennaselect/` | Antenna-selection reconciler (core implemented) |
-| beamsteer | `beamsteer/` | Smart rotation → `hf/beam-steer`: PstRotator UDP emulator (:12050) for the contest logger; station behind → Ultrabeam 180° flip, outside both lobes → rotate to the cheaper lobe (±30°, bi-dir ±45° no flips); toggle = hf_console Ultrabeam `SMART` |
+| beamsteer | `beamsteer/` | Smart rotation → `hf/beam-steer`: PstRotator UDP emulator (:12050) for the contest logger; station behind → Ultrabeam 180° flip, outside both lobes → rotate to the cheaper lobe (±30°, bi-dir ±45° no flips); toggle = hf_console Ultrabeam `AUTO` |
 | hadiscovery | `hadiscovery/` | Home Assistant discovery consumer (reads `/meta` `expose`, renders HA discovery) |
 | pelcobridge2 | `pelcobridge2/` | UHF rotator TUI + rotctld server (Pelco-D/P pan/tilt head over RS-485) |
 | spid-ercm-rotator-bridge | `spid-ercm-rotator-bridge/` | Sat-ops az/el rotator bridge → `uhf/az-rotator` (SPID) + `uhf/el-rotator` (GS-500 via ERC-M); rotctld :4534 + PstRotator UDP :12041 listeners (free motion, no arming gate) |

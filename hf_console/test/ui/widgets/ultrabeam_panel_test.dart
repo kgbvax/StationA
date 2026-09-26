@@ -182,14 +182,14 @@ void main() {
       expect(mqtt.publishes.first.payload, contains('retract'));
     });
 
-    group('SMART toggle', () {
+    group('AUTO (smart rotation) toggle', () {
       Future<void> pump(WidgetTester tester, BusStore store, FakeMqttService mqtt) async {
         await tester.pumpWidget(TestHarness(store: store, mqtt: mqtt, child: const UltrabeamPanel()));
         await tester.pumpAndSettle();
       }
 
       ElevatedButton smart(WidgetTester tester) =>
-          tester.widget<ElevatedButton>(find.widgetWithText(ElevatedButton, 'SMART'));
+          tester.widget<ElevatedButton>(find.widgetWithText(ElevatedButton, 'AUTO'));
 
       testWidgets('enables beamsteer with a retained cmd', (tester) async {
         final store = BusStore();
@@ -199,7 +199,7 @@ void main() {
         store.applyState('muehle/hf/beam-steer', {'enabled': false});
         await pump(tester, store, mqtt);
 
-        await tester.tap(find.widgetWithText(ElevatedButton, 'SMART'));
+        await tester.tap(find.widgetWithText(ElevatedButton, 'AUTO'));
         await tester.pumpAndSettle();
 
         expect(mqtt.publishes.length, 1);
@@ -220,9 +220,9 @@ void main() {
         await pump(tester, store, mqtt);
 
         expect(smart(tester).style!.backgroundColor!.resolve({}), AppTheme.accent);
-        expect(find.text('SMART · behind: switch to 180°'), findsOneWidget);
+        expect(find.text('AUTO · behind: switch to 180°'), findsOneWidget);
 
-        await tester.tap(find.widgetWithText(ElevatedButton, 'SMART'));
+        await tester.tap(find.widgetWithText(ElevatedButton, 'AUTO'));
         await tester.pumpAndSettle();
         expect(mqtt.publishes.single.payload, '{"action":"disable"}');
       });
@@ -235,7 +235,26 @@ void main() {
         await pump(tester, store, mqtt);
 
         expect(smart(tester).onPressed, isNull);
-        expect(find.textContaining('SMART ·'), findsNothing);
+        expect(find.textContaining('AUTO ·'), findsNothing);
+      });
+
+      testWidgets('the decision text never changes the card height', (tester) async {
+        final store = BusStore();
+        final mqtt = FakeMqttService(store);
+        store.setUltrabeam(direction: 'bidirectional', band: '20m');
+        store.setOnline('muehle/hf/beam-steer');
+        store.applyState('muehle/hf/beam-steer', {'enabled': false});
+        await pump(tester, store, mqtt);
+        final before = tester.getSize(find.byType(UltrabeamPanel)).height;
+
+        store.applyState('muehle/hf/beam-steer', {
+          'enabled': true,
+          'last': {'bearing': 230, 'reason': 'in bidirectional back lobe'},
+        });
+        await tester.pumpAndSettle();
+
+        expect(find.text('AUTO · in bidirectional back lobe'), findsOneWidget);
+        expect(tester.getSize(find.byType(UltrabeamPanel)).height, before);
       });
 
       testWidgets('stays live while the elements move', (tester) async {

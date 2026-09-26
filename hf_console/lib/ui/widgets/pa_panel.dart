@@ -1,8 +1,8 @@
-import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:clock/clock.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:provider/provider.dart';
 import '../../store/bus_store.dart';
 import '../../mqtt/mqtt_service.dart';
@@ -19,53 +19,52 @@ class PaPanel extends StatefulWidget {
   State<PaPanel> createState() => _PaPanelState();
 }
 
-class _PaPanelState extends State<PaPanel> {
+class _PaPanelState extends State<PaPanel> with SingleTickerProviderStateMixin {
   // Meter ballistics: instant attack, slow release on the bars, and a held
   // peak marker, so a speech/FT8 envelope reads steadily instead of
   // jumping with every /state update.
   final _fwd = _Ballistics(min: 0, max: 1200);
   final _swr = _Ballistics(min: 1.0, max: 4.0);
 
-  // ~30 fps: bars and markers glide down instead of stepping. Only runs while
-  // something still settles, so the cost is bounded to decays.
-  static const Duration _decayInterval = Duration(milliseconds: 33);
-  Timer? _decayTimer;
-  // Anchor for elapsed-time decay: the step is derived from how long the
-  // last tick actually took, so timer jitter never changes the drain rate.
-  DateTime? _lastDecayAt;
+  // Decay runs on a frame Ticker, not a Timer: one step per displayed frame,
+  // timed by the frame's own vsync timestamp. A free-running 33 ms Timer beat
+  // against the 60/120 Hz display — steps landed 1, 2 or 3 frames apart and
+  // the peak markers visibly stuttered on the way down. The ticker only runs
+  // while something still settles, so the cost stays bounded to decays.
+  late final Ticker _decayTicker = createTicker(_decayTick);
+  Duration _lastElapsed = Duration.zero;
 
-  /// Keep the decay timer running exactly while a bar or marker still
-  /// stands above the live reading; once everything has settled the timer
-  /// stops until the next burst.
-  void _syncDecayTimer() {
+  /// Keep the decay ticker running exactly while a bar or marker still
+  /// stands above the live reading; once everything has settled it stops
+  /// until the next burst.
+  void _syncDecayTicker() {
     if (_fwd.settling || _swr.settling) {
-      if (_decayTimer == null) {
-        _lastDecayAt = clock.now();
-        _decayTimer = Timer.periodic(_decayInterval, (_) => _decayTick());
+      if (!_decayTicker.isActive) {
+        _lastElapsed = Duration.zero;
+        _decayTicker.start();
       }
-    } else {
-      _decayTimer?.cancel();
-      _decayTimer = null;
-      _lastDecayAt = null;
+    } else if (_decayTicker.isActive) {
+      _decayTicker.stop();
     }
   }
 
-  void _decayTick() {
+  void _decayTick(Duration elapsed) {
     if (!mounted) return;
+    // dt from consecutive frame timestamps (evenly spaced at the display
+    // rate), so every frame moves the marker by the same amount.
+    final dt = (elapsed - _lastElapsed).inMicroseconds / 1e6;
+    _lastElapsed = elapsed;
     final now = clock.now();
-    final last = _lastDecayAt ?? now;
-    _lastDecayAt = now;
-    final dt = now.difference(last).inMicroseconds / 1e6;
     setState(() {
       _fwd.tick(dt, now);
       _swr.tick(dt, now);
     });
-    _syncDecayTimer();
+    _syncDecayTicker();
   }
 
   @override
   void dispose() {
-    _decayTimer?.cancel();
+    _decayTicker.dispose();
     super.dispose();
   }
 
@@ -94,7 +93,7 @@ class _PaPanelState extends State<PaPanel> {
     final now = clock.now();
     _fwd.sample(fwd, now);
     _swr.sample(swr, now);
-    _syncDecayTimer();
+    _syncDecayTicker();
 
     final (suffix, suffixColor) =
         _paState(keyed, fault, error, paRelayState, paPower) ?? ('', null);
