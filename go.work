@@ -10,6 +10,7 @@ use (
 	./hf-mqtt-capture
 	./icom9700-radio-bridge
 	./logger-spot-bridge
+	./oscarwatch-sattrack-bridge
 	./pelcobridge2
 	./powerseq
 	./shared

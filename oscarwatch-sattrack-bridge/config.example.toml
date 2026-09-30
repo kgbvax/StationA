@@ -1,0 +1,39 @@
+# oscarwatch-sattrack-bridge configuration (example).
+# Installed location: /etc/oscarwatch-sattrack-bridge/config.toml (0600, seed-once
+# by deploy.sh). The MQTT password is NOT here — it lives in
+# oscarwatch-sattrack-bridge.env as OSCARWATCH_SATTRACK_BRIDGE_MQTT_PASSWORD.
+# Env overrides: OSCARWATCH_SATTRACK_BRIDGE_MQTT_{BROKER,CLIENT_ID,USER,PASSWORD,SITE},
+# OSCARWATCH_SATTRACK_BRIDGE_SOURCE_URL.
+
+host     = "scmino"     # compute node, published in /meta
+location = "bauwagen"   # physical location label, published in /meta
+
+[slot]
+station = "uhf"
+slot    = "sat-track"
+
+[source]
+# OscarWatch Settings → Integrations → Satellite link: enable, port 7373,
+# "Allow connections from local network" on (+ Windows firewall allow).
+url           = "ws://192.168.1.197:7373/"
+# WebSocket keepalive. OscarWatch is silent between passes, so a dead link is
+# detected by missing pongs (after 2.5 × this), never by data silence. 0 = off.
+ping_interval = "30s"
+
+[station]
+# The QTH OscarWatch computes its look angles from; the sub-satellite point is
+# derived from it. Explicit lat/lon (+ alt_m) win over the locator.
+locator = "JO32WE"
+# lat   = 52.1875
+# lon   = 7.875
+# alt_m = 0
+
+[mqtt]
+broker = "tcp://192.168.1.50:1883"
+# client_id defaults to "<site>-<station>-<slot>" (muehle-uhf-sat-track).
+site   = "muehle"
+user   = "hf"
+password = ""   # use OSCARWATCH_SATTRACK_BRIDGE_MQTT_PASSWORD instead
+
+[log]
+level = "info"  # debug | info | warn | error

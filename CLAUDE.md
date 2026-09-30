@@ -42,6 +42,7 @@ separate per-component remotes to push to.
 | icom9700-radio-bridge | `icom9700-radio-bridge/` | IC-9700 UHF radio bridge → `muehle/uhf/radio` (RS-BA1 LAN session for RX audio capture only + read-only serial CI-V telemetry; no remote TX) |
 | m5dial-hf-rotctrl | `m5dial-hf-rotctrl/` | M5Stack Dial firmware — HF rotator control head (analog meter face + knob; not a slot; consumer + /cmd stimulator) |
 | logger-spot-bridge | `logger-spot-bridge/` | Shack-logger bridge (DXLog/Log4OM) → `hf/spots` — the operator-keyed station (call, position, beam bearing) |
+| oscarwatch-sattrack-bridge | `oscarwatch-sattrack-bridge/` | OscarWatch Satellite-link WebSocket bridge → `uhf/sat-track` — the satellite being tracked (name, NORAD, transponder, az/el, range, range rate, sunlit, derived sub-satellite point, radio-corrected up/downlink); read-only, runs on scmino |
 | testui | `testui/` | MQTT relay + schema-aware browser UI for the bus (not a slot; passive consumer + /cmd stimulator) |
 | vhfcam-restream | `vhfcam-restream/` | VHF cam (UniFi Protect RTSPS) multi-sink restreamer — YouTube Live + LAN web preview (:8083) with operational-data overlay (AZ/EL/freq/TX drawtext from the bus) and IC-9700 RX audio (demand-driven via icom9700-radio-bridge); web radio controls; Go supervisor around ffmpeg; MQTT consumer + minimal `/status`/`/state` planes (`muehle/hf/vhfcam`) |
 | mqtt-broker | `mqtt-broker/` | Shack-local Mosquitto broker on shari, bridged to the HA broker (infra — not a slot, not Go) |
@@ -73,6 +74,7 @@ and `go work sync` operate over the whole workspace at once.
 | `muehle/hf/power-seq` | powerseq | logic slot — no device (runs on shari); startup/shutdown sequencer |
 | `muehle/uhf/pol-ctrl` | m5stamp-pol-ctrl | M5 Stamp PLC #2 — X-Quad polarization (ESPHome), wifi |
 | `muehle/uhf/radio` | icom9700-radio-bridge | Icom IC-9700 — RS-BA1 LAN session carries RX audio capture (demand-driven) + read-only serial CI-V telemetry; no remote TX (2026-09 pivot) |
+| `muehle/uhf/sat-track` | oscarwatch-sattrack-bridge | software source — OscarWatch on BWPC (`ws://192.168.1.197:7373/`); bridge on scmino (192.168.1.178), read-only |
 | `muehle/uhf/az-rotator` | spid-ercm-rotator-bridge | SPID azimuth rotator, serial (Rot1Prog) — runs on shari with rotctld :4534 + PstRotator :12041; free motion, no arming gate |
 | `muehle/uhf/el-rotator` | spid-ercm-rotator-bridge | GS-500 elevation via ERC-M controller, serial (GS-232B) — same compound bridge as az-rotator (one process, two slots, per-axis device_online) |
 | `muehle/uhf/rotator` | pelcobridge2 | PTS-303Z/3050DZ pan/tilt head, RS-485 — interactive TUI on shack-pc (arming is manual, never remote) |

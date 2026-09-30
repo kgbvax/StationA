@@ -1,6 +1,6 @@
 # Station Integration Model — Reference
 
-Version 0.7 (draft). This defines the *shape* the configuration takes and, from 0.4, its
+Version 0.10 (draft). This defines the *shape* the configuration takes and, from 0.4, its
 transport binding. Resolved in 0.2: hierarchy and tune-routing confirmed; band policy
 completed; rotators, the polarization controller, and PA-arm hardware pinned down;
 compute hosts added as a first-class node kind. In 0.3: the `station` node reduced to a
@@ -29,7 +29,10 @@ sat-ops rotator mount added — `uhf/az-rotator` (SPID) and `uhf/el-rotator`
 (`spid-ercm-rotator-bridge` on shari), free motion with no arming gate and the
 posture's exposure review recorded in `known-issues.md`; the stale PSTRotator
 host attributions corrected (shack-pc fronts pelcobridge2, the PTS-303Z/3050DZ
-pan/tilt head).
+pan/tilt head). In 0.10: the `sat-track` role added (§4) with the
+`uhf/sat-track` slot (§7.2) — the satellite the station is tracking, fronted from
+OscarWatch's Satellite-link WebSocket by `oscarwatch-sattrack-bridge` on the new host
+`scmino` (§7.3).
 
 The guiding idea: the live configuration is the documentation. A component, once
 connected, describes itself — who it is, what it can do, and what is currently true
@@ -265,7 +268,9 @@ entirely).
   `spare`; distinct from `ant-switch`, the exclusive 1-of-N selector), `pa-arm` (the
   PA-enable arm relay; safety, heartbeat-driven, fail-safe-open), and `sequencer` (a
   logic slot that runs an ordered, delay- and confirmation-based startup/shutdown over
-  other slots' `/cmd`). Passive: `ant/*`, `mast/*`, `preamp/*` (masthead LNA).
+  other slots' `/cmd`), and `sat-track` (the satellite a tracker application is
+  following — identity, look angle, derived sub-satellite point; read-only, fronts
+  software, not hardware). Passive: `ant/*`, `mast/*`, `preamp/*` (masthead LNA).
 - **Capability keys** seen so far: `bands`, `modes`, `receivers`, `diversity`,
   `amp_key`, `tune`, `bias_t`, `band_source`, `rf_sample`, `alc_out`, `hot_switch`,
   `ports`, `off`, `exclusive`, `axes`, `polarizations`, `feeds` (a `power` slot's
@@ -745,6 +750,28 @@ target) are answered to the protocol client and logged (journald), never routed
 into `/state.error` — that channel carries `/cmd` rejections and serial link
 faults only.
 
+**`muehle/uhf/sat-track`** — the satellite the station is tracking. A software
+source, not a device: **oscarwatch-sattrack-bridge** (host `scmino`) dials the
+OscarWatch tracker's Satellite-link WebSocket on the shack PC and republishes its
+focused satellite. Read-only (no `/cmd`); tracker-agnostic role, so another tracker's
+adapter (gpredict, SatPC32) would publish the same shape.
+```
+role: sat-track;  device: { name, model: OscarWatch };  link: websocket;  host: scmino
+capabilities: source (oscarwatch); protocol (Satellite-link version)
+state:        ts; device_online (the tracker link); tracking; in_range;
+              sat_name; norad_id (string); mode_type (transponder label, not a mode);
+              az; el (°); range_km; range_rate_km_s; sunlit;
+              sub_lat; sub_lng; alt_km (sub-satellite point, derived from the look
+              angle + station QTH — no TLE); uplink_hz; downlink_hz (radio-corrected);
+              uplink_mode; downlink_mode (canonical or null); uplink_band; downlink_band;
+              beacon_only; doppler; error (omitempty, only while the link is down)
+```
+Satellite keys are JSON `null` (not omitted) when nothing is tracked or the tracker is
+unreachable — a lost link clears the satellite rather than freezing its last position.
+The look angle is the tracker's, not the rotators' readback: `uhf/az-rotator` /
+`uhf/el-rotator` report where the mount points, `sat-track` where the satellite is.
+Wire contract: `oscarwatch-sattrack-bridge/docs/oscarwatch-sattrack-bridge-mqtt-api.md`.
+
 **`muehle/uhf/pol-ctrl`** — M5 Stamp PLC #2 with custom firmware. `capabilities:
 polarizations [h, v, cl, cr]`. Settable state, operator-driven; no automatic binding.
 
@@ -768,6 +795,8 @@ muehle/host/shari       # Raspberry Pi, Linux
   role: host;  location: bauwagen;  state: online, temp_c, load
 muehle/host/shack-pc    # shack PC
   role: host;  location: bauwagen;  state: online
+muehle/host/scmino      # Debian 12 arm64 box, taking over shari's role
+  role: host;  location: bauwagen;  state: online
 ```
 
 | Adapter / service | Fronts | Host |
@@ -779,6 +808,7 @@ muehle/host/shack-pc    # shack PC
 | UHF pan/tilt head bridge (`pelcobridge2`) | `uhf/rotator` (PTS-303Z/3050DZ) | `shack-pc` |
 | Sat rotator bridge (`spid-ercm-rotator-bridge`) | `uhf/az-rotator`, `uhf/el-rotator` | `shari` |
 | IC-9700 radio bridge (`icom9700-radio-bridge`) | `uhf/radio` (Icom IC-9700) | `shari` |
+| Sat-track bridge (`oscarwatch-sattrack-bridge`) | `uhf/sat-track` (OscarWatch on shack-pc) | `scmino` |
 | FLEX bridge (flexbridge) | `hf/radio` | `shari` |
 | HF antenna-select reconciler | `hf/antenna-select` | `shari` |
 | Logging | subscriber, no slot | `shari` |

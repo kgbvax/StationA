@@ -48,6 +48,13 @@ A bridge that fronts one specific piece of hardware is named
 | M5Stamp PLC family (embedded relay/DI controller, custom firmware) | `m5stamp` | `m5stamp-hf-ctrl` (firmware) |
 | M5Stack Dial family (round-face ESP32-S3 control knob, custom firmware) | `m5dial` | `m5dial-hf-rotctrl` (firmware) |
 | Icom CI-V / RS-BA1 LAN-controlled rigs (IC-9700 today; the same protocol family covers other RS-BA1 Icoms) | `icom9700` | `icom9700-radio-bridge` |
+| OscarWatch satellite tracker (software source — its Satellite-link WebSocket) | `oscarwatch` | `oscarwatch-sattrack-bridge` |
+
+> **Software sources.** A bridge that fronts an application rather than hardware takes
+> the application as its `<devtag>` (the thing whose protocol it speaks) and the
+> collapsed role as `<function>`: `oscarwatch-sattrack-bridge` fronts role `sat-track`.
+> Another tracker publishing the same slot would be its own module
+> (`gpredict-sattrack-bridge`).
 
 > **Deviation — `icom9700` env prefix:** the env-overload prefix is `ICOM9700_`
 > rather than the dir-derived `ICOM9700_RADIO_BRIDGE_`. The longer form is
@@ -128,4 +135,6 @@ number) per the rule above.
 | _(renamed)_ `antswitchbridge` | `waveshare_relay-antswitch-bridge` | device (formerly contract-first exception; **renamed 2026-07** to follow the family-tag pattern; `_` in `waveshare_relay` is a recorded deviation, see §1) |
 | _(new)_ `shelly-power-bridge` | `shelly-power-bridge` | device (convention; Shelly family; fronts `power/master` + `power/psu-13v8`) |
 | _(new)_ `m5stamp-hf-ctrl` | `m5stamp-hf-ctrl` | embedded firmware (M5Stamp family; fronts `hf/pa-arm` + `hf/switch`) |
-| _(new)_ `powerseq` | — | logic slot (exception; the `hf/power-seq` sequencer) || _(new)_ `icom9700-radio-bridge` | `icom9700-radio-bridge` | device (convention; Icom CI-V/RS-BA1 family; fronts `muehle/uhf/radio`; `ICOM9700_` env prefix is a recorded deviation, see §1) |
+| _(new)_ `powerseq` | — | logic slot (exception; the `hf/power-seq` sequencer) |
+| _(new)_ `icom9700-radio-bridge` | `icom9700-radio-bridge` | device (convention; Icom CI-V/RS-BA1 family; fronts `muehle/uhf/radio`; `ICOM9700_` env prefix is a recorded deviation, see §1) |
+| _(new)_ `oscarwatch-sattrack-bridge` | `oscarwatch-sattrack-bridge` | software source (convention; OscarWatch Satellite link; fronts `muehle/uhf/sat-track`) |

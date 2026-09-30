@@ -75,6 +75,7 @@ model. None of them is the model; together they prove the model is buildable and
 | [m5stamp-hf-ctrl](m5stamp-hf-ctrl/) | M5 Stamp PLC firmware (PA/TRX remote-on + arm relay) | `muehle/hf/switch`, `muehle/hf/pa-arm` | wifi (embedded) |
 | [powerseq](powerseq/) | Station startup/shutdown sequencer | `muehle/hf/power-seq` | logic slot |
 | [hadiscovery](hadiscovery/) | Home Assistant discovery consumer | `muehle/hf/discovery` | logic slot — reads `/meta` |
+| [oscarwatch-sattrack-bridge](oscarwatch-sattrack-bridge/) | Satellite-tracking source (OscarWatch Satellite link) | `muehle/uhf/sat-track` | WebSocket (OscarWatch, read-only) |
 
 `hadiscovery` is a passive consumer: it reads each slot's consumer-neutral `expose` block
 from `/meta` and renders Home Assistant discovery (model §3.1, §9). The bridges carry
