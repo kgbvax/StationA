@@ -3,8 +3,11 @@
 package pstrotator
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"net"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -164,3 +167,38 @@ func TestQueryReply(t *testing.T) {
 		t.Errorf("unexpected reply %q", buf[:n])
 	}
 }
+
+// The logger's per-rotate <CALL> datagram is expected traffic: Debug only,
+// while a truly unknown datagram stays at Info.
+func TestCallDatagramLoggedQuietly(t *testing.T) {
+	var buf syncBuffer
+	s := &Server{Bind: "127.0.0.1", Port: 0, H: &fakeHandler{},
+		Log: slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))}
+	pc, err := s.Listen()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go func() { _ = s.Serve(ctx, pc) }()
+
+	send(t, pc.LocalAddr(), "<PST><CALL>FG4BM</CALL></PST>")
+	send(t, pc.LocalAddr(), "<PST><FOO>1</FOO></PST>")
+	eventually(t, "unknown logged", func() bool { return strings.Contains(buf.String(), "<FOO>") })
+	if strings.Contains(buf.String(), "FG4BM") {
+		t.Fatalf("CALL datagram logged at Info: %q", buf.String())
+	}
+}
+
+// syncBuffer is a bytes.Buffer safe for the server goroutine and the test.
+type syncBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (w *syncBuffer) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.b.Write(p)
+}
+func (w *syncBuffer) String() string { w.mu.Lock(); defer w.mu.Unlock(); return w.b.String() }

@@ -77,8 +77,15 @@ class _UltrabeamPanelState extends State<UltrabeamPanel> {
     final steerSlot = store.slots['muehle/hf/beam-steer'];
     final steerOnline = (steerSlot?.isOnline ?? false) && store.linkUp;
     final smartOn = store.stateValueAs<bool>('muehle/hf/beam-steer', 'enabled') ?? false;
-    final lastRaw = store.stateValue('muehle/hf/beam-steer', 'last');
-    final smartReason = (steerOnline && smartOn && lastRaw is Map) ? lastRaw['reason'] as String? : null;
+    // The AUTO line (in the pill band) says what beamsteer is doing — and,
+    // first, whether it can do anything: a beamsteer that has lost the
+    // rotator ignores every request while the button still reads ON.
+    final (smartLine, smartAlert) = _autoLine(
+      active: steerOnline && smartOn,
+      inputs: store.stateValue('muehle/hf/beam-steer', 'inputs'),
+      pending: store.stateValueAs<String>('muehle/hf/beam-steer', 'pending'),
+      last: store.stateValue('muehle/hf/beam-steer', 'last'),
+    );
 
     final (suffix, suffixColor) = moving
         ? ('MOVING', AppTheme.red)
@@ -199,13 +206,13 @@ class _UltrabeamPanelState extends State<UltrabeamPanel> {
             child: Row(
               children: [
                 Expanded(
-                  child: smartReason == null || smartReason.isEmpty
+                  child: smartLine == null
                       ? const SizedBox.shrink()
                       : Text(
-                          'AUTO · $smartReason',
+                          'AUTO · $smartLine',
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: AppTheme.mono(11, color: AppTheme.txtMute),
+                          style: AppTheme.mono(11, color: smartAlert ? AppTheme.red : AppTheme.txtMute),
                         ),
                 ),
                 const SizedBox(width: 8),
@@ -223,6 +230,24 @@ class _UltrabeamPanelState extends State<UltrabeamPanel> {
       ),
     );
   }
+}
+
+/// The AUTO status text and whether it is an alert. Precedence: blind
+/// (requests are being ignored) > a held flip > the last decision > idle.
+/// `inputs` is absent from older beamsteer builds — then nothing is claimed.
+(String?, bool) _autoLine({required bool active, Object? inputs, String? pending, Object? last}) {
+  if (!active) return (null, false);
+  if (inputs is Map && inputs['rotator'] == false) {
+    return ('no rotator data — logger requests ignored', true);
+  }
+  if (pending != null && pending.isNotEmpty) {
+    final dir = pending == 'reverse' ? '180°' : pending;
+    return ('$dir held until TX and element travel end', false);
+  }
+  if (last is Map && last['reason'] is String && (last['reason'] as String).isNotEmpty) {
+    return (last['reason'] as String, false);
+  }
+  return ('waiting for a logger request', false);
 }
 
 class _DirectionButton extends StatelessWidget {

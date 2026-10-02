@@ -24,11 +24,24 @@ import (
 	"beamsteer/internal/steer"
 )
 
-// Publisher publishes one MQTT message (QoS 1). Implementations may block
-// briefly; the engine only calls it from the jobs worker.
+// Publisher publishes one MQTT message. It must fail fast (not queue) while
+// the broker link is down: a sibling /cmd replayed after a reconnect would
+// move the mast to a stale target, possibly after the operator's STOP.
 type Publisher interface {
-	Publish(topic string, retained bool, payload []byte) error
+	Publish(topic string, qos byte, retained bool, payload []byte) error
 }
+
+// How long a command beamsteer sent is trusted over the sibling's /state.
+// ultrabridge republishes /state only on its 2 s poll, after a serial
+// exchange of up to 5 s; the WRC reports a new target within a frame or two.
+// Until the sibling confirms (or the window lapses), decisions use what was
+// commanded — not the stale /state — and a second flip is held.
+const (
+	dirSettle       = 15 * time.Second  // direction cmd → ant-ctrl confirms
+	rotAckWindow    = 10 * time.Second  // set_az → rotator shows our target or starts moving
+	rotTravelWindow = 120 * time.Second // acknowledged set_az → arrival (G-450 full sweep ~60 s)
+	arriveTolerance = 3.0               // degrees: rotator "at" the commanded target
+)
 
 // Last is the most recent logger request and what beamsteer did with it.
 type Last struct {
@@ -39,6 +52,14 @@ type Last struct {
 	TS        string   `json:"ts"`
 }
 
+// heldFlip is a direction change waiting for TX, element travel or an
+// earlier flip to finish — with the bearing it was decided for, so it is
+// decided again (not replayed blindly) when it is free to go.
+type heldFlip struct {
+	dir     string
+	bearing float64
+}
+
 // Engine is the beamsteer state machine.
 type Engine struct {
 	cfg config.Config
@@ -46,10 +67,11 @@ type Engine struct {
 	log *slog.Logger
 	now func() time.Time
 
-	self    string
-	rotCmd  string
-	antCmd  string
-	enabled bool
+	self      string
+	rotCmd    string
+	antCmd    string
+	enabled   bool
+	connected bool
 
 	rotStatus, rotDevice bool
 	az                   float64
@@ -60,13 +82,35 @@ type Engine struct {
 	antStatus, antDevice bool
 	direction            string
 	antMoving            bool
+	antBand              string
 
 	radioStatus, radioDevice bool
 	band                     string
 	tx                       bool
 
-	pending string // direction held until ant-ctrl stops moving and the radio is in RX
+	// Direction command in flight (see dirSettle): trusted until ant-ctrl
+	// reports it at rest, reports some third direction at rest (set by
+	// someone else), or the window lapses.
+	cmdDir      string
+	cmdDirFrom  string
+	cmdDirUntil time.Time
+
+	// set_az in flight. Acknowledged when the rotator shows our target, or
+	// starts moving from rest after the command. Retired on arrival, when the
+	// rotator stops after moving (short of the target: a STOP from anywhere,
+	// a limit — its /state az is the truth then), on a retarget by someone
+	// else, on our own Stop, or when the window lapses.
+	cmdAz           *float64
+	cmdAzUntil      time.Time
+	cmdAzAcked      bool
+	cmdAzMoved      bool
+	cmdAzFromMoving bool
+
+	pending *heldFlip
 	last    *Last
+
+	// Input liveness last published, so a change republishes /state.
+	lastInputs inputs
 
 	hmu       sync.Mutex
 	heading   float64
@@ -97,15 +141,18 @@ func (e *Engine) SelfBase() string { return e.self }
 // bus inputs
 // ---------------------------------------------------------------------------
 
+// SetConnected tracks the broker link (OnConnect / OnConnectionLost).
+// Requests while it is down are dropped with a reason, not "sent".
+func (e *Engine) SetConnected(on bool) { e.connected = on }
+
 // SetEnabled applies the operator toggle (own /cmd).
 func (e *Engine) SetEnabled(on bool) {
 	if e.enabled == on {
 		return
 	}
 	e.enabled = on
-	if !on {
-		e.pending = ""
-	}
+	e.pending = nil
+	e.last = nil // a decision from before the toggle would read as current
 	e.log.Info("smart rotation", "enabled", on)
 	e.publishState()
 }
@@ -116,7 +163,7 @@ func online(p []byte) bool { return strings.EqualFold(strings.TrimSpace(string(p
 // by /status alone.
 func deviceOnline(v *bool) bool { return v == nil || *v }
 
-func (e *Engine) RotatorStatus(p []byte) { e.rotStatus = online(p); e.updateHeading() }
+func (e *Engine) RotatorStatus(p []byte) { e.rotStatus = online(p); e.inputsChanged() }
 
 func (e *Engine) RotatorState(p []byte) {
 	var s struct {
@@ -133,18 +180,49 @@ func (e *Engine) RotatorState(p []byte) {
 		e.az, e.azKnown = *s.Az, true
 	}
 	e.targetAz, e.rotMoving, e.rotDevice = s.TargetAz, s.Moving, deviceOnline(s.DeviceOnline)
-	e.updateHeading()
+	e.settleRotator()
+	e.inputsChanged()
+}
+
+// settleRotator retires the in-flight set_az once the rotator's own /state
+// can be trusted again. Our target is "seen" only when target_az matches it
+// or motion starts from rest — a frame the WRC emitted before applying our
+// command (old target, already moving) neither acknowledges nor retargets.
+// The WRC omits target_az for 0°, so a missing target is "unknown", never a
+// retarget.
+func (e *Engine) settleRotator() {
+	if e.cmdAz == nil {
+		return
+	}
+	t := *e.cmdAz
+	targetIsOurs := e.targetAz != nil && math.Abs(*e.targetAz-t) <= 1
+	if !e.cmdAzAcked && (targetIsOurs || (!e.cmdAzFromMoving && e.rotMoving)) {
+		e.cmdAzAcked = true
+		e.cmdAzUntil = e.now().Add(rotTravelWindow)
+	}
+	if e.cmdAzAcked && e.rotMoving {
+		e.cmdAzMoved = true
+	}
+	switch {
+	case !e.rotMoving && e.azKnown && math.Abs(e.az-t) <= arriveTolerance:
+		e.cmdAz = nil // arrived
+	case e.cmdAzMoved && !e.rotMoving:
+		e.cmdAz = nil // stopped short (STOP from the console or M5 dial, a limit)
+	case e.cmdAzAcked && e.targetAz != nil && !targetIsOurs:
+		e.cmdAz = nil // retargeted by someone else (console, M5 dial, wrc listener)
+	}
 }
 
 func (e *Engine) AntStatus(p []byte) {
 	e.antStatus = online(p)
-	e.updateHeading()
+	e.inputsChanged()
 	e.retryPending()
 }
 
 func (e *Engine) AntState(p []byte) {
 	var s struct {
 		Direction    string `json:"direction"`
+		Band         string `json:"band"`
 		Moving       bool   `json:"moving"`
 		DeviceOnline *bool  `json:"device_online"`
 	}
@@ -152,12 +230,28 @@ func (e *Engine) AntState(p []byte) {
 		e.log.Warn("bad ant-ctrl state", "err", err)
 		return
 	}
-	e.direction, e.antMoving, e.antDevice = s.Direction, s.Moving, deviceOnline(s.DeviceOnline)
-	e.updateHeading()
+	e.direction, e.antBand, e.antMoving, e.antDevice = s.Direction, s.Band, s.Moving, deviceOnline(s.DeviceOnline)
+	if e.cmdDir != "" && !s.Moving {
+		switch s.Direction {
+		case e.cmdDir:
+			e.cmdDir = "" // the controller is there and at rest
+		case e.cmdDirFrom:
+			// Not applied yet (a poll from before the cmd ran): keep trusting the cmd.
+		default:
+			e.log.Info("ant-ctrl direction set elsewhere; dropping the in-flight flip",
+				"commanded", e.cmdDir, "reported", s.Direction)
+			e.cmdDir = ""
+		}
+	}
+	e.inputsChanged()
 	e.retryPending()
 }
 
-func (e *Engine) RadioStatus(p []byte) { e.radioStatus = online(p); e.retryPending() }
+func (e *Engine) RadioStatus(p []byte) {
+	e.radioStatus = online(p)
+	e.inputsChanged()
+	e.retryPending()
+}
 
 func (e *Engine) RadioState(p []byte) {
 	var s struct {
@@ -170,6 +264,7 @@ func (e *Engine) RadioState(p []byte) {
 		return
 	}
 	e.band, e.tx, e.radioDevice = s.Band, s.TX == "tx", deviceOnline(s.DeviceOnline)
+	e.inputsChanged()
 	e.retryPending()
 }
 
@@ -181,66 +276,145 @@ func (e *Engine) radioLive() bool { return e.radioStatus && e.radioDevice }
 // flexbridge must not hold a direction change forever.
 func (e *Engine) transmitting() bool { return e.radioLive() && e.tx }
 
+// decisionBand is the band for the decision. 6m wins if EITHER live source
+// says so: the radio is first after a QSY (ant-ctrl follows via antennaselect
+// band-follow and a 2 s poll), the controller is the authority on what the
+// elements are tuned to. Choosing reverse on 6m is the one wrong answer.
+func (e *Engine) decisionBand() string {
+	antBand, radioBand := "", ""
+	if e.antLive() {
+		antBand = e.antBand
+	}
+	if e.radioLive() {
+		radioBand = e.band
+	}
+	if antBand == "6m" || radioBand == "6m" {
+		return "6m"
+	}
+	if antBand != "" {
+		return antBand
+	}
+	return radioBand
+}
+
+func (e *Engine) dirInFlight() bool { return e.cmdDir != "" && e.now().Before(e.cmdDirUntil) }
+
+// effectiveDirection is the direction to decide from: a flip beamsteer just
+// sent wins over ant-ctrl's not-yet-updated /state.
+func (e *Engine) effectiveDirection() string {
+	if !e.antLive() {
+		return ""
+	}
+	if e.dirInFlight() {
+		return e.cmdDir
+	}
+	return e.direction
+}
+
+// effectiveAz is the boom heading to decide from: where beamsteer just sent
+// the rotator, else where it is going, else where it is.
+func (e *Engine) effectiveAz() float64 {
+	if e.cmdAz != nil && e.now().Before(e.cmdAzUntil) {
+		return *e.cmdAz
+	}
+	if e.rotMoving && e.targetAz != nil {
+		return *e.targetAz
+	}
+	return e.az
+}
+
 // ---------------------------------------------------------------------------
-// logger (PstRotator) inputs
+// logger (PstRotator) and console (aim) inputs
 // ---------------------------------------------------------------------------
 
-// Goto handles a logger rotate request for bearing b.
+// Goto handles a rotate request for bearing b.
 func (e *Engine) Goto(b float64) {
 	b = steer.Norm(b)
 	last := &Last{Bearing: b, TS: e.ts()}
 	e.last = last
-	e.pending = "" // a newer request supersedes a held direction change
+	e.pending = nil // a newer request supersedes a held direction change
 
-	if !e.enabled {
+	switch {
+	case !e.connected:
+		last.Reason = "not connected to the broker: request ignored"
+		e.log.Warn("rotate request ignored: not connected to the broker", "bearing", b)
+		return // nothing can be published, /state included
+	case !e.enabled:
 		t := math.Round(b)
-		last.RotateTo, last.Reason = &t, "smart rotation off: plain rotation"
-		e.sendRotate(t)
+		if e.sendRotate(t) {
+			last.RotateTo, last.Reason = &t, "smart rotation off: plain rotation"
+		} else {
+			last.Reason = "smart rotation off: rotate cmd failed"
+		}
 		e.publishState()
 		return
-	}
-	if !e.rotLive() || !e.azKnown {
+	case !e.rotLive() || !e.azKnown:
 		last.Reason = "rotator offline: request ignored"
-		e.log.Warn("logger rotate request ignored: rotator offline", "bearing", b)
+		e.log.Warn("rotate request ignored: rotator offline", "bearing", b)
 		e.publishState()
 		return
 	}
+	e.decideAndApply(b, last, "")
+	e.publishState()
+}
 
-	az := e.az
-	if e.rotMoving && e.targetAz != nil {
-		// Decide from where the rotator is going, not from mid-travel.
-		az = *e.targetAz
-	}
-	dir := ""
-	if e.antLive() {
-		dir = e.direction
-	}
+// decideAndApply decides for bearing b against the effective state and
+// sends what is needed. A direction change that may not go now is held with
+// its bearing. note is appended to the reason ("after hold").
+func (e *Engine) decideAndApply(b float64, last *Last, note string) {
+	az, dir, band := e.effectiveAz(), e.effectiveDirection(), e.decisionBand()
 	d := steer.Decide(steer.Inputs{
 		Bearing:   b,
 		Az:        az,
 		Direction: dir,
-		Band:      e.band,
+		Band:      band,
 		Lobe:      e.cfg.Steer.LobeDeg,
 		BidirLobe: e.cfg.Steer.BidirLobeDeg,
 		MaxAz:     e.cfg.Steer.MaxAz,
 	})
-	last.RotateTo, last.Direction, last.Reason = d.RotateTo, d.Direction, d.Reason
-	e.log.Info("smart rotation", "bearing", b, "az", az, "direction", dir, "band", e.band,
-		"rotate_to", fmtPtr(d.RotateTo), "new_direction", d.Direction, "reason", d.Reason)
+	reason := d.Reason
+	if note != "" {
+		reason += " (" + note + ")"
+	}
+	e.log.Info("smart rotation", "bearing", b, "az", az, "direction", dir, "band", band,
+		"rotate_to", fmtPtr(d.RotateTo), "new_direction", d.Direction, "reason", reason)
 
+	last.RotateTo, last.Direction, last.Reason = nil, d.Direction, reason
 	if d.RotateTo != nil {
-		e.sendRotate(*d.RotateTo)
+		if !e.sendRotate(*d.RotateTo) {
+			// Without the rotation the flip would point the lobe wrong; drop
+			// both (and never re-decide into another failing rotate).
+			last.Direction, last.Reason = "", reason+"; rotate cmd failed"
+			return
+		}
+		last.RotateTo = d.RotateTo
 	}
 	if d.Direction != "" {
-		e.pending = d.Direction
+		e.pending = &heldFlip{dir: d.Direction, bearing: b}
 		e.flushPending()
 	}
-	e.publishState()
 }
 
 // Stop halts the rotator. Always passed through, toggle or not.
 func (e *Engine) Stop() {
-	e.publish(e.rotCmd, false, map[string]any{"action": "stop"})
+	e.cmdAz = nil // the commanded target will not be reached
+	if err := e.publish(e.rotCmd, 0, false, map[string]any{"action": "stop"}); err != nil {
+		e.log.Warn("stop not sent", "err", err)
+	}
+}
+
+// Tick runs once a second on the jobs worker: lapsed in-flight windows stop
+// blocking, and a held flip is retried.
+func (e *Engine) Tick() {
+	if e.cmdDir != "" && !e.dirInFlight() {
+		e.log.Warn("ant-ctrl did not confirm direction in time; deciding from its /state again",
+			"commanded", e.cmdDir, "reported", e.direction)
+		e.cmdDir = ""
+	}
+	if e.cmdAz != nil && !e.now().Before(e.cmdAzUntil) {
+		e.cmdAz = nil
+	}
+	e.retryPending()
 }
 
 // Readback is the heading reported to the logger's AZ? query: where the main
@@ -255,23 +429,46 @@ func (e *Engine) Readback() (float64, bool) {
 // outputs
 // ---------------------------------------------------------------------------
 
-// flushPending sends a held direction change once it is safe. It reports
-// whether pending changed, so bus-input callers can republish /state.
+// flushPending sends a held flip once it is safe — after deciding again for
+// its bearing against the current state (the band may now be 6m, the
+// operator may have set BI, an earlier flip may already cover it). It
+// reports whether anything changed, so bus-input callers can republish.
 func (e *Engine) flushPending() bool {
-	if e.pending == "" {
+	p := e.pending
+	if p == nil {
 		return false
 	}
 	if !e.antLive() {
-		e.log.Warn("direction change dropped: ant-ctrl offline", "direction", e.pending)
-		e.pending = ""
+		e.log.Warn("held direction change dropped: ant-ctrl offline", "direction", p.dir)
+		e.pending = nil
 		return true
 	}
-	if e.antMoving || e.transmitting() {
-		return false // held; the next ant-ctrl/radio update retries
+	if !e.connected || e.antMoving || e.transmitting() || e.dirInFlight() {
+		return false // held; the next ant-ctrl/radio update or Tick retries
 	}
-	dir := e.pending
-	e.pending = ""
-	e.publish(e.antCmd, true, map[string]any{"action": "direction", "value": dir, "ts": e.ts()})
+	e.pending = nil
+	az, dir, band := e.effectiveAz(), e.effectiveDirection(), e.decisionBand()
+	d := steer.Decide(steer.Inputs{
+		Bearing: p.bearing, Az: az, Direction: dir, Band: band,
+		Lobe: e.cfg.Steer.LobeDeg, BidirLobe: e.cfg.Steer.BidirLobeDeg, MaxAz: e.cfg.Steer.MaxAz,
+	})
+	if d.RotateTo != nil {
+		// The world changed under the hold (e.g. QSY to 6m: no reverse, so
+		// the boom must turn to the forward target instead).
+		if e.last != nil && e.last.Bearing == p.bearing {
+			e.decideAndApply(p.bearing, e.last, "after hold")
+		}
+		return true
+	}
+	if d.Direction == "" {
+		return true // nothing left to do
+	}
+	if err := e.publish(e.antCmd, 1, true, map[string]any{"action": "direction", "value": d.Direction, "ts": e.ts()}); err != nil {
+		e.log.Warn("direction cmd not sent; retrying", "direction", d.Direction, "err", err)
+		e.pending = &heldFlip{dir: d.Direction, bearing: p.bearing}
+		return false
+	}
+	e.cmdDir, e.cmdDirFrom, e.cmdDirUntil = d.Direction, e.direction, e.now().Add(dirSettle)
 	return true
 }
 
@@ -282,8 +479,51 @@ func (e *Engine) retryPending() {
 	}
 }
 
-func (e *Engine) sendRotate(az float64) {
-	e.publish(e.rotCmd, false, map[string]any{"action": "set_az", "az": az})
+// sendRotate commands the rotator and records the target in flight — only
+// if the cmd actually went out.
+func (e *Engine) sendRotate(az float64) bool {
+	if err := e.publish(e.rotCmd, 0, false, map[string]any{"action": "set_az", "az": az}); err != nil {
+		e.log.Warn("set_az not sent", "az", az, "err", err)
+		return false
+	}
+	t := az
+	e.cmdAz, e.cmdAzUntil = &t, e.now().Add(rotAckWindow)
+	e.cmdAzAcked, e.cmdAzMoved, e.cmdAzFromMoving = false, false, e.rotMoving
+	return true
+}
+
+// inputs is the sibling liveness published in /state, so the console can
+// show that beamsteer is blind rather than an AUTO that silently does
+// nothing (2026-10-01: a poisoned broker session left it without rotator
+// data for hours while /state read enabled).
+type inputs struct {
+	Rotator bool `json:"rotator"`
+	AntCtrl bool `json:"ant_ctrl"`
+	Radio   bool `json:"radio"`
+}
+
+func (e *Engine) currentInputs() inputs {
+	return inputs{Rotator: e.rotLive() && e.azKnown, AntCtrl: e.antLive(), Radio: e.radioLive()}
+}
+
+// inputsChanged refreshes the AZ? heading and republishes /state when a
+// sibling's liveness flips (logged, so the journal shows when beamsteer
+// gains or loses its eyes).
+func (e *Engine) inputsChanged() {
+	e.updateHeading()
+	in := e.currentInputs()
+	if in == e.lastInputs {
+		return
+	}
+	if in.Rotator != e.lastInputs.Rotator {
+		if in.Rotator {
+			e.log.Info("rotator readback live", "az", e.az)
+		} else {
+			e.log.Warn("rotator readback lost: rotate requests will be ignored")
+		}
+	}
+	e.lastInputs = in
+	e.publishState()
 }
 
 func (e *Engine) updateHeading() {
@@ -304,14 +544,16 @@ func (e *Engine) Republish() {
 }
 
 func (e *Engine) publishState() {
-	st := map[string]any{"ts": e.ts(), "enabled": e.enabled}
-	if e.pending != "" {
-		st["pending"] = e.pending
+	st := map[string]any{"ts": e.ts(), "enabled": e.enabled, "inputs": e.currentInputs()}
+	if e.pending != nil {
+		st["pending"] = e.pending.dir
 	}
 	if e.last != nil {
 		st["last"] = e.last
 	}
-	e.publish(e.self+"/state", true, st)
+	if err := e.publish(e.self+"/state", 1, true, st); err != nil {
+		e.log.Debug("state not published", "err", err)
+	}
 }
 
 func (e *Engine) publishMeta() {
@@ -325,6 +567,7 @@ func (e *Engine) publishMeta() {
 		"capabilities": map[string]any{
 			"controls":        []string{s.RotatorSlot, s.AntCtrlSlot},
 			"input":           "pstrotator-udp",
+			"actions":         []string{"enable", "disable", "aim"},
 			"pstrotator_port": e.cfg.PstRotator.Port,
 			"lobe_deg":        s.LobeDeg,
 			"bidir_lobe_deg":  s.BidirLobeDeg,
@@ -337,18 +580,18 @@ func (e *Engine) publishMeta() {
 			},
 		},
 	}
-	e.publish(e.self+"/meta", true, meta)
+	if err := e.publish(e.self+"/meta", 1, true, meta); err != nil {
+		e.log.Debug("meta not published", "err", err)
+	}
 }
 
-func (e *Engine) publish(topic string, retained bool, v any) {
+func (e *Engine) publish(topic string, qos byte, retained bool, v any) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		e.log.Error("marshal", "topic", topic, "err", err)
-		return
+		return err
 	}
-	if err := e.pub.Publish(topic, retained, b); err != nil {
-		e.log.Warn("publish failed", "topic", topic, "err", err)
-	}
+	return e.pub.Publish(topic, qos, retained, b)
 }
 
 func (e *Engine) ts() string { return e.now().UTC().Format(time.RFC3339) }

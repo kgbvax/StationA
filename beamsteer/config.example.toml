@@ -11,7 +11,7 @@ host     = "shari"
 
 # --- MQTT -------------------------------------------------------------------
 [mqtt]
-broker   = "tcp://127.0.0.1:1883"
+broker   = "tcp://192.168.1.50:1883"   # live station broker (HA); see docs/conventions/mqtt-topology.md
 # client_id defaults to "<site>-<station>-<slot>" (model §8); set only to override.
 site     = "muehle"
 station  = "hf"

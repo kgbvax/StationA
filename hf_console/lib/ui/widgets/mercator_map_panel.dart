@@ -20,6 +20,7 @@ import '../../dxspot/projection.dart';
 import '../../dxspot/ring_subpaths.dart';
 import '../../dxspot/world_geometry.dart';
 import '../../mqtt/mqtt_service.dart';
+import '../../store/aim.dart';
 import '../../store/bus_store.dart';
 import 'band_legend.dart';
 import '../../store/selected_spot.dart';
@@ -187,8 +188,7 @@ class _MercatorMapPanelState extends State<MercatorMapPanel> {
                     final p = proj.unproject(d.localPosition.dx, d.localPosition.dy);
                     if (p == null) return;
                     final brg = initialBearing(qth, (lat: p.lat, lng: p.lng));
-                    mqtt.publish(cmdTopic(surface.cmdSlot), surface.aimPayload(brg.roundToDouble()),
-                        retain: cmdRetain[surface.stateSlot] ?? false);
+                    publishAim(mqtt, store, surface, brg.roundToDouble());
                   }
                 : null,
             child: Listener(

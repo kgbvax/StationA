@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'dart:async';
 import 'dart:math' as math;
+import '../../store/aim.dart';
 import '../../store/bus_store.dart';
 import '../../mqtt/mqtt_service.dart';
 import '../../store/selected_spot.dart';
@@ -193,11 +194,9 @@ class _CompassBody extends StatelessWidget {
     void sendAz(double value) {
       final surface = rotator;
       if (surface == null) return;
-      mqtt.publish(
-        cmdTopic(surface.cmdSlot),
-        surface.aimPayload(value),
-        retain: cmdRetain[surface.stateSlot]!,
-      );
+      // With AUTO live an HF aim goes through beamsteer (flip or cheaper
+      // lobe); otherwise straight to the rotator.
+      publishAim(mqtt, store, surface, value);
     }
 
     // The disc itself keeps a small symmetric inset from the card edges so

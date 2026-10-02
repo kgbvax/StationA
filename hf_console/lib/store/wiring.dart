@@ -232,6 +232,11 @@ String antCtrlRetractPayload() => jsonEncode({'action': 'retract'});
 String beamSteerEnablePayload(bool enabled) =>
     jsonEncode({'action': enabled ? 'enable' : 'disable'});
 
+/// One-shot aim request: put a lobe on bearing [deg]. Publish unretained —
+/// the topic's retained message is the AUTO on/off steady state.
+String beamSteerAimPayload(double deg) =>
+    jsonEncode({'action': 'aim', 'value': deg.round()});
+
 // --- PA ----------------------------------------------------------------------
 
 String paSetModePayload(String mode) => cmdPayload('set_mode', mode);

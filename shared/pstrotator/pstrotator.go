@@ -69,6 +69,9 @@ var (
 	// <AZ?> tag; nothing else in the grammar contains "AZ?"/"EL?".
 	azQueryRe = regexp.MustCompile(`(?i)<?\s*AZ\s*\?\s*>?`)
 	elQueryRe = regexp.MustCompile(`(?i)<?\s*EL\s*\?\s*>?`)
+	// Loggers (DXLog) follow every rotate with a separate informational
+	// <PST><CALL>…</CALL></PST> naming the station. Not a command.
+	callRe = regexp.MustCompile(`(?i)<\s*CALL\s*>\s*([^<]*?)\s*<\s*/\s*CALL\s*>`)
 )
 
 // Parse extracts every command the message carries in one pass. Precedence
@@ -193,6 +196,11 @@ func (s *Server) handle(src net.Addr, msg string) {
 	remote := src.String()
 	d := Parse(msg)
 	if !d.Known {
+		if m := callRe.FindStringSubmatch(msg); len(m) > 1 {
+			// Expected with every logger rotate: Debug, not journal noise.
+			s.log().Debug("pstrotator call info", "remote", remote, "call", m[1])
+			return
+		}
 		s.log().Info("pstrotator unknown datagram ignored", "remote", remote, "msg", strings.TrimSpace(msg))
 		return
 	}
