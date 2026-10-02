@@ -226,4 +226,5 @@ REMOTE
 echo ">> done. ${SERVICE_NAME} is enabled and running on ${SSH_TARGET}."
 echo "   Logs:          ssh ${SSH_TARGET} journalctl -u ${SERVICE_NAME} -f"
 echo "   OscarWatch:    Satellite link enabled + LAN access on ${SOURCE_URL}"
-echo "   Watch the bus: mosquitto_sub -h ${MQTT_BROKER#tcp://} -u ${MQTT_USER} -P ... -t '${MQTT_SITE}/${MQTT_STATION}/${MQTT_SLOT}/#' -v"
+BROKER_HOST="${MQTT_BROKER#*://}"; BROKER_HOST="${BROKER_HOST%:*}"
+echo "   Watch the bus: mosquitto_sub -h ${BROKER_HOST} -u ${MQTT_USER} -P ... -t '${MQTT_SITE}/${MQTT_STATION}/${MQTT_SLOT}/#' -v"
