@@ -130,7 +130,7 @@ addr     = "192.168.1.139 (eth) · .140 (wifi)"
 hardware = "Raspberry Pi 4 Model B, 2 GB"
 os       = "Debian 12 (bookworm)"
 storage  = "29 GB SD card"
-role     = "Device bridges + logic slots, HamClock, SvxLink, flex2mqtt"
+role     = "Device bridges + logic slots, HamClock, SvxLink"
 
 [[host]]
 name     = "scmino"
@@ -155,8 +155,8 @@ os       = "UniFi OS"
 role     = "Gateway, DNS (kgbvax.net), UniFi Protect NVR for the VHF camera (RTSPS :7441)"
 
 [[host]]
-name     = "shack-pc"
-addr     = "—"
+name     = "bwpc"
+addr     = "192.168.1.197"
 hardware = "Shack PC"
 os       = "Windows"
 role     = "DXLog / Log4OM logger, PstRotator, pelcobridge2 TUI (UHF pan/tilt)"
@@ -318,7 +318,7 @@ address   = "muehle/uhf/rotator"
 component = "pelcobridge2"
 device    = "PTS-303Z/3050DZ pan/tilt head"
 link      = "RS-485"
-host      = "shack-pc"
+host      = "bwpc"
 note      = "Interactive TUI — only on the bus while it runs"
 
 # ---------------------------------------------------------------------------
@@ -502,7 +502,7 @@ note  = "Android tablet app, direct MQTT TCP"
 name  = "pelcobridge2"
 path  = "pelcobridge2/"
 kind  = "bridge"
-host  = "shack-pc"
+host  = "bwpc"
 note  = "Interactive TUI + rotctld; arming is manual"
 slots = ["muehle/uhf/rotator"]
 
@@ -543,7 +543,7 @@ path  = "external"
 kind  = "external"
 host  = "shari"
 unit  = "flex2mqtt"
-note  = "FlexRadio 6000-series -> MQTT/HA bridge (radio 192.168.1.173)"
+note  = "DISABLED 2026-10-02 — legacy duplicate of flexbridge on the same slot (dead radio IP .173) that overwrote /meta with a FLEX-6000 placeholder"
 
 [[software]]
 name  = "HamClock"
@@ -580,7 +580,7 @@ ports = "7441/tcp (RTSPS)"
 name  = "DXLog / Log4OM, PstRotator"
 path  = "external"
 kind  = "external"
-host  = "shack-pc"
+host  = "bwpc"
 
 # ---------------------------------------------------------------------------
 # Passive resources (no bus presence)

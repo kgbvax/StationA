@@ -215,3 +215,13 @@ All components follow these shared conventions:
     and per-slot child loggers; real `Warn`/`Error` levels so `journalctl -p warning`
     filters errors; no per-service log files (journald is the consolidator)
     (see `docs/conventions/logging.md`)
+11. **Landing page inventory** — `http://scmino/` (`stationportal/`) lists every
+    service, host, slot, device and software component. **Whenever the
+    infrastructure changes** — a device or host is added/replaced/removed, an IP
+    address, hostname or port changes, a service moves host, a component is
+    added or retired — update `stationportal/internal/inventory/inventory.toml`
+    in the same change and redeploy (`cd stationportal && ./deploy.sh`). Live
+    device facts (model/serial/firmware from `/meta`) need no edit; everything
+    hand-written there (links, IPs, hosts, slot→component map, software list)
+    does. `go test` fails on a misplaced key or a slot whose component is
+    missing from `[[software]]`.

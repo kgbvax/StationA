@@ -69,10 +69,10 @@ func TestSnapshotIsACopy(t *testing.T) {
 
 func TestMetaFacts(t *testing.T) {
 	f := MetaFacts(map[string]any{
-		"role": "bandmap", "host": "shack-pc",
+		"role": "bandmap", "host": "bwpc",
 		"device": map[string]any{"name": "Shack logger", "link": "udp-broadcast", "firmware": "1.0.0"},
 	})
-	if f.Model != "Shack logger" || f.Link != "udp-broadcast" || f.Firmware != "1.0.0" || f.Host != "shack-pc" {
+	if f.Model != "Shack logger" || f.Link != "udp-broadcast" || f.Firmware != "1.0.0" || f.Host != "bwpc" {
 		t.Fatalf("got %+v", f)
 	}
 	f = MetaFacts(map[string]any{"expose": map[string]any{"device": map[string]any{"manufacturer": "Yaesu", "model": "G-450DC"}}})
