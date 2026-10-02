@@ -15,6 +15,7 @@ use (
 	./shared
 	./shelly-power-bridge
 	./spid-ercm-rotator-bridge
+	./stationportal
 	./testui
 	./ultrabridge
 	./vhfcam-restream

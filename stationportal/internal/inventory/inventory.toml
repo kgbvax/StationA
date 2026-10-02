@@ -1,0 +1,612 @@
+# stationportal built-in inventory — the static half of the landing page.
+# Versioned with the repo; a redeploy updates it. Facts as of 2026-10-02.
+# The live half (device model/serial/firmware from /meta, liveness from /status
+# and /state.device_online) comes from the bus and needs no entry here.
+
+# ---------------------------------------------------------------------------
+# Service links (probed every probe_interval_s: http(s) -> GET, mqtt/tcp/ws -> TCP)
+# ---------------------------------------------------------------------------
+
+[[link]]
+group = "Station"
+name  = "hf_console (web)"
+url   = "http://192.168.1.178:8091/"
+host  = "scmino"
+note  = "Station console in the browser — HF/UHF operation, map, CAM tab"
+
+[[link]]
+group = "Station"
+name  = "VHF cam preview"
+url   = "http://192.168.1.178:8083/"
+host  = "scmino"
+note  = "vhfcam-restream: live HLS + overlay, IC-9700 RX audio, recordings, YouTube toggle"
+
+[[link]]
+group = "Station"
+name  = "testui (bus browser)"
+url   = "http://192.168.1.178:8090/"
+host  = "scmino"
+note  = "Every slot's meta/state/status live; publish /cmd, clear retained topics"
+
+[[link]]
+group = "Station"
+name  = "HamClock"
+url   = "http://192.168.1.139:8081/live.html"
+host  = "shari"
+note  = "Live HamClock view"
+
+[[link]]
+group = "Station"
+name  = "Ultrabeam controller"
+url   = "http://192.168.1.139:8080/"
+host  = "shari"
+note  = "ultrabridge web UI (RCU-06)"
+
+[[link]]
+group = "Devices"
+name  = "HF rotator (WRC)"
+url   = "http://192.168.1.108/"
+host  = "rotor1"
+note  = "AF6SA WRC web UI — Yaesu G-450DC"
+
+[[link]]
+group = "Devices"
+name  = "Antenna switch (ESPHome)"
+url   = "http://192.168.1.157/"
+host  = "station-at1"
+note  = "WaveShare 1:6 relay switch — ESPHome web server"
+
+[[link]]
+group = "Devices"
+name  = "X-Quad polarization (ESPHome)"
+url   = "http://192.168.1.194/"
+host  = "xctrl"
+note  = "M5 Stamp PLC #2 — ESPHome web server (digest auth)"
+
+[[link]]
+group = "Devices"
+name  = "ATR-1000 tuner"
+url   = "ws://192.168.1.111:60001"
+host  = "atr1000"
+note  = "Binary WebSocket used by atr1k-tuner-bridge (no browser UI)"
+
+[[link]]
+group = "Infrastructure"
+name  = "Home Assistant"
+url   = "http://192.168.1.50:8123/"
+host  = "hassio"
+note  = "HA UI; station entities via hadiscovery"
+
+[[link]]
+group = "Infrastructure"
+name  = "UniFi OS"
+url   = "https://192.168.0.1/"
+host  = "unifi"
+note  = "Gateway + UniFi Protect (VHF camera)"
+
+[[link]]
+group = "Infrastructure"
+name  = "MQTT broker (live)"
+url   = "mqtt://192.168.1.50:1883"
+host  = "hassio"
+note  = "HA Mosquitto add-on — every station client connects here"
+
+[[link]]
+group = "Infrastructure"
+name  = "MQTT broker mirror"
+url   = "mqtt://192.168.1.178:1883"
+host  = "scmino"
+note  = "Station Mosquitto, bridged to .50 (muehle/# both ways) — no clients yet"
+
+[[link]]
+group = "Infrastructure"
+name  = "rotctld UHF az/el"
+url   = "tcp://192.168.1.139:4534"
+host  = "shari"
+note  = "spid-ercm-rotator-bridge — hamlib rotctld (sat trackers)"
+
+[[link]]
+group = "Infrastructure"
+name  = "GS-232B TCP (PstRotator)"
+url   = "tcp://192.168.1.139:4533"
+host  = "shari"
+note  = "spid-ercm-rotator-bridge — GS-232B emulation for PstRotator"
+
+[[link]]
+group = "Infrastructure"
+name  = "YouTube Studio"
+url   = "https://studio.youtube.com/"
+host  = "external"
+note  = "VHF cam live stream health (only visible there)"
+probe = "none"
+
+# ---------------------------------------------------------------------------
+# Hosts
+# ---------------------------------------------------------------------------
+
+[[host]]
+name     = "shari"
+addr     = "192.168.1.139 (eth) · .140 (wifi)"
+hardware = "Raspberry Pi 4 Model B, 2 GB"
+os       = "Debian 12 (bookworm)"
+storage  = "29 GB SD card"
+role     = "Device bridges + logic slots, HamClock, SvxLink, flex2mqtt"
+
+[[host]]
+name     = "scmino"
+addr     = "192.168.1.178 (eth) · .182 (wifi)"
+hardware = "Raspberry Pi Compute Module 5, 4 GB"
+os       = "Debian 12 (bookworm)"
+storage  = "117 GB NVMe"
+role     = "vhfcam-restream, hf_console web, testui, stationportal, Mosquitto mirror"
+
+[[host]]
+name     = "hassio"
+addr     = "192.168.1.50"
+hardware = "Home Assistant host"
+os       = "Home Assistant OS"
+role     = "Home Assistant + Mosquitto add-on (the live station broker)"
+
+[[host]]
+name     = "unifi"
+addr     = "192.168.0.1"
+hardware = "UniFi OS console"
+os       = "UniFi OS"
+role     = "Gateway, DNS (kgbvax.net), UniFi Protect NVR for the VHF camera (RTSPS :7441)"
+
+[[host]]
+name     = "shack-pc"
+addr     = "—"
+hardware = "Shack PC"
+os       = "Windows"
+role     = "DXLog / Log4OM logger, PstRotator, pelcobridge2 TUI (UHF pan/tilt)"
+
+[[host]]
+name     = "lenovo-tab"
+addr     = "192.168.1.115 (DHCP)"
+hardware = "Lenovo Tab TB311FU"
+os       = "Android 16"
+role     = "Station tablet — hf_console APK"
+
+# ---------------------------------------------------------------------------
+# Slots: bus address -> owning component + physical device.
+# The live /meta (model, serial, firmware, link, host) is shown alongside.
+# ---------------------------------------------------------------------------
+
+[[slot]]
+address   = "muehle/power/master"
+component = "shelly-power-bridge"
+device    = "Shelly Plus 1PM — station master mains"
+link      = "wifi"
+host      = "shari"
+
+[[slot]]
+address   = "muehle/power/psu-13v8"
+component = "shelly-power-bridge"
+device    = "Shelly Plus 1PM — 13.8 V PSU (feeds HF + UHF)"
+link      = "wifi"
+host      = "shari"
+
+[[slot]]
+address   = "muehle/hf/radio"
+component = "flexbridge"
+device    = "FlexRadio FLEX-8400"
+link      = "ethernet (192.168.1.118)"
+host      = "shari"
+
+[[slot]]
+address   = "muehle/hf/ant-ctrl"
+component = "ultrabridge"
+device    = "Ultrabeam RCU-06"
+link      = "USB-serial (FTDI)"
+host      = "shari"
+
+[[slot]]
+address   = "muehle/hf/ant-switch"
+component = "waveshare_relay-antswitch-bridge"
+device    = "WaveShare ESP32-S3 1:6 relay switch (station-at1)"
+link      = "wifi (ESPHome)"
+host      = "embedded"
+
+[[slot]]
+address   = "muehle/hf/switch"
+component = "m5stamp-hf-ctrl"
+device    = "M5 Stamp PLC #1 — PA/TRX remote-on relays"
+link      = "wifi"
+host      = "embedded"
+
+[[slot]]
+address   = "muehle/hf/pa-arm"
+component = "m5stamp-hf-ctrl"
+device    = "M5 Stamp PLC #1 — PA arm relay"
+link      = "wifi"
+host      = "embedded"
+
+[[slot]]
+address   = "muehle/hf/antenna-select"
+component = "antennaselect"
+device    = "logic slot"
+link      = "none"
+host      = "shari"
+
+[[slot]]
+address   = "muehle/hf/pa"
+component = "acom1200s-pa-bridge"
+device    = "ACOM 1200S"
+link      = "serial (Prolific USB)"
+host      = "shari"
+
+[[slot]]
+address   = "muehle/hf/rotator"
+component = "wrc-rotator-bridge"
+device    = "Yaesu G-450DC via AF6SA WRC"
+link      = "websocket (192.168.1.108)"
+host      = "shari"
+
+[[slot]]
+address   = "muehle/hf/tuner"
+component = "atr1k-tuner-bridge"
+device    = "ATR-1000 ATU"
+link      = "wifi, binary WebSocket (192.168.1.111)"
+host      = "shari"
+
+[[slot]]
+address   = "muehle/hf/spots"
+component = "logger-spot-bridge"
+device    = "DXLog / Log4OM UDP broadcasts"
+link      = "LAN UDP"
+host      = "shari"
+
+[[slot]]
+address   = "muehle/hf/beam-steer"
+component = "beamsteer"
+device    = "logic slot — PstRotator UDP :12050"
+link      = "none"
+host      = "shari"
+
+[[slot]]
+address   = "muehle/hf/power-seq"
+component = "powerseq"
+device    = "logic slot — startup/shutdown sequencer"
+link      = "none"
+host      = "shari"
+
+[[slot]]
+address   = "muehle/hf/discovery"
+component = "hadiscovery"
+device    = "logic slot — HA discovery from /meta"
+link      = "none"
+host      = "shari"
+
+[[slot]]
+address   = "muehle/hf/vhfcam"
+component = "vhfcam-restream"
+device    = "VHF camera restreamer (overlay bookkeeping)"
+link      = "none"
+host      = "scmino"
+
+[[slot]]
+address   = "muehle/uhf/pol-ctrl"
+component = "m5stamp-pol-ctrl"
+device    = "M5 Stamp PLC #2 — X-Quad polarization (xctrl)"
+link      = "wifi (ESPHome)"
+host      = "embedded"
+
+[[slot]]
+address   = "muehle/uhf/radio"
+component = "icom9700-radio-bridge"
+device    = "Icom IC-9700"
+link      = "LAN RS-BA1 (RX audio) + serial CI-V (read-only)"
+host      = "shari"
+
+[[slot]]
+address   = "muehle/uhf/az-rotator"
+component = "spid-ercm-rotator-bridge"
+device    = "SPID azimuth rotator (Rot1Prog)"
+link      = "serial (FTDI FT231X)"
+host      = "shari"
+
+[[slot]]
+address   = "muehle/uhf/el-rotator"
+component = "spid-ercm-rotator-bridge"
+device    = "GS-500 elevation via ERC-M"
+link      = "serial (FTDI FT230X)"
+host      = "shari"
+
+[[slot]]
+address   = "muehle/uhf/rotator"
+component = "pelcobridge2"
+device    = "PTS-303Z/3050DZ pan/tilt head"
+link      = "RS-485"
+host      = "shack-pc"
+note      = "Interactive TUI — only on the bus while it runs"
+
+# ---------------------------------------------------------------------------
+# Software components (repo components first, then external programs)
+# ---------------------------------------------------------------------------
+
+[[software]]
+name  = "flexbridge"
+path  = "flexbridge/"
+kind  = "bridge"
+host  = "shari"
+unit  = "flexbridge"
+slots = ["muehle/hf/radio"]
+
+[[software]]
+name  = "ultrabridge"
+path  = "ultrabridge/"
+kind  = "bridge"
+host  = "shari"
+unit  = "ultrabridge"
+ports = "8080/tcp (web UI)"
+slots = ["muehle/hf/ant-ctrl"]
+
+[[software]]
+name  = "acom1200s-pa-bridge"
+path  = "acom1200s-pa-bridge/"
+kind  = "bridge"
+host  = "shari"
+unit  = "acom1200s-pa-bridge"
+slots = ["muehle/hf/pa"]
+
+[[software]]
+name  = "wrc-rotator-bridge"
+path  = "wrc-rotator-bridge/"
+kind  = "bridge"
+host  = "shari"
+unit  = "wrc-rotator-bridge"
+ports = "7373/tcp, 12040/udp"
+slots = ["muehle/hf/rotator"]
+
+[[software]]
+name  = "atr1k-tuner-bridge"
+path  = "atr1k-tuner-bridge/"
+kind  = "bridge"
+host  = "shari"
+unit  = "atr1k-tuner-bridge"
+slots = ["muehle/hf/tuner"]
+
+[[software]]
+name  = "shelly-power-bridge"
+path  = "shelly-power-bridge/"
+kind  = "bridge"
+host  = "shari"
+unit  = "shelly-power-bridge"
+slots = ["muehle/power/master", "muehle/power/psu-13v8"]
+
+[[software]]
+name  = "icom9700-radio-bridge"
+path  = "icom9700-radio-bridge/"
+kind  = "bridge"
+host  = "shari"
+unit  = "icom9700-radio-bridge"
+note  = "RX audio UDP -> scmino:45031"
+slots = ["muehle/uhf/radio"]
+
+[[software]]
+name  = "spid-ercm-rotator-bridge"
+path  = "spid-ercm-rotator-bridge/"
+kind  = "bridge"
+host  = "shari"
+unit  = "spid-ercm-rotator-bridge"
+ports = "4533/tcp, 4534/tcp, 12041/udp"
+slots = ["muehle/uhf/az-rotator", "muehle/uhf/el-rotator"]
+
+[[software]]
+name  = "logger-spot-bridge"
+path  = "logger-spot-bridge/"
+kind  = "bridge"
+host  = "shari"
+unit  = "logger-spot-bridge"
+ports = "12060/udp, 2249/udp"
+slots = ["muehle/hf/spots"]
+
+[[software]]
+name  = "antennaselect"
+path  = "antennaselect/"
+kind  = "logic"
+host  = "shari"
+unit  = "antenna-select"
+slots = ["muehle/hf/antenna-select"]
+
+[[software]]
+name  = "beamsteer"
+path  = "beamsteer/"
+kind  = "logic"
+host  = "shari"
+unit  = "beamsteer"
+ports = "12050/udp"
+slots = ["muehle/hf/beam-steer"]
+
+[[software]]
+name  = "powerseq"
+path  = "powerseq/"
+kind  = "logic"
+host  = "shari"
+unit  = "powerseq"
+slots = ["muehle/hf/power-seq"]
+
+[[software]]
+name  = "hadiscovery"
+path  = "hadiscovery/"
+kind  = "logic"
+host  = "shari"
+unit  = "hadiscovery"
+slots = ["muehle/hf/discovery"]
+
+[[software]]
+name  = "hf-mqtt-capture"
+path  = "hf-mqtt-capture/"
+kind  = "tool"
+host  = "shari"
+unit  = "hf-mqtt-capture"
+note  = "Bus capture with time-based retention"
+
+[[software]]
+name  = "vhfcam-restream"
+link  = "VHF cam preview"
+path  = "vhfcam-restream/"
+kind  = "ui"
+host  = "scmino"
+unit  = "vhfcam-restream"
+ports = "8083/tcp, 45031/udp"
+slots = ["muehle/hf/vhfcam"]
+
+[[software]]
+name  = "hf_console (web)"
+link  = "hf_console (web)"
+path  = "hf_console/"
+kind  = "ui"
+host  = "scmino"
+unit  = "hf-console-web"
+ports = "8091/tcp"
+note  = "Same Flutter app as the tablet APK"
+
+[[software]]
+name  = "testui"
+link  = "testui (bus browser)"
+path  = "testui/"
+kind  = "ui"
+host  = "scmino"
+unit  = "testui"
+ports = "8090/tcp"
+
+[[software]]
+name  = "stationportal"
+path  = "stationportal/"
+kind  = "ui"
+host  = "scmino"
+unit  = "stationportal"
+ports = "80/tcp"
+note  = "This page"
+
+[[software]]
+name  = "mqtt-broker"
+link  = "MQTT broker mirror"
+path  = "mqtt-broker/"
+kind  = "infra"
+host  = "scmino"
+unit  = "mosquitto"
+ports = "1883/tcp"
+note  = "Bridged mirror of .50 — no clients yet"
+
+[[software]]
+name  = "hf_console (APK)"
+path  = "hf_console/"
+kind  = "ui"
+host  = "lenovo-tab"
+note  = "Android tablet app, direct MQTT TCP"
+
+[[software]]
+name  = "pelcobridge2"
+path  = "pelcobridge2/"
+kind  = "bridge"
+host  = "shack-pc"
+note  = "Interactive TUI + rotctld; arming is manual"
+slots = ["muehle/uhf/rotator"]
+
+[[software]]
+name  = "waveshare_relay-antswitch-bridge"
+path  = "waveshare_relay-antswitch-bridge/"
+kind  = "firmware"
+host  = "station-at1"
+note  = "ESPHome"
+slots = ["muehle/hf/ant-switch"]
+
+[[software]]
+name  = "m5stamp-hf-ctrl"
+path  = "m5stamp-hf-ctrl/"
+kind  = "firmware"
+host  = "M5 Stamp PLC #1"
+note  = "PlatformIO"
+slots = ["muehle/hf/switch", "muehle/hf/pa-arm"]
+
+[[software]]
+name  = "m5stamp-pol-ctrl"
+path  = "m5stamp-pol-ctrl/"
+kind  = "firmware"
+host  = "xctrl (M5 Stamp PLC #2)"
+note  = "ESPHome"
+slots = ["muehle/uhf/pol-ctrl"]
+
+[[software]]
+name  = "m5dial-hf-rotctrl"
+path  = "m5dial-hf-rotctrl/"
+kind  = "firmware"
+host  = "M5Stack Dial"
+note  = "HF rotator control head (not a slot)"
+
+[[software]]
+name  = "flex2mqtt"
+path  = "external"
+kind  = "external"
+host  = "shari"
+unit  = "flex2mqtt"
+note  = "FlexRadio 6000-series -> MQTT/HA bridge (radio 192.168.1.173)"
+
+[[software]]
+name  = "HamClock"
+link  = "HamClock"
+path  = "external"
+kind  = "external"
+host  = "shari"
+ports = "8081/tcp, 8082/tcp"
+
+[[software]]
+name  = "SvxLink"
+path  = "external"
+kind  = "external"
+host  = "shari"
+unit  = "svxlink"
+
+[[software]]
+name  = "Home Assistant + Mosquitto add-on"
+link  = "Home Assistant"
+path  = "external"
+kind  = "external"
+host  = "hassio"
+ports = "8123/tcp, 1883/tcp"
+
+[[software]]
+name  = "UniFi Protect"
+link  = "UniFi OS"
+path  = "external"
+kind  = "external"
+host  = "unifi"
+ports = "7441/tcp (RTSPS)"
+
+[[software]]
+name  = "DXLog / Log4OM, PstRotator"
+path  = "external"
+kind  = "external"
+host  = "shack-pc"
+
+# ---------------------------------------------------------------------------
+# Passive resources (no bus presence)
+# ---------------------------------------------------------------------------
+
+[[resource]]
+name = "Ultrabeam"
+kind = "antenna"
+note = "HF yagi on antenna-switch port 3; tuned by ant-ctrl"
+
+[[resource]]
+name = "Fan dipole 80/40"
+kind = "antenna"
+note = "Antenna-switch port 6"
+
+[[resource]]
+name = "Dummy load"
+kind = "antenna"
+note = "Antenna-switch port 1 (grounding / test)"
+
+[[resource]]
+name = "X-Quad"
+kind = "antenna"
+note = "UHF, polarization switched by uhf/pol-ctrl; on the SPID az + GS-500 el rotators"
+
+[[resource]]
+name = "VHF camera"
+kind = "camera"
+note = "UniFi Protect; RTSPS via 192.168.0.1:7441, restreamed by vhfcam-restream"

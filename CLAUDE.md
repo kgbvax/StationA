@@ -44,6 +44,7 @@ separate per-component remotes to push to.
 | logger-spot-bridge | `logger-spot-bridge/` | Shack-logger bridge (DXLog/Log4OM) → `hf/spots` — the operator-keyed station (call, position, beam bearing) |
 | testui | `testui/` | MQTT relay + schema-aware browser UI for the bus (not a slot; passive consumer + /cmd stimulator) |
 | vhfcam-restream | `vhfcam-restream/` | VHF cam (UniFi Protect RTSPS) multi-sink restreamer — YouTube Live + LAN web preview (:8083) with operational-data overlay (AZ/EL/freq/TX drawtext from the bus) and IC-9700 RX audio (demand-driven via icom9700-radio-bridge); web radio controls; Go supervisor around ffmpeg; MQTT consumer + minimal `/status`/`/state` planes (`muehle/hf/vhfcam`). **Runs on scmino** (`192.168.1.178`), not shari |
+| stationportal | `stationportal/` | Station landing page on scmino :80 (`http://scmino/`) — links to every key service (probed), live slot/hardware inventory from `/meta` + two-layer liveness, software/host/resource inventory (not a slot; passive consumer) |
 | mqtt-broker | `mqtt-broker/` | Station Mosquitto broker on **scmino** (`192.168.1.178:1883`), bridged to the HA broker `.50` as a transitional `muehle/#` mirror — **no clients yet; `.50` is still the live broker** (infra — not a slot, not Go) |
 
 Each project has its own `CLAUDE.md` and is independently buildable (`go build`/`go test`
@@ -92,8 +93,8 @@ resources** — `ant/ultrabeam` (port 3), `ant/fan-dipole` 80/40 (port 6),
 
 All services run on shari, a Raspberry Pi at `192.168.1.139` — except
 vhfcam-restream (since 2026-09-30), the station Mosquitto mirror, the
-hf_console web channel `hf-console-web` (:8091) and testui (:8090) (both since
-2026-10-02), which run on **scmino** (`192.168.1.178`, Raspberry Pi CM5, same `ssh io@` access).
+hf_console web channel `hf-console-web` (:8091), testui (:8090) and the landing
+page stationportal (:80) (all since 2026-10-02), which run on **scmino** (`192.168.1.178`, Raspberry Pi CM5, same `ssh io@` access).
 
 ```bash
 # SSH in

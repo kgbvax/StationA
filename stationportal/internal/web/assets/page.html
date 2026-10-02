@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+{{if gt .RefreshS 0}}<meta http-equiv="refresh" content="{{.RefreshS}}">{{end}}
+<title>Mühle station</title>
+<style>
+  :root {
+    --bg: #0f1216; --panel: #161b21; --line: #252c35; --text: #e6e9ee; --muted: #8a94a3;
+    --accent: #6cb6ff; --up: #3fb950; --warn: #d29922; --down: #f85149; --unknown: #6e7681;
+    --chip: #1f262e;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #f6f7f9; --panel: #ffffff; --line: #e1e4e8; --text: #1f2328; --muted: #656d76;
+      --accent: #0969da; --chip: #eef1f4;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  header { padding: 20px 24px 12px; border-bottom: 1px solid var(--line); background: var(--panel); }
+  h1 { margin: 0; font-size: 20px; font-weight: 650; letter-spacing: .2px; }
+  h1 small { font-weight: 400; color: var(--muted); font-size: 14px; margin-left: 8px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+  .chip { background: var(--chip); border: 1px solid var(--line); border-radius: 999px;
+          padding: 3px 10px; font-size: 12.5px; color: var(--muted); white-space: nowrap; }
+  .chip b { color: var(--text); font-weight: 600; }
+  nav { display: flex; gap: 16px; margin-top: 12px; font-size: 13px; flex-wrap: wrap; }
+  main { padding: 8px 24px 32px; max-width: 1500px; }
+  section { margin-top: 24px; }
+  h2 { font-size: 15px; text-transform: uppercase; letter-spacing: .8px; color: var(--muted);
+       margin: 0 0 10px; font-weight: 600; }
+  h3 { font-size: 13px; color: var(--muted); margin: 14px 0 8px; font-weight: 600; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); gap: 10px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 11px 13px; }
+  .card .t { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+  .card .u { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--muted);
+             margin-top: 3px; overflow-wrap: anywhere; }
+  .card .n { color: var(--muted); font-size: 12.5px; margin-top: 5px; }
+  .card .d { font-size: 12px; margin-top: 6px; color: var(--muted); }
+  .dot { width: 9px; height: 9px; border-radius: 50%; flex: none; display: inline-block;
+         background: var(--unknown); }
+  .dot.up { background: var(--up); box-shadow: 0 0 0 3px color-mix(in srgb, var(--up) 22%, transparent); }
+  .dot.warn { background: var(--warn); }
+  .dot.down { background: var(--down); }
+  .dot.none { background: transparent; border: 1.5px solid var(--unknown); }
+  .tbl { overflow-x: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; background: var(--chip); white-space: nowrap; }
+  tr:last-child td { border-bottom: 0; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; }
+  .muted { color: var(--muted); }
+  .sub { color: var(--muted); font-size: 12px; }
+  .tag { display: inline-block; background: var(--chip); border: 1px solid var(--line); border-radius: 4px;
+         padding: 0 6px; font-size: 11.5px; color: var(--muted); }
+  .nw { white-space: nowrap; }
+  td.dev { min-width: 240px; }
+  footer { color: var(--muted); font-size: 12px; padding: 0 24px 24px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Mühle station <small>landing page · {{.Host}}</small></h1>
+  <div class="chips">
+    <span class="chip"><b>{{.Summary.SlotsUp}}/{{.Summary.SlotsTotal}}</b> slots online</span>
+    <span class="chip"><b>{{.Summary.LinksUp}}/{{.Summary.LinksTotal}}</b> services answering</span>
+    <span class="chip"><span class="dot {{if .BusConnected}}up{{else}}down{{end}}"></span>
+      bus {{if .BusConnected}}<b>connected</b>{{else}}<b>disconnected</b>{{end}}{{if .BusSince}} · {{.BusSince}}{{end}} · <span class="mono">{{.Broker}}</span></span>
+    {{if .LastMessage}}<span class="chip">last message {{.LastMessage}} ago</span>{{end}}
+    <span class="chip">updated {{.Generated.Format "15:04:05"}}{{if gt .RefreshS 0}} · refresh {{.RefreshS}} s{{end}}</span>
+  </div>
+  <nav>
+    <a href="#services">Services</a><a href="#slots">Slots &amp; hardware</a>
+    <a href="#software">Software</a><a href="#hosts">Hosts</a><a href="#resources">Passive resources</a>
+    <a href="/api/inventory">JSON</a>
+  </nav>
+</header>
+<main>
+
+<section id="services">
+  <h2>Services</h2>
+  {{range .Groups}}
+  <h3>{{.Name}}</h3>
+  <div class="grid">
+    {{range .Links}}
+    <div class="card">
+      <div class="t"><span class="dot {{.Health}}" title="{{.Detail}}"></span>
+        {{if .Clickable}}<a href="{{.URL}}" target="_blank" rel="noopener">{{.Name}}</a>{{else}}{{.Name}}{{end}}</div>
+      <div class="u">{{.URL}}</div>
+      {{if .Note}}<div class="n">{{.Note}}</div>{{end}}
+      <div class="d"><span class="tag">{{.Host}}</span> {{.Detail}}</div>
+    </div>
+    {{end}}
+  </div>
+  {{end}}
+</section>
+
+<section id="slots">
+  <h2>Slots &amp; hardware</h2>
+  <div class="tbl"><table>
+    <tr><th></th><th>Address</th><th>Device</th><th>Component</th><th>Link</th><th>Runs on</th><th>Bridge</th><th>Device link</th></tr>
+    {{range .Slots}}
+    <tr>
+      <td><span class="dot {{.Health}}" title="{{.HealthText}}"></span></td>
+      <td class="mono nw">{{.Address}}</td>
+      <td class="dev">{{.Title}}{{if .Detail}}<div class="sub">{{.Detail}}</div>{{end}}</td>
+      <td class="nw">{{if .Component}}{{.Component}}{{else}}<span class="muted">—</span>{{end}}</td>
+      <td>{{if .Link}}{{.Link}}{{else}}{{.Live.Link}}{{end}}</td>
+      <td class="nw">{{if .Host}}{{.Host}}{{else}}{{.Live.Host}}{{end}}</td>
+      <td class="nw">{{if .Status}}{{.Status}}{{else}}<span class="muted">—</span>{{end}}</td>
+      <td class="nw">{{.DeviceOnline}}</td>
+    </tr>
+    {{end}}
+  </table></div>
+</section>
+
+<section id="software">
+  <h2>Software</h2>
+  <div class="tbl"><table>
+    <tr><th></th><th>Component</th><th>Kind</th><th>Runs on</th><th>Unit</th><th>Ports</th><th>Slots</th><th>Notes</th></tr>
+    {{range .Software}}
+    <tr>
+      <td><span class="dot {{.Health}}" title="{{.HealthText}}"></span></td>
+      <td class="nw"><b>{{.Name}}</b><div class="sub mono">{{.Path}}</div></td>
+      <td><span class="tag">{{.Kind}}</span></td>
+      <td class="nw">{{.Host}}</td>
+      <td class="mono nw">{{.Unit}}</td>
+      <td class="nw">{{.Ports}}</td>
+      <td class="mono">{{range $i, $s := .Slots}}{{if $i}}<br>{{end}}{{$s}}{{end}}</td>
+      <td>{{.HealthText}}{{if .Note}}<div class="sub">{{.Note}}</div>{{end}}</td>
+    </tr>
+    {{end}}
+  </table></div>
+</section>
+
+<section id="hosts">
+  <h2>Hosts</h2>
+  <div class="tbl"><table>
+    <tr><th>Host</th><th>Address</th><th>Hardware</th><th>OS</th><th>Storage</th><th>Role</th></tr>
+    {{range .Hosts}}
+    <tr><td class="nw"><b>{{.Name}}</b></td><td class="mono nw">{{.Addr}}</td><td>{{.Hardware}}</td>
+        <td>{{.OS}}</td><td>{{.Storage}}</td><td>{{.Role}}</td></tr>
+    {{end}}
+  </table></div>
+</section>
+
+<section id="resources">
+  <h2>Passive resources</h2>
+  <div class="tbl"><table>
+    <tr><th>Resource</th><th>Kind</th><th>Notes</th></tr>
+    {{range .Resources}}<tr><td class="nw"><b>{{.Name}}</b></td><td><span class="tag">{{.Kind}}</span></td><td>{{.Note}}</td></tr>{{end}}
+  </table></div>
+</section>
+
+</main>
+<footer>
+  stationportal{{if .Revision}} · <span class="mono">{{short .Revision}}</span>{{end}} ·
+  liveness = bridge /status AND /state.device_online · services probed server-side
+</footer>
+</body>
+</html>

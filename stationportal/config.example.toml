@@ -1,0 +1,20 @@
+# stationportal example configuration.
+#
+# The real config lives at /etc/stationportal/config.toml on scmino (0600,
+# seeded once by deploy.sh). The MQTT password is NOT here: it comes from
+# STATIONPORTAL_MQTT_PASSWORD in /etc/stationportal/stationportal.env (0600).
+
+http_addr        = ":80"
+site             = "muehle"   # subscribes <site>/# (passive: no publishes, no LWT)
+probe_interval_s = 30         # service-link probes; also the page's auto-refresh
+probe_timeout_s  = 3
+log_level        = "info"
+
+# Optional: replace the inventory built into the binary
+# (internal/inventory/inventory.toml) with a device-side file.
+# inventory = "/etc/stationportal/inventory.toml"
+
+[mqtt]
+broker    = "tcp://192.168.1.50:1883"   # the live broker — NOT the scmino mirror
+client_id = "stationportal"
+user      = "hf"
