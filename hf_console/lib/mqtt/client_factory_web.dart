@@ -1,6 +1,6 @@
 // client_factory_web.dart — browser implementation.
 //
-// Browsers cannot open raw TCP sockets. The web build is served from shari and
+// Browsers cannot open raw TCP sockets. The web build is served from scmino and
 // a small WebSocket bridge at /mqtt forwards bytes to the broker. The MQTT
 // credentials (user/pass) from the setup screen still pass through to the
 // broker; the host/port fields are ignored on web.

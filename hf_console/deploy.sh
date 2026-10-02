@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Deploy hf_console as a web app on shari.
+# Deploy hf_console as a web app on scmino (moved off shari 2026-10-02).
 #
 # This builds the Flutter web app and a tiny Go HTTP/WebSocket bridge, then
 # installs them on the Raspberry Pi as a hardened systemd service.
@@ -10,11 +10,11 @@
 # MQTT broker (192.168.1.50:1883).
 #
 # Usage:
-#   ./deploy.sh                       # deploy to default host 192.168.1.139
-#   SSH_HOST=pi@shari.local ./deploy.sh
+#   ./deploy.sh                       # deploy to default host 192.168.1.178 (scmino)
+#   SSH_HOST=io@192.168.1.178 ./deploy.sh
 #
 # Configurable via environment variables (with defaults):
-#   SSH_HOST        SSH target            (default: 192.168.1.139 = shari end0; not .140 = wifi)
+#   SSH_HOST        SSH target            (default: 192.168.1.178 = scmino)
 #   SSH_USER        SSH user              (default: io)  [used only if SSH_HOST has no user@]
 #   SERVICE_NAME    systemd service name  (default: hf-console-web)
 #   SERVICE_USER    system user to run as (default: hfconsoleweb)
@@ -25,7 +25,7 @@
 set -euo pipefail
 
 # --- configuration ----------------------------------------------------------
-SSH_HOST="${SSH_HOST:-192.168.1.139}"
+SSH_HOST="${SSH_HOST:-192.168.1.178}"
 SSH_USER="${SSH_USER:-io}"
 SERVICE_NAME="${SERVICE_NAME:-hf-console-web}"
 SERVICE_USER="${SERVICE_USER:-hfconsoleweb}"
@@ -104,7 +104,7 @@ SyslogIdentifier=${SERVICE_NAME}
 WantedBy=multi-user.target
 EOF
 
-# --- copy artifacts to shari ------------------------------------------------
+# --- copy artifacts to the host ---------------------------------------------
 echo ">> Copying files to ${SSH_TARGET}..."
 scp "$WEBBRIDGE_OUT" "${SSH_TARGET}:/tmp/hf-console-web.new"
 scp "$UNIT_FILE" "${SSH_TARGET}:/tmp/${SERVICE_NAME}.service"

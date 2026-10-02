@@ -33,7 +33,7 @@ var upgrader = websocket.Upgrader{
 	Subprotocols: []string{"mqtt"},
 	CheckOrigin: func(r *http.Request) bool {
 		// Served on the LAN; allow any origin so the browser can load the page
-		// from shari and connect back to the same host.
+		// from its host (scmino) and connect back to the same host.
 		return true
 	},
 }

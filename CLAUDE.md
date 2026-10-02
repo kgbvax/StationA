@@ -91,8 +91,9 @@ resources** — `ant/ultrabeam` (port 3), `ant/fan-dipole` 80/40 (port 6),
 ## shari — the deployment target
 
 All services run on shari, a Raspberry Pi at `192.168.1.139` — except
-vhfcam-restream, which runs on **scmino** (`192.168.1.178`, Raspberry Pi CM5,
-same `ssh io@` access) since 2026-09-30.
+vhfcam-restream (since 2026-09-30), the station Mosquitto mirror and the
+hf_console web channel `hf-console-web` (:8091, since 2026-10-02), which run on
+**scmino** (`192.168.1.178`, Raspberry Pi CM5, same `ssh io@` access).
 
 ```bash
 # SSH in

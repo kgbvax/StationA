@@ -122,9 +122,10 @@ flutter build apk --release
 
 Sideload `build/app/outputs/flutter-apk/app-release.apk` onto the tablet.
 
-### Web channel on shari
+### Web channel on scmino
 
-There is also a web deployment on shari for browser access from the LAN:
+There is also a web deployment on scmino (`192.168.1.178`; on shari until
+2026-10-02) for browser access from the LAN:
 
 ```bash
 cd hf_console
@@ -132,16 +133,19 @@ cd hf_console
 ```
 
 This builds the Flutter web app and a small Go HTTP/WebSocket bridge, then
-installs them on shari as the `hf-console-web` systemd service on port `8091`:
+installs them on scmino as the `hf-console-web` systemd service on port `8091`:
 
 ```
-http://shari:8091/
+http://scmino:8091/
 ```
 
 The browser cannot open raw TCP sockets, so the web build uses WebSocket. The
 Go bridge (`webbridge/`) serves the static Flutter build at `/` and forwards
-the `/mqtt` WebSocket stream byte-for-byte to the shack broker on shari
-(`192.168.1.139:1883`). The Android APK continues to connect directly over TCP.
+the `/mqtt` WebSocket stream byte-for-byte to the station broker
+(`-mqtt-broker`, default `192.168.1.50:1883` — the live HA broker). The page
+derives its WebSocket endpoint from its own origin (`Uri.base`), so the build
+works on whichever host serves it. The Android APK continues to connect
+directly over TCP.
 
 ### iPhone (IPA, self-sideloaded)
 

@@ -7,7 +7,7 @@
 // Last-Event-ID resume is harmless.
 //
 // CORS: a cross-origin EventSource requires horstreporter to send
-// `Access-Control-Allow-Origin` for the page origin (http://shari:8091). The native
+// `Access-Control-Allow-Origin` for the page origin (http://scmino:8091). The native
 // (Android) build is unaffected — no CORS outside the browser.
 //
 // dart:html is the zero-dependency browser SSE API (package:web would add a dep and
