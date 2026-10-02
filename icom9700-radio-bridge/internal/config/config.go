@@ -112,7 +112,7 @@ type SessionConfig struct {
 // raw UDP datagrams — S16LE 48 kHz mono — to PublishAddr (the preview host).
 type AudioConfig struct {
 	// PublishAddr is the udp host:port PCM goes to (e.g. the preview host
-	// "192.168.1.139:45031"). Empty (default) = audio cmds are rejected.
+	// "192.168.1.178:45031", scmino). Empty (default) = audio cmds are rejected.
 	PublishAddr string `toml:"publish_addr"`
 	// DemandTTL bounds an audio demand without a refreshing audio_on (a
 	// duration string, "60s" — a dead preview consumer must not pin the

@@ -60,7 +60,7 @@ power_on_frame = "1a050201"         # CI-V remote-wake frame (standby -> ON), se
 # TTL-bounded), demodulated audio (S16LE 48 kHz mono) is re-published as
 # UDP datagrams to this address (the vhfcam preview host). Empty = audio
 # cmds are rejected.
-publish_addr = ""                   # e.g. "192.168.1.139:45031"
+publish_addr = ""                   # e.g. "192.168.1.178:45031" (scmino)
 demand_ttl   = "60s"               # an unrefreshed audio_on releases the session (KTD-2)
 
 [log]

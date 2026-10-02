@@ -1,6 +1,6 @@
 // cam_feed_panel.dart — the antenna camera feed (vhfcam-restream preview).
 //
-// The camera itself is a UniFi Protect RTSPS source; vhfcam-restream on shari
+// The camera itself is a UniFi Protect RTSPS source; vhfcam-restream on scmino
 // transcodes it (with the AZ/EL/freq/TX overlay burned in server-side) into a
 // live HLS playlist served from its :8083 preview server:
 //
@@ -280,11 +280,11 @@ class _OfflineState extends StatelessWidget {
     final (title, sub) = switch (state) {
       _FeedState.serverOffline => (
           'CAM SERVER OFFLINE',
-          'no answer from $baseUrl — start it on shari: sudo systemctl start vhfcam-restream',
+          'no answer from $baseUrl — start it on scmino: sudo systemctl start vhfcam-restream',
         ),
       _FeedState.sinkStopped => (
           'CAMERA STREAM STOPPED',
-          'the cam server answers but sends no video — start it on shari: sudo systemctl start vhfcam-restream',
+          'the cam server answers but sends no video — start it on scmino: sudo systemctl start vhfcam-restream',
         ),
       _FeedState.web => (
           'VIDEO NEEDS THE APP',

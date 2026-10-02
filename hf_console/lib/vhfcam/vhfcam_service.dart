@@ -1,5 +1,5 @@
 // vhfcam_service.dart — console client for vhfcam-restream's preview server
-// (:8083 on shari). Independent of the MQTT bus: the vhfcam slot publishes no
+// (:8083 on scmino). Independent of the MQTT bus: the vhfcam slot publishes no
 // streaming/audio state (its /state is overlay bookkeeping only), so radio and
 // stream health come from the server's own HTTP planes:
 //
@@ -28,7 +28,7 @@ import 'package:flutter/foundation.dart';
 import 'radio_status.dart';
 import 'vhfcam_transport_io.dart' if (dart.library.html) 'vhfcam_transport_web.dart';
 
-const defaultVhfcamBaseUrl = 'http://192.168.1.139:8083';
+const defaultVhfcamBaseUrl = 'http://192.168.1.178:8083';
 
 const _pollInterval = Duration(seconds: 2);
 const _pollBackoff = Duration(seconds: 10);

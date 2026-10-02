@@ -1,6 +1,6 @@
 # vhfcam-restream example configuration.
 #
-# The real config lives at /etc/vhfcam-restream/config.toml on shari (0600,
+# The real config lives at /etc/vhfcam-restream/config.toml on scmino (0600,
 # seeded once by deploy.sh). The RTSPS path tokens and the YouTube stream key
 # are secrets — never commit a filled-in copy of this file.
 
@@ -43,7 +43,7 @@ log_level = "info"
 youtube_enabled = true
 
 # Local web-browser preview: a second ffmpeg writes HLS to tmpfs and the
-# built-in server serves it at http://<shari>:8083/ (hls.js is embedded in
+# built-in server serves it at http://<scmino>:8083/ (hls.js is embedded in
 # the binary, so the page works with the internet down). ~10 s behind live.
 [preview]
 enabled   = true
@@ -61,7 +61,7 @@ radio_audio_cmd_topic  = "muehle/uhf/radio/cmd"
 # Operational-data overlay: subscribes to the station MQTT broker and burns
 # AZ/EL/freq/TX text into the video via ffmpeg drawtext. enabled=true switches
 # the video from -c:v copy to a software x264 transcode (576p is comfortable
-# on the Pi 4; keep HD clean). The writer always runs so a SIGHUP toggle of
+# on the Pi; keep HD clean). The writer always runs so a SIGHUP toggle of
 # `enabled` is safe — only this flag needs a restart-less switch.
 [overlay]
 enabled       = true

@@ -43,7 +43,7 @@ separate per-component remotes to push to.
 | m5dial-hf-rotctrl | `m5dial-hf-rotctrl/` | M5Stack Dial firmware — HF rotator control head (analog meter face + knob; not a slot; consumer + /cmd stimulator) |
 | logger-spot-bridge | `logger-spot-bridge/` | Shack-logger bridge (DXLog/Log4OM) → `hf/spots` — the operator-keyed station (call, position, beam bearing) |
 | testui | `testui/` | MQTT relay + schema-aware browser UI for the bus (not a slot; passive consumer + /cmd stimulator) |
-| vhfcam-restream | `vhfcam-restream/` | VHF cam (UniFi Protect RTSPS) multi-sink restreamer — YouTube Live + LAN web preview (:8083) with operational-data overlay (AZ/EL/freq/TX drawtext from the bus) and IC-9700 RX audio (demand-driven via icom9700-radio-bridge); web radio controls; Go supervisor around ffmpeg; MQTT consumer + minimal `/status`/`/state` planes (`muehle/hf/vhfcam`) |
+| vhfcam-restream | `vhfcam-restream/` | VHF cam (UniFi Protect RTSPS) multi-sink restreamer — YouTube Live + LAN web preview (:8083) with operational-data overlay (AZ/EL/freq/TX drawtext from the bus) and IC-9700 RX audio (demand-driven via icom9700-radio-bridge); web radio controls; Go supervisor around ffmpeg; MQTT consumer + minimal `/status`/`/state` planes (`muehle/hf/vhfcam`). **Runs on scmino** (`192.168.1.178`), not shari |
 | mqtt-broker | `mqtt-broker/` | Shack-local Mosquitto broker on shari, bridged to the HA broker (infra — not a slot, not Go) |
 
 Each project has its own `CLAUDE.md` and is independently buildable (`go build`/`go test`
@@ -90,7 +90,9 @@ resources** — `ant/ultrabeam` (port 3), `ant/fan-dipole` 80/40 (port 6),
 
 ## shari — the deployment target
 
-All services run on shari, a Raspberry Pi at `192.168.1.139`.
+All services run on shari, a Raspberry Pi at `192.168.1.139` — except
+vhfcam-restream, which runs on **scmino** (`192.168.1.178`, Raspberry Pi CM5,
+same `ssh io@` access) since 2026-09-30.
 
 ```bash
 # SSH in

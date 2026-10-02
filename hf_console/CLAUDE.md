@@ -19,7 +19,7 @@ See `../sas/tablet_console_hybrid_preview.html` for the approved high-fidelity r
 - `lib/ui/screens/console_screen.dart` — single-screen layout (Station/HF/UHF/CAM pseudo-tabs)
 - `lib/ui/widgets/*.dart` — compass, PA meter, tuner, antenna, power, tx indicator, confirm dialog
 - `lib/vhfcam/*.dart` — antenna-cam feed client: HLS player state + poller for
-  vhfcam-restream's preview server (`:8083` on shari). Bus-independent HTTP;
+  vhfcam-restream's preview server (`:8083` on scmino). Bus-independent HTTP;
   `muehle/hf/vhfcam` is deliberately NOT in `expectedSlots` — the cam is an
   ad-hoc accessory (installed disabled-at-boot), its silence is not a station fault.
 - `lib/dxspot/world_geometry.dart` — singleton loader for the bundled
@@ -60,7 +60,7 @@ towns are not in the dataset.
 ## Antenna cam (CAM tab)
 
 The CAM tab plays vhfcam-restream's live HLS preview (`/hls/live.m3u8` on the
-cam server, default `http://192.168.1.139:8083`) and mirrors its radio-audio
+cam server, default `http://192.168.1.178:8083`) and mirrors its radio-audio
 controls (`POST /api/cmd/{audio_on,audio_off,power_on}` — audio_on takes the
 IC-9700 CI-V session, exactly like the :8083 reference page). Its RECORDING
 card starts/stops a server-side recording of the preview (`POST
@@ -70,7 +70,7 @@ holds the radio audio while recording; downloads happen on the :8083 page.
 Two deliberate platform notes:
 
 - The base URL is a user setting, key `vhfcam_base_url` (CredentialStore,
-  editable in the gear sheet, default `http://192.168.1.139:8083`).
+  editable in the gear sheet, default `http://192.168.1.178:8083`).
 - `macos/Runner/Info.plist` carries `NSAppTransportSecurity →
   NSAllowsLocalNetworking` — AVPlayer refuses the cleartext LAN URL without
   it. This is the LAN-scoped exception and deliberately NOT set on iOS

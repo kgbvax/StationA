@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
-# Deploy vhfcam-restream to the Raspberry Pi (shari) and install it as a
-# systemd service.
+# Deploy vhfcam-restream to scmino (Raspberry Pi CM5, 192.168.1.178) and
+# install it as a systemd service. It moved off shari on 2026-09-30.
 #
 # vhfcam-restream is an ffmpeg supervisor: it pulls the camera's RTSPS stream
 # and pushes it to YouTube Live over RTMP, plus a LAN HLS preview (:8083).
@@ -13,7 +13,7 @@
 #   SOURCE_URL=... YT_STREAM_KEY=... ./deploy.sh
 #
 # Configurable via environment variables (with defaults):
-#   SSH_HOST        SSH target            (default: 192.168.1.139)
+#   SSH_HOST        SSH target            (default: 192.168.1.178 = scmino)
 #   SSH_USER        SSH user              (default: io)  [used only if SSH_HOST has no user@]
 #   SERVICE_NAME    systemd service name  (default: vhfcam-restream)
 #   SERVICE_USER    system user to run as (default: vhfcam-restream)
@@ -37,7 +37,7 @@
 # Sinks (which outputs run when the service is started):
 #   YT_ENABLED      youtube_enabled value (default: true)
 #   PREVIEW_ENABLED preview.enabled value (default: true — local HLS preview
-#                   at http://<shari>:8083/, served by the built-in server)
+#                   at http://<scmino>:8083/, served by the built-in server)
 #   PREVIEW_ADDR    preview.http_addr      (default: :8083)
 #
 #   ENABLED         install enabled+running? (default: false — the service is
@@ -56,7 +56,7 @@
 set -euo pipefail
 
 # --- configuration ----------------------------------------------------------
-SSH_HOST="${SSH_HOST:-192.168.1.139}"
+SSH_HOST="${SSH_HOST:-192.168.1.178}"
 SSH_USER="${SSH_USER:-io}"
 SERVICE_NAME="${SERVICE_NAME:-vhfcam-restream}"
 SERVICE_USER="${SERVICE_USER:-vhfcam-restream}"
@@ -142,7 +142,7 @@ trap 'rm -f "$SEED_CONFIG" "${UNIT_FILE:-}"' EXIT
   echo "stable_run_s    = 120"
   echo ""
   echo "# Sinks: which outputs run when the service is started. The YouTube"
-  echo "# push and the local HLS preview (http://<shari>:8083/) are"
+  echo "# push and the local HLS preview (http://<scmino>:8083/) are"
   echo "# independent — either can be off without touching the other."
   echo "youtube_enabled = ${YT_ENABLED}"
   echo ""

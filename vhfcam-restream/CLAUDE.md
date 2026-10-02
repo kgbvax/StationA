@@ -8,6 +8,25 @@ exponential backoff, kill on stall, SIGHUP-driven profile switch. Since
 operational-data overlay subscribes to the uhf rotator/radio state snapshots
 and burns AZ/EL/freq/TX into the video (see below).
 
+## Host
+
+Runs on **scmino** (`192.168.1.178`, Raspberry Pi CM5, Debian 12, 117 GB
+NVMe), not shari — moved 2026-09-30 to take the x264 overlay encode and the
+recordings off shari's SD card. Same arch (arm64), so `deploy.sh` is
+unchanged apart from its default `SSH_HOST`. Two things point at this host
+and move with it:
+
+- **icom9700-radio-bridge** (still on shari) sends the radio PCM to
+  `[audio] publish_addr = "192.168.1.178:45031"` in
+  `/etc/icom9700-radio-bridge/config.toml` on shari.
+- **hf_console** CAM tab: `defaultVhfcamBaseUrl` =
+  `http://192.168.1.178:8083`; a tablet that saved the gear sheet keeps its
+  own stored URL — edit it there.
+
+Never run the service on both hosts at once: both would heartbeat
+`audio_on`, fight over the `muehle/hf/vhfcam` LWT, and the bridge sends
+audio to only one of them.
+
 ## Why the args look the way they do
 
 Both camera profiles (Medium 1024x576, HD 1920x1080, both @20fps) carry
@@ -26,7 +45,7 @@ track is Opus, which is what the default stream selection picks.
 go build ./cmd/vhfcam-restream   # local build
 go test ./...                    # unit tests (fake ffmpeg via /bin/sh scripts)
 go vet ./...
-./deploy.sh                      # cross-compile + ship + systemd on shari
+./deploy.sh                      # cross-compile + ship + systemd on scmino
 ```
 
 `deploy.sh` seeds the config on first deploy only; it takes `SOURCE_URL`,
@@ -35,13 +54,13 @@ environment (see the header comment).
 
 **The service installs DISABLED by default** (`ENABLED=false`): the unit is on
 the device but not running — the Pi does not stream constantly. Bring it up ad
-hoc on shari with `sudo systemctl enable --now vhfcam-restream`, stop it with
+hoc on scmino with `sudo systemctl enable --now vhfcam-restream`, stop it with
 `sudo systemctl disable --now vhfcam-restream`, or deploy with `ENABLED=true`
 to have deploys start it.
 
 ## Config
 
-`/etc/vhfcam-restream/config.toml` on shari (0600, seed-once; see
+`/etc/vhfcam-restream/config.toml` on scmino (0600, seed-once; see
 `../docs/conventions/config-and-secrets.md`). **It contains both secrets**: the
 RTSPS path tokens (inside `source_url`/`source_hd_url`) and the YouTube stream
 key (`stream_key`, env override `VHFCAM_STREAM_KEY`).
@@ -60,7 +79,7 @@ changes are picked up on the next service restart only.
 ## Overlay (operational-data burn-in)
 
 `[overlay] enabled = true` switches the video from `-c:v copy` to
-`libx264 -preset superfast` + a `drawtext` chain (576p comfortable on the Pi 4,
+`libx264 -preset superfast` + a `drawtext` chain (576p comfortable on a Pi 4,
 load ~+0.8; keep the HD profile clean — 1080p software x264 is not budgeted).
 
 - **File contract**: the writer (`internal/overlay`) renders
@@ -99,7 +118,7 @@ which copies the preview's segments (see Recording):
 2. **Local HLS preview** (`[preview] enabled`, default true) — a second ffmpeg
    writes `live.m3u8` + segments to `/run/vhfcam-restream/preview` (tmpfs) and
    the built-in HTTP server (`:8083`) serves a minimal player page at
-   `http://<shari>:8083/`. **hls.js is vendored into the binary** (`go:embed`,
+   `http://<scmino>:8083/`. **hls.js is vendored into the binary** (`go:embed`,
    Apache-2.0, see `internal/preview/assets/NOTICE`) so the page works with
    the internet down — the main reason a local preview exists. ~10 s behind
    live (`hls_time_s 2`, `hls_list_size 6`). No auth: LAN-only service, same
@@ -144,7 +163,9 @@ shows — overlay + radio audio — as MP4 (`internal/recorder`, `[record]`).
   recordings are deleted to stay under `max_total_gb` (5 ≈ eight 30-min
   recordings) — never to make free space. The cap must stay below what the
   floor leaves usable, or rotation never runs and starts get refused
-  instead: shari's 29 GB SD card had 15 GB free (2026-09-25).
+  instead: the defaults were sized for shari's 29 GB SD card (15 GB free,
+  2026-09-25). scmino's NVMe has ~108 GB free, so `max_total_gb` can be
+  raised in the device config if more history is wanted.
 - **Radio audio.** A recording holds the radio-audio demand (holder
   `recording`, `internal/preview/demand.go`); the page's disconnect only
   releases the page's hold, so it cannot cut audio out of a recording.
@@ -161,8 +182,8 @@ shows — overlay + radio audio — as MP4 (`internal/recorder`, `[record]`).
 ## Ops
 
 ```bash
-ssh io@192.168.1.139 'journalctl -u vhfcam-restream -f'   # progress heartbeats every 60s
-ssh io@192.168.1.139 'sudo systemctl status vhfcam-restream'
+ssh io@192.168.1.178 'journalctl -u vhfcam-restream -f'   # progress heartbeats every 60s
+ssh io@192.168.1.178 'sudo systemctl status vhfcam-restream'
 ```
 
 - A restart loop with "Could not find tag for codec" in the log means the
@@ -171,7 +192,7 @@ ssh io@192.168.1.139 'sudo systemctl status vhfcam-restream'
 - YouTube ingest state (stream health, "offline/online") is only visible in
   YT Studio; this service only guarantees it is pushing data.
 - Known property: the ffmpeg command line carries the source token and stream
-  key (`ps aux` on shari shows them, journald may echo them in some ffmpeg
+  key (`ps aux` on scmino shows them, journald may echo them in some ffmpeg
   errors). Accepted for a single-operator Pi; flagged here so it is a decision,
   not a surprise.
 
