@@ -1,18 +1,20 @@
 #!/usr/bin/env bash
 #
-# Deploy the shack-local Mosquitto broker to shari and install it as a systemd
-# service. This is infrastructure, not a Go component — no cross-compile, just
-# apt + seed-once config + password files.
+# Deploy the station Mosquitto broker to scmino (192.168.1.178) and install it
+# as a systemd service. This is infrastructure, not a Go component — no
+# cross-compile, just apt + seed-once config + password files.
 #
-# See README.md for the two-broker topology (shack broker on shari authoritative
-# for muehle/#, HA broker at 192.168.1.50 untouched, a mosquitto bridge between).
+# See README.md for the two-broker topology (station broker on scmino, HA broker
+# at 192.168.1.50 untouched, a mosquitto bridge between). Since 2026-10-01 the
+# scmino broker runs as a transitional MIRROR of .50 — no client uses it yet;
+# .50 is still the live station broker.
 #
 # Usage:
-#   ./deploy.sh                       # deploy to default host "shari"
-#   SSH_HOST=io@192.168.1.139 ./deploy.sh
+#   ./deploy.sh                       # deploy to default host scmino
+#   SSH_HOST=io@192.168.1.178 HA_REMOTE_USER=hf ./deploy.sh
 #
 # Configurable via environment variables (with defaults):
-#   SSH_HOST        SSH target            (default: 192.168.1.139)
+#   SSH_HOST        SSH target            (default: 192.168.1.178 = scmino)
 #   SSH_USER        SSH user              (default: io)  [used only if SSH_HOST has no user@]
 #   CONFIG_DIR      mosquitto config dir  (default: /etc/mosquitto)
 #   CONF_FILE       mosquitto.conf path   (default: /etc/mosquitto/mosquitto.conf)
@@ -29,14 +31,14 @@
 # Secrets handling follows the repo convention: the password db (/etc/mosquitto/passwd)
 # and the bridge remote_password (in /etc/mosquitto/mosquitto.conf) are SEEDED ONCE
 # on first deploy and never appear in the repo. Subsequent deploys leave the
-# on-device files untouched so shari owns its own settings. To change a password
+# on-device files untouched so the host owns its own settings. To change a password
 # after the first deploy, run `mosquitto_passwd` on the device (or delete the
 # passwd file and redeploy to re-seed).
 #
 set -euo pipefail
 
 # --- configuration ----------------------------------------------------------
-SSH_HOST="${SSH_HOST:-192.168.1.139}"
+SSH_HOST="${SSH_HOST:-192.168.1.178}"
 SSH_USER="${SSH_USER:-io}"
 CONFIG_DIR="${CONFIG_DIR:-/etc/mosquitto}"
 CONF_FILE="${CONF_FILE:-${CONFIG_DIR}/mosquitto.conf}"
@@ -101,11 +103,16 @@ sudo install -d -o mosquitto -g mosquitto -m 0755 /var/lib/mosquitto
 sudo install -d -o mosquitto -g mosquitto -m 0755 /var/log/mosquitto
 
 # Seed mosquitto.conf ONCE (0600 — it will hold remote_password after the
-# operator edits it, so treat it as a secret file from the start).
-if [ -e "$CONF_FILE" ]; then
-  echo "   mosquitto.conf exists at $CONF_FILE -- leaving it untouched (seed-once)."
+# operator edits it, so treat it as a secret file from the start). The apt
+# package ships a stock commented-out mosquitto.conf, so mere existence does
+# not mean "seeded": only a conf that actually activates our auth counts.
+if [ -e "$CONF_FILE" ] && grep -q '^password_file' "$CONF_FILE"; then
+  echo "   mosquitto.conf exists at $CONF_FILE and is seeded -- leaving it untouched (seed-once)."
   echo "   !! If this is the first deploy, set 'remote_password' under [bridge-to-ha] in $CONF_FILE."
 else
+  if [ -e "$CONF_FILE" ]; then
+    echo "   replacing stock/unseeded $CONF_FILE with the station seed."
+  fi
   sudo install -o mosquitto -g mosquitto -m 0600 "$SEED_CONF" "$CONF_FILE"
   echo "   seeded mosquitto.conf at $CONF_FILE (0600, owner mosquitto)."
   echo "   !! Set 'remote_password <value>' under [bridge-to-ha] in $CONF_FILE (HA-side bridge account password)."
@@ -172,4 +179,4 @@ echo "   ACL:     ${ACL_FILE}"
 echo "   Secrets: ${PASSWD_FILE}  (hf / bridge / console / dial users)"
 echo "   Logs:    ssh ${SSH_TARGET} 'journalctl -u mosquitto -f'"
 echo "   Next:    reconfigure the HA Mosquitto add-on with the 'stationa-bridge' account + ACL"
-echo "            (see README.md 'HA-side setup'), then repoint station components at 127.0.0.1:1883."
+echo "            (see README.md 'HA-side setup'), then (later, one at a time) repoint station components at 192.168.1.178:1883."

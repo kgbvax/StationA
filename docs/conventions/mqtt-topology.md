@@ -11,6 +11,18 @@ The broker itself lives at [`mqtt-broker/`](../../mqtt-broker/) (config, ACL,
 seed-once deploy script). This document is the canonical reference for the
 topology, addressing, topic directions, and ACLs.
 
+> **Current state (2026-10-01).** The broker runs on **scmino**
+> (`192.168.1.178:1883`), not shari, and is bridged to `.50` as a
+> **transitional mirror**: `muehle/#` in both directions, `homeassistant/status`
+> in, `homeassistant/+/+/+/config` out (see `mqtt-broker/mosquitto.conf.example`).
+> **No client uses it yet — `.50` is still the live station broker.** Clients
+> move one at a time by changing their broker address to `192.168.1.178:1883`;
+> once every client has moved, narrow the bridge to the split mapping below.
+> The bridge logs in to `.50` as `hf`; the only local account is `hf`.
+> Never put a `bwbroker` alias in any `/etc/hosts` — live services resolve
+> that name to `.50` (2026-09-26 incident). Where this document says shari /
+> `127.0.0.1` for the broker, read scmino / `192.168.1.178`.
+
 ## Topology
 
 ```

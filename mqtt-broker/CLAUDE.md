@@ -1,8 +1,15 @@
 # CLAUDE.md — mqtt-broker
 
-The **shack-local Mosquitto broker**, running on
-[shari](../CLAUDE.md) (`192.168.1.139`) and bridged to the Home Assistant broker
-at `192.168.1.50:1883`. It exists so the station keeps a working `muehle/#` bus
+The **station Mosquitto broker**, running on **scmino** (`192.168.1.178`,
+since 2026-10-01; originally planned for shari) and bridged to the Home
+Assistant broker at `192.168.1.50:1883`.
+
+**Current state: transitional mirror, no clients yet.** `.50` is still the live
+station broker. The bridge mirrors `muehle/#` both ways (login `hf` on `.50`),
+so clients can move here one at a time; narrow it to the split mapping in
+`mosquitto.conf.example` once all have moved. Local accounts: `hf` only.
+Never add a `bwbroker` hosts alias anywhere — live services resolve it to
+`.50` (2026-09-26 incident). It exists so the station keeps a working `muehle/#` bus
 even when the shack↔house link is down; HA is a consumer that catches up when the
 link returns.
 
@@ -13,7 +20,7 @@ config + a deploy script, like the ESPHome/PlatformIO projects:
 |------|---------|
 | `mosquitto.conf.example` | listener, persistence, password/acl files, the `connection bridge-to-ha` block with split topic directions |
 | `acl.conf.example` | `hf` / `bridge` / `console` / `dial` user ACLs |
-| `deploy.sh` | seed-once install to shari (apt, config, password db, systemd) |
+| `deploy.sh` | seed-once install to scmino (apt, config, password db, systemd) |
 | `README.md` | full topology, topic-direction table, ACLs, HA-side setup, operational behavior, verification |
 
 Read [`README.md`](README.md) first — it is the reference. The full broker
@@ -27,7 +34,10 @@ HF_MQTT_PASSWORD=... BRIDGE_MQTT_PASSWORD=... CONSOLE_MQTT_PASSWORD=... DIAL_MQT
 ```
 
 Then set `remote_password` under `connection bridge-to-ha` in
-`/etc/mosquitto/mosquitto.conf` on shari and `sudo systemctl restart mosquitto`.
+`/etc/mosquitto/mosquitto.conf` on scmino and `sudo systemctl restart mosquitto`.
+(The 2026-10-01 deploy ran with `HA_REMOTE_USER=hf` and no password env vars;
+the `hf` password was then seeded on scmino from the local vhfcam-restream
+config into `passwd` (via `mosquitto_passwd -U`) and `remote_password`.)
 See README.md "HA-side setup" for the matching `stationa-bridge` account on the
 HA Mosquitto add-on.
 

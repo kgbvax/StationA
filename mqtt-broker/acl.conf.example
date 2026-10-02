@@ -1,11 +1,11 @@
 # Shack-local Mosquitto broker ACL — example.
-# Lives at /etc/mosquitto/acl.conf on shari. Not secret; seeded once by deploy.sh
+# Lives at /etc/mosquitto/acl.conf on scmino. Not secret; seeded once by deploy.sh
 # and edited on the device if per-device Shelly prefixes need tightening.
 # See README.md for which user each component connects as.
 
 # hf — the trusted station-internal account.
-# Used by ALL station Go services on shari (flexbridge, ultrabridge, antennaselect,
-# powerseq, hadiscovery, shelly-power-bridge, …) via 127.0.0.1, AND by the Shelly
+# Used by ALL station Go services (flexbridge, ultrabridge, antennaselect,
+# powerseq, hadiscovery, shelly-power-bridge, …) on shari, AND by the Shelly
 # smart plugs, which publish on their own Gen2+ prefix (e.g.
 # shellyplus1pm-<id>/...) — NOT under muehle/. Because that prefix is per-device
 # and varies by Shelly model, hf gets full readwrite here; narrow it to
