@@ -12,10 +12,10 @@
 #
 # Usage:
 #   ./deploy.sh                       # deploy to default host (the Pi)
-#   SSH_HOST=io@192.168.1.140 ./deploy.sh
+#   SSH_HOST=io@192.168.1.139 ./deploy.sh
 #
 # Configurable via environment variables (with defaults):
-#   SSH_HOST        SSH target            (default: 192.168.1.140)
+#   SSH_HOST        SSH target            (default: 192.168.1.139 = shari end0; not .140 = wifi)
 #   SSH_USER        SSH user              (default: io)  [used only if SSH_HOST has no user@]
 #   SERVICE_NAME    systemd service name  (default: icom9700-radio-bridge)
 #   SERVICE_USER    system user to run as (default: icom9700-radio-bridge)
@@ -50,7 +50,7 @@
 set -euo pipefail
 
 # --- configuration ----------------------------------------------------------
-SSH_HOST="${SSH_HOST:-192.168.1.140}"
+SSH_HOST="${SSH_HOST:-192.168.1.139}"
 SSH_USER="${SSH_USER:-io}"
 SERVICE_NAME="${SERVICE_NAME:-icom9700-radio-bridge}"
 SERVICE_USER="${SERVICE_USER:-icom9700-radio-bridge}"
