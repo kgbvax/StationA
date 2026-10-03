@@ -45,7 +45,7 @@ separate per-component remotes to push to.
 | testui | `testui/` | MQTT relay + schema-aware browser UI for the bus (not a slot; passive consumer + /cmd stimulator) |
 | vhfcam-restream | `vhfcam-restream/` | VHF cam (UniFi Protect RTSPS) multi-sink restreamer — YouTube Live + LAN web preview (:8083) with operational-data overlay (AZ/EL/freq/TX drawtext from the bus) and IC-9700 RX audio (demand-driven via icom9700-radio-bridge); web radio controls; Go supervisor around ffmpeg; MQTT consumer + minimal `/status`/`/state` planes (`muehle/hf/vhfcam`). **Runs on scmino** (`192.168.1.178`), not shari |
 | stationportal | `stationportal/` | Station landing page on scmino :80 (`http://scmino/`) — links to every key service (probed), live slot/hardware inventory from `/meta` + two-layer liveness, software/host/resource inventory (not a slot; passive consumer) |
-| mqtt-broker | `mqtt-broker/` | Station Mosquitto broker on **scmino** (`192.168.1.178:1883`), bridged to the HA broker `.50` as a transitional `muehle/#` mirror — **no clients yet; `.50` is still the live broker** (infra — not a slot, not Go) |
+| mqtt-broker | `mqtt-broker/` | Station Mosquitto broker on **scmino** (`192.168.1.178:1883`), bridged to the HA broker `.50` as a transitional `muehle/#` mirror — **first client: the M5 Stamp PLC #1 (2026-10-03); everything else is still on `.50`, the live broker** (infra — not a slot, not Go) |
 
 Each project has its own `CLAUDE.md` and is independently buildable (`go build`/`go test`
 from its own directory works without the workspace, via the `replace … => ../shared`).
@@ -151,10 +151,11 @@ from `flexbridge/`). Cross-cutting Go code, not docs, lives in the `shared/` mod
 
 ## MQTT broker access
 
-> **Live state (2026-10-01):** every station client still uses the HA broker
-> `192.168.1.50:1883`. shari runs no mosquitto. A new station broker
-> runs on **scmino** (`192.168.1.178:1883`) as a bridged `muehle/#` mirror of
-> `.50` with no clients yet — see `mqtt-broker/CLAUDE.md`. The shari-centric
+> **Live state (2026-10-03):** every station client except the M5 Stamp PLC #1
+> (`hf/switch` + `hf/pa-arm`) still uses the HA broker `192.168.1.50:1883`.
+> shari runs no mosquitto. A new station broker runs on **scmino**
+> (`192.168.1.178:1883`) as a bridged `muehle/#` mirror of `.50`; the PLC
+> moved there first — see `mqtt-broker/CLAUDE.md`. The shari-centric
 > text below is the original target design.
 
 The station runs a **shack-local Mosquitto broker on shari** (`mqtt-broker/`),
