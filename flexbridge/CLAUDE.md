@@ -104,7 +104,7 @@ The `site`, `station`, and `slot` values are configurable via `config.toml`.
 **State is a single retained JSON document** (not per-field topics). Fields:
 `ts`, `freq_hz` (Hz integer), `band` (derived), `mode` (canonical: `cw`/`usb`/`lsb`/`am`/`fm`/`data`),
 `tx` (`rx`/`tx`), `tuning` (bool), `drive` (0–100), `device_online` (radio link liveness),
-`dvk_status` (`idle`/`recording`/`preview`/`playback`/`disabled`), `dvk_id` (active DVK memory 1–12),
+`dvk_status` (`idle`/`recording`/`preview`/`playback`/`disabled`), `dvk_id` (active DVK memory 1–12), `dvk_memories` (`[{id,name,duration_ms}]`, slot names from SmartSDR),
 `mic_profile` (active mic profile name), `mic_profiles` (available mic profile names, sorted).
 
 **flexbridge is read-only except for band changes, DVK, and mic profiles.** `/cmd` carries

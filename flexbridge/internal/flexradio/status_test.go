@@ -120,16 +120,32 @@ func TestParseDVK(t *testing.T) {
 		t.Errorf("ID = %d, want 0 (idle has no active memory)", d.ID)
 	}
 
-	// Memory-library frames (added/deleted) carry no status= key → not state.
-	if d := ParseDVK(`added id=1 name="CQ" duration=5000`); d.HasStatus {
-		t.Error(`added id=1 name="CQ" ...: HasStatus=true, want false`)
+	// Memory-library frames (added/updated/deleted) carry no status= key → not
+	// state, but describe a memory. The added line is verbatim from the
+	// FLEX-8400 (name with a space, quoted).
+	d = ParseDVK(`added id=1 name="CQ ET" duration=2720`)
+	if d.HasStatus || !d.HasMemory || d.Deleted {
+		t.Fatalf("added: HasStatus=%v HasMemory=%v Deleted=%v, want false/true/false", d.HasStatus, d.HasMemory, d.Deleted)
 	}
-	if d := ParseDVK("deleted id=1"); d.HasStatus {
-		t.Error("deleted id=1: HasStatus=true, want false")
+	if d.ID != 1 || d.Name != "CQ ET" || d.DurationMs != 2720 {
+		t.Errorf("added: got id=%d name=%q duration=%d, want 1 \"CQ ET\" 2720", d.ID, d.Name, d.DurationMs)
 	}
-	// "id=1 deleted" word-ordering variant (still no status= key) → not state.
-	if d := ParseDVK("id=1 deleted"); d.HasStatus {
-		t.Error("id=1 deleted: HasStatus=true, want false")
+	// Rename/update form without the "added" word.
+	if d := ParseDVK(`id=4 name="dpidp dl9et" duration=0`); !d.HasMemory || d.Name != "dpidp dl9et" || d.DurationMs != 0 {
+		t.Errorf("update: got %+v", d)
+	}
+	// Both deletion word orders.
+	for _, body := range []string{"deleted id=1", "id=1 deleted"} {
+		d := ParseDVK(body)
+		if d.HasStatus || !d.HasMemory || !d.Deleted || d.ID != 1 {
+			t.Errorf("%q: got %+v, want deleted memory 1", body, d)
+		}
+	}
+	// No status and no usable id → nothing.
+	for _, body := range []string{"added name=\"x\"", "id=0 name=\"x\"", ""} {
+		if d := ParseDVK(body); d.HasStatus || d.HasMemory {
+			t.Errorf("%q: got %+v, want empty", body, d)
+		}
 	}
 }
 

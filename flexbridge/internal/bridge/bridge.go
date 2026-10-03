@@ -75,15 +75,16 @@ type cmdPayload = schema.CmdPayload
 type radioState struct {
 	freqHz         int64
 	band           string
-	mode           string   // canonical (NormalizeMode applied)
-	txing          bool     // true while interlock.Transmitting
-	tuning         bool     // true while ATU or radio is in tuning state
-	drive          int      // 0-100 transmit drive level
-	deviceOnline   bool     // true while the radio TCP link is up (handshake done)
-	dvkStatus      string   // DVK: idle|recording|preview|playback|disabled (omitempty via statePayload)
-	dvkID          int      // DVK: active memory id (cleared on idle/disabled)
-	micProfile     string   // mic profile currently loaded (active name; omitempty)
-	micProfileList []string // sorted available mic profile names (omitempty)
+	mode           string      // canonical (NormalizeMode applied)
+	txing          bool        // true while interlock.Transmitting
+	tuning         bool        // true while ATU or radio is in tuning state
+	drive          int         // 0-100 transmit drive level
+	deviceOnline   bool        // true while the radio TCP link is up (handshake done)
+	dvkStatus      string      // DVK: idle|recording|preview|playback|disabled (omitempty via statePayload)
+	dvkID          int         // DVK: active memory id (cleared on idle/disabled)
+	dvkMemories    []dvkMemory // DVK memory library sorted by id (copy-on-write; omitempty)
+	micProfile     string      // mic profile currently loaded (active name; omitempty)
+	micProfileList []string    // sorted available mic profile names (omitempty)
 }
 
 // statePayload is the JSON shape published to <slot>/state (retained).
@@ -93,18 +94,27 @@ type radioState struct {
 // live radio from a frozen snapshot left over from a disconnect — /status is
 // the MQTT/LWT bridge liveness, not the radio link.
 type statePayload struct {
-	TS           string   `json:"ts"`
-	FreqHz       int64    `json:"freq_hz"`
-	Band         string   `json:"band,omitempty"`
-	Mode         string   `json:"mode,omitempty"`
-	TX           string   `json:"tx"` // "rx" | "tx"
-	Tuning       bool     `json:"tuning"`
-	Drive        int      `json:"drive"`                  // 0-100
-	DeviceOnline bool     `json:"device_online"`          // radio link liveness
-	DVKStatus    string   `json:"dvk_status,omitempty"`   // DVK operation (SmartSDR v4+)
-	DVKID        int      `json:"dvk_id,omitempty"`       // active DVK memory id
-	MicProfile   string   `json:"mic_profile,omitempty"`  // active mic profile name (SmartSDR native profile)
-	MicProfiles  []string `json:"mic_profiles,omitempty"` // available mic profile names (dynamic; /state only)
+	TS           string      `json:"ts"`
+	FreqHz       int64       `json:"freq_hz"`
+	Band         string      `json:"band,omitempty"`
+	Mode         string      `json:"mode,omitempty"`
+	TX           string      `json:"tx"` // "rx" | "tx"
+	Tuning       bool        `json:"tuning"`
+	Drive        int         `json:"drive"`                  // 0-100
+	DeviceOnline bool        `json:"device_online"`          // radio link liveness
+	DVKStatus    string      `json:"dvk_status,omitempty"`   // DVK operation (SmartSDR v4+)
+	DVKID        int         `json:"dvk_id,omitempty"`       // active DVK memory id
+	DVKMemories  []dvkMemory `json:"dvk_memories,omitempty"` // DVK memory names/durations from the radio (dynamic; /state only)
+	MicProfile   string      `json:"mic_profile,omitempty"`  // active mic profile name (SmartSDR native profile)
+	MicProfiles  []string    `json:"mic_profiles,omitempty"` // available mic profile names (dynamic; /state only)
+}
+
+// dvkMemory is one DVK memory slot as named on the radio (SmartSDR's DVK
+// panel). duration_ms 0 means the slot holds no recording.
+type dvkMemory struct {
+	ID         int    `json:"id"`
+	Name       string `json:"name"`
+	DurationMs int    `json:"duration_ms"`
 }
 
 // metaPayload is the JSON shape published to <slot>/meta (retained birth cert).
@@ -424,12 +434,18 @@ func stringSliceEqual(a, b []string) bool {
 }
 
 // handleDVK updates the DVK state from a "dvk" status frame (SmartSDR v4+,
-// subscribed via `sub dvk all`). Only status= frames carry state; added/deleted
-// memory-library frames are ignored. idle/disabled clears the active id.
+// subscribed via `sub dvk all`). status= frames carry playback state
+// (idle/disabled clears the active id); added/updated/deleted frames maintain
+// the memory library (names + durations) so consumers can label the play
+// buttons with the names set in SmartSDR.
 func (b *Bridge) handleDVK(f flexradio.Frame) {
-	ds := flexradio.ParseDVK(joinArgsFields(f))
+	ds := flexradio.ParseDVK(f.RawBody)
+	if ds.HasMemory {
+		b.handleDVKMemory(ds)
+		return
+	}
 	if !ds.HasStatus {
-		b.log.Debugf("dvk non-status frame: %s", joinArgsFields(f))
+		b.log.Debugf("dvk unrecognized frame: %s", f.RawBody)
 		return
 	}
 	b.mu.Lock()
@@ -446,6 +462,46 @@ func (b *Bridge) handleDVK(f flexradio.Frame) {
 	snap := b.state
 	b.mu.Unlock()
 
+	if changed {
+		b.publishStateSnapshot(snap)
+	}
+}
+
+// handleDVKMemory applies one memory-library frame (add/update or delete) to
+// the sorted dvkMemories list. The radio answers `sub dvk all` with one
+// `added` frame per slot, so the list fills right after the handshake.
+func (b *Bridge) handleDVKMemory(ds flexradio.DVKStatus) {
+	b.mu.Lock()
+	old := b.state.dvkMemories
+	next := make([]dvkMemory, 0, len(old)+1)
+	found, changed := false, false
+	for _, m := range old {
+		if m.ID != ds.ID {
+			next = append(next, m)
+			continue
+		}
+		found = true
+		if ds.Deleted {
+			changed = true
+			continue
+		}
+		upd := dvkMemory{ID: ds.ID, Name: ds.Name, DurationMs: ds.DurationMs}
+		changed = upd != m
+		next = append(next, upd)
+	}
+	if !found && !ds.Deleted {
+		next = append(next, dvkMemory{ID: ds.ID, Name: ds.Name, DurationMs: ds.DurationMs})
+		sort.Slice(next, func(i, j int) bool { return next[i].ID < next[j].ID })
+		changed = true
+	}
+	if changed {
+		if len(next) == 0 {
+			next = nil
+		}
+		b.state.dvkMemories = next
+	}
+	snap := b.state
+	b.mu.Unlock()
 	if changed {
 		b.publishStateSnapshot(snap)
 	}
@@ -983,6 +1039,7 @@ func (b *Bridge) publishStateSnapshot(st radioState) {
 		DeviceOnline: st.deviceOnline,
 		DVKStatus:    st.dvkStatus,
 		DVKID:        st.dvkID,
+		DVKMemories:  st.dvkMemories,
 		MicProfile:   st.micProfile,
 		MicProfiles:  st.micProfileList,
 	}
