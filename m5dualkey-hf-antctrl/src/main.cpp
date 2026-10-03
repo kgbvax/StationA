@@ -1,4 +1,6 @@
 #include <Arduino.h>
+#include <ArduinoOTA.h>
+#include <WiFi.h>
 
 #include "button_manager.h"
 #include "config.h"
@@ -23,6 +25,31 @@ bool g_dualHoldRebootIssued = false;
 uint32_t g_dualHoldStartMs = 0;
 
 constexpr uint32_t REBOOT_BOTH_HOLD_MS = 5000;
+
+bool g_otaStarted = false;
+
+// Wireless OTA, so only the first flash (or recovery) needs USB. Started once,
+// on the first WiFi association: mDNS needs the interface up. The ESP32 core
+// keeps the listener across later WiFi reconnects.
+void startOtaOnce() {
+  if (g_otaStarted || WiFi.status() != WL_CONNECTED) {
+    return;
+  }
+  g_otaStarted = true;
+
+  ArduinoOTA.setHostname(AppConfig::OTA_HOSTNAME);
+  ArduinoOTA.setPassword(SECRET_OTA_PASSWORD);
+  ArduinoOTA.onStart([]() {
+    // No antenna motion to stop: direction commands are one-shot and the
+    // controller finishes them on its own.
+    logf("%lu,OTA,START\n", millis());
+    g_leds.setMode(OperationalMode::Unknown);
+  });
+  ArduinoOTA.onEnd([]() { logf("%lu,OTA,END,rebooting\n", millis()); });
+  ArduinoOTA.onError([](ota_error_t error) { logf("%lu,OTA,ERROR,code=%u\n", millis(), static_cast<unsigned>(error)); });
+  ArduinoOTA.begin();
+  logf("%lu,OTA,LISTENING,host=%s.local,ip=%s\n", millis(), AppConfig::OTA_HOSTNAME, WiFi.localIP().toString().c_str());
+}
 
 const char* toButtonLabel(const ButtonId id) {
   switch (id) {
@@ -133,4 +160,9 @@ void loop() {
   g_leds.update(now);
 
   g_mqtt.loop(now);
+
+  startOtaOnce();
+  if (g_otaStarted) {
+    ArduinoOTA.handle();
+  }
 }

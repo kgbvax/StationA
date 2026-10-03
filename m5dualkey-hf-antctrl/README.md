@@ -26,10 +26,16 @@ LEDs stay off, and key presses are not sent, unless the bridge `/status` is
 ## Build / flash
 
 ```bash
-cp include/secrets.example.h.x include/secrets.h   # then fill in
-pio run -e m5stack_chain_dualkey
-pio run -e m5stack_chain_dualkey -t upload          # USB-C
+cp include/secrets.example.h.x include/secrets.h   # then fill in (incl. OTA password)
+./deploy.sh usb      # first flash / recovery over USB-C
+./deploy.sh          # routine update over the air (m5dualkey-antctrl-1.local)
+./deploy.sh ota 192.168.1.x   # OTA to an explicit IP if mDNS fails
 ```
+
+OTA (ArduinoOTA, password-protected) starts once WiFi first associates, so
+only the first flash needs USB. If the Mac shows no `/dev/cu.usbmodem*`, use a
+data cable, or hold Key A (GPIO0) while plugging in to force download mode.
+Serial log: `pio device monitor`. Its `OTA,LISTENING` line gives the IP.
 
 Pins: Key A = GPIO0, Key B = GPIO17, LED data = GPIO21, LED power = GPIO40.
 Requirements and test checklist: `REQUIREMENTS.md`, `test/VALIDATION_LOG.md`.

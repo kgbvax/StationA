@@ -18,3 +18,7 @@
 #define SECRET_MQTT_PORT 1883
 #define SECRET_MQTT_USERNAME "CHANGE_ME"
 #define SECRET_MQTT_PASSWORD "CHANGE_ME"
+
+// OTA update password. Required for network uploads (./deploy.sh ota);
+// deploy.sh reads it from here, so it never lands on a command line.
+#define SECRET_OTA_PASSWORD "CHANGE_ME"

@@ -38,6 +38,9 @@ static constexpr uint16_t MQTT_PORT = SECRET_MQTT_PORT;
 static constexpr const char* MQTT_USERNAME = SECRET_MQTT_USERNAME;
 static constexpr const char* MQTT_PASSWORD = SECRET_MQTT_PASSWORD;
 
+// Wireless OTA (ArduinoOTA, password from secrets.h). Hostname -> <name>.local.
+static constexpr const char* OTA_HOSTNAME = "m5dualkey-antctrl-1";
+
 // MQTT client. The client ID is a non-slot exception: this device owns no
 // slot, so it must not collide with a slot-derived bridge ID.
 static constexpr const char* MQTT_CLIENT_ID_PREFIX = "m5dualkey-hf-antctrl-";

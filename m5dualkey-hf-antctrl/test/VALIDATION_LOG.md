@@ -28,6 +28,11 @@ Tester: _TBD_
 - [ ] `direction=reverse` -> LED B red
 - [ ] `direction=bidirectional` -> both LEDs orange
 
+## OTA checks
+- [ ] Serial shows `OTA,LISTENING,host=m5dualkey-antctrl-1.local`
+- [ ] `./deploy.sh` (OTA) flashes and the key reboots into the new image
+- [ ] OTA with a wrong password is rejected
+
 ## Reconnect checks
 - [ ] Wi-Fi reconnect after AP outage
 - [ ] MQTT reconnect after broker restart
