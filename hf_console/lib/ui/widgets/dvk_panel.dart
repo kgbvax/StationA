@@ -11,6 +11,9 @@ class DvkPanel extends StatelessWidget {
   static const String slot = 'hf/radio';
   static const String topic = 'muehle/hf/radio/cmd';
 
+  /// Play buttons for DVK memories 1..buttonCount (the radio has 12).
+  static const int buttonCount = 2;
+
   const DvkPanel({super.key});
 
   /// DVK memory names as set in SmartSDR, keyed by memory id, from the
@@ -146,7 +149,7 @@ class DvkPanel extends StatelessWidget {
 
         return Row(
           children: [
-            for (var i = 1; i <= 4; i++)
+            for (var i = 1; i <= buttonCount; i++)
               Expanded(
                 child: Padding(
                   padding: const EdgeInsets.only(right: 8),
