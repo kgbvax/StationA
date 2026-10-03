@@ -47,6 +47,7 @@ A bridge that fronts one specific piece of hardware is named
 | Shelly smart-plug family (HTTP/MQTT API) | `shelly` | `shelly-power-bridge` |
 | M5Stamp PLC family (embedded relay/DI controller, custom firmware) | `m5stamp` | `m5stamp-hf-ctrl` (firmware) |
 | M5Stack Dial family (round-face ESP32-S3 control knob, custom firmware) | `m5dial` | `m5dial-hf-rotctrl` (firmware) |
+| M5Stack Chain DualKey (two-key ESP32-S3 with RGB LEDs, custom firmware) | `m5dualkey` | `m5dualkey-hf-antctrl` (firmware) |
 | Icom CI-V / RS-BA1 LAN-controlled rigs (IC-9700 today; the same protocol family covers other RS-BA1 Icoms) | `icom9700` | `icom9700-radio-bridge` |
 
 > **Deviation — `icom9700` env prefix:** the env-overload prefix is `ICOM9700_`

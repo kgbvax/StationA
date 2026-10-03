@@ -10,7 +10,7 @@ every Go component imports it via a `replace … => ../shared` so each stays sel
 without the workspace. Bridges import `shared/` but never another bridge's `internal/`
 — enforced by Go's `internal/` visibility rule across separate modules, not just
 convention. Non-Go components (`waveshare_relay-antswitch-bridge` and
-`m5stamp-pol-ctrl` = ESPHome YAML, `m5stamp-hf-ctrl` and `m5dial-hf-rotctrl` =
+`m5stamp-pol-ctrl` = ESPHome YAML, `m5stamp-hf-ctrl`, `m5dial-hf-rotctrl` and `m5dualkey-hf-antctrl` =
 PlatformIO firmware) live alongside as plain subdirectories and are not in
 `go.work`.
 
@@ -41,6 +41,7 @@ separate per-component remotes to push to.
 | spid-ercm-rotator-bridge | `spid-ercm-rotator-bridge/` | Sat-ops az/el rotator bridge → `uhf/az-rotator` (SPID) + `uhf/el-rotator` (GS-500 via ERC-M); rotctld :4534 + PstRotator UDP :12041 listeners (free motion, no arming gate) |
 | icom9700-radio-bridge | `icom9700-radio-bridge/` | IC-9700 UHF radio bridge → `muehle/uhf/radio` (RS-BA1 LAN session for RX audio capture only + read-only serial CI-V telemetry; no remote TX) |
 | m5dial-hf-rotctrl | `m5dial-hf-rotctrl/` | M5Stack Dial firmware — HF rotator control head (analog meter face + knob; not a slot; consumer + /cmd stimulator) |
+| m5dualkey-hf-antctrl | `m5dualkey-hf-antctrl/` | M5Stack Chain DualKey firmware — Ultrabeam direction keys (A forward / B reverse / A+B bidirectional, LED shows `hf/ant-ctrl` direction; not a slot; consumer + /cmd stimulator) |
 | logger-spot-bridge | `logger-spot-bridge/` | Shack-logger bridge (DXLog/Log4OM) → `hf/spots` — the operator-keyed station (call, position, beam bearing) |
 | testui | `testui/` | MQTT relay + schema-aware browser UI for the bus (not a slot; passive consumer + /cmd stimulator) |
 | vhfcam-restream | `vhfcam-restream/` | VHF cam (UniFi Protect RTSPS) multi-sink restreamer — YouTube Live + LAN web preview (:8083) with operational-data overlay (AZ/EL/freq/TX drawtext from the bus) and IC-9700 RX audio (demand-driven via icom9700-radio-bridge); web radio controls; Go supervisor around ffmpeg; MQTT consumer + minimal `/status`/`/state` planes (`muehle/hf/vhfcam`). **Runs on scmino** (`192.168.1.178`), not shari |

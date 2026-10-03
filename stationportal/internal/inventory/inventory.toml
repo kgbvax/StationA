@@ -538,6 +538,13 @@ host  = "M5Stack Dial"
 note  = "HF rotator control head (not a slot)"
 
 [[software]]
+name  = "m5dualkey-hf-antctrl"
+path  = "m5dualkey-hf-antctrl/"
+kind  = "firmware"
+host  = "M5Stack Chain DualKey"
+note  = "Ultrabeam direction keys for hf/ant-ctrl (not a slot)"
+
+[[software]]
 name  = "flex2mqtt"
 path  = "external"
 kind  = "external"

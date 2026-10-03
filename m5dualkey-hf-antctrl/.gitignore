@@ -1,0 +1,12 @@
+# Secrets — never commit (wifi + mqtt credentials). Copy
+# include/secrets.example.h.x -> include/secrets.h and fill in.
+# The build fails fast if include/secrets.h is missing.
+include/secrets.h
+.env
+
+# PlatformIO build artifacts and caches
+.pio/
+.vscode/
+
+# macOS / local tooling noise
+.DS_Store
