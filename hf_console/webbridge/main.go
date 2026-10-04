@@ -42,13 +42,26 @@ func main() {
 	flag.Parse()
 
 	fs := http.FileServer(http.Dir(*webRoot))
-	http.Handle("/", fs)
+	http.Handle("/", revalidate(fs))
 	http.HandleFunc("/mqtt", handleMQTT)
 
 	log.Printf("hf-console-web listening on %s, serving %s, broker %s", *listenAddr, *webRoot, *brokerAddr)
 	if err := http.ListenAndServe(*listenAddr, nil); err != nil {
 		log.Fatalf("listen: %v", err)
 	}
+}
+
+// revalidate makes browsers re-check every static file on each load. The file
+// server sends Last-Modified but no Cache-Control, so browsers applied
+// heuristic caching and kept running the previous main.dart.js for minutes
+// after a deploy (2026-10-02: a fixed build was live but the open tab still
+// ran the broken one). no-cache costs one conditional request per file; an
+// unchanged file answers 304.
+func revalidate(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-cache")
+		h.ServeHTTP(w, r)
+	})
 }
 
 // handleMQTT upgrades the HTTP request to a WebSocket and then copies bytes
