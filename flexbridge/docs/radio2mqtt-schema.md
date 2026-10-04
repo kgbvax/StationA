@@ -190,6 +190,10 @@ regardless of how many internal receivers the radio has.
   "device_online": true,
   "dvk_status": "idle",
   "dvk_id": 0,
+  "dvk_memories": [
+    { "id": 1, "name": "CQ ET", "duration_ms": 2720 },
+    { "id": 2, "name": "dl9et", "duration_ms": 2565 }
+  ],
   "mic_profile": "Default ProSet HC6",
   "mic_profiles": ["Contest", "Default ProSet HC6", "Ragchew"]
 }
@@ -209,6 +213,7 @@ regardless of how many internal receivers the radio has.
 | `device_online` | bool | — | `true` while the radio TCP link is up; `false` on disconnect. `/status` is the MQTT/LWT bridge liveness, not the radio link |
 | `dvk_status` | string | — | DVK operation: `idle` \| `recording` \| `preview` \| `playback` \| `disabled`. SmartSDR v4+; omitted when no DVK status has been reported. `disabled` means no SmartSDR+ license |
 | `dvk_id` | integer | — | Active DVK memory id (1–12) while playing/recording/previewing; `0`/omitted when idle |
+| `dvk_memories` | object[] | — | DVK memory library as named in SmartSDR, sorted by `id`: `{id, name, duration_ms}` per slot (`duration_ms` 0 = empty slot; unnamed slots carry the radio default `Recording N`). Populated from the `dvk added id=N name="…" duration=…` frames the radio sends in reply to `sub dvk all` (one per slot), updated on rename/re-record (`dvk id=N name=…`) and delete. `/state`-only (not in `expose.fields`); omitted until the radio reports it |
 | `mic_profile` | string | — | Currently-loaded mic profile name (SmartSDR native mic profile). Best-effort: SmartSDR does not report an active mic profile, so the bridge tracks this client-side as the name most recently loaded via `set_mic_profile`; empty until the first load via the bus. Omitted when empty |
 | `mic_profiles` | string[] | — | Available mic-profile names (sorted). Populated from the radio's reply to the one-shot `profile mic info` command (`profile mic list=A^B C^…` status frames; queried once in the handshake on connect). `/state`-only (not in `expose.fields`) |
 

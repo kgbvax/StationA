@@ -4,8 +4,11 @@ The **station Mosquitto broker**, running on **scmino** (`192.168.1.178`,
 since 2026-10-01; originally planned for shari) and bridged to the Home
 Assistant broker at `192.168.1.50:1883`.
 
-**Current state: transitional mirror, no clients yet.** `.50` is still the live
-station broker. The bridge mirrors `muehle/#` both ways (login `hf` on `.50`),
+**Current state: transitional mirror, one client.** `.50` is still the live
+station broker. First client moved 2026-10-03: the M5 Stamp PLC #1
+(`m5stamp-hf-ctrl`, `hf/switch` + `hf/pa-arm`; `MQTT_HOST` in its gitignored
+`src/secrets.h`) — it reads `hf/radio/state` and `hf/ant-switch/state` through
+the bridge. The bridge mirrors `muehle/#` both ways (login `hf` on `.50`),
 so clients can move here one at a time; narrow it to the split mapping in
 `mosquitto.conf.example` once all have moved. Local accounts: `hf` only.
 Never add a `bwbroker` hosts alias anywhere — live services resolve it to

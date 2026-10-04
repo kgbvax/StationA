@@ -11,7 +11,26 @@ class DvkPanel extends StatelessWidget {
   static const String slot = 'hf/radio';
   static const String topic = 'muehle/hf/radio/cmd';
 
+  /// Play buttons for DVK memories 1..buttonCount (the radio has 12).
+  static const int buttonCount = 2;
+
   const DvkPanel({super.key});
+
+  /// DVK memory names as set in SmartSDR, keyed by memory id, from the
+  /// bridge's `/state.dvk_memories` list (`[{id, name, duration_ms}]`).
+  /// Malformed entries and blank names are skipped so the button falls back
+  /// to `DVK<n>`.
+  static Map<int, String> memoryNames(dynamic raw) {
+    final out = <int, String>{};
+    if (raw is! List) return out;
+    for (final e in raw) {
+      if (e is! Map) continue;
+      final id = e['id'];
+      final name = e['name'];
+      if (id is int && name is String && name.trim().isNotEmpty) out[id] = name.trim();
+    }
+    return out;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -124,12 +143,13 @@ class DvkPanel extends StatelessWidget {
         final status = store.stateValueAs<String>('muehle/$slot', 'dvk_status') ?? 'idle';
         final activeId = store.stateValueAs<int>('muehle/$slot', 'dvk_id') ?? 0;
         final isPlaying = status == 'playback';
+        final names = memoryNames(store.stateValue('muehle/$slot', 'dvk_memories'));
 
         final mqtt = context.read<MqttService>();
 
         return Row(
           children: [
-            for (var i = 1; i <= 4; i++)
+            for (var i = 1; i <= buttonCount; i++)
               Expanded(
                 child: Padding(
                   padding: const EdgeInsets.only(right: 8),
@@ -139,7 +159,12 @@ class DvkPanel extends StatelessWidget {
                       minimumSize: const WidgetStatePropertyAll(Size(0, 48)),
                       padding: const WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: 8, vertical: 6)),
                     ),
-                    child: Text('DVK$i'),
+                    // Radio names can be long ("dpidp dl9et"): shrink to
+                    // fit rather than wrap or clip, like the band buttons.
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Text(names[i] ?? 'DVK$i', maxLines: 1),
+                    ),
                   ),
                 ),
               ),

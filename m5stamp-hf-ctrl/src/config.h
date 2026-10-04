@@ -61,8 +61,13 @@ static const int SAFE_BANDS_COUNT = sizeof(SAFE_BANDS) / sizeof(SAFE_BANDS[0]);
 
 // --- MQTT ------------------------------------------------------------------
 // PubSubClient default buffer is too small for retained /meta with an expose
-// block; bump it before connect() (the LWT is set before connect).
-#define MQTT_BUFFER_SIZE 1024
+// block; bump it before connect() (the LWT is set before connect). The buffer
+// also bounds INBOUND messages: a larger one is dropped silently, and pa-arm
+// then never sees hf/radio/state ("radio offline", arm blocked). That state
+// carries the dynamic mic_profiles + dvk_memories lists — ~1.4 KB on
+// 2026-10-03, which overflowed the previous 1024. 4096 leaves headroom; each
+// slot's client allocates its own buffer (2 × 4 KB heap).
+#define MQTT_BUFFER_SIZE 4096
 #define MQTT_KEEPALIVE_S 30
 
 // Bounded reconnect (defect D6): a silent broker must not stall the arm-logic

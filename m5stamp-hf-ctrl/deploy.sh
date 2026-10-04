@@ -63,7 +63,15 @@ case "${1:-}" in
     HOST="${2:-m5stamp-plc-1.local}"
     echo "==> Building and flashing via OTA to $HOST ..."
     cd "$PROJECT_DIR"
-    pio run -e "$ENV_OTA" -t upload --upload-port "$HOST"
+    # The firmware's ArduinoOTA requires OTA_PASSWORD (src/secrets.h); espota
+    # must send it or the upload fails with "Authentication Failed". Passed via
+    # the environment so it never lands on a command line.
+    OTA_PW=$(sed -nE 's/^#define[[:space:]]+OTA_PASSWORD[[:space:]]+"(.*)"/\1/p' src/secrets.h)
+    if [[ -z "$OTA_PW" ]]; then
+      echo "OTA_PASSWORD not found in src/secrets.h" >&2
+      exit 1
+    fi
+    PLATFORMIO_UPLOAD_FLAGS="--auth=$OTA_PW" pio run -e "$ENV_OTA" -t upload --upload-port "$HOST"
     ;;
   *)
     echo "Unknown command: $1" >&2
