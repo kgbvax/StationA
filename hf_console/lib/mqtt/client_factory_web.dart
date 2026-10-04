@@ -7,15 +7,14 @@
 import 'package:mqtt_client/mqtt_client.dart';
 import 'package:mqtt_client/mqtt_browser_client.dart';
 
-/// The bridge serves this page itself, so the WebSocket endpoint is this
-/// page's own origin — the build follows whatever host serves it instead of
-/// hardcoding one station address.
-final Uri _bridgeBase = Uri.base;
+import 'bridge_endpoint.dart';
 
 MqttClient createMqttClientImpl(String host, int port, String clientId) {
-  final wsScheme = _bridgeBase.scheme == 'https' ? 'wss' : 'ws';
-  final client = MqttBrowserClient(
-      '$wsScheme://${_bridgeBase.host}:${_bridgeBase.port}/mqtt', clientId);
+  final ep = bridgeEndpoint(Uri.base);
+  final client = MqttBrowserClient(ep.url, clientId);
+  // Load-bearing: MqttBrowserClient replaces the URL's port with client.port
+  // (default 1883) — without this the browser dials ws://<host>:1883/mqtt.
+  client.port = ep.port;
   client.websocketProtocols = MqttClientConstants.protocolsSingleDefault;
   return client;
 }
