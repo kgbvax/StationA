@@ -1,7 +1,7 @@
 # Validation Log — m5dualkey-hf-antctrl (ex m5btn2)
 
 Date: 2026-06-07
-Firmware branch/commit: _TBD_
+Firmware branch/commit: ea79ba9 (live-verified 2026-10-04 against ultrabridge; device at 192.168.1.122 / m5dualkey-antctrl-1.local)
 Tester: _TBD_
 
 ## Build
@@ -14,15 +14,15 @@ Tester: _TBD_
 
 ## Functional checks
 - [ ] Startup banner appears on serial within 2s
-- [ ] Button A short press emits serial event and publishes `{"action":"direction","value":"forward"}` to `muehle/hf/ant-ctrl/cmd`
-- [ ] Button B short press emits serial event and publishes direction `reverse`
-- [ ] A+B combo press emits serial event and publishes direction `bidirectional`
+- [x] Button A short press emits serial event and publishes `{"action":"direction","value":"forward"}` to `muehle/hf/ant-ctrl/cmd`
+- [x] Button B short press emits serial event and publishes direction `reverse`
+- [x] A+B combo press emits serial event and publishes direction `bidirectional`
 - [ ] Long press on A emits `LONG_PRESS`
 - [ ] Long press on B emits `LONG_PRESS`
 - [ ] Rapid tapping does not create bounce duplicates
 
 ## MQTT + LED checks
-- [ ] Subscribe handling from `muehle/hf/ant-ctrl/state` + `/status` works
+- [x] Subscribe handling from `muehle/hf/ant-ctrl/state` + `/status` works
 - [ ] Bridge `/status` offline or `device_online:false` -> LEDs off, presses not sent
 - [ ] `direction=forward` -> LED A green
 - [ ] `direction=reverse` -> LED B red
