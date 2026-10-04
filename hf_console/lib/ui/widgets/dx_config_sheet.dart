@@ -67,7 +67,7 @@ class _DxConfigDialogState extends State<_DxConfigDialog> {
     setState(() {
       _locator.text = values['station_locator'] ?? '';
       _url.text = values['horstreporter_base_url'] ?? 'https://horstreporter.kgbvax.net';
-      _camUrl.text = values['vhfcam_base_url'] ?? defaultVhfcamBaseUrl;
+      _camUrl.text = resolveVhfcamBaseUrl(values['vhfcam_base_url']);
       final park = UhfPark.notifier.value;
       _parkAz.text = _fmtDeg(UhfPark.parseAz(values[UhfPark.azKey]) ?? park.az);
       _parkEl.text = _fmtDeg(UhfPark.parseEl(values[UhfPark.elKey]) ?? park.el);

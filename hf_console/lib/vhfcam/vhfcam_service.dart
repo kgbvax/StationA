@@ -30,6 +30,24 @@ import 'vhfcam_transport_io.dart' if (dart.library.html) 'vhfcam_transport_web.d
 
 const defaultVhfcamBaseUrl = 'http://192.168.1.178:8083';
 
+/// Hosts that served the cam before it moved to scmino (2026-09-30): shari's
+/// wired and wifi addresses and its name. The service is never run on both.
+const _legacyVhfcamHosts = {'192.168.1.139', '192.168.1.140', 'shari'};
+
+/// Resolves a stored gear-sheet value to the base URL to use. Empty or
+/// missing → the default; a saved URL that still points at shari → the
+/// default (a tablet that saved the sheet before the move would otherwise
+/// keep polling a dead host). Anything else is kept as entered.
+String resolveVhfcamBaseUrl(String? stored) {
+  final trimmed = stored?.trim() ?? '';
+  if (trimmed.isEmpty) return defaultVhfcamBaseUrl;
+  final host = Uri.tryParse(trimmed)?.host.toLowerCase();
+  if (host != null && _legacyVhfcamHosts.contains(host)) {
+    return defaultVhfcamBaseUrl;
+  }
+  return trimmed;
+}
+
 const _pollInterval = Duration(seconds: 2);
 const _pollBackoff = Duration(seconds: 10);
 const _requestTimeout = Duration(seconds: 3);
@@ -60,11 +78,10 @@ class VhfcamService extends ChangeNotifier {
   /// The server page's recordings list (download / delete happen there).
   String get recordingsUrl => '$_baseUrl/#rec';
 
-  /// Re-points the service (gear-sheet live-apply). An empty value restores
-  /// the shack default.
+  /// Re-points the service (gear-sheet live-apply). An empty value or a
+  /// legacy shari URL restores the shack default.
   void configure({required String baseUrl}) {
-    final trimmed = baseUrl.trim();
-    final next = trimmed.isEmpty ? defaultVhfcamBaseUrl : trimmed;
+    final next = resolveVhfcamBaseUrl(baseUrl);
     if (next == _baseUrl) return;
     _baseUrl = next;
     _failures = 0;

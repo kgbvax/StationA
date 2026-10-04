@@ -70,7 +70,10 @@ holds the radio audio while recording; downloads happen on the :8083 page.
 Two deliberate platform notes:
 
 - The base URL is a user setting, key `vhfcam_base_url` (CredentialStore,
-  editable in the gear sheet, default `http://192.168.1.178:8083`).
+  editable in the gear sheet, default `http://192.168.1.178:8083`). A saved
+  value still pointing at shari (`.139`/`.140`/`shari`, pre-2026-09-30 host)
+  is treated as unset and resolves to the scmino default
+  (`resolveVhfcamBaseUrl`).
 - `macos/Runner/Info.plist` carries `NSAppTransportSecurity →
   NSAllowsLocalNetworking` — AVPlayer refuses the cleartext LAN URL without
   it. This is the LAN-scoped exception and deliberately NOT set on iOS

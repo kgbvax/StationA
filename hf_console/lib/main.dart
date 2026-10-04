@@ -118,7 +118,7 @@ class _AppRootState extends State<_AppRoot> with WidgetsBindingObserver {
     // The antenna-cam feed is bus-independent (plain HTTP to the preview
     // server); start its poll loop with the stored base URL, like the DX
     // overlay above.
-    _vhfcam.configure(baseUrl: values['vhfcam_base_url'] ?? defaultVhfcamBaseUrl);
+    _vhfcam.configure(baseUrl: values['vhfcam_base_url'] ?? '');
     _vhfcam.start();
     UhfPark.load(values);
     if (host != null && port != null && user != null && pass != null && pass.isNotEmpty) {
