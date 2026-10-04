@@ -35,8 +35,8 @@ type Config struct {
 	VideoCodec    string `toml:"video_codec"`    // -c:v
 	AudioCodec    string `toml:"audio_codec"`    // -c:a
 
-	// Sinks. The service is disabled at boot by default (deploy.sh), so nothing
-	// streams constantly; when started, these pick which sinks run. The
+	// Sinks. The service starts at boot (deploy.sh); these pick which sinks
+	// run (deploy seeds YouTube off, so autostart stays LAN-only). The
 	// preview is deliberately independent of YouTube: the LAN preview must
 	// work when the internet (or YouTube) is down.
 	YoutubeEnabled bool `toml:"youtube_enabled"`

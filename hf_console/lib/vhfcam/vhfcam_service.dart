@@ -5,8 +5,8 @@
 //
 //   GET  /api/radio-status   IC-9700 audio-chain LEDs (2 s poll, like the page)
 //   GET  /hls/live.m3u8      exists only while the preview sink is running —
-//                            the process is installed disabled-at-boot and
-//                            started ad hoc, so 404 is a *normal* state
+//                            the sink can be off (camera down, preview
+//                            disabled), so 404 is a *normal* state
 //   POST /api/cmd/{action}   audio_on | audio_off | power_on (allowlist; the
 //                            server translates these to muehle/uhf/radio/cmd)
 //   POST /api/rec/start|stop record the preview (overlay + radio audio); the

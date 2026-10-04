@@ -52,11 +52,12 @@ go vet ./...
 `SOURCE_HD_URL`, `QUALITY`, `YT_URL`, `YT_STREAM_KEY`, `LOG_LEVEL` from the
 environment (see the header comment).
 
-**The service installs DISABLED by default** (`ENABLED=false`): the unit is on
-the device but not running — the Pi does not stream constantly. Bring it up ad
-hoc on scmino with `sudo systemctl enable --now vhfcam-restream`, stop it with
-`sudo systemctl disable --now vhfcam-restream`, or deploy with `ENABLED=true`
-to have deploys start it.
+**The service starts at boot** (`ENABLED=true`, the default since 2026-10-04):
+the console's CAM tab must work after a power cycle without a manual start.
+Only the LAN preview runs by default — a fresh seed has `youtube_enabled =
+false` (`YT_ENABLED`), so autostart never goes live on YouTube by itself.
+Stop it with `sudo systemctl disable --now vhfcam-restream`, or deploy with
+`ENABLED=false` to install it disabled and stopped.
 
 ## Config
 

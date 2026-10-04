@@ -6,8 +6,9 @@
 //
 //   http://<cam base>/hls/live.m3u8     (cleartext HTTP, LAN-only, no auth)
 //
-// The service is installed disabled-at-boot and started ad hoc, so "offline"
-// is a normal operating state, not a fault — this panel renders it as one and
+// The service starts at boot, but the cam is an accessory (scmino rebooting,
+// the camera down), so "offline" is an operating state, not a fault — this
+// panel renders it as one and
 // re-probes via [VhfcamService]. Latency is ~10 s behind live by design
 // (HLS segmenting), which the header chip does not compensate for.
 //

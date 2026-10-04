@@ -21,7 +21,7 @@ See `../sas/tablet_console_hybrid_preview.html` for the approved high-fidelity r
 - `lib/vhfcam/*.dart` — antenna-cam feed client: HLS player state + poller for
   vhfcam-restream's preview server (`:8083` on scmino). Bus-independent HTTP;
   `muehle/hf/vhfcam` is deliberately NOT in `expectedSlots` — the cam is an
-  ad-hoc accessory (installed disabled-at-boot), its silence is not a station fault.
+  accessory, not a station slot, its silence is not a station fault.
 - `lib/dxspot/world_geometry.dart` — singleton loader for the bundled
   Natural Earth 50m coastline outlines (`assets/geo/world.geojson`,
   ~3 MB raw / ~1 MB gzipped). Lazy-loads once at startup; the compass
