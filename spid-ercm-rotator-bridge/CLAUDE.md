@@ -138,7 +138,7 @@ per axis (`<slot>` = `az-rotator` | `el-rotator`):
 muehle/uhf/<slot>/meta     retained  birth certificate (role `rotator`, capabilities: axes + limits {min,max,park} + deadband)
 muehle/uhf/<slot>/state    retained  live rotator state JSON snapshot (see below)
 muehle/uhf/<slot>/status   retained  online | offline (LWT — the bridge, not the controller)
-muehle/uhf/<slot>/cmd      one-shot  goto | stop intent (bus → bridge), value-keyed args, non-retained
+muehle/uhf/<slot>/cmd      one-shot  goto | stop | park intent (bus → bridge), value-keyed args, non-retained
 ```
 
 `/state` is a single retained JSON document —
@@ -149,7 +149,10 @@ never wire-reported. `device_online` is always an explicit boolean (two-layer
 liveness: `/status` is the bridge process, `/state.device_online` is **this
 slot's own serial link** — a dead elevation port takes only `el-rotator`
 offline). `/cmd` payloads: `{"action":"goto","value":"45.0"}` /
-`{"action":"stop"}` — published non-retained, subscribed at QoS 0, cleared with
+`{"action":"stop"}` / `{"action":"park"}` (park = the atomic mount-level
+intent: stop phase, then BOTH axes to `control.<axis>.park` — station park
+az 200° / el 0°; on either slot's /cmd it parks the whole mount, like stop) —
+published non-retained, subscribed at QoS 0, cleared with
 an empty retained publish after execute-or-reject, `ts`-gated when stamped
 (KTD13; unstamped producers tolerated). A goto is written immediately as
 `W<el> 000` — elevation rides the ERC-M's az channel (wiring note above);

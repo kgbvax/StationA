@@ -116,7 +116,8 @@ link         = "serial"
 #                   micro-corrections do not jerk the rotor, el 1° — the
 #                   elevation deadband is expected to need bench loosening,
 #                   KTD14)
-# <axis>.park     = park position for the PstRotator PARK command (R7)
+# <axis>.park     = park position for the PstRotator PARK command and the
+#                   /cmd "park" action (R7; station park: az 200, el 0)
 
 [control]
 poll_interval   = "1s"

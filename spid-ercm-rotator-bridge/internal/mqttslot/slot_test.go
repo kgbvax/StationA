@@ -148,6 +148,15 @@ type fakeMount struct {
 	moving    bool
 	stopErrs  []mount.AxisError
 	stopBlock time.Duration
+	parks     int
+	parkRefs  []mount.Refusal
+}
+
+func (f *fakeMount) Park() []mount.Refusal {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.parks++
+	return f.parkRefs
 }
 
 func (f *fakeMount) Goto(t mount.Target) []mount.Refusal {
@@ -737,6 +746,57 @@ func TestStopDispatchesStopAndClears(t *testing.T) {
 	})
 	waitFor(t, 2*time.Second, "cmd cleared after stop", func() bool {
 		return cmdCleared(fake, s.cmdTopic)
+	})
+}
+
+// TestParkDispatchesMountParkAndClears pins the park action: one atomic
+// mount.Park (KTD11 — both axes, whichever slot received it), no per-axis
+// goto, plus the one-shot clear. Pinned on the el slot: park from either
+// topic is a mount-level intent.
+func TestParkDispatchesMountParkAndClears(t *testing.T) {
+	o := testOptions(config.AxisEL, "el-rotator")
+	fm := &fakeMount{online: true}
+	fake := &recordingPaho{}
+	s := newTestSlot(t, o, fm, fake)
+
+	s.onCmd(nil, fakeMessage{topic: s.cmdTopic, payload: []byte(`{"action":"park"}`)})
+
+	waitFor(t, 2*time.Second, "park dispatched", func() bool {
+		fm.mu.Lock()
+		defer fm.mu.Unlock()
+		return fm.parks == 1
+	})
+	waitFor(t, 2*time.Second, "cmd cleared after park", func() bool {
+		return cmdCleared(fake, s.cmdTopic)
+	})
+	fm.mu.Lock()
+	defer fm.mu.Unlock()
+	if len(fm.gotos) != 0 || fm.stops != 0 {
+		t.Errorf("park issued %d goto(s) and %d stop(s) via the slot, want 0 (mount.Park owns both)", len(fm.gotos), fm.stops)
+	}
+}
+
+// TestParkRefusalSurfacesErrorAndStillCleared: a refused park target (an axis
+// offline) surfaces in /state.error and the retained cmd is still cleared.
+func TestParkRefusalSurfacesErrorAndStillCleared(t *testing.T) {
+	o := testOptions(config.AxisAZ, "az-rotator")
+	fm := &fakeMount{online: true,
+		parkRefs: []mount.Refusal{{Axis: mount.EL, Reason: mount.RefusalLiveness, Detail: "device link down"}}}
+	fake := &recordingPaho{}
+	s := newTestSlot(t, o, fm, fake)
+
+	s.onCmd(nil, fakeMessage{topic: s.cmdTopic, payload: []byte(`{"action":"park"}`)})
+
+	waitFor(t, 2*time.Second, "retained cmd cleared despite park refusal", func() bool {
+		return cmdCleared(fake, s.cmdTopic)
+	})
+	waitFor(t, 2*time.Second, "park refusal surfaced in /state.error", func() bool {
+		pubs := statePubs(t, fake, s.stateTopic)
+		if len(pubs) == 0 {
+			return false
+		}
+		errStr, _ := pubs[len(pubs)-1]["error"].(string)
+		return errStr != ""
 	})
 }
 
