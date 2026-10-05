@@ -4,10 +4,10 @@ import 'package:provider/provider.dart';
 
 import '../../mqtt/mqtt_service.dart';
 import '../../store/bus_store.dart';
-import '../../store/uhf_park.dart';
 import '../../store/wiring.dart';
 import '../theme.dart';
 import 'card_container.dart';
+import 'rotator_park.dart';
 import 'status_pill.dart';
 import 'status_tag.dart';
 
@@ -29,8 +29,9 @@ import 'status_tag.dart';
 /// halt both axes from either topic, so the dual publish is belt-and-braces
 /// against a dead slot path.
 ///
-/// PARK sends every operable axis to the park position set in Settings
-/// ([UhfPark]; this station: az 200°, el 3°) as ordinary goto commands.
+/// PARK sends the bridge's `park` intent ONE time (the first operable slot):
+/// the bridge moves both axes to its configured park position (this
+/// station: az 200°, el 0°), which the key reads from /meta.
 ///
 /// Goto targets are validated client-side against the axis travel limits in
 /// /meta `capabilities.limits` (inclusive); with no /meta yet the panel
@@ -71,20 +72,6 @@ class SatRotatorPanel extends StatelessWidget {
         mqtt.publish(
           cmdTopic(slot),
           satRotatorStopPayload(),
-          retain: cmdRetain[address]!,
-        );
-      }
-    }
-
-    void sendPark(({double az, double el}) park) {
-      for (final (slot, address, online, deg) in [
-        (_azSlot, _azAddress, azOnline, park.az),
-        (_elSlot, _elAddress, elOnline, park.el),
-      ]) {
-        if (!online) continue;
-        mqtt.publish(
-          cmdTopic(slot),
-          satRotatorGotoPayload(deg),
           retain: cmdRetain[address]!,
         );
       }
@@ -155,22 +142,21 @@ class SatRotatorPanel extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 Expanded(
-                  child: ValueListenableBuilder<({double az, double el})>(
-                    valueListenable: UhfPark.notifier,
-                    builder: (context, park, _) => ElevatedButton(
-                      key: const ValueKey('sat-park'),
-                      onPressed: (azOnline || elOnline) ? () => sendPark(park) : null,
-                      style: AppTheme.actionButton().copyWith(
-                        padding: const WidgetStatePropertyAll(
-                          EdgeInsets.symmetric(horizontal: 8, vertical: 14),
-                        ),
+                  child: ElevatedButton(
+                    key: const ValueKey('sat-park'),
+                    onPressed: rotatorParkSlot(store, vhfRotator) != null
+                        ? () => sendRotatorPark(store, mqtt, vhfRotator)
+                        : null,
+                    style: AppTheme.actionButton().copyWith(
+                      padding: const WidgetStatePropertyAll(
+                        EdgeInsets.symmetric(horizontal: 8, vertical: 14),
                       ),
-                      child: Text(
-                        'PARK ${_fmtDeg(park.az)}° / ${_fmtDeg(park.el)}°',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: AppTheme.mono(14, weight: FontWeight.w800),
-                      ),
+                    ),
+                    child: Text(
+                      'PARK ${rotatorParkLabel(store, vhfRotator)}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: AppTheme.mono(14, weight: FontWeight.w800),
                     ),
                   ),
                 ),

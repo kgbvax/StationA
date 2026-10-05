@@ -5,8 +5,9 @@ import '../../mqtt/mqtt_service.dart';
 import '../../store/bus_store.dart';
 import '../../store/wiring.dart';
 import '../theme.dart';
+import 'rotator_park.dart';
 
-/// One-tap STOP shortcut for the rotator.
+/// One-tap STOP shortcut for the rotator (plus PARK on the sat mount).
 ///
 /// Tablet: [RotatorPresetsRail] — a vertical rail on the right edge of the DX
 /// map, stacked above the +/- zoom controls, so the map column no longer
@@ -104,7 +105,13 @@ List<_PresetAction> _presetActions(BuildContext context, RotatorSurface rotator)
     }
   }
 
+  // PARK (sat mount only — the HF surface has no parkPayload): one
+  // bridge-side intent, both axes to the bridge's park position. Above STOP
+  // so the e-stop keeps its bottom-edge spot.
+  final canPark = rotatorParkSlot(store, rotator) != null;
   return [
+    if (rotator.parkPayload != null)
+      _PresetAction('PARK', onPressed: canPark ? () => sendRotatorPark(store, mqtt, rotator) : null),
     _PresetAction('STOP', danger: true, onPressed: anyOnline ? sendStop : null),
   ];
 }

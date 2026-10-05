@@ -1,6 +1,6 @@
 // vhf_map_test.dart — the VHF/UHF map module (DxMapContainer.vhf): Mercator
-// only, UHF az beam, tap-to-aim on the great-circle bearing, STOP for both
-// sat axes, town-level zoom.
+// only, UHF az beam, tap-to-aim on the great-circle bearing, PARK and STOP
+// for both sat axes, town-level zoom.
 
 import 'dart:convert';
 
@@ -93,6 +93,22 @@ void main() {
       expect(jsonDecode(p.payload)['action'], 'stop');
       expect(p.retain, isFalse);
     }
+  });
+
+  testWidgets('PARK sends one bridge park intent to the az slot, unretained', (tester) async {
+    final (_, mqtt) = await _pump(tester);
+    await tester.tap(find.text('PARK'));
+    await tester.pump();
+    expect(mqtt.publishes.map((p) => p.topic), ['muehle/uhf/az-rotator/cmd']);
+    expect(jsonDecode(mqtt.publishes.single.payload), {'action': 'park'});
+    expect(mqtt.publishes.single.retain, isFalse);
+  });
+
+  testWidgets('PARK is disabled while both sat axes are offline', (tester) async {
+    final (_, mqtt) = await _pump(tester, online: false);
+    await tester.tap(find.text('PARK'));
+    await tester.pump();
+    expect(mqtt.publishes, isEmpty);
   });
 
   testWidgets('zooms in to 12 and no further', (tester) async {

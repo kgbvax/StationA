@@ -4,7 +4,6 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'store/bus_store.dart';
 import 'store/credential_store.dart';
-import 'store/uhf_park.dart';
 import 'mqtt/mqtt_service.dart';
 import 'dxspot/dxspot_service.dart';
 import 'vhfcam/vhfcam_service.dart';
@@ -120,7 +119,6 @@ class _AppRootState extends State<_AppRoot> with WidgetsBindingObserver {
     // overlay above.
     _vhfcam.configure(baseUrl: values['vhfcam_base_url'] ?? '');
     _vhfcam.start();
-    UhfPark.load(values);
     if (host != null && port != null && user != null && pass != null && pass.isNotEmpty) {
       _bootHost = host;
       _bootPort = port;

@@ -130,6 +130,12 @@ class RotatorSurface {
   final List<String> stopSlots;
   final String Function() stopPayload;
 
+  /// The /cmd payload that parks this rotator, or null when it has no park.
+  /// Park is a bridge-side mount-level intent: it goes to ONE of
+  /// [stopSlots] (the first online) and the bridge moves every axis to its
+  /// configured park position (/meta `capabilities.limits.park`).
+  final String Function()? parkPayload;
+
   /// Half the drawn main-lobe width, degrees (visual only).
   final double beamHalfWidthDeg;
 
@@ -141,6 +147,7 @@ class RotatorSurface {
     required this.aimPayload,
     required this.stopSlots,
     required this.stopPayload,
+    this.parkPayload,
     required this.beamHalfWidthDeg,
   });
 }
@@ -166,6 +173,7 @@ const RotatorSurface vhfRotator = RotatorSurface(
   aimPayload: satRotatorGotoPayload,
   stopSlots: ['uhf/az-rotator', 'uhf/el-rotator'],
   stopPayload: satRotatorStopPayload,
+  parkPayload: satRotatorParkPayload,
   // X-Quad main lobe, roughly ±20° at the -3 dB points.
   beamHalfWidthDeg: 20,
 );
@@ -184,6 +192,10 @@ String rotatorRevPayload() => jsonEncode({'action': 'rev'});
 String satRotatorGotoPayload(double deg) => cmdPayload('goto', deg.toString());
 
 String satRotatorStopPayload() => jsonEncode({'action': 'stop'});
+
+/// Park the whole sat mount (both axes) at the bridge's configured park
+/// position — one atomic bridge-side intent, so send it to ONE slot only.
+String satRotatorParkPayload() => jsonEncode({'action': 'park'});
 
 // --- X-Quad polarization (uhf/pol-ctrl) ---------------------------------------
 //

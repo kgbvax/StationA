@@ -57,6 +57,12 @@ void main() {
       expect(jsonDecode(satRotatorStopPayload()), {'action': 'stop'});
     });
 
+    test('park has no argument (the bridge owns the position)', () {
+      expect(jsonDecode(satRotatorParkPayload()), {'action': 'park'});
+      expect(vhfRotator.parkPayload, isNotNull);
+      expect(hfRotator.parkPayload, isNull);
+    });
+
     test('cmdTopic addresses the uhf slots', () {
       expect(cmdTopic('uhf/az-rotator'), 'muehle/uhf/az-rotator/cmd');
       expect(cmdTopic('uhf/el-rotator'), 'muehle/uhf/el-rotator/cmd');
