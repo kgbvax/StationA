@@ -23,8 +23,17 @@ type Config struct {
 	// serial number. Empty -> first discovered radio.
 	RadioSerial string `toml:"radio_serial"`
 
-	MQTT MQTTConfig `toml:"mqtt"`
-	Log  LogConfig  `toml:"log"`
+	MQTT       MQTTConfig       `toml:"mqtt"`
+	Log        LogConfig        `toml:"log"`
+	PowerLimit PowerLimitConfig `toml:"power_limit"`
+}
+
+// PowerLimitConfig selects how the set_rf_power_limit ceiling is enforced
+// (see internal/bridge/powerlimit.go).
+type PowerLimitConfig struct {
+	// Mechanism is "clamp" (lower rfpower/tunepower above the ceiling; the
+	// default), "native" (drive the radio's own max_power_level) or "both".
+	Mechanism string `toml:"mechanism"`
 }
 
 // MQTTConfig holds broker connection settings and station-model addressing.
@@ -63,7 +72,8 @@ func Defaults() Config {
 			DiscoveryPrefix: "homeassistant",
 			Slot:            "radio",
 		},
-		Log: LogConfig{Level: "info"},
+		Log:        LogConfig{Level: "info"},
+		PowerLimit: PowerLimitConfig{Mechanism: "clamp"},
 	}
 }
 
@@ -112,6 +122,14 @@ func Load(f *Flags) (Config, error) {
 	}
 	if cfg.MQTT.Slot == "" {
 		cfg.MQTT.Slot = "radio"
+	}
+	cfg.PowerLimit.Mechanism = strings.ToLower(strings.TrimSpace(cfg.PowerLimit.Mechanism))
+	switch cfg.PowerLimit.Mechanism {
+	case "":
+		cfg.PowerLimit.Mechanism = "clamp"
+	case "clamp", "native", "both":
+	default:
+		return Config{}, fmt.Errorf("power_limit.mechanism %q: want clamp, native or both", cfg.PowerLimit.Mechanism)
 	}
 
 	return cfg, nil

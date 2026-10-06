@@ -56,8 +56,15 @@ type Bridge struct {
 	tuStatus    flexradio.ATUStatus
 	state       radioState
 	bandTx      *bandTransition // nil when no band transition is in progress
+	limitKnown  bool            // a set_rf_power_limit arrived this process (state.rfPowerLimit is authoritative)
 
 	discoDone bool
+
+	// Power-ceiling enforcer (powerlimit.go). limitKick wakes RunPowerLimit;
+	// limSent/limTries are owned by the enforcer goroutine (not under mu).
+	limitKick chan struct{}
+	limSent   map[txCmd]time.Time
+	limTries  map[txCmd]int
 }
 
 // Commander is the radio control surface the bridge drives from /cmd. The
@@ -90,6 +97,10 @@ type radioState struct {
 	rxBand         string      // slice A's derived band while split ("" otherwise)
 	crossBand      bool        // split with slice A on another ham band than the TX slice
 	rxInput        string      // receive antenna of rxInputSlice, lowercased wire port (ant1|ant2|rx_a|xvta); "" unknown
+	rfPower        optInt      // transmit rfpower (0-100 = W on the FLEX-8400), radio-reported
+	tunePower      optInt      // transmit tunepower, radio-reported
+	maxPowerLevel  optInt      // transmit max_power_level (radio-side ceiling), radio-reported
+	rfPowerLimit   optInt      // power ceiling from set_rf_power_limit; survives Reset (see powerlimit.go)
 }
 
 // statePayload is the JSON shape published to <slot>/state (retained).
@@ -105,18 +116,22 @@ type statePayload struct {
 	Mode         string      `json:"mode,omitempty"`
 	TX           string      `json:"tx"` // "rx" | "tx"
 	Tuning       bool        `json:"tuning"`
-	Drive        int         `json:"drive"`                  // 0-100
-	DeviceOnline bool        `json:"device_online"`          // radio link liveness
-	DVKStatus    string      `json:"dvk_status,omitempty"`   // DVK operation (SmartSDR v4+)
-	DVKID        int         `json:"dvk_id,omitempty"`       // active DVK memory id
-	DVKMemories  []dvkMemory `json:"dvk_memories,omitempty"` // DVK memory names/durations from the radio (dynamic; /state only)
-	MicProfile   string      `json:"mic_profile,omitempty"`  // active mic profile name (SmartSDR native profile)
-	MicProfiles  []string    `json:"mic_profiles,omitempty"` // available mic profile names (dynamic; /state only)
-	Split        bool        `json:"split"`                  // the TX slice is not slice A (split operation)
-	RxFreqHz     int64       `json:"rx_freq_hz,omitempty"`   // slice A frequency while split
-	RxBand       string      `json:"rx_band,omitempty"`      // slice A band while split
-	CrossBand    bool        `json:"cross_band"`             // split across two ham bands (operator-intent warning)
-	RxInput      string      `json:"rx_input,omitempty"`     // receive antenna of the slice being listened on (select_rx target)
+	Drive        int         `json:"drive"`                       // 0-100
+	DeviceOnline bool        `json:"device_online"`               // radio link liveness
+	DVKStatus    string      `json:"dvk_status,omitempty"`        // DVK operation (SmartSDR v4+)
+	DVKID        int         `json:"dvk_id,omitempty"`            // active DVK memory id
+	DVKMemories  []dvkMemory `json:"dvk_memories,omitempty"`      // DVK memory names/durations from the radio (dynamic; /state only)
+	MicProfile   string      `json:"mic_profile,omitempty"`       // active mic profile name (SmartSDR native profile)
+	MicProfiles  []string    `json:"mic_profiles,omitempty"`      // available mic profile names (dynamic; /state only)
+	RFPowerW     *int        `json:"rf_power_w,omitempty"`        // radio RF power setting (W)
+	TunePowerW   *int        `json:"tune_power_w,omitempty"`      // radio TUNE carrier power (W)
+	MaxPowerW    *int        `json:"max_power_level_w,omitempty"` // radio-side max_power_level (W)
+	RFLimitW     *int        `json:"rf_power_limit_w,omitempty"`  // bridge-enforced ceiling; absent = no ceiling
+	Split        bool        `json:"split"`                       // the TX slice is not slice A (split operation)
+	RxFreqHz     int64       `json:"rx_freq_hz,omitempty"`        // slice A frequency while split
+	RxBand       string      `json:"rx_band,omitempty"`           // slice A band while split
+	CrossBand    bool        `json:"cross_band"`                  // split across two ham bands (operator-intent warning)
+	RxInput      string      `json:"rx_input,omitempty"`          // receive antenna of the slice being listened on (select_rx target)
 }
 
 // dvkMemory is one DVK memory slot as named on the radio (SmartSDR's DVK
@@ -214,6 +229,10 @@ type metaCapabilities struct {
 	BiasT     bool     `json:"bias_t"`
 	RxInputs  []string `json:"rx_inputs,omitempty"`
 	TxOutputs []string `json:"tx_outputs,omitempty"`
+	// MaxPowerW is the radio's rated output (rfpower 0-100 maps to watts on it);
+	// PowerLimit is the set_rf_power_limit mechanism (clamp|native|both).
+	MaxPowerW  int    `json:"max_power_w,omitempty"`
+	PowerLimit string `json:"power_limit,omitempty"`
 }
 
 // Config is the subset of config the bridge needs.
@@ -225,6 +244,9 @@ type Config struct {
 	DiscoveryPrefix    string // e.g. "homeassistant"
 	AvailTopic         string // <site>/<station>/<slot>/status  (LWT topic)
 	PublishHADiscovery bool   // gate the legacy embedded HA discovery (model §9); default false
+	// PowerLimitMechanism is how set_rf_power_limit is enforced:
+	// clamp (default) | native | both — see powerlimit.go.
+	PowerLimitMechanism string
 }
 
 // Logger is the minimal logging surface the bridge uses. Errorf is for
@@ -239,6 +261,9 @@ type Logger interface {
 
 // New constructs a Bridge.
 func New(cfg Config, pub Publisher, log Logger) *Bridge {
+	if cfg.PowerLimitMechanism == "" {
+		cfg.PowerLimitMechanism = MechanismClamp
+	}
 	return &Bridge{
 		cfg:         cfg,
 		pub:         pub,
@@ -247,6 +272,9 @@ func New(cfg Config, pub Publisher, log Logger) *Bridge {
 		sliceBand:   make(map[int]string),
 		pans:        make(map[string]flexradio.PanStatus),
 		micProfiles: make(map[string]struct{}),
+		limitKick:   make(chan struct{}, 1),
+		limSent:     make(map[txCmd]time.Time),
+		limTries:    make(map[txCmd]int),
 	}
 }
 
@@ -254,10 +282,15 @@ func New(cfg Config, pub Publisher, log Logger) *Bridge {
 // intent. Called from runOnce after a successful handshake (the *Client is
 // per-connect-cycle, so the Commander is injected rather than passed in
 // Config). Pass nil when the radio link is down so HandleCommand no-ops.
+// A non-nil commander kicks the power-ceiling enforcer so a held ceiling is
+// re-applied right after a radio (re)connect.
 func (b *Bridge) SetCommander(c Commander) {
 	b.mu.Lock()
 	b.commander = c
 	b.mu.Unlock()
+	if c != nil {
+		b.kickLimit()
+	}
 }
 
 // SetDevice records the radio identity (called after a successful handshake).
@@ -291,9 +324,11 @@ func (b *Bridge) Reset() {
 	b.micProfiles = make(map[string]struct{})
 	b.interlock = flexradio.InterlockStatus{}
 	b.tuStatus = flexradio.ATUStatus{}
-	b.state = radioState{} // deviceOnline defaults false
-	b.commander = nil      // radio link down: /cmd must no-op
-	b.bandTx = nil         // any pending band transition is abandoned
+	limit := b.state.rfPowerLimit
+	b.state = radioState{}       // deviceOnline defaults false
+	b.state.rfPowerLimit = limit // the ceiling outlives the radio link (powerlimit.go)
+	b.commander = nil            // radio link down: /cmd must no-op
+	b.bandTx = nil               // any pending band transition is abandoned
 	b.discoDone = false
 	snap := b.state
 	b.mu.Unlock()
@@ -358,6 +393,8 @@ func (b *Bridge) HandleStatus(f flexradio.Frame) {
 		b.handleDVK(f)
 	case "profile": // SmartSDR mic profile list/active (reply to `profile mic info`)
 		b.handleProfile(f)
+	case "transmit": // rfpower/tunepower/max_power_level (sub tx all), for the power ceiling
+		b.handleTransmit(f)
 	}
 }
 
@@ -920,10 +957,19 @@ func (b *Bridge) handleRadio(f flexradio.Frame) {
 //	                                   mode (slice set <idx> mode=<MODE>)
 //	{"action":"set_mic_profile","value":"<name>"} load mic profile <name> (SmartSDR
 //	                                   native profile mic load)
+//	{"action":"set_rf_power_limit","value":"40"|"off"} power CEILING in watts,
+//	                                   enforced bridge-locally (powerlimit.go);
+//	                                   accepted while the radio is offline
 func (b *Bridge) HandleCommand(payload []byte) {
 	var c cmdPayload
 	if err := json.Unmarshal(payload, &c); err != nil {
 		b.log.Warnf("cmd: parse: %v", err)
+		return
+	}
+	if c.Action == "set_rf_power_limit" {
+		// Before the commander check: the ceiling must be held while the radio
+		// is down so it is in force the moment the radio reconnects.
+		b.setPowerLimit(c.Value)
 		return
 	}
 	b.mu.RLock()
@@ -1239,6 +1285,10 @@ func (b *Bridge) publishStateSnapshot(st radioState) {
 		RxBand:       st.rxBand,
 		CrossBand:    st.crossBand,
 		RxInput:      st.rxInput,
+		RFPowerW:     st.rfPower.ptr(),
+		TunePowerW:   st.tunePower.ptr(),
+		MaxPowerW:    st.maxPowerLevel.ptr(),
+		RFLimitW:     st.rfPowerLimit.ptr(),
 	}
 	data, err := json.Marshal(p)
 	if err != nil {
@@ -1272,15 +1322,17 @@ func (b *Bridge) publishMeta() {
 		Link:     "ethernet",
 		Location: loc,
 		Capabilities: metaCapabilities{
-			Bands:     []string{"160m", "80m", "60m", "40m", "30m", "20m", "17m", "15m", "12m", "10m", "6m"},
-			Modes:     []string{"cw", "usb", "lsb", "am", "fm", "data"},
-			Receivers: 1,
-			Diversity: false,
-			AmpKey:    true,
-			Tune:      true,
-			BiasT:     false,
-			RxInputs:  []string{"ant1", "ant2", "rx_a"},
-			TxOutputs: []string{"ant1", "ant2"},
+			Bands:      []string{"160m", "80m", "60m", "40m", "30m", "20m", "17m", "15m", "12m", "10m", "6m"},
+			Modes:      []string{"cw", "usb", "lsb", "am", "fm", "data"},
+			Receivers:  1,
+			Diversity:  false,
+			AmpKey:     true,
+			Tune:       true,
+			BiasT:      false,
+			RxInputs:   []string{"ant1", "ant2", "rx_a"},
+			TxOutputs:  []string{"ant1", "ant2"},
+			MaxPowerW:  100,
+			PowerLimit: b.cfg.PowerLimitMechanism,
 		},
 		// Consumer-neutral field surface (model §3.1). Radio tuning state is
 		// read-only except band and mic_profile, which are writable setpoints
@@ -1320,6 +1372,10 @@ func (b *Bridge) publishMeta() {
 				// Receive antenna of the slice being listened on (slice A in split).
 				{Key: "rx_input", Name: "RX antenna", Type: "enum", OptionsRef: "rx_inputs", Writable: true,
 					Command: &metaCommand{Action: "select_rx", ValueKey: "value", ValueType: "string"}},
+				// Read-only on purpose: tx-guard is the single writer of the
+				// ceiling, and a writable number would become a retained HA write.
+				{Key: "rf_power_w", Name: "RF Power", Type: "number", Unit: "W", Class: "power"},
+				{Key: "rf_power_limit_w", Name: "RF Power Limit", Type: "number", Unit: "W", Class: "power"},
 			},
 			Actions: dvkExposeActions(),
 		},

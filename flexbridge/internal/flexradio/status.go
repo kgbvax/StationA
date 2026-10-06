@@ -531,35 +531,42 @@ func decodeDVKName(v string) string {
 	return strings.TrimSpace(strings.ReplaceAll(v, "\x7f", " "))
 }
 
-// ParseTxPower extracts the configured transmit power from a "radio" status
-// line's tx_power field (0..100). Returns ok=false when absent.
-func ParseTxPower(fieldsStr string) (int, bool) {
-	f := ParseStatusFields(fieldsStr)
-	v, ok := f["tx_power"]
-	if !ok {
-		return 0, false
-	}
-	n, err := strconv.Atoi(v)
-	if err != nil {
-		return 0, false
-	}
-	return n, true
+// TransmitStatus is the power-related subset of a "transmit" status frame
+// (flows after `sub tx all`). The radio splits the transmit state over several
+// incremental frames — confirmed live on the FLEX-8400 (fw v4.2.20):
+//
+//	S…|transmit tx_rf_power_changes_allowed=1 tune=0 … max_power_level=100
+//	S…|transmit freq=14.213000 rfpower=37 tunepower=10 tx_slice_mode=USB …
+//
+// so each field carries a presence flag and callers merge only what a frame
+// carries. All three are 0–100; on the 100 W FLEX-8400 that is watts.
+type TransmitStatus struct {
+	RFPower       int // rfpower= (the RF power slider)
+	TunePower     int // tunepower= (the TUNE carrier power slider)
+	MaxPowerLevel int // max_power_level= (radio-side ceiling)
+	HasRF         bool
+	HasTune       bool
+	HasMax        bool
 }
 
-// ParseTunePower extracts the tune (carrier during ATU/tune) power from a
-// "radio" status line's tune_power field (0..100). Returns ok=false when
-// absent.
-func ParseTunePower(fieldsStr string) (int, bool) {
+// ParseTransmit extracts rfpower/tunepower/max_power_level from a "transmit"
+// status frame's fields. Absent or non-numeric fields leave their Has* flag
+// false.
+func ParseTransmit(fieldsStr string) TransmitStatus {
 	f := ParseStatusFields(fieldsStr)
-	v, ok := f["tune_power"]
-	if !ok {
-		return 0, false
+	var ts TransmitStatus
+	atoi := func(key string) (int, bool) {
+		v, ok := f[key]
+		if !ok {
+			return 0, false
+		}
+		n, err := strconv.Atoi(v)
+		return n, err == nil
 	}
-	n, err := strconv.Atoi(v)
-	if err != nil {
-		return 0, false
-	}
-	return n, true
+	ts.RFPower, ts.HasRF = atoi("rfpower")
+	ts.TunePower, ts.HasTune = atoi("tunepower")
+	ts.MaxPowerLevel, ts.HasMax = atoi("max_power_level")
+	return ts
 }
 
 // ParseDrive extracts the transmit drive level from a "radio" status line's

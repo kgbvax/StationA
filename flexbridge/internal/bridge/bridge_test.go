@@ -422,8 +422,8 @@ func TestBridge_MetaTopic(t *testing.T) {
 		t.Fatalf("meta missing expose block; got %v", meta["expose"])
 	}
 	fields, _ := expose["fields"].([]any)
-	if len(fields) != 15 {
-		t.Errorf("expose.fields len = %d, want 15 (device_online,freq_hz,band,mode,drive,tx,tuning,dvk_status,dvk_id,mic_profile,split,rx_freq_hz,rx_band,cross_band,rx_input)", len(fields))
+	if len(fields) != 17 {
+		t.Errorf("expose.fields len = %d, want 17 (device_online,freq_hz,band,mode,drive,tx,tuning,dvk_status,dvk_id,mic_profile,rf_power_w,rf_power_limit_w,split,rx_freq_hz,rx_band,cross_band,rx_input)", len(fields))
 	}
 	// Radio tuning state is read-only except band, mic_profile and rx_input,
 	// which are writable setpoints (set_band → native band-stacking;
@@ -511,6 +511,7 @@ type fakeCommander struct {
 	modeCall       []modeCall
 	rxAntCall      []rxAntCall
 	tuneCall       []tuneCall
+	txCall         []txCmd
 }
 
 type rxAntCall struct {
@@ -598,6 +599,23 @@ func (f *fakeCommander) SetMicProfile(name string) error {
 	defer f.mu.Unlock()
 	f.micProfileCall = append(f.micProfileCall, name)
 	return nil
+}
+
+func (f *fakeCommander) SetRFPower(level int) error       { return f.tx(knobRF, level) }
+func (f *fakeCommander) SetTunePower(level int) error     { return f.tx(knobTune, level) }
+func (f *fakeCommander) SetMaxPowerLevel(level int) error { return f.tx(knobMax, level) }
+
+func (f *fakeCommander) tx(k txKnob, level int) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.txCall = append(f.txCall, txCmd{k, level})
+	return nil
+}
+
+func (f *fakeCommander) txCmds() []txCmd {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]txCmd(nil), f.txCall...)
 }
 
 func (f *fakeCommander) plays() []int {

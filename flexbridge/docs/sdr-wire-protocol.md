@@ -33,10 +33,11 @@ After TCP connect, send each command and read lines until a matching `R1|` reply
 3. `sub radio all`
 4. `sub interlock all`
 5. `sub atu all`
-6. `sub pan all` — panadapter status (pan handles + band/center); needed to address band changes. Failure of any of 2–6 stops the connect cycle.
-7. `info` — awaited but **non-fatal** if it fails. Reply body is comma-separated `key="value"` pairs; extract `model` (e.g. `FLEX-8400`), `chassis_serial` (e.g. `1126-1213-8400-3564`), `firmware_version` (e.g. `3.8.19`); strip a leading `<seq>|` prefix.
-8. `sub dvk all` — **fire-and-forget** (no await). SmartSDR v4+/licensed only; a v3 or unlicensed radio rejects it and that must not break the handshake. The read loop consumes the reply, if any, and drops it. Sent *after* the awaited commands so no reply can look like another reply's.
-9. `profile mic info` — **fire-and-forget**. Undocumented one-shot (used by FlexLib); the radio replies asynchronously with a `profile mic list=...` status frame. Best-effort; on older radios the mic-profile list stays empty.
+6. `sub pan all` — panadapter status (pan handles + band/center); needed to address band changes.
+7. `sub tx all` — transmit status (`rfpower`/`tunepower`/`max_power_level`); needed to enforce the power ceiling. Failure of any of 2–7 stops the connect cycle.
+8. `info` — awaited but **non-fatal** if it fails. Reply body is comma-separated `key="value"` pairs; extract `model` (e.g. `FLEX-8400`), `chassis_serial` (e.g. `1126-1213-8400-3564`), `firmware_version` (e.g. `3.8.19`); strip a leading `<seq>|` prefix.
+9. `sub dvk all` — **fire-and-forget** (no await). SmartSDR v4+/licensed only; a v3 or unlicensed radio rejects it and that must not break the handshake. The read loop consumes the reply, if any, and drops it. Sent *after* the awaited commands so no reply can look like another reply's.
+10. `profile mic info` — **fire-and-forget**. Undocumented one-shot (used by FlexLib); the radio replies asynchronously with a `profile mic list=...` status frame. Best-effort; on older radios the mic-profile list stays empty.
 
 The handshake must not send `client udpport` or `meter list` — no meter telemetry is part of the contract.
 
@@ -54,8 +55,11 @@ All runtime commands are fire-and-forget on the wire; confirmation comes through
 | Mic-profile load | `profile mic load "<name>"` (name double-quoted, can include spaces) |
 | Slice mode (added 2026-10-23, 130dc0f) | `slice set <sliceIndex> mode=<CW\|USB\|LSB>` — TX slice, else the active one; from the SmartSDR slice wiki, not yet confirmed live on the FLEX-8400 |
 | Slice receive antenna (added 2026-10-30) | `slice set <sliceIndex> rxant=<ANT1\|ANT2\|RX_A>` — the active slice, slice A in split; ports as in the slice's `ant_list`; confirmed live on the FLEX-8400 2026-10-30 (ANT1 → RX_A → ANT1, echoed as `rxant=` within ~2 s) |
+| Power ceiling: lower RF power | `transmit set rfpower=<L>` (0–100; watts on the FLEX-8400) |
+| Power ceiling: lower TUNE power | `transmit set tunepower=<L>` |
+| Power ceiling: radio-side ceiling | `transmit set max_power_level=<L>` (`100` = no ceiling) |
 
-There is deliberately **no** set_freq, set_mode, or set_power command — the bridge never tunes the radio except by band (hard safety boundary).
+There is deliberately **no** set_freq, set_mode, or power *setpoint* command. The bridge never tunes the radio except by band (hard safety boundary). The three `transmit set` commands are the one carve-out, and they exist only to enforce the `set_rf_power_limit` ceiling: they lower `rfpower`/`tunepower` that is above the ceiling, or set the radio's own `max_power_level`. They never raise output (`max_power_level=100` on lift removes a ceiling; it does not change the RF power slider).
 
 Update 2026-10-23: `set_mode` exists since 130dc0f (`cw`/`usb`/`lsb` only, for the hf_console SSB/CW toggle on a re-tap of the active band). There is still no set_freq or set_power command. The liveness probe (`version`, see the keepalive item) is the only runtime write not in this table.
 
@@ -73,7 +77,16 @@ The bridge routes on `frame.Topic`:
 
 **`atu` — antenna-tuner status.** `status=<value>` (case-insensitive, e.g. `tuned`, `bypass`, `tuning`); the published `tuning` flag is true iff `status == "tuning"`. The parser also reads `active=1`.
 
-**`radio` — radio-wide status.** `drive=<0-100>` → published `drive`. `tuning=1|0` drives the same published `tuning` flag as the ATU state (see the [defect] item on last-writer-wins semantics). Parsers for `tx_power`/`tune_power` exist but neither is part of the contract.
+**`radio` — radio-wide status.** `drive=<0-100>` → published `drive`. The FLEX-8400 (fw v4.2.20) does **not** send `drive=` on `radio` frames (checked live 2026-10-06), so `drive` stays 0 there; the RF power setting is on the `transmit` topic. `tuning=1|0` drives the same published `tuning` flag as the ATU state (see the [defect] item on last-writer-wins semantics).
+
+**`transmit` — transmit settings (flows after `sub tx all`).** The radio splits transmit state over several incremental frames with no topic args, e.g. (FLEX-8400, fw v4.2.20, captured 2026-10-06):
+
+```
+S…|transmit tx_rf_power_changes_allowed=1 tune=0 tune_mode=single_tone mon_available=1 max_power_level=100
+S…|transmit freq=14.213000 rfpower=37 tunepower=10 tx_slice_mode=USB hwalc_enabled=0 inhibit=0 …
+```
+
+Merge only the fields a frame carries. `rfpower` → published `rf_power_w`, `tunepower` → `tune_power_w`, `max_power_level` → `max_power_level_w` (all 0–100 = W on the 100 W FLEX-8400). Frames *with* topic args are not the live transmit state and are ignored. Each change wakes the power-ceiling enforcer.
 
 **`dvk` — Digital Voice Keyer status (SmartSDR v4+; flows only after `sub dvk all`).** Frame shape: `S<h>|dvk status=<idle|recording|preview|playback|disabled> [id=<N>] [enabled=1|0]`. Memory-library frames carry no `status=` key and feed `/state.dvk_memories` instead: the radio answers `sub dvk all` with one `dvk added id=<N> name="<name>" duration=<ms>` per slot (confirmed live on the FLEX-8400, 2026-10-03; names are double-quoted and may contain spaces), `dvk id=<N> name=… duration=…` updates a slot, and `dvk deleted id=<N>` / `dvk id=<N> deleted` removes it. `idle` or `disabled` must force the active memory id to 0 (cleared) even if the frame carries an id.
 

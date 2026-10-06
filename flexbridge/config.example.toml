@@ -29,6 +29,16 @@ location = "bauwagen"      # physical location label, included in /meta
 [log]
 level = "info"             # debug | info | warn | error
 
+# RF power ceiling (set_rf_power_limit on /cmd, sent by the tx-guard logic slot
+# while the HF PA is live and armed). How the bridge enforces it:
+#   clamp  — lower rfpower/tunepower whenever the radio reports them above the
+#            ceiling (default; the operator's slider snaps back)
+#   native — drive the radio's own max_power_level (the radio enforces it and
+#            keeps it if the bridge dies; the bridge then owns max_power_level)
+#   both   — native + clamp
+[power_limit]
+mechanism = "clamp"
+
 # Environment variable overrides (systemd reads /etc/flexbridge/flexbridge.env):
 #   FLEXBRIDGE_MQTT_BROKER
 #   FLEXBRIDGE_MQTT_CLIENT_ID

@@ -12,7 +12,7 @@ flexbridge implements the `radio` slot of the station integration model
 | `/meta` | yes | bridge → bus | birth certificate: identity + capabilities |
 | `/state` | yes | bridge → bus | live radio state (JSON snapshot) |
 | `/status` | yes | broker LWT | liveness: `online` / `offline` |
-| `/cmd` | no | bus → bridge | intent: band changes (`set_band`) + slice mode (`set_mode`) + receive antenna (`select_rx`) + frequency (`set_freq`) + DVK playback + mic-profile load (`set_mic_profile`) (one-shot, not retained) |
+| `/cmd` | no | bus → bridge | intent: band changes (`set_band`) + slice mode (`set_mode`) + receive antenna (`select_rx`) + frequency (`set_freq`) + DVK playback + mic-profile load (`set_mic_profile`) + RF power ceiling (`set_rf_power_limit`) (one-shot, not retained) |
 
 ---
 
@@ -77,7 +77,9 @@ subscriber or a late-joiner gets this immediately without polling.
     "tune":      true,
     "bias_t":    false,
     "rx_inputs": ["ant1","ant2","rx_a"],
-    "tx_outputs":["ant1","ant2"]
+    "tx_outputs":["ant1","ant2"],
+    "max_power_w": 100,
+    "power_limit": "clamp"
   },
   "expose": {
     "device": {
@@ -105,7 +107,9 @@ subscriber or a late-joiner gets this immediately without polling.
       { "key": "rx_band",    "name": "Split RX band",      "type": "enum", "options_ref": "bands" },
       { "key": "cross_band", "name": "Split cross-band",   "type": "boolean" },
       { "key": "rx_input",   "name": "RX antenna",         "type": "enum", "options_ref": "rx_inputs", "writable": true,
-        "command": { "action": "select_rx", "value_key": "value", "value_type": "string" } }
+        "command": { "action": "select_rx", "value_key": "value", "value_type": "string" } },
+      { "key": "rf_power_w",       "name": "RF Power",       "type": "number", "unit": "W", "class": "power" },
+      { "key": "rf_power_limit_w", "name": "RF Power Limit", "type": "number", "unit": "W", "class": "power" }
     ],
     "actions": [
       { "key": "dvk_play_1",  "name": "DVK Play 1",  "command": { "action": "dvk_play_1" } },
@@ -154,6 +158,10 @@ resolve via `options_ref` against `capabilities.bands` / `capabilities.modes` ab
 source of truth). The `tx` boolean carries `on`/`off` because `/state` holds the strings
 `"tx"`/`"rx"`, not a bool; `tuning` omits them because `/state` holds a real bool.
 
+`rf_power_w` and `rf_power_limit_w` are deliberately **read-only** in `expose`: the ceiling
+has exactly one writer (the `tx-guard` logic slot), and a writable number would be rendered
+by hadiscovery as a retained HA write.
+
 The HA-specific rendering (component choice, `value_template`, unit→`device_class` map,
 availability, device block) lives in `hadiscovery`, not in this bridge.
 
@@ -177,6 +185,8 @@ availability, device block) lives in `hadiscovery`, not in this bridge.
 | `capabilities.bias_t` | bool | Bias-T for masthead preamp |
 | `capabilities.rx_inputs` | string[] | Named RX antenna inputs |
 | `capabilities.tx_outputs` | string[] | Named TX antenna outputs |
+| `capabilities.max_power_w` | int | Rated RF output (100 on the FLEX-8400); SmartSDR's 0–100 power scale maps to watts on it |
+| `capabilities.power_limit` | string | How `set_rf_power_limit` is enforced: `clamp` \| `native` \| `both` (config `power_limit.mechanism`) |
 
 ---
 
@@ -214,7 +224,11 @@ regardless of how many internal receivers the radio has.
   "rx_freq_hz": 18100000,
   "rx_band": "17m",
   "cross_band": true,
-  "rx_input": "ant1"
+  "rx_input": "ant1",
+  "rf_power_w": 37,
+  "tune_power_w": 10,
+  "max_power_level_w": 100,
+  "rf_power_limit_w": 40
 }
 ```
 
@@ -228,7 +242,7 @@ regardless of how many internal receivers the radio has.
 | `mode` | string | — | Canonical mode; see mode table |
 | `tx` | string | — | `"tx"` while transmitting, `"rx"` otherwise |
 | `tuning` | bool | — | `true` while the ATU or radio is actively tuning |
-| `drive` | integer | % | Transmit drive level, 0–100 |
+| `drive` | integer | % | Parsed from `radio drive=`, which the FLEX-8400 (fw v4.2.20) never sends — always 0 there. Use `rf_power_w` |
 | `device_online` | bool | — | `true` while the radio TCP link is up; `false` on disconnect. `/status` is the MQTT/LWT bridge liveness, not the radio link |
 | `dvk_status` | string | — | DVK operation: `idle` \| `recording` \| `preview` \| `playback` \| `disabled`. SmartSDR v4+; omitted when no DVK status has been reported. `disabled` means no SmartSDR+ license |
 | `dvk_id` | integer | — | Active DVK memory id (1–12) while playing/recording/previewing; `0`/omitted when idle |
@@ -240,6 +254,10 @@ regardless of how many internal receivers the radio has.
 | `rx_band` | string | — | Slice A's derived band while `split` (same table and hysteresis as `band`); omitted otherwise |
 | `cross_band` | bool | — | `split` with slice A on a different ham band than the TX slice — the "clicked a 17 m spot while VFO B still transmits on 20 m" case. `gen`/`unknown`/empty on either side never count as a mismatch. An operator-intent **warning** (the RF chain follows the TX slice, so nothing is mistuned); cross-band operation is legal and has legitimate uses, so consumers warn and do not block (hf_console banner; m5stamp-hf-ctrl has an opt-in gate compiled out by default). Logged as one Warn per false→true edge |
 | `rx_input` | string | — | Receive antenna of the slice being listened on — the slice `/state` follows, or slice A while `split` — from the slice's `rxant=`, lowercased: `ant1` \| `ant2` \| `rx_a` \| `xvta`. Changes made in SmartSDR republish `/state`. Omitted until a slice has reported `rxant` |
+| `rf_power_w` | integer | W | Transmit RF power setting (`transmit rfpower=`, 0–100 = W on the FLEX-8400). Omitted until the radio reports it (cleared on disconnect) |
+| `tune_power_w` | integer | W | TUNE carrier power (`transmit tunepower=`). Omitted until reported |
+| `max_power_level_w` | integer | W | Radio-side power ceiling (`transmit max_power_level=`). Omitted until reported |
+| `rf_power_limit_w` | integer | W | The ceiling this bridge enforces (from `set_rf_power_limit`). **Absent = no ceiling.** Survives radio disconnects (published with `device_online:false` too) but not a bridge restart — tx-guard re-sends it |
 
 ### Mode values
 
@@ -290,7 +308,7 @@ An exit from a ham band into `gen` is held for up to 2 kHz past the band edge
 
 ---
 
-## `/cmd` — band-change, slice-mode, DVK & mic-profile intent
+## `/cmd` — band-change, slice-mode, DVK, mic-profile & power-ceiling intent
 
 `/cmd` is **not retained** (QoS 1): all intents are one-shot triggers, and a stale
 command must not re-fire on a bridge or broker restart (same rationale as the tuner
@@ -309,6 +327,7 @@ Accepted actions:
 | `dvk_play` | `"N"` | Same, value form (for scripts / Node-RED) |
 | `dvk_stop` | `"N"` | Stop memory N and unkey |
 | `dvk_stop` | omitted | Stop the currently-active memory, resolved by the bridge from `/state.dvk_id` |
+| `set_rf_power_limit` | `"1"`…`"100"` (W) \| `"off"` | **RF power ceiling** (sent by the `tx-guard` logic slot while the HF PA is live and armed). Accepted while the radio is offline and held until changed (radio reconnects keep it; a bridge restart drops it until tx-guard re-sends). Enforced bridge-locally on every `transmit` status frame — see *RF power ceiling* below. `"off"` lifts the ceiling; the previous power is **not** restored. Other values (incl. `"0"`) are rejected. A **retained** `set_rf_power_limit` is ignored with a warning |
 | `set_mic_profile` | `"<name>"` | **Native mic-profile load.** Sends `profile mic load "<name>"` (SmartSDR's own mic profiles). The name is double-quoted on the wire, so it must not contain `"`/`\`/control characters (rejected as invalid). If `/state.mic_profiles` is populated and `name` is not in it, the command is dropped as a likely typo; an empty list does not block (the list is empty only before the first `profile mic info` response). The bridge then tracks the loaded name on `/state.mic_profile` client-side (SmartSDR reports no active mic profile) |
 
 Examples:
@@ -322,12 +341,38 @@ Examples:
 {"action":"dvk_stop"}
 {"action":"dvk_stop","value":"3"}
 {"action":"set_mic_profile","value":"Default ProSet HC6"}
+{"action":"set_rf_power_limit","value":"40"}
+{"action":"set_rf_power_limit","value":"off"}
 ```
 
 **No command-ack is published.** Consumers observe the result on `/state` —
 `freq_hz`/`band`/`mode` for `set_band`, `mode` for `set_mode`, `rx_input` for `select_rx`, `dvk_status`/`dvk_id` for DVK,
-`mic_profile` for mic-profile load — the stationa
+`mic_profile` for mic-profile load, `rf_power_limit_w` (and `rf_power_w`) for the
+power ceiling — the stationa
 fire-and-observe plane discipline: send intent, watch state.
+
+### RF power ceiling
+
+The one power command is a **ceiling, not a setpoint**: the bridge only ever lowers
+output, never raises it. It is still not a general power control: there is no
+`set_rf_power`/`set_drive`. The `tx-guard` logic slot (`muehle/hf/tx-guard`) is
+the single writer. It caps the FLEX while the HF PA is live and armed, so the
+ACOM is not overdriven. Manual writes are reverted by its next re-assert.
+
+The enforcer runs on its own goroutine. It wakes on every `transmit` status frame,
+on a new ceiling, on a radio reconnect, and every 5 s. Identical commands are
+spaced at least 1 s apart, and a Warn is logged after 3 unconfirmed attempts.
+What it sends depends on `power_limit.mechanism`:
+
+| Mechanism | While a ceiling L is set | After `"off"` |
+|---|---|---|
+| `clamp` (default) | `transmit set rfpower=L` / `tunepower=L` whenever the radio reports a value **above** L. A value not yet reported is never written | nothing |
+| `native` | `transmit set max_power_level=L` whenever the radio's `max_power_level` differs from L (the bridge owns it) | `max_power_level=100` if reported below 100 |
+| `both` | native + clamp | as native |
+
+Until the first `set_rf_power_limit` after a bridge start, the ceiling is
+*unknown* and the enforcer sends nothing. In particular, a persisted native
+ceiling is not lifted on its own.
 
 ### Band-stacking notes
 
@@ -492,6 +537,8 @@ see where the operator listens versus where the next key-up goes out.
 | `/cmd` `set_mic_profile` received | radio `profile mic load` sent; bridge tracks `/state.mic_profile` client-side (radio reports no active mic profile) |
 | Every 5 s while `device_online` is true | `/state` (unchanged snapshot; `StateHeartbeat`) |
 | Radio link lost | `/state` once with `device_online: false`; the heartbeat pauses until the next handshake |
+| Radio `transmit` rfpower/tunepower/max_power_level changes | `/state` (`rf_power_w`, `tune_power_w`, `max_power_level_w`); the enforcer re-checks the ceiling |
+| `/cmd` `set_rf_power_limit` received (changed or not) | `/state` (`rf_power_limit_w`); the enforcer clamps the radio if needed |
 | Disconnect / crash | `/status` → `offline` (broker LWT) |
 
 Event-driven `/state` publishes are change-gated: an event that changes no field produces

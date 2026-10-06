@@ -78,6 +78,8 @@ func TestHandshake_SendsExpectedCommands(t *testing.T) {
 		"sub radio all",
 		"sub interlock all",
 		"sub atu all",
+		"sub pan all",
+		"sub tx all", // transmit status for the power ceiling
 		"|info",
 		"sub dvk all", // SmartSDR v4+ DVK status stream (best-effort, fire-and-forget)
 		// `profile mic info` is also sent here (fire-and-forget) but is not
@@ -353,5 +355,41 @@ func TestRun_ProbeKeepsQuietPeerAlive(t *testing.T) {
 	case <-done:
 	case <-time.After(2 * time.Second):
 		t.Fatal("Run did not return after ctx cancel")
+	}
+}
+
+func TestSend_PowerCeilingCommands(t *testing.T) {
+	clientConn, radioConn := net.Pipe()
+	client := newClientFromConn(clientConn)
+	defer client.Close()
+
+	cmds := make(chan string, 3)
+	go func() {
+		defer radioConn.Close()
+		sc := bufio.NewScanner(radioConn)
+		for sc.Scan() {
+			cmds <- sc.Text()
+		}
+	}()
+
+	for _, tc := range []struct {
+		send func() error
+		want string
+	}{
+		{func() error { return client.SetRFPower(40) }, "C1|transmit set rfpower=40"},
+		{func() error { return client.SetTunePower(10) }, "C1|transmit set tunepower=10"},
+		{func() error { return client.SetMaxPowerLevel(100) }, "C1|transmit set max_power_level=100"},
+	} {
+		if err := tc.send(); err != nil {
+			t.Fatalf("%s: %v", tc.want, err)
+		}
+		select {
+		case got := <-cmds:
+			if got != tc.want {
+				t.Errorf("sent %q, want %q", got, tc.want)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatalf("%s: no command sent", tc.want)
+		}
 	}
 }

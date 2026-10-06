@@ -4,7 +4,7 @@ flexbridge is a **read-only** bridge for radio tuning state: it observes a FlexR
 SmartSDR radio (the station's FLEX-8400; the SmartSDR TCP/IP API is common to the 6000 and
 8000 series) over the SmartSDR TCP/IP API, and publishes state to MQTT. The exceptions are
 **band changes**, **slice mode**, the **receive antenna**, the **Digital Voice Keyer (DVK)**,
-and **mic profiles**:
+**mic profiles**, and the **RF power ceiling**:
 
 - **Band changes** (`set_band`): the bridge drives SmartSDR's native band-stacking from
   the `/cmd` plane — `display pan s <pan_handle> band=<wavelength>` changes the band on a
@@ -27,8 +27,15 @@ and **mic profiles**:
   reports no active mic profile). This is deliberately the radio's own profile mechanism, not
   a custom preset layer. There is **no save** — `profile mic save` is obsolete on SmartSDR
   v4+ (malformed reply); profile creation uses a file-transfer mechanism out of scope here.
+- **RF power ceiling** (`set_rf_power_limit`): the `tx-guard` logic slot sets a ceiling
+  in watts while the HF PA is live and armed. The bridge holds it (it survives radio
+  reconnects, not a bridge restart) and enforces it **bridge-locally** in
+  `internal/bridge/powerlimit.go`. On every `transmit` status frame (`sub tx all`) it
+  lowers `rfpower`/`tunepower` above the ceiling (`clamp`) and/or drives the radio's own
+  `max_power_level` (`native`), per config `power_limit.mechanism`. It is a ceiling, not
+  a setpoint: it never raises output and never restores a power on lift.
 
-Apart from band changes, slice mode, receive antenna, DVK, and mic profiles it never sends commands to the radio.
+Apart from band changes, slice mode, receive antenna, DVK, mic profiles and the power ceiling it never sends commands to the radio.
 
 ---
 
@@ -59,7 +66,7 @@ go test ./internal/bridge/... -run TestGate
 1. **UDP discovery** (`flexradio.Discover`) — broadcast to `255.255.255.255:4992`,
    receives the radio's IP, serial, and model.
 2. **TCP connection** (`flexradio.Client`) — port 4992 (SmartSDR TCP/IP API). On connect
-   runs a handshake: sends `version`, subscribes to `slice/radio/interlock/atu/pan all`,
+   runs a handshake: sends `version`, subscribes to `slice/radio/interlock/atu/pan/tx all`,
    queries `info` (model/serial/firmware), then sends best-effort `sub dvk all` (SmartSDR
    v4+) and `profile mic info` (fire-and-forget so a v3/unlicensed radio rejecting them
    cannot break the handshake). After that, `Client.Run` blocks reading async status lines
@@ -90,6 +97,12 @@ and `set_mic_profile` intent to the radio through the `Commander` interface
 DVK, `mic_profile` for mic profiles), the fire-and-observe plane discipline. Panadapters are tracked from `sub pan all` status so
 `set_band` can target a pan handle.
 
+A fourth goroutine, `Bridge.RunPowerLimit` (process lifetime, like `StateHeartbeat`),
+enforces the power ceiling. It wakes on `transmit` status changes, on a new ceiling,
+on `SetCommander`, and every 5 s. It plans with the pure `planLimit` and sends
+through the `Commander` outside the lock, so neither the radio read loop nor the
+`/cmd` worker blocks on it.
+
 `Bridge` (`internal/bridge/bridge.go`) owns all shared state under `sync.RWMutex`.
 
 **Reconnect loop** (`cmd/flexbridge/main.go:radioLoop`): connects, runs until disconnect, then
@@ -108,7 +121,7 @@ flexbridge publishes to the station integration model topics:
 muehle/hf/radio/meta      retained  birth certificate (capabilities + expose JSON)
 muehle/hf/radio/state     retained  live state JSON snapshot
 muehle/hf/radio/status    retained  online | offline (LWT)
-muehle/hf/radio/cmd       not retained  band / mode / rx antenna / DVK / mic-profile intent (bus → bridge)
+muehle/hf/radio/cmd       not retained  band / mode / rx antenna / DVK / mic-profile / power-ceiling intent (bus → bridge)
 ```
 
 The `site`, `station`, and `slot` values are configurable via `config.toml`.
@@ -121,7 +134,10 @@ The `site`, `station`, and `slot` values are configurable via `config.toml`.
 `split` (the TX slice is not slice A), `rx_freq_hz` + `rx_band` (slice A while split, omitted
 otherwise), `cross_band` (split with slice A on another ham band than the TX slice),
 `rx_input` (receive antenna of the slice being listened on, lowercased port: `ant1`/`ant2`/`rx_a`/`xvta`;
-omitted until a slice has reported `rxant`).
+omitted until a slice has reported `rxant`),
+`rf_power_w`/`tune_power_w`/`max_power_level_w` (radio `transmit` settings, W),
+`rf_power_limit_w` (enforced ceiling; absent = none). `drive` is always 0 on the
+FLEX-8400: it never sends `radio drive=`.
 
 **Split.** `/state` always follows the TX slice (that is where RF goes and what antenna-select,
 ultrabridge and the pa-arm tune for). Slice A — `index_letter=A`, what SmartSDR CAT and so the
@@ -131,7 +147,7 @@ warning (spot click retuned VFO A, VFO B still transmitting on the old band); `g
 never count as a mismatch. One Warn per edge. Consumers warn, they do not block: cross-band is
 legal and has legitimate uses (`../docs/known-issues.md`, "Split cross-band").
 
-**flexbridge is read-only except for band changes, slice mode, receive antenna, DVK, and mic profiles.** `/cmd` carries
+**flexbridge is read-only except for band changes, slice mode, receive antenna, DVK, mic profiles, and the power ceiling.** `/cmd` carries
 one-shot intent only (not retained — a stale command must not re-fire on restart):
 
 - `set_band` + `value` (band label, e.g. `"20m"`) — native band-stacking; the radio restores
@@ -149,6 +165,9 @@ one-shot intent only (not retained — a stale command must not re-fire on resta
 - `dvk_play_<N>` / `dvk_play`+`value` / `dvk_stop` — DVK playback.
 - `set_mic_profile` + `value` (profile name) — native `profile mic load`; confirm on
   `/state.mic_profile`.
+- `set_rf_power_limit` + `value` (`"1"`..`"100"` W or `"off"`). The ceiling is accepted
+  while the radio is offline. Confirm on `/state.rf_power_limit_w`. A **retained**
+  copy is ignored, as for every `/cmd` (the subscription drops it). tx-guard is the only writer.
 
 The mic-profile **list** (`mic_profiles`) is a `/state`-only dynamic field — it is not in
 `expose.fields` (the expose schema has no array type). It is populated from the radio's
@@ -163,7 +182,8 @@ the first `profile mic info` response — does not block).
 
 It is not a general radio-control channel (no `set_drive`; `set_mode` takes
 only `cw`/`usb`/`lsb`, and `mode` is not writable in `expose`; `select_rx` changes only the
-receive antenna, never `txant`).
+receive antenna, never `txant`; `set_rf_power_limit` is a ceiling that can only lower output,
+not a power setpoint).
 Panadapters are tracked via `sub pan all`; `set_band` targets the active slice's panadapter,
 falling back to the single/lowest tracked pan. If no panadapter is open, `set_band` is a
 logged no-op.
