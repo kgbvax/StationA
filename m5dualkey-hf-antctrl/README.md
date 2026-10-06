@@ -14,6 +14,26 @@ It drives slot `muehle/hf/ant-ctrl` (`ultrabridge`, Ultrabeam RCU-06); see
 | A + B (within 100 ms) | `{"action":"direction","value":"bidirectional"}` |
 | A + B held 5 s | reboots the key |
 
+### Chain Key — DVK 2
+
+An M5Stack **Chain Key** on either HY2.0-4P Chain-bus port (both are probed;
+hot-plug is handled) plays **DVK memory 2** on the FLEX via `muehle/hf/radio`
+(`flexbridge`). DVK playback keys the transmitter.
+
+| Chain Key | Publishes to `muehle/hf/radio/cmd` (not retained) |
+|-----------|---------------------------------------------------|
+| Press, DVK idle | `{"action":"dvk_play_2"}` |
+| Press, any DVK memory playing | `{"action":"dvk_stop"}` |
+| Long press (3 s) | `{"action":"dvk_stop"}` |
+
+Press is ignored while the DVK is recording/previewing/disabled, and while the
+radio link is not live (`hf/radio/status` online AND `/state.device_online`).
+Chain Key LED: red = DVK 2 on the air, amber = another memory playing, dim
+green = ready, off = radio link down. The memory number is `DVK_MEMORY` in
+`include/config.h`.
+
+### LEDs (Key A / B)
+
 The LEDs follow `/state.direction`: forward = A green, reverse = B red,
 bidirectional = A + B orange; alternating white while `/state.moving`. The
 LEDs stay off, and key presses are not sent, unless the bridge `/status` is

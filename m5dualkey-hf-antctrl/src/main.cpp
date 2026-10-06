@@ -3,6 +3,7 @@
 #include <WiFi.h>
 
 #include "button_manager.h"
+#include "chain_key.h"
 #include "config.h"
 #include "led_status.h"
 #include "logging.h"
@@ -17,6 +18,7 @@ ButtonManager g_buttons(
 
 LedStatus g_leds(AppConfig::LED_PWR_PIN, AppConfig::LED_SIG_PIN, AppConfig::LED_COUNT);
 MqttClientManager g_mqtt;
+ChainKeyManager g_chainKey;
 
 bool g_buttonAPressed = false;
 bool g_buttonBPressed = false;
@@ -93,13 +95,31 @@ void handleMovingUpdate(const bool moving) {
   logf("%lu,MOTORS,moving=%s\n", millis(), moving ? "true" : "false");
 }
 
+// Chain Key LED mirrors the radio's DVK: red = our memory is on the air,
+// amber = another memory is playing, dim green = ready, off = radio link down.
+void handleDvkUpdate(const DvkState& state) {
+  if (!state.live) {
+    g_chainKey.setLed(0, 0, 0);
+  } else if (state.playing && state.id == AppConfig::DVK_MEMORY) {
+    g_chainKey.setLed(255, 0, 0);
+  } else if (state.playing) {
+    g_chainKey.setLed(255, 100, 0);
+  } else {
+    g_chainKey.setLed(0, 40, 0);
+  }
+  logf("%lu,DVK,live=%s,playing=%s,id=%u\n", millis(), state.live ? "true" : "false",
+       state.playing ? "true" : "false", state.id);
+}
+
 void setup() {
   Serial.begin(115200);
 
   g_buttons.begin();
   g_leds.begin();
   g_leds.startModeCycle(1);
+  g_mqtt.setDvkCallback(handleDvkUpdate);
   g_mqtt.begin(handleModeUpdate, handleMovingUpdate);
+  g_chainKey.begin();
 
   logln("m5dualkey-hf-antctrl startup");
 }
@@ -155,6 +175,16 @@ void loop() {
     logf("%lu,SYSTEM,REBOOT,reason=both_buttons_held_5s\n", now);
     delay(50);
     ESP.restart();
+  }
+
+  g_chainKey.update(now);
+  while (g_chainKey.takePress()) {
+    logf("%lu,CHAIN_KEY,PRESS\n", now);
+    g_mqtt.publishDvkToggle();
+  }
+  while (g_chainKey.takeLongPress()) {
+    logf("%lu,CHAIN_KEY,LONG_PRESS\n", now);
+    g_mqtt.publishDvkStop();
   }
 
   g_leds.update(now);

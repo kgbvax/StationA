@@ -16,7 +16,12 @@ MqttClientManager::MqttClientManager()
       _bridgeOnline(false),
       _deviceOnline(false),
       _direction(OperationalMode::Unknown),
-      _moving(false) {}
+      _moving(false),
+      _dvkCallback(nullptr),
+      _radioBridgeOnline(false),
+      _radioDeviceOnline(false),
+      _dvkStatus{0},
+      _dvkId(0) {}
 
 void MqttClientManager::begin(ModeUpdateCallback modeCallback, MovingUpdateCallback movingCallback) {
   _modeCallback = modeCallback;
@@ -41,6 +46,25 @@ void MqttClientManager::resetLinkState() {
   _direction = OperationalMode::Unknown;
   _moving = false;
   notify();
+
+  _radioBridgeOnline = false;
+  _radioDeviceOnline = false;
+  _dvkStatus[0] = '\0';
+  _dvkId = 0;
+  notifyDvk();
+}
+
+bool MqttClientManager::radioLive() {
+  return _mqtt.connected() && _radioBridgeOnline && _radioDeviceOnline;
+}
+
+void MqttClientManager::notifyDvk() {
+  if (_dvkCallback == nullptr) {
+    return;
+  }
+  const bool live = radioLive();
+  const DvkState state{live, live && strcmp(_dvkStatus, "playback") == 0, live ? _dvkId : static_cast<uint8_t>(0)};
+  _dvkCallback(state);
 }
 
 void MqttClientManager::notify() {
@@ -89,15 +113,18 @@ void MqttClientManager::tryConnectMqtt(const uint32_t nowMs) {
   if (connected) {
     const bool subscribedStatus = _mqtt.subscribe(AppConfig::TOPIC_ANT_CTRL_STATUS);
     const bool subscribedState = _mqtt.subscribe(AppConfig::TOPIC_ANT_CTRL_STATE);
+    const bool subscribedRadio = _mqtt.subscribe(AppConfig::TOPIC_RADIO_STATUS) &&
+                                 _mqtt.subscribe(AppConfig::TOPIC_RADIO_STATE);
     logf(
-        "%lu,MQTT,CONNECTED,host=%s,port=%u,auth=%s,client=%s,sub_status=%s,sub_state=%s\n",
+        "%lu,MQTT,CONNECTED,host=%s,port=%u,auth=%s,client=%s,sub_status=%s,sub_state=%s,sub_radio=%s\n",
         millis(),
         AppConfig::MQTT_HOST,
         AppConfig::MQTT_PORT,
         hasAuth ? "yes" : "no",
         clientId,
         subscribedStatus ? "yes" : "no",
-        subscribedState ? "yes" : "no");
+        subscribedState ? "yes" : "no",
+        subscribedRadio ? "yes" : "no");
   } else {
     logf(
         "%lu,MQTT,CONNECT_FAILED,state=%d,host=%s,port=%u\n",
@@ -152,6 +179,84 @@ bool MqttClientManager::publishDirectionCommand(const OperationalMode mode) {
   return ok;
 }
 
+bool MqttClientManager::publishRadioCmd(const char* payload) {
+  if (!radioLive()) {
+    logf(
+        "%lu,MQTT,TX_SKIPPED,topic=%s,payload=%s,reason=%s\n",
+        millis(),
+        AppConfig::TOPIC_RADIO_CMD,
+        payload,
+        !_mqtt.connected() ? "not_connected" : (!_radioBridgeOnline ? "bridge_offline" : "device_offline"));
+    return false;
+  }
+
+  // NOT retained: a DVK play keys the transmitter; it must never replay.
+  const bool ok = _mqtt.publish(AppConfig::TOPIC_RADIO_CMD, payload, false);
+  logf("%lu,MQTT,TX,topic=%s,payload=%s,result=%s\n", millis(), AppConfig::TOPIC_RADIO_CMD, payload, ok ? "ok" : "failed");
+  return ok;
+}
+
+bool MqttClientManager::publishDvkStop() {
+  // No value: the bridge stops whichever memory /state.dvk_id names.
+  return publishRadioCmd("{\"action\":\"dvk_stop\"}");
+}
+
+bool MqttClientManager::publishDvkToggle() {
+  if (strcmp(_dvkStatus, "playback") == 0) {
+    return publishDvkStop();
+  }
+  if (strcmp(_dvkStatus, "recording") == 0 || strcmp(_dvkStatus, "preview") == 0 ||
+      strcmp(_dvkStatus, "disabled") == 0) {
+    logf("%lu,MQTT,TX_SKIPPED,topic=%s,reason=dvk_%s\n", millis(), AppConfig::TOPIC_RADIO_CMD, _dvkStatus);
+    return false;
+  }
+
+  char payload[48];
+  snprintf(payload, sizeof(payload), "{\"action\":\"dvk_play_%u\"}", AppConfig::DVK_MEMORY);
+  return publishRadioCmd(payload);
+}
+
+void MqttClientManager::onRadioState(uint8_t* payload, const unsigned int length) {
+  if (length == 0) {
+    _radioDeviceOnline = false;
+    _dvkStatus[0] = '\0';
+    _dvkId = 0;
+    notifyDvk();
+    return;
+  }
+
+  // The radio /state is large (DVK memory list, meters ...): keep only the
+  // fields the DVK key needs.
+  StaticJsonDocument<64> filter;
+  filter["device_online"] = true;
+  filter["dvk_status"] = true;
+  filter["dvk_id"] = true;
+
+  StaticJsonDocument<256> doc;
+  const DeserializationError err =
+      deserializeJson(doc, payload, length, DeserializationOption::Filter(filter));
+  if (err) {
+    logf("%lu,MQTT,RX_PARSE_FAILED,topic=%s,error=%s,len=%u\n", millis(), AppConfig::TOPIC_RADIO_STATE, err.c_str(), length);
+    return;
+  }
+
+  const bool deviceOnline = doc["device_online"] | false;
+  const char* status = doc["dvk_status"] | "";
+  const uint8_t id = doc["dvk_id"] | 0;
+  const bool changed = deviceOnline != _radioDeviceOnline || strcmp(status, _dvkStatus) != 0 || id != _dvkId;
+
+  _radioDeviceOnline = deviceOnline;
+  strlcpy(_dvkStatus, status, sizeof(_dvkStatus));
+  _dvkId = id;
+
+  // The radio /state republishes on every meter change; log only DVK changes.
+  if (changed) {
+    logf("%lu,MQTT,RX_RADIO,device_online=%s,dvk_status=%s,dvk_id=%u,len=%u\n", millis(),
+         deviceOnline ? "true" : "false", _dvkStatus[0] != '\0' ? _dvkStatus : "(none)", _dvkId, length);
+    notifyDvk();
+  }
+}
+
 bool MqttClientManager::isConnected() {
   return _mqtt.connected();
 }
@@ -169,6 +274,22 @@ void MqttClientManager::onMessage(char* topic, uint8_t* payload, unsigned int le
     _bridgeOnline = (strcmp(status, "online") == 0);
     logf("%lu,MQTT,RX_STATUS,status=%s\n", millis(), status);
     notify();
+    return;
+  }
+
+  if (strcmp(topic, AppConfig::TOPIC_RADIO_STATUS) == 0) {
+    char status[16];
+    const size_t copyLen = (length < sizeof(status) - 1) ? length : (sizeof(status) - 1);
+    memcpy(status, payload, copyLen);
+    status[copyLen] = '\0';
+    _radioBridgeOnline = (strcmp(status, "online") == 0);
+    logf("%lu,MQTT,RX_RADIO_STATUS,status=%s\n", millis(), status);
+    notifyDvk();
+    return;
+  }
+
+  if (strcmp(topic, AppConfig::TOPIC_RADIO_STATE) == 0) {
+    onRadioState(payload, length);
     return;
   }
 

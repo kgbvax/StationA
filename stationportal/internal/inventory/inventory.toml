@@ -542,7 +542,7 @@ name  = "m5dualkey-hf-antctrl"
 path  = "m5dualkey-hf-antctrl/"
 kind  = "firmware"
 host  = "M5Stack Chain DualKey"
-note  = "Ultrabeam direction keys for hf/ant-ctrl (not a slot)"
+note  = "Ultrabeam direction keys for hf/ant-ctrl + Chain Key DVK 2 on hf/radio (not a slot)"
 
 [[software]]
 name  = "flex2mqtt"

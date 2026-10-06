@@ -11,6 +11,15 @@
 using ModeUpdateCallback = void (*)(OperationalMode mode);
 using MovingUpdateCallback = void (*)(bool moving);
 
+// DVK view of muehle/hf/radio. live = bridge /status online AND
+// /state.device_online; playing/id only meaningful while live.
+struct DvkState {
+  bool live;
+  bool playing;
+  uint8_t id;
+};
+using DvkUpdateCallback = void (*)(const DvkState& state);
+
 class MqttClientManager {
  public:
   MqttClientManager();
@@ -18,6 +27,11 @@ class MqttClientManager {
   void begin(ModeUpdateCallback modeCallback, MovingUpdateCallback movingCallback);
   void loop(uint32_t nowMs);
   bool publishDirectionCommand(OperationalMode mode);
+  // Chain Key: play DVK memory AppConfig::DVK_MEMORY, or stop whatever DVK
+  // memory is playing. Never sent while the radio link is not live.
+  bool publishDvkToggle();
+  bool publishDvkStop();
+  void setDvkCallback(DvkUpdateCallback callback) { _dvkCallback = callback; }
   bool isConnected();
 
  private:
@@ -36,11 +50,21 @@ class MqttClientManager {
   OperationalMode _direction;
   bool _moving;
 
+  DvkUpdateCallback _dvkCallback;
+  bool _radioBridgeOnline;
+  bool _radioDeviceOnline;
+  char _dvkStatus[16];
+  uint8_t _dvkId;
+
   static MqttClientManager* _instance;
 
   bool linkLive();
   void resetLinkState();
   void notify();
+  bool radioLive();
+  void notifyDvk();
+  void onRadioState(uint8_t* payload, unsigned int length);
+  bool publishRadioCmd(const char* payload);
   void tryConnectWiFi(uint32_t nowMs);
   void tryConnectMqtt(uint32_t nowMs);
   void onMessage(char* topic, uint8_t* payload, unsigned int length);

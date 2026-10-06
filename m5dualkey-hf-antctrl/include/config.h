@@ -22,6 +22,18 @@ static constexpr uint32_t DEBOUNCE_MS = 30;
 static constexpr uint32_t LONG_PRESS_MS = 600;
 static constexpr uint32_t COMBO_WINDOW_MS = 100;
 
+// Chain Key on a HY2.0-4P Chain-bus port (UART). Both ports are probed.
+static constexpr int8_t CHAIN_PORT1_RX_PIN = 48;
+static constexpr int8_t CHAIN_PORT1_TX_PIN = 47;
+static constexpr int8_t CHAIN_PORT2_RX_PIN = 5;
+static constexpr int8_t CHAIN_PORT2_TX_PIN = 6;
+static constexpr uint32_t CHAIN_PROBE_MS = 5000;
+static constexpr uint32_t CHAIN_HEARTBEAT_MS = 10000;
+static constexpr uint8_t CHAIN_KEY_LED_BRIGHTNESS = 60;
+
+// DVK memory the Chain Key plays (flexbridge dvk_play_<N>).
+static constexpr uint8_t DVK_MEMORY = 2;
+
 // Connectivity timing
 static constexpr uint32_t WIFI_RETRY_MS = 5000;
 static constexpr uint32_t MQTT_RETRY_MS = 5000;
@@ -44,16 +56,21 @@ static constexpr const char* OTA_HOSTNAME = "m5dualkey-antctrl-1";
 // MQTT client. The client ID is a non-slot exception: this device owns no
 // slot, so it must not collide with a slot-derived bridge ID.
 static constexpr const char* MQTT_CLIENT_ID_PREFIX = "m5dualkey-hf-antctrl-";
-// PubSubClient's default 256-byte buffer is too small for the retained /state
-// with room to spare (oversize messages are dropped silently); set it BEFORE
-// connect().
-static constexpr uint16_t MQTT_BUFFER_SIZE = 1024;
+// PubSubClient drops oversize messages silently. hf/radio/state carries the
+// DVK memory list and needs several KB; set it BEFORE connect().
+static constexpr uint16_t MQTT_BUFFER_SIZE = 8192;
 
 // Slot muehle/hf/ant-ctrl (ultrabridge, Ultrabeam RCU-06). See
 // ../ultrabridge/ultrabeam-mqtt-api.md.
 static constexpr const char* TOPIC_ANT_CTRL_STATE = "muehle/hf/ant-ctrl/state";
 static constexpr const char* TOPIC_ANT_CTRL_STATUS = "muehle/hf/ant-ctrl/status";
 static constexpr const char* TOPIC_ANT_CTRL_CMD = "muehle/hf/ant-ctrl/cmd";
+
+// Slot muehle/hf/radio (flexbridge, FLEX-8400) — DVK playback. See
+// ../flexbridge/docs/radio2mqtt-schema.md.
+static constexpr const char* TOPIC_RADIO_STATE = "muehle/hf/radio/state";
+static constexpr const char* TOPIC_RADIO_STATUS = "muehle/hf/radio/status";
+static constexpr const char* TOPIC_RADIO_CMD = "muehle/hf/radio/cmd";
 
 }  // namespace AppConfig
 

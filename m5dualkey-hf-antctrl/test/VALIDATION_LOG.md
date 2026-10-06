@@ -30,8 +30,16 @@ Tester: _TBD_
 
 ## OTA checks
 - [ ] Serial shows `OTA,LISTENING,host=m5dualkey-antctrl-1.local`
-- [ ] `./deploy.sh` (OTA) flashes and the key reboots into the new image
+- [x] `./deploy.sh` (OTA) flashes and the key reboots into the new image
 - [ ] OTA with a wrong password is rejected
+
+## Chain Key / DVK checks
+- [ ] Serial shows `CHAIN,KEY_FOUND,port=<n>,id=<n>`; key LED dim green while radio live
+- [x] Press with DVK idle -> `dvk_play_2`, radio plays memory 2, key LED red
+- [x] Press during playback -> `dvk_stop`, playback stops (bus-verified 2026-10-06: play 14:49:31, stop same second, tx -> rx)
+- [ ] Long press -> `dvk_stop`
+- [ ] Radio /status offline or device_online:false -> key LED off, press not sent
+- [ ] Unplug + replug the Chain Key -> `KEY_LOST` then `KEY_FOUND`
 
 ## Reconnect checks
 - [ ] Wi-Fi reconnect after AP outage
