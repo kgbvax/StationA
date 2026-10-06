@@ -34,6 +34,12 @@ static constexpr uint8_t CHAIN_KEY_LED_BRIGHTNESS = 60;
 // DVK memory the Chain Key plays (flexbridge dvk_play_<N>).
 static constexpr uint8_t DVK_MEMORY = 2;
 
+// Power. loop() sleeps LOOP_PERIOD_MS per pass so the core idles instead of
+// spinning (buttons debounce at 30 ms, so 10 ms sampling is plenty).
+static constexpr uint32_t LOOP_PERIOD_MS = 10;
+// Global NeoPixel scale (0-255) for the two key LEDs.
+static constexpr uint8_t LED_BRIGHTNESS = 48;
+
 // Connectivity timing
 static constexpr uint32_t WIFI_RETRY_MS = 5000;
 static constexpr uint32_t MQTT_RETRY_MS = 5000;

@@ -39,6 +39,7 @@ void LedStatus::begin() {
   digitalWrite(_powerPin, HIGH);
 
   _strip.begin();
+  _strip.setBrightness(AppConfig::LED_BRIGHTNESS);
   applyOff();
   _strip.show();
 }

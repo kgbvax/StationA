@@ -29,6 +29,9 @@ void MqttClientManager::begin(ModeUpdateCallback modeCallback, MovingUpdateCallb
   _instance = this;
 
   WiFi.mode(WIFI_STA);
+  // Modem sleep between DTIM beacons: the radio is the biggest consumer after
+  // the CPU. Outgoing publishes wake it immediately.
+  WiFi.setSleep(true);
   _mqtt.setServer(AppConfig::MQTT_HOST, AppConfig::MQTT_PORT);
   _mqtt.setBufferSize(AppConfig::MQTT_BUFFER_SIZE);
   _mqtt.setCallback(MqttClientManager::mqttCallbackThunk);

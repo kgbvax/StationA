@@ -195,4 +195,7 @@ void loop() {
   if (g_otaStarted) {
     ArduinoOTA.handle();
   }
+
+  // Yield the core: without this loop() spins at 100% and the key gets warm.
+  delay(AppConfig::LOOP_PERIOD_MS);
 }
