@@ -19,13 +19,21 @@
 #define SWITCH_SLOT "hf/switch"
 #define PA_ARM_SLOT "hf/pa-arm"
 #define RADIO_SLOT "hf/radio"       // subscribed for arm logic (tuning / band / liveness)
-#define ANT_SWITCH_SLOT "hf/ant-switch"  // subscribed for arm logic (antenna grounded?)
+#define ANT_SWITCH_SLOT "hf/ant-switch"  // subscribed for arm logic (antenna grounded / switching)
+#define ANT_CTRL_SLOT "hf/ant-ctrl"      // subscribed for arm logic (Ultrabeam moving / tuned)
+#define ANT_SELECT_SLOT "hf/antenna-select"  // subscribed for arm logic (switch move pending)
+#define PA_SLOT "hf/pa"                  // subscribed for arm logic (PA fault / liveness)
+#define TUNER_SLOT "hf/tuner"            // subscribed for arm logic (ATU tune cycle)
 
 // Full topic bases (no leading slash — station convention).
 #define SWITCH_BASE SITE "/" SWITCH_SLOT     // muehle/hf/switch
 #define PA_ARM_BASE  SITE "/" PA_ARM_SLOT     // muehle/hf/pa-arm
 #define RADIO_BASE    SITE "/" RADIO_SLOT      // muehle/hf/radio
 #define ANT_SWITCH_BASE SITE "/" ANT_SWITCH_SLOT  // muehle/hf/ant-switch
+#define ANT_CTRL_BASE   SITE "/" ANT_CTRL_SLOT    // muehle/hf/ant-ctrl
+#define ANT_SELECT_BASE SITE "/" ANT_SELECT_SLOT  // muehle/hf/antenna-select
+#define PA_BASE         SITE "/" PA_SLOT          // muehle/hf/pa
+#define TUNER_BASE      SITE "/" TUNER_SLOT       // muehle/hf/tuner
 
 // --- relay map (M5StamPLC relay channels are 0-indexed 0..3) -----------------
 // Plan relay numbering is 1-based; subtract 1 for the library channel.
@@ -51,23 +59,93 @@
 #define RADIO_HEARTBEAT_MS 10000
 
 // --- band safety ------------------------------------------------------------
-// band_safe = the radio's current band is one the PA (ACOM 1200S) can amplify.
-// The ACOM 1200S covers 160m..6m (model §7.1 capabilities). A band outside this
-// set (or unknown) ⇒ armed false. 6m is the upper edge.
+// band_safe = the band the radio is ACTUALLY on (derived from radio/state
+// freq_hz, not the band label — flexbridge holds the label at the old band for
+// 750 ms after a band change) is one the PA may amplify. A band outside this set
+// (or a frequency outside every band) ⇒ armed false.
+//
+// 60m is deliberately absent: it is a 15 W EIRP allocation in DL/OE, the ACOM
+// bridge has no 60m band, and a 1.2 kW PA must never arm there.
 static const char* const SAFE_BANDS[] = {
-    "160m", "80m", "60m", "40m", "30m", "20m", "17m", "15m", "12m", "10m", "6m"
+    "160m", "80m", "40m", "30m", "20m", "17m", "15m", "12m", "10m", "6m"
 };
 static const int SAFE_BANDS_COUNT = sizeof(SAFE_BANDS) / sizeof(SAFE_BANDS[0]);
+
+// Band edges for deriving the band from freq_hz. MUST mirror flexbridge's
+// canonicalBands (flexbridge/internal/flexradio/band.go, IARU R1 edges per
+// docs/conventions/band-mode-reference.md): inclusive edges, plus the same
+// 2 kHz exit hysteresis so the PLC and flexbridge never disagree at a band edge.
+struct BandEdge { uint32_t lo, hi; const char* label; };
+static const BandEdge BAND_EDGES[] = {
+    {1800000, 2000000, "160m"},   {3500000, 4000000, "80m"},
+    {5351500, 5366500, "60m"},    {7000000, 7300000, "40m"},
+    {10100000, 10150000, "30m"},  {14000000, 14350000, "20m"},
+    {18068000, 18168000, "17m"},  {21000000, 21450000, "15m"},
+    {24890000, 24990000, "12m"},  {28000000, 29700000, "10m"},
+    {50000000, 54000000, "6m"},
+};
+static const int BAND_EDGES_COUNT = sizeof(BAND_EDGES) / sizeof(BAND_EDGES[0]);
+#define BAND_EDGE_HYSTERESIS_HZ 2000
+
+// --- arm timing ---------------------------------------------------------------
+// Closing is slow, opening is fast. Every gate must hold for ARM_CLOSE_DWELL_MS
+// with the radio in RX before the relay closes (no flapping on bus jitter, never
+// hot-key the PA under drive).
+#define ARM_CLOSE_DWELL_MS 1000
+// After the radio moves to a different ham band, hold the arm open while the
+// rest of the station follows: antennaselect switches the port / retunes the
+// Ultrabeam / pre-positions the ACOM (one broker hop .50→.178), ultrabridge's
+// first 2 s motor poll, the ACOM band walk (~150 ms per step).
+#define BAND_CHANGE_HOLDOFF_MS 3000
+
+// --- Ultrabeam (hf/ant-ctrl) --------------------------------------------------
+// The switch port the Ultrabeam is wired to. Ultrabeam gates apply only while
+// ant-switch/state.selected == this port. port4 matches the live antennaselect
+// wiring map (17m → target port4, followed by ant-ctrl); the station docs still
+// say port 3 (known issue O14) — confirm on site before changing.
+#define ULTRABEAM_PORT "port4"
+// ultrabridge retunes when |requested kHz − current kHz| >= 25 (integer kHz,
+// ultrabridge controller.go freqDeadbandKHz). The PLC uses the SAME arithmetic:
+// a radio frequency that would make ultrabridge move the elements is "not tuned".
+#define ULTRABEAM_DEADBAND_KHZ 25
+// ultrabridge polls the motors every 2 s and publishes /state change-only, so a
+// commanded move can be invisible for up to one poll. After any ant-ctrl/cmd
+// that will move the elements, treat the antenna as moving for this long.
+#define ULTRABEAM_CMD_BLIND_MS 2500
+// Mechanical settle + one poll period after the motors stop (moving true→false,
+// a freq/direction change, or the switch entering the Ultrabeam port).
+#define ULTRABEAM_SETTLE_MS 3000
+
+// --- relay readback -------------------------------------------------------------
+// relayGet() reads the AW9523 output-pin level (coil driver), not the contacts.
+// An open relay reading closed is rewritten every pass; this many consecutive
+// failures raise "relay mismatch" (forces the arm open), as do this many
+// confirmed drops of a closed relay. It clears after RELAY_MISMATCH_CLEAR
+// consistent passes.
+#define RELAY_MISMATCH_TRIP  3
+#define RELAY_MISMATCH_CLEAR 20
+// A CLOSED relay reading back open is acted on only after this many
+// consecutive passes (one failed I²C read must not unkey the PA mid-over).
+// Confirmed drops accumulate toward RELAY_MISMATCH_TRIP and are forgiven only
+// after RELAY_STABLE_PASSES (60 s) closed and consistent.
+#define RELAY_DROP_CONFIRM   3
+#define RELAY_STABLE_PASSES  1200
 
 // --- MQTT ------------------------------------------------------------------
 // PubSubClient default buffer is too small for retained /meta with an expose
 // block; bump it before connect() (the LWT is set before connect). The buffer
 // also bounds INBOUND messages: a larger one is dropped silently, and pa-arm
 // then never sees hf/radio/state ("radio offline", arm blocked). That state
-// carries the dynamic mic_profiles + dvk_memories lists — ~1.4 KB on
-// 2026-10-03, which overflowed the previous 1024. 4096 leaves headroom; each
-// slot's client allocates its own buffer (2 × 4 KB heap).
-#define MQTT_BUFFER_SIZE 4096
+// carries the dynamic mic_profiles + dvk_memories lists — ~1.5 KB on
+// 2026-10-06, which overflowed the previous 1024. The pa-arm connection carries
+// every arm input, so it gets 8 KB; hf/switch only sees its own small /cmd.
+#define MQTT_BUFFER_SIZE        4096
+#define PA_ARM_MQTT_BUFFER_SIZE 8192
+// PubSubClient handles ONE inbound packet per loop() call. On (re)subscribe the
+// broker replays ~14 retained arm inputs at once, and while keyed the ACOM and
+// ATR bridges publish per meter frame; drain up to this many per main-loop pass
+// so radio/state never queues behind telemetry.
+#define MQTT_DRAIN_MAX 16
 #define MQTT_KEEPALIVE_S 30
 
 // Bounded reconnect (defect D6): a silent broker must not stall the arm-logic

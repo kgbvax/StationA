@@ -1,7 +1,7 @@
 # Salvage: m5stamp-relay-controller.md
 > Extracted from PRD/03-components/m5stamp-relay-controller.md (2026-09-03) before PRD deletion. Prose is verbatim PRD text unless marked.
 
-## [defect] D1 / O1 — Arm relay frozen during WiFi outage (STILL OPEN)
+## [defect] D1 / O1 — Arm relay frozen during WiFi outage (FIXED 2026-10-06, src/arm.h)
 
 The main loop's WiFi gate early-returns BEFORE arm recomputation. So with WiFi
 down the arm relay holds its last physical position indefinitely — no heartbeat
@@ -15,7 +15,7 @@ re-implementation.
 Code-check 2026-09-03: still open — `m5stamp-hf-ctrl/src/main.cpp:541-549`
 (WiFi gate `return`s early) before `recomputeArm()` at `main.cpp:569`.
 
-## [defect] D5 / R6.1 / O4 — JSON-boolean `set_enabled` silently disarms (STILL OPEN)
+## [defect] D5 / R6.1 / O4 — JSON-boolean `set_enabled` silently disarms (FIXED 2026-10-06, src/main.cpp parseBoolish)
 
 The `value` field is carried as a **JSON string**; booleans ride as the strings
 `"true"`/`"false"`. The implementation extracts `value` with a string-typed
@@ -36,7 +36,7 @@ Code-check 2026-09-03: still open — `parseCmd()` at
 `m5stamp-hf-ctrl/src/main.cpp:92` (`value = doc["value"] | ""`), applied at
 `main.cpp:144` (`enabled = (value == "true")`).
 
-## [defect] D4 / O2 (antenna half) / O3 — `antenna_ready` has no staleness window (STILL OPEN)
+## [defect] D4 / O2 (antenna half) / O3 — `antenna_ready` has no staleness window (FIXED 2026-10-06, src/arm.h: ant-switch /status LWT + reset on reconnect; no age window — producer is change-only)
 
 A stale antenna-switch state stays "ready" forever. If the antenna-switch
 bridge is down but its last retained state names a port, the arm can close on
@@ -88,7 +88,7 @@ Code-check 2026-09-03: still open — `publishSwitchCmd()` returns early when
 disconnected (`main.cpp:262-263`), and `onConnect()` re-subscribes `/cmd`
 (`mqtt_slot.h:95-103`), so the replay lands.
 
-## [defect] D10 / O6 — Relay readback fail-safe claimed, not implemented (STILL OPEN)
+## [defect] D10 / O6 — Relay readback fail-safe claimed, not implemented (PARTLY FIXED 2026-10-06: relay 1 is re-driven and read back every pass, 3 mismatching passes force the arm open with error "relay mismatch"; the readback is the AW9523 output level, not the contacts — a welded contact stays undetectable)
 
 The relay readback has no failure detection; a comment claims fail-safe-on-error
 but the code returns the raw expander read. A re-implementation MUST treat a
@@ -110,7 +110,7 @@ keep this or to fix this is a documented choice.
 Code-check 2026-09-03: still open — `otaInit().onStart` at
 `m5stamp-hf-ctrl/src/main.cpp:504-507` clears only `RELAY_PA_ARM`.
 
-## [defect] D7 / O13 — error-vs-enabled doc drift (STILL OPEN, in the live doc)
+## [defect] D7 / O13 — error-vs-enabled doc drift (DECIDED 2026-10-06: keep `error` independent of `enabled`, but `error` now carries faults only; normal transitions and "permit off" go in the new `block` field — API doc §4 updated)
 
 The reference publishes the `error` string from the safety inputs
 **regardless of `enabled`** (contrary to its own API doc). Decision: keep this
@@ -223,10 +223,12 @@ conventions, or the component's MQTT-API doc:
 - **Cold boot opens all four relays as the FIRST act** (R5.1): write all
   relays de-energized before any network activity (arm open, PA/TRX remote-on
   off).
-- **No local override on the arm relay** (R5.6): no button can force or drop
-  it; it moves only with `armed`. Buttons B/C toggle only PA/TRX remote-on
-  (relays 3/4), debounced to at most one action per 150 ms, and must work with
-  WiFi down.
+- **No local override on the arm relay** (R5.6): no button can force it; it
+  moves only with the interlock. **Amended 2026-10-06:** button A toggles the
+  arm *permit* (`enabled`) — the operator's manual arm/disarm at the PLC — and
+  publishes it as the retained `set_enabled` intent; arming still needs every
+  gate clear. Buttons B/C toggle only PA/TRX remote-on (relays 3/4). All three
+  are debounced to at most one action per 150 ms and work with WiFi down.
 - **Silent drop of unknown commands** (R6.2): unknown actions or unparseable
   JSON on either `/cmd` are dropped — no reply, no error topic, never a crash.
 - **No MQTT echo** (R6.3): commands received over MQTT are never echoed back
@@ -284,3 +286,27 @@ behavioral contract is conformant; this records the reasoning):
   match this component — self-healing here relies entirely on retained
   messages (retained-command replay), not session state, so either session
   mode is acceptable provided the retained-command replay on reconnect holds.
+## [fixed] Connect-edge race skipped the pa-arm feed re-subscribe (FIXED 2026-10-06)
+
+`main.cpp` detected the pa-arm connect edge by sampling `connected()` once per
+pass and re-subscribed `hf/radio/state` + `hf/ant-switch/state` only on that
+edge. After a WiFi outage (loop returned before the flag reset) or a drop +
+redial inside one `SlotMqtt::loop()` call, the edge was never seen; with a
+clean session the broker had forgotten the subscriptions, so pa-arm sat on
+"radio feed stale" until a later observed drop. The feed subscriptions now run
+in a connect hook inside `SlotMqtt::onConnect` (same call as the dial); a
+failed subscribe disconnects and redials.
+
+## [decision] Arm gates for band changes and Ultrabeam motion (2026-10-06)
+
+The arm formula used to ignore everything a band change or an Ultrabeam move
+does: ultrabridge motion, ant-switch relay travel (`settled`), the reconciler's
+pending move, the ACOM fault, the ATR tune cycle. `src/arm.h` now gates on all
+of them, split into hazard gates (open at once, even keyed) and readiness gates
+(block closing; open only in RX — model §6 "arm permit, not a fast software
+gate"). Deliberately NOT gated: PA band vs radio band and ATU in-line state —
+antennaselect sends set_band / set_inline once and never re-sends, so either
+gate would deadlock after a PA or ATR power cycle. Residuals: change-only
+producers (ultrabridge, ant-switch) have no age window, only their LWT; the
+Ultrabeam port is the compile-time `ULTRABEAM_PORT` (port4) until O14 is
+confirmed on site; a retract latch lives in RAM and is lost on PLC reboot.

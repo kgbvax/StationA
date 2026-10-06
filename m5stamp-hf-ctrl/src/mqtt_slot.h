@@ -8,9 +8,14 @@
 // analog of the Go compound bridge's one-client-per-slot decision.
 //
 // Each SlotMqtt:
-//   - connects with CleanSession=false and a retained LWT "offline" on <base>/status
-//   - on (re)connect publishes "online" to <base>/status and re-subscribes <base>/cmd
-//     (retained /cmd is replayed by the broker → self-heal, model §8)
+//   - connects with a CLEAN session (PubSubClient 2.8 forces cleanSession=1) and
+//     a retained LWT "offline" on <base>/status — so the broker forgets every
+//     subscription on disconnect, and self-heal relies on retained replay only
+//   - on (re)connect publishes "online" to <base>/status, re-subscribes
+//     <base>/cmd (retained /cmd is replayed by the broker → self-heal, model §8)
+//     and then runs the slot's onConnected hook IN THE SAME CALL, so extra
+//     subscriptions (the pa-arm input feeds) can never be skipped by a missed
+//     connect edge
 //   - exposes publish(topic, retained, payload) and a per-slot callback for /cmd
 #pragma once
 
@@ -19,6 +24,10 @@
 #include <WiFiClient.h>
 
 typedef void (*CmdCallback)(const char* topic, const uint8_t* payload, unsigned int len);
+// ConnectedHook runs right after a successful (re)connect + /cmd subscribe.
+// Returns false if any of its subscriptions failed — the slot then drops the
+// connection so the next dial starts clean instead of running half-subscribed.
+typedef bool (*ConnectedHook)();
 
 // BoundedConnectClient bounds the TCP connect wait. PubSubClient dials through
 // the 2-arg Client overloads; the ESP32 core's default is a 3 s select() wait
@@ -38,15 +47,14 @@ class BoundedConnectClient : public WiFiClient {
 
 class SlotMqtt {
    public:
-    SlotMqtt(const char* base, const char* clientSuffix, CmdCallback onCmd)
-        : base_(base), suffix_(clientSuffix), onCmd_(onCmd), connected_(false) {
+    SlotMqtt(const char* base, const char* clientSuffix, CmdCallback onCmd,
+             ConnectedHook onConnected, uint16_t bufferSize)
+        : base_(base), suffix_(clientSuffix), onCmd_(onCmd), onConnected_(onConnected) {
         client_.setClient(net_);
-        client_.setBufferSize(MQTT_BUFFER_SIZE);
+        client_.setBufferSize(bufferSize);
         client_.setKeepAlive(MQTT_KEEPALIVE_S);
         client_.setSocketTimeout(MQTT_CONNACK_TIMEOUT_S);
         // LWT: retained "offline" on this slot's /status — fires on unexpected disconnect.
-        char willTopic[80];
-        snprintf(willTopic, sizeof(willTopic), "%s/status", base);
         client_.setServer(MQTT_HOST, MQTT_PORT);
         client_.setCallback(
             [this](char* topic, uint8_t* payload, unsigned int len) {
@@ -62,8 +70,14 @@ class SlotMqtt {
     // the same iteration (defect D6). Returns true while connected.
     bool loop() {
         if (client_.connected()) {
-            client_.loop();
-            return true;
+            // PubSubClient reads at most one packet per loop(); drain a bounded
+            // burst so a retained replay or keyed-PA telemetry cannot starve
+            // radio/state (MQTT_DRAIN_MAX in config.h).
+            for (int i = 0; i < MQTT_DRAIN_MAX; ++i) {
+                if (!client_.loop()) break;
+                if (net_.available() <= 0) break;
+            }
+            return client_.connected();
         }
         static unsigned long lastAttemptMs = 0;  // shared across ALL SlotMqtt instances
         unsigned long now = millis();
@@ -74,16 +88,26 @@ class SlotMqtt {
         if (connect()) {
             onConnect();
         }
-        return false;
+        return client_.connected();
     }
 
     bool connected() { return client_.connected(); }
 
-    // publish a retained payload under <base>/<suffix>.
-    void publish(const char* suffix, bool retained, const char* payload) {
+    // drop tears the session down so the next loop() redials and re-runs the
+    // connect hook. Used after a WiFi outage: ESP32's WiFiClient can still
+    // report a short-blipped socket as connected, and then nothing would
+    // re-subscribe (the arm inputs were invalidated during the outage).
+    void drop() {
+        client_.disconnect();
+        net_.stop();
+    }
+
+    // publish a payload under <base>/<suffix>. Returns PubSubClient's result
+    // (false = not written; QoS 0, so true is no delivery guarantee either).
+    bool publish(const char* suffix, bool retained, const char* payload) {
         char topic[96];
         snprintf(topic, sizeof(topic), "%s/%s", base_, suffix);
-        client_.publish(topic, payload, retained);
+        return client_.publish(topic, payload, retained);
     }
     void publish(const char* suffix, bool retained, const uint8_t* payload, unsigned int len) {
         char topic[96];
@@ -91,22 +115,22 @@ class SlotMqtt {
         client_.publish(topic, payload, len, retained);
     }
 
-    void subscribe(const char* suffix) {
+    bool subscribe(const char* suffix) {
         char topic[96];
         snprintf(topic, sizeof(topic), "%s/%s", base_, suffix);
-        client_.subscribe(topic);
+        return client_.subscribe(topic);
     }
 
-    // subscribe an arbitrary absolute topic (used for hf/radio/state by pa-arm).
-    void subscribeAbs(const char* topic) { client_.subscribe(topic); }
+    // subscribe an arbitrary absolute topic (the pa-arm input feeds).
+    bool subscribeAbs(const char* topic) { return client_.subscribe(topic); }
 
    private:
     const char* base_;
     const char* suffix_;
     CmdCallback onCmd_;
+    ConnectedHook onConnected_;
     BoundedConnectClient net_;
     PubSubClient client_;
-    bool connected_;
     char willTopic_[80];
 
     bool connect() {
@@ -116,14 +140,22 @@ class SlotMqtt {
                                willTopic_, 1, true, "offline");
     }
 
+    // onConnect runs inside the same loop() call that dialed, so the connect
+    // edge can never be missed (it used to be sampled by main once per pass: a
+    // drop + redial inside one SlotMqtt::loop() skipped the feed re-subscribe
+    // and left pa-arm on "radio feed stale" until the next observed drop).
     void onConnect() {
-        connected_ = true;
         publish("status", true, "online");
         // Replay retained /cmd (broker delivers the last retained command on
-        // subscribe → self-heal). And re-subscribe any absolute topics is the
-        // caller's responsibility via the onCmd_ wiring — we only re-subscribe
-        // our own /cmd here; extra subs are set up by main after connect.
-        subscribe("cmd");
+        // subscribe → self-heal); the hook then publishes meta/state and
+        // subscribes any extra feeds.
+        bool ok = subscribe("cmd");
+        if (ok && onConnected_) ok = onConnected_();
+        if (!ok) {
+            // A clean disconnect suppresses the LWT — retract "online" ourselves.
+            publish("status", true, "offline");
+            client_.disconnect();  // redial clean on the next backoff tick
+        }
     }
 
     void dispatch(char* topic, uint8_t* payload, unsigned int len) {

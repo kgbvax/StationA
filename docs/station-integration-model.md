@@ -530,9 +530,11 @@ relay (`pa-arm`); relay 2 is spare.
 planned M5Stack, §11.3, now realized as the M5 Stamp PLC).
 ```
 capabilities: fail_safe open; heartbeat true; relay 1
-state:        enabled bool; armed bool
-              # enabled = software arm-permit (last /cmd); armed = enabled ∧ radio_online
-              #   ∧ ¬radio.tuning ∧ band_safe ∧ heartbeat — the actual relay, fail-safe-open
+state:        enabled bool; armed bool; block string; error string
+              # enabled = software arm-permit (last /cmd or PLC button A); armed = relay
+              #   readback, closed only when enabled ∧ every interlock gate clear (radio,
+              #   band, antenna switch, Ultrabeam, PA, ATU) — fail-safe-open; table in
+              #   m5stamp-hf-ctrl/docs/m5stamp-hf-ctrl-mqtt-api.md §4
 intent:       set_enabled {true|false}         # /cmd retained (steady-state permit)
 ```
 Arm decision is the embedded firmware's: it subscribes `hf/radio/state` for `tuning`/`band`
@@ -609,9 +611,13 @@ override / pre-position path, not the primary follow mechanism.
   (ladder tier 1; walk-away lightning protection) — except under an operator `manual`
   stand-down (tier 0): in manual the antenna is **never** moved automatically, and idle
   grounding is itself an automatic move
-- `pa-arm.armed` ← `enabled ∧ radio_online ∧ ¬radio.tuning ∧ band_safe ∧ heartbeat ∧
-  antenna_ready` (realized in the M5 Stamp firmware, not the reconciler; fail-safe open,
-  heartbeat-driven; `antenna_ready` drops the arm when the antenna is grounded/off)
+- `pa-arm.armed` ← `enabled ∧` all interlock gates clear for 1 s, closed only in RX
+  (realized in the M5 Stamp firmware, not the reconciler; fail-safe open). Hazard gates
+  open it at once even in TX — radio lost/stale/tuning, band not PA-safe, antenna
+  grounded or switch relays travelling, Ultrabeam moving / commanded / retracted /
+  off-frequency (while in circuit), PA fault, ATU tune. Readiness gates block closing and
+  open it only in RX — band-change hold-off, Ultrabeam settle, reconciler move pending, a
+  supervising feed offline. Full table: `m5stamp-hf-ctrl/docs/m5stamp-hf-ctrl-mqtt-api.md` §4
 - `power-seq.{start,stop}` ← operator one-button; the sequencer then issues the ordered
   chain `power/master → power/psu-13v8 → hf/switch.trx → hf/switch.pa → hf/pa-arm` on
   start (reverse on stop), gated on liveness confirmations and delays (§6, §7.1)

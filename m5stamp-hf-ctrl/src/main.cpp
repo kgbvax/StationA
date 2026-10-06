@@ -9,11 +9,13 @@
 //                        sets the `enabled` permit; `armed` is derived.
 //
 // The arm logic is the model's planned embedded safety node (§6, §11.3): the
-// firmware subscribes hf/radio/state and hf/ant-switch/state and computes
-//   armed = enabled ∧ radio_online ∧ ¬radio.tuning ∧ band_safe ∧ heartbeat ∧ antenna_ready
-// driving relay 1 so that ANY failure (radio offline, tuning, unsafe band,
-// heartbeat lost, antenna grounded, 13.8 V lost, PLC crash) drops the relay
-// open → PA disabled.
+// firmware subscribes the radio, antenna switch, Ultrabeam controller, antenna
+// reconciler, PA and tuner feeds and computes (arm.h)
+//   armed = enabled ∧ all gates clear (held ARM_CLOSE_DWELL_MS, closed in RX)
+// driving relay 1 so that any hazard (radio lost/stale/tuning, unsafe band,
+// antenna grounded or switching, Ultrabeam moving/off-frequency, PA fault, ATU
+// tuning, 13.8 V lost, PLC crash) drops the relay open → PA disabled, and a band
+// change or Ultrabeam move holds it open until the station has followed.
 //
 // See docs/m5stamp-hf-ctrl-mqtt-api.md and
 // ../stationa/docs/station-integration-model.md §7.1.
@@ -27,6 +29,7 @@
 #include "config.h"
 #include "relay.h"     // uses the library global M5StamPLC
 #include "mqtt_slot.h"
+#include "arm.h"       // pa-arm interlock: inputs, gates, relay drive
 
 // ---------------------------------------------------------------------------
 // switch slot state (relays 3 & 4 → channels 2 & 3)
@@ -43,23 +46,28 @@ extern SlotMqtt* gSwitch;
 extern SlotMqtt* gPaArm;
 
 // ---------------------------------------------------------------------------
-// pa-arm slot state (relay 1 → channel 0) + arm logic inputs
+// pa-arm slot state (relay 1 → channel 0). Inputs + gates live in arm.h.
 // ---------------------------------------------------------------------------
 bool enabled = false;        // software arm-permit (last /cmd set_enabled)
-bool armed = false;          // derived actual relay state
-// radio inputs from hf/radio/state:
-bool radioOnline = false;
-bool radioTuning = false;
-String radioBand = "";       // canonical band name (e.g. "20m"), "" if unknown
-unsigned long lastRadioStateMs = 0;  // heartbeat freshness
-bool antennaReady = false;    // ant-switch/state.selected != "off" (an antenna is in circuit)
+String cmdError = "";        // last rejected /cmd value (D5: never a silent disarm)
+// A front-panel permit toggle (BtnA) stays the authoritative intent until the
+// PLC sees its own retained echo come back: until then it is re-published (on
+// reconnect, and every PERMIT_REPUBLISH_MS), and an inbound set_enabled with a
+// different value — the broker's stale retained intent — is not applied (D8,
+// for the permit).
+bool permitEchoPending = false;
+bool permitIntent = false;
+unsigned long permitPublishMs = 0;
+#define PERMIT_REPUBLISH_MS 2000
+arm::Eval armEval;           // the evaluation relay 1 was last driven from
 
-// Deduplication: publish immediately when enabled/armed/error change, otherwise
-// only on heartbeat. lastPublishedEnabled/Armed/Error track the last snapshot we
-// actually sent.
+// Deduplication: publish immediately when enabled/armed/error/block change,
+// otherwise only on heartbeat. lastPublished* track the last snapshot sent.
 bool lastPublishedEnabled = false;
 bool lastPublishedArmed = false;
 String lastPublishedError = "";
+String lastPublishedBlock = "";
+String lastPublishedCmdError = "";
 
 // ---------------------------------------------------------------------------
 // forward decls
@@ -71,10 +79,8 @@ static void publishPaArmMeta(SlotMqtt& s);
 static void publishPaArmState(SlotMqtt& s);
 static void handleSwitchCmd(const char* topic, const uint8_t* payload, unsigned int len);
 static void handlePaArmCmd(const char* topic, const uint8_t* payload, unsigned int len);
-static void handleRadioState(const char* topic, const uint8_t* payload, unsigned int len);
-static void handleAntSwitchState(const char* topic, const uint8_t* payload, unsigned int len);
-static bool bandSafe(const String& band);
-static bool recomputeArm(SlotMqtt& paArm);
+static bool onSwitchConnected();
+static bool onPaArmConnected();
 static void uiInit();
 static void uiRender();
 static void handleButtons();
@@ -82,15 +88,22 @@ static void handleButtons();
 // ---------------------------------------------------------------------------
 // JSON helpers
 // ---------------------------------------------------------------------------
-// Small static docs are fine within 1024-byte buffers (set in SlotMqtt).
-
-static bool parseCmd(const uint8_t* payload, unsigned int len, String& action, String& value) {
-    JsonDocument doc;
-    DeserializationError err = deserializeJson(doc, payload, len);
-    if (err) return false;
-    action = doc["action"] | "";
-    value = doc["value"] | "";
-    return true;
+// parseBoolish reads a /cmd `value` that may arrive as a JSON bool or as one of
+// two case-insensitive strings (onWord/offWord). Returns false — and leaves
+// `out` untouched — for anything else, so a mistyped value is rejected loudly
+// instead of being applied as the safe-side-but-wrong "off" (defect D5).
+static bool parseBoolish(JsonVariantConst v, const char* onWord, const char* offWord, bool& out) {
+    if (v.is<bool>()) {
+        out = v.as<bool>();
+        return true;
+    }
+    if (!v.is<const char*>()) return false;
+    String s = v.as<const char*>();
+    s.trim();
+    s.toLowerCase();
+    if (s == onWord) { out = true; return true; }
+    if (s == offWord) { out = false; return true; }
+    return false;
 }
 
 // ---------------------------------------------------------------------------
@@ -105,13 +118,17 @@ static void applySwitchRelays() {
 }
 
 static void handleSwitchCmd(const char* topic, const uint8_t* payload, unsigned int len) {
-    String action, value;
-    if (!parseCmd(payload, len, action, value)) return;
+    JsonDocument doc;
+    if (deserializeJson(doc, payload, len)) return;
+    String action = doc["action"] | "";
+    bool on;
     if (action == "set_pa") {
-        switchState.pa = (value == "on");
+        if (!parseBoolish(doc["value"], "on", "off", on)) return;  // bad value — drop, relay unchanged
+        switchState.pa = on;
         applySwitchRelays();
     } else if (action == "set_trx") {
-        switchState.trx = (value == "on");
+        if (!parseBoolish(doc["value"], "on", "off", on)) return;
+        switchState.trx = on;
         applySwitchRelays();
     } else {
         return;  // unknown action — drop
@@ -123,81 +140,27 @@ static void handleSwitchCmd(const char* topic, const uint8_t* payload, unsigned 
 // ---------------------------------------------------------------------------
 // pa-arm slot
 // ---------------------------------------------------------------------------
-// The paArmSlot connection subscribes its own /cmd AND the radio + ant-switch
-// /state feeds (for arm logic). All arrive through the same PubSubClient
-// callback, so dispatch by topic suffix here: */cmd → set_enabled;
-// */radio/state → radio inputs; */ant-switch/state → antenna_ready.
+// The paArmSlot connection subscribes its own /cmd AND the arm input feeds
+// (arm.h INPUT_TOPICS). All arrive through the same PubSubClient callback:
+// arm::dispatch takes the input topics (exact match), anything else is our /cmd.
 static void handlePaArmCmd(const char* topic, const uint8_t* payload, unsigned int len) {
-    String t(topic);
-    if (t.endsWith("/radio/state")) {
-        handleRadioState(topic, payload, len);
-        return;
-    }
-    if (t.endsWith("/ant-switch/state")) {
-        handleAntSwitchState(topic, payload, len);
-        return;
-    }
-    // /cmd path
-    String action, value;
-    if (!parseCmd(payload, len, action, value)) return;
-    if (action == "set_enabled") {
-        enabled = (value == "true");
-        // armed recomputed in main loop; relay driven from armed.
-    }
-}
-
-static void handleRadioState(const char* topic, const uint8_t* payload, unsigned int len) {
+    if (arm::dispatch(topic, payload, len)) return;
+    if (strcmp(topic, PA_ARM_BASE "/cmd") != 0) return;
     JsonDocument doc;
-    DeserializationError err = deserializeJson(doc, payload, len);
-    if (err) return;
-    // radio liveness: device_online true means the radio (flexbridge) is up.
-    // tuning and band drive the arm logic.
-    radioOnline = doc["device_online"] | false;
-    radioTuning = doc["tuning"] | false;
-    const char* b = doc["band"];
-    radioBand = b ? String(b) : String("");
-    lastRadioStateMs = millis();
-}
-
-static void handleAntSwitchState(const char* topic, const uint8_t* payload, unsigned int len) {
-    JsonDocument doc;
-    DeserializationError err = deserializeJson(doc, payload, len);
-    if (err) return;
-    // antennaReady = an antenna is actually in circuit (not the grounded "off"
-    // position). Conservative: unknown/missing selected drops the arm.
-    String sel = doc["selected"] | "";
-    antennaReady = (sel.length() > 0 && sel != "off");
-}
-
-static bool bandSafe(const String& band) {
-    if (band.length() == 0) return false;
-    for (int i = 0; i < SAFE_BANDS_COUNT; ++i) {
-        if (band == SAFE_BANDS[i]) return true;
+    if (deserializeJson(doc, payload, len)) return;  // unparseable — silent drop (R6.2)
+    String action = doc["action"] | "";
+    if (action != "set_enabled") return;            // unknown action — silent drop
+    bool v;
+    if (parseBoolish(doc["value"], "true", "false", v)) {
+        if (permitEchoPending) {
+            if (v != permitIntent) return;  // stale retained intent — the button press wins
+            permitEchoPending = false;      // our own echo: the broker holds the new intent
+        }
+        enabled = v;  // armed recomputed in main loop; relay driven from the gates
+        cmdError = "";
+    } else {
+        cmdError = "set_enabled: bad value";  // permit unchanged, reported in /state
     }
-    return false;
-}
-
-// radioHeartbeatFresh reports whether a radio/state message arrived within
-// RADIO_HEARTBEAT_MS (and at all). Shared by recomputeArm and currentPaArmError
-// so the relay decision and the reported error can never disagree. With no
-// fresh heartbeat the radio-derived inputs (device_online, tuning, band) are
-// a frozen snapshot and must not be trusted (§10).
-static bool radioHeartbeatFresh() {
-    return lastRadioStateMs != 0 && (millis() - lastRadioStateMs) < RADIO_HEARTBEAT_MS;
-}
-
-// recomputeArm evaluates the arm condition and drives relay 1. Fail-safe-open:
-// the relay is energized ONLY when every condition holds; any failure drops it
-// open. Returns whether `armed` changed.
-static bool recomputeArm(SlotMqtt& paArm) {
-    bool newArmed = enabled && radioOnline && !radioTuning && bandSafe(radioBand)
-                 && radioHeartbeatFresh() && antennaReady;
-    if (newArmed != armed) {
-        armed = newArmed;
-        relaySet(RELAY_PA_ARM, armed);  // energize on arm, de-energize (open) on any drop
-        return true;
-    }
-    return false;
 }
 
 // ---------------------------------------------------------------------------
@@ -259,6 +222,22 @@ static void publishSwitchState(SlotMqtt& s) {
     s.publish("state", true, out.c_str());
 }
 
+// publishPaArmPermit writes the local permit as the retained pa-arm/cmd intent
+// (the same wire form powerseq and the console use). We are subscribed to our
+// own /cmd, so the echo comes back and is re-applied — idempotent.
+static void publishPaArmPermit() {
+    permitEchoPending = true;  // cleared only by the echo (handlePaArmCmd)
+    permitIntent = enabled;
+    permitPublishMs = millis();
+    if (!gPaArm || !gPaArm->connected()) return;  // re-sent from the connect hook
+    JsonDocument doc;
+    doc["action"] = "set_enabled";
+    doc["value"] = enabled ? "true" : "false";
+    String out;
+    serializeJson(doc, out);
+    gPaArm->publish("cmd", true, out.c_str());
+}
+
 static void publishSwitchCmd(const char* action, const char* value) {
     if (!gSwitch || !gSwitch->connected()) return;
     JsonDocument doc;
@@ -282,6 +261,10 @@ static void publishPaArmMeta(SlotMqtt& s) {
     caps["fail_safe"] = "open";
     caps["heartbeat"] = true;
     caps["relay"] = 1;
+    JsonArray inputs = caps["inputs"].to<JsonArray>();
+    inputs.add(RADIO_SLOT); inputs.add(ANT_SWITCH_SLOT); inputs.add(ANT_CTRL_SLOT);
+    inputs.add(ANT_SELECT_SLOT); inputs.add(PA_SLOT); inputs.add(TUNER_SLOT);
+    caps["ultrabeam_port"] = ULTRABEAM_PORT;
     JsonObject expose = doc["expose"].to<JsonObject>();
     JsonObject edev = expose["device"].to<JsonObject>();
     edev["name"] = DEVICE_MODEL;
@@ -304,49 +287,55 @@ static void publishPaArmMeta(SlotMqtt& s) {
         JsonObject cmd = f["command"].to<JsonObject>();
         cmd["action"] = "set_enabled";
         cmd["value_key"] = "value";
-        // Wire form is a STRING ("true"/"false") — parseCmd reads doc["value"]
-        // as const char* and ArduinoJson cannot coerce a JSON bool (it would
-        // arrive as "" → enabled=false → silent disarm). Must match the API
-        // doc §set_enabled; consumers key on this descriptor.
+        // Wire form is a STRING ("true"/"false"); a JSON bool is accepted too
+        // (parseBoolish), anything else is rejected into /state.cmd_error.
+        // Must match the API doc §set_enabled; consumers key on this descriptor.
         cmd["value_type"] = "string";
+    }
+    {  // block — read-only interlock reason
+        JsonObject f = fields.add<JsonObject>();
+        f["key"] = "block";
+        f["name"] = "Arm blocked by";
+        f["type"] = "string";
+        f["writable"] = false;
     }
     String out;
     serializeJson(doc, out);
     s.publish("meta", true, out.c_str());
 }
 
-// currentPaArmError returns the human-readable reason the arm is blocked, or
-// an empty string when there is no error. Heartbeat staleness is reported
-// right after "radio offline": the tuning/band inputs below are only as fresh
-// as the last radio/state message, so a stale feed outranks them — and it must
-// be surfaced, because the arm drops on staleness alone while the radio inputs
-// themselves may all still look healthy (this was a silent failure before;
-// flexbridge now heartbeats /state, so staleness means a real feed problem).
-static String currentPaArmError() {
-    if (!radioOnline) return "radio offline";
-    if (!radioHeartbeatFresh()) return "radio feed stale";
-    if (radioTuning) return "radio tuning";
-    if (!bandSafe(radioBand)) return "band not safe";
-    if (!antennaReady) return "antenna grounded";
-    return "";
-}
-
+// /state carries:
+//   enabled    the operator permit
+//   armed      relay 1 readback
+//   error      a FAULT among the gates (feed lost/stale, relay mismatch, PA
+//              fault, Ultrabeam controller offline while in circuit) —
+//              independent of `enabled` (D7: tells the operator why an arm would
+//              be blocked). Normal transitions are NOT errors (console FAULTS).
+//   block      why the arm is open / about to open, including normal
+//              transitions ("band change settling", "ultrabeam moving",
+//              "permit off", "waiting for rx"); absent when armed and clear
+//   cmd_error  the last rejected set_enabled value, until a valid one arrives
 static void publishPaArmState(SlotMqtt& s) {
     JsonDocument doc;
     doc["ts"] = millis();
     doc["enabled"] = enabled;
-    doc["armed"] = armed;
+    doc["armed"] = arm::relayReadback;
     doc["device_online"] = true;
-    String err = currentPaArmError();
+    String err = armEval.fault ? armEval.fault : "";
+    String block = arm::blockReason(armEval, enabled);
     if (err.length() > 0) doc["error"] = err;
+    if (block.length() > 0) doc["block"] = block;
+    if (cmdError.length() > 0) doc["cmd_error"] = cmdError;
     String out;
     serializeJson(doc, out);
     s.publish("state", true, out.c_str());
 
     // Track what we just published so we can suppress duplicates on the heartbeat.
     lastPublishedEnabled = enabled;
-    lastPublishedArmed = armed;
+    lastPublishedArmed = arm::relayReadback;
     lastPublishedError = err;
+    lastPublishedBlock = block;
+    lastPublishedCmdError = cmdError;
 }
 
 // ---------------------------------------------------------------------------
@@ -354,7 +343,8 @@ static void publishPaArmState(SlotMqtt& s) {
 // ---------------------------------------------------------------------------
 // The M5 Stamp PLC has a 240x135 LCD and three buttons below it: A (left),
 // B (middle), C (right).  We draw four indicator lights for the relay states
-// and use B to toggle PA remote-on and C to toggle TRX remote-on.
+// and use A to toggle the arm permit, B to toggle PA remote-on and C to toggle
+// TRX remote-on.
 
 static void uiInit() {
     M5StamPLC.setBacklight(true);
@@ -386,15 +376,23 @@ static void drawSquareButton(int x, int y, int w, int h, bool on, const char* la
 static void drawStatusText() {
     auto& d = M5StamPLC.Display;
 
-    // Header line with connection + test label.
+    // Header line: arm status (ARMED / PERMIT off / BLOCKED) + link state.
     d.setTextDatum(top_left);
-    d.setTextColor(0xFFFFFF);
     d.setTextSize(2);
-    d.drawString("TEST", 4, 2);
+    if (arm::relayReadback) {
+        d.setTextColor(0x00FF00);
+        d.drawString("ARMED", 4, 2);
+    } else if (!enabled) {
+        d.setTextColor(0xAAAAAA);
+        d.drawString("PERMIT", 4, 2);
+    } else {
+        d.setTextColor(0xFF4040);
+        d.drawString("BLOCKED", 4, 2);
+    }
     d.setTextSize(1);
 
     bool wifiUp = (WiFi.status() == WL_CONNECTED);
-    String status = wifiUp ? (gSwitch && gSwitch->connected() ? "MQTT" : "WiFi") : "----";
+    String status = wifiUp ? (gPaArm && gPaArm->connected() ? "MQTT" : "WiFi") : "----";
     d.setTextDatum(top_right);
     d.setTextColor(wifiUp ? 0x00FF00 : 0xFF0000);
     d.setTextSize(2);
@@ -407,8 +405,9 @@ static void drawButtonLegend() {
     d.setTextDatum(bottom_center);
     d.setTextColor(0xAAAAAA);
     d.setTextSize(1);
-    d.drawString("B:PA", d.width() / 2 - 55, d.height() - 2);
-    d.drawString("C:TRX", d.width() / 2 + 55, d.height() - 2);
+    d.drawString("A:ARM", d.width() / 2 - 80, d.height() - 2);
+    d.drawString("B:PA", d.width() / 2, d.height() - 2);
+    d.drawString("C:TRX", d.width() / 2 + 80, d.height() - 2);
 }
 
 static void uiRender() {
@@ -443,11 +442,28 @@ static void uiRender() {
     drawSquareButton(startX + 1 * (btnW + gap), y, btnW, btnH, relayGet(RELAY_PA_REMOTE), "PA");
     drawSquareButton(startX + 2 * (btnW + gap), y, btnW, btnH, relayGet(RELAY_TRX_REMOTE), "TRX");
     drawSquareButton(startX + 3 * (btnW + gap), y, btnW, btnH, relayGet(RELAY_SPARE), "SP");
+
+    // Arm block reason under the buttons, so the cause is readable at the PLC.
+    d.fillRect(0, y + btnH + 4, d.width(), 14, 0x000000);
+    d.setTextDatum(top_center);
+    d.setTextSize(1);
+    d.setTextColor(0xFFFF80);
+    d.drawString(arm::blockReason(armEval, enabled), d.width() / 2, y + btnH + 6);
 }
 
 static void handleButtons() {
     static unsigned long lastBtnMs = 0;
     if (millis() - lastBtnMs < UI_BTN_DEBOUNCE_MS) return;
+
+    // BtnA (leftmost) toggles the arm PERMIT — manual arm / disarm at the PLC.
+    // It never forces relay 1: arming still needs every gate clear, the dwell
+    // and RX (arm.h); disarming opens the relay on the next pass.
+    if (M5StamPLC.BtnA.wasPressed()) {
+        lastBtnMs = millis();
+        enabled = !enabled;
+        cmdError = "";
+        publishPaArmPermit();
+    }
 
     // BtnB (middle) toggles PA remote power.
     if (M5StamPLC.BtnB.wasPressed()) {
@@ -472,21 +488,26 @@ static void handleButtons() {
 // ---------------------------------------------------------------------------
 SlotMqtt* gSwitch = nullptr;
 SlotMqtt* gPaArm = nullptr;
-bool switchConnectedOnce = false;
-bool paArmConnectedOnce = false;
 
-void onSwitchConnect() {
+// Connect hooks run inside SlotMqtt::onConnect (same call as the dial), after
+// /status online + /cmd subscribe — the R8.1 reconnect order.
+static bool onSwitchConnected() {
     publishSwitchMeta(*gSwitch);
     publishSwitchState(*gSwitch);
-    switchConnectedOnce = true;
+    return true;
 }
-void onPaArmConnect() {
+static bool onPaArmConnected() {
+    // Every input back to unknown/closed BEFORE the retained replay lands: the
+    // arm can only close on data received over this connection.
+    arm::invalidate();
+    if (permitEchoPending) publishPaArmPermit();  // un-echoed BtnA press wins over the stale retained intent
     publishPaArmMeta(*gPaArm);
     publishPaArmState(*gPaArm);
-    // (re)subscribe the radio + ant-switch state feeds for arm logic.
-    gPaArm->subscribeAbs(RADIO_BASE "/state");
-    gPaArm->subscribeAbs(ANT_SWITCH_BASE "/state");
-    paArmConnectedOnce = true;
+    bool ok = true;
+    for (int i = 0; i < arm::INPUT_TOPICS_COUNT; ++i) {
+        ok = gPaArm->subscribeAbs(arm::INPUT_TOPICS[i]) && ok;
+    }
+    return ok;
 }
 
 // ---------------------------------------------------------------------------
@@ -506,8 +527,12 @@ static void otaInit() {
     ArduinoOTA.setHostname(DEVICE_SERIAL);
     ArduinoOTA.setPassword(OTA_PASSWORD);
     ArduinoOTA.onStart([]() {
-        // Best-effort: drop the arm relay before rebooting into the update.
+        // Best-effort: drop the arm relay before rebooting into the update. Also
+        // clear the commanded state, so a FAILED update that returns to loop()
+        // re-arms only through the dwell + RX path.
         relaySet(RELAY_PA_ARM, false);
+        arm::relayCmd = false;
+        arm::closeOkValid = false;
     });
     ArduinoOTA.onError([](ota_error_t err) {
         // Errors are logged only; the main loop keeps running.
@@ -519,8 +544,8 @@ static void otaInit() {
 // ---------------------------------------------------------------------------
 // setup / loop
 // ---------------------------------------------------------------------------
-SlotMqtt switchSlot(SWITCH_BASE, "switch", handleSwitchCmd);
-SlotMqtt paArmSlot(PA_ARM_BASE, "pa-arm", handlePaArmCmd);
+SlotMqtt switchSlot(SWITCH_BASE, "switch", handleSwitchCmd, onSwitchConnected, MQTT_BUFFER_SIZE);
+SlotMqtt paArmSlot(PA_ARM_BASE, "pa-arm", handlePaArmCmd, onPaArmConnected, PA_ARM_MQTT_BUFFER_SIZE);
 
 void setup() {
     relayInit();
@@ -540,55 +565,60 @@ void loop() {
     // 2. Front-panel button toggles: B = PA remote-on, C = TRX remote-on.
     handleButtons();
 
-    // 3. WiFi — wait/reconnect.
+    // 3. WiFi + MQTT. The arm logic below runs on EVERY pass, link or not
+    //    (D1: it used to be skipped while WiFi was down, freezing relay 1).
     static unsigned long lastWifiCheck = 0;
-    if (WiFi.status() != WL_CONNECTED) {
+    static bool linkLost = false;
+    bool wifiUp = (WiFi.status() == WL_CONNECTED);
+    if (wifiUp) {
+        if (linkLost) {
+            // The inputs were invalidated during the outage; force a fresh
+            // session so the connect hook re-subscribes and the broker replays.
+            paArmSlot.drop();
+            switchSlot.drop();
+            linkLost = false;
+        }
+        // pa-arm first: the safety slot wins the shared reconnect backoff.
+        paArmSlot.loop();
+        switchSlot.loop();
+        ArduinoOTA.handle();
+    } else {
+        linkLost = true;
         if (millis() - lastWifiCheck > 5000) {
             lastWifiCheck = millis();
             WiFi.reconnect();
         }
-        uiRender();
-        delay(LOOP_DELAY_MS);  // slow poll while waiting for WiFi
-        return;
+    }
+    // A button permit change not yet echoed back: re-send it.
+    if (permitEchoPending && paArmSlot.connected() &&
+        millis() - permitPublishMs >= PERMIT_REPUBLISH_MS) {
+        publishPaArmPermit();
     }
 
-    // 4. Drive both slot MQTT state machines.
-    switchSlot.loop();
-    paArmSlot.loop();
+    // 4. No link ⇒ no supervision: every arm input drops to unknown/closed, so
+    //    relay 1 opens on this pass instead of holding its last position.
+    if (!wifiUp || !paArmSlot.connected()) arm::invalidate();
 
-    // 4a. Service ArduinoOTA so network firmware updates work.
-    ArduinoOTA.handle();
-
-    // 5. Connect-edge bookkeeping (publish meta + initial state + resub radio).
-    if (switchSlot.connected() && !switchConnectedOnce) onSwitchConnect();
-    if (!switchSlot.connected()) switchConnectedOnce = false;
-    if (paArmSlot.connected() && !paArmConnectedOnce) onPaArmConnect();
-    if (!paArmSlot.connected()) paArmConnectedOnce = false;
-
-    // 6. Arm logic: recompute every loop; publish /state immediately when
-    //    enabled, armed, or the blocking error changes, otherwise only on the
-    //    slow heartbeat. This prevents flooding the bus with identical
-    //    snapshots while the PA sits idle in RX.
+    // 5. Arm logic: recompute + drive relay 1 every pass; publish /state
+    //    immediately when enabled, armed, error, block or cmd_error change,
+    //    otherwise only on the slow heartbeat.
     static unsigned long lastArmPublish = 0;
-    bool armedChanged = recomputeArm(paArmSlot);
-    bool shouldPublish = false;
+    armEval = arm::recompute(enabled, millis());
     if (paArmSlot.connected()) {
-        String err = currentPaArmError();
-        if (armedChanged ||
-            enabled != lastPublishedEnabled ||
-            armed != lastPublishedArmed ||
-            err != lastPublishedError) {
-            shouldPublish = true;
-        } else if (millis() - lastArmPublish >= PA_ARM_HEARTBEAT_MS) {
-            shouldPublish = true;
-        }
-        if (shouldPublish) {
+        String err = armEval.fault ? armEval.fault : "";
+        String block = arm::blockReason(armEval, enabled);
+        if (enabled != lastPublishedEnabled ||
+            arm::relayReadback != lastPublishedArmed ||
+            err != lastPublishedError ||
+            block != lastPublishedBlock ||
+            cmdError != lastPublishedCmdError ||
+            millis() - lastArmPublish >= PA_ARM_HEARTBEAT_MS) {
             publishPaArmState(paArmSlot);
             lastArmPublish = millis();
         }
     }
 
-    // 7. Local LCD indicator lights.
+    // 6. Local LCD indicator lights.
     uiRender();
 
     delay(LOOP_DELAY_MS);  // ~20 Hz poll; keeps CPU cool vs. a tight 10 ms loop

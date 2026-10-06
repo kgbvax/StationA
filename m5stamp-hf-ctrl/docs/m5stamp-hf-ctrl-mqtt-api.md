@@ -5,7 +5,7 @@ M5 Stamp PLC #1 firmware. It implements **two** station integration-model
 slots — `muehle/hf/switch` and `muehle/hf/pa-arm` — from one physical PLC (a
 compound device; the shared `device{model,serial}` is the relationship, model
 §3). It is the authoritative on-the-wire contract — derived from
-`src/main.cpp`, `src/mqtt_slot.h`, and `src/config.h`.
+`src/main.cpp`, `src/arm.h`, `src/mqtt_slot.h`, and `src/config.h`.
 
 ---
 
@@ -13,9 +13,9 @@ compound device; the shared `device{model,serial}` is the relationship, model
 
 | Property | Value |
 |----------|-------|
-| Protocol | MQTT 3.1.1 (plain TCP, `192.168.1.139:1883`) |
+| Protocol | MQTT 3.1.1 (plain TCP, `MQTT_HOST` in `secrets.h` — the scmino broker `192.168.1.178:1883` since 2026-10-03) |
 | Authentication | Username/password (`hf` user) |
-| Clean session | false; retained `/cmd` is replayed on every reconnect (self-heal) |
+| Clean session | true (PubSubClient 2.8 forces it); every subscription is re-issued on each reconnect and retained `/cmd` + input snapshots are replayed (self-heal) |
 | Auto-reconnect | handled in `loop()` (WiFi + two MQTT clients) |
 | Client IDs | one per slot: `muehle-switch`, `muehle-pa-arm` |
 | Connections | **two** (one PubSubClient per slot, each with its own LWT) |
@@ -43,9 +43,10 @@ All topics are addressed `<site>/<station>/<slot>/<suffix>`. The site is
 `/cmd` is **retained** for both slots: they hold steady-state intent. On
 reconnect the broker replays the last command and the firmware re-applies it.
 
-The firmware also **subscribes** `muehle/hf/radio/state` and
-`muehle/hf/ant-switch/state` (on the pa-arm connection) for arm-logic inputs; it
-never publishes there.
+The firmware also **subscribes** the arm-logic inputs on the pa-arm connection
+(`/status` + `/state` of `hf/radio`, `hf/ant-switch`, `hf/ant-ctrl`,
+`hf/antenna-select`, `hf/pa`, `hf/tuner`, plus `hf/ant-ctrl/cmd`); it never
+publishes there.
 
 ---
 
@@ -97,6 +98,9 @@ marker). `device_online` is the PLC itself (true while it is publishing).
 { "action": "set_trx", "value": "off" }
 ```
 
+`value` is `"on"`/`"off"` (case-insensitive) or a JSON bool; any other value is
+dropped and the relay is left unchanged (it used to switch the relay off).
+
 Each drives the named relay and publishes a new `/state` with the readback
 position. `set_pa` drives relay 3; `set_trx` drives relay 4. The argument rides
 under the conventional `value` key (stationa /cmd convention).
@@ -117,13 +121,18 @@ arm logic embedded in the firmware. Same device as `hf/switch` (compound).
   "device": { "model": "M5Stamp PLC", "serial": "m5stamp-plc-1" },
   "link": "wifi",
   "host": "embedded",
-  "capabilities": { "fail_safe": "open", "heartbeat": true, "relay": 1 },
+  "capabilities": {
+    "fail_safe": "open", "heartbeat": true, "relay": 1,
+    "inputs": ["hf/radio", "hf/ant-switch", "hf/ant-ctrl", "hf/antenna-select", "hf/pa", "hf/tuner"],
+    "ultrabeam_port": "port4"
+  },
   "expose": {
     "device": { "name": "M5Stamp PLC", "model": "M5Stamp PLC", "manufacturer": "M5Stack" },
     "fields": [
       { "key": "armed",   "name": "Armed", "type": "boolean", "writable": false },
       { "key": "enabled", "name": "Enabled (arm permit)", "type": "boolean", "writable": true,
-        "command": { "action": "set_enabled", "value_key": "value", "value_type": "boolean" } }
+        "command": { "action": "set_enabled", "value_key": "value", "value_type": "string" } },
+      { "key": "block",   "name": "Arm blocked by", "type": "string", "writable": false }
     ]
   }
 }
@@ -132,20 +141,19 @@ arm logic embedded in the firmware. Same device as `hf/switch` (compound).
 ### `/state`
 
 ```json
-{ "ts": 123456, "enabled": true, "armed": false, "device_online": true, "error": "radio tuning" }
+{ "ts": 123456, "enabled": true, "armed": false, "device_online": true,
+  "block": "ultrabeam moving" }
 ```
 
 | Field | Type | Meaning |
 |-------|------|---------|
 | `ts` | number | PLC uptime ms (freshness marker) |
-| `enabled` | bool | software arm-permit (last `set_enabled` cmd) |
-| `armed` | bool | **derived** actual relay state — see arm logic below; never commanded directly |
+| `enabled` | bool | the arm **permit** (last `set_enabled` cmd or front-panel A toggle) |
+| `armed` | bool | relay 1 **readback** (AW9523 output level) — derived, never commanded |
 | `device_online` | bool | the PLC (true while publishing) |
-| `error` | string, omitempty | why the arm is dropped: `radio offline` / `radio feed stale` / `radio tuning` / `band not safe` / `antenna grounded` (first failing check in priority order) |
-
-`error` is omitted when `armed` would be true (i.e. when enabled and all
-safety conditions hold). When `enabled` is false, `armed` is false with no
-`error` (that is the operator's intent, not a fault).
+| `error` | string, omitempty | a **fault** among the gates: `relay mismatch`, `radio offline`, `radio feed stale`, `antenna switch offline`, `ultrabeam offline` (only while the Ultrabeam is in circuit), `pa fault`. Published whether or not `enabled` (D7, decided: it tells the operator why an arm *would* be blocked). Normal transitions are never `error` — the console turns `error` into FAULTS rows |
+| `block` | string, omitempty | why the arm is open or about to open: the first failing hazard gate, else the first readiness gate, else `permit off`, `waiting for rx` or `settling` (close dwell). Absent when armed and clear |
+| `cmd_error` | string, omitempty | the last rejected `set_enabled` (`set_enabled: bad value`); cleared by the next valid one |
 
 ### `/cmd`
 
@@ -154,31 +162,83 @@ safety conditions hold). When `enabled` is false, `armed` is false with no
 { "action": "set_enabled", "value": "false" }
 ```
 
-There is **no** `arm` action — `armed` is derived, never commanded (§6
+`value` is `"true"`/`"false"` (case-insensitive) or a JSON bool. Anything else
+leaves the permit unchanged and sets `/state.cmd_error` — never a silent disarm
+(D5). There is **no** `arm` action — `armed` is derived, never commanded (§6
 software-arm-permit AND hardware key). `set_enabled` only sets the permit; the
 firmware arms when safe and drops automatically when not.
 
-### Arm logic (embedded)
+**Front panel:** button **A** (leftmost) toggles the permit locally and
+publishes it as the retained `set_enabled` intent (the same wire form as
+powerseq). A press made while the pa-arm connection is down is re-published on
+reconnect, so the broker's older retained intent cannot revert it. Like `/cmd`,
+it never forces the relay — every gate still applies.
+
+### Arm logic (embedded, `src/arm.h`)
 
 ```
-armed = enabled ∧ radio_online ∧ ¬radio.tuning ∧ band_safe ∧ heartbeat ∧ antenna_ready
+close relay 1  ⇐  (enabled ∧ every gate clear ∧ radio.tx == "rx") held continuously for ARM_CLOSE_DWELL_MS (1 s)
+open  relay 1  ⇐  ¬enabled ∨ any HAZARD gate ∨ (any READINESS gate ∧ radio in RX)
 ```
 
-| Input | Source | Meaning |
-|-------|--------|---------|
-| `enabled` | `set_enabled` /cmd | operator/sequencer arm permit |
-| `radio_online` | `hf/radio/state` `device_online` | the radio (flexbridge) is up |
-| `radio.tuning` | `hf/radio/state` `tuning` | a tune cycle is in progress → drop |
-| `band_safe` | `hf/radio/state` `band` ∈ {160m,80m,60m,40m,30m,20m,17m,15m,12m,10m,6m} | a band the PA can amplify |
-| `heartbeat` | `hf/radio/state` received within `RADIO_HEARTBEAT_MS` (10 s) | the radio feed is live |
-| `antenna_ready` | `hf/ant-switch/state` `selected` ≠ `off` | an antenna is in circuit (not the grounded `off` position) |
+**HAZARD** gates open the relay at once, even while transmitting — RF is (or
+is about to be) going somewhere unsafe. **READINESS** gates block closing and
+open a closed relay only in RX — the station is still following a change or a
+supervising feed is down, and hot-unkeying the PA under drive for bookkeeping
+is worse than finishing the over (model §6: a slow arm permit ANDed with the
+hardware key line).
 
-The relay is energized **only** when `armed` is true; any failure de-energizes
-it → open → PA disabled (fail-safe-open). Loss of 13.8 V (which powers the PLC)
-or a PLC crash drops the relay open by hardware. The firmware subscribes
-`muehle/hf/radio/state` and `muehle/hf/ant-switch/state` on the pa-arm connection
-and dispatches them by topic in `handlePaArmCmd` (`/radio/state` → radio inputs,
-`/ant-switch/state` → `antenna_ready`, `/cmd` → set_enabled).
+| Gate | Class | Source | Blocks when | `block` text |
+|------|-------|--------|-------------|--------------|
+| relay | hazard, fault | relay 1 readback (AW9523 output level, not the contacts) | an open relay still reading closed after 3 rewrites, or 3 confirmed drops of a closed relay (a drop is acted on only after 3 consecutive open readbacks — one failed I²C read never unkeys the PA; a dropped relay re-closes only via dwell + RX). Clears after 20 consistent passes; drops are forgiven after 60 s held closed | `relay mismatch` |
+| radio live | hazard, fault | `hf/radio/status` + `/state.device_online` + heartbeat | status ≠ online, or no **new** radio `/state` within 10 s, or device_online false | `radio offline` / `radio feed stale` |
+| tuning | hazard | `hf/radio/state.tuning` | true (missing ⇒ true) | `radio tuning` |
+| band | hazard | `hf/radio/state.freq_hz` → band | band (derived from freq, flexbridge edges + 2 kHz exit hysteresis) ∉ {160,80,40,30,20,17,15,12,10,6 m} — **60 m excluded** (15 W EIRP) | `band not safe` |
+| switch live | readiness, fault | `hf/ant-switch/status` + `/state` | offline or no state since subscribe | `antenna switch offline` |
+| grounded | hazard | `hf/ant-switch/state.selected` | `off` or empty | `antenna grounded` |
+| switching | hazard | `hf/ant-switch/state.settled` | false (missing ⇒ false) — relays travelling | `antenna switching` |
+| Ultrabeam\* retracted | hazard | `hf/ant-ctrl/state.retracted` ∨ a seen `retract` cmd | ultrabridge's latch (set by a successful retract, cleared by the next accepted freq/direction change; ultrabridge publishes /state at once after any accepted command, MQTT or web UI), plus the PLC's own cmd latch — cleared by the next motion cmd or by `retracted:false` after the blind window | `ultrabeam retracted` |
+| Ultrabeam\* commanded | hazard | `hf/ant-ctrl/cmd` | 2.5 s after a command that will drive the motors, using ultrabridge's own rules: `frequency` / `band` (band centre) ≥ 25 kHz from current, any `direction`, `retract` — covers ultrabridge's 2 s poll blind spot | `ultrabeam commanded` |
+| Ultrabeam\* live | readiness, fault | `hf/ant-ctrl/status` + `/state.device_online` | offline | `ultrabeam offline` |
+| Ultrabeam\* moving | hazard | `hf/ant-ctrl/state.moving` | true (missing ⇒ true) | `ultrabeam moving` |
+| Ultrabeam\* tuned | hazard | `hf/ant-ctrl/state.freq_hz` vs radio | \|⌊radio kHz⌋ − ub kHz\| ≥ 25 (ultrabridge's own deadband — exactly when it would retune) | `ultrabeam not tuned` |
+| Ultrabeam\* settle | readiness | edges | 3 s after moving→false, a freq/direction change, a motion cmd, or switching onto the Ultrabeam port | `ultrabeam settling` |
+| PA live | readiness | `hf/pa/status` + `/state.{device_online,fault,keyed}` | offline, or no live telemetry yet (empty `fault`/`keyed` — acombridge's open-time snapshot); barefoot is unaffected — the relay is only in the PA key line | `pa offline` |
+| PA fault | hazard, fault | `hf/pa/state.fault` | ≠ `none` | `pa fault` |
+| ATU tune | hazard | `hf/tuner/status` + `/state.settling` | tuner live and settling (an offline tuner does not block) | `tuner tuning` |
+| band change | readiness | radio band edge | 3 s after the radio moves to a different ham band | `band change settling` |
+| converged | readiness | `hf/antenna-select/status` + `/state.target` | reconciler online, target set and ≠ `ant-switch.selected` (a port move is pending; empty target = manual mode, no opinion) | `antenna not converged` |
+
+\* Ultrabeam gates apply only while `ant-switch.selected == ULTRABEAM_PORT`
+(`port4`, `config.h`; the station docs still say port 3 — known issue O14).
+
+**Liveness.** Only flexbridge heartbeats its `/state` (5 s), so only the radio
+feed has an age window; its heartbeat is refreshed only by a `ts` that differs
+from the last one seen and is not the first message after a subscribe — a
+retained replay (resubscribe, or the `.50`↔`.178` bridge reconnecting) cannot
+revive a dead feed. The other producers publish change-only; their liveness is
+the two-layer rule (`/status` LWT ∧ `device_online`). On WiFi loss, a pa-arm
+disconnect, and each (re)subscribe, every input resets to the closed side, so
+the arm only closes on data received over the current connection.
+
+**Residuals.** (1) The `.178`↔`.50` mosquitto bridge (`topic muehle/# both`,
+clean session) re-delivers `.50`'s retained topics when it reconnects — a
+permit changed on `.178` while the bridge was down can be reverted by `.50`'s
+older retained `set_enabled` (true of every retained `/cmd` during the mirror
+period). (2) ultrabridge's `retracted` latch is process memory: an ultrabridge
+restart after a retract reports `false` until the next retract. (3) The
+change-only producers have no age window — a hung-but-connected ultrabridge or
+ant-switch keeps its last state until its LWT fires.
+
+**Not gated (deliberately):** PA band vs radio band and ATU in-line state —
+antennaselect sends `set_band`/`set_inline` once and never re-sends, so a gate
+would deadlock after a PA or ATR power cycle; the ACOM's own drive-frequency
+check faults on a band mismatch (→ `pa fault`). Also not gated: rotator motion
+(no RF hazard) and `muehle/power/psu-13v8` (R4.9 — the PLC runs from it).
+
+The relay is energized **only** when the logic says close; it is re-driven and
+read back every 50 ms loop pass. Loss of 13.8 V (which powers the PLC) or a PLC
+crash drops it open by hardware.
 
 ---
 

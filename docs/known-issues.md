@@ -98,19 +98,19 @@ Code-check verdict (2026-09-03): **partially mitigated in the console only** —
 
 From PRD §2.3 (and repeated in §7.2): "the main loop now early-returns before re-evaluating `armed` when WiFi is down. The relay *freezes* in its last position for the outage duration — a contract violation of \"any failure drops the relay\". The arm evaluation must run regardless of link state. The safe direction drops the arm. Never hold the arm."
 
-Code-check verdict: STILL OPEN — `m5stamp-hf-ctrl/src/main.cpp` loop step 3 early-returns while `WiFi.status() != WL_CONNECTED`, so `recomputeArm` never runs during an outage (relay holds last position). Also tracked by the m5stamp PRD extractor; treat as duplicate there, keep one copy.
+Code-check verdict: FIXED 2026-10-06 (branch claude/pa-arm-gates, `src/arm.h`) — the arm is recomputed every loop pass with or without a link, and WiFi loss / pa-arm disconnect resets every input to closed, so the relay opens on that pass. Previously: `m5stamp-hf-ctrl/src/main.cpp` loop step 3 early-returned while `WiFi.status() != WL_CONNECTED`, so `recomputeArm` never runs during an outage (relay holds last position). Also tracked by the m5stamp PRD extractor; treat as duplicate there, keep one copy.
 
 ## [defect] Silent disarm on a JSON-boolean /cmd value
 
 From PRD §2.3: "the parser extracts `/cmd` values as JSON strings. A sender publishing `\"value\": true` — a JSON boolean — yields the empty string. For `set_enabled` that **silently disarms**. The command parser must either accept JSON booleans or reject the command loudly. Silent disarm on a well-formed-looking payload is a defect."
 
-Code-check verdict: STILL OPEN — `m5stamp-hf-ctrl/src/main.cpp` `parseCmd` does `value = doc["value"] | \"\"` with no type check, and `handlePaArmCmd` does `enabled = (value == \"true\")`; a JSON boolean `true` yields a non-`"true"` string, i.e. disarm.
+Code-check verdict: FIXED 2026-10-06 (branch claude/pa-arm-gates, `src/arm.h`) — `parseBoolish` accepts a JSON bool or "true"/"false" (case-insensitive); anything else leaves the permit unchanged and sets `/state.cmd_error`. Previously: `parseCmd` did `value = doc["value"] | \"\"` with no type check, and `handlePaArmCmd` does `enabled = (value == \"true\")`; a JSON boolean `true` yields a non-`"true"` string, i.e. disarm.
 
 ## [defect] antenna_ready input has no staleness bound
 
 From PRD §2.3: "the antenna-switch input has no freshness window, so a stale \"ready\" stays ready forever. The ant-switch slot's LWT is not used here either. The arm can therefore close on data from a dead slot whose retained state shows a selected antenna. The antenna-ready input must carry a freshness bound and/or the `/status` liveness layer."
 
-Code-check verdict: STILL OPEN — `main.cpp` reads `antennaReady = (sel != "" && sel != "off")` from the ant-switch snapshot with no freshness timestamp and no `/status` subscription on the ant-switch slot; only the radio input is freshness-gated.
+Code-check verdict: FIXED 2026-10-06 (branch claude/pa-arm-gates, `src/arm.h`) — the ant-switch `/status` LWT is subscribed and ANDed in (two-layer liveness; the producer is change-only, so no age window), `settled` is honoured, and inputs reset on every reconnect. Previously: `main.cpp` read `antennaReady = (sel != "" && sel != "off")` from the ant-switch snapshot with no freshness timestamp and no `/status` subscription on the ant-switch slot; only the radio input is freshness-gated.
 
 ## [defect] Missing `tuning` field defaults fail-open
 
@@ -118,7 +118,7 @@ From PRD §2.2/REQ-S13: "One input defaults the other way: a missing `tuning` fi
 
 From PRD §8 item 16: "Either default the missing field to `true` (fail closed — a deliberate contract change against the deployed firmware) or keep the deployed default and document the fail-open risk."
 
-Code-check verdict: STILL OPEN — `main.cpp` `handleRadioState`: `radioTuning = doc["tuning"] | false;` (absent key → false → permissive).
+Code-check verdict: FIXED 2026-10-06 (branch claude/pa-arm-gates, `src/arm.h`) — missing `tuning` now defaults to true (fail closed). Previously: `radioTuning = doc["tuning"] | false;` (absent key → false → permissive).
 
 ## [decision] Ultrabeam and fan-dipole switch ports: the repo contradicts itself
 
@@ -130,11 +130,11 @@ Code-check verdict: STILL OPEN — `docs/station-integration-model.md` says `ant
 
 From PRD §2.2/§8 item 17: "the PLC firmware's `SAFE_BANDS` list contains 11 bands including `60m`. The ACOM 1200S covers 10 bands and has no `60m` filter (`set_band` on the PA bridge accepts the same 10). Either drop `60m` from `band_safe`, or check on hardware and document why `60m` operation with the PA is safe. Until resolved, the arm can close on a band the PA does not cover."
 
-Code-check verdict: STILL OPEN — `m5stamp-hf-ctrl/src/config.h` `SAFE_BANDS[]` = `160m, 80m, 60m, 40m, 30m, 20m, 17m, 15m, 12m, 10m, 6m` (11 entries, `60m` present).
+Code-check verdict: DECIDED 2026-10-06 — `60m` removed from `SAFE_BANDS` (15 W EIRP allocation, no ACOM 60m band); the band is now derived from `freq_hz`. Previously: `SAFE_BANDS[]` = `160m, 80m, 60m, 40m, 30m, 20m, 17m, 15m, 12m, 10m, 6m` (11 entries, `60m` present).
 
 ## [decision] Arm evaluation during a link outage — deliberate contract change needed
 
-From PRD §8 item 4: "current code freezes the relay (§7.2). The recommendation is compute the arm condition always — drop is the safe direction. This is a deliberate contract change. A reimplementation must make it explicitly." Related §8 item 3: the error reason for heartbeat staleness ("radio feed stale" is now the shipped string; the related sub-questions — whether a stale `antenna_ready` must produce an error, and whether the arm must use the ant-switch `/status` LWT — remain undecided).
+From PRD §8 item 4: "current code freezes the relay (§7.2). The recommendation is compute the arm condition always — drop is the safe direction. This is a deliberate contract change. A reimplementation must make it explicitly." **DECIDED 2026-10-06: compute always; drop on link loss** (`src/arm.h`). Related §8 item 3: the error reason for heartbeat staleness ("radio feed stale" is now the shipped string; the related sub-questions — whether a stale `antenna_ready` must produce an error, and whether the arm must use the ant-switch `/status` LWT — remain undecided).
 
 ## [requirement] REQ-S6 — handler isolation (messaging-plane robustness)
 

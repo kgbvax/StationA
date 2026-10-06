@@ -12,14 +12,15 @@ relationship, model §3):
 | `muehle/hf/pa-arm` | `pa-arm` | 1 (arm) | the PA-enable arm relay, **fail-safe-open**, with the arm logic embedded |
 
 Relay 2 is spare. The PLC is the model's planned embedded safety node (§6,
-§11.3, now realized here): it subscribes `hf/radio/state` and `hf/ant-switch/state`
-and computes
-
-```
-armed = enabled ∧ radio_online ∧ ¬radio.tuning ∧ band_safe ∧ heartbeat ∧ antenna_ready
-```
-
-driving relay 1 so that **any** failure drops the relay open → PA disabled.
+§11.3, now realized here): it subscribes the radio, antenna switch, Ultrabeam
+controller (`hf/ant-ctrl` state **and** cmd), antenna reconciler, PA and tuner
+feeds and closes relay 1 only when the permit is on and every gate has been
+clear for 1 s with the radio in RX. Hazard gates (radio lost/stale/tuning,
+unsafe band, antenna grounded/switching, Ultrabeam moving/commanded/retracted/
+off-frequency, PA fault, ATU tuning) open it at once; readiness gates (band
+change hold-off, Ultrabeam settle, antenna move pending, a supervising feed
+offline) block closing and open it only in RX. Full table:
+`docs/m5stamp-hf-ctrl-mqtt-api.md` §4.
 
 This is embedded firmware (Arduino C++ / PlatformIO), not a Go service on
 shari. It therefore uses its **own gitignored secrets file** (`src/secrets.h`,
@@ -63,10 +64,13 @@ in `main.cpp`.
 **Data flow:** MQTT bus → PubSubClient → main.cpp (state + arm logic) → relay
 HAL (M5StamPLC) → relays; and relays read back → main.cpp → MQTT.
 
-1. `src/main.cpp` — WiFi connect, the two slot state machines, the embedded arm
-   logic, and the `/meta` + `/state` publishers for both slots.
+1. `src/main.cpp` — WiFi connect, the two slot state machines, the `/cmd`
+   handlers, the front-panel buttons/LCD, and the `/meta` + `/state` publishers.
+1a. `src/arm.h` — the pa-arm interlock: input feed handlers, gate evaluation
+   (hazard vs readiness), relay 1 drive + readback check.
 2. `src/mqtt_slot.h` — `SlotMqtt`: one MQTT connection per slot, each with its
-   own **LWT** on its own `<slot>/status`. Two slots ⇒ two connections, so a PLC
+   own **LWT** on its own `<slot>/status`. A per-slot connect hook runs in the
+   same call as the dial, so the pa-arm input subscriptions are never skipped. Two slots ⇒ two connections, so a PLC
    crash fires **both** slots' wills at once (no stale-online gap) — the embedded
    analog of the Go compound bridge's one-client-per-slot decision (MQTT 3.1.1
    allows one Will per client).
@@ -77,16 +81,17 @@ HAL (M5StamPLC) → relays; and relays read back → main.cpp → MQTT.
 5. `src/secrets.h` (gitignored) / `src/secrets.example.h` — WiFi + MQTT
    credentials + device identity.
 
-**Arm logic** (`recomputeArm`): runs every `loop()` iteration. `armed` is
-recomputed from `enabled ∧ radio_online ∧ ¬tuning ∧ bandSafe ∧ heartbeat ∧
-antenna_ready` and drives relay 1 (energize to arm, de-energize/open on any
-drop). The radio inputs (`device_online`, `tuning`, `band`) come from
-`hf/radio/state` and `antenna_ready` from `hf/ant-switch/state` (`selected` ≠
-`off`), both subscribed on the pa-arm slot's connection (dispatched by topic in
-`handlePaArmCmd`). Heartbeat: if no `/state` arrives within
-`RADIO_HEARTBEAT_MS` (10 s) the arm drops. `band_safe` checks `band` against the
-ACOM 1200S band set (160m..6m). `antenna_ready` drops the arm when the antenna
-switch is in the grounded `off` position (walk-away lightning protection).
+**Arm logic** (`arm::recompute`, every `loop()` pass, link or not): evaluates
+the gates, applies the close dwell / RX rule, drives relay 1 and checks the
+readback. On WiFi loss or a pa-arm disconnect every input drops to unknown, so
+the relay opens on that pass. Only the radio feed has an age window (10 s,
+fresh `ts` only — flexbridge heartbeats every 5 s); the change-only producers
+are supervised by their `/status` LWT ∧ `device_online`. The Ultrabeam gates
+apply only while `ant-switch.selected == ULTRABEAM_PORT` (`port4`).
+
+**Front panel:** A = arm permit toggle (published retained to `pa-arm/cmd`;
+never forces the relay), B = PA remote-on, C = TRX remote-on. The LCD header
+shows ARMED / PERMIT / BLOCKED and the block reason under the relay lights.
 
 **Fail-safe-open:** relay 1 is energized ONLY to arm. Power loss, PLC crash, or
 any safety failure de-energizes it → open → PA disabled. On cold boot
@@ -110,7 +115,7 @@ muehle/hf/switch/status   retained  online | offline (LWT — this PLC, this slo
 muehle/hf/switch/cmd      retained   set_pa | set_trx intent (self-healing §8)
 
 muehle/hf/pa-arm/meta     retained  birth certificate (capabilities + expose)
-muehle/hf/pa-arm/state    retained  { enabled, armed, device_online, ts, error? }
+muehle/hf/pa-arm/state    retained  { enabled, armed, device_online, ts, error?, block?, cmd_error? }
 muehle/hf/pa-arm/status   retained  online | offline (LWT — this PLC, this slot)
 muehle/hf/pa-arm/cmd      retained   set_enabled intent (self-healing §8)
 ```
@@ -120,9 +125,10 @@ reconnect the broker replays the last command and the firmware re-applies it.
 The arm relay is **never** commanded directly — `armed` is derived. See
 `docs/m5stamp-hf-ctrl-mqtt-api.md` for the full on-the-wire contract.
 
-The firmware also **subscribes** `muehle/hf/radio/state` and
-`muehle/hf/ant-switch/state` (on the pa-arm connection) for the arm-logic
-inputs; it does not publish there.
+The firmware also **subscribes** (on the pa-arm connection) `/status` + `/state`
+of `hf/radio`, `hf/ant-switch`, `hf/ant-ctrl`, `hf/antenna-select`, `hf/pa`,
+`hf/tuner`, and `hf/ant-ctrl/cmd`, for the arm-logic inputs; it does not
+publish there.
 
 ---
 
