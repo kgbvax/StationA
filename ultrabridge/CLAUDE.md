@@ -74,7 +74,7 @@ muehle/hf/ant-ctrl/cmd       retained  one-shot command — cleared after execut
 ```
 
 State fields: `ts`, `freq_hz` (Hz), `band`, `direction` (`forward`/`reverse`/`bidirectional`),
-`moving` (bool), `device_online` (bool, `true` while the RCU-06 is reachable, `false` when
+`moving` (bool), `retracted` (bool — latched by a successful retract, cleared by the next accepted frequency/direction change; bridge-side, lost on restart; the PA arm on PLC #1 blocks on it), `device_online` (bool, `true` while the RCU-06 is reachable, `false` when
 not — always present), `error` (string, omitempty).
 
 `direction` is deliberately not called `mode` — on the station bus `mode` is the

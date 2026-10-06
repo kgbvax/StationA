@@ -137,12 +137,12 @@ func TestMetaPayloadExpose(t *testing.T) {
 	// fields: every writable field must carry a command; every enum options_ref must
 	// resolve to a non-empty list in capabilities.
 	fields, _ := expose["fields"].([]map[string]any)
-	if len(fields) != 6 {
-		t.Fatalf("expose.fields len = %d, want 6", len(fields))
+	if len(fields) != 7 {
+		t.Fatalf("expose.fields len = %d, want 7", len(fields))
 	}
 	wantWritable := map[string]bool{
 		"freq_hz": true, "band": true, "direction": true,
-		"moving": false, "device_online": false, "error": false,
+		"moving": false, "retracted": false, "device_online": false, "error": false,
 	}
 	for _, f := range fields {
 		key, _ := f["key"].(string)

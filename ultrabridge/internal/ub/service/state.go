@@ -12,4 +12,9 @@ type State struct {
 	UpdatedAt    time.Time `json:"updated_at"`
 	Offline      bool      `json:"offline"`
 	LastError    string    `json:"last_error,omitempty"`
+	// Retracted latches true when a retract command succeeds and clears when a
+	// change-frequency command (new frequency or direction) is accepted. The RCU-06
+	// status reply carries no retract flag, so this is bridge-side knowledge: it is
+	// lost on a bridge restart. The PA arm (PLC #1) blocks on it.
+	Retracted bool `json:"retracted"`
 }

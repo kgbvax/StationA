@@ -120,6 +120,9 @@ func main() {
 		// renders discovery from /meta.expose instead.
 		mqttClient.PublishDiscoveryIfEnabled()
 		mqttClient.BindCommands(ctx)
+		// Publish /state right after any accepted command (MQTT or web UI), not at
+		// the next 2 s poll — the PA arm on PLC #1 gates on retracted/freq changes.
+		ctrl.SetOnChange(mqttClient.PublishState)
 	}
 
 	pollCtx, cancelPoll := context.WithCancel(ctx)

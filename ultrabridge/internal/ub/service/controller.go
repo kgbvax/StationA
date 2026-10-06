@@ -20,6 +20,22 @@ type Controller struct {
 
 	mu    sync.RWMutex
 	state State
+
+	// onChange, when set, is called after every command the RCU-06 accepted
+	// (retract, change-frequency) with the refreshed state — whichever caller
+	// issued it (MQTT /cmd, web UI). It lets the bridge publish /state at once
+	// instead of at the next 2 s poll: the PA arm (PLC #1) must see a move or a
+	// retract before the operator can key into it.
+	onChange func(State)
+}
+
+// SetOnChange installs the post-command hook. Call once at startup.
+func (c *Controller) SetOnChange(fn func(State)) { c.onChange = fn }
+
+func (c *Controller) notifyChange() {
+	if c.onChange != nil {
+		c.onChange(c.State())
+	}
 }
 
 // freqDeadbandKHz is the minimum frequency delta that is actually sent to the RCU-06.
@@ -62,7 +78,8 @@ func (c *Controller) Refresh(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	wasOffline := c.State().Offline
+	prev := c.State()
+	wasOffline := prev.Offline
 	c.setState(State{
 		FrequencyKHz: gs.FrequencyKHz,
 		BandIndex:    gs.BandIndex,
@@ -71,6 +88,7 @@ func (c *Controller) Refresh(ctx context.Context) error {
 		MotorsMoving: gs.MotorBits != 0,
 		MotorBits:    gs.MotorBits,
 		UpdatedAt:    time.Now(),
+		Retracted:    prev.Retracted, // not in the status reply — carry the latch
 	})
 	if wasOffline {
 		// Recovery from a device_offline=false stretch: edge-triggered so the
@@ -115,6 +133,8 @@ func (c *Controller) Retract(ctx context.Context) error {
 	if pkt.Com != protocol.ReplyOK {
 		return fmt.Errorf("retract reply com=%d", pkt.Com)
 	}
+	c.setRetracted(true)
+	defer c.notifyChange()
 	return c.Refresh(ctx)
 }
 
@@ -155,6 +175,8 @@ func (c *Controller) sendFrequency(ctx context.Context, frequencyKHz uint16, mod
 		}
 		return fmt.Errorf("frequency reply com=%d", pkt.Com)
 	}
+	c.setRetracted(false) // the elements are driven back out to the new setting
+	defer c.notifyChange()
 	return c.Refresh(ctx)
 }
 
@@ -176,6 +198,12 @@ func (c *Controller) SetMode(ctx context.Context, mode string) error {
 	// Direction change at the current frequency: bypass the SetFrequency deadband so
 	// the direction byte always reaches the controller.
 	return c.sendFrequency(ctx, state.FrequencyKHz, modeByte)
+}
+
+func (c *Controller) setRetracted(v bool) {
+	c.mu.Lock()
+	c.state.Retracted = v
+	c.mu.Unlock()
 }
 
 func (c *Controller) setOffline(err error) {

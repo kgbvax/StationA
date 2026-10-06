@@ -87,6 +87,7 @@ type publishedState struct {
 	Band      string
 	Mode      string
 	Moving    bool
+	Retracted bool
 	Offline   bool
 	LastError string
 }
@@ -100,6 +101,10 @@ type statePayload struct {
 	// radio-mode vocabulary (cw/usb/lsb/...), a different concept (§4).
 	Direction string `json:"direction"`
 	Moving    bool   `json:"moving"`
+	// Retracted is true after a successful retract until the next accepted
+	// frequency/direction change (bridge-side latch, lost on restart). The PA arm
+	// on PLC #1 treats a retracted Ultrabeam as not tuned.
+	Retracted bool `json:"retracted"`
 	// DeviceOnline is the canonical device-reachability field (model §3): true while the
 	// RCU-06 is reachable over serial, false when it is not (and the bridge itself is
 	// still up). Published on every state snapshot so consumers (HA, historians) can
@@ -229,6 +234,7 @@ func (c *Client) PublishState(state service.State) {
 		Band:         snap.Band,
 		Direction:    snap.Mode,
 		Moving:       snap.Moving,
+		Retracted:    snap.Retracted,
 		DeviceOnline: !snap.Offline,
 		Error:        snap.LastError,
 	}
@@ -290,6 +296,7 @@ func (c *Client) metaPayload() map[string]any {
 					"command":  map[string]any{"action": "direction", "value_key": "value", "value_type": "string"},
 				},
 				{"key": "moving", "name": "Moving", "type": "boolean"},
+				{"key": "retracted", "name": "Retracted", "type": "boolean"},
 				// device_online and error are read-only diagnostics: RCU-06 reachability
 				// (binary_sensor) and the last error string (sensor). The bridge stays up
 				// (/status online) while the device is down, so these surface device health
@@ -320,6 +327,7 @@ func stateSnapshot(state service.State) publishedState {
 		Band:      state.BandName,
 		Mode:      state.ModeName,
 		Moving:    state.MotorsMoving,
+		Retracted: state.Retracted,
 		Offline:   state.Offline,
 		LastError: state.LastError,
 	}
