@@ -75,6 +75,14 @@ const expectedSlots = [
   'muehle/uhf/radio',
 ];
 
+/// Accessory slots, treated like the antenna cam (`muehle/hf/vhfcam`): not in
+/// [expectedSlots], and their device side being down is a normal state, not
+/// a station fault. `uhf/sat-track` fronts the OscarWatch tracker app on the
+/// shack PC — closing OscarWatch flips device_online false and sets
+/// /state.error, which must not land on the faults bar. A dead bridge
+/// (/status offline) is still reported like any other.
+const optionalSlots = {'muehle/uhf/sat-track'};
+
 String cmdPayload(String action, dynamic value) =>
     jsonEncode({'action': action, 'value': value});
 

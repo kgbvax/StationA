@@ -4,7 +4,7 @@ import 'dart:convert';
 import 'package:clock/clock.dart';
 import 'package:flutter/foundation.dart';
 
-import 'wiring.dart' show expectedSlots;
+import 'wiring.dart' show expectedSlots, optionalSlots;
 
 /// Whether an HF carrier is up, as far as the bus can tell.
 enum RfState { rx, tune, tx }
@@ -225,6 +225,7 @@ class BusStore extends ChangeNotifier {
   }
 
   void _updateFaultHistory(String addr, Map<String, dynamic>? state) {
+    if (optionalSlots.contains(addr)) return;
     final fault = _stringFrom(state?['fault']);
     final error = _stringFrom(state?['error']);
     final ts = _stringFrom(state?['ts']) ?? DateTime.now().toIso8601String();
@@ -300,9 +301,10 @@ class BusStore extends ChangeNotifier {
     for (final s in _slots.values) {
       if (s.status != 'online') {
         out.add('${s.address}: bridge down');
-      } else if (!s.sessionSlot && !s.deviceOnline) {
+      } else if (!s.sessionSlot && !s.deviceOnline && !optionalSlots.contains(s.address)) {
         // sessionSlot devices are exempt: device_online:false is their
-        // healthy idle (see [Slot.sessionSlot]).
+        // healthy idle (see [Slot.sessionSlot]); optional slots likewise
+        // (see [optionalSlots]).
         out.add('${s.address}: device unreachable');
       }
     }
@@ -329,7 +331,7 @@ class BusStore extends ChangeNotifier {
     for (final s in _slots.values) {
       if (s.status != 'online') {
         since[s.address] = s.statusChangedAt;
-      } else if (!s.sessionSlot && !s.deviceOnline) {
+      } else if (!s.sessionSlot && !s.deviceOnline && !optionalSlots.contains(s.address)) {
         since[s.address] = s.deviceChangedAt ?? s.statusChangedAt;
       }
     }

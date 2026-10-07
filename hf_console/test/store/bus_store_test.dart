@@ -140,6 +140,37 @@ void main() {
     });
   });
 
+  group('optional slots (sat-track, like the cam)', () {
+    Map<String, dynamic> trackerClosed() => {
+          'ts': '2026-10-07T13:00:00Z',
+          'device_online': false,
+          'tracking': false,
+          'sat_name': null,
+          'error': 'oscarwatch: dial ws://192.168.1.197:7373/: i/o timeout',
+        };
+
+    test('OscarWatch closed is neither offline nor a fault', () {
+      final store = BusStore();
+      store.applyStatus('muehle/uhf/sat-track', 'online');
+      store.applyState('muehle/uhf/sat-track', trackerClosed());
+
+      expect(store.offlineList.where((e) => e.contains('sat-track')), isEmpty);
+      expect(store.offlineSince.containsKey('muehle/uhf/sat-track'), isFalse);
+      expect(store.faultHistory.where((r) => r.address == 'muehle/uhf/sat-track'), isEmpty);
+    });
+
+    test('a dead sat-track bridge is still reported', () {
+      final store = BusStore();
+      store.applyStatus('muehle/uhf/sat-track', 'offline');
+      store.applyState('muehle/uhf/sat-track', trackerClosed());
+      expect(store.offlineList, contains('muehle/uhf/sat-track: bridge down'));
+    });
+
+    test('sat-track is not an expected slot (no "silent" row)', () {
+      expect(expectedSlots, isNot(contains('muehle/uhf/sat-track')));
+    });
+  });
+
   group('BusStore.offlineList', () {
     test('lists bridge down and device unreachable separately', () {
       final store = BusStore();
