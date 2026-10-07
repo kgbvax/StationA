@@ -11,6 +11,7 @@ import 'package:hf_console/dxspot/mercator_projection.dart';
 import 'package:hf_console/dxspot/places.dart';
 import 'package:hf_console/dxspot/projection.dart';
 import 'package:hf_console/store/bus_store.dart';
+import 'package:hf_console/store/sat_track.dart';
 import 'package:hf_console/ui/widgets/dx_map_container.dart';
 import 'package:hf_console/ui/theme.dart';
 import 'package:hf_console/ui/widgets/mercator_map_panel.dart';
@@ -145,5 +146,54 @@ void main() {
     store.setSatRotator('muehle/uhf/az-rotator', axis: 'az', pos: 120, target: 120);
     await tester.pump();
     expect(MercatorPainterDebug.paintCount, greaterThan(0));
+  });
+
+  group('tracked satellite', () {
+    void track(BusStore store, {double lat = 47.0, double lng = 12.0, String name = 'ISS'}) {
+      store.applyStatus(satTrackSlot, 'online');
+      store.applyState(satTrackSlot, {
+        'ts': '2026-10-07T11:05:00Z',
+        'device_online': true,
+        'tracking': true,
+        'in_range': true,
+        'sat_name': name,
+        'el': 23.8,
+        'range_km': 1012.4,
+        'sub_lat': lat,
+        'sub_lng': lng,
+        'alt_km': 418.0,
+      });
+    }
+
+    testWidgets('a satellite move repaints the map', (tester) async {
+      final (store, _) = await _pump(tester);
+      track(store);
+      await tester.pump();
+      expect(tester.takeException(), isNull);
+
+      MercatorPainterDebug.paintCount = 0;
+      track(store, lng: 13.5);
+      await tester.pump();
+      expect(MercatorPainterDebug.paintCount, greaterThan(0));
+    });
+
+    testWidgets('an identical republish does not repaint', (tester) async {
+      final (store, _) = await _pump(tester);
+      track(store);
+      await tester.pump();
+      MercatorPainterDebug.paintCount = 0;
+      track(store);
+      await tester.pump();
+      expect(MercatorPainterDebug.paintCount, 0);
+    });
+
+    testWidgets('a footprint across the map seam paints without throwing', (tester) async {
+      final (store, _) = await _pump(tester);
+      // Centre ~8° E → the wrap seam sits at ~-172°: a bird over the Pacific
+      // puts its footprint across it.
+      track(store, lat: 10.0, lng: -170.0, name: 'AO-91');
+      await tester.pump();
+      expect(tester.takeException(), isNull);
+    });
   });
 }

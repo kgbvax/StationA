@@ -22,6 +22,7 @@ import '../../dxspot/world_geometry.dart';
 import '../../mqtt/mqtt_service.dart';
 import '../../store/aim.dart';
 import '../../store/bus_store.dart';
+import '../../store/sat_track.dart';
 import 'band_legend.dart';
 import '../../store/selected_spot.dart';
 import '../../store/wiring.dart';
@@ -166,6 +167,9 @@ class _MercatorMapPanelState extends State<MercatorMapPanel> {
     final beam = (surface != null && az != null && qth != null)
         ? (qth: qth, az: az, target: targetAz, half: surface.beamHalfWidthDeg, online: rotatorOnline)
         : null;
+    // The satellite OscarWatch is tracking (muehle/uhf/sat-track): VHF
+    // module only — sat ops live on the UHF/CAM pages.
+    final sat = widget.rotatorOverlay ? SatTrack.fromStore(store) : null;
     final mqtt = context.read<MqttService>();
 
     return LayoutBuilder(
@@ -221,6 +225,7 @@ class _MercatorMapPanelState extends State<MercatorMapPanel> {
                         selectedAgeSeconds: selectedAge,
                         places: _places,
                         beam: beam,
+                        sat: sat,
                       ),
                       child: SizedBox.expand(),
                     ),
@@ -441,6 +446,7 @@ class _MercatorPainter extends CustomPainter {
   final int selectedAgeSeconds;
   final List<Place> places;
   final MercatorBeam? beam;
+  final SatTrack? sat;
 
   _MercatorPainter({
     required this.projection,
@@ -455,6 +461,7 @@ class _MercatorPainter extends CustomPainter {
     this.selectedAgeSeconds = 0,
     this.places = const [],
     this.beam,
+    this.sat,
   });
 
   /// Paint calls, for the repaint-discipline test.
@@ -550,6 +557,88 @@ class _MercatorPainter extends CustomPainter {
         _drawLabel(canvas, sel.call, p.x + 12, p.y - 12, color);
       }
     }
+
+    // 7. Tracked satellite (VHF module): footprint, the great circle from
+    // the station to the sub-satellite point, and the pin with its label.
+    final st = sat;
+    if (st != null) _drawSat(canvas, size, st);
+  }
+
+  /// The tracked satellite. Green (amber is the keyed station, cyan the
+  /// rotator); everything dimmed while it is below the horizon. The station
+  /// line matters most when zoomed in: the satellite itself is usually off
+  /// screen, the line shows where it is relative to the rotator beam.
+  void _drawSat(Canvas canvas, Size size, SatTrack st) {
+    final color = AppTheme.green.withValues(alpha: st.inRange ? 1.0 : 0.5);
+
+    // Footprint: the ground circle the satellite is above the horizon for.
+    final radius = st.footprintRadiusKm;
+    if (radius != null) {
+      final path = _geoPolyline(
+          [for (var brg = 0; brg <= 360; brg += 4) destinationPoint(st.position, brg.toDouble(), radius)], size);
+      canvas.drawPath(
+        path,
+        Paint()
+          ..color = color.withValues(alpha: color.a * 0.6)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.5,
+      );
+    }
+
+    // Station → sub-satellite point along the great circle.
+    final q = (qthLat != null && qthLng != null) ? (lat: qthLat!, lng: qthLng!) : null;
+    final linePts = <LatLng>[];
+    if (q != null) {
+      final brg = initialBearing(q, st.position);
+      final dist = distanceKm(q, st.position);
+      linePts.addAll([for (var i = 0; i <= 32; i++) destinationPoint(q, brg, dist * i / 32)]);
+      final path = _geoPolyline(linePts, size);
+      canvas.drawPath(
+        path,
+        Paint()
+          ..color = color.withValues(alpha: color.a * 0.8)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.5,
+      );
+    }
+
+    // Pin: a diamond, so it never reads as a spot dot or the keyed station.
+    final view = (Offset.zero & size).deflate(8);
+    final p = projection.project(st.lat, st.lng);
+    if (p == null || !view.contains(Offset(p.x, p.y))) {
+      // Off screen (the usual case at the UHF page's town-level zoom): name
+      // the satellite where its station line leaves the map.
+      Offset? edge;
+      for (final ll in linePts) {
+        final lp = projection.project(ll.lat, ll.lng);
+        if (lp != null && view.contains(Offset(lp.x, lp.y))) edge = Offset(lp.x, lp.y);
+      }
+      if (edge != null) {
+        // Kept clear of the right-hand rail (zoom row, STOP/PARK, ~110 dp
+        // wide) and the heading chip top-right.
+        final w = _labelPainter(st.label, color).width + 8;
+        final x = math.max(8.0, math.min(edge.dx, size.width - 120 - w));
+        final y = edge.dy.clamp(48.0, size.height - 48.0);
+        _drawLabel(canvas, st.label, x, y, color);
+      }
+      return;
+    }
+    final c = Offset(p.x, p.y);
+    final diamond = Path()
+      ..moveTo(c.dx, c.dy - 7)
+      ..lineTo(c.dx + 7, c.dy)
+      ..lineTo(c.dx, c.dy + 7)
+      ..lineTo(c.dx - 7, c.dy)
+      ..close();
+    canvas.drawPath(diamond, Paint()..color = color);
+    canvas.drawPath(
+      diamond,
+      Paint()
+        ..color = AppTheme.page
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.2,
+    );
+    _drawLabel(canvas, st.label, c.dx + 12, c.dy - 12, color);
   }
 
   /// Cities from the bundled Natural Earth layer, thinned by zoom (only
@@ -663,12 +752,36 @@ class _MercatorPainter extends CustomPainter {
           ..strokeCap = StrokeCap.round);
   }
 
+  /// Projects [points] into one path, starting a new subpath where a point
+  /// does not project or the projection wraps (a jump of half the canvas).
+  Path _geoPolyline(List<LatLng> points, Size size) {
+    final path = Path();
+    Offset? prev;
+    for (final ll in points) {
+      final p = projection.project(ll.lat, ll.lng);
+      if (p == null) {
+        prev = null;
+        continue;
+      }
+      final o = Offset(p.x, p.y);
+      if (prev == null || (o.dx - prev.dx).abs() > size.width / 2) {
+        path.moveTo(o.dx, o.dy);
+      } else {
+        path.lineTo(o.dx, o.dy);
+      }
+      prev = o;
+    }
+    return path;
+  }
+
+  TextPainter _labelPainter(String text, Color color) => TextPainter(
+        text: TextSpan(text: text, style: AppTheme.mono(11, weight: FontWeight.w700, color: color)),
+        textDirection: TextDirection.ltr,
+      )..layout();
+
   /// Callsign label on a small dark pill so it reads on any land fill.
   void _drawLabel(Canvas canvas, String text, double x, double y, Color color) {
-    final tp = TextPainter(
-      text: TextSpan(text: text, style: AppTheme.mono(11, weight: FontWeight.w700, color: color)),
-      textDirection: TextDirection.ltr,
-    )..layout();
+    final tp = _labelPainter(text, color);
     final rect = Rect.fromLTWH(x, y - tp.height / 2, tp.width + 8, tp.height + 4);
     canvas.drawRRect(
       RRect.fromRectAndRadius(rect, const Radius.circular(3)),
@@ -814,6 +927,7 @@ class _MercatorPainter extends CustomPainter {
         oldDelegate.filter != filter ||
         oldDelegate.places.length != places.length ||
         oldDelegate.beam != beam ||
+        oldDelegate.sat?.paintKey != sat?.paintKey ||
         // Selected-station marker: identity change (new call/source) or a
         // half-minute age bucket (the dim-out).
         _selectedKey(oldDelegate.selected, oldDelegate.selectedAgeSeconds) !=
