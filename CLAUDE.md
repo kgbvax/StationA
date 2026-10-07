@@ -10,7 +10,7 @@ every Go component imports it via a `replace … => ../shared` so each stays sel
 without the workspace. Bridges import `shared/` but never another bridge's `internal/`
 — enforced by Go's `internal/` visibility rule across separate modules, not just
 convention. Non-Go components (`waveshare_relay-antswitch-bridge` and
-`m5stamp-pol-ctrl` = ESPHome YAML, `m5stamp-hf-ctrl` and `m5dial-hf-rotctrl` =
+`m5stamp-pol-ctrl` = ESPHome YAML, `m5stamp-hf-ctrl`, `m5dial-hf-rotctrl` and `m5dualkey-hf-antctrl` =
 PlatformIO firmware) live alongside as plain subdirectories and are not in
 `go.work`.
 
@@ -41,11 +41,13 @@ separate per-component remotes to push to.
 | spid-ercm-rotator-bridge | `spid-ercm-rotator-bridge/` | Sat-ops az/el rotator bridge → `uhf/az-rotator` (SPID) + `uhf/el-rotator` (GS-500 via ERC-M); rotctld :4534 + PstRotator UDP :12041 listeners (free motion, no arming gate) |
 | icom9700-radio-bridge | `icom9700-radio-bridge/` | IC-9700 UHF radio bridge → `muehle/uhf/radio` (RS-BA1 LAN session for RX audio capture only + read-only serial CI-V telemetry; no remote TX) |
 | m5dial-hf-rotctrl | `m5dial-hf-rotctrl/` | M5Stack Dial firmware — HF rotator control head (analog meter face + knob; not a slot; consumer + /cmd stimulator) |
+| m5dualkey-hf-antctrl | `m5dualkey-hf-antctrl/` | M5Stack Chain DualKey firmware — Ultrabeam direction keys (A forward / B reverse / A+B bidirectional, LED shows `hf/ant-ctrl` direction; chained M5 Chain Key toggles DVK memory 2 on `hf/radio`; not a slot; consumer + /cmd stimulator) |
 | logger-spot-bridge | `logger-spot-bridge/` | Shack-logger bridge (DXLog/Log4OM) → `hf/spots` — the operator-keyed station (call, position, beam bearing) |
 | oscarwatch-sattrack-bridge | `oscarwatch-sattrack-bridge/` | OscarWatch Satellite-link WebSocket bridge → `uhf/sat-track` — the satellite being tracked (name, NORAD, transponder, az/el, range, range rate, sunlit, derived sub-satellite point, radio-corrected up/downlink); read-only, runs on scmino |
 | testui | `testui/` | MQTT relay + schema-aware browser UI for the bus (not a slot; passive consumer + /cmd stimulator) |
-| vhfcam-restream | `vhfcam-restream/` | VHF cam (UniFi Protect RTSPS) multi-sink restreamer — YouTube Live + LAN web preview (:8083) with operational-data overlay (AZ/EL/freq/TX drawtext from the bus) and IC-9700 RX audio (demand-driven via icom9700-radio-bridge); web radio controls; Go supervisor around ffmpeg; MQTT consumer + minimal `/status`/`/state` planes (`muehle/hf/vhfcam`) |
-| mqtt-broker | `mqtt-broker/` | Shack-local Mosquitto broker on shari, bridged to the HA broker (infra — not a slot, not Go) |
+| vhfcam-restream | `vhfcam-restream/` | VHF cam (UniFi Protect RTSPS) multi-sink restreamer — YouTube Live + LAN web preview (:8083) with operational-data overlay (AZ/EL/freq/TX drawtext from the bus) and IC-9700 RX audio (demand-driven via icom9700-radio-bridge); web radio controls; Go supervisor around ffmpeg; MQTT consumer + minimal `/status`/`/state` planes (`muehle/hf/vhfcam`). **Runs on scmino** (`192.168.1.178`), not shari |
+| stationportal | `stationportal/` | Station landing page on scmino :80 (`http://scmino/`) — links to every key service (probed), live slot/hardware inventory from `/meta` + two-layer liveness, software/host/resource inventory (not a slot; passive consumer) |
+| mqtt-broker | `mqtt-broker/` | Station Mosquitto broker on **scmino** (`192.168.1.178:1883`), bridged to the HA broker `.50` as a transitional `muehle/#` mirror — **first client: the M5 Stamp PLC #1 (2026-10-03); everything else is still on `.50`, the live broker** (infra — not a slot, not Go) |
 
 Each project has its own `CLAUDE.md` and is independently buildable (`go build`/`go test`
 from its own directory works without the workspace, via the `replace … => ../shared`).
@@ -92,7 +94,10 @@ resources** — `ant/ultrabeam` (port 3), `ant/fan-dipole` 80/40 (port 6),
 
 ## shari — the deployment target
 
-All services run on shari, a Raspberry Pi at `192.168.1.139`.
+All services run on shari, a Raspberry Pi at `192.168.1.139` — except
+vhfcam-restream (since 2026-09-30), the station Mosquitto mirror, the
+hf_console web channel `hf-console-web` (:8091), testui (:8090) and the landing
+page stationportal (:80) (all since 2026-10-02), which run on **scmino** (`192.168.1.178`, Raspberry Pi CM5, same `ssh io@` access).
 
 ```bash
 # SSH in
@@ -148,6 +153,13 @@ from `flexbridge/`). Cross-cutting Go code, not docs, lives in the `shared/` mod
 ---
 
 ## MQTT broker access
+
+> **Live state (2026-10-03):** every station client except the M5 Stamp PLC #1
+> (`hf/switch` + `hf/pa-arm`) still uses the HA broker `192.168.1.50:1883`.
+> shari runs no mosquitto. A new station broker runs on **scmino**
+> (`192.168.1.178:1883`) as a bridged `muehle/#` mirror of `.50`; the PLC
+> moved there first — see `mqtt-broker/CLAUDE.md`. The shari-centric
+> text below is the original target design.
 
 The station runs a **shack-local Mosquitto broker on shari** (`mqtt-broker/`),
 authoritative for the `muehle/#` namespace. A mosquitto `bridge` connection
@@ -207,3 +219,13 @@ All components follow these shared conventions:
     and per-slot child loggers; real `Warn`/`Error` levels so `journalctl -p warning`
     filters errors; no per-service log files (journald is the consolidator)
     (see `docs/conventions/logging.md`)
+11. **Landing page inventory** — `http://scmino/` (`stationportal/`) lists every
+    service, host, slot, device and software component. **Whenever the
+    infrastructure changes** — a device or host is added/replaced/removed, an IP
+    address, hostname or port changes, a service moves host, a component is
+    added or retired — update `stationportal/internal/inventory/inventory.toml`
+    in the same change and redeploy (`cd stationportal && ./deploy.sh`). Live
+    device facts (model/serial/firmware from `/meta`) need no edit; everything
+    hand-written there (links, IPs, hosts, slot→component map, software list)
+    does. `go test` fails on a misplaced key or a slot whose component is
+    missing from `[[software]]`.

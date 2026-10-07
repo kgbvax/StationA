@@ -1,13 +1,14 @@
 // cam_feed_panel.dart — the antenna camera feed (vhfcam-restream preview).
 //
-// The camera itself is a UniFi Protect RTSPS source; vhfcam-restream on shari
+// The camera itself is a UniFi Protect RTSPS source; vhfcam-restream on scmino
 // transcodes it (with the AZ/EL/freq/TX overlay burned in server-side) into a
 // live HLS playlist served from its :8083 preview server:
 //
 //   http://<cam base>/hls/live.m3u8     (cleartext HTTP, LAN-only, no auth)
 //
-// The service is installed disabled-at-boot and started ad hoc, so "offline"
-// is a normal operating state, not a fault — this panel renders it as one and
+// The service starts at boot, but the cam is an accessory (scmino rebooting,
+// the camera down), so "offline" is an operating state, not a fault — this
+// panel renders it as one and
 // re-probes via [VhfcamService]. Latency is ~10 s behind live by design
 // (HLS segmenting), which the header chip does not compensate for.
 //
@@ -280,11 +281,11 @@ class _OfflineState extends StatelessWidget {
     final (title, sub) = switch (state) {
       _FeedState.serverOffline => (
           'CAM SERVER OFFLINE',
-          'no answer from $baseUrl — start it on shari: sudo systemctl start vhfcam-restream',
+          'no answer from $baseUrl — start it on scmino: sudo systemctl start vhfcam-restream',
         ),
       _FeedState.sinkStopped => (
           'CAMERA STREAM STOPPED',
-          'the cam server answers but sends no video — start it on shari: sudo systemctl start vhfcam-restream',
+          'the cam server answers but sends no video — start it on scmino: sudo systemctl start vhfcam-restream',
         ),
       _FeedState.web => (
           'VIDEO NEEDS THE APP',

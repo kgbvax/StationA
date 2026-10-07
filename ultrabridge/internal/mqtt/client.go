@@ -524,23 +524,29 @@ func (c *Client) onCmd(_ paho.Client, msg paho.Message) {
 	}
 	c.logger().Info("rx cmd", "action", cmd.Action, "value", cmd.Value, "freq_hz", cmd.FreqHz)
 	sharedmqtt.Enqueue(c.jobs, func() {
+		var err error
 		switch cmd.Action {
 		case "frequency":
 			khz := uint16(cmd.FreqHz / 1000)
-			_ = c.ctrl.SetFrequency(c.ctx, khz, c.ctrl.State().ModeName)
+			err = c.ctrl.SetFrequency(c.ctx, khz, c.ctrl.State().ModeName)
 		case "direction", "mode": // "mode" accepted as a deprecated alias for "direction"
-			_ = c.ctrl.SetMode(c.ctx, cmd.Value)
+			err = c.ctrl.SetMode(c.ctx, cmd.Value)
 		case "band":
 			khz, ok := bandCenterKHz[strings.TrimSpace(cmd.Value)]
 			if !ok {
 				c.logger().Warn("unknown band in cmd", "band", cmd.Value)
 				break
 			}
-			_ = c.ctrl.SetFrequency(c.ctx, khz, c.ctrl.State().ModeName)
+			err = c.ctrl.SetFrequency(c.ctx, khz, c.ctrl.State().ModeName)
 		case "retract":
-			_ = c.ctrl.Retract(c.ctx)
+			err = c.ctrl.Retract(c.ctx)
 		default:
 			c.logger().Warn("unknown cmd action", "action", cmd.Action)
+		}
+		if err != nil {
+			// A refused or failed cmd (e.g. a direction change beamsteer sent)
+			// must reach the journal — it used to vanish into `_ =`.
+			c.logger().Warn("cmd failed", "action", cmd.Action, "value", cmd.Value, "freq_hz", cmd.FreqHz, "err", err)
 		}
 		// One-shot semantics: clear the retained cmd after every action (or rejection) so
 		// nothing re-executes on the next (re)connect — not just retract.

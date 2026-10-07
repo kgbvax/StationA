@@ -495,7 +495,7 @@ class _CamPage extends StatelessWidget {
     // _TabletShell.leftTop) with the DX map keeping the rest below it — its
     // az dial reads the VHF array the camera is watching. The right rail is
     // the IC-9700 audio-chain surface mirrored from the :8083 page. The cam
-    // server is bus-independent and ad hoc, so this page adds no faults-bar
+    // server is bus-independent and an accessory, so this page adds no faults-bar
     // slots; its own panels carry the offline states.
     final isPhone = MediaQuery.of(context).size.shortestSide < 600;
 

@@ -841,18 +841,58 @@ func TestHandleDVK_State(t *testing.T) {
 	}
 }
 
-// TestHandleDVK_NonStatusFrameNoState asserts added/deleted memory-library
-// frames do not perturb the /state plane (only status= frames carry state).
-func TestHandleDVK_NonStatusFrameNoState(t *testing.T) {
+// TestHandleDVK_Memories asserts the memory-library frames the radio sends on
+// `sub dvk all` build the sorted dvk_memories list on /state (names as set in
+// SmartSDR), that an identical repeat publishes nothing, that rename and
+// delete update it, and that status= frames leave it intact.
+func TestHandleDVK_Memories(t *testing.T) {
 	b, pub := newTestBridge(t)
-	pub.Reset()
-
-	// A "dvk added" memory-library frame must not publish state.
-	f, _ := flexradio.ParseFrame(`S0|dvk added id=1 name="CQ" duration=5000`)
-	b.HandleStatus(f)
-	if _, ok := lastState(pub.Messages(), testStateTopic); ok {
-		t.Error("dvk added frame published /state; only status= frames should")
+	send := func(line string) {
+		t.Helper()
+		f, err := flexradio.ParseFrame(line)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b.HandleStatus(f)
 	}
+	want := func(snap statePayload, exp ...dvkMemory) {
+		t.Helper()
+		if len(snap.DVKMemories) != len(exp) {
+			t.Fatalf("dvk_memories = %+v, want %+v", snap.DVKMemories, exp)
+		}
+		for i := range exp {
+			if snap.DVKMemories[i] != exp[i] {
+				t.Errorf("dvk_memories[%d] = %+v, want %+v", i, snap.DVKMemories[i], exp[i])
+			}
+		}
+	}
+
+	pub.Reset()
+	send(`S711C3AB|dvk added id=2 name="dl9et" duration=2565`)
+	send(`S711C3AB|dvk added id=1 name="CQ ET" duration=2720`)
+	snap, ok := lastState(pub.Messages(), testStateTopic)
+	if !ok {
+		t.Fatal("no /state published after dvk added")
+	}
+	want(snap, dvkMemory{1, "CQ ET", 2720}, dvkMemory{2, "dl9et", 2565})
+
+	pub.Reset()
+	send(`S711C3AB|dvk added id=1 name="CQ ET" duration=2720`)
+	if _, ok := lastState(pub.Messages(), testStateTopic); ok {
+		t.Error("identical dvk added republished /state")
+	}
+
+	send(`S711C3AB|dvk id=2 name="dl9et fd" duration=4405`)
+	snap, _ = lastState(pub.Messages(), testStateTopic)
+	want(snap, dvkMemory{1, "CQ ET", 2720}, dvkMemory{2, "dl9et fd", 4405})
+
+	send(`S711C3AB|dvk status=playback id=1`)
+	snap, _ = lastState(pub.Messages(), testStateTopic)
+	want(snap, dvkMemory{1, "CQ ET", 2720}, dvkMemory{2, "dl9et fd", 4405})
+
+	send(`S711C3AB|dvk id=1 deleted`)
+	snap, _ = lastState(pub.Messages(), testStateTopic)
+	want(snap, dvkMemory{2, "dl9et fd", 4405})
 }
 
 // TestBridge_MetaExposesDVK asserts the expose actions are exactly the 12

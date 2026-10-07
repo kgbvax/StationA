@@ -53,13 +53,12 @@ func main() {
 	defer stop()
 
 	slotLog := logger.With("slot", cfg.MQTT.Site+"/"+cfg.MQTT.Station+"/"+cfg.MQTT.Slot)
-	client, err := mqtt.New(ctx, cfg, slotLog)
-	if err != nil {
-		slog.Error("mqtt connect", "err", err)
-		os.Exit(1)
-	}
-	defer client.Close()
+	client := mqtt.New(ctx, cfg, slotLog)
 
+	// Bind the logger's UDP port before the broker connect: the connect can
+	// block (broker down, bad credentials), and a port that never opens looks
+	// like a dead service. Requests before the connect are ignored with a
+	// reason (no rotator data yet).
 	srv := &pstrotator.Server{
 		Bind:  cfg.PstRotator.Bind,
 		Port:  cfg.PstRotator.Port,
@@ -67,8 +66,22 @@ func main() {
 		Reply: pstrotator.ReplyFormat(cfg.PstRotator.Reply),
 		Log:   slotLog,
 	}
+	pc, err := srv.Listen()
+	if err != nil {
+		slog.Error("pstrotator listener", "err", err)
+		os.Exit(1)
+	}
 	udpErr := make(chan error, 1)
-	go func() { udpErr <- srv.Run(ctx) }()
+	go func() { udpErr <- srv.Serve(ctx, pc) }()
+
+	if err := client.Connect(ctx); err != nil {
+		if ctx.Err() != nil {
+			return // shut down while connecting
+		}
+		slog.Error("mqtt connect", "err", err)
+		os.Exit(1)
+	}
+	defer client.Close()
 
 	slotLog.Info("running", "pstrotator_port", cfg.PstRotator.Port)
 	select {

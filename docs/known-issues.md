@@ -49,6 +49,8 @@ The browser client ignores the configured broker host. It connects to a hard-cod
 
 Code-check verdict (2026-09-03): **still open** — `hf_console/lib/mqtt/client_factory_web.dart` line 10: `const _wsUri = 'ws://192.168.1.139:8091/mqtt';`.
 
+Code-check verdict (2026-10-02): **fixed** — `client_factory_web.dart` derives the endpoint from the page origin (`Uri.base`, ws/wss by scheme); the web channel moved from shari to scmino with no client change.
+
 ## [decision] Capture retention granularity and capture-filter width (PRD §4.2 / §6.7)
 
 Retention: on rotation, delete whole date-directories older than `retention_hours` (default 72). **Documented consequence (actual behavior, not the idealized claim)**: cleanup granularity is whole days. With the default, the tool keeps between **72 and 96 hours** of logs. A reconstruction can fix the granularity, but tooling must not assume hour-precision deletion.

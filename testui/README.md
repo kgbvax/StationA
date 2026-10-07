@@ -35,13 +35,13 @@ export TESTUI_MQTT_PASSWORD=...
 
 )
 
-**On shari** (LAN-served — no local server needed; the browser hits the Pi directly):
+**On scmino** (LAN-served — no local server needed; the browser hits the Pi directly):
 
 ```bash
 ./deploy.sh        # cross-compile, ship, install as a hardened systemd service
 ```
 
-Then open <http://192.168.1.139:8090>. The unit binds `0.0.0.0:8090` and pulls the `hf`
+Then open <http://scmino:8090> (`192.168.1.178`; on shari until 2026-10-02). The unit binds `0.0.0.0:8090` and pulls the `hf`
 MQTT password from an existing station service env on the Pi. `/api/publish` +
 `/api/clear` are unauthenticated — fine for the trusted home LAN, not for an untrusted
 network. See `CLAUDE.md` and `deploy.sh` for the hardening details.
@@ -93,7 +93,7 @@ Mirrors the stationa bridges: `module testui`; pelletier `go-toml/v2` config wit
 with `SetAutoReconnect(true)` + `SetCleanSession(false)` and re-subscribe on reconnect;
 the `jobs chan func()` worker so no `Publish` runs inside a paho message handler (the
 documented deadlock — see `hadiscovery/internal/mqtt/client.go`). `deploy.sh` installs it
-on shari as a hardened systemd service (network-service sandbox: `PrivateDevices=true`,
+on scmino as a hardened systemd service (network-service sandbox: `PrivateDevices=true`,
 `RestrictAddressFamilies=AF_INET AF_INET6`, seed-once config + env); the workstation
 `make run` mode stays loopback-only.
 

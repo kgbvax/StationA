@@ -4,9 +4,9 @@ testui is a **MQTT relay + static UI server** for the stationa station bus. It i
 deployed slot: it has no `/meta`, `/state`, `/status`, or `/cmd` of its own on the bus — it
 is a passive consumer that subscribes `<site>/#` and proxies browser publish/clear requests
 back onto the bus with safety guards. It can run two ways: on the developer workstation
-(`make run`, loopback only) or deployed to shari as a hardened systemd service
-(`./deploy.sh`, HTTP bound to the LAN so the browser hits `http://shari:8090` with no local
-server). The deployed form is a network service, not a serial bridge — no `/dev/tty*`, so
+(`make run`, loopback only) or deployed to scmino (`192.168.1.178`; on shari until
+2026-10-02) as a hardened systemd service (`./deploy.sh`, HTTP bound to the LAN so the
+browser hits `http://scmino:8090` with no local server). The deployed form is a network service, not a serial bridge — no `/dev/tty*`, so
 the unit runs under a stricter sandbox than the serial bridges (`PrivateDevices=true`).
 
 ## Why a relay (not a direct browser MQTT client)
@@ -97,19 +97,22 @@ publishes expose" claim — most do.)
 make build vet test test-race
 ```
 
-## Deploy to shari (LAN-served, no local server)
+## Deploy to scmino (LAN-served, no local server)
 
 ```bash
-./deploy.sh        # cross-compile, ship, install as a hardened systemd service on shari
+./deploy.sh        # cross-compile, ship, install as a hardened systemd service on scmino
 ```
 
 The unit binds HTTP to `0.0.0.0:8090` (config `http_addr`), so the browser reaches
-`http://192.168.1.139:8090` directly. The `hf` MQTT password is pulled on-device from an
-existing station service env (never leaves the Pi). `/api/publish` + `/api/clear` are
+`http://scmino:8090` directly. The broker is the live one, `tcp://192.168.1.50:1883` —
+not `127.0.0.1`, which on scmino is the not-yet-used mirror broker. On a fresh host the
+`hf` MQTT password is pulled on-device from an existing station service env (never leaves
+the Pi); scmino has none, so the 2026-10-02 move copied `/etc/testui/{config.toml,testui.env}`
+from shari instead. `/api/publish` + `/api/clear` are
 unauthenticated — this is intentional for the trusted home LAN; do not deploy this default
 onto an untrusted network without an auth layer / reverse proxy. Config + env are seed-once,
 like the bridges.
 
-There is no live-broker test (creds live on shari). The HTTP/SSE/tree/handler/config
+There is no live-broker test (creds live on the device). The HTTP/SSE/tree/handler/config
 layers are covered by unit tests; the MQTT client mirrors the proven antennaselect/
 hadiscovery pattern. Live verification is manual (see README).

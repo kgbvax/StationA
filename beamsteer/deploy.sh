@@ -20,7 +20,8 @@
 #   INSTALL_DIR       remote install dir    (default: /opt/beamsteer)
 #   BINARY            binary name           (default: beamsteer)
 #
-#   MQTT_BROKER       mqtt.broker     value (default: tcp://127.0.0.1:1883)
+#   MQTT_BROKER       mqtt.broker     value (default: tcp://192.168.1.50:1883 — the live
+#                     station broker; shari runs no mosquitto)
 #   MQTT_SITE         mqtt.site       value (default: muehle)
 #   MQTT_STATION      mqtt.station    value (default: hf)
 #   MQTT_SLOT         mqtt.slot       value (default: beam-steer)
@@ -54,7 +55,7 @@ CONFIG_FILE="${CONFIG_FILE:-${CONFIG_DIR}/config.toml}"
 BINARY="${BINARY:-beamsteer}"
 PKG="./cmd/beamsteer"
 
-MQTT_BROKER="${MQTT_BROKER:-tcp://127.0.0.1:1883}"
+MQTT_BROKER="${MQTT_BROKER:-tcp://192.168.1.50:1883}"
 MQTT_SITE="${MQTT_SITE:-muehle}"
 MQTT_STATION="${MQTT_STATION:-hf}"
 MQTT_SLOT="${MQTT_SLOT:-beam-steer}"

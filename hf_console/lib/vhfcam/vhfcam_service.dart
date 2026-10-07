@@ -1,12 +1,12 @@
 // vhfcam_service.dart — console client for vhfcam-restream's preview server
-// (:8083 on shari). Independent of the MQTT bus: the vhfcam slot publishes no
+// (:8083 on scmino). Independent of the MQTT bus: the vhfcam slot publishes no
 // streaming/audio state (its /state is overlay bookkeeping only), so radio and
 // stream health come from the server's own HTTP planes:
 //
 //   GET  /api/radio-status   IC-9700 audio-chain LEDs (2 s poll, like the page)
 //   GET  /hls/live.m3u8      exists only while the preview sink is running —
-//                            the process is installed disabled-at-boot and
-//                            started ad hoc, so 404 is a *normal* state
+//                            the sink can be off (camera down, preview
+//                            disabled), so 404 is a *normal* state
 //   POST /api/cmd/{action}   audio_on | audio_off | power_on (allowlist; the
 //                            server translates these to muehle/uhf/radio/cmd)
 //   POST /api/rec/start|stop record the preview (overlay + radio audio); the
@@ -28,7 +28,25 @@ import 'package:flutter/foundation.dart';
 import 'radio_status.dart';
 import 'vhfcam_transport_io.dart' if (dart.library.html) 'vhfcam_transport_web.dart';
 
-const defaultVhfcamBaseUrl = 'http://192.168.1.139:8083';
+const defaultVhfcamBaseUrl = 'http://192.168.1.178:8083';
+
+/// Hosts that served the cam before it moved to scmino (2026-09-30): shari's
+/// wired and wifi addresses and its name. The service is never run on both.
+const _legacyVhfcamHosts = {'192.168.1.139', '192.168.1.140', 'shari'};
+
+/// Resolves a stored gear-sheet value to the base URL to use. Empty or
+/// missing → the default; a saved URL that still points at shari → the
+/// default (a tablet that saved the sheet before the move would otherwise
+/// keep polling a dead host). Anything else is kept as entered.
+String resolveVhfcamBaseUrl(String? stored) {
+  final trimmed = stored?.trim() ?? '';
+  if (trimmed.isEmpty) return defaultVhfcamBaseUrl;
+  final host = Uri.tryParse(trimmed)?.host.toLowerCase();
+  if (host != null && _legacyVhfcamHosts.contains(host)) {
+    return defaultVhfcamBaseUrl;
+  }
+  return trimmed;
+}
 
 const _pollInterval = Duration(seconds: 2);
 const _pollBackoff = Duration(seconds: 10);
@@ -60,11 +78,10 @@ class VhfcamService extends ChangeNotifier {
   /// The server page's recordings list (download / delete happen there).
   String get recordingsUrl => '$_baseUrl/#rec';
 
-  /// Re-points the service (gear-sheet live-apply). An empty value restores
-  /// the shack default.
+  /// Re-points the service (gear-sheet live-apply). An empty value or a
+  /// legacy shari URL restores the shack default.
   void configure({required String baseUrl}) {
-    final trimmed = baseUrl.trim();
-    final next = trimmed.isEmpty ? defaultVhfcamBaseUrl : trimmed;
+    final next = resolveVhfcamBaseUrl(baseUrl);
     if (next == _baseUrl) return;
     _baseUrl = next;
     _failures = 0;

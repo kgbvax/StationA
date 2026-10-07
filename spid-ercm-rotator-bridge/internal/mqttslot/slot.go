@@ -61,6 +61,9 @@ type Mount interface {
 	Goto(t mount.Target) []mount.Refusal
 	// Stop is the atomic all-stop from any control path (KTD8).
 	Stop() []mount.AxisError
+	// Park is the atomic mount-level park intent (KTD11): both axes to
+	// their configured park positions.
+	Park() []mount.Refusal
 	// Readback returns the axis's cached position and its validity.
 	Readback(ax mount.Axis) (float64, bool)
 	// Online reports the axis's device-link liveness (the device_online layer).
@@ -412,6 +415,9 @@ func (s *Slot) onCmd(_ paho.Client, msg paho.Message) {
 	case "stop":
 		s.log.Info("rx cmd", "action", cmd.Action)
 		sharedmqtt.Enqueue(s.jobs, s.executeStop)
+	case "park":
+		s.log.Info("rx cmd", "action", cmd.Action)
+		sharedmqtt.Enqueue(s.jobs, s.executePark)
 	default:
 		s.log.Warn("unknown cmd action", "action", cmd.Action)
 		s.rejectAsync(fmt.Sprintf("unknown cmd action %q", cmd.Action))
@@ -490,6 +496,30 @@ func (s *Slot) stopAxes() (errs []mount.AxisError, timedOut bool) {
 		timedOut = true
 	}
 	return errs, timedOut
+}
+
+// executePark runs on the jobs worker: the atomic mount-level park (KTD11 —
+// stop phase, then BOTH axes to their configured park positions, which is
+// why a park on either slot's /cmd parks the whole mount). The façade call
+// carries a stop phase, so it takes the same per-call bound as stop: on
+// expiry the worker moves on and the abandoned call still completes the
+// park on its own goroutine.
+func (s *Slot) executePark() {
+	done := make(chan []mount.Refusal, 1)
+	go func() { done <- s.mnt.Park() }()
+	select {
+	case refs := <-done:
+		if len(refs) > 0 {
+			s.setCmdErr(refs[0].Error())
+		} else {
+			s.setCmdErr("")
+		}
+	case <-time.After(stopCallTimeout):
+		s.log.Warn("façade park timed out", "bound", stopCallTimeout)
+		s.setCmdErr(fmt.Sprintf("park timed out after %s", stopCallTimeout))
+	}
+	s.publishState(false)
+	s.clearCmd()
 }
 
 // rejectAsync enqueues the rejection path onto the jobs worker: record the

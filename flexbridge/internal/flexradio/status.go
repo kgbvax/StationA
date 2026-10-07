@@ -450,35 +450,62 @@ func ParseATU(fieldsStr string) ATUStatus {
 }
 
 // DVKStatus holds the Digital Voice Keyer state parsed from a "dvk" status
-// line. SmartSDR v4+ emits (after `sub dvk all`):
+// line. SmartSDR v4+ emits (after `sub dvk all`; confirmed live on the
+// FLEX-8400, which answers the subscription with one `added` frame per slot):
 //
 //	S<h>|dvk status=idle|recording|preview|playback|disabled [id=<N>] [enabled=1|0]
-//	S<h>|dvk added   id=<N> name="..." duration=<ms>   (memory library; not state)
-//	S<h>|dvk deleted id=<N>                            (memory library; not state)
+//	S<h>|dvk added   id=<N> name="CQ ET" duration=<ms>   (memory library)
+//	S<h>|dvk id=<N> name="..." duration=<ms>            (memory renamed/re-recorded)
+//	S<h>|dvk deleted id=<N>  |  S<h>|dvk id=<N> deleted  (memory removed)
 //
-// Only the status= frames carry state for the /state plane; added/deleted are
-// reported with HasStatus=false so the bridge can ignore them for state.
+// status= frames carry the playback state (HasStatus); the others describe the
+// memory library (HasMemory, with Deleted set for a removal).
 type DVKStatus struct {
 	Status    string // idle|recording|preview|playback|disabled
-	ID        int    // active memory id when present
+	ID        int    // active memory id (status frame) or the memory's id (library frame)
 	HasStatus bool   // true when a status= key was present
+
+	HasMemory  bool   // true for a memory-library frame with a valid id
+	Deleted    bool   // library frame removes memory ID
+	Name       string // memory name, quotes stripped (library add/update only)
+	DurationMs int    // recording length in ms; 0 = empty slot
 }
 
-// ParseDVK parses an "S|dvk ..." status body (the joinArgsFields form, i.e.
-// topic-args + key=value fields). Non-status frames (added/deleted) return
-// HasStatus=false. The "dvk id=<N> deleted" word-ordering variant is handled
-// by the absence of a status= key (still HasStatus=false).
-func ParseDVK(fieldsStr string) DVKStatus {
-	f := ParseStatusFields(fieldsStr)
-	st, ok := f["status"]
-	if !ok {
-		return DVKStatus{} // added/deleted/other — no state change
+// ParseDVK parses an "S|dvk ..." status body (Frame.RawBody: topic-args plus
+// key=value fields, unparsed — the trailing "deleted" word of the
+// "dvk id=<N> deleted" variant is not a key=value token, so the re-joined
+// Fields form would lose it).
+func ParseDVK(rawBody string) DVKStatus {
+	f := ParseStatusFields(rawBody)
+	if st, ok := f["status"]; ok {
+		d := DVKStatus{Status: strings.ToLower(st), HasStatus: true}
+		if id, err := strconv.Atoi(f["id"]); err == nil {
+			d.ID = id
+		}
+		return d
 	}
-	d := DVKStatus{Status: strings.ToLower(st), HasStatus: true}
-	if id, err := strconv.Atoi(f["id"]); err == nil {
-		d.ID = id
+	id, err := strconv.Atoi(f["id"])
+	if err != nil || id <= 0 {
+		return DVKStatus{} // no status, no memory id — nothing to track
 	}
+	d := DVKStatus{ID: id, HasMemory: true}
+	for _, w := range strings.Fields(rawBody) {
+		if w == "deleted" {
+			d.Deleted = true
+			return d
+		}
+	}
+	d.Name = decodeDVKName(f["name"])
+	d.DurationMs, _ = strconv.Atoi(f["duration"])
 	return d
+}
+
+// decodeDVKName strips the surrounding quotes from a DVK memory name and maps
+// SmartSDR's 0x7F space substitute (used in other unquoted name fields) back
+// to a space, defensively.
+func decodeDVKName(v string) string {
+	v = strings.Trim(v, `"`)
+	return strings.TrimSpace(strings.ReplaceAll(v, "\x7f", " "))
 }
 
 // ParseTxPower extracts the configured transmit power from a "radio" status

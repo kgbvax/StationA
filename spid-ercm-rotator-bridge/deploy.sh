@@ -50,7 +50,7 @@
 #   REOPEN_COOLDOWN control.reopen_cooldown (default: 2s)
 #   AZ_MIN/AZ_MAX   az travel limits      (defaults: 0 / 360 — set the real
 #   EL_MIN/EL_MAX   el travel limits       mechanical range at bench bring-up)
-#   AZ_PARK/EL_PARK park positions        (default: 0)
+#   AZ_PARK/EL_PARK park positions        (defaults: 200 / 0 — the station park)
 #   AZ_DEADBAND     az no-op deadband °   (default: 4 — smaller azimuth changes
 #   EL_DEADBAND     el no-op deadband °   (defaults: 1 / 1) do not move the rotor)
 #
@@ -110,7 +110,7 @@ POLL_INTERVAL="${POLL_INTERVAL:-1s}"
 REOPEN_COOLDOWN="${REOPEN_COOLDOWN:-2s}"
 AZ_MIN="${AZ_MIN:-0}"
 AZ_MAX="${AZ_MAX:-360}"
-AZ_PARK="${AZ_PARK:-0}"
+AZ_PARK="${AZ_PARK:-200}"
 EL_MIN="${EL_MIN:-0}"
 EL_MAX="${EL_MAX:-90}"
 EL_PARK="${EL_PARK:-0}"

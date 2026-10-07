@@ -257,6 +257,43 @@ void main() {
         expect(tester.getSize(find.byType(UltrabeamPanel)).height, before);
       });
 
+      testWidgets('AUTO line alerts when beamsteer has no rotator data', (tester) async {
+        final store = BusStore();
+        final mqtt = FakeMqttService(store);
+        store.setUltrabeam();
+        store.setOnline('muehle/hf/beam-steer');
+        store.applyState('muehle/hf/beam-steer', {
+          'enabled': true,
+          'inputs': {'rotator': false, 'ant_ctrl': true, 'radio': true},
+          'last': {'bearing': 265, 'reason': 'rotate to 85 180°'},
+        });
+        await pump(tester, store, mqtt);
+
+        final line = tester.widget<Text>(find.text('AUTO · no rotator data — logger requests ignored'));
+        expect(line.style!.color, AppTheme.red);
+      });
+
+      testWidgets('AUTO line shows a held flip, then idle when nothing came in', (tester) async {
+        final store = BusStore();
+        final mqtt = FakeMqttService(store);
+        store.setUltrabeam();
+        store.setOnline('muehle/hf/beam-steer');
+        store.applyState('muehle/hf/beam-steer', {
+          'enabled': true,
+          'inputs': {'rotator': true, 'ant_ctrl': true, 'radio': true},
+          'pending': 'reverse',
+        });
+        await pump(tester, store, mqtt);
+        expect(find.text('AUTO · 180° held until TX and element travel end'), findsOneWidget);
+
+        store.applyState('muehle/hf/beam-steer', {
+          'enabled': true,
+          'inputs': {'rotator': true, 'ant_ctrl': true, 'radio': true},
+        });
+        await tester.pumpAndSettle();
+        expect(find.text('AUTO · waiting for a logger request'), findsOneWidget);
+      });
+
       testWidgets('stays live while the elements move', (tester) async {
         final store = BusStore();
         final mqtt = FakeMqttService(store);

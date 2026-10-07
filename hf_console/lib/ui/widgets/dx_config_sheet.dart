@@ -1,7 +1,6 @@
 // dx_config_sheet.dart — in-console editor for the non-broker settings: the
 // colour scheme (applied live, not on SAVE), the DX-overlay pair (station Maidenhead locator + horstreporter base URL) and
-// the antenna-cam base URL (vhfcam-restream's preview server) and the UHF
-// array's park position (the PARK key on the sat-rotator panel).
+// the antenna-cam base URL (vhfcam-restream's preview server).
 //
 // The full setup screen only shows when broker credentials are missing, so an
 // already-provisioned tablet (creds stored) boots straight to the console and has
@@ -13,7 +12,6 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../store/credential_store.dart';
-import '../../store/uhf_park.dart';
 import '../../dxspot/dxspot_service.dart';
 import '../../vhfcam/vhfcam_service.dart';
 import '../theme.dart';
@@ -40,16 +38,11 @@ class _DxConfigDialogState extends State<_DxConfigDialog> {
   final _locator = TextEditingController();
   final _url = TextEditingController(text: 'https://horstreporter.kgbvax.net');
   final _camUrl = TextEditingController(text: defaultVhfcamBaseUrl);
-  final _parkAz = TextEditingController();
-  final _parkEl = TextEditingController();
   bool _loading = true;
-
-  bool get _parkValid =>
-      UhfPark.parseAz(_parkAz.text) != null && UhfPark.parseEl(_parkEl.text) != null;
 
   @override
   void dispose() {
-    for (final c in [_locator, _url, _camUrl, _parkAz, _parkEl]) {
+    for (final c in [_locator, _url, _camUrl]) {
       c.dispose();
     }
     super.dispose();
@@ -67,10 +60,7 @@ class _DxConfigDialogState extends State<_DxConfigDialog> {
     setState(() {
       _locator.text = values['station_locator'] ?? '';
       _url.text = values['horstreporter_base_url'] ?? 'https://horstreporter.kgbvax.net';
-      _camUrl.text = values['vhfcam_base_url'] ?? defaultVhfcamBaseUrl;
-      final park = UhfPark.notifier.value;
-      _parkAz.text = _fmtDeg(UhfPark.parseAz(values[UhfPark.azKey]) ?? park.az);
-      _parkEl.text = _fmtDeg(UhfPark.parseEl(values[UhfPark.elKey]) ?? park.el);
+      _camUrl.text = resolveVhfcamBaseUrl(values['vhfcam_base_url']);
       _loading = false;
     });
   }
@@ -79,18 +69,12 @@ class _DxConfigDialogState extends State<_DxConfigDialog> {
     final locator = _locator.text.trim().toUpperCase();
     final baseUrl = _url.text.trim();
     final camUrl = _camUrl.text.trim();
-    final parkAz = UhfPark.parseAz(_parkAz.text);
-    final parkEl = UhfPark.parseEl(_parkEl.text);
-    if (parkAz == null || parkEl == null) return;
     await _storage.writeAll({
       'station_locator': locator,
       'horstreporter_base_url': baseUrl,
       'vhfcam_base_url': camUrl,
-      UhfPark.azKey: _fmtDeg(parkAz),
-      UhfPark.elKey: _fmtDeg(parkEl),
     });
     if (!mounted) return;
-    UhfPark.notifier.value = (az: parkAz, el: parkEl);
     final dx = context.read<DxSpotService>();
     dx.configure(baseUrl: baseUrl, locator: locator);
     dx.restart();
@@ -147,26 +131,6 @@ class _DxConfigDialogState extends State<_DxConfigDialog> {
                   const SizedBox(height: 12),
                   _field('Antenna cam URL', _camUrl, hint: 'http://…:8083'),
                   const SizedBox(height: 16),
-                  Text('Where PARK on the UHF tab sends the rotators.',
-                      style: AppTheme.body(11, color: AppTheme.txtMute)),
-                  const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      Expanded(child: _field('Park azimuth °', _parkAz, hint: '0–360', key: const ValueKey('park-az'), number: true)),
-                      const SizedBox(width: 8),
-                      Expanded(child: _field('Park elevation °', _parkEl, hint: '0–90', key: const ValueKey('park-el'), number: true)),
-                    ],
-                  ),
-                  if (!_parkValid)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 4),
-                      child: Text(
-                        'Azimuth 0–360°, elevation 0–90°.',
-                        key: const ValueKey('park-invalid'),
-                        style: AppTheme.body(11, color: AppTheme.amber),
-                      ),
-                    ),
-                  const SizedBox(height: 16),
                   Row(
                     mainAxisAlignment: MainAxisAlignment.end,
                     children: [
@@ -177,7 +141,7 @@ class _DxConfigDialogState extends State<_DxConfigDialog> {
                       const SizedBox(width: 8),
                       ElevatedButton(
                         key: const ValueKey('settings-save'),
-                        onPressed: _parkValid ? _save : null,
+                        onPressed: _save,
                         style: AppTheme.actionButton(active: true),
                         child: const Text('SAVE'),
                       ),
@@ -214,14 +178,11 @@ class _DxConfigDialogState extends State<_DxConfigDialog> {
     );
   }
 
-  Widget _field(String label, TextEditingController controller, {String? hint, Key? key, bool number = false}) {
+  Widget _field(String label, TextEditingController controller, {String? hint}) {
     return TextField(
-      key: key,
       controller: controller,
       style: AppTheme.mono(13),
       autocorrect: false,
-      keyboardType: number ? const TextInputType.numberWithOptions(decimal: true) : null,
-      onChanged: number ? (_) => setState(() {}) : null,
       decoration: InputDecoration(
         labelText: label,
         labelStyle: AppTheme.mono(11, color: AppTheme.txtMute),
@@ -237,7 +198,3 @@ class _DxConfigDialogState extends State<_DxConfigDialog> {
     );
   }
 }
-
-/// Whole degrees print without decimals (200 not 200.0); fractional keep theirs.
-String _fmtDeg(double v) =>
-    v == v.truncateToDouble() ? v.truncate().toString() : v.toString();

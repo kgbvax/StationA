@@ -19,9 +19,9 @@ See `../sas/tablet_console_hybrid_preview.html` for the approved high-fidelity r
 - `lib/ui/screens/console_screen.dart` — single-screen layout (Station/HF/UHF/CAM pseudo-tabs)
 - `lib/ui/widgets/*.dart` — compass, PA meter, tuner, antenna, power, tx indicator, confirm dialog
 - `lib/vhfcam/*.dart` — antenna-cam feed client: HLS player state + poller for
-  vhfcam-restream's preview server (`:8083` on shari). Bus-independent HTTP;
+  vhfcam-restream's preview server (`:8083` on scmino). Bus-independent HTTP;
   `muehle/hf/vhfcam` is deliberately NOT in `expectedSlots` — the cam is an
-  ad-hoc accessory (installed disabled-at-boot), its silence is not a station fault.
+  accessory, not a station slot, its silence is not a station fault.
 - `lib/dxspot/world_geometry.dart` — singleton loader for the bundled
   Natural Earth 50m coastline outlines (`assets/geo/world.geojson`,
   ~3 MB raw / ~1 MB gzipped). Lazy-loads once at startup; the compass
@@ -48,7 +48,9 @@ Two map modules share `DxMapContainer`:
 - **VHF/UHF** (`DxMapContainer.vhf()`, UHF + CAM tabs): Mercator only, opens at
   zoom 7 on the station (up to 12), draws the UHF az rotator's great-circle
   beam (±20°) and target line, aims by tap (great-circle bearing from the
-  station, `goto` to `uhf/az-rotator`), and carries a STOP that stops both
+  station, `goto` to `uhf/az-rotator`), and carries PARK (one bridge-side
+  `park` intent — both sat axes to the bridge's configured park, az 200° /
+  el 0°, shown on the sat panel's key from /meta) and a STOP that stops both
   sat axes. Bearings are only as good as the station locator — use 6
   characters (the settings dialog warns on 4).
 
@@ -60,7 +62,7 @@ towns are not in the dataset.
 ## Antenna cam (CAM tab)
 
 The CAM tab plays vhfcam-restream's live HLS preview (`/hls/live.m3u8` on the
-cam server, default `http://192.168.1.139:8083`) and mirrors its radio-audio
+cam server, default `http://192.168.1.178:8083`) and mirrors its radio-audio
 controls (`POST /api/cmd/{audio_on,audio_off,power_on}` — audio_on takes the
 IC-9700 CI-V session, exactly like the :8083 reference page). Its RECORDING
 card starts/stops a server-side recording of the preview (`POST
@@ -70,7 +72,10 @@ holds the radio audio while recording; downloads happen on the :8083 page.
 Two deliberate platform notes:
 
 - The base URL is a user setting, key `vhfcam_base_url` (CredentialStore,
-  editable in the gear sheet, default `http://192.168.1.139:8083`).
+  editable in the gear sheet, default `http://192.168.1.178:8083`). A saved
+  value still pointing at shari (`.139`/`.140`/`shari`, pre-2026-09-30 host)
+  is treated as unset and resolves to the scmino default
+  (`resolveVhfcamBaseUrl`).
 - `macos/Runner/Info.plist` carries `NSAppTransportSecurity →
   NSAllowsLocalNetworking` — AVPlayer refuses the cleartext LAN URL without
   it. This is the LAN-scoped exception and deliberately NOT set on iOS
@@ -122,9 +127,10 @@ flutter build apk --release
 
 Sideload `build/app/outputs/flutter-apk/app-release.apk` onto the tablet.
 
-### Web channel on shari
+### Web channel on scmino
 
-There is also a web deployment on shari for browser access from the LAN:
+There is also a web deployment on scmino (`192.168.1.178`; on shari until
+2026-10-02) for browser access from the LAN:
 
 ```bash
 cd hf_console
@@ -132,16 +138,19 @@ cd hf_console
 ```
 
 This builds the Flutter web app and a small Go HTTP/WebSocket bridge, then
-installs them on shari as the `hf-console-web` systemd service on port `8091`:
+installs them on scmino as the `hf-console-web` systemd service on port `8091`:
 
 ```
-http://shari:8091/
+http://scmino:8091/
 ```
 
 The browser cannot open raw TCP sockets, so the web build uses WebSocket. The
 Go bridge (`webbridge/`) serves the static Flutter build at `/` and forwards
-the `/mqtt` WebSocket stream byte-for-byte to the shack broker on shari
-(`192.168.1.139:1883`). The Android APK continues to connect directly over TCP.
+the `/mqtt` WebSocket stream byte-for-byte to the station broker
+(`-mqtt-broker`, default `192.168.1.50:1883` — the live HA broker). The page
+derives its WebSocket endpoint from its own origin (`Uri.base`), so the build
+works on whichever host serves it. The Android APK continues to connect
+directly over TCP.
 
 ### iPhone (IPA, self-sideloaded)
 
