@@ -101,9 +101,12 @@ func buildInputsAndOverlay(cfg *config.Config, sourceURL string) (args []string,
 		barSrc = "bar"
 	}
 	// Bottom-left corner: the dragon sits directly above the data bar
-	// (bar height = fontsize + 2×margin), scaled to 140 px height.
+	// (bar height = fontsize + 2×margin), scaled to 140 px height. The PNG's
+	// own alpha does the cut-out: no colorkey — colorkey rewrites the alpha
+	// channel from the RGB, turning the transparent background into a
+	// speckled plate (seen live 2026-10-07).
 	barH := cfg.Overlay.FontSize + 2*cfg.Overlay.Margin
-	fc = fmt.Sprintf("%s[%d:v]scale=-1:140,colorkey=black:0.1:0[dl];[%s][dl]overlay=x=%d:y=main_h-%d-140[vout]",
+	fc = fmt.Sprintf("%s[%d:v]scale=-1:140,format=rgba[dl];[%s][dl]overlay=x=%d:y=main_h-%d-140[vout]",
 		chain, logoIdx, barSrc, cfg.Overlay.Margin, cfg.Overlay.Margin+barH)
 	vmap = "[vout]"
 	return args, vmap, fc, audioMap
