@@ -292,3 +292,64 @@ func TestAudioDemandLifecycle(t *testing.T) {
 		t.Fatalf("SetAudioDemand(false): %v", err)
 	}
 }
+
+// Regression (2026-10-07, live): audio_off then audio_on within one live
+// session — the preview restarting — reopened the radio's audio stream but
+// never restarted the PCM router (its "running" marker survived the router's
+// exit), so the radio's audio reached the bridge and went nowhere. Each
+// demand cycle must deliver PCM to the sink again.
+func TestAudioReopenWithinLiveSessionStillForwards(t *testing.T) {
+	audio := civ.NewFakeAudio(t)
+	got := make(chan []byte, 256)
+	h := newHarness(t, func(o *SessionOptions) {
+		o.AudioPort = audio.Port()
+		o.IdleTimeout = 2 * time.Second // stay live across the off/on gap
+		o.AudioDemandTTL = 5 * time.Second
+		o.AudioSink = func(pcm []byte) {
+			select {
+			case got <- pcm:
+			default:
+			}
+		}
+	})
+	waitState(t, h.s, StateIdle, time.Second)
+
+	expectPCM := func(round int) {
+		t.Helper()
+		pcm := make([]byte, 640) // ≥ the radio's minimum audio datagram (580 incl. header)
+		pcm[0] = byte(round)
+		deadline := time.After(2 * time.Second)
+		for seq := uint16(1); ; seq++ {
+			audio.Send(seq, pcm)
+			select {
+			case p := <-got:
+				if len(p) == len(pcm) && p[0] == byte(round) {
+					return
+				}
+			case <-time.After(30 * time.Millisecond):
+			case <-deadline:
+				t.Fatalf("round %d: no PCM reached the sink", round)
+			}
+		}
+	}
+
+	if err := h.s.SetAudioDemand(h.ctx, true); err != nil {
+		t.Fatalf("audio_on: %v", err)
+	}
+	waitState(t, h.s, StateLive, time.Second)
+	expectPCM(1)
+
+	for round := 2; round <= 3; round++ {
+		if err := h.s.SetAudioDemand(h.ctx, false); err != nil {
+			t.Fatalf("audio_off: %v", err)
+		}
+		time.Sleep(50 * time.Millisecond) // the router sees its stream close
+		if err := h.s.SetAudioDemand(h.ctx, true); err != nil {
+			t.Fatalf("audio_on: %v", err)
+		}
+		if s := h.s.Snapshot().SessionState; s != StateLive {
+			t.Fatalf("round %d: session left live (%q)", round, s)
+		}
+		expectPCM(round)
+	}
+}

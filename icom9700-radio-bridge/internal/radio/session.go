@@ -212,7 +212,6 @@ func (s *Session) ensureAudio() {
 	s.mu.Lock()
 	c := s.client
 	sink := s.opts.AudioSink
-	routeCh := s.audioRouteCh
 	s.mu.Unlock()
 	if c == nil {
 		return
@@ -221,26 +220,50 @@ func (s *Session) ensureAudio() {
 		s.log.Warn("audio stream open failed", "err", err)
 		return
 	}
-	if routeCh != nil {
-		return // router already running for this client
-	}
+	// Decide under s.mu: routeAudio clears the marker under the same lock
+	// when it exits, so either it sees the reopened stream and keeps going,
+	// or we see no router and start one — never neither (2026-10-07: an
+	// audio_off + audio_on inside one live session left the marker set and
+	// no router running; the radio's audio reached the bridge and went
+	// nowhere).
 	s.mu.Lock()
-	s.audioRouteCh = make(chan struct{})
-	routeCh = s.audioRouteCh
+	if s.audioRouteCh != nil {
+		s.mu.Unlock()
+		return // router running for this client; it follows a reopened stream
+	}
+	routeCh := make(chan struct{})
+	s.audioRouteCh = routeCh
 	s.mu.Unlock()
 	go s.routeAudio(c, routeCh, sink)
 }
 
 // routeAudio pumps PCM chunks from the live client's audio stream to the
-// configured sink until the session or the audio stream ends.
+// configured sink until the session ends or the audio stream closes for
+// good. A stream closed and reopened (audio_off then audio_on) is followed:
+// the frames channel is re-read every iteration.
 func (s *Session) routeAudio(c *civ.Client, done chan struct{}, sink func([]byte)) {
 	for {
+		frames := c.AudioFrames()
+		if frames == nil {
+			// Audio closed (demand off, loss, or shutdown). Exit unless it
+			// was reopened meanwhile — checked and cleared under s.mu, the
+			// lock ensureAudio decides under.
+			s.mu.Lock()
+			if frames = c.AudioFrames(); frames == nil {
+				if s.audioRouteCh == done {
+					s.audioRouteCh = nil
+				}
+				s.mu.Unlock()
+				return
+			}
+			s.mu.Unlock()
+		}
 		select {
 		case <-done:
 			return
-		case pcm, ok := <-c.AudioFrames():
+		case pcm, ok := <-frames:
 			if !ok {
-				return // audio stream closed (demand off, loss, or shutdown)
+				continue // this stream closed; re-check for a reopened one
 			}
 			if sink != nil {
 				sink(pcm)

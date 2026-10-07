@@ -555,3 +555,77 @@ func (f *FakeRadio) CtrlLog() [][]byte { return f.ctrlLog() }
 
 // CivLog returns every civ datagram the client sent, in order.
 func (f *FakeRadio) CivLog() [][]byte { return f.civLog() }
+
+// FakeAudio is the radio's audio stream (port 50003) for session-level tests:
+// it answers the stream's start handshake and pings, remembers the client's
+// audio socket, and streams PCM datagrams to it on demand. A reopened stream
+// (CloseAudio + OpenAudio) handshakes again from a new socket; Send always
+// targets the latest one.
+type FakeAudio struct {
+	conn *net.UDPConn
+	mu   sync.Mutex
+	peer *net.UDPAddr
+}
+
+// NewFakeAudio starts the fake audio stream on a loopback port.
+func NewFakeAudio(t testing.TB) *FakeAudio {
+	t.Helper()
+	conn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { conn.Close() })
+	a := &FakeAudio{conn: conn}
+	go a.serve()
+	return a
+}
+
+// Port is the audio port to configure on the client.
+func (a *FakeAudio) Port() int { return a.conn.LocalAddr().(*net.UDPAddr).Port }
+
+func (a *FakeAudio) serve() {
+	buf := make([]byte, 1500)
+	for {
+		n, from, err := a.conn.ReadFromUDP(buf)
+		if err != nil {
+			return
+		}
+		pkt := buf[:n]
+		var reply []byte
+		switch {
+		case prefixEqual(pkt, sigAreYouThere):
+			a.mu.Lock()
+			a.peer = from
+			a.mu.Unlock()
+			reply = header(sigIAmHere, 0x1234, binary.BigEndian.Uint32(pkt[8:12]))
+		case prefixEqual(pkt, sigReady):
+			reply = header(sigReady, 0x1234, binary.BigEndian.Uint32(pkt[8:12]))
+		case isPing(pkt) && pkt[16] == pingRequest:
+			seq, id := parsePingRequest(pkt)
+			reply = buildPing(0x1234, binary.BigEndian.Uint32(pkt[12:16]), seq, id)
+		default:
+			continue
+		}
+		_, _ = a.conn.WriteToUDP(reply, from)
+	}
+}
+
+// Send streams one audio datagram to the client's current audio socket;
+// false when no client has opened the stream yet.
+func (a *FakeAudio) Send(seq uint16, pcm []byte) bool {
+	a.mu.Lock()
+	dst := a.peer
+	a.mu.Unlock()
+	if dst == nil {
+		return false
+	}
+	p := make([]byte, audioHeaderLen+len(pcm))
+	copy(p, sigAudioMain)
+	binary.LittleEndian.PutUint16(p[6:8], seq)
+	p[16] = 0x80
+	binary.BigEndian.PutUint16(p[18:20], seq-1)
+	binary.BigEndian.PutUint16(p[22:24], uint16(len(pcm)))
+	copy(p[audioHeaderLen:], pcm)
+	_, _ = a.conn.WriteToUDP(p, dst)
+	return true
+}
