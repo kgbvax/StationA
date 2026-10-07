@@ -284,7 +284,7 @@ func TestRenderSatNameTruncated(t *testing.T) {
 	o, _ := satOverlay(t)
 	now := time.Now()
 	o.apply(testCfg("").TopicSat, satSnap(now, `"device_online":true,"tracking":true,"sat_name":"VERYLONGSATELLITENAME","range_km":987.6`))
-	if got := o.render(now)["sat"]; got != "VERYLONGSATE  988 km" {
+	if got := o.render(now)["sat"]; got != "VERYLONGSA  988 km" {
 		t.Fatalf("sat = %q", got)
 	}
 }

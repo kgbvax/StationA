@@ -67,7 +67,7 @@ type satReading struct {
 
 // satNameMax bounds the burned-in satellite name so a long catalogue name can
 // never run into the right-aligned TX field.
-const satNameMax = 12
+const satNameMax = 10
 
 // Overlay is the MQTT consumer + textfile writer. All mutable state is guarded
 // by mu; paho handlers only Enqueue.

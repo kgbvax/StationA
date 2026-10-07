@@ -100,14 +100,13 @@ func buildInputsAndOverlay(cfg *config.Config, sourceURL string) (args []string,
 		chain = fmt.Sprintf("[0:v]%s[bar];", bar)
 		barSrc = "bar"
 	}
-	// Bottom-left corner: the dragon sits directly above the data bar
-	// (bar height = fontsize + 2×margin), scaled to 140 px height. The PNG's
-	// own alpha does the cut-out: no colorkey — colorkey rewrites the alpha
-	// channel from the RGB, turning the transparent background into a
-	// speckled plate (seen live 2026-10-07).
-	barH := cfg.Overlay.FontSize + 2*cfg.Overlay.Margin
-	fc = fmt.Sprintf("%s[%d:v]scale=-1:140,format=rgba[dl];[%s][dl]overlay=x=%d:y=main_h-%d-140[vout]",
-		chain, logoIdx, barSrc, cfg.Overlay.Margin, cfg.Overlay.Margin+barH)
+	// Bottom-left corner, standing on the bottom edge over the data bar; the
+	// bar text starts to the right of him (BuildVideoFilter, logoBox). Scaled
+	// to fit a logoBox square. The PNG's own alpha does the cut-out: no
+	// colorkey — colorkey rewrites the alpha channel from the RGB, turning
+	// the transparent background into a speckled plate (seen live 2026-10-07).
+	fc = fmt.Sprintf("%s[%d:v]scale=w=%d:h=%d:force_original_aspect_ratio=decrease,format=rgba[dl];[%s][dl]overlay=x=%d:y=main_h-overlay_h[vout]",
+		chain, logoIdx, logoBox, logoBox, barSrc, cfg.Overlay.Margin)
 	vmap = "[vout]"
 	return args, vmap, fc, audioMap
 }
@@ -169,6 +168,10 @@ func previewOutputArgs(cfg *config.Config, transcode bool) []string {
 	)
 }
 
+// logoBox is the square (px) the dragon logo is scaled into; the data-bar text
+// starts right of it when a logo is configured.
+const logoBox = 140
+
 // BuildVideoFilter returns the bottom-bar drawtext chain for the
 // operational-data overlay, or "" when the overlay is disabled. AZ, EL and
 // frequency share one line at the bottom edge; the red TX indicator is
@@ -190,12 +193,21 @@ func BuildVideoFilter(cfg *config.Config) string {
 			"drawtext=fontfile=%s:textfile=%s/%s.txt:reload=1:fontcolor=%s:fontsize=%d:x=%s:y=%s",
 			o.FontFile, o.Dir, file, color, fs, x, textY)
 	}
+	// Fields start right of the dragon when there is one. Spacing in tenths
+	// of the font size, sized for DejaVu Sans: "AZ 195°" ≈ 4.1 em,
+	// "145.850 MHz" ≈ 6.6 em — tight enough that the SAT field (name ≤ 10
+	// chars + range) still ends before the right-aligned TX at 1024 px.
+	x0 := m
+	if o.Logo != "" {
+		x0 = 2*m + logoBox
+	}
+	at := func(tenths int) string { return strconv.Itoa(x0 + tenths*fs/10) }
 	parts := []string{
 		fmt.Sprintf("drawbox=x=0:y=ih-%d:w=iw:h=%d:color=black@0.5:t=fill", barH, barH),
-		dt("az", "white", strconv.Itoa(m)),
-		dt("el", "white", strconv.Itoa(m+6*fs)),
-		dt("freq", "white", strconv.Itoa(m+12*fs)),
-		dt("sat", "white", strconv.Itoa(m+20*fs)),
+		dt("az", "white", at(0)),
+		dt("el", "white", at(50)),
+		dt("freq", "white", at(97)),
+		dt("sat", "white", at(170)),
 		dt("tx", "red", "main_w-tw-"+strconv.Itoa(m)),
 	}
 	return strings.Join(parts, ",")

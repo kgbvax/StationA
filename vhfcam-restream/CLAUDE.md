@@ -99,10 +99,16 @@ load ~+0.8; keep the HD profile clean — 1080p software x264 is not budgeted).
   `stale_after_s` (default 3600 — the bridges are change-only publishers, so
   silence is normal and message-arrival time is *not* a staleness signal).
   Stale → `---`, never a frozen value. The red TX line just goes empty when
-  not transmitting; likewise the SAT field (`SO-50  2100 km`, x = m+20·fs,
-  name capped at 12 chars so it cannot reach TX) is empty unless a satellite
+  not transmitting; likewise the SAT field (`SO-50  2100 km`, name capped at
+  10 chars so it cannot run into TX) is empty unless a satellite
   is tracked and the sat-track snapshot is fresh — no placeholder between
   passes (user choice 2026-10-07).
+- **Layout** (user, 2026-10-07): the dragon logo stands in the bottom-left
+  corner on the bottom edge (scaled into a 140 px box, its own PNG alpha —
+  no colorkey, which destroyed the transparency); the bar text starts right
+  of him (`x0 = 2·margin + 140`), fields at x0 + {0, 5.0, 9.7, 17.0}·fontsize
+  — measured on the 1024×576 SD profile so a 10-char name + 4-digit range
+  ends at the TX field.
 - **Planes**: publishes `muehle/hf/vhfcam/status` (retained LWT online/offline)
   and `/state` (`mqtt_connected`, per-field stale flags, `tx`). No `/meta` or
   `/cmd` yet. Broker is the **hassio** one (`tcp://192.168.1.50:1883`) — the

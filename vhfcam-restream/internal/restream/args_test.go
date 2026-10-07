@@ -81,7 +81,7 @@ func TestBuildArgsWithLogo(t *testing.T) {
 	for _, want := range []string{
 		"-i /run/vhfcam-restream/dragon.png",
 		"-filter_complex [0:v]drawbox=",
-		"[bar];[1:v]scale=-1:140,format=rgba[dl];[bar][dl]overlay=x=12:y=main_h-64-140[vout]",
+		"[bar];[1:v]scale=w=140:h=140:force_original_aspect_ratio=decrease,format=rgba[dl];[bar][dl]overlay=x=12:y=main_h-overlay_h[vout]",
 		"-map [vout]",
 		"-c:v libx264",
 	} {
