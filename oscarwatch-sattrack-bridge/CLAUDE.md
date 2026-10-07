@@ -9,11 +9,11 @@ radio-corrected uplink/downlink frequencies and canonical modes. It also holds t
 **sub-satellite point** (lat/lng/alt), which the bridge derives from the look angle and
 the station QTH. Read-only: no `/cmd`.
 
-The slot is the sat-ops analogue of `muehle/hf/spots`. The planned consumers are:
-- the hf_console map (a pin and footprint from `sub_lat`/`sub_lng`/`alt_km`)
-- the vhfcam-restream overlay, and pass-triggered recording on the `in_range` edge
-
-Neither consumer exists yet.
+The slot is the sat-ops analogue of `muehle/hf/spots`. Consumers:
+- vhfcam-restream overlay (since 2026-10-07): burns `sat_name` + `range_km` into the
+  data bar while `tracking` (blank otherwise).
+- Planned: the hf_console map (a pin and footprint from `sub_lat`/`sub_lng`/`alt_km`),
+  and pass-triggered recording on the `in_range` edge.
 
 ## Commands
 

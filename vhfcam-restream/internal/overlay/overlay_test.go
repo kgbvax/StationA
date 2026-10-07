@@ -131,7 +131,7 @@ func TestStartSeedsAllFiles(t *testing.T) {
 	if err := o.Start(ctx); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	for _, name := range []string{"az", "el", "freq", "tx"} {
+	for _, name := range []string{"az", "el", "freq", "tx", "sat"} {
 		if _, err := os.Stat(filepath.Join(dir, name+".txt")); err != nil {
 			t.Errorf("file %s.txt not seeded: %v", name, err)
 		}
@@ -220,5 +220,71 @@ func TestFreqHzMatchesOverlay(t *testing.T) {
 	o.applyStatus(statusOf(testCfg("").TopicRadio), "offline")
 	if _, ok := o.FreqHz(); ok {
 		t.Error("freq known with the radio bridge offline")
+	}
+}
+
+// satOverlay returns an overlay with MQTT up and the sat-track /status online.
+func satOverlay(t *testing.T) (*Overlay, string) {
+	t.Helper()
+	o, dir := newTestOverlay(t)
+	o.setUp(true)
+	o.applyStatus(statusOf(testCfg("").TopicSat), "online")
+	return o, dir
+}
+
+func satSnap(now time.Time, body string) []byte {
+	return []byte(`{"ts":"` + now.Format(time.RFC3339) + `",` + body + `}`)
+}
+
+func TestRenderSatTracking(t *testing.T) {
+	o, _ := satOverlay(t)
+	now := time.Now()
+	o.apply(testCfg("").TopicSat, satSnap(now, `"device_online":true,"tracking":true,"sat_name":"SO-50","range_km":2100.5`))
+	if got := o.render(now)["sat"]; got != "SO-50  2100 km" {
+		t.Fatalf("sat = %q", got)
+	}
+}
+
+func TestRenderSatBlank(t *testing.T) {
+	now := time.Now()
+	cases := map[string]struct {
+		body     string
+		statusUp bool
+		at       time.Time
+	}{
+		"nothing tracked": {`"device_online":true,"tracking":false,"sat_name":null,"range_km":null`, true, now},
+		"tracker offline": {`"device_online":false,"tracking":false,"sat_name":null,"range_km":null,"error":"x"`, true, now},
+		"bridge offline":  {`"device_online":true,"tracking":true,"sat_name":"SO-50","range_km":2100`, false, now},
+		"stale snapshot":  {`"device_online":true,"tracking":true,"sat_name":"SO-50","range_km":2100`, true, now.Add(-2 * time.Hour)},
+		"no range":        {`"device_online":true,"tracking":true,"sat_name":"SO-50","range_km":null`, true, now},
+	}
+	for name, c := range cases {
+		o, _ := satOverlay(t)
+		if !c.statusUp {
+			o.applyStatus(statusOf(testCfg("").TopicSat), "offline")
+		}
+		o.apply(testCfg("").TopicSat, satSnap(c.at, c.body))
+		if got := o.render(now)["sat"]; got != "" {
+			t.Errorf("%s: sat = %q, want blank", name, got)
+		}
+	}
+}
+
+func TestRenderSatClearsAfterPass(t *testing.T) {
+	o, _ := satOverlay(t)
+	now := time.Now()
+	o.apply(testCfg("").TopicSat, satSnap(now, `"device_online":true,"tracking":true,"sat_name":"SO-50","range_km":2100`))
+	o.apply(testCfg("").TopicSat, satSnap(now, `"device_online":true,"tracking":false,"sat_name":null,"range_km":null`))
+	if got := o.render(now)["sat"]; got != "" {
+		t.Fatalf("sat = %q after the satellite was dropped", got)
+	}
+}
+
+func TestRenderSatNameTruncated(t *testing.T) {
+	o, _ := satOverlay(t)
+	now := time.Now()
+	o.apply(testCfg("").TopicSat, satSnap(now, `"device_online":true,"tracking":true,"sat_name":"VERYLONGSATELLITENAME","range_km":987.6`))
+	if got := o.render(now)["sat"]; got != "VERYLONGSATE  988 km" {
+		t.Fatalf("sat = %q", got)
 	}
 }

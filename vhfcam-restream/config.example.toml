@@ -71,3 +71,5 @@ mqtt_password = "<mqtt-hf-password>"   # or env VHFCAM_MQTT_PASSWORD
 site          = "muehle"
 station       = "hf"
 slot          = "vhfcam"
+# Source topics default to the uhf rotators, radio and sat-track slots
+# (topic_az, topic_el, topic_radio, topic_sat = "muehle/uhf/sat-track/state").

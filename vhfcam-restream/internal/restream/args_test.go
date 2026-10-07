@@ -57,6 +57,7 @@ func TestBuildArgsWithOverlay(t *testing.T) {
 		"drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
 		"textfile=/run/vhfcam-restream/overlay/az.txt:reload=1",
 		"fontcolor=red", // TX indicator
+		"textfile=/run/vhfcam-restream/overlay/sat.txt:reload=1",
 		"-c:v libx264",
 		"-preset superfast",
 		"-pix_fmt yuv420p",

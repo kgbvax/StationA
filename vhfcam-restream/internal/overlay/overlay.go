@@ -54,6 +54,21 @@ type radioReading struct {
 	at           time.Time
 }
 
+// satReading is the latest muehle/uhf/sat-track snapshot. The bridge
+// publishes the satellite keys as null (never omits them) when nothing is
+// tracked, so each snapshot replaces the previous one wholesale.
+type satReading struct {
+	name     *string
+	rangeKm  *float64
+	tracking bool
+	online   bool
+	at       time.Time
+}
+
+// satNameMax bounds the burned-in satellite name so a long catalogue name can
+// never run into the right-aligned TX field.
+const satNameMax = 12
+
 // Overlay is the MQTT consumer + textfile writer. All mutable state is guarded
 // by mu; paho handlers only Enqueue.
 type Overlay struct {
@@ -68,9 +83,11 @@ type Overlay struct {
 	az    reading
 	el    reading
 	radio radioReading
+	sat   satReading
 	azUp  bool // source slot /status LWT ("online")
 	elUp  bool
 	radUp bool
+	satUp bool
 	up    bool // our mqtt connection up
 }
 
@@ -122,6 +139,9 @@ func (o *Overlay) apply(topic string, payload []byte) {
 		SessionState     *string  `json:"session_state"`
 		AudioDemand      *bool    `json:"audio_demand"`
 		RadioResponding  *bool    `json:"radio_responding"`
+		SatName          *string  `json:"sat_name"`
+		RangeKm          *float64 `json:"range_km"`
+		Tracking         bool     `json:"tracking"`
 		Ts               string   `json:"ts"`
 	}
 	if err := json.Unmarshal(payload, &m); err != nil {
@@ -142,6 +162,8 @@ func (o *Overlay) apply(topic string, payload []byte) {
 		o.az = reading{val: m.Az, online: m.DeviceOnline, at: at}
 	case cfg.TopicEL:
 		o.el = reading{val: m.El, online: m.DeviceOnline, at: at}
+	case cfg.TopicSat:
+		o.sat = satReading{name: m.SatName, rangeKm: m.RangeKm, tracking: m.Tracking, online: m.DeviceOnline, at: at}
 	case cfg.TopicRadio:
 		r := o.radio // fields the snapshot omits carry over the last value
 		freqHz := r.freqHz
@@ -186,6 +208,8 @@ func (o *Overlay) applyStatus(topic, payload string) {
 		o.elUp = up
 	case statusOf(cfg.TopicRadio):
 		o.radUp = up
+	case statusOf(cfg.TopicSat):
+		o.satUp = up
 	}
 }
 
@@ -256,11 +280,12 @@ func (o *Overlay) render(now time.Time) map[string]string {
 	staleAfter := time.Duration(cfg.StaleAfterS * float64(time.Second))
 
 	o.mu.Lock()
-	az, el, radio := o.az, o.el, o.radio
-	azUp, elUp, radUp, up := o.azUp, o.elUp, o.radUp, o.up
+	az, el, radio, sat := o.az, o.el, o.radio, o.sat
+	azUp, elUp, radUp, satUp, up := o.azUp, o.elUp, o.radUp, o.satUp, o.up
 	o.mu.Unlock()
 
-	texts := map[string]string{"tx": ""} // TX line is blank unless actively transmitting
+	// TX and SAT are blank unless actively transmitting / tracking.
+	texts := map[string]string{"tx": "", "sat": ""}
 	if up && azUp && az.online && az.val != nil && now.Sub(az.at) <= staleAfter {
 		texts["az"] = fmt.Sprintf("AZ %03.0f°", *az.val)
 	} else {
@@ -283,7 +308,25 @@ func (o *Overlay) render(now time.Time) map[string]string {
 	if radioOK && radio.tx {
 		texts["tx"] = "TX"
 	}
+	if satFresh(up, satUp, sat, now, staleAfter) {
+		texts["sat"] = fmt.Sprintf("%s  %.0f km", truncate(*sat.name, satNameMax), *sat.rangeKm)
+	}
 	return texts
+}
+
+// satFresh is the SAT field's rule: the same two-layer freshness as the other
+// fields, plus a satellite actually tracked with a name and a range.
+func satFresh(up, satUp bool, s satReading, now time.Time, staleAfter time.Duration) bool {
+	return up && satUp && s.online && s.tracking && s.name != nil && s.rangeKm != nil &&
+		now.Sub(s.at) <= staleAfter
+}
+
+func truncate(s string, n int) string {
+	r := []rune(strings.TrimSpace(s))
+	if len(r) > n {
+		r = r[:n]
+	}
+	return string(r)
 }
 
 // freshFreq is the one rule for "the frequency is known": the radio slot is
@@ -390,9 +433,11 @@ func (o *Overlay) onConnect(c pahomqtt.Client) {
 		{cfg.TopicAZ, o.stateHandler()},
 		{cfg.TopicEL, o.stateHandler()},
 		{cfg.TopicRadio, o.stateHandler()},
+		{cfg.TopicSat, o.stateHandler()},
 		{statusOf(cfg.TopicAZ), o.statusHandler()},
 		{statusOf(cfg.TopicEL), o.statusHandler()},
 		{statusOf(cfg.TopicRadio), o.statusHandler()},
+		{statusOf(cfg.TopicSat), o.statusHandler()},
 	}
 	for _, s := range subs {
 		if tok := c.Subscribe(s.topic, 0, s.h); tok.Wait() && tok.Error() != nil {
@@ -421,8 +466,8 @@ func (o *Overlay) publishState(now time.Time, texts map[string]string) {
 	o.mu.Lock()
 	client := o.client
 	up := o.up
-	azUp, elUp, radUp := o.azUp, o.elUp, o.radUp
-	az, el, radio := o.az, o.el, o.radio
+	azUp, elUp, radUp, satUp := o.azUp, o.elUp, o.radUp, o.satUp
+	az, el, radio, sat := o.az, o.el, o.radio, o.sat
 	o.mu.Unlock()
 	if client == nil || !up {
 		return
@@ -439,6 +484,7 @@ func (o *Overlay) publishState(now time.Time, texts map[string]string) {
 		"az_stale":       azStale,
 		"el_stale":       elStale,
 		"radio_stale":    radioStale,
+		"sat_stale":      !satFresh(up, satUp, sat, now, staleAfter),
 		"tx":             texts["tx"] != "",
 	})
 	if err != nil {

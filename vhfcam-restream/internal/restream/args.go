@@ -192,6 +192,7 @@ func BuildVideoFilter(cfg *config.Config) string {
 		dt("az", "white", strconv.Itoa(m)),
 		dt("el", "white", strconv.Itoa(m+6*fs)),
 		dt("freq", "white", strconv.Itoa(m+12*fs)),
+		dt("sat", "white", strconv.Itoa(m+20*fs)),
 		dt("tx", "red", "main_w-tw-"+strconv.Itoa(m)),
 	}
 	return strings.Join(parts, ",")

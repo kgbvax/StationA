@@ -110,6 +110,7 @@ type OverlayConfig struct {
 	TopicAZ    string `toml:"topic_az"`    // rotator state carrying az
 	TopicEL    string `toml:"topic_el"`    // rotator state carrying el
 	TopicRadio string `toml:"topic_radio"` // radio state carrying freq_hz/tx
+	TopicSat   string `toml:"topic_sat"`   // sat-track state carrying sat_name/range_km
 
 	Dir         string  `toml:"dir"`         // drawtext textfile directory (tmpfs on the device)
 	StaleAfterS float64 `toml:"stale_after_s"` // max age of a snapshot's own ts before the field renders --- (rotators are change-only publishers; liveness comes from /status + device_online, not republish cadence)
@@ -163,6 +164,7 @@ func Default() Config {
 			TopicAZ:      "muehle/uhf/az-rotator/state",
 			TopicEL:      "muehle/uhf/el-rotator/state",
 			TopicRadio:   "muehle/uhf/radio/state",
+			TopicSat:     "muehle/uhf/sat-track/state",
 			Dir:          "/run/vhfcam-restream/overlay",
 			StaleAfterS:  3600,
 			RefreshS:     0.5,
