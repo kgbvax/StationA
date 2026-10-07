@@ -40,7 +40,6 @@ type radioReading struct {
 	// could not read (e.g. radio in standby: session live, CI-V deaf) — an
 	// omitted frequency must render as "---", never as a zero.
 	freqPresent bool
-	tx          bool
 	online      bool
 	// Session truth from the icom9700 bridge (2026-09-21 preview status):
 	session string // idle|connecting|live|error
@@ -58,16 +57,19 @@ type radioReading struct {
 // publishes the satellite keys as null (never omits them) when nothing is
 // tracked, so each snapshot replaces the previous one wholesale.
 type satReading struct {
-	name     *string
-	rangeKm  *float64
-	tracking bool
+	name       *string
+	rangeKm    *float64
+	downlinkHz *int64 // OscarWatch's radio-corrected (Doppler-applied) frequencies
+	uplinkHz   *int64
+	tracking   bool
 	online   bool
 	at       time.Time
 }
 
 // satNameMax bounds the burned-in satellite name so a long catalogue name can
-// never run into the right-aligned TX field.
-const satNameMax = 10
+// never run into the FREQ field on the left (LoTW names are ≤ 8 chars:
+// TEVEL2-5, SONATE-2).
+const satNameMax = 8
 
 // Overlay is the MQTT consumer + textfile writer. All mutable state is guarded
 // by mu; paho handlers only Enqueue.
@@ -135,12 +137,13 @@ func (o *Overlay) apply(topic string, payload []byte) {
 		El               *float64 `json:"el"`
 		DeviceOnline     bool     `json:"device_online"`
 		FreqHz           *int64   `json:"freq_hz"`
-		Tx               *string  `json:"tx"`
 		SessionState     *string  `json:"session_state"`
 		AudioDemand      *bool    `json:"audio_demand"`
 		RadioResponding  *bool    `json:"radio_responding"`
 		SatName          *string  `json:"sat_name"`
 		RangeKm          *float64 `json:"range_km"`
+		DownlinkHz       *int64   `json:"downlink_hz"`
+		UplinkHz         *int64   `json:"uplink_hz"`
 		Tracking         bool     `json:"tracking"`
 		Ts               string   `json:"ts"`
 	}
@@ -163,17 +166,16 @@ func (o *Overlay) apply(topic string, payload []byte) {
 	case cfg.TopicEL:
 		o.el = reading{val: m.El, online: m.DeviceOnline, at: at}
 	case cfg.TopicSat:
-		o.sat = satReading{name: m.SatName, rangeKm: m.RangeKm, tracking: m.Tracking, online: m.DeviceOnline, at: at}
+		o.sat = satReading{
+			name: m.SatName, rangeKm: m.RangeKm, downlinkHz: m.DownlinkHz, uplinkHz: m.UplinkHz,
+			tracking: m.Tracking, online: m.DeviceOnline, at: at,
+		}
 	case cfg.TopicRadio:
 		r := o.radio // fields the snapshot omits carry over the last value
 		freqHz := r.freqHz
 		freqPresent := false
 		if m.FreqHz != nil {
 			freqHz, freqPresent = *m.FreqHz, true
-		}
-		tx := r.tx
-		if m.Tx != nil {
-			tx = *m.Tx == "tx"
 		}
 		session, demand := r.session, r.demand
 		if m.SessionState != nil {
@@ -187,7 +189,7 @@ func (o *Overlay) apply(topic string, payload []byte) {
 			responding, sawResp = *m.RadioResponding, true
 		}
 		o.radio = radioReading{
-			freqHz: freqHz, freqPresent: freqPresent, tx: tx, online: m.DeviceOnline,
+			freqHz: freqHz, freqPresent: freqPresent, online: m.DeviceOnline,
 			session: session, demand: demand,
 			responding: responding, sawRespField: sawResp,
 			at: at,
@@ -284,8 +286,8 @@ func (o *Overlay) render(now time.Time) map[string]string {
 	azUp, elUp, radUp, satUp, up := o.azUp, o.elUp, o.radUp, o.satUp, o.up
 	o.mu.Unlock()
 
-	// TX and SAT are blank unless actively transmitting / tracking.
-	texts := map[string]string{"tx": "", "sat": ""}
+	// SAT is blank unless a satellite is tracked.
+	texts := map[string]string{"sat": ""}
 	if up && azUp && az.online && az.val != nil && now.Sub(az.at) <= staleAfter {
 		texts["az"] = fmt.Sprintf("AZ %03.0f°", *az.val)
 	} else {
@@ -296,30 +298,46 @@ func (o *Overlay) render(now time.Time) map[string]string {
 	} else {
 		texts["el"] = "EL ---"
 	}
-	// freqPresent=false = the bridge omitted the field (could not read it —
-	// e.g. radio in standby); a carried-over or zero value must never render
-	// as a real frequency.
 	radioOK := up && radUp && radio.online && now.Sub(radio.at) <= staleAfter
-	if hz, ok := freshFreq(radioOK, radio); ok {
-		texts["freq"] = fmt.Sprintf("%.3f MHz", float64(hz)/1e6)
-	} else {
-		texts["freq"] = "FREQ ---"
-	}
-	if radioOK && radio.tx {
-		texts["tx"] = "TX"
-	}
+	texts["freq"] = freqText(satTracked(up, satUp, sat, now, staleAfter), sat, radioOK, radio)
 	if satFresh(up, satUp, sat, now, staleAfter) {
-		texts["sat"] = fmt.Sprintf("%s  %.0f km", truncate(*sat.name, satNameMax), *sat.rangeKm)
+		texts["sat"] = fmt.Sprintf("%s %.0f km", truncate(*sat.name, satNameMax), *sat.rangeKm)
 	}
 	return texts
 }
 
-// satFresh is the SAT field's rule: the same two-layer freshness as the other
-// fields, plus a satellite actually tracked with a name and a range.
-func satFresh(up, satUp bool, s satReading, now time.Time, staleAfter time.Duration) bool {
-	return up && satUp && s.online && s.tracking && s.name != nil && s.rangeKm != nil &&
-		now.Sub(s.at) <= staleAfter
+// satTracked: the sat-track snapshot is fresh (two-layer liveness, like every
+// field) and a satellite is tracked.
+func satTracked(up, satUp bool, s satReading, now time.Time, staleAfter time.Duration) bool {
+	return up && satUp && s.online && s.tracking && now.Sub(s.at) <= staleAfter
 }
+
+// satFresh is the SAT field's rule: a tracked satellite with a name and a range.
+func satFresh(up, satUp bool, s satReading, now time.Time, staleAfter time.Duration) bool {
+	return satTracked(up, satUp, s, now, staleAfter) && s.name != nil && s.rangeKm != nil
+}
+
+// freqText is the FREQ field. While a satellite is tracked it shows
+// OscarWatch's radio-corrected downlink/uplink ("↓145.850 ↑435.300", user
+// 2026-10-07); otherwise the IC-9700's own frequency, or "FREQ ---".
+func freqText(tracked bool, s satReading, radioOK bool, r radioReading) string {
+	if tracked && (positive(s.downlinkHz) || positive(s.uplinkHz)) {
+		var parts []string
+		if positive(s.downlinkHz) {
+			parts = append(parts, fmt.Sprintf("↓%.3f", float64(*s.downlinkHz)/1e6))
+		}
+		if positive(s.uplinkHz) {
+			parts = append(parts, fmt.Sprintf("↑%.3f", float64(*s.uplinkHz)/1e6))
+		}
+		return strings.Join(parts, " ")
+	}
+	if hz, ok := freshFreq(radioOK, r); ok {
+		return fmt.Sprintf("%.3f MHz", float64(hz)/1e6)
+	}
+	return "FREQ ---"
+}
+
+func positive(v *int64) bool { return v != nil && *v > 0 }
 
 func truncate(s string, n int) string {
 	r := []rune(strings.TrimSpace(s))
@@ -329,9 +347,10 @@ func truncate(s string, n int) string {
 	return string(r)
 }
 
-// freshFreq is the one rule for "the frequency is known": the radio slot is
-// fresh and its snapshot carried a real freq_hz. Shared by the overlay text
-// and FreqHz so the burned-in value and a recording's file name agree.
+// freshFreq is the one rule for "the radio frequency is known": the radio slot
+// is fresh and its snapshot carried a real freq_hz (freqPresent=false = the
+// bridge omitted the field, e.g. radio in standby — a carried-over or zero
+// value must never render as a real frequency).
 func freshFreq(radioOK bool, r radioReading) (int64, bool) {
 	if radioOK && r.freqPresent && r.freqHz > 0 {
 		return r.freqHz, true
@@ -339,14 +358,19 @@ func freshFreq(radioOK bool, r radioReading) (int64, bool) {
 	return 0, false
 }
 
-// FreqHz is the radio frequency as the overlay would show it now; ok=false
-// when the overlay would show "FREQ ---".
+// FreqHz is the receive frequency matching the burned-in FREQ field — the
+// tracked satellite's downlink, else the radio's frequency; ok=false when the
+// overlay shows "FREQ ---". Names recordings.
 func (o *Overlay) FreqHz() (int64, bool) {
 	staleAfter := time.Duration(o.cfgFn().StaleAfterS * float64(time.Second))
+	now := o.now()
 	o.mu.Lock()
-	radio, radUp, up := o.radio, o.radUp, o.up
+	radio, radUp, sat, satUp, up := o.radio, o.radUp, o.sat, o.satUp, o.up
 	o.mu.Unlock()
-	radioOK := up && radUp && radio.online && time.Since(radio.at) <= staleAfter
+	if satTracked(up, satUp, sat, now, staleAfter) && positive(sat.downlinkHz) {
+		return *sat.downlinkHz, true
+	}
+	radioOK := up && radUp && radio.online && now.Sub(radio.at) <= staleAfter
 	return freshFreq(radioOK, radio)
 }
 
@@ -485,7 +509,6 @@ func (o *Overlay) publishState(now time.Time, texts map[string]string) {
 		"el_stale":       elStale,
 		"radio_stale":    radioStale,
 		"sat_stale":      !satFresh(up, satUp, sat, now, staleAfter),
-		"tx":             texts["tx"] != "",
 	})
 	if err != nil {
 		return

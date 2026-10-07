@@ -6,7 +6,7 @@ streaming (RTSPS in, FLV out), the Go binary owns liveness — restart with
 exponential backoff, kill on stall, SIGHUP-driven profile switch. Since
 2026-09-19 it is also an MQTT **consumer** (and minimal slot): the
 operational-data overlay subscribes to the uhf rotator/radio state snapshots
-and burns AZ/EL/freq/TX into the video (see below).
+and burns AZ/EL/freq/satellite into the video (see below).
 
 ## Host
 
@@ -84,33 +84,39 @@ changes are picked up on the next service restart only.
 load ~+0.8; keep the HD profile clean — 1080p software x264 is not budgeted).
 
 - **File contract**: the writer (`internal/overlay`) renders
-  `/run/vhfcam-restream/overlay/{az,el,freq,sat,tx}.txt` at 2 Hz (tmpfs,
+  `/run/vhfcam-restream/overlay/{az,el,freq,sat}.txt` at 2 Hz (tmpfs,
   `RuntimeDirectory` + `ReadWritePaths` in the unit). ffmpeg's drawtext reads
   them with `reload=1` every frame. The files MUST exist before ffmpeg inits
   drawtext — the writer runs unconditionally and seeds them at startup, which
   is what makes a SIGHUP toggle of `enabled` safe.
 - **Data**: `muehle/uhf/az-rotator/state` (`az`), `muehle/uhf/el-rotator/state`
-  (`el`), `muehle/uhf/radio/state` (`freq_hz`, `tx`),
-  `muehle/uhf/sat-track/state` (`tracking`, `sat_name`, `range_km` — from
+  (`el`), `muehle/uhf/radio/state` (`freq_hz`),
+  `muehle/uhf/sat-track/state` (`tracking`, `sat_name`, `range_km`,
+  `downlink_hz`, `uplink_hz` — from
   oscarwatch-sattrack-bridge) **plus each slot's
   `/status` LWT**. Freshness is two-layer (station model): a field renders only
   when our MQTT link is up, the source slot's `/status` is `online`, the
   snapshot says `device_online`, and the snapshot's own `ts` is younger than
   `stale_after_s` (default 3600 — the bridges are change-only publishers, so
   silence is normal and message-arrival time is *not* a staleness signal).
-  Stale → `---`, never a frozen value. The red TX line just goes empty when
-  not transmitting; likewise the SAT field (`SO-50  2100 km`, name capped at
-  10 chars so it cannot run into TX) is empty unless a satellite
-  is tracked and the sat-track snapshot is fresh — no placeholder between
-  passes (user choice 2026-10-07).
+  Stale → `---`, never a frozen value. FREQ shows OscarWatch's
+  radio-corrected `↓downlink ↑uplink` (MHz, 3 decimals) while a satellite is
+  tracked, else the IC-9700's own `freq_hz`, else `FREQ ---` (user,
+  2026-10-07); recordings are named after the same frequency
+  (`Overlay.FreqHz`: the downlink while tracking). The SAT field
+  (`SO-50 2100 km`, right-aligned, name capped at 8 chars so it cannot run
+  into FREQ) is empty unless a satellite is tracked and the sat-track
+  snapshot is fresh — no placeholder between passes. **No TX field** — the
+  IC-9700 bridge is receive-only; the user dropped it 2026-10-07.
 - **Layout** (user, 2026-10-07): the dragon logo stands in the bottom-left
   corner on the bottom edge (scaled into a 140 px box, its own PNG alpha —
   no colorkey, which destroyed the transparency); the bar text starts right
-  of him (`x0 = 2·margin + 140`), fields at x0 + {0, 5.0, 9.7, 17.0}·fontsize
-  — measured on the 1024×576 SD profile so a 10-char name + 4-digit range
-  ends at the TX field.
+  of him (`x0 = 2·margin + 140`), AZ/EL/FREQ at x0 + {0, 4.6, 9.2}·fontsize,
+  SAT right-aligned — measured on the 1024×576 SD profile (render the real
+  filter on scmino) so `↓145.848 ↑435.302` and `TEVEL2-5 13802 km` still
+  leave a gap.
 - **Planes**: publishes `muehle/hf/vhfcam/status` (retained LWT online/offline)
-  and `/state` (`mqtt_connected`, per-field stale flags, `tx`). No `/meta` or
+  and `/state` (`mqtt_connected`, per-field stale flags). No `/meta` or
   `/cmd` yet. Broker is the **hassio** one (`tcp://192.168.1.50:1883`) — the
   shari-local mosquitto of the repo docs is not what is deployed (see
   memory `station-broker-hassio`).

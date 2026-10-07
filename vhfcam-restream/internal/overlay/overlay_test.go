@@ -41,7 +41,7 @@ func TestRenderFreshValues(t *testing.T) {
 	// silence is normal, liveness rides /status + device_online).
 	o.apply(testCfg("").TopicAZ, []byte(`{"az":214.4,"device_online":true,"ts":"`+now.Format(time.RFC3339)+`"}`))
 	o.apply(testCfg("").TopicEL, []byte(`{"el":37.0,"device_online":true,"ts":"`+now.Format(time.RFC3339)+`"}`))
-	o.apply(testCfg("").TopicRadio, []byte(`{"freq_hz":435100000,"tx":"tx","device_online":true,"ts":"`+now.Format(time.RFC3339)+`"}`))
+	o.apply(testCfg("").TopicRadio, []byte(`{"freq_hz":435100000,"device_online":true,"ts":"`+now.Format(time.RFC3339)+`"}`))
 
 	texts := o.render(now)
 	if texts["az"] != "AZ 214°" {
@@ -52,9 +52,6 @@ func TestRenderFreshValues(t *testing.T) {
 	}
 	if texts["freq"] != "435.100 MHz" {
 		t.Errorf("freq = %q", texts["freq"])
-	}
-	if texts["tx"] != "TX" {
-		t.Errorf("tx = %q", texts["tx"])
 	}
 }
 
@@ -71,7 +68,7 @@ func TestRenderStaleAndOffline(t *testing.T) {
 	old := now.Add(-2 * time.Hour).Format(time.RFC3339)
 	o.apply(testCfg("").TopicEL, []byte(`{"el":10,"device_online":true,"ts":"`+old+`"}`))
 	// offline radio
-	o.apply(testCfg("").TopicRadio, []byte(`{"freq_hz":435100000,"tx":"tx","device_online":false,"ts":"`+now.Format(time.RFC3339)+`"}`))
+	o.apply(testCfg("").TopicRadio, []byte(`{"freq_hz":435100000,"device_online":false,"ts":"`+now.Format(time.RFC3339)+`"}`))
 
 	texts := o.render(now)
 	if texts["az"] != "AZ 100°" {
@@ -82,9 +79,6 @@ func TestRenderStaleAndOffline(t *testing.T) {
 	}
 	if texts["freq"] != "FREQ ---" {
 		t.Errorf("offline radio freq = %q", texts["freq"])
-	}
-	if texts["tx"] != "" {
-		t.Errorf("offline radio tx = %q, want empty", texts["tx"])
 	}
 }
 
@@ -119,9 +113,6 @@ func TestRenderMQTTDownBlankEverything(t *testing.T) {
 			t.Errorf("%s vanished; want --- form", k)
 		}
 	}
-	if texts["tx"] != "" {
-		t.Errorf("tx = %q while mqtt down", texts["tx"])
-	}
 }
 
 func TestStartSeedsAllFiles(t *testing.T) {
@@ -131,7 +122,7 @@ func TestStartSeedsAllFiles(t *testing.T) {
 	if err := o.Start(ctx); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	for _, name := range []string{"az", "el", "freq", "tx", "sat"} {
+	for _, name := range []string{"az", "el", "freq", "sat"} {
 		if _, err := os.Stat(filepath.Join(dir, name+".txt")); err != nil {
 			t.Errorf("file %s.txt not seeded: %v", name, err)
 		}
@@ -240,7 +231,7 @@ func TestRenderSatTracking(t *testing.T) {
 	o, _ := satOverlay(t)
 	now := time.Now()
 	o.apply(testCfg("").TopicSat, satSnap(now, `"device_online":true,"tracking":true,"sat_name":"SO-50","range_km":2100.5`))
-	if got := o.render(now)["sat"]; got != "SO-50  2100 km" {
+	if got := o.render(now)["sat"]; got != "SO-50 2100 km" {
 		t.Fatalf("sat = %q", got)
 	}
 }
@@ -284,7 +275,44 @@ func TestRenderSatNameTruncated(t *testing.T) {
 	o, _ := satOverlay(t)
 	now := time.Now()
 	o.apply(testCfg("").TopicSat, satSnap(now, `"device_online":true,"tracking":true,"sat_name":"VERYLONGSATELLITENAME","range_km":987.6`))
-	if got := o.render(now)["sat"]; got != "VERYLONGSA  988 km" {
+	if got := o.render(now)["sat"]; got != "VERYLONG 988 km" {
 		t.Fatalf("sat = %q", got)
+	}
+}
+
+func TestRenderFreqFromOscarWatch(t *testing.T) {
+	o, _ := satOverlay(t)
+	now := time.Now()
+	o.applyStatus(statusOf(testCfg("").TopicRadio), "online")
+	o.apply(testCfg("").TopicRadio, satSnap(now, `"freq_hz":144300000,"device_online":true`))
+
+	// Not tracking: the radio's own frequency.
+	o.apply(testCfg("").TopicSat, satSnap(now, `"device_online":true,"tracking":false,"downlink_hz":null,"uplink_hz":null`))
+	if got := o.render(now)["freq"]; got != "144.300 MHz" {
+		t.Fatalf("idle freq = %q, want the radio's", got)
+	}
+	if hz, ok := o.FreqHz(); !ok || hz != 144300000 {
+		t.Fatalf("idle FreqHz = %d %v", hz, ok)
+	}
+
+	// Tracking: OscarWatch's radio-corrected downlink + uplink.
+	o.apply(testCfg("").TopicSat, satSnap(now, `"device_online":true,"tracking":true,"sat_name":"SO-50","range_km":2100,"downlink_hz":145848213,"uplink_hz":435302140`))
+	if got := o.render(now)["freq"]; got != "↓145.848 ↑435.302" {
+		t.Fatalf("tracking freq = %q", got)
+	}
+	if hz, ok := o.FreqHz(); !ok || hz != 145848213 {
+		t.Fatalf("tracking FreqHz = %d %v, want the downlink", hz, ok)
+	}
+
+	// Beacon-only transponder: no uplink.
+	o.apply(testCfg("").TopicSat, satSnap(now, `"device_online":true,"tracking":true,"sat_name":"AO-07","range_km":3000,"downlink_hz":145977800,"uplink_hz":null`))
+	if got := o.render(now)["freq"]; got != "↓145.978" {
+		t.Fatalf("beacon freq = %q", got)
+	}
+
+	// Tracker link down: back to the radio.
+	o.apply(testCfg("").TopicSat, satSnap(now, `"device_online":false,"tracking":false,"downlink_hz":null`))
+	if got := o.render(now)["freq"]; got != "144.300 MHz" {
+		t.Fatalf("tracker down freq = %q", got)
 	}
 }

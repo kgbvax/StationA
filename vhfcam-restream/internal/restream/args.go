@@ -174,10 +174,11 @@ const logoBox = 140
 
 // BuildVideoFilter returns the bottom-bar drawtext chain for the
 // operational-data overlay, or "" when the overlay is disabled. AZ, EL and
-// frequency share one line at the bottom edge; the red TX indicator is
-// right-aligned on the same line and simply goes empty when not
-// transmitting. Each field is its own drawtext with reload=1 reading a
-// textfile the overlay writer keeps current.
+// frequency share one line at the bottom edge; the tracked satellite (name +
+// range) is right-aligned on the same line and simply goes empty between
+// passes. Each field is its own drawtext with reload=1 reading a textfile the
+// overlay writer keeps current. (No TX field: the IC-9700 bridge is
+// receive-only and the user dropped it, 2026-10-07.)
 func BuildVideoFilter(cfg *config.Config) string {
 	o := &cfg.Overlay
 	if !o.Enabled {
@@ -194,9 +195,9 @@ func BuildVideoFilter(cfg *config.Config) string {
 			o.FontFile, o.Dir, file, color, fs, x, textY)
 	}
 	// Fields start right of the dragon when there is one. Spacing in tenths
-	// of the font size, sized for DejaVu Sans: "AZ 195°" ≈ 4.1 em,
-	// "145.850 MHz" ≈ 6.6 em — tight enough that the SAT field (name ≤ 10
-	// chars + range) still ends before the right-aligned TX at 1024 px.
+	// of the font size, sized for DejaVu Sans: "AZ 195°" ≈ 4.1 em; FREQ is up
+	// to "↓145.850 ↑435.300" ≈ 10.3 em, leaving the right-aligned SAT field
+	// (name ≤ 8 chars + range) room on the 1024 px preview.
 	x0 := m
 	if o.Logo != "" {
 		x0 = 2*m + logoBox
@@ -205,10 +206,11 @@ func BuildVideoFilter(cfg *config.Config) string {
 	parts := []string{
 		fmt.Sprintf("drawbox=x=0:y=ih-%d:w=iw:h=%d:color=black@0.5:t=fill", barH, barH),
 		dt("az", "white", at(0)),
-		dt("el", "white", at(50)),
-		dt("freq", "white", at(97)),
-		dt("sat", "white", at(170)),
-		dt("tx", "red", "main_w-tw-"+strconv.Itoa(m)),
+		dt("el", "white", at(46)),
+		dt("freq", "white", at(92)),
+		// SAT is right-aligned at the right edge (where TX used to be), so a
+		// long name grows left into the free space after FREQ.
+		dt("sat", "white", "main_w-tw-"+strconv.Itoa(m)),
 	}
 	return strings.Join(parts, ",")
 }

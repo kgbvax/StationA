@@ -10,10 +10,12 @@ radio-corrected uplink/downlink frequencies and canonical modes. It also holds t
 the station QTH. Read-only: no `/cmd`.
 
 The slot is the sat-ops analogue of `muehle/hf/spots`. Consumers:
-- vhfcam-restream overlay (since 2026-10-07): burns `sat_name` + `range_km` into the
-  data bar while `tracking` (blank otherwise).
-- Planned: the hf_console map (a pin and footprint from `sub_lat`/`sub_lng`/`alt_km`),
-  and pass-triggered recording on the `in_range` edge.
+- vhfcam-restream overlay (since 2026-10-07): burns `sat_name` + `range_km` and the
+  radio-corrected `downlink_hz`/`uplink_hz` (as FREQ) into the data bar while
+  `tracking`; recordings are named after the downlink.
+- hf_console VHF/UHF map (since 2026-10-07): pin on `sub_lat`/`sub_lng`, footprint
+  from `alt_km`, great circle from the station.
+- Planned: pass-triggered recording on the `in_range` edge.
 
 ## Commands
 
