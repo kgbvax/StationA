@@ -15,6 +15,7 @@ import 'package:provider/provider.dart';
 
 import '../../dxspot/dxspot_service.dart';
 import '../../dxspot/mercator_projection.dart';
+import '../../dxspot/overlay_geometry.dart';
 import '../../dxspot/places.dart';
 import '../../dxspot/projection.dart';
 import '../../dxspot/ring_subpaths.dart';
@@ -431,6 +432,27 @@ typedef MercatorBeam = ({LatLng qth, double az, double? target, double half, boo
 class MercatorPainterDebug {
   static int get paintCount => _MercatorPainter.debugPaintCount;
   static set paintCount(int v) => _MercatorPainter.debugPaintCount = v;
+
+  /// The map painter with only the layers the overlay tests exercise.
+  static CustomPainter overlayPainter({
+    required MercatorProjection projection,
+    required LatLng qth,
+    MercatorBeam? beam,
+    SatTrack? sat,
+    List<List<LatLng>>? rings,
+  }) =>
+      _MercatorPainter(
+        projection: projection,
+        isDark: true,
+        rings: rings,
+        gridSquares: const [],
+        spots: const [],
+        filter: DxSpotFilter(),
+        qthLat: qth.lat,
+        qthLng: qth.lng,
+        beam: beam,
+        sat: sat,
+      );
 }
 
 class _MercatorPainter extends CustomPainter {
@@ -572,10 +594,14 @@ class _MercatorPainter extends CustomPainter {
     final color = AppTheme.green.withValues(alpha: st.inRange ? 1.0 : 0.5);
 
     // Footprint: the ground circle the satellite is above the horizon for.
+    // Both curves are clipped to the world rectangle and repeated across the
+    // wrap seam (see overlay_geometry.dart).
+    canvas.save();
+    canvas.clipRect(_worldRect);
     final radius = st.footprintRadiusKm;
     if (radius != null) {
-      final path = _geoPolyline(
-          [for (var brg = 0; brg <= 360; brg += 4) destinationPoint(st.position, brg.toDouble(), radius)], size);
+      final path = Path();
+      _addLine(path, projectLine(projection, circleSamples(st.position, radius)));
       canvas.drawPath(
         path,
         Paint()
@@ -587,12 +613,12 @@ class _MercatorPainter extends CustomPainter {
 
     // Station → sub-satellite point along the great circle.
     final q = (qthLat != null && qthLng != null) ? (lat: qthLat!, lng: qthLng!) : null;
-    final linePts = <LatLng>[];
+    ProjectedLine? stationLine;
     if (q != null) {
-      final brg = initialBearing(q, st.position);
-      final dist = distanceKm(q, st.position);
-      linePts.addAll([for (var i = 0; i <= 32; i++) destinationPoint(q, brg, dist * i / 32)]);
-      final path = _geoPolyline(linePts, size);
+      stationLine = projectLine(
+          projection, greatCircleSamples(q, initialBearing(q, st.position), distanceKm(q, st.position)));
+      final path = Path();
+      _addLine(path, stationLine);
       canvas.drawPath(
         path,
         Paint()
@@ -601,18 +627,17 @@ class _MercatorPainter extends CustomPainter {
           ..strokeWidth = 1.5,
       );
     }
+    canvas.restore();
 
     // Pin: a diamond, so it never reads as a spot dot or the keyed station.
     final view = (Offset.zero & size).deflate(8);
-    final p = projection.project(st.lat, st.lng);
+    // Beyond the Mercator limit (a polar pass) the bird is not on the map:
+    // it gets the off-map label, not a pin squashed onto the edge.
+    final p = MercatorProjection.latInBounds(st.lat) ? projection.project(st.lat, st.lng) : null;
     if (p == null || !view.contains(Offset(p.x, p.y))) {
       // Off screen (the usual case at the UHF page's town-level zoom): name
       // the satellite where its station line leaves the map.
-      Offset? edge;
-      for (final ll in linePts) {
-        final lp = projection.project(ll.lat, ll.lng);
-        if (lp != null && view.contains(Offset(lp.x, lp.y))) edge = Offset(lp.x, lp.y);
-      }
+      final edge = stationLine == null ? null : _lastVisible(stationLine, view);
       if (edge != null) {
         // Kept clear of the right-hand rail (zoom row, STOP/PARK, ~110 dp
         // wide) and the heading chip top-right.
@@ -684,53 +709,64 @@ class _MercatorPainter extends CustomPainter {
     );
   }
 
-  /// Beam wedge along great circles from the QTH (az ± half) out to the
-  /// farthest viewport corner, the boom line on az and a faint target line
-  /// while turning — the compass rules, drawn in Mercator.
-  void _drawBeam(Canvas canvas, Size size, MercatorBeam b) {
-    Offset? pt(LatLng ll) {
-      final p = projection.project(ll.lat, ll.lng);
-      return p == null ? null : Offset(p.x, p.y);
-    }
+  /// Canvas rectangle the world occupies (the map is blank outside it);
+  /// overlay geometry is clipped to it.
+  Rect get _worldRect {
+    final b = projection.worldBounds;
+    return Rect.fromLTRB(b.left, b.top, b.right, b.bottom);
+  }
 
-    final origin = pt(b.qth);
-    if (origin == null) return;
-    var reach = 50.0;
-    for (final c in [Offset.zero, Offset(size.width, 0), Offset(0, size.height), Offset(size.width, size.height)]) {
-      final ll = projection.unproject(c.dx, c.dy);
-      if (ll != null) reach = math.max(reach, distanceKm(b.qth, (lat: ll.lat, lng: ll.lng)));
-    }
-    reach = math.min(reach * 1.1, 5000);
-
-    List<Offset> ray(double brg) {
-      final out = <Offset>[];
-      for (var i = 1; i <= 24; i++) {
-        final o = pt(destinationPoint(b.qth, brg, reach * i / 24));
-        if (o != null) out.add(o);
+  /// Adds [line] to [path] once per world shift (the copies past the seam).
+  static void _addLine(Path path, ProjectedLine line) {
+    if (line.isEmpty) return;
+    for (final s in line.shifts) {
+      path.moveTo(line.points.first.x + s, line.points.first.y);
+      for (var i = 1; i < line.points.length; i++) {
+        path.lineTo(line.points[i].x + s, line.points[i].y);
       }
-      return out;
     }
+  }
 
-    final wedge = Path()..moveTo(origin.dx, origin.dy);
-    for (final o in ray(b.az - b.half)) {
-      wedge.lineTo(o.dx, o.dy);
+  /// The last sample of [line] that is on screen and on the map, or null.
+  Offset? _lastVisible(ProjectedLine line, Rect view) {
+    final world = _worldRect;
+    Offset? last;
+    for (final p in line.points) {
+      for (final s in line.shifts) {
+        final o = Offset(p.x + s, p.y);
+        if (view.contains(o) && world.contains(o)) last = o;
+      }
     }
-    for (var a = b.az - b.half; a <= b.az + b.half; a += 2) {
-      final o = pt(destinationPoint(b.qth, a, reach));
-      if (o != null) wedge.lineTo(o.dx, o.dy);
+    return last;
+  }
+
+  /// Beam wedge along great circles from the QTH (az ± half) out to the
+  /// farthest part of the viewport, the boom line on az and a faint target
+  /// line while turning — the compass rules, drawn in Mercator. Zoomed out the
+  /// rays run to the far side of the earth: across the antimeridian seam and
+  /// over the poles, see overlay_geometry.dart.
+  void _drawBeam(Canvas canvas, Size size, MercatorBeam b) {
+    final reach = beamReachKm(projection, b.qth);
+
+    canvas.save();
+    canvas.clipRect(_worldRect);
+
+    final wedge = Path();
+    for (final quad in beamWedge(projection, b.qth, b.az, b.half, reach)) {
+      for (final s in quad.shifts) {
+        wedge.moveTo(quad.points[0].x + s, quad.points[0].y);
+        for (var i = 1; i < 4; i++) {
+          wedge.lineTo(quad.points[i].x + s, quad.points[i].y);
+        }
+        wedge.close();
+      }
     }
-    for (final o in ray(b.az + b.half).reversed) {
-      wedge.lineTo(o.dx, o.dy);
-    }
-    wedge.close();
     final alpha = b.online ? 0.30 : 0.12;
     canvas.drawPath(wedge, Paint()..color = AppTheme.blend(AppTheme.accent, alpha));
 
     void line(double brg, Paint paint) {
-      final path = Path()..moveTo(origin.dx, origin.dy);
-      for (final o in ray(brg)) {
-        path.lineTo(o.dx, o.dy);
-      }
+      final path = Path();
+      _addLine(path, beamRay(projection, b.qth, brg, reach));
       canvas.drawPath(path, paint);
     }
 
@@ -750,28 +786,7 @@ class _MercatorPainter extends CustomPainter {
           ..style = PaintingStyle.stroke
           ..strokeWidth = 2.5
           ..strokeCap = StrokeCap.round);
-  }
-
-  /// Projects [points] into one path, starting a new subpath where a point
-  /// does not project or the projection wraps (a jump of half the canvas).
-  Path _geoPolyline(List<LatLng> points, Size size) {
-    final path = Path();
-    Offset? prev;
-    for (final ll in points) {
-      final p = projection.project(ll.lat, ll.lng);
-      if (p == null) {
-        prev = null;
-        continue;
-      }
-      final o = Offset(p.x, p.y);
-      if (prev == null || (o.dx - prev.dx).abs() > size.width / 2) {
-        path.moveTo(o.dx, o.dy);
-      } else {
-        path.lineTo(o.dx, o.dy);
-      }
-      prev = o;
-    }
-    return path;
+    canvas.restore();
   }
 
   TextPainter _labelPainter(String text, Color color) => TextPainter(

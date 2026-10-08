@@ -11,6 +11,10 @@ import 'ring_subpaths.dart' show ProjectedPoint;
 
 const double _mercatorRadius = 6378137.0;
 const double _webMercatorMaxLat = 85.05112878;
+
+/// Latitude overlay geometry is projected up to ([MercatorProjection.projectNear]):
+/// short of the pole, where the Mercator y runs off to infinity.
+const double _overlayMaxLat = 89.5;
 const double _tileSize = 256.0;
 
 /// A projected (x, y) point in pixels, or `null` if the input is outside the
@@ -140,6 +144,41 @@ class MercatorProjection {
     );
   }
 
+  /// Width (= height) of one copy of the world, canvas pixels.
+  double get worldPixels => math.pow(2.0, zoom) * _tileSize;
+
+  /// Canvas rectangle one copy of the world occupies: longitude
+  /// centerLng ± 180°, latitude ±85.05°. The map is blank outside it.
+  ({double left, double top, double right, double bottom}) get worldBounds {
+    final w = worldPixels;
+    return (
+      left: width / 2.0 - w / 2.0,
+      right: width / 2.0 + w / 2.0,
+      top: height / 2.0 - (_latToY(_webMercatorMaxLat) - _centerWorldY) * scale,
+      bottom: height / 2.0 - (_latToY(-_webMercatorMaxLat) - _centerWorldY) * scale,
+    );
+  }
+
+  /// [project] for overlay geometry that has to survive the seam and the
+  /// poles: the point lands on the world copy nearest [nearX] (default: the
+  /// copy inside [worldBounds]), so a path that crosses the antimeridian stays
+  /// continuous instead of jumping a world width, and latitudes up to ±89.5°
+  /// are projected for real instead of clamped to the Mercator limit — a clip
+  /// to [worldBounds] then cuts a path that runs on towards a pole where it
+  /// leaves the map, rather than squashing it onto the edge.
+  MercatorPoint? projectNear(double lat, double lng, [double? nearX]) {
+    if (!lat.isFinite || !lng.isFinite) return null;
+    final deltaLng = _wrapLng180(lng - centerLng);
+    var x = width / 2.0 + _mercatorRadius * _degToRad(deltaLng) * scale;
+    if (nearX != null) {
+      final w = worldPixels;
+      x += w * ((nearX - x) / w).roundToDouble();
+    }
+    final y = height / 2.0 - (_latToY(lat, _overlayMaxLat) - _centerWorldY) * scale;
+    if (!x.isFinite || !y.isFinite) return null;
+    return (x: x, y: y);
+  }
+
   /// True if [lat] is inside the Mercator latitude domain.
   static bool latInBounds(double lat) =>
       lat >= -_webMercatorMaxLat && lat <= _webMercatorMaxLat;
@@ -151,8 +190,8 @@ class MercatorProjection {
     return math.max(0.0, math.log(height / _tileSize) / math.ln2);
   }
 
-  static double _latToY(double lat) {
-    final clamped = lat.clamp(-_webMercatorMaxLat, _webMercatorMaxLat);
+  static double _latToY(double lat, [double limit = _webMercatorMaxLat]) {
+    final clamped = lat.clamp(-limit, limit);
     final sinLat = math.sin(_degToRad(clamped));
     return _mercatorRadius * math.log((1.0 + sinLat) / (1.0 - sinLat)) / 2.0;
   }
