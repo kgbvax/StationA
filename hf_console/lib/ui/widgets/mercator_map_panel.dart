@@ -14,6 +14,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../dxspot/dxspot_service.dart';
+import '../../dxspot/map_fit.dart';
 import '../../dxspot/mercator_projection.dart';
 import '../../dxspot/overlay_geometry.dart';
 import '../../dxspot/places.dart';
@@ -79,6 +80,14 @@ class _MercatorMapPanelState extends State<MercatorMapPanel> {
   late final double _zoomDefault = widget.initialZoom ?? _kMercatorZoomDefault;
   double? _centerLat;
   double? _centerLng;
+  // While a satellite is tracked the view frames the station AND the
+  // satellite (map_fit.dart). The first pan / pinch / zoom press hands the
+  // view to the operator (_autoFit off) until the next pass starts or RESET
+  // is pressed.
+  bool _autoFit = true;
+  bool _wasTracking = false;
+  String? _trackedName;
+  double _scaleBaseZoom = 0;
   List<List<LatLng>>? _rings;
   List<Place> _places = Places.instance.loaded;
   // Aging tick for the selected-station marker (dim/hide as the keyed call
@@ -114,22 +123,41 @@ class _MercatorMapPanelState extends State<MercatorMapPanel> {
     setState(() => _zoom = clamped);
   }
 
-  void _panBy(double dx, double dy, Size size) {
+  /// One pinch / drag step: pan by [focalDelta], then zoom to [zoom] keeping
+  /// the geographic point under [focal] fixed (pinch zooms where the fingers are).
+  void _gestureStep(Offset focal, Offset focalDelta, double zoom, Size size) {
     final lat = _centerLat;
     final lng = _centerLng;
     if (lat == null || lng == null) return;
-    final proj = MercatorProjection(
-      centerLat: lat,
-      centerLng: lng,
-      zoom: _zoom,
-      width: size.width,
-      height: size.height,
-    );
-    final next = proj.unproject(size.width / 2 + dx, size.height / 2 + dy);
-    if (next == null) return;
+    final z = zoom.clamp(widget.minZoom, widget.maxZoom).toDouble();
+    var cLat = lat;
+    var cLng = lng;
+
+    MercatorProjection projAt(double clat, double clng, double zz) =>
+        MercatorProjection(centerLat: clat, centerLng: clng, zoom: zz, width: size.width, height: size.height);
+
+    final panned = projAt(cLat, cLng, _zoom).unproject(size.width / 2 - focalDelta.dx, size.height / 2 - focalDelta.dy);
+    if (panned != null) {
+      cLat = panned.lat;
+      cLng = panned.lng;
+    }
+    if (z != _zoom) {
+      final anchor = projAt(cLat, cLng, _zoom).unproject(focal.dx, focal.dy);
+      if (anchor != null) {
+        final q = projAt(cLat, cLng, z).project(anchor.lat, anchor.lng);
+        if (q != null) {
+          final moved = projAt(cLat, cLng, z).unproject(size.width / 2 + (q.x - focal.dx), size.height / 2 + (q.y - focal.dy));
+          if (moved != null) {
+            cLat = moved.lat;
+            cLng = moved.lng;
+          }
+        }
+      }
+    }
     setState(() {
-      _centerLat = next.lat;
-      _centerLng = next.lng;
+      _centerLat = cLat;
+      _centerLng = cLng;
+      _zoom = z;
     });
   }
 
@@ -155,6 +183,16 @@ class _MercatorMapPanelState extends State<MercatorMapPanel> {
       _centerLng = qthLng;
     }
 
+    // The satellite OscarWatch is tracking (muehle/uhf/sat-track): VHF
+    // module only — sat ops live on the UHF/CAM pages.
+    final sat = widget.rotatorOverlay ? SatTrack.fromStore(store) : null;
+    final tracking = sat != null && qthLat != null && qthLng != null;
+    // A new pass (or a different satellite) re-frames; ending a pass with
+    // auto-fit still on simply falls back to the view held underneath.
+    if (tracking && (!_wasTracking || _trackedName != sat.name)) _autoFit = true;
+    _wasTracking = tracking;
+    _trackedName = tracking ? sat.name : null;
+
     final lat = _centerLat ?? qthLat ?? 0.0;
     final lng = _centerLng ?? qthLng ?? 0.0;
 
@@ -166,26 +204,69 @@ class _MercatorMapPanelState extends State<MercatorMapPanel> {
     final targetAz = surface == null ? null : store.stateValueAs<num>(surface.stateSlot, surface.targetKey)?.toDouble();
     final qth = (qthLat != null && qthLng != null) ? (lat: qthLat, lng: qthLng) : null;
     final beam = (surface != null && az != null && qth != null)
-        ? (qth: qth, az: az, target: targetAz, half: surface.beamHalfWidthDeg, online: rotatorOnline)
+        ? (
+            qth: qth,
+            az: az,
+            target: targetAz,
+            half: surface.beamHalfWidthDeg,
+            online: rotatorOnline,
+            // The beam goes yellow while it follows a tracked satellite.
+            color: sat != null ? AppTheme.amber : AppTheme.accent,
+          )
         : null;
-    // The satellite OscarWatch is tracking (muehle/uhf/sat-track): VHF
-    // module only — sat ops live on the UHF/CAM pages.
-    final sat = widget.rotatorOverlay ? SatTrack.fromStore(store) : null;
     final mqtt = context.read<MqttService>();
 
     return LayoutBuilder(
       builder: (context, constraints) {
         final size = Size(constraints.maxWidth, constraints.maxHeight);
+        // Auto-fit frames the station and the satellite together; otherwise
+        // the operator's own view.
+        var viewLat = lat;
+        var viewLng = lng;
+        var viewZoom = _zoom;
+        if (tracking && _autoFit) {
+          final fit = fitPoints(
+            (lat: qthLat, lng: qthLng),
+            sat.position,
+            width: size.width,
+            height: size.height,
+            minZoom: widget.minZoom,
+            maxZoom: math.min(widget.maxZoom, _zoomDefault),
+          );
+          viewLat = fit.lat;
+          viewLng = fit.lng;
+          viewZoom = fit.zoom;
+        }
+        // Any hands-on zoom or pan takes the view over from auto-fit,
+        // starting from exactly what is on screen.
+        void takeOver() {
+          if (!(tracking && _autoFit)) return;
+          _autoFit = false;
+          _centerLat = viewLat;
+          _centerLng = viewLng;
+          _zoom = viewZoom;
+        }
+
         final proj = MercatorProjection(
-          centerLat: lat,
-          centerLng: lng,
-          zoom: _zoom,
+          centerLat: viewLat,
+          centerLng: viewLng,
+          zoom: viewZoom,
           width: size.width,
           height: size.height,
         );
         return ClipRect(
           child: GestureDetector(
-            onPanUpdate: (d) => _panBy(-d.delta.dx, -d.delta.dy, size),
+            // One recogniser for drag and pinch (pan and scale cannot be
+            // combined): one finger pans, two fingers pan + zoom about the
+            // fingers' centre.
+            onScaleStart: (d) {
+              takeOver();
+              _scaleBaseZoom = _zoom;
+            },
+            onScaleUpdate: (d) {
+              final z = d.scale == 1.0 ? _zoom : _scaleBaseZoom + math.log(d.scale) / math.ln2;
+              _gestureStep(d.localFocalPoint, d.focalPointDelta, z, size);
+            },
             // Tap aims the rotator at the great-circle bearing of the tapped
             // point — the Mercator twin of the compass disc's tap-to-aim.
             onTapUp: (rotatorOnline && qth != null)
@@ -201,6 +282,7 @@ class _MercatorMapPanelState extends State<MercatorMapPanel> {
                 if (event is PointerScrollEvent) {
                   // Wheel up (negative scroll delta) zooms in; down zooms out.
                   final step = event.scrollDelta.dy < 0 ? _kMercatorZoomStep : -_kMercatorZoomStep;
+                  takeOver();
                   _setZoom(_zoom + step);
                 }
               },
@@ -235,12 +317,20 @@ class _MercatorMapPanelState extends State<MercatorMapPanel> {
                     bottom: 12,
                     right: 12,
                     child: _ZoomControls(
-                      zoom: _zoom,
+                      zoom: viewZoom,
                       minZoom: widget.minZoom,
                       maxZoom: widget.maxZoom,
-                      onZoomIn: () => _setZoom(_zoom + _kMercatorZoomStep),
-                      onZoomOut: () => _setZoom(_zoom - _kMercatorZoomStep),
+                      onZoomIn: () {
+                        takeOver();
+                        _setZoom(_zoom + _kMercatorZoomStep);
+                      },
+                      onZoomOut: () {
+                        takeOver();
+                        _setZoom(_zoom - _kMercatorZoomStep);
+                      },
                       onReset: () {
+                        // While tracking, RESET re-frames station + satellite.
+                        if (tracking) setState(() => _autoFit = true);
                         _setZoom(_zoomDefault);
                         if (qthLat != null && qthLng != null) {
                           setState(() {
@@ -425,12 +515,14 @@ double gridZoomFade(double zoom) {
 }
 
 /// Rotator beam for the painter: QTH, pointing and commanded azimuth.
-typedef MercatorBeam = ({LatLng qth, double az, double? target, double half, bool online});
+typedef MercatorBeam = ({LatLng qth, double az, double? target, double half, bool online, Color color});
 
 /// Test hook: paint calls of the Mercator map painter.
 @visibleForTesting
 class MercatorPainterDebug {
   static int get paintCount => _MercatorPainter.debugPaintCount;
+  static MercatorProjection? get lastProjection => _MercatorPainter.debugLastProjection;
+  static MercatorBeam? get lastBeam => _MercatorPainter.debugLastBeam;
   static set paintCount(int v) => _MercatorPainter.debugPaintCount = v;
 
   /// The map painter with only the layers the overlay tests exercise.
@@ -488,10 +580,14 @@ class _MercatorPainter extends CustomPainter {
 
   /// Paint calls, for the repaint-discipline test.
   static int debugPaintCount = 0;
+  static MercatorProjection? debugLastProjection;
+  static MercatorBeam? debugLastBeam;
 
   @override
   void paint(Canvas canvas, Size size) {
     debugPaintCount++;
+    debugLastProjection = projection;
+    debugLastBeam = beam;
     // 1. Background
     canvas.drawRect(
       Offset.zero & size,
@@ -762,7 +858,7 @@ class _MercatorPainter extends CustomPainter {
       }
     }
     final alpha = b.online ? 0.30 : 0.12;
-    canvas.drawPath(wedge, Paint()..color = AppTheme.blend(AppTheme.accent, alpha));
+    canvas.drawPath(wedge, Paint()..color = AppTheme.blend(b.color, alpha));
 
     void line(double brg, Paint paint) {
       final path = Path();
@@ -775,14 +871,14 @@ class _MercatorPainter extends CustomPainter {
       line(
           t,
           Paint()
-            ..color = AppTheme.blend(AppTheme.accent, 0.55)
+            ..color = AppTheme.blend(b.color, 0.55)
             ..style = PaintingStyle.stroke
             ..strokeWidth = 1.5);
     }
     line(
         b.az,
         Paint()
-          ..color = AppTheme.accent
+          ..color = b.color
           ..style = PaintingStyle.stroke
           ..strokeWidth = 2.5
           ..strokeCap = StrokeCap.round);
