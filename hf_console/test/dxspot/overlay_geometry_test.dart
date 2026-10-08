@@ -89,6 +89,12 @@ void main() {
       expect(beamReachKm(_proj(zoom: 1), _muenster), lessThanOrEqualTo(kMaxReachKm));
     });
 
+    test('a caller can cap it', () {
+      expect(beamReachKm(_proj(zoom: 1), _muenster, maxKm: 4000), 4000);
+      // A cap beyond what the viewport needs changes nothing.
+      expect(beamReachKm(_proj(zoom: 10), _muenster, maxKm: 4000), lessThan(300));
+    });
+
     test('zoomed in it stays local', () {
       expect(beamReachKm(_proj(zoom: 10), _muenster), lessThan(300));
     });

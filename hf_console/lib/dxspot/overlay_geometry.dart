@@ -88,8 +88,8 @@ List<double> worldShifts(MercatorProjection proj, double minX, double maxX) {
 /// How far from [qth] a beam has to reach to cover the viewport: the
 /// farthest of a coarse grid of viewport points (a zoomed-out view has its
 /// farthest point on an edge or in the middle, not at a corner — the
-/// antipode), with a margin, never beyond [kMaxReachKm].
-double beamReachKm(MercatorProjection proj, LatLng qth) {
+/// antipode), with a margin, never beyond [maxKm] (default [kMaxReachKm]).
+double beamReachKm(MercatorProjection proj, LatLng qth, {double maxKm = kMaxReachKm}) {
   var reach = 50.0;
   const nx = 8, ny = 6;
   for (var i = 0; i <= nx; i++) {
@@ -98,7 +98,7 @@ double beamReachKm(MercatorProjection proj, LatLng qth) {
       if (ll != null) reach = math.max(reach, distanceKm(qth, ll));
     }
   }
-  return math.min(reach * 1.1, kMaxReachKm);
+  return math.min(reach * 1.1, math.min(maxKm, kMaxReachKm));
 }
 
 /// A great-circle ray of [km] from [qth] on [bearingDeg].

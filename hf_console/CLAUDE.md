@@ -70,8 +70,7 @@ Beam, footprint and station line are great circles drawn by
 continuously across the antimeridian seam (repeated per world copy) and clipped
 to the world rectangle, with latitudes up to ±89.5° projected for real so a ray
 over a pole leaves the map at the edge and re-enters on the far meridian. The
-beam reaches the farthest viewport point (up to the antipode), not a fixed
-range. `test/tool/overlay_render_test.dart` renders a zoom × pole grid to PNGs
+beam reaches the farthest viewport point, capped at 4000 km (`_kBeamMaxKm`). `test/tool/overlay_render_test.dart` renders a zoom × pole grid to PNGs
 for eyeballing (`OVERLAY_RENDER=1 flutter test test/tool/overlay_render_test.dart`,
 output in `/tmp/overlay`).
 

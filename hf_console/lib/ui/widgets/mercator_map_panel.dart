@@ -34,6 +34,9 @@ import 'rotator_presets_bar.dart';
 const double kMercatorZoomMin = 1.0;
 const double kMercatorZoomMax = 12.0;
 const double _kMercatorZoomDefault = 2.5;
+
+/// The rotator beam is drawn out to this distance, no farther (UHF map).
+const double _kBeamMaxKm = 4000.0;
 const double _kMercatorZoomStep = 0.5;
 
 class MercatorMapPanel extends StatefulWidget {
@@ -837,12 +840,12 @@ class _MercatorPainter extends CustomPainter {
   }
 
   /// Beam wedge along great circles from the QTH (az ± half) out to the
-  /// farthest part of the viewport, the boom line on az and a faint target
-  /// line while turning — the compass rules, drawn in Mercator. Zoomed out the
-  /// rays run to the far side of the earth: across the antimeridian seam and
-  /// over the poles, see overlay_geometry.dart.
+  /// farthest part of the viewport (but no farther than [_kBeamMaxKm]), the
+  /// boom line on az and a faint target line while turning — the compass
+  /// rules, drawn in Mercator. The rays are great circles: they cross the
+  /// antimeridian seam and run over the poles, see overlay_geometry.dart.
   void _drawBeam(Canvas canvas, Size size, MercatorBeam b) {
-    final reach = beamReachKm(projection, b.qth);
+    final reach = beamReachKm(projection, b.qth, maxKm: _kBeamMaxKm);
 
     canvas.save();
     canvas.clipRect(_worldRect);
