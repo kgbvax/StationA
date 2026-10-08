@@ -9,6 +9,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -52,6 +53,12 @@ func main() {
 	defer cancel()
 
 	if err := run(ctx, cfg, log); err != nil {
+		// A SIGTERM/SIGINT cancels the root context; that's a clean shutdown,
+		// not a failure — exit 0 so `systemctl stop` doesn't report FAILURE.
+		if errors.Is(err, context.Canceled) {
+			log.Info("icom9700-radio-bridge stopped")
+			return
+		}
 		log.Error("icom9700-radio-bridge exited", "err", err)
 		os.Exit(1)
 	}
