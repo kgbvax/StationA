@@ -1,5 +1,5 @@
 # stationportal built-in inventory — the static half of the landing page.
-# Versioned with the repo; a redeploy updates it. Facts as of 2026-10-02.
+# Versioned with the repo; a redeploy updates it. Facts as of 2026-10-08.
 # The live half (device model/serial/firmware from /meta, liveness from /status
 # and /state.device_online) comes from the bus and needs no entry here.
 
@@ -138,7 +138,7 @@ addr     = "192.168.1.178 (eth) · .182 (wifi)"
 hardware = "Raspberry Pi Compute Module 5, 4 GB"
 os       = "Debian 12 (bookworm)"
 storage  = "117 GB NVMe"
-role     = "vhfcam-restream, hf_console web, testui, stationportal, Mosquitto mirror"
+role     = "vhfcam-restream, oscarwatch-sattrack-bridge, hf_console web, testui, stationportal, Mosquitto mirror"
 
 [[host]]
 name     = "hassio"
@@ -159,7 +159,7 @@ name     = "bwpc"
 addr     = "192.168.1.197"
 hardware = "Shack PC"
 os       = "Windows"
-role     = "DXLog / Log4OM logger, PstRotator, pelcobridge2 TUI (UHF pan/tilt)"
+role     = "DXLog / Log4OM logger, PstRotator, OscarWatch (Satellite link ws :7373), pelcobridge2 TUI (UHF pan/tilt)"
 
 [[host]]
 name     = "lenovo-tab"
@@ -300,6 +300,13 @@ link      = "LAN RS-BA1 (RX audio) + serial CI-V (read-only)"
 host      = "shari"
 
 [[slot]]
+address   = "muehle/uhf/sat-track"
+component = "oscarwatch-sattrack-bridge"
+device    = "OscarWatch satellite tracker (software, on bwpc)"
+link      = "websocket (ws://192.168.1.197:7373/)"
+host      = "scmino"
+
+[[slot]]
 address   = "muehle/uhf/az-rotator"
 component = "spid-ercm-rotator-bridge"
 device    = "SPID azimuth rotator (Rot1Prog)"
@@ -392,6 +399,15 @@ host  = "shari"
 unit  = "spid-ercm-rotator-bridge"
 ports = "4533/tcp, 4534/tcp, 12041/udp"
 slots = ["muehle/uhf/az-rotator", "muehle/uhf/el-rotator"]
+
+[[software]]
+name  = "oscarwatch-sattrack-bridge"
+path  = "oscarwatch-sattrack-bridge/"
+kind  = "bridge"
+host  = "scmino"
+unit  = "oscarwatch-sattrack-bridge"
+note  = "Dials OscarWatch on bwpc (ws :7373); feeds the vhfcam overlay + console map"
+slots = ["muehle/uhf/sat-track"]
 
 [[software]]
 name  = "logger-spot-bridge"
