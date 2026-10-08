@@ -145,14 +145,14 @@ type Client struct {
 
 	control *udpStream
 	civ     *udpStream
-	audio   *udpStream      // audio receive stream; nil unless OpenAudio ran
+	audio   *udpStream // audio receive stream; nil unless OpenAudio ran
 	auth    authState
 
 	wmu sync.Mutex // serializes all tracked sends + inner/outer seq bookkeeping
 
 	done     chan struct{} // closed on loss or Close; stops all timers/pumps
 	loseOnce sync.Once
-	loseErr  error
+	loseErr  error      // guarded by mu: written by lose (any goroutine), read by hsErr
 	Lost     chan error // exactly one delivery
 
 	frames chan []byte // ordered inbound CI-V frames
@@ -164,7 +164,7 @@ type Client struct {
 	a8Got   chan struct{}
 
 	// liveness bookkeeping
-	mu            sync.Mutex // lastControlRx
+	mu            sync.Mutex // lastControlRx, loseErr
 	lastControlRx time.Time
 
 	smu        sync.Mutex // timers + reauthDead
@@ -256,7 +256,9 @@ func Dial(ctx context.Context, opts Options) (c *Client, err error) {
 	// 4. First auth (0x02) — a single immediate auth (wfview's order); the
 	// 0x05 renewal rides the periodic timer. The radio answers 0x40 with a
 	// 0 response and volunteers its 0xa8 capabilities (the radio name).
-	if err = c.sendTracked(c.control, c.auth.buildAuth(c.control.localSID, c.control.remoteSID, 0x02)); err != nil {
+	if err = c.sendBuilt(c.control, func() []byte {
+		return c.auth.buildAuth(c.control.localSID, c.control.remoteSID, 0x02)
+	}); err != nil {
 		return nil, c.hsErr(err)
 	}
 	c.startKeepalives(c.control)
@@ -313,7 +315,7 @@ func Dial(ctx context.Context, opts Options) (c *Client, err error) {
 			return nil, c.hsErr(err)
 		}
 		c.startKeepalives(c.civ)
-		if err = c.sendTracked(c.civ, c.buildOpenClose(false)); err != nil {
+		if err = c.sendBuilt(c.civ, func() []byte { return c.buildOpenClose(false) }); err != nil {
 			return nil, c.hsErr(err)
 		}
 
@@ -328,8 +330,11 @@ func Dial(ctx context.Context, opts Options) (c *Client, err error) {
 // hsErr prefers a session-ending fact the reader already recorded (e.g. the
 // radio refusing during login) over the generic timeout.
 func (c *Client) hsErr(err error) error {
-	if c.loseErr != nil {
-		return c.loseErr
+	c.mu.Lock()
+	lost := c.loseErr
+	c.mu.Unlock()
+	if lost != nil {
+		return lost
 	}
 	return err
 }
@@ -700,7 +705,9 @@ func (c *Client) lose(err error) {
 		return
 	}
 	c.loseOnce.Do(func() {
+		c.mu.Lock()
 		c.loseErr = err
+		c.mu.Unlock()
 		c.log.Warn("ci-v session lost", "err", err)
 		select {
 		case c.Lost <- err:
@@ -715,6 +722,15 @@ func (c *Client) sendTracked(s *udpStream, p []byte) error {
 	c.wmu.Lock()
 	defer c.wmu.Unlock()
 	return c.sendTrackedLocked(s, p)
+}
+
+// sendBuilt builds AND sends under one wmu hold: the builders bump the
+// inner/auth sequence counters wmu guards, so passing a built packet to
+// sendTracked (argument evaluated before the lock) races the watchdogs.
+func (c *Client) sendBuilt(s *udpStream, build func() []byte) error {
+	c.wmu.Lock()
+	defer c.wmu.Unlock()
+	return c.sendTrackedLocked(s, build())
 }
 
 func (c *Client) sendTrackedLocked(s *udpStream, p []byte) error {
@@ -754,7 +770,7 @@ func (c *Client) Close() {
 		c.markDone()
 		// Data stream first: close packet, then its disconnect one-shot.
 		if c.civ != nil && c.civ.conn != nil {
-			_ = c.sendTracked(c.civ, c.buildOpenClose(true))
+			_ = c.sendBuilt(c.civ, func() []byte { return c.buildOpenClose(true) })
 			c.civ.disconnect()
 			_ = c.civ.conn.Close()
 		}
@@ -762,7 +778,9 @@ func (c *Client) Close() {
 		// retransmits before the control socket disappears.
 		if c.control != nil && c.control.conn != nil {
 			if c.auth.gotToken {
-				_ = c.sendTracked(c.control, c.auth.buildAuth(c.control.localSID, c.control.remoteSID, 0x01))
+				_ = c.sendBuilt(c.control, func() []byte {
+					return c.auth.buildAuth(c.control.localSID, c.control.remoteSID, 0x01)
+				})
 				time.Sleep(500 * time.Millisecond)
 			}
 			c.control.disconnect()
@@ -814,10 +832,17 @@ func (c *Client) markDone() {
 	}
 }
 
-// shutdown closes done and the sockets, waking all readers.
+// shutdown closes done and the sockets, waking all readers. The audio
+// teardown needs wmu (c.audio/audioFrames race OpenAudio/CloseAudio/
+// AudioFrames otherwise) but lose can run with wmu already held (a tracked
+// send's write error), so it takes the lock on its own goroutine.
 func (c *Client) shutdown() {
 	c.markDone()
-	c.closeAudioLocked()
+	go func() {
+		c.wmu.Lock()
+		defer c.wmu.Unlock()
+		c.closeAudioLocked()
+	}()
 	if c.civ != nil && c.civ.conn != nil {
 		_ = c.civ.conn.Close()
 	}
