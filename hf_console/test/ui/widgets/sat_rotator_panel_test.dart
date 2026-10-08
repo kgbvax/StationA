@@ -464,6 +464,44 @@ void main() {
       expect(mqtt.publishes.single.retain, isFalse);
     });
 
+    testWidgets('also retunes the radio when its bridge advertises a park target', (tester) async {
+      final store = BusStore();
+      final mqtt = FakeMqttService(store);
+      store.setSatRotator(azAddress, axis: 'az', pos: 45, limits: parkAz);
+      store.setSatRotator(elAddress, axis: 'el', pos: 10, limits: parkEl);
+      store.applyStatus('muehle/uhf/radio', 'online');
+      // A healthy idle radio publishes device_online:false by design.
+      store.applyState('muehle/uhf/radio', {'device_online': false, 'session_state': 'idle'});
+      store.applyMeta('muehle/uhf/radio', {
+        'capabilities': {
+          'park': {'freq_hz': 432200000, 'mode': 'usb'}
+        }
+      });
+
+      await pumpPanel(tester, store: store, mqtt: mqtt);
+      await tester.tap(find.byKey(const ValueKey('sat-park')));
+      await tester.pumpAndSettle();
+
+      expect(mqtt.publishes.map((r) => r.topic),
+          ['muehle/uhf/az-rotator/cmd', 'muehle/uhf/radio/cmd']);
+      expect(jsonDecode(mqtt.publishes.last.payload), {'action': 'park_radio'});
+      expect(mqtt.publishes.last.retain, isFalse);
+    });
+
+    testWidgets('radio without a park target (or offline) is left alone', (tester) async {
+      final store = BusStore();
+      final mqtt = FakeMqttService(store);
+      store.setSatRotator(azAddress, axis: 'az', pos: 45, limits: parkAz);
+      store.setSatRotator(elAddress, axis: 'el', pos: 10, limits: parkEl);
+      store.applyStatus('muehle/uhf/radio', 'online');
+      store.applyMeta('muehle/uhf/radio', {'capabilities': {'bands': ['2m']}});
+
+      await pumpPanel(tester, store: store, mqtt: mqtt);
+      await tester.tap(find.byKey(const ValueKey('sat-park')));
+      await tester.pumpAndSettle();
+      expect(mqtt.publishes.map((r) => r.topic), ['muehle/uhf/az-rotator/cmd']);
+    });
+
     testWidgets('az down → park goes to the el slot; link down disables PARK', (tester) async {
       final store = BusStore();
       final mqtt = FakeMqttService(store);

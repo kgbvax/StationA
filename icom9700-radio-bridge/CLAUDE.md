@@ -117,7 +117,14 @@ state + `audio_demand` + `monitor` + monitor-gated telemetry (`freq_hz`, `band`,
 `mode`, `satellite`, `s_meter`, `swr`, `alc`; `tx_power` only when the bench
 proves the read) — omitted while the monitor is off or the radio is deaf, never
 zeroed, never frozen. `/cmd` actions: exactly `audio_on`, `audio_off`,
-`power_on`, `monitor_on`, `monitor_off`.
+`power_on`, `monitor_on`, `monitor_off`, `park_radio`.
+
+**park_radio** (2026-10-08): retunes mode + frequency to `[park]` (`freq_hz`,
+`mode`) through a hamlib **rigctld on scmino** (`park.rigctld_addr`,
+`rigctld-scmino/` holds its hardened unit + `deploy.sh`; reachable from shari
+only, via systemd `IPAddressAllow`). `internal/rigctl` can send exactly mode +
+frequency — no PTT/power/raw CI-V. The bridge itself never opens a serial port
+for control; the radio's COM port belongs to other software.
 
 ---
 

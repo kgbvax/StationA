@@ -25,6 +25,8 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
+
+	"icom9700-radio-bridge/internal/rigctl"
 )
 
 // EnvPrefix is the ICOM9700_* env override prefix. The feature plan pins these
@@ -46,6 +48,7 @@ type Config struct {
 	Session SessionConfig `toml:"session"`
 	Serial  SerialConfig  `toml:"serial"`
 	Audio   AudioConfig   `toml:"audio"`
+	Park    ParkConfig    `toml:"park"`
 	Log     LogConfig     `toml:"log"`
 }
 
@@ -144,6 +147,17 @@ type SerialConfig struct {
 
 	MeterIntervalDur  time.Duration `toml:"-"`
 	PowerOnFrameBytes []byte        `toml:"-"`
+}
+
+// ParkConfig is the radio retune the park_radio cmd performs (the console's
+// PARK sends it alongside the rotator park). Control goes ONLY through a
+// hamlib rigctld on the host that owns a dedicated CI-V port (scmino) — the
+// bridge never opens a serial port for it. RigctldAddr empty (default) =
+// park_radio is rejected with that fact.
+type ParkConfig struct {
+	RigctldAddr string `toml:"rigctld_addr"` // "192.168.1.178:4532"
+	FreqHz      int64  `toml:"freq_hz"`
+	Mode        string `toml:"mode"` // canonical: usb lsb cw am fm
 }
 
 // LogConfig controls logging verbosity.
@@ -356,6 +370,11 @@ func (c Config) Validate() error {
 	}
 	if c.Serial.MeterIntervalDur <= 0 {
 		return fmt.Errorf("serial.meter_interval must be > 0 (got %s)", c.Serial.MeterIntervalDur)
+	}
+	if c.Park.RigctldAddr != "" {
+		if err := rigctl.Validate(c.Park.FreqHz, c.Park.Mode); err != nil {
+			return fmt.Errorf("park: %w", err)
+		}
 	}
 	return nil
 }

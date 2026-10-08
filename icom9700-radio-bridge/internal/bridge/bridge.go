@@ -72,6 +72,14 @@ type Monitor interface {
 	Close()
 }
 
+// Retuner sets the radio's mode and frequency through a rigctld (the park
+// retune). Implemented by internal/rigctl; a fake in tests. nil
+// Options.Retuner = park_radio not configured. The bridge has no other
+// control path to the radio.
+type Retuner interface {
+	Tune(ctx context.Context, freqHz int64, mode string) error
+}
+
 // Options wires the slot. Every address and identity field comes from the
 // bridge config — no site, station or location constant lives here (§8.1
 // item 6).
@@ -100,6 +108,13 @@ type Options struct {
 	// Monitor is the serial CI-V telemetry reader. nil = no serial port
 	// configured (monitor_* / power_on cmds rejected with the fact).
 	Monitor Monitor
+
+	// Retuner + ParkFreqHz + ParkMode are the park_radio target. nil
+	// Retuner = the cmd is rejected with that fact and /meta advertises no
+	// park (so the console does not send it).
+	Retuner    Retuner
+	ParkFreqHz int64
+	ParkMode   string
 
 	Logger *slog.Logger
 }

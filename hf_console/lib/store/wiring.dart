@@ -219,7 +219,7 @@ String setPolPayload(String pol) => cmdPayload('set_pol', pol);
 // --- UHF radio (muehle/uhf/radio, icom9700-radio-bridge) ----------------------
 //
 // Receive-only posture (2026-09): the action set is exactly audio_on,
-// audio_off, power_on, monitor_on, monitor_off — no value arguments, the
+// audio_off, power_on, monitor_on, monitor_off, park_radio — no value arguments, the
 // action name is the whole intent. All are published with
 // cmdRetain['muehle/uhf/radio']! = false (one-shot; a stale queued demand
 // must never re-fire after a bridge restart). There is no PTT/arm/tuning
@@ -234,6 +234,11 @@ String uhfRadioPowerOnPayload() => jsonEncode({'action': 'power_on'});
 String uhfRadioMonitorOnPayload() => jsonEncode({'action': 'monitor_on'});
 
 String uhfRadioMonitorOffPayload() => jsonEncode({'action': 'monitor_off'});
+
+/// Retune the radio to the bridge's configured park frequency + mode (via a
+/// rigctld on scmino — the bridge owns the target; /meta
+/// `capabilities.park` is present only when it is configured).
+String uhfRadioParkPayload() => jsonEncode({'action': 'park_radio'});
 
 // --- Ultrabeam controller ----------------------------------------------------
 

@@ -1,0 +1,30 @@
+[Unit]
+Description=hamlib rigctld for the IC-9700 CI-V port (scmino) — park retune, nothing else may open the port
+After=network.target
+
+[Service]
+# Model 3081 = Icom IC-9700. rigctld only talks to the radio when a client
+# asks; it never polls on its own.
+ExecStart=/usr/bin/rigctld -m 3081 -r /dev/serial/by-id/usb-Prolific_Technology_Inc._USB-Serial_Controller_AMBVb148313-if00-port0 -s 19200 -T 0.0.0.0 -t 4532
+Restart=always
+RestartSec=5
+
+# rigctld has no authentication and can key PTT: only shari (the
+# icom9700-radio-bridge host) and localhost may connect.
+IPAddressDeny=any
+IPAddressAllow=127.0.0.1 192.168.1.139
+
+DynamicUser=yes
+SupplementaryGroups=dialout
+DeviceAllow=char-ttyUSB rw
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+MemoryMax=64M
+
+[Install]
+WantedBy=multi-user.target

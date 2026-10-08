@@ -392,6 +392,15 @@ note  = "RX audio UDP -> scmino:45031"
 slots = ["muehle/uhf/radio"]
 
 [[software]]
+name  = "rigctld-ic9700"
+path  = "icom9700-radio-bridge/rigctld-scmino/"
+kind  = "infra"
+host  = "scmino"
+unit  = "rigctld-ic9700"
+ports = "4532/tcp (shari only)"
+note  = "hamlib rigctld on the IC-9700 CI-V port; park_radio retune only"
+
+[[software]]
 name  = "spid-ercm-rotator-bridge"
 path  = "spid-ercm-rotator-bridge/"
 kind  = "bridge"

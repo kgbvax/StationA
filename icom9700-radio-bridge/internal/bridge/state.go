@@ -137,6 +137,17 @@ func (b *Bridge) statePayload(sn snap) map[string]any {
 // READ-ONLY and control-free (2026-09 pivot: no tx, no armed — the radio
 // is monitored and its receive audio captured, nothing else).
 func (b *Bridge) metaPayload() map[string]any {
+	meta := b.baseMeta()
+	if b.opts.Retuner != nil {
+		// Advertised so the console only sends park_radio when it can work.
+		meta["capabilities"].(map[string]any)["park"] = map[string]any{
+			"freq_hz": b.opts.ParkFreqHz, "mode": b.opts.ParkMode,
+		}
+	}
+	return meta
+}
+
+func (b *Bridge) baseMeta() map[string]any {
 	model := b.opts.DeviceModel
 	if model == "" {
 		model = "Icom IC-9700"

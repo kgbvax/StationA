@@ -22,6 +22,7 @@ import (
 	"icom9700-radio-bridge/internal/civserial"
 	"icom9700-radio-bridge/internal/config"
 	"icom9700-radio-bridge/internal/radio"
+	"icom9700-radio-bridge/internal/rigctl"
 )
 
 func main() {
@@ -123,6 +124,15 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 		log.Info("no serial.device configured: monitor and power_on cmds disabled")
 	}
 
+	// The park retune: mode + frequency through a rigctld on the CI-V host
+	// (scmino) — the bridge never opens a serial port for control.
+	var retuner bridge.Retuner
+	if cfg.Park.RigctldAddr != "" {
+		retuner = &rigctl.Client{Addr: cfg.Park.RigctldAddr}
+	} else {
+		log.Info("no park.rigctld_addr configured: park_radio cmd disabled")
+	}
+
 	// The four-plane MQTT surface (U5): /meta /state /status /cmd with the
 	// station gate set. The initial MQTT connect is fatal (model §8.1
 	// item 10) — systemd's Restart=on-failure crash-loops the unit until
@@ -138,7 +148,11 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 		Host:     cfg.RadioHost,
 		Manager:  mgr,
 		Monitor:  monitor,
-		Logger:   log,
+
+		Retuner:    retuner,
+		ParkFreqHz: cfg.Park.FreqHz,
+		ParkMode:   cfg.Park.Mode,
+		Logger:     log,
 	})
 	if err != nil {
 		return fmt.Errorf("bridge: %w", err)

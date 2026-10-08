@@ -54,12 +54,13 @@ One-shot (KTD6): QoS-0 subscription (no offline backlog), clear-after-
 execute-or-reject (the empty-payload echo guard), ts gate (30 s, unstamped
 tolerated), 4 KB size gate, rejections clipped to 200 runes.
 
-Exactly five actions — no value arguments, the action name is the intent:
+Exactly six actions — no value arguments, the action name is the intent:
 
 | Action | Notes |
 |---|---|
 | `audio_on` / `audio_off` | opens/closes the :50003 RX audio receive stream and publishes its PCM to `audio.publish_addr` (S16LE 48 kHz mono UDP); the demand is TTL-bounded (`audio.demand_ttl`) and refreshed by repeated `audio_on` — a dead consumer releases the session (KTD-2). The audio demand is the session's only hold source |
 | `power_on` | blind serial CI-V wake frame `1A 05 02 01` (IC-9700 remote wake from standby; configurable via `serial.power_on_frame`); requires `serial.device` |
+| `park_radio` | sets mode, then frequency to `[park] mode` / `freq_hz` through the rigctld at `park.rigctld_addr` (a hamlib rigctld on the host owning a dedicated CI-V port — scmino:4532, `rigctld-scmino/`). The bridge opens no serial port for it. Rejected when `park.rigctld_addr` is empty; /meta `capabilities.park {freq_hz, mode}` is present only when configured |
 | `monitor_on` / `monitor_off` | toggles the serial CI-V telemetry reader (sticky — no TTL: the serial wire is dedicated to this process); requires `serial.device` |
 
 ## /meta

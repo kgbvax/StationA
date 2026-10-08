@@ -3,6 +3,8 @@ package bridge
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
@@ -525,4 +527,75 @@ func waitTrue(t *testing.T, what string, d time.Duration, fn func() bool) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatalf("%s not observed within %s", what, d)
+}
+
+// fakeRetuner records Tune calls; err is returned from each.
+type fakeRetuner struct {
+	mu    sync.Mutex
+	calls []string
+	err   error
+}
+
+func (f *fakeRetuner) Tune(_ context.Context, freqHz int64, mode string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, fmt.Sprintf("%d/%s", freqHz, mode))
+	return f.err
+}
+
+func (f *fakeRetuner) got() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.calls...)
+}
+
+func newBHRetuner(t *testing.T, rt Retuner) *bharness {
+	t.Helper()
+	h := newBH(t)
+	h.b.opts.Retuner = rt
+	h.b.opts.ParkFreqHz = 432_200_000
+	h.b.opts.ParkMode = "usb"
+	return h
+}
+
+// park_radio retunes through the Retuner with the configured target and
+// clears the one-shot cmd.
+func TestParkRadioTunesConfiguredTarget(t *testing.T) {
+	rt := &fakeRetuner{}
+	h := newBHRetuner(t, rt)
+	h.cli.sendCmd([]byte(`{"action":"park_radio"}`))
+	h.cli.waitCmdErr(t, "")
+	deadline := time.Now().Add(3 * time.Second)
+	for len(rt.got()) == 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if got := rt.got(); len(got) != 1 || got[0] != "432200000/usb" {
+		t.Fatalf("Tune calls = %v, want one 432200000/usb", got)
+	}
+}
+
+func TestParkRadioFailureSurfaces(t *testing.T) {
+	h := newBHRetuner(t, &fakeRetuner{err: errors.New("rigctld refused")})
+	h.cli.sendCmd([]byte(`{"action":"park_radio"}`))
+	h.cli.waitCmdErr(t, "park_radio: rigctld refused")
+}
+
+func TestParkRadioRejectedWhenNotConfigured(t *testing.T) {
+	h := newBH(t)
+	h.cli.sendCmd([]byte(`{"action":"park_radio"}`))
+	h.cli.waitCmdErr(t, "park_radio not configured (park.rigctld_addr empty)")
+}
+
+// /meta advertises park only when a Retuner is wired — the console keys its
+// park_radio on that.
+func TestMetaAdvertisesParkOnlyWhenConfigured(t *testing.T) {
+	h := newBH(t)
+	if _, has := h.b.metaPayload()["capabilities"].(map[string]any)["park"]; has {
+		t.Error("park advertised without a Retuner")
+	}
+	h = newBHRetuner(t, &fakeRetuner{})
+	park, _ := h.b.metaPayload()["capabilities"].(map[string]any)["park"].(map[string]any)
+	if park["freq_hz"] != int64(432_200_000) || park["mode"] != "usb" {
+		t.Errorf("park meta = %v", park)
+	}
 }

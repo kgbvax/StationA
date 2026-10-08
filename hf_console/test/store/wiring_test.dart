@@ -57,6 +57,10 @@ void main() {
       expect(jsonDecode(satRotatorStopPayload()), {'action': 'stop'});
     });
 
+    test('radio park_radio carries no value (the bridge owns the target)', () {
+      expect(jsonDecode(uhfRadioParkPayload()), {'action': 'park_radio'});
+    });
+
     test('park has no argument (the bridge owns the position)', () {
       expect(jsonDecode(satRotatorParkPayload()), {'action': 'park'});
       expect(vhfRotator.parkPayload, isNotNull);

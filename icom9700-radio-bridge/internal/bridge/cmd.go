@@ -33,7 +33,8 @@ type busCmd struct {
 // worker. One-shot posture: the retained topic is cleared after the worker
 // has acted on it, whatever the outcome. The action set is the complete
 // receive-only surface (2026-09 pivot): audio_on, audio_off, power_on,
-// monitor_on, monitor_off. There is no LAN CI-V command path.
+// monitor_on, monitor_off, plus park_radio (mode + frequency via rigctld
+// only). There is no LAN CI-V command path.
 func (b *Bridge) onCmd(payload []byte) {
 	if len(payload) == 0 {
 		// Our own retained-clear echo — never re-clear (echo guard).
@@ -80,6 +81,9 @@ func (b *Bridge) onCmd(payload []byte) {
 	case "power_on":
 		b.log.Info("rx cmd", "action", cmd.Action)
 		sharedmqtt.Enqueue(b.jobs, func() { b.executePowerOn() })
+	case "park_radio":
+		b.log.Info("rx cmd", "action", cmd.Action)
+		sharedmqtt.Enqueue(b.jobs, b.executeParkRadio)
 	default:
 		b.rejectAsync(fmt.Sprintf("unknown cmd action %q", cmd.Action))
 	}
@@ -132,6 +136,26 @@ func (b *Bridge) executePowerOn() {
 	if err := b.opts.Monitor.Wake(ctx); err != nil {
 		b.setCmdErr(err.Error())
 	} else {
+		b.setCmdErr("")
+	}
+	b.publishState(false)
+	b.clearCmd()
+}
+
+// executeParkRadio retunes the radio to the configured park frequency and
+// mode through rigctld. Never touches a serial port.
+func (b *Bridge) executeParkRadio() {
+	if b.opts.Retuner == nil {
+		b.reject("park_radio not configured (park.rigctld_addr empty)")
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := b.opts.Retuner.Tune(ctx, b.opts.ParkFreqHz, b.opts.ParkMode); err != nil {
+		b.log.Warn("park_radio failed", "err", err)
+		b.setCmdErr("park_radio: " + err.Error())
+	} else {
+		b.log.Info("park_radio done", "freq_hz", b.opts.ParkFreqHz, "mode", b.opts.ParkMode)
 		b.setCmdErr("")
 	}
 	b.publishState(false)

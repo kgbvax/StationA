@@ -21,6 +21,9 @@ String? rotatorParkSlot(BusStore store, RotatorSurface surface) {
 }
 
 /// Publishes the park intent to [rotatorParkSlot]; false when none is operable.
+/// Parking also retunes the IC-9700 (mode + frequency) when its bridge
+/// advertises a park target and is online — best effort, never a reason to
+/// hold back the rotator park.
 bool sendRotatorPark(BusStore store, MqttService mqtt, RotatorSurface surface) {
   final slot = rotatorParkSlot(store, surface);
   if (slot == null) return false;
@@ -29,7 +32,25 @@ bool sendRotatorPark(BusStore store, MqttService mqtt, RotatorSurface surface) {
     surface.parkPayload!(),
     retain: cmdRetain['muehle/$slot'] ?? false,
   );
+  if (radioParkAvailable(store)) {
+    mqtt.publish(
+      cmdTopic(_radioSlot),
+      uhfRadioParkPayload(),
+      retain: cmdRetain['muehle/$_radioSlot'] ?? false,
+    );
+  }
   return true;
+}
+
+const _radioSlot = 'uhf/radio';
+
+/// The radio bridge is online and /meta advertises a park target
+/// (`capabilities.park`, present only when park.rigctld_addr is configured).
+bool radioParkAvailable(BusStore store) {
+  final radio = store.slots['muehle/$_radioSlot'];
+  if (radio == null || !radio.isOnline || !store.linkUp) return false;
+  final caps = radio.meta?['capabilities'];
+  return caps is Map && caps['park'] is Map;
 }
 
 /// The configured park position of one slot, from /meta

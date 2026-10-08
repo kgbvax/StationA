@@ -365,3 +365,25 @@ func TestValidateRejectsNonPositiveDurations(t *testing.T) {
 		}
 	}
 }
+
+func TestParkConfigValidation(t *testing.T) {
+	cfg := Defaults()
+	cfg.MQTT.Site, cfg.MQTT.Station, cfg.MQTT.Slot = "muehle", "uhf", "radio"
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("no park configured must validate: %v", err)
+	}
+	cfg.Park = ParkConfig{RigctldAddr: "192.168.1.178:4532", FreqHz: 432_200_000, Mode: "usb"}
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("valid park rejected: %v", err)
+	}
+	for _, bad := range []ParkConfig{
+		{RigctldAddr: "h:1", FreqHz: 0, Mode: "usb"},
+		{RigctldAddr: "h:1", FreqHz: 432_200_000, Mode: "dv"},
+		{RigctldAddr: "h:1", FreqHz: 432_200_000, Mode: ""},
+	} {
+		cfg.Park = bad
+		if cfg.Validate() == nil {
+			t.Errorf("park %+v must be rejected", bad)
+		}
+	}
+}

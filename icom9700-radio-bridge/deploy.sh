@@ -36,6 +36,9 @@
 #   CIV_USERNAME    [civ].username          (default: empty -> set on device)
 #   CIV_PASSWORD    ICOM9700_CIV_PASSWORD   (default: empty -> set on device)
 #   DISCOVERY_PREFIX mqtt.discovery_prefix  (default: homeassistant)
+#   PARK_RIGCTLD_ADDR [park].rigctld_addr   (default: empty -> park_radio rejected)
+#   PARK_FREQ_HZ    [park].freq_hz          (required with PARK_RIGCTLD_ADDR)
+#   PARK_MODE       [park].mode             (usb|lsb|cw|am|fm; required with PARK_RIGCTLD_ADDR)
 #
 # Configuration lives in a single 0600 TOML file on the target
 # (/etc/icom9700-radio-bridge/config.toml). The two secrets are NOT in the
@@ -73,6 +76,9 @@ MQTT_PASSWORD="${MQTT_PASSWORD:-}"
 CIV_USERNAME="${CIV_USERNAME:-}"
 CIV_PASSWORD="${CIV_PASSWORD:-}"
 DISCOVERY_PREFIX="${DISCOVERY_PREFIX:-homeassistant}"
+PARK_RIGCTLD_ADDR="${PARK_RIGCTLD_ADDR:-}"
+PARK_FREQ_HZ="${PARK_FREQ_HZ:-0}"
+PARK_MODE="${PARK_MODE:-}"
 
 # Allow "user@host" in SSH_HOST; otherwise prepend SSH_USER.
 if [[ "$SSH_HOST" == *"@"* ]]; then
@@ -164,6 +170,13 @@ trap 'rm -f "$SEED_CONFIG" "$SEED_ENV" "${UNIT_FILE:-}"' EXIT
   echo "# RX audio publisher (vhfcam preview host). Empty = audio cmds rejected."
   echo "publish_addr = \"\""
   echo "demand_ttl   = \"60s\""
+  echo ""
+  echo "[park]"
+  echo "# park_radio retune (mode + frequency) via a rigctld on the CI-V host"
+  echo "# (scmino) — never a serial port of this bridge. Empty = rejected."
+  echo "rigctld_addr = \"$(toml_escape "$PARK_RIGCTLD_ADDR")\""
+  echo "freq_hz      = ${PARK_FREQ_HZ}"
+  echo "mode         = \"$(toml_escape "$PARK_MODE")\""
   echo ""
   echo "[log]"
   echo "level = \"$(toml_escape "$LOG_LEVEL")\""
