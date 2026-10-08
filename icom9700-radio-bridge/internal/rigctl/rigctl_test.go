@@ -3,22 +3,65 @@ package rigctl
 import (
 	"bufio"
 	"context"
+	"fmt"
 	"net"
 	"strings"
 	"sync"
 	"testing"
 )
 
-// fakeRigctld answers each line with reply and records the commands.
-func fakeRigctld(t *testing.T, reply func(cmd string) string) (addr string, cmds func() []string) {
+// fakeRadio is a rigctld stand-in with real state: it records every command,
+// applies M/F/U SATMODE, and answers f/m from that state. ignoreMode makes
+// it accept "M" with RPRT 0 but keep its old mode (the live failure: the
+// 9700 stayed LSB). refuse names a command prefix answered with RPRT -1.
+type fakeRadio struct {
+	mu         sync.Mutex
+	cmds       []string
+	freq       int64
+	mode       string
+	sat        bool
+	ignoreMode bool
+	refuse     string
+}
+
+func (r *fakeRadio) handle(cmd string) string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.cmds = append(r.cmds, cmd)
+	if r.refuse != "" && strings.HasPrefix(cmd, r.refuse) {
+		return "RPRT -1"
+	}
+	f := strings.Fields(cmd)
+	switch f[0] {
+	case "U":
+		r.sat = f[2] == "1"
+	case "M":
+		if !r.ignoreMode {
+			r.mode = f[1]
+		}
+	case "F":
+		fmt.Sscan(f[1], &r.freq)
+	case "f":
+		return fmt.Sprint(r.freq)
+	case "m":
+		return r.mode + "\n12000"
+	}
+	return "RPRT 0"
+}
+
+func (r *fakeRadio) sent() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return strings.Join(r.cmds, "|")
+}
+
+func serve(t *testing.T, r *fakeRadio) string {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { ln.Close() })
-	var mu sync.Mutex
-	var got []string
 	go func() {
 		for {
 			c, err := ln.Accept()
@@ -29,50 +72,54 @@ func fakeRigctld(t *testing.T, reply func(cmd string) string) (addr string, cmds
 				defer c.Close()
 				sc := bufio.NewScanner(c)
 				for sc.Scan() {
-					mu.Lock()
-					got = append(got, sc.Text())
-					mu.Unlock()
-					c.Write([]byte(reply(sc.Text()) + "\n"))
+					c.Write([]byte(r.handle(sc.Text()) + "\n"))
 				}
 			}()
 		}
 	}()
-	return ln.Addr().String(), func() []string {
-		mu.Lock()
-		defer mu.Unlock()
-		return append([]string(nil), got...)
+	return ln.Addr().String()
+}
+
+func TestTuneParksOutOfSatModeThenModeThenFreq(t *testing.T) {
+	r := &fakeRadio{sat: true, mode: "LSB", freq: 435_856_762}
+	if err := (&Client{Addr: serve(t, r)}).Tune(context.Background(), 145_212_500, "fm"); err != nil {
+		t.Fatal(err)
+	}
+	if got := r.sent(); got != "U SATMODE 0|M FM 0|F 145212500|f|m" {
+		t.Errorf("sent %q, want satmode off, mode, freq, then readbacks", got)
+	}
+	if r.sat || r.mode != "FM" || r.freq != 145_212_500 {
+		t.Errorf("radio state sat=%v mode=%s freq=%d", r.sat, r.mode, r.freq)
 	}
 }
 
-func TestTuneSendsModeThenFreq(t *testing.T) {
-	addr, cmds := fakeRigctld(t, func(string) string { return "RPRT 0" })
-	c := &Client{Addr: addr}
-	if err := c.Tune(context.Background(), 432_200_000, "usb"); err != nil {
-		t.Fatal(err)
-	}
-	if got := strings.Join(cmds(), "|"); got != "M USB 0|F 432200000" {
-		t.Errorf("sent %q, want mode then freq", got)
+// The live failure: rigctld said RPRT 0 but the radio stayed LSB. The
+// readback must turn that into an error instead of a silent success.
+func TestTuneDetectsRadioIgnoringMode(t *testing.T) {
+	r := &fakeRadio{mode: "LSB", ignoreMode: true}
+	err := (&Client{Addr: serve(t, r)}).Tune(context.Background(), 145_212_500, "fm")
+	if err == nil || !strings.Contains(err.Error(), "reads mode LSB") {
+		t.Fatalf("err = %v, want the readback mismatch", err)
 	}
 }
 
 func TestTuneRefusalSurfaces(t *testing.T) {
-	addr, cmds := fakeRigctld(t, func(cmd string) string {
-		if strings.HasPrefix(cmd, "F ") {
-			return "RPRT -1"
-		}
-		return "RPRT 0"
-	})
-	err := (&Client{Addr: addr}).Tune(context.Background(), 432_200_000, "fm")
+	r := &fakeRadio{}
+	err := (&Client{Addr: serve(t, r)}).Tune(context.Background(), 145_212_500, "fm")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r2 := &fakeRadio{refuse: "U SATMODE"}
+	err = (&Client{Addr: serve(t, r2)}).Tune(context.Background(), 145_212_500, "fm")
 	if err == nil || !strings.Contains(err.Error(), "RPRT -1") {
 		t.Fatalf("err = %v, want the rigctld refusal", err)
 	}
-	if len(cmds()) != 2 {
-		t.Errorf("sent %v", cmds())
+	if got := r2.sent(); got != "U SATMODE 0" {
+		t.Errorf("after a refused satmode, sent %q — must stop there", got)
 	}
 }
 
 func TestTuneValidatesBeforeDialing(t *testing.T) {
-	// An unroutable address would hang if Validate did not run first.
 	c := &Client{Addr: "127.0.0.1:1"}
 	for _, tc := range []struct {
 		hz   int64
