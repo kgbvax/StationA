@@ -56,8 +56,12 @@ Two map modules share `DxMapContainer`:
   the sub-satellite point with `name  EL n°  range km`, the footprint circle
   (horizon distance for `alt_km`) and the great circle from the station —
   dimmed below the horizon, hidden unless tracking + device_online + bridge
-  online + link up. At the opening zoom the bird is usually off screen; the
-  label then sits where the station line leaves the map. Bearings are only
+  online + link up. While a satellite is tracked the view auto-frames the
+  station and the sub-satellite point (`lib/dxspot/map_fit.dart`, zoom capped
+  at the opening zoom 7) and the rotator beam/target line draws amber instead
+  of cyan; the first pan/pinch/zoom hands the view to the operator until the
+  next pass or the crosshair (RESET). One finger pans, two fingers pinch-zoom
+  about their centre. Bearings are only
   as good as the station locator — use 6 characters (the settings dialog
   warns on 4).
 

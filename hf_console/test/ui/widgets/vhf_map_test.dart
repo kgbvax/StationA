@@ -165,6 +165,92 @@ void main() {
       });
     }
 
+    // The view the painter last drew, and where a point lands on screen.
+    Offset? screenOf(double lat, double lng) {
+      final p = MercatorPainterDebug.lastProjection!.project(lat, lng);
+      return p == null ? null : Offset(p.x, p.y);
+    }
+
+    testWidgets('auto-fit frames the station and the satellite together', (tester) async {
+      final (store, _) = await _pump(tester);
+      final before = MercatorPainterDebug.lastProjection!.zoom;
+      expect(before, kVhfMapZoom);
+
+      track(store, lat: 40.0, lng: -25.0); // ~3500 km away
+      await tester.pump();
+
+      final proj = MercatorPainterDebug.lastProjection!;
+      expect(proj.zoom, lessThan(before), reason: 'zoomed out to take in the satellite');
+      for (final pt in [(51.962, 7.626), (40.0, -25.0)]) {
+        final o = screenOf(pt.$1, pt.$2)!;
+        expect(o.dx, inInclusiveRange(0, _size.width));
+        expect(o.dy, inInclusiveRange(0, _size.height));
+      }
+
+      // The satellite sets: back to the station view.
+      store.applyState(satTrackSlot, {'device_online': true, 'tracking': false});
+      await tester.pump();
+      expect(MercatorPainterDebug.lastProjection!.zoom, kVhfMapZoom);
+    });
+
+    testWidgets('a pinch takes the view over from auto-fit; RESET re-frames', (tester) async {
+      final (store, _) = await _pump(tester);
+      track(store, lat: 40.0, lng: -25.0);
+      await tester.pump();
+      final fitted = MercatorPainterDebug.lastProjection!.zoom;
+
+      // Spread two fingers apart: zooms in about their centre.
+      const c = Offset(400, 300);
+      final g1 = await tester.startGesture(c - const Offset(20, 0), pointer: 1);
+      final g2 = await tester.startGesture(c + const Offset(20, 0), pointer: 2);
+      for (var i = 1; i <= 10; i++) {
+        await g1.moveTo(c - Offset(20.0 + i * 12, 0));
+        await g2.moveTo(c + Offset(20.0 + i * 12, 0));
+        await tester.pump();
+      }
+      await g1.up();
+      await g2.up();
+      await tester.pump();
+      final pinched = MercatorPainterDebug.lastProjection!.zoom;
+      expect(pinched, greaterThan(fitted + 0.5));
+
+      // A satellite move no longer re-frames the operator's view.
+      track(store, lat: 41.0, lng: -24.0);
+      await tester.pump();
+      expect(MercatorPainterDebug.lastProjection!.zoom, pinched);
+
+      // RESET (the crosshair) hands the view back to auto-fit.
+      await tester.tap(find.byIcon(Icons.my_location));
+      await tester.pump();
+      expect(MercatorPainterDebug.lastProjection!.zoom, fitted);
+    });
+
+    testWidgets('pinch-out zooms out and stays inside the zoom limits', (tester) async {
+      final (_, _) = await _pump(tester);
+      const c = Offset(400, 300);
+      final g1 = await tester.startGesture(c - const Offset(150, 0), pointer: 1);
+      final g2 = await tester.startGesture(c + const Offset(150, 0), pointer: 2);
+      for (var i = 1; i <= 30; i++) {
+        await g1.moveTo(c - Offset(150.0 - i * 5, 0));
+        await g2.moveTo(c + Offset(150.0 - i * 5, 0));
+        await tester.pump();
+      }
+      await g1.up();
+      await g2.up();
+      await tester.pump();
+      final z = MercatorPainterDebug.lastProjection!.zoom;
+      expect(z, lessThan(kVhfMapZoom));
+      expect(z, greaterThanOrEqualTo(1.0));
+    });
+
+    testWidgets('the beam is accent without a satellite and amber while tracking', (tester) async {
+      final (store, _) = await _pump(tester);
+      expect(MercatorPainterDebug.lastBeam!.color, AppTheme.accent);
+      track(store);
+      await tester.pump();
+      expect(MercatorPainterDebug.lastBeam!.color, AppTheme.amber);
+    });
+
     testWidgets('a satellite move repaints the map', (tester) async {
       final (store, _) = await _pump(tester);
       track(store);
