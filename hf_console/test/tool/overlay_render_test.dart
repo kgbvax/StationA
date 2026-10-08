@@ -32,7 +32,7 @@ Future<void> _render(
     projection: proj,
     qth: qth,
     rings: rings,
-    beam: (qth: qth, az: az, target: az + 40, half: half, online: true),
+    beam: (qth: qth, az: az, target: az + 40, half: half, online: true, color: const Color(0xFF4DD0E1)),
     sat: sat,
   );
   await tester.runAsync(() async {
