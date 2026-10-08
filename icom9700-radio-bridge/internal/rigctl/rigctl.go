@@ -24,6 +24,13 @@ var Modes = map[string]string{
 	"usb": "USB", "lsb": "LSB", "cw": "CW", "am": "AM", "fm": "FM",
 }
 
+// passbandHz is the filter width set with the mode. Passband 0 means "keep
+// the current filter": a radio coming from CW stayed on its 500 Hz filter in
+// FM (live 2026-10-08), so each mode names its own.
+var passbandHz = map[string]int{
+	"usb": 2400, "lsb": 2400, "cw": 500, "am": 6000, "fm": 12000,
+}
+
 // Frequency sanity bound: the IC-9700 covers 144 MHz up to 1.3 GHz.
 const (
 	MinFreqHz = 100_000_000
@@ -51,9 +58,10 @@ type Client struct {
 
 // Tune parks the radio: satellite mode off first (a radio left in sat mode
 // keeps its split main/sub receivers and its own mode, and leaving sat mode
-// restores a different main frequency — so it must precede both), then the
-// (canonical) mode, then the frequency, then both are read back and must
-// match. Passband 0 = the radio's default filter for that mode.
+// restores a different main frequency), then the frequency, then the
+// (canonical) mode, then both are read back and must match. The mode must
+// follow the frequency: the IC-9700 stores a mode per band and restores it
+// on a band change, so a mode set before the frequency is overwritten.
 func (c *Client) Tune(ctx context.Context, freqHz int64, mode string) error {
 	if err := Validate(freqHz, mode); err != nil {
 		return err
@@ -108,8 +116,8 @@ func (c *Client) Tune(ctx context.Context, freqHz int64, mode string) error {
 
 	for _, cmd := range []string{
 		"U SATMODE 0",
-		fmt.Sprintf("M %s 0", Modes[mode]),
 		fmt.Sprintf("F %d", freqHz),
+		fmt.Sprintf("M %s %d", Modes[mode], passbandHz[mode]),
 	} {
 		if err := set(cmd); err != nil {
 			return err

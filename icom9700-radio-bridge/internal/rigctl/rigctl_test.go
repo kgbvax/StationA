@@ -21,6 +21,7 @@ type fakeRadio struct {
 	mode       string
 	sat        bool
 	ignoreMode bool
+	bandMode   string // mode the radio restores on a band change ("" = none)
 	refuse     string
 }
 
@@ -40,7 +41,13 @@ func (r *fakeRadio) handle(cmd string) string {
 			r.mode = f[1]
 		}
 	case "F":
-		fmt.Sscan(f[1], &r.freq)
+		// Band-stacking: a band change restores that band's stored mode.
+		var hz int64
+		fmt.Sscan(f[1], &hz)
+		if r.bandMode != "" && (hz/100_000_000 != r.freq/100_000_000) {
+			r.mode = r.bandMode
+		}
+		r.freq = hz
 	case "f":
 		return fmt.Sprint(r.freq)
 	case "m":
@@ -80,13 +87,13 @@ func serve(t *testing.T, r *fakeRadio) string {
 	return ln.Addr().String()
 }
 
-func TestTuneParksOutOfSatModeThenModeThenFreq(t *testing.T) {
-	r := &fakeRadio{sat: true, mode: "LSB", freq: 435_856_762}
+func TestTuneParksOutOfSatModeThenFreqThenMode(t *testing.T) {
+	r := &fakeRadio{sat: true, mode: "LSB", freq: 435_856_762, bandMode: "CW"}
 	if err := (&Client{Addr: serve(t, r)}).Tune(context.Background(), 145_212_500, "fm"); err != nil {
 		t.Fatal(err)
 	}
-	if got := r.sent(); got != "U SATMODE 0|M FM 0|F 145212500|f|m" {
-		t.Errorf("sent %q, want satmode off, mode, freq, then readbacks", got)
+	if got := r.sent(); got != "U SATMODE 0|F 145212500|M FM 12000|f|m" {
+		t.Errorf("sent %q, want satmode off, freq, mode (band-stacking restores the old mode on a band change), then readbacks", got)
 	}
 	if r.sat || r.mode != "FM" || r.freq != 145_212_500 {
 		t.Errorf("radio state sat=%v mode=%s freq=%d", r.sat, r.mode, r.freq)

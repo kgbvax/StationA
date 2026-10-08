@@ -123,7 +123,7 @@ zeroed, never frozen. `/cmd` actions: exactly `audio_on`, `audio_off`,
 to `[park]` (`freq_hz`, `mode`) and reads both back (an error if the radio
 disagrees — live, a radio in sat mode answered `M` with RPRT 0 and stayed LSB;
 leaving sat mode also restores a different main frequency, so the order is
-satmode off → mode → frequency) through a hamlib **rigctld on scmino** (`park.rigctld_addr`,
+satmode off → frequency → mode: the radio restores a per-band stored mode, here CW, on the band change) through a hamlib **rigctld on scmino** (`park.rigctld_addr`,
 `rigctld-scmino/` holds its hardened unit + `deploy.sh`; reachable from shari
 only, via systemd `IPAddressAllow`). `internal/rigctl` can send exactly satmode-off, mode and
 frequency (plus the two readbacks) — no PTT/power/raw CI-V. The bridge itself never opens a serial port
