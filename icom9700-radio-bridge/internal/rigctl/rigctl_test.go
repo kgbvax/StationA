@@ -15,14 +15,16 @@ import (
 // it accept "M" with RPRT 0 but keep its old mode (the live failure: the
 // 9700 stayed LSB). refuse names a command prefix answered with RPRT -1.
 type fakeRadio struct {
-	mu         sync.Mutex
-	cmds       []string
-	freq       int64
-	mode       string
-	sat        bool
-	ignoreMode bool
-	bandMode   string // mode the radio restores on a band change ("" = none)
-	refuse     string
+	mu          sync.Mutex
+	cmds        []string
+	freq        int64
+	mode        string
+	sat         bool
+	split       bool
+	ignoreSplit bool // accept "S" with RPRT 0 but stay in split
+	ignoreMode  bool
+	bandMode    string // mode the radio restores on a band change ("" = none)
+	refuse      string
 }
 
 func (r *fakeRadio) handle(cmd string) string {
@@ -36,6 +38,15 @@ func (r *fakeRadio) handle(cmd string) string {
 	switch f[0] {
 	case "U":
 		r.sat = f[2] == "1"
+	case "S":
+		if !r.ignoreSplit {
+			r.split = f[1] == "1"
+		}
+	case "s":
+		if r.split {
+			return "1\nVFOB"
+		}
+		return "0\nVFOA"
 	case "M":
 		if !r.ignoreMode {
 			r.mode = f[1]
@@ -87,15 +98,15 @@ func serve(t *testing.T, r *fakeRadio) string {
 	return ln.Addr().String()
 }
 
-func TestTuneParksOutOfSatModeThenFreqThenMode(t *testing.T) {
-	r := &fakeRadio{sat: true, mode: "LSB", freq: 435_856_762, bandMode: "CW"}
+func TestTuneParksOutOfSatModeAndSplitThenFreqThenMode(t *testing.T) {
+	r := &fakeRadio{sat: true, split: true, mode: "LSB", freq: 435_856_762, bandMode: "CW"}
 	if err := (&Client{Addr: serve(t, r)}).Tune(context.Background(), 145_212_500, "fm"); err != nil {
 		t.Fatal(err)
 	}
-	if got := r.sent(); got != "U SATMODE 0|F 145212500|M FM 12000|f|m" {
-		t.Errorf("sent %q, want satmode off, freq, mode (band-stacking restores the old mode on a band change), then readbacks", got)
+	if got := r.sent(); got != "U SATMODE 0|S 0 VFOA|F 145212500|M FM 12000|s|f|m" {
+		t.Errorf("sent %q, want satmode off, split off, freq, mode (band-stacking restores the old mode on a band change), then readbacks", got)
 	}
-	if r.sat || r.mode != "FM" || r.freq != 145_212_500 {
+	if r.sat || r.split || r.mode != "FM" || r.freq != 145_212_500 {
 		t.Errorf("radio state sat=%v mode=%s freq=%d", r.sat, r.mode, r.freq)
 	}
 }
@@ -107,6 +118,15 @@ func TestTuneDetectsRadioIgnoringMode(t *testing.T) {
 	err := (&Client{Addr: serve(t, r)}).Tune(context.Background(), 145_212_500, "fm")
 	if err == nil || !strings.Contains(err.Error(), "reads mode LSB") {
 		t.Fatalf("err = %v, want the readback mismatch", err)
+	}
+}
+
+// The live failure (2026-10-09): the radio stayed in split after a park.
+func TestTuneDetectsRadioStayingInSplit(t *testing.T) {
+	r := &fakeRadio{split: true, ignoreSplit: true, mode: "LSB"}
+	err := (&Client{Addr: serve(t, r)}).Tune(context.Background(), 145_212_500, "fm")
+	if err == nil || !strings.Contains(err.Error(), "reads split 1") {
+		t.Fatalf("err = %v, want the split readback mismatch", err)
 	}
 }
 
