@@ -63,7 +63,7 @@ and `go work sync` operate over the whole workspace at once.
 | `muehle/power/master` | shelly-power-bridge | Shelly plug — station master mains, wifi |
 | `muehle/power/psu-13v8` | shelly-power-bridge | Shelly plug — 13.8 V PSU (site-level; feeds HF+UHF), wifi |
 | `muehle/hf/radio` | flexbridge | FLEX-8400, ethernet |
-| `muehle/hf/ant-ctrl` | ultrabridge | Ultrabeam RCU-06, USB-serial via FTDI |
+| `muehle/hf/ant-ctrl` | ultrabridge | Ultrabeam RCU-06, USB-serial via FTDI — on scmino since 2026-10-09 (HamClock took :8080 on shari) |
 | `muehle/hf/ant-switch` | waveshare_relay-antswitch-bridge | 1:6 antenna switch, wifi (ESPHome) |
 | `muehle/hf/switch` | m5stamp-hf-ctrl | M5 Stamp PLC #1 — PA/TRX remote-on relays (relays 3 & 4), wifi |
 | `muehle/hf/pa-arm` | m5stamp-hf-ctrl | M5 Stamp PLC #1 — PA arm relay (relay 1), wifi |
@@ -97,7 +97,8 @@ resources** — `ant/ultrabeam` (port 3), `ant/fan-dipole` 80/40 (port 6),
 All services run on shari, a Raspberry Pi at `192.168.1.139` — except
 vhfcam-restream (since 2026-09-30), the station Mosquitto mirror, the
 hf_console web channel `hf-console-web` (:8091), testui (:8090) and the landing
-page stationportal (:80) (all since 2026-10-02), which run on **scmino** (`192.168.1.178`, Raspberry Pi CM5, same `ssh io@` access).
+page stationportal (:80) (all since 2026-10-02) and ultrabridge (:8080, RCU-06
+FTDI cable on scmino's USB; since 2026-10-09), which run on **scmino** (`192.168.1.178`, Raspberry Pi CM5, same `ssh io@` access).
 
 ```bash
 # SSH in

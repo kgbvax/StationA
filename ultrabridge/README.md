@@ -38,7 +38,7 @@ http_addr   = "0.0.0.0:8080"
 serial_port = "/dev/ttyUSB0"   # empty -> mock device
 baud        = 19200
 location    = "bauwagen"       # published in /meta
-host        = "shari"          # published in /meta
+host        = "scmino"         # published in /meta
 
 [mqtt]
 broker           = "tcp://127.0.0.1:1883"  # empty -> MQTT disabled

@@ -23,7 +23,7 @@ gofmt -s -w .                  # format
 # Run locally with mock serial (no hardware needed)
 go run ./cmd/ultrabridge -http 127.0.0.1:8080
 
-# Deploy to shari
+# Deploy to scmino (since 2026-10-09; was shari)
 ./deploy.sh
 ```
 
@@ -103,7 +103,7 @@ http_addr   = "0.0.0.0:8080"
 serial_port = "/dev/serial/by-id/usb-FTDI_Dual_RS232-if00-port0"
 baud        = 19200
 location    = "bauwagen"   # published in /meta
-host        = "shari"      # published in /meta
+host        = "scmino"     # published in /meta
 
 [mqtt]
 broker           = "tcp://127.0.0.1:1883"
@@ -125,15 +125,15 @@ See `../docs/conventions/config-and-secrets.md` for the full convention.
 ## Deployment
 
 ```bash
-./deploy.sh      # cross-compile arm64, copy to shari, install systemd service
+./deploy.sh      # cross-compile arm64, copy to scmino, install systemd service
 ```
 
 The script seeds `/etc/ultrabridge/config.toml` on first deploy only (seed-once). To change
-settings after the first deploy, edit the file on shari directly.
+settings after the first deploy, edit the file on scmino directly.
 
 ```bash
-ssh io@192.168.1.139 'journalctl -u ultrabridge -f'
-ssh io@192.168.1.139 'sudo systemctl restart ultrabridge'
+ssh io@192.168.1.178 'journalctl -u ultrabridge -f'
+ssh io@192.168.1.178 'sudo systemctl restart ultrabridge'
 ```
 
 See `../docs/conventions/deployment.md` for the general pattern.

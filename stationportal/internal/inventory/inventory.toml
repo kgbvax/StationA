@@ -38,8 +38,8 @@ note  = "Live HamClock view"
 [[link]]
 group = "Station"
 name  = "Ultrabeam controller"
-url   = "http://192.168.1.139:8080/"
-host  = "shari"
+url   = "http://192.168.1.178:8080/"
+host  = "scmino"
 note  = "ultrabridge web UI (RCU-06)"
 
 [[link]]
@@ -199,7 +199,7 @@ address   = "muehle/hf/ant-ctrl"
 component = "ultrabridge"
 device    = "Ultrabeam RCU-06"
 link      = "USB-serial (FTDI)"
-host      = "shari"
+host      = "scmino"
 
 [[slot]]
 address   = "muehle/hf/ant-switch"
@@ -344,7 +344,7 @@ slots = ["muehle/hf/radio"]
 name  = "ultrabridge"
 path  = "ultrabridge/"
 kind  = "bridge"
-host  = "shari"
+host  = "scmino"
 unit  = "ultrabridge"
 ports = "8080/tcp (web UI)"
 slots = ["muehle/hf/ant-ctrl"]

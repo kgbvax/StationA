@@ -3,11 +3,11 @@
 # Deploy ultrabridge to a Raspberry Pi and install it as a systemd service.
 #
 # Usage:
-#   ./deploy.sh                       # deploy to default host "shari"
-#   SSH_HOST=pi@shari.local ./deploy.sh
+#   ./deploy.sh                       # deploy to default host "scmino"
+#   SSH_HOST=io@192.168.1.139 HOST_NAME=shari ./deploy.sh
 #
 # Configurable via environment variables (with defaults):
-#   SSH_HOST        SSH target            (default: 192.168.1.139)
+#   SSH_HOST        SSH target            (default: 192.168.1.178, scmino)
 #   SSH_USER        SSH user              (default: io)  [used only if SSH_HOST has no user@]
 #   SERVICE_NAME    systemd service name  (default: ultrabridge)
 #   SERVICE_USER    system user to run as (default: ultrabridge)
@@ -20,7 +20,7 @@
 #   SERIAL_PORT     serial_port value        (default: empty -> mock)
 #   BAUD            baud  value              (default: 19200)
 #   LOCATION        location value           (default: bauwagen)  [published in /meta]
-#   HOST_NAME       host value               (default: shari)     [published in /meta]
+#   HOST_NAME       host value               (default: scmino)    [published in /meta]
 #   MQTT_BROKER     mqtt.broker value        (default: tcp://127.0.0.1:1883, the shack broker on shari)
 #   MQTT_SITE       mqtt.site                (default: empty)
 #   MQTT_STATION    mqtt.station             (default: empty)
@@ -38,7 +38,7 @@
 set -euo pipefail
 
 # --- configuration ----------------------------------------------------------
-SSH_HOST="${SSH_HOST:-192.168.1.139}"
+SSH_HOST="${SSH_HOST:-192.168.1.178}"
 SSH_USER="${SSH_USER:-io}"
 SERVICE_NAME="${SERVICE_NAME:-ultrabridge}"
 SERVICE_USER="${SERVICE_USER:-ultrabridge}"
@@ -58,7 +58,7 @@ HTTP_ADDR="${HTTP_ADDR:-0.0.0.0:8080}"
 SERIAL_PORT="${SERIAL_PORT:-}"
 BAUD="${BAUD:-19200}"
 LOCATION="${LOCATION:-bauwagen}"
-HOST_NAME="${HOST_NAME:-shari}"
+HOST_NAME="${HOST_NAME:-scmino}"
 MQTT_BROKER="${MQTT_BROKER:-tcp://127.0.0.1:1883}"
 MQTT_SITE="${MQTT_SITE:-}"
 MQTT_STATION="${MQTT_STATION:-}"
@@ -180,9 +180,10 @@ getent group "$SERIAL_GROUP" >/dev/null 2>&1 || sudo groupadd --system "$SERIAL_
 sudo usermod -aG "$SERIAL_GROUP" "$SERVICE_USER"
 # Install a udev rule so the USB-serial adapter is owned by SERIAL_GROUP. Some
 # distros assign FTDI tty devices to plugdev (not dialout) by default, which
-# would deny the service user access; this pins the group to match.
+# would deny the service user access; this pins the group to match. It also
+# tells ModemManager (running on scmino) never to probe the RCU-06 port.
 if [ -n "$SERIAL_USB_VENDOR" ]; then
-  printf 'SUBSYSTEM=="tty", SUBSYSTEMS=="usb", ATTRS{idVendor}=="%s", GROUP="%s", MODE="0660"\n' \
+  printf 'SUBSYSTEM=="tty", SUBSYSTEMS=="usb", ATTRS{idVendor}=="%s", GROUP="%s", MODE="0660", ENV{ID_MM_DEVICE_IGNORE}="1"\n' \
     "$SERIAL_USB_VENDOR" "$SERIAL_GROUP" | sudo tee /etc/udev/rules.d/99-ultrabridge-serial.rules >/dev/null
   sudo udevadm control --reload-rules
   sudo udevadm trigger --subsystem-match=tty
