@@ -488,6 +488,38 @@ void main() {
       expect(mqtt.publishes.last.retain, isFalse);
     });
 
+    testWidgets('also selects vertical polarization (retained) when pol-ctrl is online',
+        (tester) async {
+      final store = BusStore();
+      final mqtt = FakeMqttService(store);
+      store.setSatRotator(azAddress, axis: 'az', pos: 45, limits: parkAz);
+      store.setSatRotator(elAddress, axis: 'el', pos: 10, limits: parkEl);
+      store.setPolCtrl(pol: 'h');
+
+      await pumpPanel(tester, store: store, mqtt: mqtt);
+      await tester.tap(find.byKey(const ValueKey('sat-park')));
+      await tester.pumpAndSettle();
+
+      expect(mqtt.publishes.map((r) => r.topic),
+          ['muehle/uhf/az-rotator/cmd', 'muehle/uhf/pol-ctrl/cmd']);
+      expect(jsonDecode(mqtt.publishes.last.payload), {'action': 'set_pol', 'value': 'v'});
+      expect(mqtt.publishes.last.retain, isTrue);
+    });
+
+    testWidgets('pol-ctrl offline: park leaves polarization alone', (tester) async {
+      final store = BusStore();
+      final mqtt = FakeMqttService(store);
+      store.setSatRotator(azAddress, axis: 'az', pos: 45, limits: parkAz);
+      store.setSatRotator(elAddress, axis: 'el', pos: 10, limits: parkEl);
+      store.setPolCtrl(pol: 'h');
+      store.applyStatus('muehle/uhf/pol-ctrl', 'offline');
+
+      await pumpPanel(tester, store: store, mqtt: mqtt);
+      await tester.tap(find.byKey(const ValueKey('sat-park')));
+      await tester.pumpAndSettle();
+      expect(mqtt.publishes.map((r) => r.topic), ['muehle/uhf/az-rotator/cmd']);
+    });
+
     testWidgets('radio without a park target (or offline) is left alone', (tester) async {
       final store = BusStore();
       final mqtt = FakeMqttService(store);
