@@ -3,8 +3,8 @@
 // The bridge never opens the radio's serial port for control (the serial
 // port is reserved for other software). The only control path is a rigctld
 // on the host that owns a dedicated CI-V port (scmino), and this client can
-// set three things: satellite mode off, the mode, and the frequency (and read
-// the last two back). There is deliberately no PTT, no power and no raw-CI-V
+// set four things: satellite mode off, split off, the mode, and the frequency
+// (and read split, mode and frequency back). There is deliberately no PTT, no power and no raw-CI-V
 // send in this package — the receive-only posture holds.
 package rigctl
 
@@ -58,8 +58,10 @@ type Client struct {
 
 // Tune parks the radio: satellite mode off first (a radio left in sat mode
 // keeps its split main/sub receivers and its own mode, and leaving sat mode
-// restores a different main frequency), then the frequency, then the
-// (canonical) mode, then both are read back and must match. The mode must
+// restores a different main frequency), then split off (a radio left in split
+// would park with its TX on VFO B; live 2026-10-09 it read split=1 TX=VFOB),
+// then the frequency, then the (canonical) mode, then all three are read back
+// and must match. The mode must
 // follow the frequency: the IC-9700 stores a mode per band and restores it
 // on a band change, so a mode set before the frequency is overwritten.
 func (c *Client) Tune(ctx context.Context, freqHz int64, mode string) error {
@@ -92,6 +94,8 @@ func (c *Client) Tune(ctx context.Context, freqHz int64, mode string) error {
 		switch cmd {
 		case "m":
 			n = 2 // mode, passband
+		case "s":
+			n = 2 // split flag, TX VFO
 		}
 		out := make([]string, 0, n)
 		for i := 0; i < n; i++ {
@@ -116,6 +120,7 @@ func (c *Client) Tune(ctx context.Context, freqHz int64, mode string) error {
 
 	for _, cmd := range []string{
 		"U SATMODE 0",
+		"S 0 VFOA",
 		fmt.Sprintf("F %d", freqHz),
 		fmt.Sprintf("M %s %d", Modes[mode], passbandHz[mode]),
 	} {
@@ -125,6 +130,11 @@ func (c *Client) Tune(ctx context.Context, freqHz int64, mode string) error {
 	}
 
 	// Read back: the radio, not rigctld's RPRT 0, is the proof.
+	if out, err := talk("s"); err != nil {
+		return err
+	} else if out[0] != "0" {
+		return fmt.Errorf("radio reads split %s after retune, want 0", out[0])
+	}
 	if out, err := talk("f"); err != nil {
 		return err
 	} else if out[0] != fmt.Sprint(freqHz) {
