@@ -50,7 +50,7 @@ Two map modules share `DxMapContainer`:
   beam (±20°) and target line, aims by tap (great-circle bearing from the
   station, `goto` to `uhf/az-rotator`), and carries PARK (one bridge-side
   `park` intent — both sat axes to the bridge's configured park, az 200° /
-  el 0°, shown on the sat panel's key from /meta) and a STOP that stops both
+  el 0°, shown on the sat panel's key from /meta; it also retunes the IC-9700 when its bridge advertises a park target, and selects vertical polarization — retained `set_pol v` to `uhf/pol-ctrl` when online) and a STOP that stops both
   sat axes. It also draws the satellite OscarWatch is tracking
   (`muehle/uhf/sat-track`, `lib/store/sat_track.dart`): a green diamond on
   the sub-satellite point with `name  EL n°  range km`, the footprint circle

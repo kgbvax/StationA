@@ -22,7 +22,8 @@ String? rotatorParkSlot(BusStore store, RotatorSurface surface) {
 
 /// Publishes the park intent to [rotatorParkSlot]; false when none is operable.
 /// Parking also retunes the IC-9700 (mode + frequency) when its bridge
-/// advertises a park target and is online — best effort, never a reason to
+/// advertises a park target and is online, and selects vertical polarization
+/// on the X-Quads when pol-ctrl is online — best effort, never a reason to
 /// hold back the rotator park.
 bool sendRotatorPark(BusStore store, MqttService mqtt, RotatorSurface surface) {
   final slot = rotatorParkSlot(store, surface);
@@ -39,10 +40,26 @@ bool sendRotatorPark(BusStore store, MqttService mqtt, RotatorSurface surface) {
       retain: cmdRetain['muehle/$_radioSlot'] ?? false,
     );
   }
+  if (polParkAvailable(store)) {
+    mqtt.publish(
+      cmdTopic(_polSlot),
+      setPolPayload(_parkPol),
+      retain: cmdRetain['muehle/$_polSlot'] ?? false,
+    );
+  }
   return true;
 }
 
 const _radioSlot = 'uhf/radio';
+const _polSlot = 'uhf/pol-ctrl';
+
+/// The polarization a park selects: vertical, the de-energized (relays-off)
+/// state — the safe resting phase for the X-Quads.
+const _parkPol = 'v';
+
+/// The polarization controller is online and the console link is up.
+bool polParkAvailable(BusStore store) =>
+    store.linkUp && (store.slots['muehle/$_polSlot']?.isOnline ?? false);
 
 /// The radio bridge is online and /meta advertises a park target
 /// (`capabilities.park`, present only when park.rigctld_addr is configured).
