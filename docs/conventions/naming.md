@@ -85,15 +85,6 @@ A bridge that fronts one specific piece of hardware is named
 > without colliding. The dir name, env overload prefix, systemd unit, and binary all
 > follow from the devtag as usual.
 
-> **Deviation — `pelcobridge2`:** the UHF rotator component fronts the
-> `muehle/uhf/rotator` slot (Pelco-D/P head) but deliberately does **not** follow
-> `<devtag>-<function>-bridge` (which would be `pelcod-rotator-bridge`). It is the
-> user's chosen name, evolved from the `pelcotest/ptest` bench tool, and it is not a
-> conventional bridge: it is an interactive TUI application (not a daemon, no systemd
-> unit, runs on host `shack-pc` under the operator's session) that *also* serves the
-> slot. The `-bridge` suffix and unit/install-dir rules therefore do not apply; the
-> env-overload prefix still does (`PELCOBRIDGE2_*`).
-
 ### Derived names (must follow)
 
 - **Env-overload prefix** — the dir name uppercased, hyphens → underscores:
@@ -111,8 +102,6 @@ A bridge that fronts one specific piece of hardware is named
 
 - **Logic slots** with no device — `antennaselect` (the reconciler), `hadiscovery` (the HA
   discovery consumer). They are not device bridges.
-- **`pelcobridge2`** — interactive TUI on the shack PC (no systemd unit, no service
-  user); see the deviation note above.
 
 ---
 

@@ -52,15 +52,14 @@ routing among them is `ant-switch` (actuator) driven by `antenna-select` (policy
 | `hf/rotator` | wrc-rotator-bridge | HF rotator (Yaesu G-450DC via AF6SA WRC) | WebSocket |
 | `hf/tuner` | atr1k-tuner-bridge | ATR-1000 ATU bridge (in-line / bypass, tune) | Wi-Fi (binary WebSocket) |
 | `hf/discovery` | hadiscovery | HA discovery consumer (logic) | reads `/meta.expose` |
-| `uhf/rotator` | pelcobridge2 | UHF rotator console — interactive TUI + rotctld server (Pelco-D/P head) | RS-485 (shack-pc, not a daemon) |
 
 All HF bridges run on **shari** (Raspberry Pi, `192.168.1.139`) against the
 **shack-local Mosquitto broker on shari** (`127.0.0.1:1883` on shari,
 `192.168.1.139:1883` from the LAN), bridged to the HA broker at
-`192.168.1.50:1883`, under the `muehle/…` address tree. The exception is
-`uhf/rotator` (pelcobridge2), which runs interactively on the **shack PC** — arming
-is manual, so it is intentionally not a service. See
-`docs/conventions/mqtt-topology.md`.
+`192.168.1.50:1883`, under the `muehle/…` address tree. See
+`docs/conventions/mqtt-topology.md`. (The former `uhf/rotator` slot —
+pelcobridge2, an interactive Pelco-D/P pan/tilt TUI on the shack PC — was
+retired 2026-10-10, not in use; UHF az/el is `spid-ercm-rotator-bridge`.)
 
 > **Bridge naming:** device-specific bridges follow `<devtag>-<function>-bridge`
 > (e.g. `atr1k-tuner-bridge`); the `<devtag>` is the device *family / control

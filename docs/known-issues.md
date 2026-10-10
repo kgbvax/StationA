@@ -11,6 +11,9 @@
 
 ## [defect] UHF rotator auto-heal gives up permanently after one failed reopen (PRD §5.3 row 9)
 
+> **Moot (2026-10-10):** `pelcobridge2` and the `muehle/uhf/rotator` slot were retired
+> (not in use) and the component was removed from the repo. Kept as a record only.
+
 Symptom: UHF rotator link dead after adapter re-enumeration. No auto-recovery.
 Cause: Auto-heal retries once after a 2 s cooldown, then gives up permanently on a failed reopen.
 Remedy / required behavior: Manual: the TUI's manual reopen key (always works). A reconstruction must retry indefinitely at a 2 s reopen cooldown (the current auto-heal interval).
@@ -312,6 +315,10 @@ From PRD 00 §7 item 10:
 Status 2026-09-03: still unconfirmed; harmless while the console stays on Pelco-D,
 but load-bearing if P framing is ever reintroduced.
 
+Status 2026-10-10: moot — `pelcobridge2` (the UHF pan/tilt rotator console) was
+retired (not in use) and removed from the repo. Still applies to any future Pelco
+component.
+
 ## [unique] Ham-radio glossary (plain-language definitions)
 
 From PRD 02 §0.1. Candidate home: appendix of `docs/conventions/band-mode-reference.md`.
@@ -385,6 +392,11 @@ PRD 00 §7 items later resolved in code, recorded so nobody re-opens them:
   (`flexbridge/internal/bridge/bridge.go`, `DefaultStateHeartbeat = 5 * time.Second`,
   started from `cmd/flexbridge/main.go`), sitting well inside the PA-arm PLC's
   10 s heartbeat window.
+- **`pelcobridge2` / `muehle/uhf/rotator` retired (2026-10-10).** The UHF pan/tilt
+  rotator TUI + rotctld on the shack PC was not in use; the component was removed
+  from the repo and the slot from the inventory. UHF az/el rotation is
+  `spid-ercm-rotator-bridge` (`uhf/az-rotator`, `uhf/el-rotator`). The two entries
+  below record its last fixes.
 - **UHF rotator self-check-disable cadence (PRD 00 §7.6).** FIXED: the engine now
   re-sends the self-check disable (preset set 105) after every successful link
   reopen, not once per process start (`pelcobridge2/internal/control/engine.go`,
@@ -430,9 +442,9 @@ Each vector states the surface, the exposure, and the decision:
    reaches the ports, not what magnitudes pass through); axis-liveness refusal
    (motion toward a dead port is refused to the client, never queued, R9); the
    ~1° deadband no-op skip keeps a misbehaving client from hammering the hardware
-   (R12); and the port is deliberately **distinct from pelcobridge2's rotctld
-   `:4533`** so a client pointed at "the rotator" cannot silently reach the wrong
-   antenna system. Revisit only if the shack LAN stops being a trusted segment.
+   (R12); and the port is deliberately **distinct from the hamlib default
+   `:4533`** (once the retired pelcobridge2's rotctld on shack-pc) so a client
+   pointed at "the rotator" cannot silently reach the wrong antenna system. Revisit only if the shack LAN stops being a trusted segment.
 2. **PstRotator UDP `:12041` on shari, unauthenticated + source-spoofable.** UDP
    has no connection state; the reply goes to the datagram's source IP at
    listen-port+1, and the source IP is spoofable — a spoofed `AZ?`/`EL?` query

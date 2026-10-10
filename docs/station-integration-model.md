@@ -32,7 +32,9 @@ host attributions corrected (shack-pc fronts pelcobridge2, the PTS-303Z/3050DZ
 pan/tilt head). In 0.10: the `sat-track` role added (§4) with the
 `uhf/sat-track` slot (§7.2) — the satellite the station is tracking, fronted from
 OscarWatch's Satellite-link WebSocket by `oscarwatch-sattrack-bridge` on the new host
-`scmino` (§7.3).
+`scmino` (§7.3). 2026-10-10: the `uhf/rotator` slot (pelcobridge2, the
+PTS-303Z/3050DZ pan/tilt head on shack-pc) retired — not in use; UHF az/el is the
+sat-ops mount (`uhf/az-rotator` / `uhf/el-rotator`).
 
 The guiding idea: the live configuration is the documentation. A component, once
 connected, describes itself — who it is, what it can do, and what is currently true
@@ -696,20 +698,11 @@ re-prove the firmware unkey behavior. `/meta` declares a **read-only** `expose` 
 no PTT/arm widgets in HA (the sat-rotator posture; the action set lives on `/cmd` and
 in the wire contract).
 
-**`muehle/uhf/rotator`** — PTS-303Z/3050DZ pan/tilt head (Pelco-D/P over RS-485),
-driven by **pelcobridge2** on host `shack-pc` — an interactive TUI that doubles as a
-hamlib `rotctld` server (`-m 901`, port 4533). `capabilities: axes [az, el]`. Same
-role name as the HF rotator but a completely different control stack; a
-satellite-tracking consumer reads the axes rather than knowing the hardware. The
-safety model differs from every other bridge: the component is **disarmed at every
-start**, arming is a keyboard act in the TUI (requires entering the head's true
-azimuth to calibrate the offset; never automatic, never remote-controlled), arming
-gates only the rotctld path — TUI manual motion (jog, goto-0) works disarmed so
-the head can be positioned first — and MQTT
-`/cmd` accepts **only** `stop` — no motion path exists from the bus. Absolute sets
-use a verify-and-resend ladder (quiet-line window, one verification query, bounded
-retries) instead of readback polling. The self-test (preset call 125) re-homes the
-head and can rip cables; it is disarmed-only and two-stage confirmed in the TUI.
+**`muehle/uhf/rotator`** — *retired 2026-10-10 (not in use).* Formerly the
+PTS-303Z/3050DZ pan/tilt head (Pelco-D/P over RS-485), driven by the interactive
+**pelcobridge2** TUI + rotctld on `shack-pc` (manual arming, MQTT `/cmd` limited to
+`stop`). The component was removed from the repo; the address is free. UHF az/el
+rotation is the sat-ops mount below.
 
 **`muehle/uhf/az-rotator`** and **`muehle/uhf/el-rotator`** — the sat-ops
 rotator mount (azimuth: SPID, Rot1Prog binary serial; elevation: GS-500 via the
@@ -734,9 +727,9 @@ its **own serial link** — a dead elevation port takes only `el-rotator`
 offline, never `az-rotator` — while `/status` is the shared bridge process
 (one LWT per slot, so process death flips both with no stale-online gap).
 
-Motion is **free with no arming gate** — deliberately unlike `uhf/rotator`'s
-manual-arming TUI: any connected client (rotctld, PstRotator, console) may move
-the mount. Safety is procedural (operator watching); the posture's exposure
+Motion is **free with no arming gate** — deliberately unlike the retired
+`uhf/rotator`'s manual-arming TUI: any connected client (rotctld, PstRotator,
+console) may move the mount. Safety is procedural (operator watching); the posture's exposure
 vectors are reviewed and recorded per-vector in `docs/known-issues.md` (the
 plan's KTD4 register). The slots publish **read-only** `expose` blocks —
 hadiscovery renders state but no HA motion widgets; the motion authority lives
@@ -750,9 +743,9 @@ is purely by axis (az → SPID, el → GS-500; a wire message that structurally
 omits one axis leaves that axis parked; `stop` from any path halts both axes;
 targets outside the configured travel limits are refused on every path before
 any serial write). The ports are deliberately distinct from the other rotator
-systems (pelcobridge2's rotctld `:4533` on shack-pc, wrc's PstRotator
-`:12040`) so a client pointed at "the rotator" cannot silently reach the wrong
-antenna system. Refusals on these protocol paths (dead axis, out-of-limits
+systems (wrc's PstRotator `:12040`; `:4533`, the hamlib default, was the
+retired pelcobridge2's rotctld on shack-pc) so a client pointed at "the
+rotator" cannot silently reach the wrong antenna system. Refusals on these protocol paths (dead axis, out-of-limits
 target) are answered to the protocol client and logged (journald), never routed
 into `/state.error` — that channel carries `/cmd` rejections and serial link
 faults only.
@@ -812,7 +805,6 @@ muehle/host/scmino      # Debian 12 arm64 box, taking over shari's role
 | Tuner bridge | `hf/tuner` | `scmino` |
 | HF rotator bridge (AF6SA WRC) | `hf/rotator` | `scmino` |
 | Antenna controller bridge (Ultrabeam) | `hf/ant-ctrl` | `shari` |
-| UHF pan/tilt head bridge (`pelcobridge2`) | `uhf/rotator` (PTS-303Z/3050DZ) | `shack-pc` |
 | Sat rotator bridge (`spid-ercm-rotator-bridge`) | `uhf/az-rotator`, `uhf/el-rotator` | `shari` |
 | IC-9700 radio bridge (`icom9700-radio-bridge`) | `uhf/radio` (Icom IC-9700) | `shari` |
 | Sat-track bridge (`oscarwatch-sattrack-bridge`) | `uhf/sat-track` (OscarWatch on shack-pc) | `scmino` |
@@ -1046,10 +1038,9 @@ Stated plainly rather than left implied.
 - **Hosts are now single points too.** `shari` fronts the HF PA, tuner, rotator, and
   Ultrabeam, the sat-ops az/el rotator mount (`spid-ercm-rotator-bridge`, whose
   rotctld and PstRotator listeners also live there), and also hosts the
-  `antenna-select` reconciler and logging; `shack-pc` fronts only the UHF
-  pan/tilt head — `pelcobridge2`, the interactive PTS-303Z/3050DZ TUI with its
-  rotctld server. A host loss takes its whole cluster offline
-  at once — correctly, via last-will, but simultaneously. Host liveness is load-bearing
+  `antenna-select` reconciler and logging; `shack-pc` fronts no slot since the
+  UHF pan/tilt head (`pelcobridge2`) was retired 2026-10-10. A host loss takes
+  its whole cluster offline at once — correctly, via last-will, but simultaneously. Host liveness is load-bearing
   and worth monitoring; the reconciler running on `shari` compounds that host's
   coordination single point (see §11).
 - **GenAI-authored adapters vary in quality.** The strict core limits blast radius, but
@@ -1078,8 +1069,9 @@ surfaced by those answers:
 1. ~~**160 m antenna.**~~ Resolved: no dedicated 160 m antenna. Unmatched bands (incl.
    160 m) fall back to the fan-dipole via the ATU (`band_policy.fallback` in
    `antenna-select`). Revisit if a resonant 160 m antenna is added.
-2. ~~**`shack-pc` roles.**~~ Resolved: shari hosts the reconciler and logging (flexbridge moved to scmino 2026-10-12). shack-pc hosts pelcobridge2 only — the interactive TUI + rotctld
-   server for the PTS-303Z/3050DZ pan/tilt head (`uhf/rotator`). (The former
+2. ~~**`shack-pc` roles.**~~ Resolved: shari hosts the reconciler and logging (flexbridge moved to scmino 2026-10-12). shack-pc hosted pelcobridge2 only — the interactive TUI + rotctld
+   server for the PTS-303Z/3050DZ pan/tilt head (`uhf/rotator`), retired 2026-10-10
+   (not in use); it now fronts no slot. (The former
    PSTRotator/SPID attribution of shack-pc was stale: the SPID/GS-500 sat-ops
    rotators are fronted by `spid-ercm-rotator-bridge` on shari, as
    `uhf/az-rotator` / `uhf/el-rotator`.)
