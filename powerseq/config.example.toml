@@ -112,12 +112,56 @@ level = "info"
 #     # exactly one of duration_s / duration; unknown symbolic value → load
 #     # error; a non-positive duration_s → load error (no silent no-op).
 #
+#   kind = "wol"          send a Wake-on-LAN magic packet (UDP).
+#     mac       = "aa:bb:cc:dd:ee:ff"     # target NIC MAC (REQUIRED, valid)
+#     broadcast = "192.168.1.255:9"       # optional host:port, default
+#                                         # 255.255.255.255:9 (prefer the
+#                                         # subnet broadcast on a multi-NIC host)
+#
 # Phase transitions are implicit: entering the first startup step → phase=
 # starting; completing the last → running. Entering the first shutdown step →
 # stopping; completing the last → idle. A wait timeout → phase=idle, fault=
 # "<step>: <reason>", NO rollback (driven slots hold their last retained /cmd).
+#
+# Idle standby (optional — omit [[standby]], [[wake]] and [idle] to disable):
+# from phase=running, when [idle].activity_slot reports activity="inactive",
+# no [[idle.watch]] moved for timeout_minutes, and running has lasted at least
+# timeout_minutes → [[standby]] runs (phase entering_standby → standby). In
+# standby, a last_activity newer than the standby entry, a watch moving, or a
+# `start` cmd → [[wake]] runs (phase waking → running). `stop` works from
+# standby. A fault in either list → phase=idle + fault, like startup.
 
-# --- startup (model §7.1) -----------------------------------------------------
+# --- idle standby triggers ----------------------------------------------------
+[idle]
+# antenna-select grounds the antenna after its own idle timeout (no VFO change,
+# no TX, no operator hold) and publishes /state.activity + last_activity.
+activity_slot = "hf/antenna-select"
+# Quiet window for the watches below, and the minimum time in phase=running
+# before standby (so a start/wake is not followed by an instant standby).
+timeout_minutes = 30
+
+# UHF use counts as activity too: the antenna-power plug also feeds the UHF
+# rotators, and the shack PC runs the satellite tracker. A watch is a /state
+# field; a change of at least min_delta (numeric) since the last counted value
+# is activity. Changes while the slot is offline / device_online=false, or a
+# field appearing/vanishing, are not activity.
+[[idle.watch]]
+slot = "uhf/radio"
+field = "freq_hz"
+
+[[idle.watch]]
+slot = "uhf/az-rotator"
+field = "az"
+min_delta = 2.0
+
+[[idle.watch]]
+# el readback dithers 0↔1° at the lower stop (ADC noise) — the deadband keeps
+# that from reading as activity.
+slot = "uhf/el-rotator"
+field = "el"
+min_delta = 2.0
+
+# --- startup ------------------------------------------------------------------
 # 1. Energize station master mains.
 [[startup]]
 name = "master-on"
@@ -132,7 +176,7 @@ name = "network-delay"
 kind = "delay"
 duration = "network"
 
-# 3. Energize the 13.8 V PSU (site-level; feeds HF + UHF).
+# 3. Energize the TRX PSU (13.8 V, site-level; feeds HF + UHF and the PLC).
 [[startup]]
 name = "psu-on"
 kind = "cmd"
@@ -140,13 +184,23 @@ slot = "power/psu-13v8"
 action = "set_power"
 value = "on"
 
-# 4. Wait for the PSU-fed control devices to report online (they boot on 13.8 V).
+# 4. Let the PSU settle.
 [[startup]]
-name = "wait-controllers-online"
-kind = "wait_status"
-slots = ["hf/switch", "hf/pa-arm", "hf/ant-switch"]
+name = "psu-settle"
+kind = "delay"
+duration_s = 5
 
-# 5. Power on the TRX (FLEX-8400) via the remote-on relay.
+# 5. Guard: the PLC (hf/switch) must be online before the remote-on relays are
+#    commanded. hf/switch/cmd is ONE retained topic — if set_trx and set_pa
+#    were both published while the PLC is still booting, the broker would keep
+#    only set_pa and the TRX would never switch on. Passes at once when the PLC
+#    is already up.
+[[startup]]
+name = "wait-plc-online"
+kind = "wait_status"
+slots = ["hf/switch"]
+
+# 6. Power on the TRX (FLEX-8400) via the PLC remote-on relay.
 [[startup]]
 name = "trx-on"
 kind = "cmd"
@@ -154,13 +208,13 @@ slot = "hf/switch"
 action = "set_trx"
 value = "on"
 
-# 6. Wait for the radio to come online after TRX power-on.
+# 7. 1 s between TRX and PA remote-on.
 [[startup]]
-name = "wait-radio-online"
-kind = "wait_status"
-slots = ["hf/radio"]
+name = "trx-settle"
+kind = "delay"
+duration_s = 1
 
-# 7. Engage the PA enable relay.
+# 8. Power on the PA via the PLC remote-on relay.
 [[startup]]
 name = "pa-on"
 kind = "cmd"
@@ -168,8 +222,23 @@ slot = "hf/switch"
 action = "set_pa"
 value = "on"
 
-# 8. Wait for the PA to report power on (state.power == "on"). The implicit
-#    /status-online precondition means a dead PA cannot pass on stale /state.
+# 9. Antenna power: HF + UHF rotators and the Ultrabeam RCU-06.
+[[startup]]
+name = "antennas-on"
+kind = "cmd"
+slot = "power/antennas"
+action = "set_power"
+value = "on"
+
+# 10. Wait for the radio to come online after TRX power-on.
+[[startup]]
+name = "wait-radio-online"
+kind = "wait_status"
+slots = ["hf/radio"]
+
+# 11. Wait for the PA to report power on (state.power == "on"). The implicit
+#     two-layer liveness precondition means a dead bridge (LWT) or a dead PA
+#     behind a live bridge cannot pass on stale /state.
 [[startup]]
 name = "wait-pa-power-on"
 kind = "wait_state"
@@ -177,7 +246,7 @@ slot = "hf/pa"
 field = "power"
 value = "on"
 
-# 9. Arm the PA (permit RF). Last startup step → phase=running.
+# 12. Arm the PA (permit RF). Last startup step → phase=running.
 [[startup]]
 name = "pa-arm-enable"
 kind = "cmd"
@@ -199,6 +268,18 @@ kind = "delay"
 duration = "stagger"
 
 [[shutdown]]
+name = "antennas-off"
+kind = "cmd"
+slot = "power/antennas"
+action = "set_power"
+value = "off"
+
+[[shutdown]]
+name = "stagger-2"
+kind = "delay"
+duration = "stagger"
+
+[[shutdown]]
 name = "pa-off"
 kind = "cmd"
 slot = "hf/switch"
@@ -206,7 +287,7 @@ action = "set_pa"
 value = "off"
 
 [[shutdown]]
-name = "stagger-2"
+name = "stagger-3"
 kind = "delay"
 duration = "stagger"
 
@@ -218,7 +299,7 @@ action = "set_trx"
 value = "off"
 
 [[shutdown]]
-name = "stagger-3"
+name = "stagger-4"
 kind = "delay"
 duration = "stagger"
 
@@ -230,7 +311,7 @@ action = "set_power"
 value = "off"
 
 [[shutdown]]
-name = "stagger-4"
+name = "stagger-5"
 kind = "delay"
 duration = "stagger"
 
@@ -240,6 +321,46 @@ kind = "cmd"
 slot = "power/master"
 action = "set_power"
 value = "off"
+
+# --- idle standby -------------------------------------------------------------
+# antenna-select has already grounded the antenna when this runs.
+[[standby]]
+name = "antennas-off"
+kind = "cmd"
+slot = "power/antennas"
+action = "set_power"
+value = "off"
+
+# Shack PC (bwpc) to sleep. NOT retained: a retained sleep would replay when
+# the PC wakes and put it straight back to sleep. The agent on the PC refuses
+# while someone is using its keyboard/mouse.
+[[standby]]
+name = "pc-sleep"
+kind = "cmd"
+slot = "power/shack-pc"
+action = "sleep"
+value = "now"
+retain = false
+
+# --- wake (antenna-select reconnects the antenna on the same activity) --------
+[[wake]]
+name = "pc-wake"
+kind = "wol"
+mac = "00:00:00:00:00:00"    # REPLACE with the bwpc NIC MAC
+broadcast = "192.168.1.255:9"
+
+[[wake]]
+name = "antennas-on"
+kind = "cmd"
+slot = "power/antennas"
+action = "set_power"
+value = "on"
+
+[[wake]]
+name = "wait-antenna-gear-online"
+kind = "wait_status"
+slots = ["hf/ant-ctrl", "hf/rotator"]
+timeout_s = 120
 
 # --- env overrides (systemd EnvironmentFile) ---------------------------------
 # These POWERSEQ_MQTT_* env vars overlay the [mqtt] section above and are used

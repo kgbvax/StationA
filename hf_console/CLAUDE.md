@@ -117,11 +117,11 @@ is the source of truth; this app's palette must be kept in sync with it.
 
 ## Retained /cmd policy
 
-Retained cmd slots (self-healing steady state): `power/master`, `power/psu-13v8`, `hf/switch`, `hf/pa-arm`, `hf/ant-switch`, `hf/antenna-select`, `hf/beam-steer` (`enable`/`disable` — the smart-rotation toggle survives a beamsteer restart), `uhf/pol-ctrl` (`set_pol` — desired phase re-applies after a controller reboot or broker reconnect, KTD13's deliberate contrast with the one-shot sat rotators).
+Retained cmd slots (self-healing steady state): `power/master`, `power/psu-13v8`, `power/antennas` (rotators + Ultrabeam controller plug, ANT PWR toggle), `hf/switch`, `hf/pa-arm`, `hf/ant-switch`, `hf/antenna-select`, `hf/beam-steer` (`enable`/`disable` — the smart-rotation toggle survives a beamsteer restart), `uhf/pol-ctrl` (`set_pol` — desired phase re-applies after a controller reboot or broker reconnect, KTD13's deliberate contrast with the one-shot sat rotators).
 
 Retained but one-shot (consumer clears the topic after every execution — a command does NOT re-apply if the bridge restarts): `hf/ant-ctrl`.
 
-Non-retained (one-shot): `hf/pa`, `hf/rotator`, `hf/tuner`, `hf/power-seq`, `hf/radio` (DVK `play`/`stop`), `uhf/az-rotator`, `uhf/el-rotator` (sat `goto`/`stop` — a stale retained or queued motion must never replay against real antennas), `uhf/radio` (icom9700-radio-bridge, receive-only since 2026-09: the action set is exactly `audio_on`/`audio_off`/`power_on`/`monitor_on`/`monitor_off` — there is no PTT/arm/tuning path anymore).
+Non-retained (one-shot): `power/shack-pc` (`sleep` — retained, it would re-sleep the PC on every wake), `hf/pa`, `hf/rotator`, `hf/tuner`, `hf/power-seq`, `hf/radio` (DVK `play`/`stop`), `uhf/az-rotator`, `uhf/el-rotator` (sat `goto`/`stop` — a stale retained or queued motion must never replay against real antennas), `uhf/radio` (icom9700-radio-bridge, receive-only since 2026-09: the action set is exactly `audio_on`/`audio_off`/`power_on`/`monitor_on`/`monitor_off` — there is no PTT/arm/tuning path anymore).
 
 The machine-readable source of truth is `cmdRetain` in `lib/store/wiring.dart`; keep this list in sync with it.
 

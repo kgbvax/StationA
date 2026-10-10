@@ -393,9 +393,9 @@ power loss independently of this flag.
 ### 7.0 Power infrastructure (site level)
 
 The upstream supplies feed across both stations, so they sit at site level
-(`site/power/<name>`, §2) — not under `hf/` or `uhf/`. Both are Shelly smart plugs,
+(`site/power/<name>`, §2) — not under `hf/` or `uhf/`. All three are Shelly smart plugs,
 formerly operated only through Home Assistant; brought onto the canonical bus by one
-`shelly-power-bridge` on `shari` (one process, two slots — a compound bridge). HA is
+`shelly-power-bridge` on `shari` (one process, three slots — a compound bridge). HA is
 thereafter one writer of these topics, not the control path (§9).
 
 **`muehle/power/master`** — Shelly plug, station master mains
@@ -408,15 +408,36 @@ intent:       set_power {on|off}             # /cmd retained (idempotent steady-
 **`muehle/power/psu-13v8`** — Shelly plug, 13.8 V PSU
 ```
 role: power;  device: { model: "Shelly Plug …", serial };  link: wifi;  host: shari
-capabilities: fail_safe {off}; feeds [hf/radio, uhf/radio, hf/tuner, hf/ant-ctrl,
-              hf/ant-switch, hf/rotator, hf/switch, hf/pa-arm]   # what this supply powers
+capabilities: fail_safe {off}; feeds [hf/radio, uhf/radio, hf/tuner,
+              hf/ant-switch, hf/switch, hf/pa-arm]   # what this supply powers
 state:        power {on|off}
 intent:       set_power {on|off}             # /cmd retained
 ```
-The 13.8 V supply is upstream of the HF radio, the UHF radio, the tuner, the ant-ctrl,
-the ant-switch, the HF rotator, **and the M5 Stamp PLCs** — so it must be on before any
-of them can actuate or report. The sequencer (§7.1) waits on their `/status` before
-proceeding.
+The 13.8 V supply (the TRX PSU) is upstream of the HF radio, the UHF radio, the tuner,
+the ant-switch, **and the M5 Stamp PLCs** — so it must be on before any of them can
+actuate or report. The sequencer (§7.1) waits for the PLC (`hf/switch`) before the
+remote-on relays are commanded.
+
+**`muehle/power/antennas`** — Shelly plug, antenna power (2026-10-10)
+```
+role: power;  device: { model: "Shelly Plus 1PM", serial };  link: wifi;  host: shari
+capabilities: fail_safe {off}; feeds [hf/ant-ctrl, hf/rotator, uhf/az-rotator, uhf/el-rotator]
+state:        power {on|off}
+intent:       set_power {on|off}             # /cmd retained
+```
+Powers both rotators (HF and UHF) and the Ultrabeam RCU-06. The sequencer switches it on
+in the cold start and off in idle standby (§7.1 power-seq), back on at wake.
+
+**`muehle/power/shack-pc`** — the shack PC bwpc (Windows), `winpc-power-bridge`
+```
+role: pc-power;  link: ethernet;  host: bwpc
+state:        power {awake}; user_idle_s; device_online; error (omitempty)
+intent:       sleep                          # /cmd NOT retained (a retained sleep would
+                                             #  replay at wake)
+```
+Offline (`/status`) is normal: the PC is asleep. The agent refuses `sleep` while the
+operator has used keyboard/mouse within its threshold. Wake is Wake-on-LAN from the
+sequencer, not an MQTT command (a sleeping PC has no MQTT session).
 
 ### 7.1 Station `hf`
 
@@ -549,14 +570,19 @@ sets the `enabled` permit.
 on `shari`).
 ```
 role: sequencer  # logic slot, no device
-subscribes: /status of power/master, power/psu-13v8, hf/switch, hf/pa-arm, hf/ant-switch,
-            hf/radio, hf/pa; and hf/pa/state.power
-state:      phase {idle|starting|running|stopping}; step <string>; fault (omitempty)
+subscribes: /status of every slot a step references (power/*, hf/switch, hf/radio,
+            hf/pa, …); hf/pa/state.power; hf/antenna-select/state (activity,
+            last_activity); /state of the idle watches (uhf/radio, uhf/az-rotator,
+            uhf/el-rotator)
+state:      phase {idle|starting|running|stopping|entering_standby|standby|waking};
+            step <string>; fault (omitempty)
 intent:     start | stop                       # operator one-button; /cmd NOT retained
 ```
-Startup (confirmations + delays): `power/master` on → ~30 s (network) → `power/psu-13v8`
-on → wait `hf/switch`, `hf/pa-arm`, `hf/ant-switch` `/status` online (they boot on 13.8 V)
-→ `hf/switch` trx on → wait `hf/radio` `/status` online → `hf/switch` pa on → wait
+Startup (confirmations + delays, cold start 2026-10-10): `power/master` on → ~30 s
+(network) → `power/psu-13v8` (TRX PSU) on → 5 s → wait `hf/switch` `/status` online
+(`hf/switch/cmd` is one retained topic: `set_trx` + `set_pa` published while the PLC
+boots would collapse to `set_pa`) → `hf/switch` trx on → 1 s → `hf/switch` pa on →
+`power/antennas` on → wait `hf/radio` `/status` online → wait
 `hf/pa` `power` on (the slot's `/status` must also be online, and its
 `/state.device_online` must not be `false` when the field is present, so neither a dead
 bridge nor a dead device passes the wait on a stale retained `/state`) → `hf/pa-arm`
@@ -564,8 +590,19 @@ set_enabled true (arms when safe). Shutdown is the reverse, with short staggers 
 inrush. The sequencer is **one writer** of these slots but does not lock them — any
 channel stays directly toggleable for troubleshooting while the sequencer is idle.
 
-This sequence is **config-driven** in `powerseq` (the `[[startup]]` / `[[shutdown]]`
-step lists in its TOML, each step `cmd` / `wait_status` / `wait_state` / `delay`); the
+**Idle standby.** From `running`, when `hf/antenna-select` reports `activity=inactive`
+(it has grounded the antenna after its idle timeout), no idle watch (UHF radio
+frequency, UHF rotator position) moved, and `running` has lasted the idle timeout →
+`entering_standby`: `power/antennas` off, `power/shack-pc` sleep → `standby`. A
+`last_activity` newer than the standby entry (VFO change, TX, operator hold), a watch
+moving, or `start` → `waking`: Wake-on-LAN to bwpc, `power/antennas` on, wait for
+`hf/ant-ctrl` + `hf/rotator` online → `running`. antennaselect reconnects the antenna
+on the same activity. UHF use counts as activity because the antenna plug also feeds
+the UHF rotators and bwpc runs the satellite tracker.
+
+This sequence is **config-driven** in `powerseq` (the `[[startup]]` / `[[shutdown]]` /
+`[[standby]]` / `[[wake]]` step lists in its TOML, each step `cmd` / `wait_status` /
+`wait_state` / `delay` / `wol`); the
 text above is the default shipped in `config.example.toml`, not hard-coded. The
 subscribed topics and the `/meta` `controls`/`watches` are derived from the configured
 sequence, so a different setup defines a different sequence with no Go change.
@@ -622,8 +659,8 @@ override / pre-position path, not the primary follow mechanism.
   open it only in RX — band-change hold-off, Ultrabeam settle, reconciler move pending, a
   supervising feed offline. Full table: `m5stamp-hf-ctrl/docs/m5stamp-hf-ctrl-mqtt-api.md` §4
 - `power-seq.{start,stop}` ← operator one-button; the sequencer then issues the ordered
-  chain `power/master → power/psu-13v8 → hf/switch.trx → hf/switch.pa → hf/pa-arm` on
-  start (reverse on stop), gated on liveness confirmations and delays (§6, §7.1)
+  chain `power/master → power/psu-13v8 → hf/switch.trx → hf/switch.pa → power/antennas →
+  hf/pa-arm` on start (reverse on stop), gated on liveness confirmations and delays (§6, §7.1)
 
 **Hardware interlock chain (enforces; software mirrors only):**
 ```
@@ -811,7 +848,8 @@ muehle/host/scmino      # Debian 12 arm64 box, taking over shari's role
 | FLEX bridge (flexbridge) | `hf/radio` | `scmino` |
 | HF antenna-select reconciler | `hf/antenna-select` | `scmino` |
 | Logging | subscriber, no slot | `shari` |
-| Shelly power bridge (`shelly-power-bridge`) | `power/master`, `power/psu-13v8` | `shari` |
+| Shelly power bridge (`shelly-power-bridge`) | `power/master`, `power/psu-13v8`, `power/antennas` | `shari` |
+| Shack-PC power agent (`winpc-power-bridge`) | `power/shack-pc` | `bwpc` |
 | M5 Stamp #1 firmware (`m5stamp-hf-ctrl`) | `hf/pa-arm`, `hf/switch` | embedded (M5 Stamp PLC) |
 | M5 Stamp #2 firmware | `uhf/pol-ctrl` | embedded (M5 Stamp PLC) |
 | Power sequencer (`powerseq`) | `hf/power-seq` | `shari` |

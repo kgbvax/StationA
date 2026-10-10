@@ -37,8 +37,49 @@ void main() {
     test('both rotator slots are monitored (silent reporting)', () {
       expect(expectedSlots, contains('muehle/uhf/az-rotator'));
       expect(expectedSlots, contains('muehle/uhf/el-rotator'));
-      // The existing PTS pan/tilt slot stays monitored.
-      expect(expectedSlots, contains('muehle/uhf/rotator'));
+    });
+
+    test('the decommissioned PTS pan/tilt slot is no longer monitored', () {
+      // pelcobridge2 (muehle/uhf/rotator) is retired: listing it would put a
+      // permanent 'silent' row on the faults bar.
+      expect(expectedSlots, isNot(contains('muehle/uhf/rotator')));
+    });
+  });
+
+  group('power slots — antennas plug + shack PC', () {
+    test('both are monitored', () {
+      expect(expectedSlots, contains('muehle/power/antennas'));
+      expect(expectedSlots, contains('muehle/power/shack-pc'));
+    });
+
+    test('antennas set_power is retained steady state, like the PSU plug', () {
+      expect(cmdRetain['muehle/power/antennas'], isTrue);
+      expect(cmdRetain['muehle/power/psu-13v8'], isTrue);
+    });
+
+    test('shack-pc sleep is one-shot', () {
+      expect(cmdRetain['muehle/power/shack-pc'], isFalse,
+          reason: 'a retained sleep would re-sleep the PC on every wake');
+      expect(jsonDecode(shackPcSleepPayload()), {'action': 'sleep'});
+      expect(cmdTopic('power/shack-pc'), 'muehle/power/shack-pc/cmd');
+    });
+
+    test('set_power carries on/off under the value key', () {
+      expect(jsonDecode(powerSetPayload('off')), {'action': 'set_power', 'value': 'off'});
+    });
+  });
+
+  group('power-seq phase sets', () {
+    test('start is accepted in idle and standby only', () {
+      expect(powerSeqStartablePhases, {'idle', 'standby'});
+    });
+
+    test('transition phases exclude the steady states', () {
+      expect(powerSeqTransitionPhases,
+          {'starting', 'stopping', 'entering_standby', 'waking'});
+      for (final p in ['idle', 'running', 'standby']) {
+        expect(powerSeqTransitionPhases, isNot(contains(p)));
+      }
     });
   });
 

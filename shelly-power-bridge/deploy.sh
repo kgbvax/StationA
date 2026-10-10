@@ -34,10 +34,12 @@
 #
 #   MASTER_SHELLY_ID   [[slot]] shelly_id for the master mains plug
 #   PSU_SHELLY_ID     [[slot]] shelly_id for the 13.8 V PSU plug
+#   ANTENNAS_SHELLY_ID [[slot]] shelly_id for the antenna-power plug (rotators + RCU-06)
 #
 # Per-slot [[slot]] blocks are seeded from the example config. The Shelly ids
-# (MASTER_SHELLY_ID / PSU_SHELLY_ID) MUST be set to the real Gen2 device ids of
-# the two plugs; deploy will refuse to seed a placeholder id. Other slot fields
+# (MASTER_SHELLY_ID / PSU_SHELLY_ID / ANTENNAS_SHELLY_ID) MUST be set to the real
+# Gen2 device ids of the plugs; deploy refuses to SEED a placeholder id (an
+# existing on-device config is left alone either way). Other slot fields
 # (station/slot/device_model/device_serial/feeds) keep their example values —
 # edit the on-device config.toml after first deploy to correct them.
 #
@@ -75,6 +77,11 @@ MQTT_PASSWORD="${MQTT_PASSWORD:-}"
 # before first deploy; a placeholder is refused.
 MASTER_SHELLY_ID="${MASTER_SHELLY_ID:-shellyplus1pm-aabbccddeeff}"
 PSU_SHELLY_ID="${PSU_SHELLY_ID:-shellyplus1pm-112233445566}"
+ANTENNAS_SHELLY_ID="${ANTENNAS_SHELLY_ID:-shellyplus1pm-ccddeeff0011}"
+PLACEHOLDER_IDS=0
+case "$MASTER_SHELLY_ID $PSU_SHELLY_ID $ANTENNAS_SHELLY_ID" in
+  *aabbccddeeff*|*112233445566*|*ccddeeff0011*) PLACEHOLDER_IDS=1 ;;
+esac
 
 # Allow "user@host" in SSH_HOST; otherwise prepend SSH_USER.
 if [[ "$SSH_HOST" == *"@"* ]]; then
@@ -143,8 +150,21 @@ trap 'rm -f "$SEED_CONFIG" "$SEED_ENV" "${UNIT_FILE:-}"' EXIT
   echo "shelly_id     = \"$(toml_escape "$PSU_SHELLY_ID")\""
   echo "fail_safe     = \"off\""
   echo "feeds = ["
-  echo "  \"hf/radio\", \"uhf/radio\", \"hf/tuner\", \"hf/ant-ctrl\","
-  echo "  \"hf/ant-switch\", \"hf/rotator\", \"hf/switch\", \"hf/pa-arm\","
+  echo "  \"hf/radio\", \"uhf/radio\", \"hf/tuner\","
+  echo "  \"hf/ant-switch\", \"hf/switch\", \"hf/pa-arm\","
+  echo "]"
+  echo ""
+  echo "# --- antenna power (HF + UHF rotators, Ultrabeam RCU-06) ---"
+  echo "[[slot]]"
+  echo "station       = \"power\""
+  echo "slot          = \"antennas\""
+  echo "location      = \"bauwagen\""
+  echo "device_model  = \"Shelly Plus 1PM\""
+  echo "device_serial = \"$(toml_escape "$ANTENNAS_SHELLY_ID")\""
+  echo "shelly_id     = \"$(toml_escape "$ANTENNAS_SHELLY_ID")\""
+  echo "fail_safe     = \"off\""
+  echo "feeds = ["
+  echo "  \"hf/ant-ctrl\", \"hf/rotator\", \"uhf/az-rotator\", \"uhf/el-rotator\","
   echo "]"
 } > "$SEED_CONFIG"
 
@@ -233,7 +253,7 @@ scp "$SEED_ENV" "${SSH_TARGET}:/tmp/${SERVICE_NAME}.env.seed"
 
 # --- install remotely -------------------------------------------------------
 echo ">> Installing on ${SSH_TARGET}..."
-ssh "$SSH_TARGET" "INSTALL_DIR='${INSTALL_DIR}' BINARY='${BINARY}' SERVICE_NAME='${SERVICE_NAME}' SERVICE_USER='${SERVICE_USER}' CONFIG_DIR='${CONFIG_DIR}' CONFIG_FILE='${CONFIG_FILE}' ENV_FILE='${ENV_FILE}' bash -s" <<'REMOTE'
+ssh "$SSH_TARGET" "INSTALL_DIR='${INSTALL_DIR}' BINARY='${BINARY}' SERVICE_NAME='${SERVICE_NAME}' SERVICE_USER='${SERVICE_USER}' CONFIG_DIR='${CONFIG_DIR}' CONFIG_FILE='${CONFIG_FILE}' ENV_FILE='${ENV_FILE}' PLACEHOLDER_IDS='${PLACEHOLDER_IDS}' bash -s" <<'REMOTE'
 set -euo pipefail
 SEED_CFG="/tmp/${SERVICE_NAME}.config.seed"
 SEED_ENV="/tmp/${SERVICE_NAME}.env.seed"
@@ -250,6 +270,10 @@ sudo install -d -o "$SERVICE_USER" -g "$SERVICE_USER" -m 0755 "$CONFIG_DIR"
 # Seed the config ONCE: install only if the device has no config yet.
 if [ -e "$CONFIG_FILE" ]; then
   echo "   config exists at $CONFIG_FILE -- leaving it untouched (seed-once)."
+elif [ "$PLACEHOLDER_IDS" = "1" ]; then
+  echo "!! refusing to seed $CONFIG_FILE with placeholder Shelly ids:" >&2
+  echo "!! set MASTER_SHELLY_ID / PSU_SHELLY_ID / ANTENNAS_SHELLY_ID to the real Gen2 device ids." >&2
+  exit 1
 else
   sudo install -o "$SERVICE_USER" -g "$SERVICE_USER" -m 0600 "$SEED_CFG" "$CONFIG_FILE"
   echo "   seeded config at $CONFIG_FILE (0600, owner $SERVICE_USER)."

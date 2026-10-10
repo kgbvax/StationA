@@ -14,6 +14,14 @@
 //	             /state)
 //	delay        sleep a fixed duration (a literal duration_s or a symbolic
 //	             "network"/"stagger" ref into [timing])
+//	wol          send a Wake-on-LAN magic packet (UDP broadcast)
+//
+// Besides start/stop the sequencer has an optional idle standby: from
+// phase=running, when the activity slot (antenna-select) reports the station
+// inactive and no watched /state field moved for the idle timeout, it runs the
+// standby list (antenna power off, shack PC to sleep) → phase=standby. Fresh
+// activity (a last_activity newer than the standby entry, a watch moving) or a
+// `start` runs the wake list → phase=running.
 //
 // The runner is a single goroutine that executes one sequence at a time;
 // observations arrive from the mqtt layer and update a mutex-guarded input map.
@@ -29,6 +37,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
+	"net"
 	"sort"
 	"strconv"
 	"sync"
@@ -43,6 +53,10 @@ const (
 	PhaseStarting = "starting"
 	PhaseRunning  = "running"
 	PhaseStopping = "stopping"
+	// Idle standby (optional, configured with [[standby]]/[[wake]]).
+	PhaseEnteringStandby = "entering_standby"
+	PhaseStandby         = "standby"
+	PhaseWaking          = "waking"
 )
 
 // Step kinds.
@@ -51,6 +65,7 @@ const (
 	KindWaitStatus = "wait_status"
 	KindWaitState  = "wait_state"
 	KindDelay      = "delay"
+	KindWOL        = "wol"
 )
 
 // Logger is the minimal logging surface the sequencer uses. Errorf is for
@@ -100,7 +115,25 @@ type Step struct {
 	// delay
 	DurationS *int   // literal seconds
 	Duration  string // "network" | "stagger" (symbolic ref into [timing])
+
+	// wol
+	MAC       string // target NIC MAC
+	Broadcast string // host:port; "" → DefaultWOLBroadcast
 }
+
+// DefaultWOLBroadcast is the wol destination when a step omits broadcast.
+const DefaultWOLBroadcast = "255.255.255.255:9"
+
+// Watch is one extra idle-activity source: a change of a /state field.
+type Watch struct {
+	Slot     string  // site-relative
+	Field    string  // top-level /state key
+	MinDelta float64 // numeric deadband (0 = any change counts)
+}
+
+// WOLSender sends a magic packet for mac to addr (host:port). Injected so tests
+// do not touch the network.
+type WOLSender func(mac net.HardwareAddr, addr string) error
 
 // Config is the subset of config the sequencer needs.
 type Config struct {
@@ -113,6 +146,17 @@ type Config struct {
 
 	Startup  []Step
 	Shutdown []Step
+	Standby  []Step // optional idle power-down
+	Wake     []Step // optional revive (required with Standby)
+
+	// Idle standby triggers (used only when Standby/Wake are configured).
+	ActivitySlot string        // site-relative; /state.activity + last_activity
+	IdleTimeout  time.Duration // watch quiet window + minimum running time
+	Watches      []Watch
+	IdleCheck    time.Duration // idle evaluation cadence (0 → 1 s)
+
+	// WOL sends wol steps; nil → SendMagicPacket.
+	WOL WOLSender
 
 	NetworkDelay    time.Duration // delay "network"
 	StepTimeout     time.Duration // default wait deadline
@@ -135,6 +179,16 @@ type resolvedStep struct {
 	Hold     time.Duration
 	Timeout  time.Duration
 	Duration time.Duration // delay
+	MAC      net.HardwareAddr
+	Bcast    string
+}
+
+// resolvedWatch is a Watch resolved to an absolute slot, plus its change state.
+type resolvedWatch struct {
+	Slot     string
+	Field    string
+	MinDelta float64
+	anchor   string // last counted value ("" = not seen yet)
 }
 
 // Sequencer is the station startup/shutdown state machine.
@@ -146,6 +200,12 @@ type Sequencer struct {
 
 	startup  []resolvedStep
 	shutdown []resolvedStep
+	standby  []resolvedStep
+	wake     []resolvedStep
+
+	activitySlot string // absolute; "" = idle standby disabled
+	watches      []*resolvedWatch
+	wol          WOLSender
 
 	mu     sync.Mutex
 	status map[string]string // absolute slot → "online"|"offline" (absent = unseen)
@@ -155,6 +215,10 @@ type Sequencer struct {
 	phase string
 	step  string
 	fault string
+
+	runningSince time.Time // last entry into phase=running
+	standbySince time.Time // last entry into phase=standby
+	lastWatch    time.Time // last counted watch change
 
 	cmdCh       chan string   // "start" | "stop" → runner
 	republishCh chan struct{} // mqtt layer → runner: re-publish retained /state
@@ -173,20 +237,53 @@ func New(cfg Config, pub Publisher, log Logger) (*Sequencer, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Sequencer{
+	standby, err := resolve(cfg.Standby, cfg, self, "standby")
+	if err != nil {
+		return nil, err
+	}
+	wake, err := resolve(cfg.Wake, cfg, self, "wake")
+	if err != nil {
+		return nil, err
+	}
+	if (len(standby) == 0) != (len(wake) == 0) {
+		return nil, fmt.Errorf("standby and wake must both be configured or both absent")
+	}
+	s := &Sequencer{
 		cfg:         cfg,
 		pub:         pub,
 		log:         log,
 		self:        self,
 		startup:     startup,
 		shutdown:    shutdown,
+		standby:     standby,
+		wake:        wake,
+		wol:         cfg.WOL,
 		status:      map[string]string{},
 		state:       map[string]any{},
 		phase:       PhaseIdle,
 		cmdCh:       make(chan string, 4),
 		republishCh: make(chan struct{}, 1),
-	}, nil
+	}
+	if s.wol == nil {
+		s.wol = SendMagicPacket
+	}
+	if len(standby) > 0 {
+		if cfg.ActivitySlot == "" {
+			return nil, fmt.Errorf("standby/wake need an activity slot")
+		}
+		if cfg.IdleTimeout <= 0 {
+			return nil, fmt.Errorf("standby/wake need an idle timeout > 0")
+		}
+		s.activitySlot = cfg.Site + "/" + cfg.ActivitySlot
+		for _, w := range cfg.Watches {
+			s.watches = append(s.watches, &resolvedWatch{Slot: cfg.Site + "/" + w.Slot, Field: w.Field, MinDelta: w.MinDelta})
+		}
+	}
+	return s, nil
 }
+
+// standbyEnabled reports whether the idle standby feature is configured.
+func (s *Sequencer) standbyEnabled() bool { return s.activitySlot != "" }
 
 func resolve(steps []Step, cfg Config, self, list string) ([]resolvedStep, error) {
 	out := make([]resolvedStep, 0, len(steps))
@@ -233,6 +330,16 @@ func resolve(steps []Step, cfg Config, self, list string) ([]resolvedStep, error
 				return nil, fmt.Errorf("%s step %q: %w", list, st.Name, err)
 			}
 			r.Duration = d
+		case KindWOL:
+			mac, err := net.ParseMAC(st.MAC)
+			if err != nil {
+				return nil, fmt.Errorf("%s step %q: wol mac: %w", list, st.Name, err)
+			}
+			r.MAC = mac
+			r.Bcast = st.Broadcast
+			if r.Bcast == "" {
+				r.Bcast = DefaultWOLBroadcast
+			}
 		}
 		out = append(out, r)
 	}
@@ -265,12 +372,21 @@ func (s *Sequencer) CmdTopic() string { return s.self + "/cmd" }
 // cmd, wait_status, or wait_state step). The /status of every such slot is
 // subscribed (so the sequencer observes outage/liveness of every slot it
 // touches, not only the ones it waits on — model §7.1); the /state of every
-// wait_state slot is subscribed.
+// wait_state slot is subscribed. With idle standby configured, the activity
+// slot and every watch slot are subscribed too (/status + /state).
 func (s *Sequencer) Subscriptions() (statusSlots, stateSlots []string) {
 	status := map[string]struct{}{}
 	state := map[string]struct{}{}
 	note := func(slot string) { status[slot] = struct{}{} }
-	for _, st := range append(append([]resolvedStep{}, s.startup...), s.shutdown...) {
+	if s.standbyEnabled() {
+		note(s.activitySlot)
+		state[s.activitySlot] = struct{}{}
+		for _, w := range s.watches {
+			note(w.Slot)
+			state[w.Slot] = struct{}{}
+		}
+	}
+	for _, st := range s.allSteps() {
 		switch st.Kind {
 		case KindCmd:
 			note(st.Slot)
@@ -284,6 +400,14 @@ func (s *Sequencer) Subscriptions() (statusSlots, stateSlots []string) {
 		}
 	}
 	return sortedKeys(status), sortedKeys(state)
+}
+
+// allSteps returns every configured step across all lists.
+func (s *Sequencer) allSteps() []resolvedStep {
+	out := append([]resolvedStep{}, s.startup...)
+	out = append(out, s.shutdown...)
+	out = append(out, s.standby...)
+	return append(out, s.wake...)
 }
 
 func sortedKeys(m map[string]struct{}) []string {
@@ -323,7 +447,52 @@ func (s *Sequencer) SetState(slot string, payload []byte) {
 	}
 	s.mu.Lock()
 	s.state[slot] = m
+	s.noteWatchesLocked(slot, m)
 	s.mu.Unlock()
+}
+
+// noteWatchesLocked records a counted change for every watch on slot whose
+// field moved by at least its deadband since the last counted value. A change
+// counts only while the slot is fit (bridge online, device_online not false)
+// and only between two real values: a field appearing or vanishing (device
+// powered down, invalid readback) is not activity — otherwise switching the
+// antenna power off in standby would read as activity and wake the station.
+func (s *Sequencer) noteWatchesLocked(slot string, m map[string]any) {
+	fit := s.status[slot] == "online" && coerceToString(m["device_online"]) != "false"
+	for _, w := range s.watches {
+		if w.Slot != slot {
+			continue
+		}
+		v := coerceToString(m[w.Field])
+		if v == "" || !fit {
+			continue
+		}
+		if w.anchor == "" {
+			w.anchor = v // first real value is the baseline, not activity
+			continue
+		}
+		if watchMoved(w.anchor, v, w.MinDelta) {
+			w.anchor = v
+			s.lastWatch = time.Now()
+		}
+	}
+}
+
+// watchMoved reports whether cur differs from anchor by at least minDelta
+// (numeric fields) or at all (non-numeric, or minDelta 0).
+func watchMoved(anchor, cur string, minDelta float64) bool {
+	if anchor == cur {
+		return false
+	}
+	if minDelta <= 0 {
+		return true
+	}
+	a, errA := strconv.ParseFloat(anchor, 64)
+	c, errC := strconv.ParseFloat(cur, 64)
+	if errA != nil || errC != nil {
+		return true
+	}
+	return math.Abs(c-a) >= minDelta
 }
 
 // SetBrokerOnline records the broker connection state. A wait or cmd step
@@ -334,12 +503,13 @@ func (s *Sequencer) SetBrokerOnline(online bool) {
 	s.mu.Unlock()
 }
 
-// Start requests a startup sequence. Non-blocking; honored only when phase=idle
-// (retries/clears a prior fault); dropped (logged) when busy.
+// Start requests a startup sequence. Non-blocking; honored when phase=idle
+// (retries/clears a prior fault) or phase=standby (= wake); dropped (logged)
+// when busy.
 func (s *Sequencer) Start() { s.request("start") }
 
-// Stop requests a shutdown sequence. Non-blocking; honored when phase=running
-// or phase=idle — the teardown is idempotent and can only de-energize, and the
+// Stop requests a shutdown sequence. Non-blocking; honored when phase=running,
+// phase=standby or phase=idle — the teardown is idempotent and can only de-energize, and the
 // fault latch is in-memory (a process restart wipes it), so stop-from-idle
 // must not depend on remembering why it is idle. Dropped (logged) mid-sequence.
 func (s *Sequencer) Stop() { s.request("stop") }
@@ -350,13 +520,13 @@ func (s *Sequencer) request(cmd string) {
 	allow := false
 	switch cmd {
 	case "start":
-		allow = phase == PhaseIdle
+		allow = phase == PhaseIdle || phase == PhaseStandby
 	case "stop":
 		// Idle is honored regardless of fault: the in-memory fault latch dies
 		// with the process, so after a restart a stop is the ONLY teardown
 		// path for the slots a faulted sequence left energized — and a
 		// shutdown re-states "off", it never energizes.
-		allow = phase == PhaseRunning || phase == PhaseIdle
+		allow = phase == PhaseRunning || phase == PhaseIdle || phase == PhaseStandby
 	}
 	s.mu.Unlock()
 	if !allow {
@@ -383,10 +553,32 @@ func (s *Sequencer) Phase() (phase, step, fault string) {
 // /state is an output; the sequencer never reads it back).
 func (s *Sequencer) Run(ctx context.Context) {
 	s.publishState()
+	var tick <-chan time.Time
+	if s.standbyEnabled() {
+		every := s.cfg.IdleCheck
+		if every <= 0 {
+			every = time.Second
+		}
+		t := time.NewTicker(every)
+		defer t.Stop()
+		tick = t.C
+	}
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-tick:
+			// Idle standby / wake run on the runner goroutine like start/stop,
+			// so they serialize with operator commands through begin().
+			cmd := s.idleDecision(time.Now())
+			if cmd == "" {
+				continue
+			}
+			steps, endPhase, ok := s.begin(cmd)
+			if !ok {
+				continue
+			}
+			s.runSequence(ctx, steps, endPhase)
 		case cmd := <-s.cmdCh:
 			// begin() is the AUTHORITATIVE busy guard: it re-checks phase and
 			// transitions it atomically under mu before running. request()'s
@@ -423,6 +615,52 @@ func (s *Sequencer) RequestRepublish() {
 // sequences
 // ---------------------------------------------------------------------------
 
+// idleDecision evaluates the idle standby triggers at now and returns
+// "standby", "wake" or "" (nothing to do). Evaluated only with a live broker
+// (stale inputs must not power anything down or up).
+//
+//   - standby (from running): the activity slot is fit and reports
+//     activity=inactive, phase=running has lasted the idle timeout (no standby
+//     right after a start or wake, even while antenna-select still says
+//     inactive), and no watch moved within the idle timeout.
+//   - wake (from standby): the activity slot reports a last_activity newer than
+//     the standby entry (a real VFO change / TX / operator hold — an
+//     antennaselect restart publishes no last_activity, so it never wakes), or
+//     a watch moved after the standby entry.
+func (s *Sequencer) idleDecision(now time.Time) string {
+	if !s.standbyEnabled() {
+		return ""
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.online {
+		return ""
+	}
+	m, _ := s.state[s.activitySlot].(map[string]any)
+	switch s.phase {
+	case PhaseRunning:
+		fit := s.status[s.activitySlot] == "online" && m != nil && coerceToString(m["device_online"]) != "false"
+		if !fit || coerceToString(m["activity"]) != "inactive" {
+			return ""
+		}
+		if now.Sub(s.runningSince) < s.cfg.IdleTimeout || now.Sub(s.lastWatch) < s.cfg.IdleTimeout {
+			return ""
+		}
+		return "standby"
+	case PhaseStandby:
+		if s.lastWatch.After(s.standbySince) {
+			return "wake"
+		}
+		if m == nil {
+			return ""
+		}
+		if ts, err := time.Parse(time.RFC3339Nano, coerceToString(m["last_activity"])); err == nil && ts.After(s.standbySince) {
+			return "wake"
+		}
+	}
+	return ""
+}
+
 // begin atomically re-checks the busy guard and transitions phase to the
 // sequence's mid-phase, returning the resolved step list + end phase. ok=false
 // if the command is no longer allowed (the runner drops it).
@@ -430,21 +668,42 @@ func (s *Sequencer) begin(cmd string) (steps []resolvedStep, endPhase string, ok
 	s.mu.Lock()
 	switch cmd {
 	case "start":
-		if s.phase == PhaseIdle {
+		switch s.phase {
+		case PhaseIdle:
 			s.phase = PhaseStarting
 			s.step = ""
 			s.fault = ""
 			steps, endPhase, ok = s.startup, PhaseRunning, true
+		case PhaseStandby:
+			// start from standby = wake (the station is energized already).
+			s.phase = PhaseWaking
+			s.step = ""
+			s.fault = ""
+			steps, endPhase, ok = s.wake, PhaseRunning, true
 		}
 	case "stop":
 		// Same idle rule as request(): stop must not depend on the in-memory
 		// fault latch surviving a restart (idempotent teardown, de-energize
 		// only).
-		if s.phase == PhaseRunning || s.phase == PhaseIdle {
+		if s.phase == PhaseRunning || s.phase == PhaseIdle || s.phase == PhaseStandby {
 			s.phase = PhaseStopping
 			s.step = ""
 			s.fault = ""
 			steps, endPhase, ok = s.shutdown, PhaseIdle, true
+		}
+	case "standby":
+		if s.phase == PhaseRunning && s.standbyEnabled() {
+			s.phase = PhaseEnteringStandby
+			s.step = ""
+			s.fault = ""
+			steps, endPhase, ok = s.standby, PhaseStandby, true
+		}
+	case "wake":
+		if s.phase == PhaseStandby && s.standbyEnabled() {
+			s.phase = PhaseWaking
+			s.step = ""
+			s.fault = ""
+			steps, endPhase, ok = s.wake, PhaseRunning, true
 		}
 	}
 	s.mu.Unlock()
@@ -487,6 +746,11 @@ func (s *Sequencer) execStep(ctx context.Context, st *resolvedStep) (string, boo
 	case KindDelay:
 		if !s.sleepCtx(ctx, st.Duration) {
 			return "interrupted", false
+		}
+		return "", true
+	case KindWOL:
+		if err := s.wol(st.MAC, st.Bcast); err != nil {
+			return "wol failed: " + err.Error(), false
 		}
 		return "", true
 	case KindWaitStatus:
@@ -645,6 +909,12 @@ func coerceToString(v any) string {
 
 func (s *Sequencer) setPhase(phase, step, fault string) {
 	s.mu.Lock()
+	switch {
+	case phase == PhaseRunning && s.phase != PhaseRunning:
+		s.runningSince = time.Now()
+	case phase == PhaseStandby && s.phase != PhaseStandby:
+		s.standbySince = time.Now()
+	}
 	s.phase = phase
 	s.step = step
 	s.fault = fault
@@ -704,7 +974,13 @@ type cmdPayload struct {
 // sequencer emits /cmd to; watches = slots it observes (cmd + wait targets).
 func (s *Sequencer) MetaPayload() []byte {
 	controlSet, watchSet := map[string]struct{}{}, map[string]struct{}{}
-	for _, st := range append(append([]resolvedStep{}, s.startup...), s.shutdown...) {
+	if s.standbyEnabled() {
+		watchSet[s.activitySlot] = struct{}{}
+		for _, w := range s.watches {
+			watchSet[w.Slot] = struct{}{}
+		}
+	}
+	for _, st := range s.allSteps() {
 		switch st.Kind {
 		case KindCmd:
 			controlSet[st.Slot] = struct{}{}
@@ -738,7 +1014,8 @@ func (s *Sequencer) MetaPayload() []byte {
 			"device": map[string]any{"name": "Station power sequencer"},
 			"fields": []map[string]any{
 				{"key": "phase", "name": "Phase", "type": "enum",
-					"options": []string{PhaseIdle, PhaseStarting, PhaseRunning, PhaseStopping}},
+					"options": []string{PhaseIdle, PhaseStarting, PhaseRunning, PhaseStopping,
+						PhaseEnteringStandby, PhaseStandby, PhaseWaking}},
 				{"key": "step", "name": "Step", "type": "string"},
 				{"key": "fault", "name": "Fault", "type": "string"},
 			},
@@ -755,4 +1032,28 @@ func (s *Sequencer) String() string {
 		return fmt.Sprintf("powerseq{phase=%s step=%s fault=%s}", phase, step, fault)
 	}
 	return fmt.Sprintf("powerseq{phase=%s step=%s}", phase, step)
+}
+
+// SendMagicPacket sends a Wake-on-LAN magic packet (6×0xFF + 16×MAC) for mac to
+// addr (host:port, usually a broadcast address) over UDP.
+func SendMagicPacket(mac net.HardwareAddr, addr string) error {
+	conn, err := net.Dial("udp", addr)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	_, err = conn.Write(MagicPacket(mac))
+	return err
+}
+
+// MagicPacket builds the Wake-on-LAN payload for mac.
+func MagicPacket(mac net.HardwareAddr) []byte {
+	p := make([]byte, 0, 6+16*len(mac))
+	for i := 0; i < 6; i++ {
+		p = append(p, 0xFF)
+	}
+	for i := 0; i < 16; i++ {
+		p = append(p, mac...)
+	}
+	return p
 }

@@ -7,10 +7,13 @@ each becoming a site-level power slot at `muehle/power/<slot>/{meta,state,status
 Each `[[slot]]` runs its own paho client with its own LWT, so a process death
 takes every fronted slot offline with no stale-online gap.
 
-The Shelies today are the **station master mains** (`power/master`) and the
-**13.8 V PSU** (`power/psu-13v8`). The PSU is a site-level DC rail feeding both
-HF and UHF (radio, tuner, ant-ctrl, ant-switch, rotator, the M5 Stamps), which
-is why the power layer sits at site level rather than under one station.
+The Shelies today are the **station master mains** (`power/master`), the
+**13.8 V PSU** (`power/psu-13v8`, the TRX PSU) and the **antenna power**
+(`power/antennas`). The PSU is a site-level DC rail feeding both HF and UHF
+(radio, tuner, ant-switch, the M5 Stamps); the antenna-power plug feeds the HF
+and UHF rotators and the Ultrabeam RCU-06 (powerseq switches it off in idle
+standby). That is why the power layer sits at site level rather than under
+one station.
 Historically the Shelies were controlled only through Home Assistant — an
 HA-as-control-path anti-pattern (integration model §9); this bridge brings them
 onto the canonical bus so the sequencer (`powerseq`) and operators drive them
@@ -97,7 +100,7 @@ once — no stale-online gap. Each client's id defaults to
 ## MQTT topics
 
 shelly-power-bridge publishes to the station integration model topics, per
-fronted Shelly (`<slot>` = `master` | `psu-13v8` | …):
+fronted Shelly (`<slot>` = `master` | `psu-13v8` | `antennas`):
 
 ```
 muehle/power/<slot>/meta     retained  birth certificate (capabilities + expose)
@@ -146,7 +149,8 @@ Target: Raspberry Pi (`shari`, `192.168.1.139`, user `io`).
 ```bash
 ./deploy.sh              # cross-compile, ship, install as a hardened systemd service
 # Set the real Shelly device ids before first deploy:
-MASTER_SHELLY_ID=shellyplus1pm-<mac> PSU_SHELLY_ID=shellyplus1pm-<mac> ./deploy.sh
+MASTER_SHELLY_ID=shellyplus1pm-<mac> PSU_SHELLY_ID=shellyplus1pm-<mac> \
+  ANTENNAS_SHELLY_ID=shellyplus1pm-<mac> ./deploy.sh   # placeholder ids are refused at seed time
 ```
 
 The unit is hardened like atr1k-tuner-bridge (network-only):

@@ -819,6 +819,11 @@ func idleClient(t *testing.T, timeout time.Duration) (c *Client, antSwitchCmds f
 		}
 		return out
 	}
+	lastIdleRecord = func() []recordedMsg {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]recordedMsg(nil), record...)
+	}
 	drain = func() {
 		done := make(chan struct{})
 		sharedmqtt.Enqueue(c.jobs, func() { close(done) })
@@ -1111,5 +1116,78 @@ func TestOperatorReleaseDoesNotMarkActive(t *testing.T) {
 	}
 	if got := antSwitchCmds(); len(got) != 2 {
 		t.Errorf("release emitted extra selects, got %d want 2", len(got))
+	}
+}
+
+// lastIdleRecord returns every publish recorded by the most recent idleClient.
+var lastIdleRecord func() []recordedMsg
+
+type activityState struct {
+	Activity     string `json:"activity"`
+	LastActivity string `json:"last_activity"`
+}
+
+// selfStates returns the antenna-select /state payloads published so far.
+func selfStates(t *testing.T) []activityState {
+	t.Helper()
+	var out []activityState
+	for _, m := range lastIdleRecord() {
+		if m.topic != "muehle/hf/antenna-select/state" {
+			continue
+		}
+		var st activityState
+		if err := json.Unmarshal(m.payload, &st); err != nil {
+			t.Fatalf("unmarshal state: %v", err)
+		}
+		out = append(out, st)
+	}
+	return out
+}
+
+// TestStatePublishesActivity: /state carries activity (powerseq's idle standby
+// trigger) and last_activity — absent until real activity, so a restart (the
+// retained radio/state replay is only the baseline) never reads as fresh
+// activity; re-published when the activity flips.
+func TestStatePublishesActivity(t *testing.T) {
+	c, _, drain, cancel := idleClient(t, time.Hour)
+	defer cancel()
+	c.onRadioStatus(nil, radioStatusMsg(true))
+	c.onRadioState(nil, radioStateMsgFreq(true, "20m", 14074000)) // retained replay = baseline
+	drain()
+	sts := selfStates(t)
+	if len(sts) == 0 {
+		t.Fatal("no /state published")
+	}
+	if last := sts[len(sts)-1]; last.Activity != "active" || last.LastActivity != "" {
+		t.Fatalf("after start: %+v, want active without last_activity", last)
+	}
+
+	c.lastActivity = time.Now().Add(-2 * time.Hour)
+	c.checkIdle()
+	drain()
+	sts = selfStates(t)
+	if last := sts[len(sts)-1]; last.Activity != "inactive" {
+		t.Fatalf("after idle timeout: %+v, want inactive", last)
+	}
+
+	before := time.Now()
+	c.onRadioState(nil, radioStateMsgFreq(true, "20m", 14075000)) // VFO change
+	drain()
+	sts = selfStates(t)
+	last := sts[len(sts)-1]
+	if last.Activity != "active" {
+		t.Fatalf("after VFO change: %+v, want active", last)
+	}
+	ts, err := time.Parse(time.RFC3339Nano, last.LastActivity)
+	if err != nil || ts.Before(before.Add(-time.Second)) {
+		t.Fatalf("last_activity = %q (%v), want ~now", last.LastActivity, err)
+	}
+
+	// Further VFO steps while active do not re-publish /state.
+	n := len(sts)
+	c.onRadioState(nil, radioStateMsgFreq(true, "20m", 14076000))
+	drain()
+	if got := len(selfStates(t)); got != n {
+		t.Errorf("VFO step while active re-published /state (%d → %d)", n, got)
 	}
 }

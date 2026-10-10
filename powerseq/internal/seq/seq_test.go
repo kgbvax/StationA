@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"strings"
 	"sync"
 	"testing"
@@ -974,4 +975,310 @@ func TestStatePublishesPhase(t *testing.T) {
 func mustPhase(s *Sequencer) string {
 	ph, _, _ := s.Phase()
 	return ph
+}
+
+// ----- idle standby / wake ---------------------------------------------------
+
+func standbySteps() []Step {
+	f := false
+	return []Step{
+		{Name: "antennas-off", Kind: KindCmd, Slot: "power/antennas", Action: "set_power", Value: "off"},
+		{Name: "pc-sleep", Kind: KindCmd, Slot: "power/shack-pc", Action: "sleep", Value: "now", Retain: &f},
+	}
+}
+
+func wakeSteps() []Step {
+	return []Step{
+		{Name: "pc-wake", Kind: KindWOL, MAC: "aa:bb:cc:dd:ee:ff", Broadcast: "192.168.1.255:9"},
+		{Name: "antennas-on", Kind: KindCmd, Slot: "power/antennas", Action: "set_power", Value: "on"},
+	}
+}
+
+type wolRec struct {
+	mu    sync.Mutex
+	calls []string
+}
+
+func (w *wolRec) send(mac net.HardwareAddr, addr string) error {
+	w.mu.Lock()
+	w.calls = append(w.calls, mac.String()+"@"+addr)
+	w.mu.Unlock()
+	return nil
+}
+
+func (w *wolRec) n() int {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return len(w.calls)
+}
+
+const testIdleTimeout = 80 * time.Millisecond
+
+// newStandbySeq builds a sequencer with idle standby configured, started and
+// in phase=running (startup = one cmd step so it reaches running at once).
+func newStandbySeq(t *testing.T) (*Sequencer, *recPublisher, *wolRec, context.CancelFunc) {
+	t.Helper()
+	pub := &recPublisher{}
+	wol := &wolRec{}
+	cfg := baseConfig(
+		[]Step{{Name: "master-on", Kind: KindCmd, Slot: "power/master", Action: "set_power", Value: "on"}},
+		exampleShutdown())
+	cfg.Standby = standbySteps()
+	cfg.Wake = wakeSteps()
+	cfg.ActivitySlot = "hf/antenna-select"
+	cfg.IdleTimeout = testIdleTimeout
+	cfg.IdleCheck = 2 * time.Millisecond
+	cfg.Watches = []Watch{
+		{Slot: "uhf/radio", Field: "freq_hz"},
+		{Slot: "uhf/el-rotator", Field: "el", MinDelta: 2},
+	}
+	cfg.WOL = wol.send
+	s, err := New(cfg, pub, &testLogger{t})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	s.SetBrokerOnline(true)
+	s.markOnline("hf/antenna-select", "uhf/radio", "uhf/el-rotator")
+	ctx, cancel := context.WithCancel(context.Background())
+	go s.Run(ctx)
+	s.Start()
+	runUntil(t, s, func() bool { return phaseIs(s, PhaseRunning) }, time.Second)
+	return s, pub, wol, cancel
+}
+
+func (s *Sequencer) setActivity(activity string, last time.Time) {
+	m := map[string]any{"activity": activity}
+	if !last.IsZero() {
+		m["last_activity"] = last.UTC().Format(time.RFC3339Nano)
+	}
+	b, _ := json.Marshal(m)
+	s.SetState(abs("hf/antenna-select"), b)
+}
+
+func cmdsTo(pub *recPublisher, rel string) []cmdTuple {
+	var out []cmdTuple
+	for _, c := range pub.cmds() {
+		if c.topic == abs(rel)+"/cmd" {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+func TestStandbyAfterIdleAndWakeOnActivity(t *testing.T) {
+	s, pub, wol, cancel := newStandbySeq(t)
+	defer cancel()
+
+	s.setActivity("inactive", time.Time{})
+	runUntil(t, s, func() bool { return phaseIs(s, PhaseStandby) }, time.Second)
+
+	ant := cmdsTo(pub, "power/antennas")
+	if len(ant) != 1 || ant[0].value != "off" || !ant[0].retained {
+		t.Fatalf("antennas cmds = %+v, want one retained off", ant)
+	}
+	pc := cmdsTo(pub, "power/shack-pc")
+	if len(pc) != 1 || pc[0].action != "sleep" || pc[0].retained {
+		t.Fatalf("shack-pc cmds = %+v, want one NOT retained sleep", pc)
+	}
+
+	// Fresh VFO activity: antennaselect reports a last_activity after standby.
+	s.setActivity("active", time.Now())
+	runUntil(t, s, func() bool { return phaseIs(s, PhaseRunning) }, time.Second)
+	if wol.n() != 1 || wol.calls[0] != "aa:bb:cc:dd:ee:ff@192.168.1.255:9" {
+		t.Errorf("wol calls = %v", wol.calls)
+	}
+	ant = cmdsTo(pub, "power/antennas")
+	if len(ant) != 2 || ant[1].value != "on" {
+		t.Errorf("antennas cmds after wake = %+v", ant)
+	}
+}
+
+func TestNoStandbyBeforeRunningForTimeout(t *testing.T) {
+	s, _, _, cancel := newStandbySeq(t)
+	defer cancel()
+	// antenna-select was already inactive at start: standby must still wait a
+	// full idle timeout after phase=running.
+	s.setActivity("inactive", time.Time{})
+	time.Sleep(testIdleTimeout / 2)
+	if !phaseIs(s, PhaseRunning) {
+		t.Fatalf("standby before the idle timeout: phase=%s", mustPhase(s))
+	}
+	runUntil(t, s, func() bool { return phaseIs(s, PhaseStandby) }, time.Second)
+}
+
+func TestActiveStationNeverStandsBy(t *testing.T) {
+	s, _, _, cancel := newStandbySeq(t)
+	defer cancel()
+	s.setActivity("active", time.Now())
+	time.Sleep(3 * testIdleTimeout)
+	if !phaseIs(s, PhaseRunning) {
+		t.Fatalf("phase=%s, want running while active", mustPhase(s))
+	}
+}
+
+func TestWatchActivityDefersStandby(t *testing.T) {
+	s, _, _, cancel := newStandbySeq(t)
+	defer cancel()
+	s.setActivity("inactive", time.Time{})
+	s.SetState(abs("uhf/radio"), []byte(`{"freq_hz":145800000,"device_online":true}`))
+	// Keep the UHF radio moving (doppler) past the idle timeout.
+	deadline := time.Now().Add(2 * testIdleTimeout)
+	f := 145800000
+	for time.Now().Before(deadline) {
+		f += 50
+		s.SetState(abs("uhf/radio"), []byte(fmt.Sprintf(`{"freq_hz":%d,"device_online":true}`, f)))
+		if !phaseIs(s, PhaseRunning) {
+			t.Fatalf("standby while the UHF radio is in use: phase=%s", mustPhase(s))
+		}
+		time.Sleep(testIdleTimeout / 8)
+	}
+	runUntil(t, s, func() bool { return phaseIs(s, PhaseStandby) }, time.Second)
+}
+
+func TestWatchDeadbandAndPowerLossAreNotActivity(t *testing.T) {
+	s, _, wol, cancel := newStandbySeq(t)
+	defer cancel()
+	s.SetState(abs("uhf/el-rotator"), []byte(`{"el":0,"device_online":true}`))
+	s.setActivity("inactive", time.Time{})
+	runUntil(t, s, func() bool { return phaseIs(s, PhaseStandby) }, time.Second)
+
+	// el dithers 0↔1 (ADC noise) — below the 2° deadband.
+	s.SetState(abs("uhf/el-rotator"), []byte(`{"el":1,"device_online":true}`))
+	// Antenna power off: the device drops, the position vanishes.
+	s.SetState(abs("uhf/el-rotator"), []byte(`{"device_online":false}`))
+	s.SetState(abs("uhf/el-rotator"), []byte(`{"el":37,"device_online":false}`))
+	time.Sleep(20 * time.Millisecond)
+	if !phaseIs(s, PhaseStandby) || wol.n() != 0 {
+		t.Fatalf("woke on noise/power loss: phase=%s wol=%d", mustPhase(s), wol.n())
+	}
+
+	// A real move (≥ 2°) while fit wakes the station.
+	s.SetState(abs("uhf/el-rotator"), []byte(`{"el":5,"device_online":true}`))
+	runUntil(t, s, func() bool { return phaseIs(s, PhaseRunning) }, time.Second)
+}
+
+func TestAntennaselectRestartDoesNotWake(t *testing.T) {
+	s, _, wol, cancel := newStandbySeq(t)
+	defer cancel()
+	s.setActivity("inactive", time.Now().Add(-time.Hour))
+	runUntil(t, s, func() bool { return phaseIs(s, PhaseStandby) }, time.Second)
+
+	// antennaselect restarts: offline, online, activity=active, no last_activity.
+	s.markOffline("hf/antenna-select")
+	s.markOnline("hf/antenna-select")
+	s.setActivity("active", time.Time{})
+	time.Sleep(20 * time.Millisecond)
+	if !phaseIs(s, PhaseStandby) || wol.n() != 0 {
+		t.Fatalf("restart woke the station: phase=%s wol=%d", mustPhase(s), wol.n())
+	}
+}
+
+func TestStartFromStandbyWakesWithoutInstantRestandby(t *testing.T) {
+	s, pub, wol, cancel := newStandbySeq(t)
+	defer cancel()
+	s.setActivity("inactive", time.Time{})
+	runUntil(t, s, func() bool { return phaseIs(s, PhaseStandby) }, time.Second)
+
+	s.Start() // operator START in standby = wake (not the full startup)
+	runUntil(t, s, func() bool { return phaseIs(s, PhaseRunning) }, time.Second)
+	if wol.n() != 1 {
+		t.Errorf("wol calls = %d, want 1", wol.n())
+	}
+	if n := len(cmdsTo(pub, "power/master")); n != 1 {
+		t.Errorf("start from standby re-ran startup: %d master cmds", n)
+	}
+	// antenna-select still says inactive; standby must wait a fresh timeout.
+	time.Sleep(testIdleTimeout / 2)
+	if !phaseIs(s, PhaseRunning) {
+		t.Fatalf("instant re-standby after a START wake: phase=%s", mustPhase(s))
+	}
+	runUntil(t, s, func() bool { return phaseIs(s, PhaseStandby) }, time.Second)
+}
+
+func TestStopFromStandby(t *testing.T) {
+	s, _, _, cancel := newStandbySeq(t)
+	defer cancel()
+	s.setActivity("inactive", time.Time{})
+	runUntil(t, s, func() bool { return phaseIs(s, PhaseStandby) }, time.Second)
+	s.Stop()
+	runUntil(t, s, func() bool { return phaseIs(s, PhaseIdle) }, time.Second)
+	// A stopped station never stands by or wakes.
+	s.setActivity("active", time.Now())
+	time.Sleep(20 * time.Millisecond)
+	if !phaseIs(s, PhaseIdle) {
+		t.Fatalf("phase=%s after stop, want idle", mustPhase(s))
+	}
+}
+
+func TestStandbyGatedOnBroker(t *testing.T) {
+	s, _, _, cancel := newStandbySeq(t)
+	defer cancel()
+	s.SetBrokerOnline(false)
+	s.setActivity("inactive", time.Time{})
+	time.Sleep(2 * testIdleTimeout)
+	if !phaseIs(s, PhaseRunning) {
+		t.Fatalf("standby with the broker down: phase=%s", mustPhase(s))
+	}
+}
+
+func TestStandbyRequiresWake(t *testing.T) {
+	cfg := baseConfig(exampleStartup(), exampleShutdown())
+	cfg.Standby = standbySteps()
+	cfg.ActivitySlot = "hf/antenna-select"
+	cfg.IdleTimeout = time.Minute
+	if _, err := New(cfg, &recPublisher{}, &testLogger{t}); err == nil {
+		t.Fatal("standby without wake accepted")
+	}
+}
+
+func TestStandbySubscriptionsAndMeta(t *testing.T) {
+	s, _, _, cancel := newStandbySeq(t)
+	defer cancel()
+	status, state := s.Subscriptions()
+	for _, want := range []string{"hf/antenna-select", "uhf/radio", "uhf/el-rotator", "power/antennas", "power/shack-pc"} {
+		if !contains(status, abs(want)) {
+			t.Errorf("status subscriptions miss %s: %v", want, status)
+		}
+	}
+	for _, want := range []string{"hf/antenna-select", "uhf/radio", "uhf/el-rotator"} {
+		if !contains(state, abs(want)) {
+			t.Errorf("state subscriptions miss %s: %v", want, state)
+		}
+	}
+	var meta struct {
+		Capabilities struct{ Controls []string } `json:"capabilities"`
+	}
+	if err := json.Unmarshal(s.MetaPayload(), &meta); err != nil {
+		t.Fatal(err)
+	}
+	if !contains(meta.Capabilities.Controls, abs("power/shack-pc")) {
+		t.Errorf("meta controls miss power/shack-pc: %v", meta.Capabilities.Controls)
+	}
+}
+
+func contains(xs []string, x string) bool {
+	for _, v := range xs {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+func TestMagicPacket(t *testing.T) {
+	mac, _ := net.ParseMAC("01:23:45:67:89:ab")
+	p := MagicPacket(mac)
+	if len(p) != 102 {
+		t.Fatalf("len = %d, want 102", len(p))
+	}
+	for i := 0; i < 6; i++ {
+		if p[i] != 0xFF {
+			t.Fatalf("header byte %d = %x", i, p[i])
+		}
+	}
+	for i := 0; i < 16; i++ {
+		if string(p[6+i*6:12+i*6]) != string(mac) {
+			t.Fatalf("repetition %d wrong", i)
+		}
+	}
 }

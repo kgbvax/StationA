@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hf_console/store/bus_store.dart';
+import 'package:hf_console/ui/theme.dart';
 import 'package:hf_console/ui/widgets/power_panel.dart';
 import '../../support/fake_mqtt_service.dart';
 import '../../support/fixtures.dart';
@@ -74,6 +75,103 @@ void main() {
       expect(find.byKey(const ValueKey('seq-step')), findsOneWidget);
       expect(find.text('psu-on'), findsOneWidget);
     });
+
+    testWidgets('ANT PWR toggle publishes a retained set_power', (tester) async {
+      final store = BusStore();
+      final mqtt = FakeMqttService(store);
+      store.setPower();
+      store.setOnline('muehle/power/antennas');
+      store.applyState('muehle/power/antennas', {'power': 'on', 'device_online': true});
+
+      await tester.pumpWidget(TestHarness(store: store, mqtt: mqtt, child: const PowerPanel()));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('ANT PWR'));
+      await tester.pumpAndSettle();
+
+      expect(mqtt.publishes.length, 1);
+      expect(mqtt.publishes.first.topic, 'muehle/power/antennas/cmd');
+      expect(mqtt.publishes.first.payload, contains('"value":"off"'));
+      expect(mqtt.publishes.first.retain, isTrue);
+    });
+
+    testWidgets('ANT PWR is inert while its plug bridge is offline', (tester) async {
+      final store = BusStore();
+      final mqtt = FakeMqttService(store);
+      store.setPower(); // antennas slot never seen
+
+      await tester.pumpWidget(TestHarness(store: store, mqtt: mqtt, child: const PowerPanel()));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('ANT PWR'), warnIfMissed: false);
+      await tester.pumpAndSettle();
+      expect(mqtt.publishes, isEmpty);
+    });
+
+    testWidgets('SHACK PC reads AWAKE / ASLEEP from the agent status', (tester) async {
+      final store = BusStore();
+      store.setPower();
+      store.setOnline('muehle/power/shack-pc');
+      store.applyState('muehle/power/shack-pc', {'power': 'awake', 'user_idle_s': 12, 'device_online': true});
+
+      await tester.pumpWidget(TestHarness(store: store, child: const PowerPanel()));
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.text('SHACK PC'), findsOneWidget);
+      expect(find.text('AWAKE'), findsOneWidget);
+
+      store.applyStatus('muehle/power/shack-pc', 'offline');
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.text('ASLEEP'), findsOneWidget);
+    });
+
+    testWidgets('SHACK PC shows the agent error text', (tester) async {
+      final store = BusStore();
+      store.setPower();
+      store.setOnline('muehle/power/shack-pc');
+      store.applyState('muehle/power/shack-pc',
+          {'power': 'awake', 'user_idle_s': 0, 'device_online': true, 'error': 'sleep blocked'});
+
+      await tester.pumpWidget(TestHarness(store: store, child: const PowerPanel()));
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.byKey(const ValueKey('shack-pc-error')), findsOneWidget);
+      expect(find.text('sleep blocked'), findsOneWidget);
+    });
+
+    testWidgets('standby: amber STANDBY, START enabled (wake)', (tester) async {
+      final store = BusStore();
+      final mqtt = FakeMqttService(store);
+      store.setPower();
+      store.applyState('muehle/hf/power-seq', {'phase': 'standby', 'step': '', 'device_online': true});
+
+      await tester.pumpWidget(TestHarness(store: store, mqtt: mqtt, child: const PowerPanel()));
+      await tester.pumpAndSettle();
+
+      final label = tester.widget<Text>(find.text('STANDBY'));
+      expect(label.style?.color, AppTheme.amber);
+      expect(find.byKey(const ValueKey('seq-step')), findsNothing);
+
+      await tester.tap(find.widgetWithText(ElevatedButton, 'START\nSTATION'));
+      await tester.pumpAndSettle();
+      expect(mqtt.publishes.single.payload, contains('start'));
+    });
+
+    for (final (phase, label) in [('entering_standby', 'ENTER STANDBY'), ('waking', 'WAKING')]) {
+      testWidgets('$phase: amber $label with step, START disabled, STOP enabled', (tester) async {
+        final store = BusStore();
+        store.setPower();
+        store.applyState('muehle/hf/power-seq', {'phase': phase, 'step': 'ant-plug', 'device_online': true});
+
+        await tester.pumpWidget(TestHarness(store: store, child: const PowerPanel()));
+        await tester.pump(const Duration(milliseconds: 100));
+
+        expect(tester.widget<Text>(find.text(label)).style?.color, AppTheme.amber);
+        expect(find.text('ant-plug'), findsOneWidget);
+        final start = tester.widget<ElevatedButton>(find.widgetWithText(ElevatedButton, 'START\nSTATION'));
+        expect(start.onPressed, isNull);
+        final stop = tester.widget<ElevatedButton>(find.widgetWithText(ElevatedButton, 'STOP\nSTATION'));
+        expect(stop.onPressed, isNotNull);
+      });
+    }
 
     testWidgets('no step line once running', (tester) async {
       final store = BusStore();

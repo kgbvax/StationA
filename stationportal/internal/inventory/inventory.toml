@@ -159,7 +159,7 @@ name     = "bwpc"
 addr     = "192.168.1.197"
 hardware = "Shack PC"
 os       = "Windows"
-role     = "DXLog / Log4OM logger, PstRotator, OscarWatch (Satellite link ws :7373)"
+role     = "DXLog / Log4OM logger, PstRotator, OscarWatch (Satellite link ws :7373); winpc-power-bridge (sleeps in idle standby, woken by WOL)"
 
 [[host]]
 name     = "lenovo-tab"
@@ -183,9 +183,23 @@ host      = "shari"
 [[slot]]
 address   = "muehle/power/psu-13v8"
 component = "shelly-power-bridge"
-device    = "Shelly Plus 1PM — 13.8 V PSU (feeds HF + UHF)"
+device    = "Shelly Plus 1PM — 13.8 V TRX PSU (feeds HF + UHF)"
 link      = "wifi"
 host      = "shari"
+
+[[slot]]
+address   = "muehle/power/antennas"
+component = "shelly-power-bridge"
+device    = "Shelly Plus 1PM — antenna power (HF + UHF rotators, Ultrabeam RCU-06)"
+link      = "wifi"
+host      = "shari"
+
+[[slot]]
+address   = "muehle/power/shack-pc"
+component = "winpc-power-bridge"
+device    = "Shack PC bwpc — sleep on idle standby (offline = asleep)"
+link      = "ethernet (192.168.1.197)"
+host      = "bwpc"
 
 [[slot]]
 address   = "muehle/hf/radio"
@@ -372,7 +386,15 @@ path  = "shelly-power-bridge/"
 kind  = "bridge"
 host  = "shari"
 unit  = "shelly-power-bridge"
-slots = ["muehle/power/master", "muehle/power/psu-13v8"]
+slots = ["muehle/power/master", "muehle/power/psu-13v8", "muehle/power/antennas"]
+
+[[software]]
+name  = "winpc-power-bridge"
+path  = "winpc-power-bridge/"
+kind  = "bridge"
+host  = "bwpc"
+note  = "Task Scheduler at logon (user session); sleep cmd from powerseq standby"
+slots = ["muehle/power/shack-pc"]
 
 [[software]]
 name  = "icom9700-radio-bridge"

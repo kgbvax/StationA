@@ -67,9 +67,9 @@ shelly_id     = "shellyplus1pm-aabbccddeeff"
 fail_safe     = "off"
 # master feeds everything; feeds is left empty — it is the top of the tree.
 
-# 13.8 V PSU — site-level DC rail feeding both HF and UHF (radio, tuner,
-# ant-ctrl, ant-switch, rotator, the M5 Stamps). Declares `feeds` so consumers
-# know what goes dark when this supply drops.
+# 13.8 V PSU (the TRX PSU) — site-level DC rail feeding both HF and UHF (radio,
+# tuner, ant-switch, the M5 Stamps). Declares `feeds` so consumers know what
+# goes dark when this supply drops.
 [[slot]]
 station       = "power"
 slot          = "psu-13v8"
@@ -82,11 +82,26 @@ feeds = [
   "hf/radio",
   "uhf/radio",
   "hf/tuner",
-  "hf/ant-ctrl",
   "hf/ant-switch",
-  "hf/rotator",
   "hf/switch",
   "hf/pa-arm",
+]
+
+# Antenna power — the HF + UHF rotators and the Ultrabeam RCU-06. powerseq
+# switches it on in the cold start and off in idle standby (and back on at wake).
+[[slot]]
+station       = "power"
+slot          = "antennas"
+location      = "bauwagen"
+device_model  = "Shelly Plus 1PM"
+device_serial = "shellyplus1pm-C3"
+shelly_id     = "shellyplus1pm-ccddeeff0011"
+fail_safe     = "off"
+feeds = [
+  "hf/ant-ctrl",
+  "hf/rotator",
+  "uhf/az-rotator",
+  "uhf/el-rotator",
 ]
 
 # --- env overrides (systemd EnvironmentFile) ---------------------------------

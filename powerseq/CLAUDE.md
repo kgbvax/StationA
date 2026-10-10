@@ -81,12 +81,23 @@ emission + own `/state`).
 4. `internal/config` — TOML config (incl. the `[[startup]]`/`[[shutdown]]`
    step lists), flags, `POWERSEQ_MQTT_*` env overrides, sequence validation.
 
-**Default sequence** (model §7.1, shipped in `config.example.toml`):
-`power/master` set_power on → ~30 s (network) → `power/psu-13v8` set_power on →
-wait `hf/switch` + `hf/pa-arm` + `hf/ant-switch` `/status` online → `hf/switch`
-set_trx on → wait `hf/radio` `/status` online → `hf/switch` set_pa on → wait
-`hf/pa` `state.power` on → `hf/pa-arm` set_enabled true → `phase=running`.
-**Shutdown** is the reverse with short staggers for inrush → `phase=idle`. A
+**Default sequence** (shipped in `config.example.toml`, cold start 2026-10-10):
+`power/master` set_power on → ~30 s (network) → `power/psu-13v8` (TRX PSU)
+set_power on → 5 s → wait `hf/switch` online (retained-cmd collapse guard) →
+`hf/switch` set_trx on → 1 s → `hf/switch` set_pa on → `power/antennas`
+set_power on → wait `hf/radio` online → wait `hf/pa` `state.power` on →
+`hf/pa-arm` set_enabled true → `phase=running`.
+**Shutdown** is the reverse with short staggers for inrush → `phase=idle`.
+
+**Idle standby** (optional `[[standby]]`/`[[wake]]` + `[idle]`): from `running`,
+when `hf/antenna-select` reports `activity=inactive` (antenna grounded), no
+`[[idle.watch]]` (UHF radio freq, UHF rotator position) moved and `running`
+lasted `timeout_minutes` → `entering_standby` → antenna power off + shack PC
+(bwpc) sleep (`retain=false`) → `standby`. A `last_activity` newer than the
+standby entry, a watch moving, or `start` → `waking` → WOL to bwpc + antenna
+power on → `running`. The idle check runs on the runner goroutine (1 s ticker),
+so it serializes with start/stop through `begin()`. Step kind `wol` sends the
+magic packet (UDP broadcast; `RestrictAddressFamilies=AF_INET` covers it). A
 step that times out → `fault` + `phase=idle`; the slots driven so far remain in
 whatever state the retained `/cmd` last set them (self-healing, no rollback).
 
@@ -98,8 +109,8 @@ does all the `/cmd` emission + `/state` publishing; blocking the runner in a
 liveness wait is safe — it is never a paho handler. `Sequencer.mu` guards the
 status/state maps, the broker-online flag, and phase/step/fault.
 
-**Busy guard:** `start` is honored only when `phase=idle`; `stop` when
-`phase=running` or `phase=idle` — the shutdown is an idempotent teardown that
+**Busy guard:** `start` is honored when `phase=idle` (startup) or
+`phase=standby` (= wake); `stop` when `phase=running`, `phase=standby` or `phase=idle` — the shutdown is an idempotent teardown that
 can only de-energize, and it must not depend on the in-memory `fault` latch:
 a process restart wipes the latch, and stop is then the only teardown path for
 the still-energized slots a faulted sequence left behind (no rollback by

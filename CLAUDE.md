@@ -30,10 +30,11 @@ separate per-component remotes to push to.
 | wrc-rotator-bridge | `wrc-rotator-bridge/` | HF rotator bridge (Yaesu G-450DC via AF6SA WRC, websocket) |
 | atr1k-tuner-bridge | `atr1k-tuner-bridge/` | ATR-1000 ATU bridge (in-line/bypass + tune, binary WebSocket) |
 | waveshare_relay-antswitch-bridge | `waveshare_relay-antswitch-bridge/` | 1:6 antenna switch bridge (ESPHome, WaveShare relay-board family) |
-| shelly-power-bridge | `shelly-power-bridge/` | Shelly smart-plug bridge → `power/master` + `power/psu-13v8` (supply layer) |
+| shelly-power-bridge | `shelly-power-bridge/` | Shelly smart-plug bridge → `power/master` + `power/psu-13v8` + `power/antennas` (supply layer) |
 | m5stamp-hf-ctrl | `m5stamp-hf-ctrl/` | M5 Stamp PLC #1 firmware → `hf/pa-arm` + `hf/switch` (PA/TRX remote-on + arm) |
 | m5stamp-pol-ctrl | `m5stamp-pol-ctrl/` | M5 Stamp PLC #2 firmware → `uhf/pol-ctrl` (X-Quad polarization, ESPHome) |
-| powerseq | `powerseq/` | Startup/shutdown sequencer → `hf/power-seq` (ordered, delay + liveness confirmations) |
+| powerseq | `powerseq/` | Startup/shutdown sequencer → `hf/power-seq` (ordered, delay + liveness confirmations); idle standby: antenna power off + bwpc sleep when antenna-select reports inactive, WOL + antenna power on at wake |
+| winpc-power-bridge | `winpc-power-bridge/` | Windows agent on bwpc → `power/shack-pc` (`sleep` cmd from powerseq standby, refused while the operator uses the PC; runs at logon via Task Scheduler) |
 | antennaselect | `antennaselect/` | Antenna-selection reconciler (live on scmino since 2026-10-12, unit `antenna-select`) |
 | beamsteer | `beamsteer/` | Smart rotation → `hf/beam-steer`: PstRotator UDP emulator (:12050) for the contest logger; station behind → Ultrabeam 180° flip, outside both lobes → rotate to the cheaper lobe (±30°, bi-dir ±45° no flips); toggle = hf_console Ultrabeam `AUTO` |
 | hadiscovery | `hadiscovery/` | Home Assistant discovery consumer (reads `/meta` `expose`, renders HA discovery) |
@@ -60,7 +61,9 @@ and `go work sync` operate over the whole workspace at once.
 | Slot address | Component | Physical device |
 |-------------|-----------|-----------------|
 | `muehle/power/master` | shelly-power-bridge | Shelly plug — station master mains, wifi |
-| `muehle/power/psu-13v8` | shelly-power-bridge | Shelly plug — 13.8 V PSU (site-level; feeds HF+UHF), wifi |
+| `muehle/power/psu-13v8` | shelly-power-bridge | Shelly plug — 13.8 V TRX PSU (site-level; feeds HF+UHF), wifi |
+| `muehle/power/antennas` | shelly-power-bridge | Shelly plug — antenna power: HF + UHF rotators and the Ultrabeam RCU-06, wifi |
+| `muehle/power/shack-pc` | winpc-power-bridge | Shack PC bwpc (`192.168.1.197`) — sleep/wake (offline = asleep), ethernet |
 | `muehle/hf/radio` | flexbridge | FLEX-8400, ethernet |
 | `muehle/hf/ant-ctrl` | ultrabridge | Ultrabeam RCU-06, USB-serial via FTDI — on scmino since 2026-10-09 (HamClock took :8080 on shari) |
 | `muehle/hf/ant-switch` | waveshare_relay-antswitch-bridge | 1:6 antenna switch, wifi (ESPHome) |

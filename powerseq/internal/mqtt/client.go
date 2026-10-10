@@ -95,6 +95,11 @@ func New(ctx context.Context, cfg config.Config, log *slog.Logger) (*Client, *se
 		DiscoveryPrefix: cfg.MQTT.DiscoveryPrefix,
 		Startup:         toSeqSteps(cfg.Startup),
 		Shutdown:        toSeqSteps(cfg.Shutdown),
+		Standby:         toSeqSteps(cfg.Standby),
+		Wake:            toSeqSteps(cfg.Wake),
+		ActivitySlot:    cfg.Idle.ActivitySlot,
+		IdleTimeout:     time.Duration(cfg.Idle.TimeoutMinutes) * time.Minute,
+		Watches:         toSeqWatches(cfg.Idle.Watches),
 		NetworkDelay:    time.Duration(cfg.Timing.NetworkDelayS) * time.Second,
 		StepTimeout:     time.Duration(cfg.Timing.StepTimeoutS) * time.Second,
 		ShutdownStagger: time.Duration(cfg.Timing.ShutdownStaggerS) * time.Second,
@@ -260,7 +265,18 @@ func toSeqSteps(cs []config.Step) []seq.Step {
 			TimeoutS:  st.TimeoutS,
 			DurationS: st.DurationS,
 			Duration:  st.Duration,
+			MAC:       st.MAC,
+			Broadcast: st.Broadcast,
 		}
+	}
+	return out
+}
+
+// toSeqWatches converts the [[idle.watch]] list to seq watches.
+func toSeqWatches(ws []config.Watch) []seq.Watch {
+	out := make([]seq.Watch, len(ws))
+	for i, w := range ws {
+		out[i] = seq.Watch{Slot: w.Slot, Field: w.Field, MinDelta: w.MinDelta}
 	}
 	return out
 }

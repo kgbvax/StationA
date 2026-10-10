@@ -1,0 +1,11 @@
+/dist/
+/winpc-power-bridge
+/winpc-power-bridge.exe
+/.deploy-seed.toml
+/.deploy-task.xml
+*.test
+*.out
+.DS_Store
+*.swp
+*~
+.claude/

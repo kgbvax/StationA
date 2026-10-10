@@ -19,5 +19,6 @@ use (
 	./testui
 	./ultrabridge
 	./vhfcam-restream
+	./winpc-power-bridge
 	./wrc-rotator-bridge
 )

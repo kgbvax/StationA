@@ -3,6 +3,15 @@ import 'package:provider/provider.dart';
 import '../../store/bus_store.dart';
 import '../theme.dart';
 
+/// Slots behind the `muehle/power/antennas` plug (HF + UHF rotators and the
+/// Ultrabeam controller). They go offline by design in standby.
+const _antPoweredSlots = {
+  'muehle/hf/ant-ctrl',
+  'muehle/hf/rotator',
+  'muehle/uhf/az-rotator',
+  'muehle/uhf/el-rotator',
+};
+
 class FaultsBar extends StatelessWidget {
   /// Show every row and fill the given height (Station page — the station
   /// health view) instead of the last three rows in a fixed strip.
@@ -16,13 +25,26 @@ class FaultsBar extends StatelessWidget {
     final now = DateTime.now();
     final time = '${_twoDigits(now.hour)}:${_twoDigits(now.minute)}:${_twoDigits(now.second)}';
 
+    // Antenna side deliberately unpowered: the sequencer is in standby, or
+    // the antennas plug is confirmed off (bridge online + power 'off' — a
+    // missing key or a dead plug bridge is unknown, not off, same rule as
+    // the PSU line below). The rotators and the Ultrabeam controller then
+    // drop off the bus by design; their rows are consequences, not faults.
+    final seqPhase = store.stateValueAs<String>('muehle/hf/power-seq', 'phase');
+    final antPower = store.stateValueAs<String>('muehle/power/antennas', 'power');
+    final antOnline = store.slots['muehle/power/antennas']?.isOnline ?? false;
+    final antUnpowered = seqPhase == 'standby' || (antOnline && antPower == 'off');
+
     final List<_Fault> history = [];
     for (final record in store.faultHistory) {
+      // An unpowered antenna device's error (link lost, no reply) is moot:
+      // keep it in the list, but greyed, not as an active fault.
+      final moot = antUnpowered && _antPoweredSlots.contains(record.address);
       history.add(_Fault(
         _ts(record.ts, time),
         _parseTime(record.ts, now),
         '${record.address}: ${record.text}',
-        active: record.active,
+        active: record.active && !moot,
       ));
     }
 
@@ -35,8 +57,17 @@ class FaultsBar extends StatelessWidget {
 
     final offlineSince = store.offlineSince;
     final List<_Fault> offline = [];
+    var antRowsSuppressed = false;
     for (final entry in store.offlineList) {
       final address = entry.split(':').first;
+      // The shack PC's agent LWT goes offline whenever the PC sleeps — a
+      // normal state the power panel shows as ASLEEP. Its /state.error still
+      // reaches the list through the fault history.
+      if (address == 'muehle/power/shack-pc') continue;
+      if (antUnpowered && _antPoweredSlots.contains(address)) {
+        antRowsSuppressed = true;
+        continue;
+      }
       if (activeFaultAddresses.contains(address)) continue;
       // Stamp the row with when the slot actually went offline — the store
       // tracks /status flips, /state device-link flips and connect time for
@@ -54,9 +85,20 @@ class FaultsBar extends StatelessWidget {
     // inference exists to avoid.
     final psuPower = store.stateValueAs<String>('muehle/power/psu-13v8', 'power');
     final psuOnline = store.slots['muehle/power/psu-13v8']?.isOnline ?? false;
-    final hfChainDead = store.offlineList.any((e) => e.startsWith('muehle/hf/'));
+    // Unpowered antenna-side slots are not 13.8 V casualties — don't let them
+    // alone name the PSU.
+    final hfChainDead = store.offlineList.any((e) =>
+        e.startsWith('muehle/hf/') &&
+        !(antUnpowered && _antPoweredSlots.contains(e.split(':').first)));
     if (psuOnline && psuPower == 'off' && hfChainDead) {
       offline.add(_Fault(time, now, 'muehle/power/psu-13v8: PSU OFF — HF control chain unpowered', active: true));
+    }
+
+    // One info line in place of the suppressed rotator/Ultrabeam rows, so
+    // their absence from the list is explained rather than silent.
+    if (antRowsSuppressed) {
+      final why = seqPhase == 'standby' ? 'STANDBY' : 'ANT PWR OFF';
+      offline.add(_Fault(time, now, 'muehle/power/antennas: $why — rotators/Ultrabeam unpowered'));
     }
 
     final faults = [...history, ...offline];

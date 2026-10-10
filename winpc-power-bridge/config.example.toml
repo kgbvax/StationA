@@ -1,0 +1,40 @@
+# winpc-power-bridge configuration — seed-once (deploy.sh copies it to the
+# shack PC only if no config.toml exists there; the PC owns it afterwards).
+#
+# The MQTT password is NOT meant to be here: set the user environment variable
+# WINPC_POWER_BRIDGE_MQTT_PASSWORD on the shack PC (see CLAUDE.md). The
+# [mqtt] password key is only a fallback; the file lives in the user profile,
+# which only the user, SYSTEM and Administrators can read.
+# Missing keys fall back to the built-in defaults shown below.
+
+host     = "bwpc"       # compute node, published in /meta
+location = "bauwagen"   # physical location, published in /meta
+
+[mqtt]
+broker    = "tcp://192.168.1.50:1883"   # live station broker (HA, .50)
+client_id = ""                          # default: muehle-power-shack-pc
+user      = "hf"
+password  = ""                          # fallback only; env WINPC_POWER_BRIDGE_MQTT_PASSWORD wins
+site      = "muehle"
+station   = "power"
+slot      = "shack-pc"
+
+[device]
+model  = "Windows PC"
+serial = ""            # default: host
+link   = "ethernet"
+
+[sleep]
+# A sleep /cmd is refused when the last keyboard/mouse input in the user
+# session is newer than this. Minimum 1.
+min_user_idle_minutes = 30
+
+[state]
+interval_s = 30        # /state refresh (user_idle_s); minimum 5
+
+[log]
+level = "info"         # debug | info | warn | error
+# Windows exception to the logging convention: the agent runs hidden (no
+# console), so stderr goes nowhere. Relative paths resolve against this
+# file's directory. Moved to <file>.1 at start when above 5 MB. "" = stderr.
+file  = "winpc-power-bridge.log"

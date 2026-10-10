@@ -4,9 +4,10 @@
 // and loading (TOML file + flags + env overrides for the [mqtt] section).
 //
 // The startup/shutdown sequence is CONFIG-DRIVEN: it is a pair of ordered step
-// lists ([[startup]] / [[shutdown]]) in this config, not hard-coded in Go. Each
-// step is one of four kinds — emit a retained /cmd, wait for N slots' /status,
-// wait for a slot's /state field, or a fixed delay. The sequencer resolves the
+// lists ([[startup]] / [[shutdown]], plus the optional idle [[standby]] /
+// [[wake]]) in this config, not hard-coded in Go. Each
+// step is one of five kinds — emit a retained /cmd, wait for N slots' /status,
+// wait for a slot's /state field, a fixed delay, or a Wake-on-LAN packet. The sequencer resolves the
 // site-relative slot addresses to absolute ones (model §7.1 is the default
 // sequence shipped in config.example.toml).
 package config
@@ -14,6 +15,7 @@ package config
 import (
 	"flag"
 	"fmt"
+	"net"
 	"os"
 	"strings"
 
@@ -36,6 +38,15 @@ type Config struct {
 	// Shutdown is the ordered shutdown sequence (reverse of startup, with
 	// staggers for inrush). Run on `stop`.
 	Shutdown []Step `toml:"shutdown"`
+	// Standby is the ordered idle power-down sequence (optional). Run from
+	// phase=running when the station has been idle (see Idle).
+	Standby []Step `toml:"standby"`
+	// Wake is the ordered revive sequence (optional, required with Standby).
+	// Run from phase=standby on activity or on `start`.
+	Wake []Step `toml:"wake"`
+	// Idle configures when the station counts as idle (standby trigger) and
+	// what counts as activity (wake trigger). Only used with Standby/Wake.
+	Idle IdleConfig `toml:"idle"`
 	// Log controls logging verbosity.
 	Log LogConfig `toml:"log"`
 }
@@ -73,6 +84,34 @@ type TimingConfig struct {
 	DefaultHoldMs int `toml:"default_hold_ms"`
 }
 
+// IdleConfig configures the standby/wake triggers.
+//
+// The station is idle when the activity slot's /state.activity is "inactive"
+// AND no watch moved within TimeoutMinutes AND phase=running has lasted at
+// least TimeoutMinutes. It wakes when the activity slot reports a
+// last_activity newer than the standby entry, or a watch moves.
+type IdleConfig struct {
+	// ActivitySlot is the site-relative slot whose /state carries
+	// activity ("active"|"inactive") and last_activity (RFC3339), e.g.
+	// "hf/antenna-select".
+	ActivitySlot string `toml:"activity_slot"`
+	// TimeoutMinutes is the quiet window for the watches and the minimum time
+	// in phase=running before standby (no standby right after a start/wake).
+	TimeoutMinutes int `toml:"timeout_minutes"`
+	// Watches are extra activity sources: a change of the /state field counts
+	// as activity (e.g. UHF radio frequency, UHF rotator position).
+	Watches []Watch `toml:"watch"`
+}
+
+// Watch is one extra activity source.
+type Watch struct {
+	Slot  string `toml:"slot"`
+	Field string `toml:"field"`
+	// MinDelta is the numeric deadband: a numeric change smaller than this
+	// (from the last counted value) is not activity. 0 = any change counts.
+	MinDelta float64 `toml:"min_delta"`
+}
+
 // LogConfig controls logging verbosity.
 type LogConfig struct {
 	Level string `toml:"level"`
@@ -87,6 +126,7 @@ type LogConfig struct {
 //	kind = "wait_status"  wait for N slots' /status.     slots [, state] [, hold_ms] [, timeout_s]
 //	kind = "wait_state"   wait for a slot's /state field. slot, field, value [, hold_ms] [, timeout_s]
 //	kind = "delay"        sleep a fixed duration.        duration_s | duration("network"|"stagger")
+//	kind = "wol"          send a Wake-on-LAN packet.     mac [, broadcast]
 //
 // value is ALWAYS a TOML string: the stationa /cmd value-key convention carries
 // the argument under `value` as a string (model value_type is string|int|float,
@@ -116,6 +156,10 @@ type Step struct {
 	// delay
 	DurationS *int   `toml:"duration_s"`
 	Duration  string `toml:"duration"`
+
+	// wol
+	MAC       string `toml:"mac"`
+	Broadcast string `toml:"broadcast"` // host:port, default 255.255.255.255:9
 }
 
 // The valid step kinds.
@@ -124,6 +168,7 @@ const (
 	KindWaitStatus = "wait_status"
 	KindWaitState  = "wait_state"
 	KindDelay      = "delay"
+	KindWOL        = "wol"
 )
 
 // Defaults returns a Config with sensible default values. The sequence itself
@@ -212,6 +257,9 @@ func Load(f *Flags) (Config, error) {
 	if cfg.Timing.DefaultHoldMs < 0 {
 		cfg.Timing.DefaultHoldMs = 0
 	}
+	if cfg.Idle.TimeoutMinutes == 0 {
+		cfg.Idle.TimeoutMinutes = 30
+	}
 
 	return cfg, nil
 }
@@ -234,6 +282,33 @@ func (c Config) Validate() error {
 	}
 	if err := validateSteps("shutdown", c.Shutdown); err != nil {
 		return err
+	}
+	// Standby and wake come as a pair: a station that can power down on idle
+	// must also be able to revive.
+	if (len(c.Standby) == 0) != (len(c.Wake) == 0) {
+		return fmt.Errorf("[[standby]] and [[wake]] must both be present or both absent")
+	}
+	if len(c.Standby) > 0 {
+		if err := validateSteps("standby", c.Standby); err != nil {
+			return err
+		}
+		if err := validateSteps("wake", c.Wake); err != nil {
+			return err
+		}
+		if c.Idle.ActivitySlot == "" {
+			return fmt.Errorf("[idle] activity_slot is required with [[standby]]/[[wake]]")
+		}
+		if c.Idle.TimeoutMinutes <= 0 {
+			return fmt.Errorf("[idle] timeout_minutes must be > 0 (got %d)", c.Idle.TimeoutMinutes)
+		}
+		for i, w := range c.Idle.Watches {
+			if w.Slot == "" || w.Field == "" {
+				return fmt.Errorf("idle.watch[%d]: slot and field are required", i)
+			}
+			if w.MinDelta < 0 {
+				return fmt.Errorf("idle.watch[%d]: min_delta must be >= 0", i)
+			}
+		}
 	}
 	return nil
 }
@@ -293,8 +368,17 @@ func validateSteps(list string, steps []Step) error {
 			if hasSym && st.Duration != "network" && st.Duration != "stagger" {
 				return fmt.Errorf("%s (%q): delay duration must be \"network\"|\"stagger\", got %q", prefix, st.Name, st.Duration)
 			}
+		case KindWOL:
+			if _, err := net.ParseMAC(st.MAC); err != nil {
+				return fmt.Errorf("%s (%q): wol step requires a valid mac: %v", prefix, st.Name, err)
+			}
+			if st.Broadcast != "" {
+				if _, _, err := net.SplitHostPort(st.Broadcast); err != nil {
+					return fmt.Errorf("%s (%q): wol broadcast must be host:port: %v", prefix, st.Name, err)
+				}
+			}
 		default:
-			return fmt.Errorf("%s (%q): unknown step kind %q (want cmd|wait_status|wait_state|delay)", prefix, st.Name, st.Kind)
+			return fmt.Errorf("%s (%q): unknown step kind %q (want cmd|wait_status|wait_state|delay|wol)", prefix, st.Name, st.Kind)
 		}
 	}
 	return nil
