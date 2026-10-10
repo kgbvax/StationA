@@ -74,6 +74,13 @@ TUI) the handler is the plain text handler.
 as an error MUST be `Warn` or `Error`. `journalctl -p warning` is the station-wide
 error filter; a module that logs its errors at `Info` breaks it.
 
+The converse also holds: a reconnect loop against a device that is simply off must not
+flood the filter with one `Warn` per backoff cycle. Use `logging.Streak` (shared/logging):
+the first failure of an outage logs at `Warn`, repeats at `Info` with a `repeat` count,
+and `Reset()` after a run that proved healthy re-arms the `Warn` (acom, atr1k and
+flexbridge reset on their existing "run lasted ≥ 1 min" backoff test). Routine,
+self-healing steps inside a run (e.g. re-sending a telemetry-enable) are `Info`.
+
 Fatal startup paths log via slog, then exit: `os.Exit(2)` for config errors,
 `os.Exit(1)` for connect/run errors (existing convention, unchanged).
 

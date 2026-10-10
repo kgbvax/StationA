@@ -196,6 +196,7 @@ func radioLoop(ctx context.Context, cfg config.Config, b *bridge.Bridge, pub *br
 	const maxBackoff = 60 * time.Second
 	const backoffResetAfter = time.Minute // a connection that lived this long was healthy
 	backoff := 2 * time.Second
+	var lost logging.Streak // one Warn per outage, not per retry (radio powered off)
 
 	for {
 		if ctx.Err() != nil {
@@ -204,7 +205,7 @@ func radioLoop(ctx context.Context, cfg config.Config, b *bridge.Bridge, pub *br
 
 		host, serial, err := resolveRadio(ctx, cfg, log)
 		if err != nil {
-			log.Warn("radio discovery failed", "err", err)
+			lost.Fail(log, "radio discovery failed", "err", err)
 			if !sleepCtx(ctx, backoff) {
 				return "", ctx.Err()
 			}
@@ -231,8 +232,9 @@ func radioLoop(ctx context.Context, cfg config.Config, b *bridge.Bridge, pub *br
 		// outage, every later reconnect (even hours later) waits the full 60 s.
 		if time.Since(start) >= backoffResetAfter {
 			backoff = 2 * time.Second
+			lost.Reset()
 		}
-		log.Warn("radio connection lost", "err", runErr)
+		lost.Fail(log, "radio connection lost", "err", runErr)
 		b.Reset()
 		if !sleepCtx(ctx, backoff) {
 			return serial, ctx.Err()

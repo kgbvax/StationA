@@ -212,18 +212,24 @@ func publishMetaOnReconnect(c pahomqtt.Client, cfg config.Config) {
 // with exponential backoff until ctx is cancelled.
 func wsLoop(ctx context.Context, cfg config.Config, b *bridge.Bridge, dev *tuner.Device, log *slog.Logger) error {
 	const maxBackoff = 60 * time.Second
+	const healthyRun = time.Minute // a run that lived this long was a healthy link
 	backoff := 2 * time.Second
+	var lost logging.Streak // one Warn per outage, not per retry (ATR powered off)
 
 	for {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
 
+		start := time.Now()
 		runErr := dev.Run(ctx, b.HandleTelemetry)
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		log.Warn("ATR run ended", "err", runErr)
+		if time.Since(start) >= healthyRun {
+			lost.Reset()
+		}
+		lost.Fail(log, "ATR run ended", "err", runErr)
 		b.SetDeviceOnline(false, fmt.Sprintf("atr1k: %v", runErr))
 		if !sleepCtx(ctx, backoff) {
 			return ctx.Err()

@@ -46,7 +46,10 @@ func (s *AudioSourceStatus) Alive() bool {
 // pumps a constant-rate stream to each. Runs until ctx is done; UDP errors
 // are logged and retried. status (may be nil) is stamped on every real
 // datagram.
-func StartAudioSource(ctx context.Context, udpAddr, tcpAddr string, status *AudioSourceStatus, log interface{ Warn(string, ...any) }) error {
+func StartAudioSource(ctx context.Context, udpAddr, tcpAddr string, status *AudioSourceStatus, log interface {
+	Info(string, ...any)
+	Warn(string, ...any)
+}) error {
 	udp, err := net.ListenPacket("udp", udpAddr)
 	if err != nil {
 		return err
@@ -57,7 +60,7 @@ func StartAudioSource(ctx context.Context, udpAddr, tcpAddr string, status *Audi
 		return err
 	}
 	defer ln.Close()
-	log.Warn("radio audio source listening", "udp", udpAddr, "tcp", tcpAddr)
+	log.Info("radio audio source listening", "udp", udpAddr, "tcp", tcpAddr)
 
 	// PCM inbox: datagrams land here; the writer drains at its cadence.
 	var mu sync.Mutex
@@ -109,7 +112,7 @@ func StartAudioSource(ctx context.Context, udpAddr, tcpAddr string, status *Audi
 			cmu.Lock()
 			clients[c] = struct{}{}
 			cmu.Unlock()
-			log.Warn("radio audio client connected", "remote", c.RemoteAddr().String())
+			log.Info("radio audio client connected", "remote", c.RemoteAddr().String())
 		}
 	}()
 

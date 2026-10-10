@@ -217,9 +217,10 @@ func (d *Device) Run(ctx context.Context, onObs func(Observation)) error {
 			return fmt.Errorf("no data received for %s, restarting monitor", silenceLimit)
 		}
 		if time.Since(lastDataTime) > 5*time.Second && time.Since(lastRetryTime) > 5*time.Second {
-			// Degraded-but-recovering: the link has gone quiet; the re-send is
-			// the recovery attempt (logging.md §3 → Warn).
-			d.log.Warnf("no data for 5s, re-sending enable telemetry")
+			// The re-send is routine recovery inside one run (Info): a link
+			// that stays quiet ends the run, and serialLoop reports that
+			// failure — once per outage — at Warn.
+			d.log.Infof("no data for 5s, re-sending enable telemetry")
 			if err := d.EnableTelemetry(); err != nil {
 				d.log.Warnf("re-send enable telemetry: %v", err)
 			}

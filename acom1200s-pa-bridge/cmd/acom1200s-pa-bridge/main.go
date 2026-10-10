@@ -204,6 +204,7 @@ func serialLoop(ctx context.Context, cfg config.Config, b *bridge.Bridge, dev *a
 	const initialBackoff = 2 * time.Second
 	const healthyRunForReset = time.Minute
 	backoff := initialBackoff
+	var lost logging.Streak // one Warn per outage, not per retry (amp powered off)
 
 	for {
 		if ctx.Err() != nil {
@@ -216,7 +217,10 @@ func serialLoop(ctx context.Context, cfg config.Config, b *bridge.Bridge, dev *a
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		log.Warn("serial run ended", "err", runErr)
+		if ran >= healthyRunForReset {
+			lost.Reset()
+		}
+		lost.Fail(log, "serial run ended", "err", runErr)
 		b.SetDeviceOnline(false, fmt.Sprintf("serial: %v", runErr))
 
 		// A run that lasted a while was a healthy episode; the escalation
