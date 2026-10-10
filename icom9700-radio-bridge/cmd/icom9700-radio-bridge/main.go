@@ -24,6 +24,8 @@ import (
 	"icom9700-radio-bridge/internal/config"
 	"icom9700-radio-bridge/internal/radio"
 	"icom9700-radio-bridge/internal/rigctl"
+
+	"codeberg.org/kgbvax/stationa/shared/logging"
 )
 
 func main() {
@@ -219,6 +221,6 @@ func newLogger(level string) *slog.Logger {
 	default:
 		lv = slog.LevelInfo
 	}
-	h := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: lv})
+	h := logging.NewHandler(os.Stderr, &slog.HandlerOptions{Level: lv})
 	return slog.New(h)
 }

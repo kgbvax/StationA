@@ -31,6 +31,8 @@ import (
 	"spid-ercm-rotator-bridge/internal/pstrotator"
 	"spid-ercm-rotator-bridge/internal/rotctld"
 	"spid-ercm-rotator-bridge/internal/spid"
+
+	"codeberg.org/kgbvax/stationa/shared/logging"
 )
 
 // component is the constant slog component attr and the service name —
@@ -266,7 +268,7 @@ func newLogger(level string) *slog.Logger {
 	default:
 		lv = slog.LevelInfo
 	}
-	h := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: lv})
+	h := logging.NewHandler(os.Stderr, &slog.HandlerOptions{Level: lv})
 	// Convention §1 (docs/conventions/logging.md): one constant `component`
 	// attr on the root logger; slot-specific context goes through child
 	// loggers created per slot.

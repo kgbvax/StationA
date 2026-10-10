@@ -24,6 +24,8 @@ import (
 	"stationportal/internal/inventory"
 	"stationportal/internal/probe"
 	"stationportal/internal/web"
+
+	"codeberg.org/kgbvax/stationa/shared/logging"
 )
 
 func main() {
@@ -44,7 +46,7 @@ func main() {
 	// constant component attr.
 	level := slog.LevelInfo
 	_ = level.UnmarshalText([]byte(cfg.LogLevel))
-	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level})).
+	log := slog.New(logging.NewHandler(os.Stderr, &slog.HandlerOptions{Level: level})).
 		With("component", "stationportal")
 	slog.SetDefault(log)
 	if err != nil {

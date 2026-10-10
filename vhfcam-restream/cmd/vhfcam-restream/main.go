@@ -28,6 +28,8 @@ import (
 	"vhfcam-restream/internal/preview"
 	"vhfcam-restream/internal/recorder"
 	"vhfcam-restream/internal/restream"
+
+	"codeberg.org/kgbvax/stationa/shared/logging"
 )
 
 const componentName = "vhfcam-restream"
@@ -307,7 +309,7 @@ func newLogger(level string) *slog.Logger {
 	if err := lvl.UnmarshalText([]byte(level)); err != nil {
 		lvl = slog.LevelInfo
 	}
-	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: lvl}))
+	return slog.New(logging.NewHandler(os.Stderr, &slog.HandlerOptions{Level: lvl}))
 }
 
 // isFlagSet reports whether the named flag was set explicitly on the command

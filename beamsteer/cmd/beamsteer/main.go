@@ -18,6 +18,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"codeberg.org/kgbvax/stationa/shared/logging"
 	"codeberg.org/kgbvax/stationa/shared/pstrotator"
 
 	"beamsteer/internal/config"
@@ -27,7 +28,7 @@ import (
 func main() {
 	// Logging convention (docs/conventions/logging.md): slog text on stderr
 	// with a constant component attr.
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})).
+	logger := slog.New(logging.NewHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})).
 		With("component", "beamsteer")
 	slog.SetDefault(logger)
 

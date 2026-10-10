@@ -18,6 +18,7 @@ import (
 
 	pahomqtt "github.com/eclipse/paho.mqtt.golang"
 
+	"codeberg.org/kgbvax/stationa/shared/logging"
 	sharedmqtt "codeberg.org/kgbvax/stationa/shared/mqtt"
 
 	"hf-mqtt-capture/internal/config"
@@ -28,7 +29,7 @@ func main() {
 	// stderr with a constant component attr, installed as the default. The rotating
 	// capture files below are the tool's data output, not a service log — diagnostics
 	// go to stderr only.
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})).
+	logger := slog.New(logging.NewHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})).
 		With("component", "hf-mqtt-capture")
 	slog.SetDefault(logger)
 

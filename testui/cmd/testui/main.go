@@ -20,6 +20,8 @@ import (
 	"testui/internal/config"
 	"testui/internal/mqtt"
 	"testui/internal/web"
+
+	"codeberg.org/kgbvax/stationa/shared/logging"
 )
 
 const defaultConfigPath = "config.toml"
@@ -28,7 +30,7 @@ func main() {
 	// Logging convention (docs/conventions/logging.md): one root slog text logger on
 	// stderr with a constant component attr, installed as the default so internal
 	// packages log through it.
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})).
+	logger := slog.New(logging.NewHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})).
 		With("component", "testui")
 	slog.SetDefault(logger)
 

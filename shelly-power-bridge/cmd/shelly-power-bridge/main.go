@@ -20,6 +20,7 @@ import (
 
 	pahomqtt "github.com/eclipse/paho.mqtt.golang"
 
+	"codeberg.org/kgbvax/stationa/shared/logging"
 	sharedmqtt "codeberg.org/kgbvax/stationa/shared/mqtt"
 	schema "codeberg.org/kgbvax/stationa/shared/schema"
 
@@ -308,7 +309,7 @@ func newLogger(level string) *slog.Logger {
 	default:
 		lv = slog.LevelInfo
 	}
-	h := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: lv})
+	h := logging.NewHandler(os.Stderr, &slog.HandlerOptions{Level: lv})
 	// Convention §1 (docs/conventions/logging.md): one constant `component` attr
 	// per service; slot-specific loggers are children of this root (§2).
 	return slog.New(h).With("component", "shelly-power-bridge")

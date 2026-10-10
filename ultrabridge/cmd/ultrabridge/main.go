@@ -16,6 +16,8 @@ import (
 	"ultrabridge/internal/ub/service"
 	"ultrabridge/internal/ub/transport"
 	"ultrabridge/internal/web"
+
+	"codeberg.org/kgbvax/stationa/shared/logging"
 )
 
 const defaultConfigPath = "/etc/ultrabridge/config.toml"
@@ -26,7 +28,7 @@ func main() {
 	// package-level slog call carries it. The config schema has no [log] level
 	// key, so the level stays at the Info default (do not invent a key here —
 	// the schema is shared with the deployed 0600 file).
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+	logger := slog.New(logging.NewHandler(os.Stderr, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
 	})).With("component", "ultrabridge")
 	slog.SetDefault(logger)

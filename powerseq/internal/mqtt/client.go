@@ -29,6 +29,7 @@ import (
 
 	pahomqtt "github.com/eclipse/paho.mqtt.golang"
 
+	"codeberg.org/kgbvax/stationa/shared/logging"
 	sharedmqtt "codeberg.org/kgbvax/stationa/shared/mqtt"
 
 	"powerseq/internal/config"
@@ -285,5 +286,5 @@ func NewLogger(level string) *slog.Logger {
 	default:
 		lv = slog.LevelInfo
 	}
-	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: lv}))
+	return slog.New(logging.NewHandler(os.Stderr, &slog.HandlerOptions{Level: lv}))
 }

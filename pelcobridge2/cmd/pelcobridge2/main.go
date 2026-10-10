@@ -23,6 +23,7 @@ import (
 
 	pahomqtt "github.com/eclipse/paho.mqtt.golang"
 
+	"codeberg.org/kgbvax/stationa/shared/logging"
 	sharedmqtt "codeberg.org/kgbvax/stationa/shared/mqtt"
 
 	"pelcobridge2/internal/config"
@@ -39,7 +40,7 @@ func main() {
 	// The TUI renders on stdout's alt screen; stderr Warn+ lines are the exact
 	// pattern the MQTT slot already used before this migration, so they are
 	// proven not to disturb the TUI any more than the slot's old stderrLogger did.
-	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+	slog.SetDefault(slog.New(logging.NewHandler(os.Stderr, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
 	})).With("component", "pelcobridge2"))
 

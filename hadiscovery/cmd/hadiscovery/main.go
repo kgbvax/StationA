@@ -18,13 +18,15 @@ import (
 	"hadiscovery/internal/config"
 	"hadiscovery/internal/engine"
 	"hadiscovery/internal/mqtt"
+
+	"codeberg.org/kgbvax/stationa/shared/logging"
 )
 
 func main() {
 	// Logging convention (docs/conventions/logging.md): one root slog text logger on
 	// stderr with a constant component attr, installed as the default so internal
 	// packages log through it.
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})).
+	logger := slog.New(logging.NewHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})).
 		With("component", "hadiscovery")
 	slog.SetDefault(logger)
 

@@ -30,11 +30,19 @@ Every Go service builds one root logger at startup:
 
 ```go
 level := slog.LevelInfo // from the [log] level config key, where one exists
-logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+logger := slog.New(logging.NewHandler(os.Stderr, &slog.HandlerOptions{
     Level: level,
 })).With("component", "flexbridge") // constant, per-service
 slog.SetDefault(logger)
 ```
+
+`logging` is `codeberg.org/kgbvax/stationa/shared/logging`. Under systemd (it sets
+`JOURNAL_STREAM`) the handler prefixes each line with its syslog priority (`<3>`
+Error, `<4>` Warn, `<6>` Info, `<7>` Debug); journald strips the prefix and files the
+line at that priority. A bare `slog.NewTextHandler` lands every line at priority info,
+so `journalctl -p warning` never sees it — that was the state from the 2026-09-04
+migration until 2026-10-10. Outside the journal (terminal, tests, the pelcobridge2
+TUI) the handler is the plain text handler.
 
 - Text format, not JSON: humans read it via `journalctl`; journald already adds
   timestamps, unit, and PID per line, so the app must not re-emit timestamps.
