@@ -165,12 +165,13 @@ func (r *Reconciler) Resolve(in Inputs) Decision {
 	}
 
 	// Tier 3 — auto: band policy. Never trust radio state unless the radio is online (§10).
-	// An empty band is a transient "no slice reported yet" / reconnect-Reset state from
-	// flexbridge, not a tuning intent: resolving it to the fallback would chatter the
-	// antenna to the fallback resource and back on every reconnect cycle. Hold the last
+	// An empty or "unknown" band is a transient "no slice/frequency yet" state from
+	// flexbridge (reconnect Reset, a panadapter re-created with center 0 Hz), not a
+	// tuning intent: resolving it to the fallback chattered the antenna to the fallback
+	// resource and back on every reconnect (seen live 2026-10-10). Hold the last
 	// selection instead — only a known-but-unmatched band (160m, gen, …) reaches the
 	// fallback via portForBand.
-	if in.RadioOnline && in.RadioBand != "" {
+	if in.RadioOnline && knownBand(in.RadioBand) {
 		if port, ok := r.portForBand(in.RadioBand); ok {
 			return Decision{Mode: mode, Target: port, Source: SourceAuto}
 		}
@@ -246,7 +247,9 @@ func (r *Reconciler) Next(in Inputs) Actions {
 	// TX on a new band. The PA is always in the RF path, so this is NOT gated on antenna
 	// selection — only on radio online (§10: don't trust radio state otherwise) + a known
 	// band. No TX guard: hot-switch protection is hardware.
-	if r.cfg.PAFollow.Enabled && in.RadioOnline && in.RadioBand != "" {
+	// "gen" is excluded too: the amp has no general-coverage band, so pushing it only
+	// draws a rejected cmd.
+	if r.cfg.PAFollow.Enabled && in.RadioOnline && knownBand(in.RadioBand) && in.RadioBand != "gen" {
 		act.SetBand = in.RadioBand
 	}
 
@@ -256,12 +259,19 @@ func (r *Reconciler) Next(in Inputs) Actions {
 	// of line). Gated on radio online + a known band (§10). The ATU engages only while the
 	// tuner's resource is the resolved target — cold-switch sequencing above already
 	// withholds a port change during TX, so the ATU is not re-keyed mid-TX.
-	if r.cfg.TunerFollow.Enabled && r.tunerPort != "" && in.RadioOnline && in.RadioBand != "" {
+	if r.cfg.TunerFollow.Enabled && r.tunerPort != "" && in.RadioOnline && knownBand(in.RadioBand) {
 		desired := d.Target == r.tunerPort && contains(r.cfg.TunerFollow.ATUBands, in.RadioBand)
 		act.SetInline = &desired
 	}
 
 	return act
+}
+
+// knownBand reports whether band carries tuning information: flexbridge publishes ""
+// before a slice is reported and "unknown" for a 0 Hz / out-of-table frequency — both
+// mean "no information", never a band to act on. "gen" (HF general coverage) is known.
+func knownBand(band string) bool {
+	return band != "" && band != "unknown"
 }
 
 // contains reports whether s lists v. A nil/empty slice matches nothing.

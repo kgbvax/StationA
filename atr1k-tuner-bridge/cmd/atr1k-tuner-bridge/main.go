@@ -42,8 +42,12 @@ func main() {
 		os.Exit(2)
 	}
 
-	logger := newLogger(cfg.Log.Level)
-	logger.Info("atr1k-tuner-bridge starting", "tuner", cfg.Tuner.URL, "slot", cfg.MQTT.Slot)
+	// Logging convention §2: constant component attr on the root logger (also the
+	// slog default, which device adapters log through) and the slot address.
+	logger := newLogger(cfg.Log.Level).With("component", "atr1k-tuner-bridge",
+		"slot", cfg.MQTT.Site+"/"+cfg.MQTT.Station+"/"+cfg.MQTT.Slot)
+	slog.SetDefault(logger)
+	logger.Info("atr1k-tuner-bridge starting", "tuner", cfg.Tuner.URL)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()

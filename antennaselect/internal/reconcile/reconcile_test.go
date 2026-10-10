@@ -145,15 +145,20 @@ func TestResolveRadioOfflineHoldsLast(t *testing.T) {
 // band (160m, gen) still reaches the fallback — only the empty case holds.
 func TestResolveEmptyBandHoldsNotFallback(t *testing.T) {
 	r := New(testConfig())
-	d := r.Resolve(Inputs{RadioOnline: true, RadioBand: "", StationActivity: "active"})
-	if d.Target != "" {
-		t.Errorf("empty band: target=%q, want empty (hold last, not fallback)", d.Target)
-	}
-	if d.Source != SourceAuto {
-		t.Errorf("empty band: source=%q, want auto", d.Source)
+	// "" and "unknown" are flexbridge's no-information states (reconnect Reset, a
+	// panadapter re-created at 0 Hz): hold the last selection. Resolving "unknown" to
+	// the fallback flipped the antenna to port6 and back on every reconnect (2026-10-10).
+	for _, band := range []string{"", "unknown"} {
+		d := r.Resolve(Inputs{RadioOnline: true, RadioBand: band, StationActivity: "active"})
+		if d.Target != "" {
+			t.Errorf("band %q: target=%q, want empty (hold last, not fallback)", band, d.Target)
+		}
+		if d.Source != SourceAuto {
+			t.Errorf("band %q: source=%q, want auto", band, d.Source)
+		}
 	}
 	// Known-but-unmatched bands still use the fallback — the fix must not regress that.
-	for _, band := range []string{"160m", "gen", "unknown"} {
+	for _, band := range []string{"160m", "gen"} {
 		d := r.Resolve(Inputs{RadioOnline: true, RadioBand: band, StationActivity: "active"})
 		if d.Target != "port6" {
 			t.Errorf("band %q: target=%q, want port6 (fallback still applies to non-empty unmatched)", band, d.Target)
@@ -269,10 +274,13 @@ func TestNextPAFollowGatesOnRadioOnline(t *testing.T) {
 
 func TestNextPAFollowGatesOnBandKnown(t *testing.T) {
 	r := New(paFollowCfg())
-	// Band unknown/empty: nothing to push.
-	act := r.Next(Inputs{RadioOnline: true, RadioBand: "", StationActivity: "active", RadioTX: TXReceive, SwitchSelected: "port3"})
-	if act.SetBand != "" {
-		t.Errorf("empty band: expected no SetBand, got %q", act.SetBand)
+	// Band empty/unknown: nothing to push. "gen" neither — the amp has no such band and
+	// rejects it (acom logged `unknown band "unknown"` on every radio reconnect).
+	for _, band := range []string{"", "unknown", "gen"} {
+		act := r.Next(Inputs{RadioOnline: true, RadioBand: band, StationActivity: "active", RadioTX: TXReceive, SwitchSelected: "port3"})
+		if act.SetBand != "" {
+			t.Errorf("band %q: expected no SetBand, got %q", band, act.SetBand)
+		}
 	}
 }
 
@@ -415,11 +423,13 @@ func TestNextTunerFollowGatesOnRadioOnline(t *testing.T) {
 
 func TestNextTunerFollowGatesOnBandKnown(t *testing.T) {
 	r := New(tunerFollowCfg())
-	// Band unknown/empty: nothing to push.
-	act := r.Next(Inputs{RadioOnline: true, RadioBand: "", StationActivity: "active",
-		RadioTX: TXReceive, SwitchSelected: "port6"})
-	if act.SetInline != nil {
-		t.Errorf("empty band: expected no SetInline, got %v", *act.SetInline)
+	// Band empty/unknown: nothing to push.
+	for _, band := range []string{"", "unknown"} {
+		act := r.Next(Inputs{RadioOnline: true, RadioBand: band, StationActivity: "active",
+			RadioTX: TXReceive, SwitchSelected: "port6"})
+		if act.SetInline != nil {
+			t.Errorf("band %q: expected no SetInline, got %v", band, *act.SetInline)
+		}
 	}
 }
 
