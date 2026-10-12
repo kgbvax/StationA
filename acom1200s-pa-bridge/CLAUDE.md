@@ -61,7 +61,9 @@ CLI flags:
 **Restart loop** (`serialLoop`): opens the port, publishes meta, runs the
 telemetry loop until the port errors / 30 s silence / ctx cancel, then marks
 the device offline and backs off and retries. `/status` stays `online` while
-the bridge retries — only `/state.device_online` flips. The loop is a pure
+the bridge retries — only `/state.device_online` flips, and it is raised only
+by the first telemetry frame of a session, never by opening the port (a
+switched-off amp opens fine and stays silent). The loop is a pure
 observer: it neither drives the amp's power state nor parks. When the amp is
 unpowered (its remote-on relay released by the `hf/switch` slot) the port goes
 silent and the loop backs off; once the amp is powered again telemetry resumes

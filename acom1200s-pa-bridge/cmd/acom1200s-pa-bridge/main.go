@@ -256,7 +256,11 @@ func runOnce(ctx context.Context, cfg config.Config, b *bridge.Bridge, dev *acom
 	}
 	defer dev.Close()
 	log.Info("serial port opened", "port", cfg.Serial.Port)
-	b.SetDeviceOnline(true, "")
+	// device_online is NOT raised here. An open port is not a live link: an amp
+	// that is switched off opens fine and then says nothing, and claiming
+	// "online" for the 30 s silence watchdog made /state flap online/offline
+	// every ~40 s (the PLC's pa-arm opened its arm on each offline phase).
+	// Bridge.HandleTelemetry raises it with the first frame.
 
 	// Publish meta + (gated) discovery on each (re)connect cycle so late
 	// subscribers get the birth certificate. /status online is handled by the

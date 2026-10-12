@@ -190,7 +190,7 @@ state (model §8). The document is always complete.
 | `fault` | string | — | canonical: `none` \| `swr` \| `temp` \| `reflected` \| `other` |
 | `pa_state` | string | — | raw firmware mode (diagnostic): `OPR/RX`, `OPR/TX`, `STANDBY`, `OFF`, … |
 | `power` | string | — | canonical: `on` \| `off` (actual, read-only telemetry). `off` only when `pa_state == OFF` or the port is lost. Powering the PA is owned by the `hf/switch` slot, not this `/cmd` |
-| `device_online` | bool | — | `true` while the serial loop has data; `false` when the port is lost |
+| `device_online` | bool | — | `true` once a telemetry frame has arrived on the current serial session (an open port alone does not count); `false` when the port is lost or the amp is silent (switched off) |
 | `error` | string | — | verbatim fault message when `fault != none`; empty otherwise |
 
 The raw amplifier frequency (kHz) is **not** published — `band` is the PA's
@@ -326,8 +326,8 @@ The bridge itself contains no HA knowledge in this path. See
 | Connect / reconnect | `/status` (`online`); `/meta` (incl. `expose`); embedded HA discovery only if `publish_ha_discovery = true` |
 | Each telemetry frame | `/state` (full snapshot, incl. `power`) |
 | Serial port lost (30 s silence / read error) | `/state` with `device_online:false`, `power:"off"`, `error:"..."`; `/status` stays `online` |
-| Amp powered on via `hf/switch` `pa` relay | serial loop reconnects; `/state` resumes with `power:"on"` once telemetry returns |
-| Amp powered off via `hf/switch` `pa` relay | port goes silent → serial loop backs off; `/state` `device_online:false`, `power:"off"` |
+| Amp powered on via `hf/switch` `pa` relay | serial loop reconnects; `device_online` stays `false` until the first frame, then `/state` resumes with `power:"on"` |
+| Amp powered off via `hf/switch` `pa` relay | port goes silent → serial loop backs off; `/state` stays `device_online:false`, `power:"off"` (retries every 30 s do not flip it back) |
 | Disconnect / crash | `/status` → `offline` (broker LWT) |
 
 > The bridge no longer issues any power command or drives the RTS line — power
