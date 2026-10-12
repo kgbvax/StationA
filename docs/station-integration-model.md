@@ -611,7 +611,8 @@ override / pre-position path, not the primary follow mechanism.
   (ladder tier 1; walk-away lightning protection) — except under an operator `manual`
   stand-down (tier 0): in manual the antenna is **never** moved automatically, and idle
   grounding is itself an automatic move
-- `pa-arm.armed` ← `enabled ∧` all interlock gates clear for 1 s, closed only in RX
+- `pa-arm.armed` ← `enabled ∧` all interlock gates clear for 1 s (an Ultrabeam move's own
+  timed windows excepted), closed only in RX
   (realized in the M5 Stamp firmware, not the reconciler; fail-safe open). Hazard gates
   open it at once even in TX — radio lost/stale/tuning, band not PA-safe, antenna
   grounded or switch relays travelling, Ultrabeam moving / commanded / retracted /

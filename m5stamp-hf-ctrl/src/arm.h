@@ -114,8 +114,11 @@ bool bandEdgeValid = false;
 unsigned long bandEdgeMs = 0;
 bool ubSettleValid = false;
 unsigned long ubSettleMs = 0;     // settle hold-off starts here
+unsigned long ubSettleDurMs = ULTRABEAM_SETTLE_MS;  // STOP_SETTLE after an observed stop
+bool ubStopSettle = false;        // the running window follows an observed stop
 bool ubCmdValid = false;
 unsigned long ubCmdMs = 0;        // last ant-ctrl/cmd that will move the elements
+bool ubCmdMoveSeen = true;        // no commanded move still unseen (moving:true since the last motion cmd)
 bool ubRetracted = false;         // latched by a retract cmd; cleared by a later motion cmd
 
 // Relay drive.
@@ -203,6 +206,20 @@ inline bool payloadIs(const uint8_t* p, unsigned int len, const char* s) {
 }
 inline bool statusOnline(const uint8_t* p, unsigned int len) { return payloadIs(p, len, "online"); }
 
+// startUbSettle opens the Ultrabeam settle window. An observed stop replaces
+// whatever window is running (the stop is the freshest truth about the
+// elements); a blind trigger never shortens a longer window already running.
+inline void startUbSettle(unsigned long now, unsigned long durMs, bool afterStop) {
+    if (!afterStop && ubSettleValid && !ubStopSettle) {
+        unsigned long elapsed = now - ubSettleMs;
+        if (elapsed < ubSettleDurMs && ubSettleDurMs - elapsed >= durMs) return;
+    }
+    ubSettleValid = true;
+    ubSettleMs = now;
+    ubSettleDurMs = durMs;
+    ubStopSettle = afterStop;
+}
+
 inline void onRadioState(const uint8_t* payload, unsigned int len, unsigned long now) {
     static JsonDocument filter;
     static bool init = false;
@@ -251,8 +268,7 @@ inline void onAntSwitchState(const uint8_t* payload, unsigned int len, unsigned 
     if (sel == ULTRABEAM_PORT && antSw.selected != ULTRABEAM_PORT) {
         // Switched onto the Ultrabeam: give antennaselect's follow + ultrabridge
         // one settle period before trusting its tuning.
-        ubSettleValid = true;
-        ubSettleMs = now;
+        startUbSettle(now, ULTRABEAM_SETTLE_MS, false);
     }
     antSw.selected = sel;
     antSw.settled = doc["settled"] | false;
@@ -277,9 +293,20 @@ inline void onAntCtrlState(const uint8_t* payload, unsigned int len, unsigned lo
     String dir = doc["direction"] | "";
     bool changed = !ub.everSeen || freq != ub.freqHz || dir != ub.direction;
     bool stopped = ub.stateSeen && ub.moving && !moving;
-    if (changed || stopped) {
-        ubSettleValid = true;
-        ubSettleMs = now;
+    if (moving) ubCmdMoveSeen = true;
+    if (stopped && ubCmdMoveSeen) {
+        // The motion was watched to its end: short settle, and the cmd blind
+        // window has done its job once the commanded move was seen.
+        startUbSettle(now, ULTRABEAM_STOP_SETTLE_MS, true);
+        ubCmdValid = false;
+    } else if (stopped) {
+        // The end of a move that predates the latest cmd — that cmd's own move
+        // is still unseen, so its blind windows stand.
+        startUbSettle(now, ULTRABEAM_STOP_SETTLE_MS, false);
+    } else if (changed && !moving) {
+        // New freq/direction with no motion seen: the move may have fallen
+        // between two polls — full settle.
+        startUbSettle(now, ULTRABEAM_SETTLE_MS, false);
     }
     ub.deviceOnline = doc["device_online"] | false;
     ub.moving = moving;
@@ -343,8 +370,8 @@ inline void onAntCtrlCmd(const uint8_t* payload, unsigned int len, unsigned long
     if (motion) {
         ubCmdValid = true;
         ubCmdMs = now;
-        ubSettleValid = true;
-        ubSettleMs = now;
+        ubCmdMoveSeen = false;
+        startUbSettle(now, ULTRABEAM_SETTLE_MS, false);
     }
 }
 
@@ -424,6 +451,10 @@ struct Eval {
     const char* hazard = nullptr;  // first failing HAZARD gate
     const char* ready = nullptr;   // first failing READINESS gate
     const char* fault = nullptr;   // first failing gate that is a fault (→ /state.error)
+    // A gate other than an Ultrabeam move in flight (commanded, moving,
+    // off-frequency while moving, settling) is failing. Only these hold back
+    // the close-dwell clock.
+    bool dwellBlocked = false;
 };
 
 inline bool radioFresh(unsigned long now) {
@@ -434,18 +465,22 @@ inline Eval evaluate(unsigned long now) {
     // Expire one-shot windows once elapsed, so a millis() wrap (~49.7 days) can
     // never re-enter them.
     if (ubCmdValid && now - ubCmdMs >= ULTRABEAM_CMD_BLIND_MS) ubCmdValid = false;
-    if (ubSettleValid && now - ubSettleMs >= ULTRABEAM_SETTLE_MS) ubSettleValid = false;
+    if (ubSettleValid && now - ubSettleMs >= ubSettleDurMs) ubSettleValid = false;
     if (bandEdgeValid && now - bandEdgeMs >= BAND_CHANGE_HOLDOFF_MS) bandEdgeValid = false;
     if (radio.freshValid && now - radio.freshMs >= RADIO_HEARTBEAT_MS) radio.freshValid = false;
 
     Eval e;
-    auto hazard = [&](const char* r, bool isFault) {
+    // motion = part of a watched Ultrabeam move; it blocks closing but does
+    // not restart the close dwell.
+    auto hazard = [&](const char* r, bool isFault, bool motion = false) {
         if (!e.hazard) e.hazard = r;
         if (isFault && !e.fault) e.fault = r;
+        if (!motion) e.dwellBlocked = true;
     };
-    auto ready = [&](const char* r, bool isFault) {
+    auto ready = [&](const char* r, bool isFault, bool motion = false) {
         if (!e.ready) e.ready = r;
         if (isFault && !e.fault) e.fault = r;
+        if (!motion) e.dwellBlocked = true;
     };
 
     if (relayFault) hazard("relay mismatch", true);
@@ -467,17 +502,25 @@ inline Eval evaluate(unsigned long now) {
     // Ultrabeam — only while it is the antenna in circuit
     if (ultrabeamInCircuit()) {
         if (ubRetracted || (ub.stateSeen && ub.retracted)) hazard("ultrabeam retracted", false);
-        if (ubCmdValid && (now - ubCmdMs) < ULTRABEAM_CMD_BLIND_MS) hazard("ultrabeam commanded", false);
+        bool cmdBlind = ubCmdValid && (now - ubCmdMs) < ULTRABEAM_CMD_BLIND_MS;
+        bool settling = ubSettleValid && (now - ubSettleMs) < ubSettleDurMs;
+        // A move in flight: commanded, moving, or inside a settle window. Its
+        // gates are timed windows already — they block closing but do not hold
+        // back the close dwell, so the relay closes on the pass they end.
+        bool inMove = cmdBlind || ub.moving || settling;
+        if (cmdBlind) hazard("ultrabeam commanded", false, true);
         if (!ub.statusOnline || !ub.stateSeen || !ub.deviceOnline) {
             ready("ultrabeam offline", true);
         } else {
-            if (ub.moving) hazard("ultrabeam moving", false);
+            if (ub.moving) hazard("ultrabeam moving", false, true);
             uint32_t ubKhz = ub.freqHz / 1000;
             if (ubKhz == 0 || absDiff(radio.freqHz / 1000, ubKhz) >= ULTRABEAM_DEADBAND_KHZ) {
-                hazard("ultrabeam not tuned", false);
+                // Off-frequency during a move is the move; at rest it is real
+                // (and a VFO dithering across the deadband must not chatter).
+                hazard("ultrabeam not tuned", false, inMove);
             }
         }
-        if (ubSettleValid && (now - ubSettleMs) < ULTRABEAM_SETTLE_MS) ready("ultrabeam settling", false);
+        if (settling) ready("ultrabeam settling", false, true);
     }
 
     // PA (ACOM) — offline only blocks closing (barefoot operation is unaffected:
@@ -510,8 +553,12 @@ inline Eval evaluate(unsigned long now) {
 inline Eval recompute(bool enabled, unsigned long now) {
     Eval e = evaluate(now);
     bool gatesOk = !e.hazard && !e.ready;
-    bool closeOk = enabled && !relayFault && gatesOk && radio.stateSeen && radio.rx;
-    if (!closeOk) {
+    // The dwell clock runs while permit, RX and every gate except a watched
+    // Ultrabeam move hold — so a beam that stops and settles closes the relay
+    // on the pass its STOP_SETTLE elapses, without a second wait.
+    bool dwellOk = enabled && !relayFault && !e.dwellBlocked && radio.stateSeen && radio.rx;
+    bool closeOk = dwellOk && gatesOk;
+    if (!dwellOk) {
         closeOkValid = false;
     } else if (!closeOkValid) {
         closeOkValid = true;
@@ -526,8 +573,9 @@ inline Eval recompute(bool enabled, unsigned long now) {
         bool keyed = radio.stateSeen && !radio.rx;
         want = !(e.hazard || (e.ready && !keyed));
     } else {
-        // open: close only after permit + gates + RX held for the whole dwell
-        want = closeOkValid && (now - closeOkSinceMs) >= ARM_CLOSE_DWELL_MS;
+        // open: close only with every gate clear now, after permit + RX + the
+        // non-motion gates held for the whole dwell
+        want = closeOk && closeOkValid && (now - closeOkSinceMs) >= ARM_CLOSE_DWELL_MS;
     }
     // Command edges write the relay; the close edge is the only place it is
     // ever energized (dwell + RX verified above).

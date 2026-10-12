@@ -15,7 +15,8 @@ Relay 2 is spare. The PLC is the model's planned embedded safety node (§6,
 §11.3, now realized here): it subscribes the radio, antenna switch, Ultrabeam
 controller (`hf/ant-ctrl` state **and** cmd), antenna reconciler, PA and tuner
 feeds and closes relay 1 only when the permit is on and every gate has been
-clear for 1 s with the radio in RX. Hazard gates (radio lost/stale/tuning,
+clear for 1 s with the radio in RX (an Ultrabeam move's own windows — commanded,
+moving, settling: 250 ms after an observed stop — do not restart that 1 s). Hazard gates (radio lost/stale/tuning,
 unsafe band, antenna grounded/switching, Ultrabeam moving/commanded/retracted/
 off-frequency, PA fault, ATU tuning) open it at once; readiness gates (band
 change hold-off, Ultrabeam settle, antenna move pending, a supervising feed
