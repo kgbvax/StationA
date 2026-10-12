@@ -111,9 +111,10 @@ would re-power whichever relay was commanded last. On the first connect after
 boot the PLC therefore publishes the retained intent `set_pa off` itself and
 ignores `set_pa on` until that echo comes back (10 s fallback). PA power then
 needs an explicit `set_pa on` (console, powerseq START, button B). A later
-reconnect without a reboot replays as before. TRX is not forced: it comes back
-on only if `set_trx on` was the last retained action — and the boot `set_pa
-off` overwrites that, so after a reboot both relays stay off until commanded.
+reconnect without a reboot replays as before. TRX is not forced: the replay
+lands before the boot `set_pa off`, so TRX comes back on if `set_trx on` was
+the last retained action at reboot (seen live 2026-10-12) — and stays off if
+the last action was anything else, including a previous boot's `set_pa off`.
 
 ---
 
