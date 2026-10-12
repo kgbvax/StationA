@@ -592,8 +592,8 @@ host:       shari
 **Passive resources:** `ant/ultrabeam` (port 3), `ant/fan-dipole` 80/40 (port 2),
 `ant/dummy-load` (port 1), `ant/k9ay-loop` (RX, via rx-loop-ctrl), `mast/ta16-hf`.
 
-**Adapters:** the `pa`, `tuner`, HF `rotator`, and `ant-ctrl` bridges run on host
-`shari`; `pa-arm` + `switch` are a self-hosted M5 Stamp PLC; the Shelly power bridge and
+**Adapters:** the `tuner` and HF `rotator` bridges run on host `shari` (`pa` moved to
+`scmino` 2026-10-12, `ant-ctrl` 2026-10-09); `pa-arm` + `switch` are a self-hosted M5 Stamp PLC; the Shelly power bridge and
 the `power-seq` sequencer run on `shari`. See §7.3. The PA bridge talks to the ACOM
 1200S over USB-serial (Prolific, 9600 8N1) for telemetry and manual `/cmd set_band`
 band-walk commands. There is no CAT band-data cable in this adapter; the amp auto-bands
@@ -808,7 +808,7 @@ muehle/host/scmino      # Debian 12 arm64 box, taking over shari's role
 
 | Adapter / service | Fronts | Host |
 |---|---|---|
-| PA bridge (+ ACOM telemetry) | `hf/pa` | `shari` |
+| PA bridge (+ ACOM telemetry) | `hf/pa` | `scmino` |
 | Tuner bridge | `hf/tuner` | `shari` |
 | HF rotator bridge (AF6SA WRC) | `hf/rotator` | `shari` |
 | Antenna controller bridge (Ultrabeam) | `hf/ant-ctrl` | `shari` |

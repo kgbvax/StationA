@@ -402,6 +402,7 @@ Evidence for 1: binary default (`internal/config/config.go`), `config.example.to
 re-implementation must decide whether the normative default is 1 or 300, and must confirm the
 live value on the device (`ssh io@192.168.1.139 cat /etc/acom1200s-pa-bridge/config.toml`).
 Code-check 2026-09-03: mismatch **still present in the repo** (binary 1, `deploy.sh` seed 300).
+RESOLVED 2026-10-12: the live config on shari has `avg_time_ms = 1`; `deploy.sh` now seeds 1.
 
 ## [decision] Vendor protocol open questions (need the ACOM PDF, which is not in the repo)
 

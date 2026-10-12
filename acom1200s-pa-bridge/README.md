@@ -27,7 +27,7 @@ go build ./cmd/acom1200s-pa-bridge                 # local build
 > **before** the first `./deploy.sh` so the new service keeps the real config + MQTT
 > password instead of seeded defaults:
 > ```sh
-> ./migrate-from-acombridge.sh            # on shari: stop/disable old service, copy config+env
+> ./migrate-from-acombridge.sh            # on the old host: stop/disable old service, copy config+env
 >                                         # (rewrites ACOMBRIDGE_ -> ACOM1200S_PA_BRIDGE_ on device),
 > ./deploy.sh                             # then install acom1200s-pa-bridge (seed-once keeps migrated files)
 > ```
@@ -69,7 +69,7 @@ sudo cp config.example.toml /etc/acom1200s-pa-bridge/config.toml
 | `serial.port` | `/dev/serial/by-id/…Prolific…` | Serial port device path |
 | `serial.avg_time_ms` | `1` | Forward-power moving-average window in ms (`1` = no averaging) |
 | `device.model` / `serial` / `link` | `ACOM 1200S` / `""` / `serial` | Identity published in `/meta` |
-| `host` | `shari` | Compute node (in `/meta`) |
+| `host` | `scmino` | Compute node (in `/meta`) |
 | `log.level` | `info` | Log level |
 
 ## MQTT

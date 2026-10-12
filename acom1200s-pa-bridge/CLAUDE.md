@@ -147,13 +147,17 @@ See `../docs/conventions/config-and-secrets.md` for the full convention.
 
 ## Deployment
 
-Target: Raspberry Pi (`shari`, `192.168.1.139`, user `io`).
+Target: Raspberry Pi **scmino** (`192.168.1.178`, user `io`) since 2026-10-12 — the ACOM's Prolific
+USB-serial adapter is plugged into scmino's USB (it was on shari, `192.168.1.139`). The shari
+copy is disabled, not removed (rollback). Never run two instances: they share the MQTT
+client_id `muehle-hf-pa` and kick each other off the broker. Live broker is the HA broker
+`192.168.1.50` (`127.0.0.1` on scmino is the unused mirror).
 
 ```bash
 ./deploy.sh              # cross-compile, ship, install as a hardened systemd service
 ```
 
-**Migrating from the legacy `acombridge` install:** run the one-time
+**Migrating from the legacy `acombridge` install** (shari only; already done): run the one-time
 `./migrate-from-acombridge.sh` **before** the first `./deploy.sh`. It stops +
 disables the old `acombridge` service, copies `/etc/acombridge/{config.toml,acombridge.env}`
 to `/etc/acom1200s-pa-bridge/` (rewriting `ACOMBRIDGE_` → `ACOM1200S_PA_BRIDGE_` in the

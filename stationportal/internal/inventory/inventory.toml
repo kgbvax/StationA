@@ -234,7 +234,7 @@ address   = "muehle/hf/pa"
 component = "acom1200s-pa-bridge"
 device    = "ACOM 1200S"
 link      = "serial (Prolific USB)"
-host      = "shari"
+host      = "scmino"
 
 [[slot]]
 address   = "muehle/hf/rotator"
@@ -353,7 +353,7 @@ slots = ["muehle/hf/ant-ctrl"]
 name  = "acom1200s-pa-bridge"
 path  = "acom1200s-pa-bridge/"
 kind  = "bridge"
-host  = "shari"
+host  = "scmino"
 unit  = "acom1200s-pa-bridge"
 slots = ["muehle/hf/pa"]
 
