@@ -41,6 +41,16 @@ struct SwitchState {
 };
 SwitchState switchState{false, false};
 
+// PA remote power defaults OFF after a reboot. hf/switch/cmd is ONE retained
+// topic holding only the last action, so the first-connect replay would power
+// the ACOM back on whenever set_pa on was the last command. On the first
+// connect after boot the PLC overwrites the retained intent with set_pa off
+// (so a later reconnect cannot replay "on" either) and ignores set_pa on until
+// that echo comes back — or PA_BOOT_OFF_GUARD_MS passes, if it never does.
+bool paBootOffPending = true;
+unsigned long paBootOffMs = 0;
+#define PA_BOOT_OFF_GUARD_MS 10000
+
 // Slot instances are defined later (before setup); forward-declare the pointers
 // so command handlers can publish immediately after driving a relay.
 extern SlotMqtt* gSwitch;
@@ -125,6 +135,10 @@ static void handleSwitchCmd(const char* topic, const uint8_t* payload, unsigned 
     bool on;
     if (action == "set_pa") {
         if (!parseBoolish(doc["value"], "on", "off", on)) return;  // bad value — drop, relay unchanged
+        if (paBootOffPending) {
+            if (on && millis() - paBootOffMs < PA_BOOT_OFF_GUARD_MS) return;  // pre-reboot retained "on"
+            paBootOffPending = false;  // our boot "off" echo (or any off) ends the guard
+        }
         switchState.pa = on;
         applySwitchRelays();
     } else if (action == "set_trx") {
@@ -438,6 +452,12 @@ SlotMqtt* gPaArm = nullptr;
 // Connect hooks run inside SlotMqtt::onConnect (same call as the dial), after
 // /status online + /cmd subscribe — the R8.1 reconnect order.
 static bool onSwitchConnected() {
+    static bool firstConnect = true;
+    if (firstConnect) {
+        firstConnect = false;
+        paBootOffMs = millis();
+        publishSwitchCmd("set_pa", "off");  // boot default: PA power off (see paBootOffPending)
+    }
     publishSwitchMeta(*gSwitch);
     publishSwitchState(*gSwitch);
     return true;

@@ -105,6 +105,16 @@ Each drives the named relay and publishes a new `/state` with the readback
 position. `set_pa` drives relay 3; `set_trx` drives relay 4. The argument rides
 under the conventional `value` key (stationa /cmd convention).
 
+**PA power defaults off after a reboot.** All relays open at boot, and
+`/cmd` is one retained topic holding only the last action, so its replay
+would re-power whichever relay was commanded last. On the first connect after
+boot the PLC therefore publishes the retained intent `set_pa off` itself and
+ignores `set_pa on` until that echo comes back (10 s fallback). PA power then
+needs an explicit `set_pa on` (console, powerseq START, button B). A later
+reconnect without a reboot replays as before. TRX is not forced: it comes back
+on only if `set_trx on` was the last retained action — and the boot `set_pa
+off` overwrites that, so after a reboot both relays stay off until commanded.
+
 ---
 
 `device.firmware` is the `git describe --always --dirty` of the checkout the
