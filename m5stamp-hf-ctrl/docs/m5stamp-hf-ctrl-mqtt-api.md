@@ -60,7 +60,7 @@ Role `switch`. Non-exclusive multi-channel relay (relays 3 & 4 of the PLC).
 {
   "schema": "1.0",
   "role": "switch",
-  "device": { "model": "M5Stamp PLC", "serial": "m5stamp-plc-1" },
+  "device": { "model": "M5Stamp PLC", "serial": "m5stamp-plc-1", "firmware": "76b2291" },
   "link": "wifi",
   "host": "embedded",
   "capabilities": {
@@ -107,6 +107,10 @@ under the conventional `value` key (stationa /cmd convention).
 
 ---
 
+`device.firmware` is the `git describe --always --dirty` of the checkout the
+image was built from (`tools/fw_version.py`, both slots) — a `-dirty` or stale
+hash on the bus means the PLC is not running a committed `origin/main` build.
+
 ## 4. `muehle/hf/pa-arm` — the arm relay
 
 Role `pa-arm`. The PA-enable arm relay (relay 1), **fail-safe-open**, with the
@@ -118,7 +122,7 @@ arm logic embedded in the firmware. Same device as `hf/switch` (compound).
 {
   "schema": "1.0",
   "role": "pa-arm",
-  "device": { "model": "M5Stamp PLC", "serial": "m5stamp-plc-1" },
+  "device": { "model": "M5Stamp PLC", "serial": "m5stamp-plc-1", "firmware": "76b2291" },
   "link": "wifi",
   "host": "embedded",
   "capabilities": {

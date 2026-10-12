@@ -174,6 +174,7 @@ static void publishSwitchMeta(SlotMqtt& s) {
     JsonObject dev = doc["device"].to<JsonObject>();
     dev["model"] = DEVICE_MODEL;
     dev["serial"] = DEVICE_SERIAL;
+    dev["firmware"] = FW_VERSION;
     doc["link"] = "wifi";
     doc["host"] = "embedded";
     JsonObject caps = doc["capabilities"].to<JsonObject>();
@@ -256,6 +257,7 @@ static void publishPaArmMeta(SlotMqtt& s) {
     JsonObject dev = doc["device"].to<JsonObject>();
     dev["model"] = DEVICE_MODEL;  // SAME device as hf/switch (compound, §3)
     dev["serial"] = DEVICE_SERIAL;
+    dev["firmware"] = FW_VERSION;
     doc["link"] = "wifi";
     doc["host"] = "embedded";
     JsonObject caps = doc["capabilities"].to<JsonObject>();

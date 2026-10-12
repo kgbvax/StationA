@@ -197,3 +197,8 @@ static const int BAND_EDGES_COUNT = sizeof(BAND_EDGES) / sizeof(BAND_EDGES[0]);
 // enough for human-scale button toggles and MQTT keepalives, while letting the
 // CPU/SoC idle between iterations (no tight spin).
 #define LOOP_DELAY_MS      50
+
+// Firmware version (git describe), injected by tools/fw_version.py.
+#ifndef FW_VERSION
+#define FW_VERSION "unknown"
+#endif
