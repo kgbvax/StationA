@@ -60,7 +60,7 @@ Role `switch`. Non-exclusive multi-channel relay (relays 3 & 4 of the PLC).
 {
   "schema": "1.0",
   "role": "switch",
-  "device": { "model": "M5Stamp PLC", "serial": "m5stamp-plc-1" },
+  "device": { "model": "M5Stamp PLC", "serial": "m5stamp-plc-1", "firmware": "76b2291" },
   "link": "wifi",
   "host": "embedded",
   "capabilities": {
@@ -105,7 +105,22 @@ Each drives the named relay and publishes a new `/state` with the readback
 position. `set_pa` drives relay 3; `set_trx` drives relay 4. The argument rides
 under the conventional `value` key (stationa /cmd convention).
 
+**PA power defaults off after a reboot.** All relays open at boot, and
+`/cmd` is one retained topic holding only the last action, so its replay
+would re-power whichever relay was commanded last. On the first connect after
+boot the PLC therefore publishes the retained intent `set_pa off` itself and
+ignores `set_pa on` until that echo comes back (10 s fallback). PA power then
+needs an explicit `set_pa on` (console, powerseq START, button B). A later
+reconnect without a reboot replays as before. TRX is not forced: the replay
+lands before the boot `set_pa off`, so TRX comes back on if `set_trx on` was
+the last retained action at reboot (seen live 2026-10-12) — and stays off if
+the last action was anything else, including a previous boot's `set_pa off`.
+
 ---
+
+`device.firmware` is the `git describe --always --dirty` of the checkout the
+image was built from (`tools/fw_version.py`, both slots) — a `-dirty` or stale
+hash on the bus means the PLC is not running a committed `origin/main` build.
 
 ## 4. `muehle/hf/pa-arm` — the arm relay
 
@@ -118,7 +133,7 @@ arm logic embedded in the firmware. Same device as `hf/switch` (compound).
 {
   "schema": "1.0",
   "role": "pa-arm",
-  "device": { "model": "M5Stamp PLC", "serial": "m5stamp-plc-1" },
+  "device": { "model": "M5Stamp PLC", "serial": "m5stamp-plc-1", "firmware": "76b2291" },
   "link": "wifi",
   "host": "embedded",
   "capabilities": {
@@ -177,9 +192,16 @@ it never forces the relay — every gate still applies.
 ### Arm logic (embedded, `src/arm.h`)
 
 ```
-close relay 1  ⇐  (enabled ∧ every gate clear ∧ radio.tx == "rx") held continuously for ARM_CLOSE_DWELL_MS (1 s)
+close relay 1  ⇐  every gate clear now
+                  ∧ (enabled ∧ every non-move gate clear ∧ radio.tx == "rx") held continuously for ARM_CLOSE_DWELL_MS (1 s)
 open  relay 1  ⇐  ¬enabled ∨ any HAZARD gate ∨ (any READINESS gate ∧ radio in RX)
 ```
+
+*Move gates* are the gates of an Ultrabeam move in flight — `ultrabeam
+commanded`, `ultrabeam moving`, `ultrabeam settling`, and `ultrabeam not tuned`
+while one of those windows runs. They are timed windows themselves: they block
+closing but do not restart the dwell, so the relay closes on the pass the
+move's settle ends (e.g. 250 ms after the motors stop) — no second 1 s wait.
 
 **HAZARD** gates open the relay at once, even while transmitting — RF is (or
 is about to be) going somewhere unsafe. **READINESS** gates block closing and
@@ -202,7 +224,7 @@ hardware key line).
 | Ultrabeam\* live | readiness, fault | `hf/ant-ctrl/status` + `/state.device_online` | offline | `ultrabeam offline` |
 | Ultrabeam\* moving | hazard | `hf/ant-ctrl/state.moving` | true (missing ⇒ true) | `ultrabeam moving` |
 | Ultrabeam\* tuned | hazard | `hf/ant-ctrl/state.freq_hz` vs radio | \|⌊radio kHz⌋ − ub kHz\| ≥ 25 (ultrabridge's own deadband — exactly when it would retune) | `ultrabeam not tuned` |
-| Ultrabeam\* settle | readiness | edges | 3 s after moving→false, a freq/direction change, a motion cmd, or switching onto the Ultrabeam port | `ultrabeam settling` |
+| Ultrabeam\* settle | readiness | edges | **250 ms** after an observed stop (moving→false; replaces a longer window still running and ends the `commanded` window — unless the latest motion cmd's move has not been seen moving yet); **3 s** after an unobserved change (freq/direction changed with no moving:true seen — a short move can fall between ultrabridge's 2 s polls), a motion cmd, or switching onto the Ultrabeam port | `ultrabeam settling` |
 | PA live | readiness | `hf/pa/status` + `/state.{device_online,fault,keyed}` | offline, or no live telemetry yet (empty `fault`/`keyed` — acombridge's open-time snapshot); barefoot is unaffected — the relay is only in the PA key line | `pa offline` |
 | PA fault | hazard, fault | `hf/pa/state.fault` | ≠ `none` | `pa fault` |
 | ATU tune | hazard | `hf/tuner/status` + `/state.settling` | tuner live and settling (an offline tuner does not block) | `tuner tuning` |

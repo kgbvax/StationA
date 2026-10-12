@@ -61,7 +61,9 @@ CLI flags:
 **Restart loop** (`serialLoop`): opens the port, publishes meta, runs the
 telemetry loop until the port errors / 30 s silence / ctx cancel, then marks
 the device offline and backs off and retries. `/status` stays `online` while
-the bridge retries — only `/state.device_online` flips. The loop is a pure
+the bridge retries — only `/state.device_online` flips, and it is raised only
+by the first telemetry frame of a session, never by opening the port (a
+switched-off amp opens fine and stays silent). The loop is a pure
 observer: it neither drives the amp's power state nor parks. When the amp is
 unpowered (its remote-on relay released by the `hf/switch` slot) the port goes
 silent and the loop backs off; once the amp is powered again telemetry resumes
@@ -110,6 +112,10 @@ muehle/hf/pa/status    retained  online | offline (LWT — the bridge, not the a
 muehle/hf/pa/cmd       not retained  set_mode | set_band intent (bus → bridge)
 ```
 
+`/cmd` is intent and must never be retained: the bridge drops retained `/cmd` deliveries
+(logged at Warn) and ignores empty payloads, so a stale retained command is not replayed on
+restart/reconnect (`cmdMessageHandler` in `cmd/acom1200s-pa-bridge/main.go`).
+
 `/state` is a single retained JSON document. Canonical fields: `mode`
 (`operate`/`standby`), `band`, `keyed` (`rx`/`tx`/`inhibited`), `fwd_power_w`,
 `rfl_power_w`, `temp_c`, `swr`, `fault` (`none`/`swr`/`temp`/`reflected`/`other`),
@@ -145,13 +151,17 @@ See `../docs/conventions/config-and-secrets.md` for the full convention.
 
 ## Deployment
 
-Target: Raspberry Pi (`shari`, `192.168.1.139`, user `io`).
+Target: Raspberry Pi **scmino** (`192.168.1.178`, user `io`) since 2026-10-12 — the ACOM's Prolific
+USB-serial adapter is plugged into scmino's USB (it was on shari, `192.168.1.139`). The shari
+copy is disabled, not removed (rollback). Never run two instances: they share the MQTT
+client_id `muehle-hf-pa` and kick each other off the broker. Live broker is the HA broker
+`192.168.1.50` (`127.0.0.1` on scmino is the unused mirror).
 
 ```bash
 ./deploy.sh              # cross-compile, ship, install as a hardened systemd service
 ```
 
-**Migrating from the legacy `acombridge` install:** run the one-time
+**Migrating from the legacy `acombridge` install** (shari only; already done): run the one-time
 `./migrate-from-acombridge.sh` **before** the first `./deploy.sh`. It stops +
 disables the old `acombridge` service, copies `/etc/acombridge/{config.toml,acombridge.env}`
 to `/etc/acom1200s-pa-bridge/` (rewriting `ACOMBRIDGE_` → `ACOM1200S_PA_BRIDGE_` in the

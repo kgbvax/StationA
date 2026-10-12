@@ -170,11 +170,7 @@ func connectMQTT(ctx context.Context, cfg config.Config, log *slog.Logger) (paho
 		// /cmd is not retained; resubscribe on every reconnect. Bounded Wait
 		// (review S1f): a stalled SUBACK must not park paho's OnConnect
 		// goroutine forever.
-		if tok := c.Subscribe(cmd, 1, func(_ pahomqtt.Client, m pahomqtt.Message) {
-			// Runs in paho's goroutine; the bridge only touches serial via the
-			// Commander (acom.Device), which guards all writes under its mutex.
-			cmdHandler(m.Payload())
-		}); !tok.WaitTimeout(10*time.Second) || tok.Error() != nil {
+		if tok := c.Subscribe(cmd, 1, cmdMessageHandler(log, func(p []byte) { cmdHandler(p) })); !tok.WaitTimeout(10*time.Second) || tok.Error() != nil {
 			log.Warn("subscribe cmd failed", "err", tok.Error())
 		}
 	}
@@ -192,6 +188,27 @@ func connectMQTT(ctx context.Context, cfg config.Config, log *slog.Logger) (paho
 		return nil, err
 	}
 	return client, nil
+}
+
+// cmdMessageHandler wraps dispatch as the /cmd subscription callback. /cmd is
+// intent, not state: a retained message is a stale command that the broker
+// replays on every (re)subscribe, so acting on it would re-fire it on each
+// bridge restart or reconnect (a retained set_mode standby once dropped the PA
+// out of operate at a restart). Retained deliveries are dropped. An empty
+// payload is the clear-retained echo, not a command, and is ignored silently.
+func cmdMessageHandler(log *slog.Logger, dispatch func([]byte)) pahomqtt.MessageHandler {
+	return func(_ pahomqtt.Client, m pahomqtt.Message) {
+		if m.Retained() {
+			log.Warn("ignoring retained /cmd (stale intent; /cmd must not be retained)", "topic", m.Topic())
+			return
+		}
+		if len(m.Payload()) == 0 {
+			return
+		}
+		// Runs in paho's goroutine; the bridge only touches serial via the
+		// Commander (acom.Device), which guards all writes under its mutex.
+		dispatch(m.Payload())
+	}
 }
 
 // serialLoop opens the serial port, runs the telemetry loop, and restarts on
@@ -256,7 +273,11 @@ func runOnce(ctx context.Context, cfg config.Config, b *bridge.Bridge, dev *acom
 	}
 	defer dev.Close()
 	log.Info("serial port opened", "port", cfg.Serial.Port)
-	b.SetDeviceOnline(true, "")
+	// device_online is NOT raised here. An open port is not a live link: an amp
+	// that is switched off opens fine and then says nothing, and claiming
+	// "online" for the 30 s silence watchdog made /state flap online/offline
+	// every ~40 s (the PLC's pa-arm opened its arm on each offline phase).
+	// Bridge.HandleTelemetry raises it with the first frame.
 
 	// Publish meta + (gated) discovery on each (re)connect cycle so late
 	// subscribers get the birth certificate. /status online is handled by the

@@ -90,7 +90,10 @@ static const int BAND_EDGES_COUNT = sizeof(BAND_EDGES) / sizeof(BAND_EDGES[0]);
 // --- arm timing ---------------------------------------------------------------
 // Closing is slow, opening is fast. Every gate must hold for ARM_CLOSE_DWELL_MS
 // with the radio in RX before the relay closes (no flapping on bus jitter, never
-// hot-key the PA under drive).
+// hot-key the PA under drive). Exception: the gates of an Ultrabeam move in
+// flight (commanded / moving / settling / off-frequency during it) are timed
+// windows themselves — they block closing but do not restart the dwell, so the
+// relay closes on the pass the move's settle ends.
 #define ARM_CLOSE_DWELL_MS 1000
 // After the radio moves to a different ham band, hold the arm open while the
 // rest of the station follows: antennaselect switches the port / retunes the
@@ -112,9 +115,15 @@ static const int BAND_EDGES_COUNT = sizeof(BAND_EDGES) / sizeof(BAND_EDGES[0]);
 // commanded move can be invisible for up to one poll. After any ant-ctrl/cmd
 // that will move the elements, treat the antenna as moving for this long.
 #define ULTRABEAM_CMD_BLIND_MS 2500
-// Mechanical settle + one poll period after the motors stop (moving true→false,
-// a freq/direction change, or the switch entering the Ultrabeam port).
+// Settle after an UNOBSERVED change — a freq/direction change reported without
+// a moving:true having been seen, or the switch entering the Ultrabeam port:
+// mechanical settle + one ultrabridge poll period (2 s), since a short move can
+// fall entirely between two polls.
 #define ULTRABEAM_SETTLE_MS 3000
+// Settle after an OBSERVED stop (moving true→false): the elements are at rest
+// 250 ms after the RCU-06 reports the motors stopped. An observed stop replaces
+// any longer settle window still running.
+#define ULTRABEAM_STOP_SETTLE_MS 250
 
 // --- relay readback -------------------------------------------------------------
 // relayGet() reads the AW9523 output-pin level (coil driver), not the contacts.
@@ -168,13 +177,13 @@ static const int BAND_EDGES_COUNT = sizeof(BAND_EDGES) / sizeof(BAND_EDGES[0]);
 #define META_REFRESH_MS 300000
 
 // --- local display / buttons -----------------------------------------------
-// The M5 Stamp PLC has a 240x135 LCD and three front-panel buttons (A/B/C).
-// We render indicator lights for the relay states and use B/C as local toggles.
+// The M5 Stamp PLC has a 240x135 LCD and three front-panel buttons (A/B/C), one
+// screen column over each: A = PA TX enable (arm permit), B = PA power, C = TRX
+// power. See src/ui.h.
 //
-// UI_REFRESH_MS was lowered to keep the LCD cool: the display redraw is the
-// most expensive operation in the loop, and a 1 Hz refresh is plenty for a
-// relay-state dashboard. Buttons are sampled at the main loop cadence below.
-#define UI_REFRESH_MS      1000  // display redraw cadence, ms
+// ui::paint repaints only the parts of the screen that changed, so a fast check
+// cadence costs nothing while the state is steady and a button press shows at once.
+#define UI_REFRESH_MS      100   // display state check cadence, ms
 #define UI_BTN_DEBOUNCE_MS 150   // minimum time between button actions, ms
 
 // --- pa-arm state publish cadence -------------------------------------------
@@ -188,3 +197,8 @@ static const int BAND_EDGES_COUNT = sizeof(BAND_EDGES) / sizeof(BAND_EDGES[0]);
 // enough for human-scale button toggles and MQTT keepalives, while letting the
 // CPU/SoC idle between iterations (no tight spin).
 #define LOOP_DELAY_MS      50
+
+// Firmware version (git describe), injected by tools/fw_version.py.
+#ifndef FW_VERSION
+#define FW_VERSION "unknown"
+#endif

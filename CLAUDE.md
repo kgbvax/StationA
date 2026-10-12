@@ -68,7 +68,7 @@ and `go work sync` operate over the whole workspace at once.
 | `muehle/hf/switch` | m5stamp-hf-ctrl | M5 Stamp PLC #1 — PA/TRX remote-on relays (relays 3 & 4), wifi |
 | `muehle/hf/pa-arm` | m5stamp-hf-ctrl | M5 Stamp PLC #1 — PA arm relay (relay 1), wifi |
 | `muehle/hf/antenna-select` | antennaselect | logic slot — no device (runs on scmino) |
-| `muehle/hf/pa` | acom1200s-pa-bridge | ACOM 1200S, serial (`set_power`/RTS removed; `power` is telemetry only) |
+| `muehle/hf/pa` | acom1200s-pa-bridge | ACOM 1200S, serial (`set_power`/RTS removed; `power` is telemetry only) — on scmino since 2026-10-12 (Prolific adapter re-plugged there) |
 | `muehle/hf/rotator` | wrc-rotator-bridge | Yaesu G-450DC via AF6SA WRC, websocket — on scmino since 2026-10-12 (GS-232 :7373 / PstRotator :12040 moved with it) |
 | `muehle/hf/tuner` | atr1k-tuner-bridge | ATR-1000 ATU, wifi (binary WebSocket) — bridge on scmino since 2026-10-12 |
 | `muehle/hf/spots` | logger-spot-bridge | DXLog/Log4OM broadcasts (LAN-wide UDP) → operator-keyed station feed (role `bandmap`; systemd service on shari since 2026-09-16) |
@@ -95,7 +95,7 @@ resources** — `ant/ultrabeam` (port 3), `ant/fan-dipole` 80/40 (port 6),
 ## shari — the deployment target
 
 All services run on shari, a Raspberry Pi at `192.168.1.139` — except
-flexbridge, wrc-rotator-bridge, antenna-select, beamsteer, atr1k-tuner-bridge and hadiscovery (since 2026-10-12), vhfcam-restream (since 2026-09-30), the station Mosquitto mirror, the
+flexbridge, acom1200s-pa-bridge, wrc-rotator-bridge, antenna-select, beamsteer, atr1k-tuner-bridge and hadiscovery (since 2026-10-12), vhfcam-restream (since 2026-09-30), the station Mosquitto mirror, the
 hf_console web channel `hf-console-web` (:8091), testui (:8090) and the landing
 page stationportal (:80) (all since 2026-10-02) and ultrabridge (:8080, RCU-06
 FTDI cable on scmino's USB; since 2026-10-09), which run on **scmino** (`192.168.1.178`, Raspberry Pi CM5, same `ssh io@` access).
@@ -104,7 +104,7 @@ FTDI cable on scmino's USB; since 2026-10-09), which run on **scmino** (`192.168
 # SSH in
 ssh io@192.168.1.139
 
-# Check service status (flexbridge + ultrabridge run on scmino now: ssh io@192.168.1.178)
+# Check service status (flexbridge, ultrabridge, acom1200s-pa-bridge run on scmino now: ssh io@192.168.1.178)
 sudo systemctl status flexbridge ultrabridge
 
 # Follow logs

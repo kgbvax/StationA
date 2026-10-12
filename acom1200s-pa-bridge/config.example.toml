@@ -11,7 +11,7 @@
 # See ../docs/conventions/config-and-secrets.md.
 
 # host is the compute node this adapter runs on (published in /meta, model §8.1).
-host = "shari"
+host = "scmino"
 
 [serial]
 # Prolific USB-serial adapter (vendor 067b). Prefer the /dev/serial/by-id/...
