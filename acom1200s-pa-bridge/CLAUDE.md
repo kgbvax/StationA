@@ -112,6 +112,10 @@ muehle/hf/pa/status    retained  online | offline (LWT — the bridge, not the a
 muehle/hf/pa/cmd       not retained  set_mode | set_band intent (bus → bridge)
 ```
 
+`/cmd` is intent and must never be retained: the bridge drops retained `/cmd` deliveries
+(logged at Warn) and ignores empty payloads, so a stale retained command is not replayed on
+restart/reconnect (`cmdMessageHandler` in `cmd/acom1200s-pa-bridge/main.go`).
+
 `/state` is a single retained JSON document. Canonical fields: `mode`
 (`operate`/`standby`), `band`, `keyed` (`rx`/`tx`/`inhibited`), `fwd_power_w`,
 `rfl_power_w`, `temp_c`, `swr`, `fault` (`none`/`swr`/`temp`/`reflected`/`other`),
