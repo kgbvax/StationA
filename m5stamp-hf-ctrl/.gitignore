@@ -17,3 +17,6 @@ venv/
 .DS_Store
 *.swp
 *~
+
+# lcd-preview renders
+tools/lcd-preview/out/

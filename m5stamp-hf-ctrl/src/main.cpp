@@ -30,6 +30,7 @@
 #include "relay.h"     // uses the library global M5StamPLC
 #include "mqtt_slot.h"
 #include "arm.h"       // pa-arm interlock: inputs, gates, relay drive
+#include "ui.h"        // front-panel LCD drawing (needs M5GFX, via relay.h)
 
 // ---------------------------------------------------------------------------
 // switch slot state (relays 3 & 4 → channels 2 & 3)
@@ -339,12 +340,11 @@ static void publishPaArmState(SlotMqtt& s) {
 }
 
 // ---------------------------------------------------------------------------
-// local LCD UI — indicator lights + front-panel button toggles
+// local LCD UI — one column per front-panel button (drawing lives in ui.h)
 // ---------------------------------------------------------------------------
 // The M5 Stamp PLC has a 240x135 LCD and three buttons below it: A (left),
-// B (middle), C (right).  We draw four indicator lights for the relay states
-// and use A to toggle the arm permit, B to toggle PA remote-on and C to toggle
-// TRX remote-on.
+// B (middle), C (right). The screen shows three columns, each over its button:
+// A = PA TX enable (arm permit), B = PA power, C = TRX power.
 
 static void uiInit() {
     M5StamPLC.setBacklight(true);
@@ -353,102 +353,46 @@ static void uiInit() {
     // normal, left-to-right landscape orientation.
     d.setRotation(1);
     d.fillScreen(0x000000);
-    d.setTextSize(1);
-    d.setTextDatum(middle_center);
 }
 
-static void drawSquareButton(int x, int y, int w, int h, bool on, const char* label) {
-    auto& d = M5StamPLC.Display;
-    uint16_t r = 6;
-    uint32_t fillColor = on ? 0x00C000 : 0x404040;
-    uint32_t borderColor = on ? 0x00FF00 : 0x808080;
+// uiModel snapshots what the screen shows from live state.
+static ui::Model uiModel() {
+    ui::Model m;
+    m.paOn = relayGet(RELAY_PA_REMOTE);
+    m.trxOn = relayGet(RELAY_TRX_REMOTE);
 
-    d.fillSmoothRoundRect(x, y, w, h, r, fillColor);
-    d.drawRoundRect(x, y, w, h, r, borderColor);
-
-    d.setTextColor(on ? 0xFFFFFF : 0xCCCCCC);
-    d.setTextDatum(middle_center);
-    d.setTextSize(2);
-    d.drawString(label, x + w / 2, y + h / 2);
-    d.setTextSize(1);  // restore default
-}
-
-static void drawStatusText() {
-    auto& d = M5StamPLC.Display;
-
-    // Header line: arm status (ARMED / PERMIT off / BLOCKED) + link state.
-    d.setTextDatum(top_left);
-    d.setTextSize(2);
     if (arm::relayReadback) {
-        d.setTextColor(0x00FF00);
-        d.drawString("ARMED", 4, 2);
+        m.tx = ui::TX_ARMED;
     } else if (!enabled) {
-        d.setTextColor(0xAAAAAA);
-        d.drawString("PERMIT", 4, 2);
+        m.tx = ui::TX_OFF;
+    } else if (armEval.hazard || armEval.ready) {
+        m.tx = ui::TX_BLOCKED;
+        m.txFault = armEval.fault != nullptr;
     } else {
-        d.setTextColor(0xFF4040);
-        d.drawString("BLOCKED", 4, 2);
+        m.tx = ui::TX_WAIT;  // permit on, nothing blocking: close dwell / waiting for RX
     }
-    d.setTextSize(1);
 
-    bool wifiUp = (WiFi.status() == WL_CONNECTED);
-    String status = wifiUp ? (gPaArm && gPaArm->connected() ? "MQTT" : "WiFi") : "----";
-    d.setTextDatum(top_right);
-    d.setTextColor(wifiUp ? 0x00FF00 : 0xFF0000);
-    d.setTextSize(2);
-    d.drawString(status.c_str(), d.width() - 4, 2);
-    d.setTextSize(1);
-}
+    // Interlock summary. "permit off" is already the A column's state, so it reads
+    // as "gates clear" here: nothing but the permit stands in the way.
+    const char* reason = arm::blockReason(armEval, enabled);
+    if (!reason[0] || strcmp(reason, "permit off") == 0) {
+        reason = "gates clear";
+    } else {
+        m.gateTone = armEval.fault ? ui::TONE_ALARM : ui::TONE_CAUTION;
+    }
+    snprintf(m.gate, sizeof m.gate, "%s", reason);
 
-static void drawButtonLegend() {
-    auto& d = M5StamPLC.Display;
-    d.setTextDatum(bottom_center);
-    d.setTextColor(0xAAAAAA);
-    d.setTextSize(1);
-    d.drawString("A:ARM", d.width() / 2 - 80, d.height() - 2);
-    d.drawString("B:PA", d.width() / 2, d.height() - 2);
-    d.drawString("C:TRX", d.width() / 2 + 80, d.height() - 2);
+    const bool wifiUp = (WiFi.status() == WL_CONNECTED);
+    m.link = !wifiUp ? ui::LINK_NONE : (gPaArm && gPaArm->connected() ? ui::LINK_MQTT : ui::LINK_WIFI);
+    return m;
 }
 
 static void uiRender() {
     static unsigned long lastUiRender = 0;
-    static bool firstRender = true;
+    static ui::Painter painter;
     if (millis() - lastUiRender < UI_REFRESH_MS) return;
     lastUiRender = millis();
-
-    auto& d = M5StamPLC.Display;
-
-    // Full clear only on first draw; after that we repaint only the dynamic
-    // regions to avoid the visible flicker from clearing the whole screen.
-    if (firstRender) {
-        d.fillScreen(0x000000);
-        drawButtonLegend();
-        firstRender = false;
-    }
-
-    // Header/status text is small and cheap; clear its bounding area and redraw.
-    d.fillRect(0, 0, d.width(), 26, 0x000000);
-    drawStatusText();
-
-    // Four large square relay buttons across the middle of the screen.
-    // Landscape 240x135: leave 28 px top for header, 18 px bottom for legend.
-    int btnW = 48;
-    int btnH = 48;
-    int y = 32;
-    int totalW = btnW * 4 + 8 * 3;  // 4 buttons + 8 px gaps
-    int startX = (d.width() - totalW) / 2;
-    int gap = 8;
-    drawSquareButton(startX + 0 * (btnW + gap), y, btnW, btnH, relayGet(RELAY_PA_ARM), "ARM");
-    drawSquareButton(startX + 1 * (btnW + gap), y, btnW, btnH, relayGet(RELAY_PA_REMOTE), "PA");
-    drawSquareButton(startX + 2 * (btnW + gap), y, btnW, btnH, relayGet(RELAY_TRX_REMOTE), "TRX");
-    drawSquareButton(startX + 3 * (btnW + gap), y, btnW, btnH, relayGet(RELAY_SPARE), "SP");
-
-    // Arm block reason under the buttons, so the cause is readable at the PLC.
-    d.fillRect(0, y + btnH + 4, d.width(), 14, 0x000000);
-    d.setTextDatum(top_center);
-    d.setTextSize(1);
-    d.setTextColor(0xFFFF80);
-    d.drawString(arm::blockReason(armEval, enabled), d.width() / 2, y + btnH + 6);
+    ui::paint(M5StamPLC.Display, uiModel(), painter);
 }
 
 static void handleButtons() {
@@ -618,7 +562,7 @@ void loop() {
         }
     }
 
-    // 6. Local LCD indicator lights.
+    // 6. Local LCD (repaints only what changed).
     uiRender();
 
     delay(LOOP_DELAY_MS);  // ~20 Hz poll; keeps CPU cool vs. a tight 10 ms loop

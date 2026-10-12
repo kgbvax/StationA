@@ -68,6 +68,10 @@ HAL (M5StamPLC) → relays; and relays read back → main.cpp → MQTT.
    handlers, the front-panel buttons/LCD, and the `/meta` + `/state` publishers.
 1a. `src/arm.h` — the pa-arm interlock: input feed handlers, gate evaluation
    (hazard vs readiness), relay 1 drive + readback check.
+1b. `src/ui.h` — front-panel LCD drawing: pure `ui::Model` → `ui::paint`
+   (repaints only what changed). `tools/lcd-preview/render.sh` renders it on the
+   desktop (SDL2 + the M5GFX that `pio run` fetched) to
+   `tools/lcd-preview/out/sheet.png` — no hardware, no flash.
 2. `src/mqtt_slot.h` — `SlotMqtt`: one MQTT connection per slot, each with its
    own **LWT** on its own `<slot>/status`. A per-slot connect hook runs in the
    same call as the dial, so the pa-arm input subscriptions are never skipped. Two slots ⇒ two connections, so a PLC
@@ -90,8 +94,14 @@ are supervised by their `/status` LWT ∧ `device_online`. The Ultrabeam gates
 apply only while `ant-switch.selected == ULTRABEAM_PORT` (`port4`).
 
 **Front panel:** A = arm permit toggle (published retained to `pa-arm/cmd`;
-never forces the relay), B = PA remote-on, C = TRX remote-on. The LCD header
-shows ARMED / PERMIT / BLOCKED and the block reason under the relay lights.
+never forces the relay), B = PA remote-on, C = TRX remote-on. The LCD is three
+columns, each centred over its button (`ui::BTN_CX` in `src/ui.h` if the case
+puts the buttons elsewhere): **PA TX enable** (big word = permit ON/OFF,
+sub-state ARMED / WAIT / BLOCKED, tile colour green / amber / red-for-fault /
+grey), **PA power**, **TRX power**. Each column ends in a key badge (`A turn
+off`) saying what that press does now. A strip across the top gives the
+interlock summary (`gates clear` or the block reason) and the link (MQTT /
+WiFi / no link). Relay 2 (spare) is not shown.
 
 **Fail-safe-open:** relay 1 is energized ONLY to arm. Power loss, PLC crash, or
 any safety failure de-energizes it → open → PA disabled. On cold boot

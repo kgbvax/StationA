@@ -168,13 +168,13 @@ static const int BAND_EDGES_COUNT = sizeof(BAND_EDGES) / sizeof(BAND_EDGES[0]);
 #define META_REFRESH_MS 300000
 
 // --- local display / buttons -----------------------------------------------
-// The M5 Stamp PLC has a 240x135 LCD and three front-panel buttons (A/B/C).
-// We render indicator lights for the relay states and use B/C as local toggles.
+// The M5 Stamp PLC has a 240x135 LCD and three front-panel buttons (A/B/C), one
+// screen column over each: A = PA TX enable (arm permit), B = PA power, C = TRX
+// power. See src/ui.h.
 //
-// UI_REFRESH_MS was lowered to keep the LCD cool: the display redraw is the
-// most expensive operation in the loop, and a 1 Hz refresh is plenty for a
-// relay-state dashboard. Buttons are sampled at the main loop cadence below.
-#define UI_REFRESH_MS      1000  // display redraw cadence, ms
+// ui::paint repaints only the parts of the screen that changed, so a fast check
+// cadence costs nothing while the state is steady and a button press shows at once.
+#define UI_REFRESH_MS      100   // display state check cadence, ms
 #define UI_BTN_DEBOUNCE_MS 150   // minimum time between button actions, ms
 
 // --- pa-arm state publish cadence -------------------------------------------
