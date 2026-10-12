@@ -14,11 +14,11 @@
 # listen.
 #
 # Usage:
-#   ./deploy.sh                       # deploy to default host "shari"
-#   SSH_HOST=pi@shari.local ./deploy.sh
+#   ./deploy.sh                       # deploy to default host "scmino"
+#   SSH_HOST=io@192.168.1.139 ./deploy.sh   # shari
 #
 # Configurable via environment variables (with defaults):
-#   SSH_HOST        SSH target            (default: 192.168.1.139)
+#   SSH_HOST        SSH target            (default: 192.168.1.178, scmino)
 #   SSH_USER        SSH user              (default: io)  [used only if SSH_HOST has no user@]
 #   SERVICE_NAME    systemd service name  (default: wrc-rotator-bridge)
 #   SERVICE_USER    system user to run as (default: wrc-rotator-bridge)
@@ -33,11 +33,12 @@
 #   PSTROTATOR_BIND      pstrotator.bind    (default: 0.0.0.0)
 #   PSTROTATOR_PORT      pstrotator.port    (default: 12040)
 #   LOCATION        location value         (default: bauwagen)  [published in /meta]
-#   HOST_NAME       host value             (default: shari)     [published in /meta]
+#   HOST_NAME       host value             (default: scmino)     [published in /meta]
 #   DEVICE_MODEL    device.model value     (default: Yaesu G-450DC)
 #   DEVICE_LINK     device.link value      (default: ethernet)
 #   LOG_LEVEL       log.level value        (default: info)
-#   MQTT_BROKER     mqtt.broker value      (default: tcp://127.0.0.1:1883)
+#   MQTT_BROKER     mqtt.broker value      (default: tcp://192.168.1.50:1883, the live HA broker;
+#                                           127.0.0.1 on scmino is the not-yet-used mirror)
 #   MQTT_SITE       mqtt.site              (default: muehle)
 #   MQTT_STATION    mqtt.station           (default: hf)
 #   MQTT_SLOT       mqtt.slot              (default: rotator)
@@ -57,7 +58,7 @@
 set -euo pipefail
 
 # --- configuration ----------------------------------------------------------
-SSH_HOST="${SSH_HOST:-192.168.1.139}"
+SSH_HOST="${SSH_HOST:-192.168.1.178}"
 SSH_USER="${SSH_USER:-io}"
 SERVICE_NAME="${SERVICE_NAME:-wrc-rotator-bridge}"
 SERVICE_USER="${SERVICE_USER:-wrc-rotator-bridge}"
@@ -76,11 +77,11 @@ PSTROTATOR_ENABLED="${PSTROTATOR_ENABLED:-true}"
 PSTROTATOR_BIND="${PSTROTATOR_BIND:-0.0.0.0}"
 PSTROTATOR_PORT="${PSTROTATOR_PORT:-12040}"
 LOCATION="${LOCATION:-bauwagen}"
-HOST_NAME="${HOST_NAME:-shari}"
+HOST_NAME="${HOST_NAME:-scmino}"
 DEVICE_MODEL="${DEVICE_MODEL:-Yaesu G-450DC}"
 DEVICE_LINK="${DEVICE_LINK:-ethernet}"
 LOG_LEVEL="${LOG_LEVEL:-info}"
-MQTT_BROKER="${MQTT_BROKER:-tcp://127.0.0.1:1883}"
+MQTT_BROKER="${MQTT_BROKER:-tcp://192.168.1.50:1883}"
 MQTT_SITE="${MQTT_SITE:-muehle}"
 MQTT_STATION="${MQTT_STATION:-hf}"
 MQTT_SLOT="${MQTT_SLOT:-rotator}"

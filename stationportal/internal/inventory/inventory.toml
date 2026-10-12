@@ -241,7 +241,7 @@ address   = "muehle/hf/rotator"
 component = "wrc-rotator-bridge"
 device    = "Yaesu G-450DC via AF6SA WRC"
 link      = "websocket (192.168.1.108)"
-host      = "shari"
+host      = "scmino"
 
 [[slot]]
 address   = "muehle/hf/tuner"
@@ -361,7 +361,7 @@ slots = ["muehle/hf/pa"]
 name  = "wrc-rotator-bridge"
 path  = "wrc-rotator-bridge/"
 kind  = "bridge"
-host  = "shari"
+host  = "scmino"
 unit  = "wrc-rotator-bridge"
 ports = "7373/tcp, 12040/udp"
 slots = ["muehle/hf/rotator"]

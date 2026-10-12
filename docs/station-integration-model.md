@@ -809,7 +809,7 @@ muehle/host/scmino      # Debian 12 arm64 box, taking over shari's role
 |---|---|---|
 | PA bridge (+ ACOM telemetry) | `hf/pa` | `shari` |
 | Tuner bridge | `hf/tuner` | `shari` |
-| HF rotator bridge (AF6SA WRC) | `hf/rotator` | `shari` |
+| HF rotator bridge (AF6SA WRC) | `hf/rotator` | `scmino` |
 | Antenna controller bridge (Ultrabeam) | `hf/ant-ctrl` | `shari` |
 | UHF pan/tilt head bridge (`pelcobridge2`) | `uhf/rotator` (PTS-303Z/3050DZ) | `shack-pc` |
 | Sat rotator bridge (`spid-ercm-rotator-bridge`) | `uhf/az-rotator`, `uhf/el-rotator` | `shari` |

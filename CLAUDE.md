@@ -69,7 +69,7 @@ and `go work sync` operate over the whole workspace at once.
 | `muehle/hf/pa-arm` | m5stamp-hf-ctrl | M5 Stamp PLC #1 — PA arm relay (relay 1), wifi |
 | `muehle/hf/antenna-select` | antennaselect | logic slot — no device (runs on shari) |
 | `muehle/hf/pa` | acom1200s-pa-bridge | ACOM 1200S, serial (`set_power`/RTS removed; `power` is telemetry only) |
-| `muehle/hf/rotator` | wrc-rotator-bridge | Yaesu G-450DC via AF6SA WRC, websocket |
+| `muehle/hf/rotator` | wrc-rotator-bridge | Yaesu G-450DC via AF6SA WRC, websocket — on scmino since 2026-10-12 (GS-232 :7373 / PstRotator :12040 moved with it) |
 | `muehle/hf/tuner` | atr1k-tuner-bridge | ATR-1000 ATU, wifi (binary WebSocket) |
 | `muehle/hf/spots` | logger-spot-bridge | DXLog/Log4OM broadcasts (LAN-wide UDP) → operator-keyed station feed (role `bandmap`; systemd service on shari since 2026-09-16) |
 | `muehle/hf/beam-steer` | beamsteer | logic slot — no device (runs on shari); logger PstRotator UDP :12050 → `hf/rotator` + `hf/ant-ctrl` direction |
@@ -95,7 +95,7 @@ resources** — `ant/ultrabeam` (port 3), `ant/fan-dipole` 80/40 (port 6),
 ## shari — the deployment target
 
 All services run on shari, a Raspberry Pi at `192.168.1.139` — except
-flexbridge (since 2026-10-12), vhfcam-restream (since 2026-09-30), the station Mosquitto mirror, the
+flexbridge and wrc-rotator-bridge (since 2026-10-12), vhfcam-restream (since 2026-09-30), the station Mosquitto mirror, the
 hf_console web channel `hf-console-web` (:8091), testui (:8090) and the landing
 page stationportal (:80) (all since 2026-10-02) and ultrabridge (:8080, RCU-06
 FTDI cable on scmino's USB; since 2026-10-09), which run on **scmino** (`192.168.1.178`, Raspberry Pi CM5, same `ssh io@` access).

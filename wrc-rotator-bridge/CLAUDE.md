@@ -133,7 +133,9 @@ See `../docs/conventions/config-and-secrets.md` for the full convention.
 
 ## Deployment
 
-Target: Raspberry Pi (`shari`, `192.168.1.139`, user `io`).
+Target: Raspberry Pi `scmino` (`192.168.1.178`, user `io`) since 2026-10-12; was `shari`.
+The GS-232 server (:7373 TCP) and PSTRotator listener (:12040 UDP) moved with it: rotator-control
+software must point at scmino, not shari.
 
 ```bash
 ./deploy.sh              # cross-compile, ship, install as a hardened systemd service
