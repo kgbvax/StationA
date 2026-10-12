@@ -305,6 +305,17 @@ void main() {
   });
 
   group('Fault history', () {
+    test('pa-arm block is a transition, not a fault; error still is', () {
+      final store = BusStore();
+      store.setPaArm(enabled: true, armed: false, block: 'band change settling');
+      store.setPaArm(enabled: false, armed: false, block: 'permit off');
+      expect(store.faultHistory, isEmpty);
+
+      store.setPaArm(enabled: true, armed: false, block: 'radio offline', error: 'radio offline');
+      expect(store.faultHistory.single.address, 'muehle/hf/pa-arm');
+      expect(store.faultHistory.single.text, 'RADIO OFFLINE');
+    });
+
     test('records a PA fault with error text', () {
       final store = BusStore();
       store.setPaFault(error: 'HOT SWITCHING ATTEMPT');

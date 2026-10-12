@@ -9,6 +9,7 @@ import '../../mqtt/mqtt_service.dart';
 import '../../store/wiring.dart';
 import '../theme.dart';
 import 'card_container.dart';
+import 'pa_arm_row.dart';
 import 'pulsing_amber_button.dart';
 import 'status_pill.dart';
 
@@ -191,6 +192,10 @@ class _PaPanelState extends State<PaPanel> with SingleTickerProviderStateMixin {
                   ),
                 ],
               ),
+              const SizedBox(height: 10),
+              // The arm interlock gates the PA's key line — it belongs with
+              // the amp, and a blocked arm is otherwise invisible (not a fault).
+              const PaArmRow(),
             ],
           ),
         ],

@@ -105,6 +105,20 @@ extension BusStoreFixtures on BusStore {
     });
   }
 
+  /// Populate the PLC #1 pa-arm slot with the firmware's /state shape
+  /// (m5stamp-hf-ctrl API §4): `block`/`error` omitted when empty.
+  void setPaArm({bool? enabled = true, bool? armed = true, String block = '', String error = ''}) {
+    applyStatus('muehle/hf/pa-arm', 'online');
+    applyState('muehle/hf/pa-arm', {
+      'ts': 123456,
+      'enabled': ?enabled,
+      'armed': ?armed,
+      'device_online': true,
+      if (block.isNotEmpty) 'block': block,
+      if (error.isNotEmpty) 'error': error,
+    });
+  }
+
   /// Populate the rotator slot at a given azimuth.
   void setRotator({double az = 0.0, double? targetAz, bool moving = false}) {
     setOnline('muehle/hf/rotator');

@@ -99,9 +99,9 @@ String switchSetPaPayload(String onOff) => cmdPayload('set_pa', onOff);
 String switchSetTrxPayload(String onOff) => cmdPayload('set_trx', onOff);
 
 // pa-arm.set_enabled value is a **string** "true" / "false".
-// No console UI publishes this today (the PA ARM panel was removed — arm
-// stays sequencer/automation-owned), but the payload contract is kept here
-// with the rest of the slot vocabulary.
+// It sets the arm *permit* only (PLC #1 firmware gates still decide the
+// relay). Published retained by the PA card's confirm-gated ARM PERMIT
+// button (pa_arm_row.dart), by powerseq and by PLC front-panel button A.
 String paArmPayload(bool enabled) =>
     cmdPayload('set_enabled', enabled ? 'true' : 'false');
 

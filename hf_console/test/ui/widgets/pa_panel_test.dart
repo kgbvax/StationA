@@ -2,11 +2,16 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hf_console/store/bus_store.dart';
 import 'package:hf_console/ui/widgets/pa_panel.dart';
+import 'package:hf_console/ui/widgets/status_pill.dart';
 import '../../support/fake_mqtt_service.dart';
 import '../../support/fixtures.dart';
 import '../../support/test_harness.dart';
 
 void main() {
+  // The PA's own liveness lives in the header pill; the arm row below the
+  // meters carries a separate OFFLINE tag for the pa-arm slot.
+  Finder inPill(Finder f) => find.descendant(of: find.byType(StatusPill), matching: f);
+
   group('PaPanel', () {
     testWidgets('shows OFFLINE when bridge is down', (tester) async {
       final store = BusStore();
@@ -14,7 +19,7 @@ void main() {
       await tester.pumpWidget(TestHarness(store: store, mqtt: mqtt, child: const PaPanel()));
       await tester.pumpAndSettle();
 
-      expect(find.textContaining('OFFLINE'), findsOneWidget);
+      expect(inPill(find.textContaining('OFFLINE')), findsOneWidget);
       expect(find.text('OPERATE'), findsOneWidget);
       expect(find.widgetWithText(ElevatedButton, 'OPERATE'), findsOneWidget);
     });
@@ -29,7 +34,7 @@ void main() {
 
       // Regular operate/standby shows just the pill name — no suffix.
       expect(find.text('ACOM 1200S'), findsOneWidget);
-      expect(find.textContaining('OFFLINE'), findsNothing);
+      expect(inPill(find.textContaining('OFFLINE')), findsNothing);
     });
 
     testWidgets('shows human-readable PA error in tag', (tester) async {
