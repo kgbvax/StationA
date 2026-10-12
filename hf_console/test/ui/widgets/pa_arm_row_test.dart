@@ -96,58 +96,29 @@ void main() {
       expect(store.faultHistory, isEmpty);
     });
 
-    testWidgets('granting the permit asks first, then publishes retained', (tester) async {
+    testWidgets('one tap grants the permit, retained, no dialog', (tester) async {
       final (_, mqtt) = await pump(tester, (s) => s.setPaArm(enabled: false, armed: false, block: 'permit off'));
       expect(find.text('PERMIT OFF'), findsOneWidget);
 
       await tester.tap(find.text('ARM PERMIT'));
       await tester.pumpAndSettle();
-      expect(find.text('Grant arm permit?'), findsOneWidget);
-      expect(mqtt.publishes, isEmpty);
 
-      await tester.tap(find.text('GRANT'));
-      await tester.pumpAndSettle();
-
+      expect(find.byType(AlertDialog), findsNothing);
       expect(mqtt.publishes.single.topic, 'muehle/hf/pa-arm/cmd');
       expect(mqtt.publishes.single.payload, contains('"set_enabled"'));
       expect(mqtt.publishes.single.payload, contains('"true"'));
       expect(mqtt.publishes.single.retain, isTrue);
     });
 
-    testWidgets('cancel publishes nothing', (tester) async {
+    testWidgets('one tap revokes the permit', (tester) async {
       final (_, mqtt) = await pump(tester, (s) => s.setPaArm(enabled: true, armed: true));
 
       await tester.tap(find.text('ARM PERMIT'));
       await tester.pumpAndSettle();
-      expect(find.text('Revoke arm permit?'), findsOneWidget);
-      await tester.tap(find.text('Cancel'));
-      await tester.pumpAndSettle();
 
-      expect(mqtt.publishes, isEmpty);
-    });
-
-    testWidgets('revoke publishes set_enabled false', (tester) async {
-      final (_, mqtt) = await pump(tester, (s) => s.setPaArm(enabled: true, armed: true));
-
-      await tester.tap(find.text('ARM PERMIT'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('REVOKE'));
-      await tester.pumpAndSettle();
-
+      expect(find.byType(AlertDialog), findsNothing);
       expect(mqtt.publishes.single.payload, contains('"false"'));
       expect(mqtt.publishes.single.retain, isTrue);
-    });
-
-    testWidgets('no publish if the slot drops while the dialog is open', (tester) async {
-      final (store, mqtt) = await pump(tester, (s) => s.setPaArm(enabled: false, armed: false, block: 'permit off'));
-
-      await tester.tap(find.text('ARM PERMIT'));
-      await tester.pumpAndSettle();
-      store.setBridgeOffline('muehle/hf/pa-arm');
-      await tester.tap(find.text('GRANT'));
-      await tester.pumpAndSettle();
-
-      expect(mqtt.publishes, isEmpty);
     });
 
     testWidgets('unknown permit disables the toggle', (tester) async {

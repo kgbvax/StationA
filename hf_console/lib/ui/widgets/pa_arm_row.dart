@@ -17,10 +17,9 @@ const _slot = 'muehle/hf/pa-arm';
 /// waiting for RX) is shown here only and never enters the fault history;
 /// `error` (the fault subset) reaches FAULTS through the store as usual.
 ///
-/// The ARM PERMIT button only sets the permit (`set_enabled`, retained) —
-/// it never forces the relay; every firmware gate still applies. It asks for
-/// confirmation because the permit is a sequencer-owned safety input
-/// (powerseq STOP retracts it) and a stray tap must not change it.
+/// The ARM PERMIT button toggles the permit (`set_enabled`, retained) in one
+/// tap, like PLC front-panel button A — no confirmation. It never forces the
+/// relay; every firmware gate still applies.
 class PaArmRow extends StatelessWidget {
   const PaArmRow({super.key});
 
@@ -44,41 +43,11 @@ class PaArmRow extends StatelessWidget {
     // Unknown permit: no definite toggle target, so no command (R4.4).
     final canToggle = online && enabled != null;
 
-    Future<void> togglePermit() async {
-      final grant = !enabled!;
-      final ok = await showDialog<bool>(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          title: Text(grant ? 'Grant arm permit?' : 'Revoke arm permit?',
-              style: AppTheme.mono(14, weight: FontWeight.w700)),
-          content: Text(grant
-              ? 'The PLC arms the PA once every interlock gate is clear '
-                  'and the radio is in RX. The permit is retained on the bus.'
-              : 'The PLC opens the PA arm relay. The PA cannot transmit '
-                  'until the permit is granted again (console, PLC button A '
-                  'or START STATION).'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(false),
-              child: const Text('Cancel'),
-            ),
-            ElevatedButton(
-              style: grant ? AppTheme.actionButton(active: true) : AppTheme.actionButton(danger: true),
-              onPressed: () => Navigator.of(ctx).pop(true),
-              child: Text(grant ? 'GRANT' : 'REVOKE'),
-            ),
-          ],
-        ),
-      );
-      if (ok != true) return;
-      // Re-check after the dialog: the link or slot may have dropped while
-      // it was open.
-      if (!context.mounted) return;
-      final now = context.read<BusStore>();
-      if (!((now.slots[_slot]?.isOnline ?? false) && now.linkUp)) return;
+    void togglePermit() {
+      if (!canToggle) return;
       mqtt.publish(
         cmdTopic('hf/pa-arm'),
-        paArmPayload(grant),
+        paArmPayload(!enabled),
         retain: cmdRetain[_slot]!,
       );
     }
