@@ -176,19 +176,19 @@ func TestRadioLinkRespondingDeploySkew(t *testing.T) {
 	ts := now.Format(time.RFC3339)
 
 	// Old bridge: no radio_responding field, freq present -> responding.
-	o.apply(testCfg("").TopicRadio, []byte(`{"freq_hz":437775000,"device_online":true,"ts":"` + ts + `"}`))
+	o.apply(testCfg("").TopicRadio, []byte(`{"freq_hz":437775000,"device_online":true,"ts":"`+ts+`"}`))
 	if !o.RadioLink().Responding {
 		t.Error("old-bridge freq presence should map to Responding")
 	}
 
 	// Old bridge, freq omitted (standby) -> not responding.
-	o.apply(testCfg("").TopicRadio, []byte(`{"device_online":true,"ts":"` + ts + `"}`))
+	o.apply(testCfg("").TopicRadio, []byte(`{"device_online":true,"ts":"`+ts+`"}`))
 	if o.RadioLink().Responding {
 		t.Error("old-bridge omitted freq should clear Responding")
 	}
 
 	// New bridge: radio_responding drives the bit regardless of freq.
-	o.apply(testCfg("").TopicRadio, []byte(`{"freq_hz":437775000,"device_online":true,"radio_responding":false,"ts":"` + ts + `"}`))
+	o.apply(testCfg("").TopicRadio, []byte(`{"freq_hz":437775000,"device_online":true,"radio_responding":false,"ts":"`+ts+`"}`))
 	if o.RadioLink().Responding {
 		t.Error("bridge-published radio_responding=false overridden by freq presence")
 	}

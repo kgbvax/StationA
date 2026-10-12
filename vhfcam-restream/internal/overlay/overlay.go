@@ -62,8 +62,8 @@ type satReading struct {
 	downlinkHz *int64 // OscarWatch's radio-corrected (Doppler-applied) frequencies
 	uplinkHz   *int64
 	tracking   bool
-	online   bool
-	at       time.Time
+	online     bool
+	at         time.Time
 }
 
 // satNameMax bounds the burned-in satellite name so a long catalogue name can
@@ -133,19 +133,19 @@ func (o *Overlay) Start(ctx context.Context) error {
 func (o *Overlay) apply(topic string, payload []byte) {
 	cfg := o.cfgFn()
 	var m struct {
-		Az               *float64 `json:"az"`
-		El               *float64 `json:"el"`
-		DeviceOnline     bool     `json:"device_online"`
-		FreqHz           *int64   `json:"freq_hz"`
-		SessionState     *string  `json:"session_state"`
-		AudioDemand      *bool    `json:"audio_demand"`
-		RadioResponding  *bool    `json:"radio_responding"`
-		SatName          *string  `json:"sat_name"`
-		RangeKm          *float64 `json:"range_km"`
-		DownlinkHz       *int64   `json:"downlink_hz"`
-		UplinkHz         *int64   `json:"uplink_hz"`
-		Tracking         bool     `json:"tracking"`
-		Ts               string   `json:"ts"`
+		Az              *float64 `json:"az"`
+		El              *float64 `json:"el"`
+		DeviceOnline    bool     `json:"device_online"`
+		FreqHz          *int64   `json:"freq_hz"`
+		SessionState    *string  `json:"session_state"`
+		AudioDemand     *bool    `json:"audio_demand"`
+		RadioResponding *bool    `json:"radio_responding"`
+		SatName         *string  `json:"sat_name"`
+		RangeKm         *float64 `json:"range_km"`
+		DownlinkHz      *int64   `json:"downlink_hz"`
+		UplinkHz        *int64   `json:"uplink_hz"`
+		Tracking        bool     `json:"tracking"`
+		Ts              string   `json:"ts"`
 	}
 	if err := json.Unmarshal(payload, &m); err != nil {
 		o.log.Warn("overlay: bad state payload", "topic", topic, "err", err)
@@ -421,11 +421,11 @@ func (o *Overlay) connectLoop(ctx context.Context) {
 	opts := pahomqtt.NewClientOptions().
 		AddBroker(cfg.MQTTBroker).
 		SetClientID(fmt.Sprintf("%s-%s-%s-overlay", cfg.Site, cfg.Station, cfg.Slot)).
-		SetKeepAlive(30 * time.Second).
+		SetKeepAlive(30*time.Second).
 		SetCleanSession(true).
 		SetAutoReconnect(true).
 		SetConnectRetry(true).
-		SetConnectRetryInterval(10 * time.Second).
+		SetConnectRetryInterval(10*time.Second).
 		SetWill(statusTopic, "offline", 0, true).
 		SetOnConnectHandler(o.onConnect).
 		SetConnectionLostHandler(func(_ pahomqtt.Client, err error) {
@@ -453,7 +453,10 @@ func (o *Overlay) onConnect(c pahomqtt.Client) {
 	cfg := o.cfgFn()
 	o.setUp(true)
 	o.log.Info("overlay: mqtt connected", "broker", cfg.MQTTBroker)
-	subs := []struct{ topic string; h pahomqtt.MessageHandler }{
+	subs := []struct {
+		topic string
+		h     pahomqtt.MessageHandler
+	}{
 		{cfg.TopicAZ, o.stateHandler()},
 		{cfg.TopicEL, o.stateHandler()},
 		{cfg.TopicRadio, o.stateHandler()},

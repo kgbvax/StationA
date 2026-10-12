@@ -97,10 +97,10 @@ type Session struct {
 	opts SessionOptions
 	log  *slog.Logger
 
-	demands  chan demand
-	audioCh  chan audioReq
-	stopped  chan struct{}
-	runDone  chan struct{}
+	demands chan demand
+	audioCh chan audioReq
+	stopped chan struct{}
+	runDone chan struct{}
 
 	mu           sync.Mutex
 	snap         Snapshot
@@ -396,58 +396,58 @@ func (s *Session) Run(ctx context.Context) error {
 			}
 			s.ensureAudio()
 
-			case ar := <-s.audioCh:
-				s.mu.Lock()
-				s.audioDemand = ar.on
-				s.snap.AudioDemand = ar.on
-				s.mu.Unlock()
-				s.notify()
-				ar.err <- nil
-				if ar.on {
-					// The audio demand holds the session open; audio_on is
-					// heartbeat-refreshed by the consumer and expires via the
-					// TTL — a dead consumer never pins the radio (KTD-2).
-					stopIdle()
-					stopAudioTTL()
-					audioTTLTimer = time.NewTimer(s.opts.AudioDemandTTL)
-					audioTTLC = audioTTLTimer.C
-					if s.live() {
-						s.ensureAudio()
-					}
-				} else {
-					stopAudioTTL()
-					if s.live() {
-						s.mu.Lock()
-						c := s.client
-						s.mu.Unlock()
-						if c != nil {
-							c.CloseAudio()
-						}
-					}
-					if s.live() {
-						stopIdle()
-						idleTimer = time.NewTimer(s.opts.IdleTimeout)
-						idleC = idleTimer.C
-					}
+		case ar := <-s.audioCh:
+			s.mu.Lock()
+			s.audioDemand = ar.on
+			s.snap.AudioDemand = ar.on
+			s.mu.Unlock()
+			s.notify()
+			ar.err <- nil
+			if ar.on {
+				// The audio demand holds the session open; audio_on is
+				// heartbeat-refreshed by the consumer and expires via the
+				// TTL — a dead consumer never pins the radio (KTD-2).
+				stopIdle()
+				stopAudioTTL()
+				audioTTLTimer = time.NewTimer(s.opts.AudioDemandTTL)
+				audioTTLC = audioTTLTimer.C
+				if s.live() {
+					s.ensureAudio()
 				}
-
-			case <-audioTTLC:
-				// Audio demand expired without a refreshing audio_on: close
-				// the audio stream and release the session to the idle clock.
-				s.mu.Lock()
-				s.audioDemand = false
-				s.snap.AudioDemand = false
-				c := s.client
-				s.mu.Unlock()
-				s.notify()
-				if c != nil {
-					c.CloseAudio()
+			} else {
+				stopAudioTTL()
+				if s.live() {
+					s.mu.Lock()
+					c := s.client
+					s.mu.Unlock()
+					if c != nil {
+						c.CloseAudio()
+					}
 				}
 				if s.live() {
 					stopIdle()
 					idleTimer = time.NewTimer(s.opts.IdleTimeout)
 					idleC = idleTimer.C
 				}
+			}
+
+		case <-audioTTLC:
+			// Audio demand expired without a refreshing audio_on: close
+			// the audio stream and release the session to the idle clock.
+			s.mu.Lock()
+			s.audioDemand = false
+			s.snap.AudioDemand = false
+			c := s.client
+			s.mu.Unlock()
+			s.notify()
+			if c != nil {
+				c.CloseAudio()
+			}
+			if s.live() {
+				stopIdle()
+				idleTimer = time.NewTimer(s.opts.IdleTimeout)
+				idleC = idleTimer.C
+			}
 
 		case <-idleC:
 			// Live without work: disconnect politely (R1) — the radio's

@@ -7,9 +7,9 @@ wiring map and band policy, and emits one intent stream to the `ant-switch`.
 
 Runs on `shari`.
 
-> **Status: implemented, pending deployment.** The Go service — config, MQTT wiring,
-> the decision logic with unit tests, and the `deploy.sh` + hardened systemd unit — is
-> in place and passes `go test ./...`. What remains is the on-device deploy to `shari`.
+> **Status: live on `shari`** as the systemd unit `antenna-select` (deployed and
+> grounding observed live since 2026-08-28; manual stand-down 2026-09-23; `unknown`-band
+> hold 2026-10-10).
 
 ---
 
@@ -59,11 +59,6 @@ The seed config bakes the Mühle wiring map and band policy (matching
 (`resource`/`slot`/`atu_bands`) are env-overridable. After the first deploy, edit
 `/etc/antenna-select/config.toml` on the device — `deploy.sh` will not overwrite it.
 
-## Still to do
-
-- On-device deploy + smoke test against the live broker on `shari`.
-
----
 
 ## The rules that must not drift (integration model)
 
@@ -87,7 +82,10 @@ The seed config bakes the Mühle wiring map and band policy (matching
 - **Idle overrides operator** (§10): station-inactive beats an operator port hold
   (walk-away safety). Documented, deliberate. The `manual` stand-down is the one
   exception (tier 0 > tier 1): idle grounding is itself an automatic move.
-- **Unmatched bands** (incl. 160m) → `fallback` (fan-dipole via ATU; §11 item #1).
+- **Unmatched bands** (incl. 160m, `gen`) → `fallback` (fan-dipole via ATU; §11 item #1).
+  `""` and `unknown` are flexbridge's no-information states (reconnect, 0 Hz) — they
+  hold the last selection and emit no PA/tuner follow; resolving `unknown` to the
+  fallback flipped the antenna on every radio reconnect (fixed 2026-10-10).
 
 ---
 

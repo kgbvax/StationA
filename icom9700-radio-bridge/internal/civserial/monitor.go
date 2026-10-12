@@ -77,9 +77,9 @@ type Monitor struct {
 	on         bool
 	stopped    bool
 	st         State
-	port       Port   // set while a session is connected
-	poll       *poll  // in-flight meter read
-	answerSeen bool   // inbound CI-V evidence since the last tick
+	port       Port  // set while a session is connected
+	poll       *poll // in-flight meter read
+	answerSeen bool  // inbound CI-V evidence since the last tick
 	deafStreak int
 	deafWarnAt time.Time
 

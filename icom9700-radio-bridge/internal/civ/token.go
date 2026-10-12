@@ -91,8 +91,8 @@ func (a *authState) buildLogin(localSID, remoteSID uint32, username, password st
 	p := header([]byte{0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, localSID, remoteSID)
 	p = append(p,
 		0x00, 0x00, 0x00, 0x70, // payloadsize (BE, wfview qToBigEndian)
-		0x01,                    // requestreply
-		0x00,                    // requesttype: login
+		0x01,                                // requestreply
+		0x00,                                // requesttype: login
 		byte(a.authSeq>>8), byte(a.authSeq), // innerseq, BE
 		0x00, 0x00, // unused
 		byte(a.tokRequest), byte(a.tokRequest>>8)) // tokrequest, LE
@@ -112,15 +112,15 @@ func (a *authState) buildAuth(localSID, remoteSID uint32, magic byte) []byte {
 	p := header([]byte{0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, localSID, remoteSID)
 	p = append(p,
 		0x00, 0x00, 0x00, 0x30, // payloadsize
-		0x01,                    // requestreply
-		magic,                   // requesttype: 0x02 first / 0x05 renewal / 0x01 deauth
+		0x01,                                // requestreply
+		magic,                               // requesttype: 0x02 first / 0x05 renewal / 0x01 deauth
 		byte(a.authSeq>>8), byte(a.authSeq), // innerseq, BE
-		0x00, 0x00,                      // unused
+		0x00, 0x00, // unused
 		byte(a.tokRequest), byte(a.tokRequest>>8), // tokrequest
 		byte(a.token), byte(a.token>>8), byte(a.token>>16), byte(a.token>>24)) // token, LE
-	p = append(p, make([]byte, 4)...)           // 0x20 authstartid (unused)
-	p = append(p, 0x07, 0x98)                   // 0x24 resetcap (BE, wfview constant)
-	p = append(p, make([]byte, 26)...)          // 0x26..0x3f
+	p = append(p, make([]byte, 4)...)  // 0x20 authstartid (unused)
+	p = append(p, 0x07, 0x98)          // 0x24 resetcap (BE, wfview constant)
+	p = append(p, make([]byte, 26)...) // 0x26..0x3f
 	a.authSeq++
 	return p
 }
@@ -134,14 +134,14 @@ func (a *authState) buildRequestStream(localSID, remoteSID uint32, username stri
 	p := header([]byte{0x90, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, localSID, remoteSID)
 	p = append(p,
 		0x00, 0x00, 0x00, 0x80, // payloadsize
-		0x01, 0x03,              // requestreply / requesttype: stream request
+		0x01, 0x03, // requestreply / requesttype: stream request
 		byte(a.authSeq>>8), byte(a.authSeq), // innerseq, BE
-		0x00, 0x00,                // unused
+		0x00, 0x00, // unused
 		byte(a.tokRequest), byte(a.tokRequest>>8), // tokrequest
 		byte(a.token), byte(a.token>>8), byte(a.token>>16), byte(a.token>>24)) // token, LE
-	p = append(p, a.guidBytes()...)    // 0x20 client identity (GUID)
-	p = append(p, make([]byte, 16)...) // 0x30
-	p = append(p, clientName32()...)   // 0x40 client computer name
+	p = append(p, a.guidBytes()...)      // 0x20 client identity (GUID)
+	p = append(p, make([]byte, 16)...)   // 0x30
+	p = append(p, clientName32()...)     // 0x40 client computer name
 	p = append(p, passcode(username)...) // 0x60
 	p = append(p,
 		0x01,       // 0x70 rxenable

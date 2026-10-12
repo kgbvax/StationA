@@ -28,7 +28,9 @@ func (f *fakeRec) Start() (recorder.Status, error) {
 func (f *fakeRec) Stop() (recorder.Status, error) {
 	return recorder.Status{State: recorder.Finalizing}, f.stopErr
 }
-func (f *fakeRec) Status() recorder.Status { return recorder.Status{Enabled: true, State: recorder.Idle} }
+func (f *fakeRec) Status() recorder.Status {
+	return recorder.Status{Enabled: true, State: recorder.Idle}
+}
 func (f *fakeRec) List() (recorder.Listing, error) {
 	return recorder.Listing{Files: []recorder.File{{Name: "vhfcam_2026-09-25T1812Z.mp4", Size: 3}}}, nil
 }

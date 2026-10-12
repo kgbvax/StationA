@@ -28,15 +28,15 @@ type reloadFn func() (config.Config, error)
 // stalls. A SIGHUP (Reload) re-reads the config and restarts the stream — that
 // is how the sd/hd profile is switched live.
 type Supervisor struct {
-	log      *slog.Logger
-	reload   reloadFn
-	cfgPtr   atomic.Pointer[config.Config]
-	reloadC  chan struct{}          // SIGHUP tokens
-	wake     chan struct{}          // wakes the backoff wait when a reload lands
-	reloadHit atomic.Bool            // set when the current run ended due to a reload
+	log       *slog.Logger
+	reload    reloadFn
+	cfgPtr    atomic.Pointer[config.Config]
+	reloadC   chan struct{}                      // SIGHUP tokens
+	wake      chan struct{}                      // wakes the backoff wait when a reload lands
+	reloadHit atomic.Bool                        // set when the current run ended due to a reload
 	curCancel atomic.Pointer[context.CancelFunc] // cancels the in-flight run, if any
-	lastBeat  atomic.Int64           // unix nanos of the last ffmpeg progress line
-	enabledFn func() bool            // nil = always enabled (sink gate)
+	lastBeat  atomic.Int64                       // unix nanos of the last ffmpeg progress line
+	enabledFn func() bool                        // nil = always enabled (sink gate)
 	argsFn    func(*config.Config, string) []string
 }
 

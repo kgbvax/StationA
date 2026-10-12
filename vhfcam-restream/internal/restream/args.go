@@ -148,7 +148,7 @@ func youtubeOutputArgs(cfg *config.Config, transcode bool) []string {
 		"-stats_period", "5",
 		"-progress", "pipe:1",
 		"-f", "flv",
-		cfg.YouTubeURL + "/" + cfg.StreamKey,
+		cfg.YouTubeURL+"/"+cfg.StreamKey,
 	)
 }
 

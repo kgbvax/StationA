@@ -343,11 +343,11 @@ func ComputeStatus(bridgeOnline, sessionHeld, radioReady, audioStream bool) Radi
 // Server serves the player page, the vendored hls.js, the HLS files the
 // preview ffmpeg writes, and the radio control endpoints.
 type Server struct {
-	cfgFn   func() config.PreviewConfig
-	log     *slog.Logger
-	cmdFn   func(action string) error // publishes a radio /cmd; nil = controls disabled
-	statusFn func() RadioStatus       // nil = /api/radio-status reports zeros
-	rec      Recordings               // nil = recording endpoints return 503
+	cfgFn    func() config.PreviewConfig
+	log      *slog.Logger
+	cmdFn    func(action string) error // publishes a radio /cmd; nil = controls disabled
+	statusFn func() RadioStatus        // nil = /api/radio-status reports zeros
+	rec      Recordings                // nil = recording endpoints return 503
 }
 
 // Recordings is the recorder as the HTTP layer sees it (a fake in tests).

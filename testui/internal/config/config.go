@@ -39,7 +39,7 @@ type Config struct {
 	// Site is the MQTT site prefix to subscribe (<site>/#) and the guard prefix for
 	// publish requests from the browser (the UI may only publish under <site>/).
 	Site string `toml:"site"`
-	MQTT MQTT  `toml:"mqtt"`
+	MQTT MQTT   `toml:"mqtt"`
 }
 
 // Default returns the built-in defaults. ClientID is a fixed, distinct value (not

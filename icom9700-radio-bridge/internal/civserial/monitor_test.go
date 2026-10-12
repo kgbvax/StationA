@@ -98,12 +98,12 @@ type sharness struct {
 func newSH(t *testing.T, failReadsAfter int) *sharness {
 	h := &sharness{t: t, failReadsAfter: failReadsAfter}
 	m, err := New(Options{
-		Device:        "/dev/serial/by-id/test",
-		Baud:          115200,
-		MeterInterval: 20 * time.Millisecond,
-		ReplyWait:     120 * time.Millisecond,
+		Device:           "/dev/serial/by-id/test",
+		Baud:             115200,
+		MeterInterval:    20 * time.Millisecond,
+		ReplyWait:        120 * time.Millisecond,
 		ReconnectSpacing: 20 * time.Millisecond,
-		PowerFrame:    []byte{0x1a, 0x05, 0x02, 0x01},
+		PowerFrame:       []byte{0x1a, 0x05, 0x02, 0x01},
 		Open: func() (Port, error) {
 			h.openMu.Lock()
 			h.openN++

@@ -200,10 +200,10 @@ func TestRadioStatusEndpointZeroesWithoutSource(t *testing.T) {
 // feature exists for).
 func TestComputeStatusTable(t *testing.T) {
 	cases := []struct {
-		name                            string
-		bridge, held, ready, audio      bool
+		name                                          string
+		bridge, held, ready, audio                    bool
 		wantBridge, wantSession, wantRadio, wantAudio string
-		wantHintSub                     string
+		wantHintSub                                   string
 	}{
 		{"all good", true, true, true, true, "on", "on", "on", "on", ""},
 		{"bridge down", false, false, false, false, "off", "unk", "unk", "off", "bridge unreachable"},

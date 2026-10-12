@@ -47,11 +47,11 @@ func main() {
 	// Resolve effective config: defaults < config file < explicitly-set flags.
 	cfg := loadConfig(*configPath, isFlagSet("config"))
 	applyFlagOverrides(&cfg, map[string]string{
-		"http":          *httpAddr,
-		"site":          *site,
-		"mqtt-broker":   *mqttBroker,
+		"http":           *httpAddr,
+		"site":           *site,
+		"mqtt-broker":    *mqttBroker,
 		"mqtt-client-id": *mqttClientID,
-		"mqtt-user":     *mqttUser,
+		"mqtt-user":      *mqttUser,
 	})
 
 	if cfg.MQTT.Broker == "" {
@@ -85,8 +85,8 @@ func main() {
 	}
 
 	srv := &http.Server{
-		Addr:    cfg.HTTPAddr,
-		Handler: web.New(tree, mqttClient, cfg.Site).Routes(),
+		Addr:              cfg.HTTPAddr,
+		Handler:           web.New(tree, mqttClient, cfg.Site).Routes(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 

@@ -19,7 +19,7 @@ import (
 // Config is the vhfcam-restream configuration.
 type Config struct {
 	// Source URLs (rtsps). Quality selects which one feeds the stream.
-	SourceURL   string `toml:"source_url"`   // SD stream
+	SourceURL   string `toml:"source_url"`    // SD stream
 	SourceHDURL string `toml:"source_hd_url"` // HD stream; empty -> sd only
 	Quality     string `toml:"quality"`       // "sd" | "hd"; switched live via SIGHUP
 
@@ -103,7 +103,7 @@ type OverlayConfig struct {
 	MQTTUser     string `toml:"mqtt_user"`
 	MQTTPassword string `toml:"mqtt_password"` // secret; VHFCAM_MQTT_PASSWORD env overrides
 
-	Site    string `toml:"site"`    // status/state plane prefix
+	Site    string `toml:"site"` // status/state plane prefix
 	Station string `toml:"station"`
 	Slot    string `toml:"slot"`
 
@@ -112,9 +112,9 @@ type OverlayConfig struct {
 	TopicRadio string `toml:"topic_radio"` // radio state carrying freq_hz/tx
 	TopicSat   string `toml:"topic_sat"`   // sat-track state carrying sat_name/range_km
 
-	Dir         string  `toml:"dir"`         // drawtext textfile directory (tmpfs on the device)
+	Dir         string  `toml:"dir"`           // drawtext textfile directory (tmpfs on the device)
 	StaleAfterS float64 `toml:"stale_after_s"` // max age of a snapshot's own ts before the field renders --- (rotators are change-only publishers; liveness comes from /status + device_online, not republish cadence)
-	RefreshS    float64 `toml:"refresh_s"` // writer cadence (seconds, may be fractional)
+	RefreshS    float64 `toml:"refresh_s"`     // writer cadence (seconds, may be fractional)
 
 	FontFile string `toml:"fontfile"`
 	FontSize int    `toml:"font_size"`
@@ -154,23 +154,23 @@ func Default() Config {
 			MaxTotalGB: 5,
 		},
 		Overlay: OverlayConfig{
-			Enabled:      false,
-			Logo:         "/run/vhfcam-restream/dragon.png",
-			MQTTBroker:   "tcp://192.168.1.50:1883",
-			MQTTUser:     "hf",
-			Site:         "muehle",
-			Station:      "hf",
-			Slot:         "vhfcam",
-			TopicAZ:      "muehle/uhf/az-rotator/state",
-			TopicEL:      "muehle/uhf/el-rotator/state",
-			TopicRadio:   "muehle/uhf/radio/state",
-			TopicSat:     "muehle/uhf/sat-track/state",
-			Dir:          "/run/vhfcam-restream/overlay",
-			StaleAfterS:  3600,
-			RefreshS:     0.5,
-			FontFile:     "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-			FontSize:     28,
-			Margin:       12,
+			Enabled:     false,
+			Logo:        "/run/vhfcam-restream/dragon.png",
+			MQTTBroker:  "tcp://192.168.1.50:1883",
+			MQTTUser:    "hf",
+			Site:        "muehle",
+			Station:     "hf",
+			Slot:        "vhfcam",
+			TopicAZ:     "muehle/uhf/az-rotator/state",
+			TopicEL:     "muehle/uhf/el-rotator/state",
+			TopicRadio:  "muehle/uhf/radio/state",
+			TopicSat:    "muehle/uhf/sat-track/state",
+			Dir:         "/run/vhfcam-restream/overlay",
+			StaleAfterS: 3600,
+			RefreshS:    0.5,
+			FontFile:    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+			FontSize:    28,
+			Margin:      12,
 		},
 		LogLevel: "info",
 	}

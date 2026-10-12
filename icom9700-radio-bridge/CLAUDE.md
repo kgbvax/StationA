@@ -162,9 +162,11 @@ See `../docs/conventions/config-and-secrets.md` for the full convention.
 
 ## Deployment
 
-Target: Raspberry Pi (current address `192.168.1.140`, user `io`) — **must be
-the Pi holding the radio's USB CI-V serial cable** (the serial monitor has no
-network path; host choice is an open operator decision, .139 vs .140).
+Target: `shari` at `192.168.1.139` (wired; `deploy.sh` default, user `io`).
+`192.168.1.140` is the same Pi's wifi address — do not deploy over it (scp
+timeouts). The serial monitor needs the radio's USB CI-V cable on the deploy
+host; `serial.device` is currently unset on shari, so the monitor and
+`power_on` are disabled there.
 
 ```bash
 ./deploy.sh              # cross-compile, ship, install as a hardened systemd service
