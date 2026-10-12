@@ -9,22 +9,23 @@
 # SupplementaryGroups, or udev rule, and can run under a strict sandbox.
 #
 # Usage:
-#   ./deploy.sh                       # deploy to default host "shari"
-#   SSH_HOST=pi@shari.local ./deploy.sh
+#   ./deploy.sh                       # deploy to default host "scmino"
+#   SSH_HOST=io@192.168.1.139 ./deploy.sh   # shari
 #
 # Configurable via environment variables (with defaults):
-#   SSH_HOST        SSH target            (default: 192.168.1.139)
+#   SSH_HOST        SSH target            (default: 192.168.1.178, scmino)
 #   SSH_USER        SSH user              (default: io)  [used only if SSH_HOST has no user@]
 #   SERVICE_NAME    systemd service name  (default: flexbridge)
 #   SERVICE_USER    system user to run as (default: flexbridge)
 #   INSTALL_DIR     remote install dir    (default: /opt/flexbridge)
 #   BINARY          binary name           (default: flexbridge)
 #
-#   RADIO_HOST      radio_host value        (default: empty -> UDP autodiscovery)
+#   RADIO_HOST      radio_host value        (default: 192.168.1.118, the FLEX-8400; empty -> UDP autodiscovery)
 #   RADIO_SERIAL    radio_serial value      (default: empty -> first discovered radio)
 #   LOCATION        location value          (default: bauwagen)  [published in /meta]
 #   LOG_LEVEL       log.level value         (default: info)
-#   MQTT_BROKER     mqtt.broker value       (default: tcp://127.0.0.1:1883)
+#   MQTT_BROKER     mqtt.broker value       (default: tcp://192.168.1.50:1883, the live HA broker;
+#                                            127.0.0.1 on scmino is the not-yet-used mirror)
 #   MQTT_SITE       mqtt.site               (default: muehle)
 #   MQTT_STATION    mqtt.station            (default: hf)
 #   MQTT_SLOT       mqtt.slot               (default: radio)
@@ -44,7 +45,7 @@
 set -euo pipefail
 
 # --- configuration ----------------------------------------------------------
-SSH_HOST="${SSH_HOST:-192.168.1.139}"
+SSH_HOST="${SSH_HOST:-192.168.1.178}"
 SSH_USER="${SSH_USER:-io}"
 SERVICE_NAME="${SERVICE_NAME:-flexbridge}"
 SERVICE_USER="${SERVICE_USER:-flexbridge}"
@@ -55,11 +56,11 @@ ENV_FILE="${ENV_FILE:-${CONFIG_DIR}/flexbridge.env}"
 BINARY="${BINARY:-flexbridge}"
 PKG="./cmd/flexbridge"
 
-RADIO_HOST="${RADIO_HOST:-}"
+RADIO_HOST="${RADIO_HOST:-192.168.1.118}"
 RADIO_SERIAL="${RADIO_SERIAL:-}"
 LOCATION="${LOCATION:-bauwagen}"
 LOG_LEVEL="${LOG_LEVEL:-info}"
-MQTT_BROKER="${MQTT_BROKER:-tcp://127.0.0.1:1883}"
+MQTT_BROKER="${MQTT_BROKER:-tcp://192.168.1.50:1883}"
 MQTT_SITE="${MQTT_SITE:-muehle}"
 MQTT_STATION="${MQTT_STATION:-hf}"
 MQTT_SLOT="${MQTT_SLOT:-radio}"

@@ -166,7 +166,9 @@ See `../docs/conventions/config-and-secrets.md` for the full convention.
 
 ## Deployment
 
-Target: Raspberry Pi (`shari`, `192.168.1.139`, user `io`).
+Target: Raspberry Pi `scmino` (`192.168.1.178`, user `io`) since 2026-10-12; was `shari`.
+The radio is reached over the LAN (TCP 4992, radio at `192.168.1.118`), so the bridge is
+host-agnostic. Never run two instances: they share the MQTT client_id and kick each other off.
 
 ```bash
 ./deploy.sh              # cross-compile, ship, install as a hardened systemd service

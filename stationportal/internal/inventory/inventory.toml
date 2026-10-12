@@ -192,7 +192,7 @@ address   = "muehle/hf/radio"
 component = "flexbridge"
 device    = "FlexRadio FLEX-8400"
 link      = "ethernet (192.168.1.118)"
-host      = "shari"
+host      = "scmino"
 
 [[slot]]
 address   = "muehle/hf/ant-ctrl"
@@ -336,7 +336,7 @@ note      = "Interactive TUI — only on the bus while it runs"
 name  = "flexbridge"
 path  = "flexbridge/"
 kind  = "bridge"
-host  = "shari"
+host  = "scmino"
 unit  = "flexbridge"
 slots = ["muehle/hf/radio"]
 

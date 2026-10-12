@@ -124,14 +124,14 @@ lets the TOML config be less sensitive while the password stays confined to its 
 cd /path/to/project && ./deploy.sh
 
 # Check logs
-ssh io@192.168.1.139 'journalctl -u flexbridge -f'
+ssh io@192.168.1.178 'journalctl -u flexbridge -f'
 ssh io@192.168.1.139 'journalctl -u ultrabridge -f'
 
 # Restart a service
-ssh io@192.168.1.139 'sudo systemctl restart flexbridge'
+ssh io@192.168.1.178 'sudo systemctl restart flexbridge'
 
 # Check status
-ssh io@192.168.1.139 'sudo systemctl status flexbridge'
+ssh io@192.168.1.178 'sudo systemctl status flexbridge'
 
 # Edit config on device (seed-once, safe to change here)
 ssh io@192.168.1.139 'sudo -e /etc/ultrabridge/config.toml'

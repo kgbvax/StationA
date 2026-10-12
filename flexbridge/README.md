@@ -123,11 +123,11 @@ make test        # unit tests (no network)
 ```bash
 ./deploy.sh                 # build + ship + install as a hardened systemd service
                             # (generates the unit inline, seeds config once)
-ssh io@192.168.1.139 'journalctl -u flexbridge -f'
+ssh io@192.168.1.178 'journalctl -u flexbridge -f'
 ```
 
 `deploy.sh` cross-compiles for arm64, copies the binary + generated systemd
-unit + seed config to `shari` (192.168.1.139), and installs the service as a
+unit + seed config to `scmino` (192.168.1.178), and installs the service as a
 dedicated `flexbridge` user with a hardened unit (`ProtectSystem=strict`, no
 capabilities). The binary uses only high ports (>1024), so it runs fully
 unprivileged. Set the MQTT password on the device in

@@ -815,7 +815,7 @@ muehle/host/scmino      # Debian 12 arm64 box, taking over shari's role
 | Sat rotator bridge (`spid-ercm-rotator-bridge`) | `uhf/az-rotator`, `uhf/el-rotator` | `shari` |
 | IC-9700 radio bridge (`icom9700-radio-bridge`) | `uhf/radio` (Icom IC-9700) | `shari` |
 | Sat-track bridge (`oscarwatch-sattrack-bridge`) | `uhf/sat-track` (OscarWatch on shack-pc) | `scmino` |
-| FLEX bridge (flexbridge) | `hf/radio` | `shari` |
+| FLEX bridge (flexbridge) | `hf/radio` | `scmino` |
 | HF antenna-select reconciler | `hf/antenna-select` | `shari` |
 | Logging | subscriber, no slot | `shari` |
 | Shelly power bridge (`shelly-power-bridge`) | `power/master`, `power/psu-13v8` | `shari` |
@@ -1077,8 +1077,7 @@ surfaced by those answers:
 1. ~~**160 m antenna.**~~ Resolved: no dedicated 160 m antenna. Unmatched bands (incl.
    160 m) fall back to the fan-dipole via the ATU (`band_policy.fallback` in
    `antenna-select`). Revisit if a resonant 160 m antenna is added.
-2. ~~**`shack-pc` roles.**~~ Resolved: shari hosts flexbridge (FLEX bridge), the reconciler,
-   and logging. shack-pc hosts pelcobridge2 only — the interactive TUI + rotctld
+2. ~~**`shack-pc` roles.**~~ Resolved: shari hosts the reconciler and logging (flexbridge moved to scmino 2026-10-12). shack-pc hosts pelcobridge2 only — the interactive TUI + rotctld
    server for the PTS-303Z/3050DZ pan/tilt head (`uhf/rotator`). (The former
    PSTRotator/SPID attribution of shack-pc was stale: the SPID/GS-500 sat-ops
    rotators are fronted by `spid-ercm-rotator-bridge` on shari, as
