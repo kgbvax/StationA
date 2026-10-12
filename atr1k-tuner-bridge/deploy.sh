@@ -12,11 +12,11 @@
 # for the outbound WS+MQTT.
 #
 # Usage:
-#   ./deploy.sh                       # deploy to default host "shari"
-#   SSH_HOST=pi@shari.local ./deploy.sh
+#   ./deploy.sh                       # deploy to default host "scmino"
+#   SSH_HOST=io@192.168.1.139 ./deploy.sh   # shari
 #
 # Configurable via environment variables (with defaults):
-#   SSH_HOST        SSH target            (default: 192.168.1.139)
+#   SSH_HOST        SSH target            (default: 192.168.1.178, scmino)
 #   SSH_USER        SSH user              (default: io)  [used only if SSH_HOST has no user@]
 #   SERVICE_NAME    systemd service name  (default: atr1k-tuner-bridge)
 #   SERVICE_USER    system user to run as (default: atr1k-tuner-bridge)
@@ -25,11 +25,12 @@
 #
 #   TUNER_URL       tuner.url value       (default: ws://192.168.1.20:60001)
 #   LOCATION        location value        (default: bauwagen)  [published in /meta]
-#   HOST_NAME       host value            (default: shari)     [published in /meta]
+#   HOST_NAME       host value            (default: scmino)     [published in /meta]
 #   DEVICE_MODEL    device.model value    (default: ATR-1000)
 #   DEVICE_LINK     device.link value     (default: wifi)
 #   LOG_LEVEL       log.level value       (default: info)
-#   MQTT_BROKER     mqtt.broker value     (default: tcp://127.0.0.1:1883)
+#   MQTT_BROKER     mqtt.broker value     (default: tcp://192.168.1.50:1883, the live broker;
+#                     127.0.0.1 on scmino is the not-yet-used mirror)
 #   MQTT_SITE       mqtt.site             (default: muehle)
 #   MQTT_STATION    mqtt.station           (default: hf)
 #   MQTT_SLOT       mqtt.slot             (default: tuner)
@@ -48,7 +49,7 @@
 set -euo pipefail
 
 # --- configuration ----------------------------------------------------------
-SSH_HOST="${SSH_HOST:-192.168.1.139}"
+SSH_HOST="${SSH_HOST:-192.168.1.178}"
 SSH_USER="${SSH_USER:-io}"
 SERVICE_NAME="${SERVICE_NAME:-atr1k-tuner-bridge}"
 SERVICE_USER="${SERVICE_USER:-atr1k-tuner-bridge}"
@@ -61,11 +62,11 @@ PKG="./cmd/atr1k-tuner-bridge"
 
 TUNER_URL="${TUNER_URL:-ws://192.168.1.20:60001}"
 LOCATION="${LOCATION:-bauwagen}"
-HOST_NAME="${HOST_NAME:-shari}"
+HOST_NAME="${HOST_NAME:-scmino}"
 DEVICE_MODEL="${DEVICE_MODEL:-ATR-1000}"
 DEVICE_LINK="${DEVICE_LINK:-wifi}"
 LOG_LEVEL="${LOG_LEVEL:-info}"
-MQTT_BROKER="${MQTT_BROKER:-tcp://127.0.0.1:1883}"
+MQTT_BROKER="${MQTT_BROKER:-tcp://192.168.1.50:1883}"
 MQTT_SITE="${MQTT_SITE:-muehle}"
 MQTT_STATION="${MQTT_STATION:-hf}"
 MQTT_SLOT="${MQTT_SLOT:-tuner}"
@@ -194,7 +195,7 @@ RemoveIPC=true
 CapabilityBoundingSet=
 AmbientCapabilities=
 ReadWritePaths=/var/lib/${SERVICE_NAME}
-# Resource ceilings. shari is the single shared host running every station
+# Resource ceilings. scmino/shari are shared hosts running many station
 # service; a leaky bridge with no limit could OOM the whole Pi and take the
 # entire station down.
 MemoryMax=256M

@@ -32,5 +32,5 @@ API: `docs/beam-steer-mqtt-api.md`.
 
 ```bash
 go test ./...
-./deploy.sh        # seed-once config at /etc/beamsteer/config.toml, systemd unit "beamsteer"
+./deploy.sh        # (host: scmino since 2026-10-12; PstRotator UDP :12050 moved with it) seed-once config at /etc/beamsteer/config.toml, systemd unit "beamsteer"
 ```

@@ -34,7 +34,7 @@ separate per-component remotes to push to.
 | m5stamp-hf-ctrl | `m5stamp-hf-ctrl/` | M5 Stamp PLC #1 firmware → `hf/pa-arm` + `hf/switch` (PA/TRX remote-on + arm) |
 | m5stamp-pol-ctrl | `m5stamp-pol-ctrl/` | M5 Stamp PLC #2 firmware → `uhf/pol-ctrl` (X-Quad polarization, ESPHome) |
 | powerseq | `powerseq/` | Startup/shutdown sequencer → `hf/power-seq` (ordered, delay + liveness confirmations) |
-| antennaselect | `antennaselect/` | Antenna-selection reconciler (live on shari, unit `antenna-select`) |
+| antennaselect | `antennaselect/` | Antenna-selection reconciler (live on scmino since 2026-10-12, unit `antenna-select`) |
 | beamsteer | `beamsteer/` | Smart rotation → `hf/beam-steer`: PstRotator UDP emulator (:12050) for the contest logger; station behind → Ultrabeam 180° flip, outside both lobes → rotate to the cheaper lobe (±30°, bi-dir ±45° no flips); toggle = hf_console Ultrabeam `AUTO` |
 | hadiscovery | `hadiscovery/` | Home Assistant discovery consumer (reads `/meta` `expose`, renders HA discovery) |
 | pelcobridge2 | `pelcobridge2/` | UHF rotator TUI + rotctld server (Pelco-D/P pan/tilt head over RS-485) |
@@ -67,12 +67,12 @@ and `go work sync` operate over the whole workspace at once.
 | `muehle/hf/ant-switch` | waveshare_relay-antswitch-bridge | 1:6 antenna switch, wifi (ESPHome) |
 | `muehle/hf/switch` | m5stamp-hf-ctrl | M5 Stamp PLC #1 — PA/TRX remote-on relays (relays 3 & 4), wifi |
 | `muehle/hf/pa-arm` | m5stamp-hf-ctrl | M5 Stamp PLC #1 — PA arm relay (relay 1), wifi |
-| `muehle/hf/antenna-select` | antennaselect | logic slot — no device (runs on shari) |
+| `muehle/hf/antenna-select` | antennaselect | logic slot — no device (runs on scmino) |
 | `muehle/hf/pa` | acom1200s-pa-bridge | ACOM 1200S, serial (`set_power`/RTS removed; `power` is telemetry only) |
 | `muehle/hf/rotator` | wrc-rotator-bridge | Yaesu G-450DC via AF6SA WRC, websocket — on scmino since 2026-10-12 (GS-232 :7373 / PstRotator :12040 moved with it) |
-| `muehle/hf/tuner` | atr1k-tuner-bridge | ATR-1000 ATU, wifi (binary WebSocket) |
+| `muehle/hf/tuner` | atr1k-tuner-bridge | ATR-1000 ATU, wifi (binary WebSocket) — bridge on scmino since 2026-10-12 |
 | `muehle/hf/spots` | logger-spot-bridge | DXLog/Log4OM broadcasts (LAN-wide UDP) → operator-keyed station feed (role `bandmap`; systemd service on shari since 2026-09-16) |
-| `muehle/hf/beam-steer` | beamsteer | logic slot — no device (runs on shari); logger PstRotator UDP :12050 → `hf/rotator` + `hf/ant-ctrl` direction |
+| `muehle/hf/beam-steer` | beamsteer | logic slot — no device (runs on scmino); logger PstRotator UDP :12050 (logger must target scmino) → `hf/rotator` + `hf/ant-ctrl` direction |
 | `muehle/hf/power-seq` | powerseq | logic slot — no device (runs on shari); startup/shutdown sequencer |
 | `muehle/uhf/pol-ctrl` | m5stamp-pol-ctrl | M5 Stamp PLC #2 — X-Quad polarization (ESPHome), wifi |
 | `muehle/uhf/radio` | icom9700-radio-bridge | Icom IC-9700 — RS-BA1 LAN session carries RX audio capture (demand-driven) + read-only serial CI-V telemetry; no remote TX (2026-09 pivot) |
@@ -80,7 +80,7 @@ and `go work sync` operate over the whole workspace at once.
 | `muehle/uhf/az-rotator` | spid-ercm-rotator-bridge | SPID azimuth rotator, serial (Rot1Prog) — runs on shari with rotctld :4534 + PstRotator :12041; free motion, no arming gate |
 | `muehle/uhf/el-rotator` | spid-ercm-rotator-bridge | GS-500 elevation via ERC-M controller, serial (GS-232B) — same compound bridge as az-rotator (one process, two slots, per-axis device_online) |
 | `muehle/uhf/rotator` | pelcobridge2 | PTS-303Z/3050DZ pan/tilt head, RS-485 — interactive TUI on shack-pc (arming is manual, never remote) |
-| `muehle/hf/discovery` | hadiscovery | logic slot — no device (runs on shari); passive consumer of `/meta` |
+| `muehle/hf/discovery` | hadiscovery | logic slot — no device (runs on scmino); passive consumer of `/meta` |
 
 **Antennas are not slots.** `ant-ctrl` is the *controller* that tunes the Ultrabeam
 (canonical role `ant-ctrl`; the device name Ultrabeam RCU-06 lives in `/meta.device`,
@@ -95,7 +95,7 @@ resources** — `ant/ultrabeam` (port 3), `ant/fan-dipole` 80/40 (port 6),
 ## shari — the deployment target
 
 All services run on shari, a Raspberry Pi at `192.168.1.139` — except
-flexbridge and wrc-rotator-bridge (since 2026-10-12), vhfcam-restream (since 2026-09-30), the station Mosquitto mirror, the
+flexbridge, wrc-rotator-bridge, antenna-select, beamsteer, atr1k-tuner-bridge and hadiscovery (since 2026-10-12), vhfcam-restream (since 2026-09-30), the station Mosquitto mirror, the
 hf_console web channel `hf-console-web` (:8091), testui (:8090) and the landing
 page stationportal (:80) (all since 2026-10-02) and ultrabridge (:8080, RCU-06
 FTDI cable on scmino's USB; since 2026-10-09), which run on **scmino** (`192.168.1.178`, Raspberry Pi CM5, same `ssh io@` access).

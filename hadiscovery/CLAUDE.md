@@ -10,12 +10,12 @@ contain **zero HA knowledge**; hadiscovery is the single HA renderer of that neu
 surface (the same `expose` is reusable by InfluxDB / Node-RED / dashboards / Prometheus).
 `meta` is the single source of truth.
 
-Runs on `shari`.
+Runs on `scmino` (since 2026-10-12; was `shari`).
 
-> **Status: deployed and running on shari.** The Go service — config, neutral `expose`
+> **Status: deployed and running on scmino.** The Go service — config, neutral `expose`
 > parsing, the deterministic neutral→HA render, the discovery lifecycle engine, the MQTT
 > client, golden unit tests, `deploy.sh` + hardened systemd unit — is in place, passes
-> `go test ./... -race`, and is live on shari as the `hadiscovery` systemd service. Smoke
+> `go test ./... -race`, and is live on scmino as the `hadiscovery` systemd service. Smoke
 > against the live broker confirmed 22 rendered entities across 5 slots (`ant-ctrl`, `pa`,
 > `antenna-select`, `radio`, `discovery`) in the `homeassistant/#` tree. Remaining work is
 > in the **bridge repos**, not here: `radio` (flexbridge) still publishes `/meta` without an
@@ -51,17 +51,17 @@ go run ./cmd/hadiscovery -broker tcp://192.168.1.139:1883   # broker via flag
 | `docs/discovery-mqtt-api.md` | **authoritative** HA mapping + discovery topic layout + rebirth/removal |
 | `config.example.toml` | broker, site/station/slot, discovery prefix, location/host |
 
-## Deploying to shari
+## Deploying to scmino
 
 `deploy.sh` cross-compiles for `linux/arm64`, copies the binary + systemd unit + seed
-config to `shari`, and installs the `hadiscovery` service (seed-once; see
+config to `scmino`, and installs the `hadiscovery` service (seed-once; see
 `../docs/conventions/deployment.md`). Passive consumer — no serial, no HTTP, no listeners
 — so the unit carries no `DeviceAllow`/`SupplementaryGroups`.
 
 ```bash
-./deploy.sh                                      # defaults: shari, broker tcp://127.0.0.1:1883 (shack broker, loopback on shari)
+./deploy.sh                                      # defaults: scmino, broker tcp://192.168.1.50:1883 (live broker)
 MQTT_PASSWORD=... ./deploy.sh                    # seed the password on first deploy
-ssh io@192.168.1.139 'journalctl -u hadiscovery -f'
+ssh io@192.168.1.178 'journalctl -u hadiscovery -f'
 ```
 
 The seed config bakes broker/site/station/slot/discovery_prefix/location/host; the MQTT

@@ -9,18 +9,19 @@
 # See docs/discovery-mqtt-api.md.
 #
 # Usage:
-#   ./deploy.sh                       # deploy to default host "shari"
-#   SSH_HOST=pi@shari.local ./deploy.sh
+#   ./deploy.sh                       # deploy to default host "scmino"
+#   SSH_HOST=io@192.168.1.139 ./deploy.sh   # shari
 #
 # Configurable via environment variables (with defaults):
-#   SSH_HOST          SSH target            (default: 192.168.1.139)
+#   SSH_HOST          SSH target            (default: 192.168.1.178, scmino)
 #   SSH_USER          SSH user              (default: io)  [used only if SSH_HOST has no user@]
 #   SERVICE_NAME      systemd service name  (default: hadiscovery)
 #   SERVICE_USER      system user to run as (default: hadiscovery)
 #   INSTALL_DIR       remote install dir    (default: /opt/hadiscovery)
 #   BINARY            binary name           (default: hadiscovery)
 #
-#   MQTT_BROKER        mqtt.broker         value (default: tcp://127.0.0.1:1883)
+#   MQTT_BROKER        mqtt.broker         value (default: tcp://192.168.1.50:1883, the live broker;
+#                     127.0.0.1 on scmino is the not-yet-used mirror)
 #   MQTT_SITE          mqtt.site           value (default: muehle)
 #   MQTT_STATION       mqtt.station        value (default: hf)
 #   MQTT_SLOT          mqtt.slot           value (default: discovery)
@@ -28,7 +29,7 @@
 #   MQTT_PASSWORD      mqtt.password       value (default: empty -> set on device)
 #   DISCOVERY_PREFIX   mqtt.discovery_prefix value (default: homeassistant)
 #   LOCATION           location            value (default: bauwagen)  [published in /meta]
-#   HOST_NAME          host                value (default: shari)     [published in /meta]
+#   HOST_NAME          host                value (default: scmino)     [published in /meta]
 #   HA_AREA             area               value (default: Bauwagen)  [HA suggested_area]
 #
 # Configuration (including the MQTT password) lives in a single 0600 TOML file on the
@@ -40,7 +41,7 @@
 set -euo pipefail
 
 # --- configuration ----------------------------------------------------------
-SSH_HOST="${SSH_HOST:-192.168.1.139}"
+SSH_HOST="${SSH_HOST:-192.168.1.178}"
 SSH_USER="${SSH_USER:-io}"
 SERVICE_NAME="${SERVICE_NAME:-hadiscovery}"
 SERVICE_USER="${SERVICE_USER:-hadiscovery}"
@@ -50,7 +51,7 @@ CONFIG_FILE="${CONFIG_FILE:-${CONFIG_DIR}/config.toml}"
 BINARY="${BINARY:-hadiscovery}"
 PKG="./cmd/hadiscovery"
 
-MQTT_BROKER="${MQTT_BROKER:-tcp://127.0.0.1:1883}"
+MQTT_BROKER="${MQTT_BROKER:-tcp://192.168.1.50:1883}"
 MQTT_SITE="${MQTT_SITE:-muehle}"
 MQTT_STATION="${MQTT_STATION:-hf}"
 MQTT_SLOT="${MQTT_SLOT:-discovery}"
@@ -58,7 +59,7 @@ MQTT_USER="${MQTT_USER:-hf}"
 MQTT_PASSWORD="${MQTT_PASSWORD:-}"
 DISCOVERY_PREFIX="${DISCOVERY_PREFIX:-homeassistant}"
 LOCATION="${LOCATION:-bauwagen}"
-HOST_NAME="${HOST_NAME:-shari}"
+HOST_NAME="${HOST_NAME:-scmino}"
 # HA area every discovered device is suggested into when its own expose.device.area is unset.
 # Maps to HA's device-level `suggested_area`. Default "Bauwagen"; set to "" to suppress.
 HA_AREA="${HA_AREA:-Bauwagen}"

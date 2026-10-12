@@ -808,7 +808,7 @@ muehle/host/scmino      # Debian 12 arm64 box, taking over shari's role
 | Adapter / service | Fronts | Host |
 |---|---|---|
 | PA bridge (+ ACOM telemetry) | `hf/pa` | `shari` |
-| Tuner bridge | `hf/tuner` | `shari` |
+| Tuner bridge | `hf/tuner` | `scmino` |
 | HF rotator bridge (AF6SA WRC) | `hf/rotator` | `scmino` |
 | Antenna controller bridge (Ultrabeam) | `hf/ant-ctrl` | `shari` |
 | UHF pan/tilt head bridge (`pelcobridge2`) | `uhf/rotator` (PTS-303Z/3050DZ) | `shack-pc` |
@@ -816,13 +816,13 @@ muehle/host/scmino      # Debian 12 arm64 box, taking over shari's role
 | IC-9700 radio bridge (`icom9700-radio-bridge`) | `uhf/radio` (Icom IC-9700) | `shari` |
 | Sat-track bridge (`oscarwatch-sattrack-bridge`) | `uhf/sat-track` (OscarWatch on shack-pc) | `scmino` |
 | FLEX bridge (flexbridge) | `hf/radio` | `scmino` |
-| HF antenna-select reconciler | `hf/antenna-select` | `shari` |
+| HF antenna-select reconciler | `hf/antenna-select` | `scmino` |
 | Logging | subscriber, no slot | `shari` |
 | Shelly power bridge (`shelly-power-bridge`) | `power/master`, `power/psu-13v8` | `shari` |
 | M5 Stamp #1 firmware (`m5stamp-hf-ctrl`) | `hf/pa-arm`, `hf/switch` | embedded (M5 Stamp PLC) |
 | M5 Stamp #2 firmware | `uhf/pol-ctrl` | embedded (M5 Stamp PLC) |
 | Power sequencer (`powerseq`) | `hf/power-seq` | `shari` |
-| HA discovery bridge (optional, `hadiscovery`) | consumer of `meta`/`state`/`status` | `shari` |
+| HA discovery bridge (optional, `hadiscovery`) | consumer of `meta`/`state`/`status` | `scmino` |
 
 Embedded controllers collapse device, adapter, and host into one node and are the
 cheapest integration point on the station; the model treats them identically to a

@@ -227,7 +227,7 @@ address   = "muehle/hf/antenna-select"
 component = "antennaselect"
 device    = "logic slot"
 link      = "none"
-host      = "shari"
+host      = "scmino"
 
 [[slot]]
 address   = "muehle/hf/pa"
@@ -248,7 +248,7 @@ address   = "muehle/hf/tuner"
 component = "atr1k-tuner-bridge"
 device    = "ATR-1000 ATU"
 link      = "wifi, binary WebSocket (192.168.1.111)"
-host      = "shari"
+host      = "scmino"
 
 [[slot]]
 address   = "muehle/hf/spots"
@@ -262,7 +262,7 @@ address   = "muehle/hf/beam-steer"
 component = "beamsteer"
 device    = "logic slot — PstRotator UDP :12050"
 link      = "none"
-host      = "shari"
+host      = "scmino"
 
 [[slot]]
 address   = "muehle/hf/power-seq"
@@ -276,7 +276,7 @@ address   = "muehle/hf/discovery"
 component = "hadiscovery"
 device    = "logic slot — HA discovery from /meta"
 link      = "none"
-host      = "shari"
+host      = "scmino"
 
 [[slot]]
 address   = "muehle/hf/vhfcam"
@@ -370,7 +370,7 @@ slots = ["muehle/hf/rotator"]
 name  = "atr1k-tuner-bridge"
 path  = "atr1k-tuner-bridge/"
 kind  = "bridge"
-host  = "shari"
+host  = "scmino"
 unit  = "atr1k-tuner-bridge"
 slots = ["muehle/hf/tuner"]
 
@@ -431,7 +431,7 @@ slots = ["muehle/hf/spots"]
 name  = "antennaselect"
 path  = "antennaselect/"
 kind  = "logic"
-host  = "shari"
+host  = "scmino"
 unit  = "antenna-select"
 slots = ["muehle/hf/antenna-select"]
 
@@ -439,7 +439,7 @@ slots = ["muehle/hf/antenna-select"]
 name  = "beamsteer"
 path  = "beamsteer/"
 kind  = "logic"
-host  = "shari"
+host  = "scmino"
 unit  = "beamsteer"
 ports = "12050/udp"
 slots = ["muehle/hf/beam-steer"]
@@ -456,7 +456,7 @@ slots = ["muehle/hf/power-seq"]
 name  = "hadiscovery"
 path  = "hadiscovery/"
 kind  = "logic"
-host  = "shari"
+host  = "scmino"
 unit  = "hadiscovery"
 slots = ["muehle/hf/discovery"]
 

@@ -8,18 +8,19 @@
 # controller band-follow). See docs/antenna-select-mqtt-api.md.
 #
 # Usage:
-#   ./deploy.sh                       # deploy to default host "shari"
-#   SSH_HOST=pi@shari.local ./deploy.sh
+#   ./deploy.sh                       # deploy to default host "scmino"
+#   SSH_HOST=io@192.168.1.139 ./deploy.sh   # shari
 #
 # Configurable via environment variables (with defaults):
-#   SSH_HOST          SSH target            (default: 192.168.1.139)
+#   SSH_HOST          SSH target            (default: 192.168.1.178, scmino)
 #   SSH_USER          SSH user              (default: io)  [used only if SSH_HOST has no user@]
 #   SERVICE_NAME      systemd service name  (default: antenna-select)
 #   SERVICE_USER      system user to run as (default: antenna-select)
 #   INSTALL_DIR       remote install dir    (default: /opt/antenna-select)
 #   BINARY            binary name           (default: antennaselect)
 #
-#   MQTT_BROKER       mqtt.broker     value (default: tcp://127.0.0.1:1883)
+#   MQTT_BROKER       mqtt.broker     value (default: tcp://192.168.1.50:1883, the live broker;
+#                     127.0.0.1 on scmino is the not-yet-used mirror)
 #   MQTT_SITE         mqtt.site       value (default: muehle)
 #   MQTT_STATION      mqtt.station    value (default: hf)
 #   MQTT_SLOT         mqtt.slot       value (default: antenna-select)
@@ -27,7 +28,7 @@
 #   MQTT_PASSWORD     mqtt.password  value (default: empty -> auto-pulled on-device
 #                     from an existing hf service env, so a re-seed is self-sufficient)
 #   LOCATION          location       value (default: bauwagen)  [published in /meta]
-#   HOST_NAME         host           value (default: shari)     [published in /meta]
+#   HOST_NAME         host           value (default: scmino)     [published in /meta]
 #   BAND_FOLLOW_RESOURCE  band_follow.resource (default: ultrabeam; empty disables)
 #   BAND_FOLLOW_SLOT      band_follow.slot     (default: ant-ctrl)
 #   PA_FOLLOW_ENABLED     pa_follow.enabled   (default: true; set false to disable)
@@ -54,7 +55,7 @@
 set -euo pipefail
 
 # --- configuration ----------------------------------------------------------
-SSH_HOST="${SSH_HOST:-192.168.1.139}"
+SSH_HOST="${SSH_HOST:-192.168.1.178}"
 SSH_USER="${SSH_USER:-io}"
 SERVICE_NAME="${SERVICE_NAME:-antenna-select}"
 SERVICE_USER="${SERVICE_USER:-antenna-select}"
@@ -64,14 +65,14 @@ CONFIG_FILE="${CONFIG_FILE:-${CONFIG_DIR}/config.toml}"
 BINARY="${BINARY:-antennaselect}"
 PKG="./cmd/antennaselect"
 
-MQTT_BROKER="${MQTT_BROKER:-tcp://127.0.0.1:1883}"
+MQTT_BROKER="${MQTT_BROKER:-tcp://192.168.1.50:1883}"
 MQTT_SITE="${MQTT_SITE:-muehle}"
 MQTT_STATION="${MQTT_STATION:-hf}"
 MQTT_SLOT="${MQTT_SLOT:-antenna-select}"
 MQTT_USER="${MQTT_USER:-hf}"
 MQTT_PASSWORD="${MQTT_PASSWORD:-}"
 LOCATION="${LOCATION:-bauwagen}"
-HOST_NAME="${HOST_NAME:-shari}"
+HOST_NAME="${HOST_NAME:-scmino}"
 BAND_FOLLOW_RESOURCE="${BAND_FOLLOW_RESOURCE:-ultrabeam}"
 BAND_FOLLOW_SLOT="${BAND_FOLLOW_SLOT:-ant-ctrl}"
 PA_FOLLOW_ENABLED="${PA_FOLLOW_ENABLED:-true}"

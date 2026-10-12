@@ -9,11 +9,11 @@
 # docs/beam-steer-mqtt-api.md.
 #
 # Usage:
-#   ./deploy.sh                       # deploy to default host "shari"
-#   SSH_HOST=pi@shari.local ./deploy.sh
+#   ./deploy.sh                       # deploy to default host "scmino"
+#   SSH_HOST=io@192.168.1.139 ./deploy.sh   # shari
 #
 # Configurable via environment variables (with defaults):
-#   SSH_HOST          SSH target            (default: 192.168.1.139)
+#   SSH_HOST          SSH target            (default: 192.168.1.178, scmino)
 #   SSH_USER          SSH user              (default: io)  [used only if SSH_HOST has no user@]
 #   SERVICE_NAME      systemd service name  (default: beamsteer)
 #   SERVICE_USER      system user to run as (default: beamsteer)
@@ -21,7 +21,7 @@
 #   BINARY            binary name           (default: beamsteer)
 #
 #   MQTT_BROKER       mqtt.broker     value (default: tcp://192.168.1.50:1883 — the live
-#                     station broker; shari runs no mosquitto)
+#                     station broker)
 #   MQTT_SITE         mqtt.site       value (default: muehle)
 #   MQTT_STATION      mqtt.station    value (default: hf)
 #   MQTT_SLOT         mqtt.slot       value (default: beam-steer)
@@ -29,7 +29,7 @@
 #   MQTT_PASSWORD     mqtt.password   value (default: empty -> auto-pulled on-device
 #                     from an existing hf service env, so a re-seed is self-sufficient)
 #   LOCATION          location        value (default: bauwagen)  [published in /meta]
-#   HOST_NAME         host            value (default: shari)     [published in /meta]
+#   HOST_NAME         host            value (default: scmino)     [published in /meta]
 #   PST_PORT          pstrotator.port       (default: 12050; replies go to port+1)
 #   PST_REPLY         pstrotator.reply      (default: manual; or xml)
 #   LOBE_DEG          steer.lobe_deg        (default: 30)
@@ -45,7 +45,7 @@
 set -euo pipefail
 
 # --- configuration ----------------------------------------------------------
-SSH_HOST="${SSH_HOST:-192.168.1.139}"
+SSH_HOST="${SSH_HOST:-192.168.1.178}"
 SSH_USER="${SSH_USER:-io}"
 SERVICE_NAME="${SERVICE_NAME:-beamsteer}"
 SERVICE_USER="${SERVICE_USER:-beamsteer}"
@@ -62,7 +62,7 @@ MQTT_SLOT="${MQTT_SLOT:-beam-steer}"
 MQTT_USER="${MQTT_USER:-hf}"
 MQTT_PASSWORD="${MQTT_PASSWORD:-}"
 LOCATION="${LOCATION:-bauwagen}"
-HOST_NAME="${HOST_NAME:-shari}"
+HOST_NAME="${HOST_NAME:-scmino}"
 PST_PORT="${PST_PORT:-12050}"
 PST_REPLY="${PST_REPLY:-manual}"
 LOBE_DEG="${LOBE_DEG:-30}"

@@ -5,9 +5,9 @@ antennaselect is the **antenna-selection reconciler** for the HF station. It imp
 it subscribes to state (radio, station, switch, operator), applies a priority ladder over a
 wiring map and band policy, and emits one intent stream to the `ant-switch`.
 
-Runs on `shari`.
+Runs on `scmino` (since 2026-10-12; was `shari`).
 
-> **Status: live on `shari`** as the systemd unit `antenna-select` (deployed and
+> **Status: live on `scmino`** as the systemd unit `antenna-select` (deployed and
 > grounding observed live since 2026-08-28; manual stand-down 2026-09-23; `unknown`-band
 > hold 2026-10-10).
 
@@ -40,17 +40,17 @@ go run ./cmd/antennaselect -broker tcp://192.168.1.139:1883   # broker via flag
 The `[priority]` section in the example config is documentation only — the ladder order is
 fixed in code (`internal/reconcile`).
 
-## Deploying to shari
+## Deploying to scmino
 
 `deploy.sh` cross-compiles for `linux/arm64`, copies the binary + systemd unit + seed
-config to `shari`, and installs the `antenna-select` service (seed-once; see
+config to `scmino`, and installs the `antenna-select` service (seed-once; see
 `../docs/conventions/deployment.md`). antennaselect is pure logic over MQTT — no serial
 device, no HTTP server — so the unit carries no `DeviceAllow`/`SupplementaryGroups`.
 
 ```bash
-./deploy.sh                                      # defaults: shari, broker tcp://127.0.0.1:1883 (shack broker, loopback on shari)
+./deploy.sh                                      # defaults: scmino, broker tcp://192.168.1.50:1883 (live broker)
 MQTT_PASSWORD=... ./deploy.sh                    # seed the password on first deploy
-ssh io@192.168.1.139 'journalctl -u antenna-select -f'
+ssh io@192.168.1.178 'journalctl -u antenna-select -f'
 ```
 
 The seed config bakes the Mühle wiring map and band policy (matching
