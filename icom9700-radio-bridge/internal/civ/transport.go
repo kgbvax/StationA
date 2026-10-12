@@ -643,10 +643,18 @@ func (c *Client) renewToken() {
 	err := c.sendTrackedLocked(c.control, p)
 	c.wmu.Unlock()
 	if err == nil {
+		// Arm the deadline only when none is outstanding: the earliest
+		// unanswered renewal's deadline stands (a later renewal must not
+		// push it out), and there is only ever one timer for an answer to
+		// stop. Overwriting the field orphaned the previous timer, which
+		// then fired against a radio whose answer had merely arrived after
+		// the next renewal.
 		c.smu.Lock()
-		c.reauthDead = time.AfterFunc(c.opts.ReauthTimeout, func() {
-			c.lose(errors.New("civ: token renewal unanswered"))
-		})
+		if c.reauthDead == nil {
+			c.reauthDead = time.AfterFunc(c.opts.ReauthTimeout, func() {
+				c.lose(errors.New("civ: token renewal unanswered"))
+			})
+		}
 		c.smu.Unlock()
 	}
 	if !c.isDone() {

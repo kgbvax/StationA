@@ -36,11 +36,12 @@ type FakeRadio struct {
 	civClosed   int
 	renewed     int
 
-	dropNext    int  // drop the next N control datagrams from the client
-	refuseLogin bool // answer 0x60 with ff ff ff fe
-	busyLogin   bool // answer the login with the 20-byte 81 ff ff ff busy reject
-	refuseSess  bool // answer the stream request with 0x50 ff ff ff
-	silent      bool // stop answering entirely (session-loss rehearsal)
+	dropNext    int           // drop the next N control datagrams from the client
+	refuseLogin bool          // answer 0x60 with ff ff ff fe
+	busyLogin   bool          // answer the login with the 20-byte 81 ff ff ff busy reject
+	refuseSess  bool          // answer the stream request with 0x50 ff ff ff
+	silent      bool          // stop answering entirely (session-loss rehearsal)
+	renewDelay  time.Duration // answer 0x05 token renewals this late (slow-radio rehearsal)
 
 	// tx log of CI-V data packets sent to the client, by outer seq — the
 	// retransmit-serve path for rx-gap tests.
@@ -151,6 +152,14 @@ func (f *FakeRadio) civLog() [][]byte {
 	return out
 }
 
+// SetRenewDelay makes the fake answer 0x05 token renewals d late (the other
+// traffic is unaffected) — a slow or loaded radio.
+func (f *FakeRadio) SetRenewDelay(d time.Duration) {
+	f.mu.Lock()
+	f.renewDelay = d
+	f.mu.Unlock()
+}
+
 func (f *FakeRadio) SetSilent(v bool) {
 	f.mu.Lock()
 	f.silent = v
@@ -206,7 +215,8 @@ func (f *FakeRadio) handle(stream string, conn *net.UDPConn, from *net.UDPAddr, 
 	refuseSess := f.refuseSess
 
 	var reply []byte
-	var posts [][]byte // datagrams sent right after reply (0xa8 + conninfo)
+	var replyDelay time.Duration // >0: send reply asynchronously this late
+	var posts [][]byte           // datagrams sent right after reply (0xa8 + conninfo)
 	switch {
 	case stream == "control" && prefixEqual(pkt, sigAreYouThere):
 		reply = header(sigIAmHere, radioSID, binary.BigEndian.Uint32(pkt[8:12]))
@@ -281,6 +291,9 @@ func (f *FakeRadio) handle(stream string, conn *net.UDPConn, from *net.UDPAddr, 
 		ans[21] = magic
 		binary.LittleEndian.PutUint32(ans[48:52], 0)
 		reply = ans
+		if magic == 0x05 {
+			replyDelay = f.renewDelay
+		}
 	case stream == "control" && pkt[0] == 0x90 && prefixEqual(pkt, sigRequestAnswer):
 		// Request-stream: the radio answers with the 0x50 status (error 0
 		// = granted, carrying the CI-V/audio ports; 0xffffffff = refused).
@@ -336,7 +349,10 @@ func (f *FakeRadio) handle(stream string, conn *net.UDPConn, from *net.UDPAddr, 
 	}
 	f.mu.Unlock()
 
-	if reply != nil {
+	if reply != nil && replyDelay > 0 {
+		r := reply
+		time.AfterFunc(replyDelay, func() { _ = f.sendTo(conn, from, r) })
+	} else if reply != nil {
 		_ = f.sendTo(conn, from, reply)
 	}
 	for _, p := range posts {

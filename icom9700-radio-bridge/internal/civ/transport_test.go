@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"net"
+	"strings"
 	"testing"
 	"time"
 )
@@ -388,6 +389,51 @@ func TestTxRetransmitServed(t *testing.T) {
 	}
 	if count < 3 {
 		t.Errorf("data packet seen %d times after retransmit request, want >= 3 (1 + two resent copies)", count)
+	}
+}
+
+// TestLateRenewalAnswerIsNotALoss: each renewal used to arm its own
+// reauthDead timer and overwrite the field without stopping the previous
+// one. An answer arriving after the NEXT renewal went out stopped only the
+// newest timer; the orphaned one fired "token renewal unanswered" against a
+// radio that had answered (the one-off TestOpenAudioFailureLeavesSessionAlive
+// failure under -race load). Answers here come 150 ms late — after the next
+// 100 ms renewal, well inside the 400 ms timeout.
+func TestLateRenewalAnswerIsNotALoss(t *testing.T) {
+	f := NewFakeRadio(t)
+	f.SetRenewDelay(150 * time.Millisecond)
+	o := fastOptions(f)
+	o.ReauthInterval = 100 * time.Millisecond
+	o.ReauthTimeout = 400 * time.Millisecond
+	cli := dialFake(t, f, o)
+
+	select {
+	case err := <-cli.Lost:
+		t.Fatalf("session lost although every renewal was answered: %v", err)
+	case <-time.After(1500 * time.Millisecond):
+	}
+	if _, _, _, _, renewals := f.counts(); renewals < 5 {
+		t.Errorf("renewals = %d in 1.5s at a 100ms cadence, want >= 5", renewals)
+	}
+}
+
+// TestUnansweredRenewalStillLoses: the deadline of the first outstanding
+// renewal must stand — later renewals must not push it out forever.
+func TestUnansweredRenewalStillLoses(t *testing.T) {
+	f := NewFakeRadio(t)
+	f.SetRenewDelay(time.Hour) // never answered within the test
+	o := fastOptions(f)
+	o.ReauthInterval = 100 * time.Millisecond
+	o.ReauthTimeout = 400 * time.Millisecond
+	cli := dialFake(t, f, o)
+
+	select {
+	case err := <-cli.Lost:
+		if err == nil || !strings.Contains(err.Error(), "token renewal unanswered") {
+			t.Fatalf("lost with %v, want token renewal unanswered", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("unanswered renewals never ended the session")
 	}
 }
 
