@@ -151,6 +151,16 @@ class DxSpotService extends ChangeNotifier {
   List<DxSpot> _spots = const [];
   List<GridSquare> _gridSquares = const [];
 
+  /// `_byKey` changed since [_spots]/[_gridSquares] were last derived. The
+  /// derivation (prune + full sort + grid grouping) is O(n log n) over every
+  /// key heard in the last 10 minutes, so it runs lazily on read — at most
+  /// once per repaint — instead of once per incoming spot. The connect
+  /// replays 30 minutes of history as one SSE event per spot; rebuilding on
+  /// each of them froze the page for minutes in browsers without a JIT
+  /// (Safari's Enhanced Security web process, used for plain-http pages).
+  bool _rebuildPending = false;
+  int _rebuilds = 0;
+
   String? _baseUrl;
   String? _locator;
   String? _callsign;
@@ -194,12 +204,25 @@ class DxSpotService extends ChangeNotifier {
       _byKey.clear();
       _spots = const [];
       _gridSquares = const [];
+      _rebuildPending = false;
     }
     notifyListeners();
   }
 
-  List<DxSpot> get spots => _spots;
-  List<GridSquare> get gridSquares => _gridSquares;
+  List<DxSpot> get spots {
+    _rebuildIfPending();
+    return _spots;
+  }
+
+  List<GridSquare> get gridSquares {
+    _rebuildIfPending();
+    return _gridSquares;
+  }
+
+  /// Number of times the spot list has been re-derived from the store.
+  @visibleForTesting
+  int get rebuildCount => _rebuilds;
+
   double? get centerLat => _centerLat;
   double? get centerLng => _centerLng;
   bool get connected => _connected;
@@ -247,6 +270,7 @@ class DxSpotService extends ChangeNotifier {
     _byKey.clear();
     _spots = const [];
     _gridSquares = const [];
+    _rebuildPending = false;
     notifyListeners();
     if (_running) _connect();
   }
@@ -270,7 +294,7 @@ class DxSpotService extends ChangeNotifier {
       final now = DateTime.now().millisecondsSinceEpoch;
       final before = _byKey.length;
       _byKey.removeWhere((_, s) => s.liveAgeSecondsAt(now) > _maxAgeSeconds);
-      if (_byKey.length != before) _rebuildAndNotify();
+      if (_byKey.length != before) _markChanged();
     });
     _connect();
   }
@@ -422,7 +446,7 @@ class DxSpotService extends ChangeNotifier {
     _connected = true;
     _error = null;
     _backoff = _minBackoffSeconds; // reset on a good event
-    _rebuildAndNotify();
+    _markChanged();
   }
 
   /// Mean of the top quarter of SNR values. Mirrors
@@ -476,10 +500,21 @@ class DxSpotService extends ChangeNotifier {
     return List.unmodifiable(out);
   }
 
-  /// Prune stale spots (live age > [_maxAgeSeconds]), cap to [_maxSpots] by freshness,
-  /// then throttle [notifyListeners]. Freshness uses live age (server age + elapsed
-  /// since receipt), computed against a single `now` so the comparator is consistent.
-  void _rebuildAndNotify() {
+  /// The store changed: mark the derived lists stale and schedule the
+  /// throttled repaint. The O(n log n) derivation itself waits for the next
+  /// read ([_rebuildIfPending]).
+  void _markChanged() {
+    _rebuildPending = true;
+    _notify();
+  }
+
+  /// Prune stale spots (live age > [_maxAgeSeconds]) and cap to [_maxSpots] by
+  /// freshness. Freshness uses live age (server age + elapsed since receipt),
+  /// computed against a single `now` so the comparator is consistent.
+  void _rebuildIfPending() {
+    if (!_rebuildPending) return;
+    _rebuildPending = false;
+    _rebuilds++;
     final now = DateTime.now().millisecondsSinceEpoch;
     _byKey.removeWhere((_, s) => s.liveAgeSecondsAt(now) > _maxAgeSeconds);
     final list = _byKey.values.toList()
@@ -489,7 +524,6 @@ class DxSpotService extends ChangeNotifier {
       });
     _spots = list.length > _maxSpots ? List.unmodifiable(list.sublist(0, _maxSpots)) : List.unmodifiable(list);
     _gridSquares = _collectGridSquares(_spots);
-    _notify();
   }
 
 
