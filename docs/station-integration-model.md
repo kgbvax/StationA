@@ -114,8 +114,8 @@ transmitting station. Two non-station paths exist under the site:
 
 - `site/host/<name>` — compute nodes (§7.3).
 - `site/power/<name>` — power-distribution infrastructure that feeds *across* stations
-  (the station master mains, a shared 13.8 V PSU that powers both the HF and UHF radios,
-  the tuner, controllers, relay boards). These are shared upstream resources, so they do
+  (a shared 13.8 V PSU that powers both the HF and UHF radios,
+  the tuner, controllers, relay boards; antenna power; the shack PC mains). These are shared upstream resources, so they do
   not live under `hf/` or `uhf/`; like `host`, they are addressed at site level. A
   station-scoped consumer (a sequencer, an operator) commands them like any other slot.
 
@@ -395,16 +395,14 @@ power loss independently of this flag.
 The upstream supplies feed across both stations, so they sit at site level
 (`site/power/<name>`, §2) — not under `hf/` or `uhf/`. All three are Shelly smart plugs,
 formerly operated only through Home Assistant; brought onto the canonical bus by one
-`shelly-power-bridge` on `shari` (one process, three slots — a compound bridge). HA is
+`shelly-power-bridge` on `shari` (one process, three slots — a compound bridge;
+`psu-13v8`, `antennas`, `shack-pc-mains`). HA is
 thereafter one writer of these topics, not the control path (§9).
 
-**`muehle/power/master`** — Shelly plug, station master mains
-```
-role: power;  device: { model: "Shelly Plug …", serial };  link: wifi;  host: shari
-capabilities: fail_safe {off}                 # Shelly power-on default set to off
-state:        power {on|off}                  # actual, read from the Shelly
-intent:       set_power {on|off}             # /cmd retained (idempotent steady-state)
-```
+The site **master mains** is not a slot: it is an Athom ESPHome plug owned by Home
+Assistant, and it also powers the Pis and the network, so StationA never switches it
+(out of scope, 2026-10-18).
+
 **`muehle/power/psu-13v8`** — Shelly plug, 13.8 V PSU
 ```
 role: power;  device: { model: "Shelly Plug …", serial };  link: wifi;  host: shari
@@ -589,8 +587,8 @@ state:      phase {idle|starting|running|stopping|entering_standby|standby|wakin
             step <string>; fault (omitempty)
 intent:     start | stop                       # operator one-button; /cmd NOT retained
 ```
-Startup (confirmations + delays, cold start 2026-10-10): `power/master` on → ~30 s
-(network) → `power/shack-pc-mains` on → `power/psu-13v8` (TRX PSU) on → 5 s → Wake-on-LAN
+Startup (confirmations + delays, cold start 2026-10-10, master mains dropped
+2026-10-18): `power/shack-pc-mains` on → `power/psu-13v8` (TRX PSU) on → 5 s → Wake-on-LAN
 to bwpc → wait `hf/switch` `/status` online
 (`hf/switch/cmd` is one retained topic: `set_trx` + `set_pa` published while the PLC
 boots would collapse to `set_pa`) → `hf/switch` trx on → 1 s → `hf/switch` pa on →
@@ -671,7 +669,7 @@ override / pre-position path, not the primary follow mechanism.
   open it only in RX — band-change hold-off, Ultrabeam settle, reconciler move pending, a
   supervising feed offline. Full table: `m5stamp-hf-ctrl/docs/m5stamp-hf-ctrl-mqtt-api.md` §4
 - `power-seq.{start,stop}` ← operator one-button; the sequencer then issues the ordered
-  chain `power/master → power/psu-13v8 → hf/switch.trx → hf/switch.pa → power/antennas →
+  chain `power/shack-pc-mains → power/psu-13v8 → hf/switch.trx → hf/switch.pa → power/antennas →
   hf/pa-arm` on start (reverse on stop), gated on liveness confirmations and delays (§6, §7.1)
 
 **Hardware interlock chain (enforces; software mirrors only):**
@@ -860,7 +858,7 @@ muehle/host/scmino      # Debian 12 arm64 box, taking over shari's role
 | FLEX bridge (flexbridge) | `hf/radio` | `scmino` |
 | HF antenna-select reconciler | `hf/antenna-select` | `scmino` |
 | Logging | subscriber, no slot | `shari` |
-| Shelly power bridge (`shelly-power-bridge`) | `power/master`, `power/psu-13v8`, `power/antennas`, `power/shack-pc-mains` | `shari` |
+| Shelly power bridge (`shelly-power-bridge`) | `power/psu-13v8`, `power/antennas`, `power/shack-pc-mains` | `shari` |
 | Shack-PC power agent (`winpc-power-bridge`) | `power/shack-pc` | `bwpc` |
 | M5 Stamp #1 firmware (`m5stamp-hf-ctrl`) | `hf/pa-arm`, `hf/switch` | embedded (M5 Stamp PLC) |
 | M5 Stamp #2 firmware | `uhf/pol-ctrl` | embedded (M5 Stamp PLC) |

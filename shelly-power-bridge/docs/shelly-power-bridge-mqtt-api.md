@@ -43,13 +43,13 @@ All canonical topics are addressed as:
 
 The site comes from `[mqtt].site` (`muehle`); each `[[slot]]` sets its own
 `station` and `slot`. For the site-level power layer these are `station="power"`,
-`slot="master"|"psu-13v8"|"antennas"|"shack-pc-mains"`. The two default slots give:
+`slot="psu-13v8"|"antennas"|"shack-pc-mains"`. For example:
 
 ```
-muehle/power/master/meta      muehle/power/psu-13v8/meta
-muehle/power/master/state      muehle/power/psu-13v8/state
-muehle/power/master/status     muehle/power/psu-13v8/status
-muehle/power/master/cmd        muehle/power/psu-13v8/cmd
+muehle/power/psu-13v8/meta     muehle/power/antennas/meta
+muehle/power/psu-13v8/state    muehle/power/antennas/state
+muehle/power/psu-13v8/status   muehle/power/antennas/status
+muehle/power/psu-13v8/cmd      muehle/power/antennas/cmd
 ```
 
 Site is **mandatory** (model §2/§8.1) — `Validate` refuses to start if it is

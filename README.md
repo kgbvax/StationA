@@ -71,7 +71,7 @@ model. None of them is the model; together they prove the model is buildable and
 | [acom1200s-pa-bridge](acom1200s-pa-bridge/) | ACOM 1200S PA bridge | `muehle/hf/pa` | Serial (telemetry only) |
 | [wrc-rotator-bridge](wrc-rotator-bridge/) | HF rotator bridge (Yaesu G-450DC via AF6SA WRC) | `muehle/hf/rotator` | WebSocket (AF6SA WRC) |
 | [atr1k-tuner-bridge](atr1k-tuner-bridge/) | ATR-1000 ATU bridge | `muehle/hf/tuner` | wifi (binary WebSocket) |
-| [shelly-power-bridge](shelly-power-bridge/) | Shelly smart-plug bridge (master mains + 13.8 V PSU) | `muehle/power/master`, `muehle/power/psu-13v8` | wifi (Gen2+ MQTT) |
+| [shelly-power-bridge](shelly-power-bridge/) | Shelly smart-plug bridge (13.8 V PSU, antenna power, shack PC mains) | `muehle/power/psu-13v8`, `muehle/power/antennas`, `muehle/power/shack-pc-mains` | wifi (Gen2+ MQTT) |
 | [m5stamp-hf-ctrl](m5stamp-hf-ctrl/) | M5 Stamp PLC firmware (PA/TRX remote-on + arm relay) | `muehle/hf/switch`, `muehle/hf/pa-arm` | wifi (embedded) |
 | [powerseq](powerseq/) | Station startup/shutdown sequencer | `muehle/hf/power-seq` | logic slot |
 | [hadiscovery](hadiscovery/) | Home Assistant discovery consumer | `muehle/hf/discovery` | logic slot — reads `/meta` |

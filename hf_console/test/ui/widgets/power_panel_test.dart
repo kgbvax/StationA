@@ -12,12 +12,12 @@ void main() {
     testWidgets('shows relay states and publishes toggle commands', (tester) async {
       final store = BusStore();
       final mqtt = FakeMqttService(store);
-      store.setPower(master: true, psu: false, trx: true, pa: false);
+      store.setPower(psu: false, trx: true, pa: false);
 
       await tester.pumpWidget(TestHarness(store: store, mqtt: mqtt, child: const PowerPanel()));
       await tester.pumpAndSettle();
 
-      expect(find.text('MAINS'), findsOneWidget);
+      expect(find.text('MAINS'), findsNothing); // site mains is out of scope
       expect(find.text('PSU 13.8V'), findsOneWidget);
       expect(find.text('TRX'), findsOneWidget);
       expect(find.text('PA'), findsOneWidget);

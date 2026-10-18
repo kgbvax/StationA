@@ -12,7 +12,6 @@ const antennaMap = {
 
 // Which /cmd topics are retained per the real bus policy.
 const cmdRetain = {
-  'muehle/power/master': true,
   'muehle/power/psu-13v8': true,
   // Antenna-side Shelly plug (HF + UHF rotators, Ultrabeam controller) —
   // same set_power steady state as the PSU plug.
@@ -63,7 +62,6 @@ String cmdTopic(String slot) => 'muehle/$slot/cmd';
 /// heard anything from them — a dead-since-boot or undeployed service must
 /// not be invisible just because it never published a retained state.
 const expectedSlots = [
-  'muehle/power/master',
   'muehle/power/psu-13v8',
   'muehle/power/antennas',
   'muehle/power/shack-pc-mains',

@@ -187,7 +187,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
 
       expect(find.text('STOP\nSTATION'), findsOneWidget);
-      expect(find.text('MAINS'), findsOneWidget);
+      expect(find.text('PSU 13.8V'), findsOneWidget);
     });
 
     testWidgets('UHF page renders the sat rotator panel (tablet layout)',

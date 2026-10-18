@@ -335,9 +335,7 @@ extension BusStoreFixtures on BusStore {
   }
 
   /// Populate power / switch slots for a healthy station.
-  void setPower({bool master = true, bool psu = true, bool trx = true, bool pa = true}) {
-    setOnline('muehle/power/master');
-    applyState('muehle/power/master', {'power': master ? 'on' : 'off', 'device_online': true});
+  void setPower({bool psu = true, bool trx = true, bool pa = true}) {
     setOnline('muehle/power/psu-13v8');
     applyState('muehle/power/psu-13v8', {'power': psu ? 'on' : 'off', 'device_online': true});
     setOnline('muehle/hf/switch');

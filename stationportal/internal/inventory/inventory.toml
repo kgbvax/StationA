@@ -174,13 +174,6 @@ role     = "Station tablet — hf_console APK"
 # ---------------------------------------------------------------------------
 
 [[slot]]
-address   = "muehle/power/master"
-component = "shelly-power-bridge"
-device    = "Shelly Plus 1PM — station master mains"
-link      = "wifi"
-host      = "shari"
-
-[[slot]]
 address   = "muehle/power/psu-13v8"
 component = "shelly-power-bridge"
 device    = "Shelly Plug S (Gen1) \"TrxPsu\" (192.168.1.150) — 13.8 V TRX PSU (feeds HF + UHF)"
@@ -393,7 +386,7 @@ path  = "shelly-power-bridge/"
 kind  = "bridge"
 host  = "shari"
 unit  = "shelly-power-bridge"
-slots = ["muehle/power/master", "muehle/power/psu-13v8", "muehle/power/antennas", "muehle/power/shack-pc-mains"]
+slots = ["muehle/power/psu-13v8", "muehle/power/antennas", "muehle/power/shack-pc-mains"]
 
 [[software]]
 name  = "winpc-power-bridge"

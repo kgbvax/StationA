@@ -248,15 +248,15 @@ func TestExampleFileDecodesAndValidates(t *testing.T) {
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("Validate example: %v", err)
 	}
-	if len(cfg.Startup) != 14 || len(cfg.Shutdown) != 11 {
-		t.Errorf("example sequence = %d/%d steps, want 14/11", len(cfg.Startup), len(cfg.Shutdown))
+	if len(cfg.Startup) != 12 || len(cfg.Shutdown) != 9 {
+		t.Errorf("example sequence = %d/%d steps, want 12/9", len(cfg.Startup), len(cfg.Shutdown))
 	}
 	// Cold-start order: PC mains → PSU → 5 s → PC WOL → (PLC online) → TRX → 1 s → PA → antenna power.
 	var order []string
 	for _, st := range cfg.Startup {
 		order = append(order, st.Name)
 	}
-	want := "master-on network-delay pc-mains-on psu-on psu-settle pc-boot wait-plc-online trx-on trx-settle pa-on antennas-on wait-radio-online wait-pa-power-on pa-arm-enable"
+	want := "pc-mains-on psu-on psu-settle pc-boot wait-plc-online trx-on trx-settle pa-on antennas-on wait-radio-online wait-pa-power-on pa-arm-enable"
 	if got := strings.Join(order, " "); got != want {
 		t.Errorf("startup order:\n got  %s\n want %s", got, want)
 	}
@@ -280,8 +280,17 @@ func TestExampleFileDecodesAndValidates(t *testing.T) {
 	if cfg.Idle.ActivitySlot != "hf/antenna-select" || len(cfg.Idle.Watches) != 3 {
 		t.Errorf("idle = %+v", cfg.Idle)
 	}
-	if cfg.Startup[0].Name != "master-on" || cfg.Startup[0].Slot != "power/master" {
-		t.Errorf("startup[0] = %+v, want master-on/power/master", cfg.Startup[0])
+	// The site master mains is out of scope: nothing in the shipped sequence may
+	// switch it (it also powers the Pis and the network).
+	for _, steps := range [][]Step{cfg.Startup, cfg.Shutdown, cfg.Standby, cfg.Wake} {
+		for _, st := range steps {
+			if st.Slot == "power/master" {
+				t.Errorf("step %q drives power/master", st.Name)
+			}
+		}
+	}
+	if cfg.Startup[0].Name != "pc-mains-on" {
+		t.Errorf("startup[0] = %+v, want pc-mains-on", cfg.Startup[0])
 	}
 	if cfg.Shutdown[0].Name != "pa-arm-disable" {
 		t.Errorf("shutdown[0] = %+v, want pa-arm-disable", cfg.Shutdown[0])

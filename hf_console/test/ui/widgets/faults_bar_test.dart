@@ -80,7 +80,7 @@ void main() {
       testWidgets('names the PSU when it is confirmed off and the HF chain is dead', (tester) async {
         final store = BusStore();
         final mqtt = FakeMqttService(store);
-        store.setPower(psu: false, master: true);
+        store.setPower(psu: false);
         store.setDeviceOffline('muehle/hf/tuner'); // the dead HF downstream
 
         await tester.pumpWidget(TestHarness(store: store, mqtt: mqtt, child: const FaultsBar()));
