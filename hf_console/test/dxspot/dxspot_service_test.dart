@@ -84,6 +84,31 @@ void main() {
       });
     }
 
+    test('a burst of spots is derived once per read, not once per spot', () {
+      // The connect replays the 30-minute history as one event per spot.
+      // Re-deriving (prune + sort + grid) on each froze Safari's JIT-less
+      // Enhanced Security web process; the store may grow per event, the
+      // derivation must wait for the reader.
+      for (var i = 0; i < 2000; i++) {
+        service.ingest(jsonEncode({
+          'lat': 51.0,
+          'lng': 7.0,
+          'snr': i % 20,
+          'ageSeconds': i % 600,
+          'locator': 'JO${31 + i % 40}',
+          'band': '20m',
+          'sender': 'DL${i}AA',
+          'sourceType': 'mqtt',
+        }));
+      }
+      expect(service.rebuildCount, 0);
+      expect(service.spots.length, 80); // capped at _maxSpots
+      expect(service.gridSquares, isNotEmpty);
+      expect(service.rebuildCount, 1); // spots + gridSquares share one pass
+      service.spots;
+      expect(service.rebuildCount, 1); // unchanged store: no re-derivation
+    });
+
     test('keeps mqtt spots, drops other source types', () {
       service.ingest(spotJson(sourceType: 'mqtt', snr: 5, locator: 'JO31'));
       service.ingest(spotJson(sourceType: 'dxcluster', snr: 5, locator: 'JO31'));
