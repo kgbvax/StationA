@@ -176,7 +176,16 @@ name = "network-delay"
 kind = "delay"
 duration = "network"
 
-# 3. Energize the TRX PSU (13.8 V, site-level; feeds HF + UHF and the PLC).
+# 3. Shack PC (bwpc) mains on. Shutdown and standby NEVER switch it off —
+#    cutting mains hard-powers-off Windows; off is a manual hf_console switch.
+[[startup]]
+name = "pc-mains-on"
+kind = "cmd"
+slot = "power/shack-pc-mains"
+action = "set_power"
+value = "on"
+
+# 4. Energize the TRX PSU (13.8 V, site-level; feeds HF + UHF and the PLC).
 [[startup]]
 name = "psu-on"
 kind = "cmd"
@@ -184,13 +193,22 @@ slot = "power/psu-13v8"
 action = "set_power"
 value = "on"
 
-# 4. Let the PSU settle.
+# 5. Let the PSU settle.
 [[startup]]
 name = "psu-settle"
 kind = "delay"
 duration_s = 5
 
-# 5. Guard: the PLC (hf/switch) must be online before the remote-on relays are
+# 6. Boot the shack PC. The plug has been on ≥ 5 s, so the NIC has standby
+#    power. A no-op when the PC is already running. Needs WOL enabled in the
+#    BIOS + NIC driver (also from S5 / soft-off).
+[[startup]]
+name = "pc-boot"
+kind = "wol"
+mac = "00:00:00:00:00:00"    # REPLACE with the bwpc NIC MAC
+broadcast = "192.168.1.255:9"
+
+# 7. Guard: the PLC (hf/switch) must be online before the remote-on relays are
 #    commanded. hf/switch/cmd is ONE retained topic — if set_trx and set_pa
 #    were both published while the PLC is still booting, the broker would keep
 #    only set_pa and the TRX would never switch on. Passes at once when the PLC
@@ -200,7 +218,7 @@ name = "wait-plc-online"
 kind = "wait_status"
 slots = ["hf/switch"]
 
-# 6. Power on the TRX (FLEX-8400) via the PLC remote-on relay.
+# 8. Power on the TRX (FLEX-8400) via the PLC remote-on relay.
 [[startup]]
 name = "trx-on"
 kind = "cmd"
@@ -208,13 +226,13 @@ slot = "hf/switch"
 action = "set_trx"
 value = "on"
 
-# 7. 1 s between TRX and PA remote-on.
+# 9. 1 s between TRX and PA remote-on.
 [[startup]]
 name = "trx-settle"
 kind = "delay"
 duration_s = 1
 
-# 8. Power on the PA via the PLC remote-on relay.
+# 10. Power on the PA via the PLC remote-on relay.
 [[startup]]
 name = "pa-on"
 kind = "cmd"
@@ -222,7 +240,7 @@ slot = "hf/switch"
 action = "set_pa"
 value = "on"
 
-# 9. Antenna power: HF + UHF rotators and the Ultrabeam RCU-06.
+# 11. Antenna power: HF + UHF rotators and the Ultrabeam RCU-06.
 [[startup]]
 name = "antennas-on"
 kind = "cmd"
@@ -230,13 +248,13 @@ slot = "power/antennas"
 action = "set_power"
 value = "on"
 
-# 10. Wait for the radio to come online after TRX power-on.
+# 12. Wait for the radio to come online after TRX power-on.
 [[startup]]
 name = "wait-radio-online"
 kind = "wait_status"
 slots = ["hf/radio"]
 
-# 11. Wait for the PA to report power on (state.power == "on"). The implicit
+# 13. Wait for the PA to report power on (state.power == "on"). The implicit
 #     two-layer liveness precondition means a dead bridge (LWT) or a dead PA
 #     behind a live bridge cannot pass on stale /state.
 [[startup]]
@@ -246,7 +264,7 @@ slot = "hf/pa"
 field = "power"
 value = "on"
 
-# 12. Arm the PA (permit RF). Last startup step → phase=running.
+# 14. Arm the PA (permit RF). Last startup step → phase=running.
 [[startup]]
 name = "pa-arm-enable"
 kind = "cmd"
@@ -255,6 +273,7 @@ action = "set_enabled"
 value = "true"
 
 # --- shutdown (reverse, short staggers for inrush) ----------------------------
+# power/shack-pc-mains is deliberately absent: the PC stays powered.
 [[shutdown]]
 name = "pa-arm-disable"
 kind = "cmd"

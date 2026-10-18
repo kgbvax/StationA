@@ -17,6 +17,9 @@ const cmdRetain = {
   // Antenna-side Shelly plug (HF + UHF rotators, Ultrabeam controller) —
   // same set_power steady state as the PSU plug.
   'muehle/power/antennas': true,
+  // Shack PC (bwpc) mains plug — same set_power steady state. powerseq
+  // switches it on at cold start and never off (PC PWR toggle).
+  'muehle/power/shack-pc-mains': true,
   'muehle/hf/switch': true,
   'muehle/hf/pa-arm': true,
   'muehle/hf/ant-ctrl': true,
@@ -63,6 +66,7 @@ const expectedSlots = [
   'muehle/power/master',
   'muehle/power/psu-13v8',
   'muehle/power/antennas',
+  'muehle/power/shack-pc-mains',
   'muehle/power/shack-pc',
   'muehle/hf/radio',
   'muehle/hf/ant-ctrl',

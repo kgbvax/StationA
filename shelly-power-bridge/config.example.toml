@@ -104,6 +104,24 @@ feeds = [
   "uhf/el-rotator",
 ]
 
+# Shack PC mains — the plug in front of bwpc. powerseq switches it on in the
+# cold start (then Wake-on-LAN) and NEVER off: shutdown and standby leave it on,
+# because cutting mains hard-powers-off Windows. Turning it off is a manual
+# hf_console switch. `power/shack-pc` (winpc-power-bridge) is the PC's own
+# sleep agent, downstream of this plug.
+[[slot]]
+station       = "power"
+slot          = "shack-pc-mains"
+location      = "bauwagen"
+device_model  = "Shelly Plus 1PM"
+device_serial = "shellyplus1pm-D4"
+shelly_id     = "shellyplus1pm-ddeeff001122"
+fail_safe     = "off"
+feeds = [
+  "power/shack-pc",
+  "uhf/sat-track",
+]
+
 # --- env overrides (systemd EnvironmentFile) ---------------------------------
 # These SHELLY_POWER_BRIDGE_MQTT_* env vars overlay the [mqtt] section above and
 # are used by deploy.sh so the secret never sits in the TOML:

@@ -43,7 +43,7 @@ All canonical topics are addressed as:
 
 The site comes from `[mqtt].site` (`muehle`); each `[[slot]]` sets its own
 `station` and `slot`. For the site-level power layer these are `station="power"`,
-`slot="master"|"psu-13v8"|"antennas"`. The two default slots give:
+`slot="master"|"psu-13v8"|"antennas"|"shack-pc-mains"`. The two default slots give:
 
 ```
 muehle/power/master/meta      muehle/power/psu-13v8/meta

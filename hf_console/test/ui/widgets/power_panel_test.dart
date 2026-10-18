@@ -124,6 +124,53 @@ void main() {
       expect(find.text('ASLEEP'), findsOneWidget);
     });
 
+    testWidgets('PC PWR on publishes a retained set_power at once', (tester) async {
+      final store = BusStore();
+      final mqtt = FakeMqttService(store);
+      store.setPower();
+      store.setOnline('muehle/power/shack-pc-mains');
+      store.applyState('muehle/power/shack-pc-mains', {'power': 'off', 'device_online': true});
+
+      await tester.pumpWidget(TestHarness(store: store, mqtt: mqtt, child: const PowerPanel()));
+      await tester.pumpAndSettle();
+      expect(find.text('NO POWER'), findsOneWidget);
+
+      await tester.tap(find.text('PC PWR'));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(AlertDialog), findsNothing);
+      expect(mqtt.publishes.length, 1);
+      expect(mqtt.publishes.first.topic, 'muehle/power/shack-pc-mains/cmd');
+      expect(mqtt.publishes.first.payload, contains('"value":"on"'));
+      expect(mqtt.publishes.first.retain, isTrue);
+    });
+
+    testWidgets('PC PWR off asks first; cancel publishes nothing', (tester) async {
+      final store = BusStore();
+      final mqtt = FakeMqttService(store);
+      store.setPower();
+      store.setOnline('muehle/power/shack-pc-mains');
+      store.applyState('muehle/power/shack-pc-mains', {'power': 'on', 'device_online': true});
+
+      await tester.pumpWidget(TestHarness(store: store, mqtt: mqtt, child: const PowerPanel()));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('PC PWR'));
+      await tester.pumpAndSettle();
+      expect(find.byType(AlertDialog), findsOneWidget);
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+      expect(mqtt.publishes, isEmpty);
+
+      await tester.tap(find.text('PC PWR'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('pc-mains-off-confirm')));
+      await tester.pumpAndSettle();
+      expect(mqtt.publishes.length, 1);
+      expect(mqtt.publishes.first.topic, 'muehle/power/shack-pc-mains/cmd');
+      expect(mqtt.publishes.first.payload, contains('"value":"off"'));
+    });
+
     testWidgets('SHACK PC shows the agent error text', (tester) async {
       final store = BusStore();
       store.setPower();

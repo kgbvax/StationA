@@ -35,9 +35,10 @@
 #   MASTER_SHELLY_ID   [[slot]] shelly_id for the master mains plug
 #   PSU_SHELLY_ID     [[slot]] shelly_id for the 13.8 V PSU plug
 #   ANTENNAS_SHELLY_ID [[slot]] shelly_id for the antenna-power plug (rotators + RCU-06)
+#   PC_SHELLY_ID       [[slot]] shelly_id for the shack-PC (bwpc) mains plug
 #
 # Per-slot [[slot]] blocks are seeded from the example config. The Shelly ids
-# (MASTER_SHELLY_ID / PSU_SHELLY_ID / ANTENNAS_SHELLY_ID) MUST be set to the real
+# (MASTER_SHELLY_ID / PSU_SHELLY_ID / ANTENNAS_SHELLY_ID / PC_SHELLY_ID) MUST be set to the real
 # Gen2 device ids of the plugs; deploy refuses to SEED a placeholder id (an
 # existing on-device config is left alone either way). Other slot fields
 # (station/slot/device_model/device_serial/feeds) keep their example values —
@@ -78,9 +79,10 @@ MQTT_PASSWORD="${MQTT_PASSWORD:-}"
 MASTER_SHELLY_ID="${MASTER_SHELLY_ID:-shellyplus1pm-aabbccddeeff}"
 PSU_SHELLY_ID="${PSU_SHELLY_ID:-shellyplus1pm-112233445566}"
 ANTENNAS_SHELLY_ID="${ANTENNAS_SHELLY_ID:-shellyplus1pm-ccddeeff0011}"
+PC_SHELLY_ID="${PC_SHELLY_ID:-shellyplus1pm-ddeeff001122}"
 PLACEHOLDER_IDS=0
-case "$MASTER_SHELLY_ID $PSU_SHELLY_ID $ANTENNAS_SHELLY_ID" in
-  *aabbccddeeff*|*112233445566*|*ccddeeff0011*) PLACEHOLDER_IDS=1 ;;
+case "$MASTER_SHELLY_ID $PSU_SHELLY_ID $ANTENNAS_SHELLY_ID $PC_SHELLY_ID" in
+  *aabbccddeeff*|*112233445566*|*ccddeeff0011*|*ddeeff001122*) PLACEHOLDER_IDS=1 ;;
 esac
 
 # Allow "user@host" in SSH_HOST; otherwise prepend SSH_USER.
@@ -165,6 +167,19 @@ trap 'rm -f "$SEED_CONFIG" "$SEED_ENV" "${UNIT_FILE:-}"' EXIT
   echo "fail_safe     = \"off\""
   echo "feeds = ["
   echo "  \"hf/ant-ctrl\", \"hf/rotator\", \"uhf/az-rotator\", \"uhf/el-rotator\","
+  echo "]"
+  echo ""
+  echo "# --- shack PC (bwpc) mains — powerseq turns it on, never off ---"
+  echo "[[slot]]"
+  echo "station       = \"power\""
+  echo "slot          = \"shack-pc-mains\""
+  echo "location      = \"bauwagen\""
+  echo "device_model  = \"Shelly Plus 1PM\""
+  echo "device_serial = \"$(toml_escape "$PC_SHELLY_ID")\""
+  echo "shelly_id     = \"$(toml_escape "$PC_SHELLY_ID")\""
+  echo "fail_safe     = \"off\""
+  echo "feeds = ["
+  echo "  \"power/shack-pc\", \"uhf/sat-track\","
   echo "]"
 } > "$SEED_CONFIG"
 
@@ -272,7 +287,7 @@ if [ -e "$CONFIG_FILE" ]; then
   echo "   config exists at $CONFIG_FILE -- leaving it untouched (seed-once)."
 elif [ "$PLACEHOLDER_IDS" = "1" ]; then
   echo "!! refusing to seed $CONFIG_FILE with placeholder Shelly ids:" >&2
-  echo "!! set MASTER_SHELLY_ID / PSU_SHELLY_ID / ANTENNAS_SHELLY_ID to the real Gen2 device ids." >&2
+  echo "!! set MASTER_SHELLY_ID / PSU_SHELLY_ID / ANTENNAS_SHELLY_ID / PC_SHELLY_ID to the real Gen2 device ids." >&2
   exit 1
 else
   sudo install -o "$SERVICE_USER" -g "$SERVICE_USER" -m 0600 "$SEED_CFG" "$CONFIG_FILE"

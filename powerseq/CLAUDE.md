@@ -82,12 +82,14 @@ emission + own `/state`).
    step lists), flags, `POWERSEQ_MQTT_*` env overrides, sequence validation.
 
 **Default sequence** (shipped in `config.example.toml`, cold start 2026-10-10):
-`power/master` set_power on → ~30 s (network) → `power/psu-13v8` (TRX PSU)
-set_power on → 5 s → wait `hf/switch` online (retained-cmd collapse guard) →
+`power/master` set_power on → ~30 s (network) → `power/shack-pc-mains` set_power
+on → `power/psu-13v8` (TRX PSU) set_power on → 5 s → WOL bwpc → wait `hf/switch` online (retained-cmd collapse guard) →
 `hf/switch` set_trx on → 1 s → `hf/switch` set_pa on → `power/antennas`
 set_power on → wait `hf/radio` online → wait `hf/pa` `state.power` on →
 `hf/pa-arm` set_enabled true → `phase=running`.
-**Shutdown** is the reverse with short staggers for inrush → `phase=idle`.
+**Shutdown** is the reverse with short staggers for inrush → `phase=idle`. It
+never switches `power/shack-pc-mains` off (a hard power-off of Windows); neither
+does standby.
 
 **Idle standby** (optional `[[standby]]`/`[[wake]]` + `[idle]`): from `running`,
 when `hf/antenna-select` reports `activity=inactive` (antenna grounded), no

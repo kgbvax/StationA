@@ -428,6 +428,17 @@ intent:       set_power {on|off}             # /cmd retained
 Powers both rotators (HF and UHF) and the Ultrabeam RCU-06. The sequencer switches it on
 in the cold start and off in idle standby (§7.1 power-seq), back on at wake.
 
+**`muehle/power/shack-pc-mains`** — Shelly plug, shack PC (bwpc) mains (2026-10-18)
+```
+role: power;  device: { model: "Shelly Plus 1PM", serial };  link: wifi;  host: shari
+capabilities: fail_safe {off}; feeds [power/shack-pc, uhf/sat-track]
+state:        power {on|off}
+intent:       set_power {on|off}             # /cmd retained
+```
+The mains supply under `power/shack-pc`. The sequencer switches it on in the cold start
+(then Wake-on-LAN boots the PC) and **never off** — not in shutdown, not in standby:
+cutting mains hard-powers-off Windows. Off is a manual (confirmed) console switch.
+
 **`muehle/power/shack-pc`** — the shack PC bwpc (Windows), `winpc-power-bridge`
 ```
 role: pc-power;  link: ethernet;  host: bwpc
@@ -579,7 +590,8 @@ state:      phase {idle|starting|running|stopping|entering_standby|standby|wakin
 intent:     start | stop                       # operator one-button; /cmd NOT retained
 ```
 Startup (confirmations + delays, cold start 2026-10-10): `power/master` on → ~30 s
-(network) → `power/psu-13v8` (TRX PSU) on → 5 s → wait `hf/switch` `/status` online
+(network) → `power/shack-pc-mains` on → `power/psu-13v8` (TRX PSU) on → 5 s → Wake-on-LAN
+to bwpc → wait `hf/switch` `/status` online
 (`hf/switch/cmd` is one retained topic: `set_trx` + `set_pa` published while the PLC
 boots would collapse to `set_pa`) → `hf/switch` trx on → 1 s → `hf/switch` pa on →
 `power/antennas` on → wait `hf/radio` `/status` online → wait
@@ -587,7 +599,7 @@ boots would collapse to `set_pa`) → `hf/switch` trx on → 1 s → `hf/switch`
 `/state.device_online` must not be `false` when the field is present, so neither a dead
 bridge nor a dead device passes the wait on a stale retained `/state`) → `hf/pa-arm`
 set_enabled true (arms when safe). Shutdown is the reverse, with short staggers for
-inrush. The sequencer is **one writer** of these slots but does not lock them — any
+inrush, and leaves `power/shack-pc-mains` on. The sequencer is **one writer** of these slots but does not lock them — any
 channel stays directly toggleable for troubleshooting while the sequencer is idle.
 
 **Idle standby.** From `running`, when `hf/antenna-select` reports `activity=inactive`
@@ -848,7 +860,7 @@ muehle/host/scmino      # Debian 12 arm64 box, taking over shari's role
 | FLEX bridge (flexbridge) | `hf/radio` | `scmino` |
 | HF antenna-select reconciler | `hf/antenna-select` | `scmino` |
 | Logging | subscriber, no slot | `shari` |
-| Shelly power bridge (`shelly-power-bridge`) | `power/master`, `power/psu-13v8`, `power/antennas` | `shari` |
+| Shelly power bridge (`shelly-power-bridge`) | `power/master`, `power/psu-13v8`, `power/antennas`, `power/shack-pc-mains` | `shari` |
 | Shack-PC power agent (`winpc-power-bridge`) | `power/shack-pc` | `bwpc` |
 | M5 Stamp #1 firmware (`m5stamp-hf-ctrl`) | `hf/pa-arm`, `hf/switch` | embedded (M5 Stamp PLC) |
 | M5 Stamp #2 firmware | `uhf/pol-ctrl` | embedded (M5 Stamp PLC) |

@@ -26,13 +26,23 @@ class PowerPanel extends StatelessWidget {
     final antOn = (store.stateValueAs<String>('muehle/power/antennas', 'power') ?? 'off') == 'on';
     final antOnline = (ant?.isOnline ?? false) && store.linkUp;
 
+    final pcMains = store.slots['muehle/power/shack-pc-mains'];
+    final pcMainsOn = (store.stateValueAs<String>('muehle/power/shack-pc-mains', 'power') ?? 'off') == 'on';
+    final pcMainsOnline = (pcMains?.isOnline ?? false) && store.linkUp;
+    // Only a plug that is reachable AND reports off proves the PC is unpowered.
+    final pcUnpowered = pcMainsOnline &&
+        store.stateValueAs<bool>('muehle/power/shack-pc-mains', 'device_online') != false &&
+        !pcMainsOn;
+
     // Shack PC (bwpc agent): its LWT flips /status offline when the PC
     // sleeps, so offline here is a normal state, not a fault.
     final pcStatus = store.slots['muehle/power/shack-pc']?.status;
     final pcError = (store.stateValueAs<String>('muehle/power/shack-pc', 'error') ?? '').trim();
     final (pcLabel, pcColor) = !store.linkUp
         ? ('UNKNOWN', AppTheme.txtFaint)
-        : pcStatus == 'online'
+        : pcUnpowered
+            ? ('NO POWER', AppTheme.txtFaint)
+            : pcStatus == 'online'
             ? ('AWAKE', AppTheme.green)
             // The agent's LWT: the PC went to sleep (or was shut down).
             : pcStatus == 'offline'
@@ -77,6 +87,38 @@ class PowerPanel extends StatelessWidget {
         cmdTopic('power/antennas'),
         powerSetPayload(on ? 'on' : 'off'),
         retain: cmdRetain['muehle/power/antennas']!,
+      );
+    }
+
+    Future<void> setPcMains(bool on) async {
+      if (!pcMainsOnline) return;
+      // Cutting mains hard-powers-off Windows — confirm, and say so.
+      if (!on) {
+        final ok = await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: Text('Shack PC power off?', style: AppTheme.mono(14, weight: FontWeight.w700)),
+            content: const Text('This cuts mains to bwpc. Shut Windows down first, or unsaved work is lost.'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(false),
+                child: const Text('Cancel'),
+              ),
+              ElevatedButton(
+                key: const ValueKey('pc-mains-off-confirm'),
+                style: AppTheme.actionButton(danger: true),
+                onPressed: () => Navigator.of(ctx).pop(true),
+                child: const Text('Power off'),
+              ),
+            ],
+          ),
+        );
+        if (ok != true) return;
+      }
+      mqtt.publish(
+        cmdTopic('power/shack-pc-mains'),
+        powerSetPayload(on ? 'on' : 'off'),
+        retain: cmdRetain['muehle/power/shack-pc-mains']!,
       );
     }
 
@@ -218,6 +260,7 @@ class PowerPanel extends StatelessWidget {
                     _Relay(name: 'ANT PWR', on: antOn, online: antOnline, onToggle: setAnt),
                     _Relay(name: 'TRX', on: trxOn, online: switchOnline, onToggle: setTrx),
                     _Relay(name: 'PA', on: paOn, online: switchOnline, onToggle: setPa),
+                    _Relay(name: 'PC PWR', on: pcMainsOn, online: pcMainsOnline, onToggle: setPcMains),
                     _Indicator(
                       key: const ValueKey('shack-pc'),
                       name: 'SHACK PC',
@@ -240,6 +283,7 @@ class PowerPanel extends StatelessWidget {
                 'muehle/power/master',
                 'muehle/power/psu-13v8',
                 'muehle/power/antennas',
+                'muehle/power/shack-pc-mains',
                 'muehle/hf/switch',
                 'muehle/hf/power-seq',
               ],

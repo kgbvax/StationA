@@ -248,15 +248,15 @@ func TestExampleFileDecodesAndValidates(t *testing.T) {
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("Validate example: %v", err)
 	}
-	if len(cfg.Startup) != 12 || len(cfg.Shutdown) != 11 {
-		t.Errorf("example sequence = %d/%d steps, want 12/11", len(cfg.Startup), len(cfg.Shutdown))
+	if len(cfg.Startup) != 14 || len(cfg.Shutdown) != 11 {
+		t.Errorf("example sequence = %d/%d steps, want 14/11", len(cfg.Startup), len(cfg.Shutdown))
 	}
-	// Cold-start order: PSU → 5 s → (PLC online) → TRX → 1 s → PA → antenna power.
+	// Cold-start order: PC mains → PSU → 5 s → PC WOL → (PLC online) → TRX → 1 s → PA → antenna power.
 	var order []string
 	for _, st := range cfg.Startup {
 		order = append(order, st.Name)
 	}
-	want := "master-on network-delay psu-on psu-settle wait-plc-online trx-on trx-settle pa-on antennas-on wait-radio-online wait-pa-power-on pa-arm-enable"
+	want := "master-on network-delay pc-mains-on psu-on psu-settle pc-boot wait-plc-online trx-on trx-settle pa-on antennas-on wait-radio-online wait-pa-power-on pa-arm-enable"
 	if got := strings.Join(order, " "); got != want {
 		t.Errorf("startup order:\n got  %s\n want %s", got, want)
 	}
@@ -266,6 +266,15 @@ func TestExampleFileDecodesAndValidates(t *testing.T) {
 	for _, st := range cfg.Standby {
 		if st.Slot == "power/shack-pc" && (st.Retain == nil || *st.Retain) {
 			t.Errorf("pc-sleep must be retain=false (a retained sleep replays on wake)")
+		}
+	}
+	// The shack PC plug is switched on at cold start and never off by the
+	// sequencer: cutting mains hard-powers-off Windows.
+	for name, steps := range map[string][]Step{"shutdown": cfg.Shutdown, "standby": cfg.Standby, "wake": cfg.Wake} {
+		for _, st := range steps {
+			if st.Slot == "power/shack-pc-mains" && st.Value == "off" {
+				t.Errorf("%s step %q switches the shack PC mains off", name, st.Name)
+			}
 		}
 	}
 	if cfg.Idle.ActivitySlot != "hf/antenna-select" || len(cfg.Idle.Watches) != 3 {

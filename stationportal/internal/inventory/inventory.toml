@@ -195,6 +195,13 @@ link      = "wifi"
 host      = "shari"
 
 [[slot]]
+address   = "muehle/power/shack-pc-mains"
+component = "shelly-power-bridge"
+device    = "Shelly Plus 1PM — shack PC (bwpc) mains; on at cold start, never off by powerseq"
+link      = "wifi"
+host      = "shari"
+
+[[slot]]
 address   = "muehle/power/shack-pc"
 component = "winpc-power-bridge"
 device    = "Shack PC bwpc — sleep on idle standby (offline = asleep)"
@@ -386,7 +393,7 @@ path  = "shelly-power-bridge/"
 kind  = "bridge"
 host  = "shari"
 unit  = "shelly-power-bridge"
-slots = ["muehle/power/master", "muehle/power/psu-13v8", "muehle/power/antennas"]
+slots = ["muehle/power/master", "muehle/power/psu-13v8", "muehle/power/antennas", "muehle/power/shack-pc-mains"]
 
 [[software]]
 name  = "winpc-power-bridge"

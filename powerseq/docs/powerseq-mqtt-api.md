@@ -219,8 +219,10 @@ the radio / PA confirmations before the PA is armed.
 |------|------|-------------|
 | `master-on` | `cmd` | `power/master` `set_power` `on` |
 | `network-delay` | `delay` | ~30 s (`duration = "network"`) |
+| `pc-mains-on` | `cmd` | `power/shack-pc-mains` `set_power` `on` (never switched off by the sequencer) |
 | `psu-on` | `cmd` | `power/psu-13v8` `set_power` `on` |
 | `psu-settle` | `delay` | 5 s |
+| `pc-boot` | `wol` | Wake-on-LAN to the bwpc MAC (no-op when the PC already runs) |
 | `wait-plc-online` | `wait_status` | `hf/switch` `/status` = `online` — guard: `hf/switch/cmd` is ONE retained topic, so `set_trx` + `set_pa` published while the PLC boots would collapse to `set_pa` only |
 | `trx-on` | `cmd` | `hf/switch` `set_trx` `on` |
 | `trx-settle` | `delay` | 1 s |
@@ -234,7 +236,8 @@ the radio / PA confirmations before the PA is armed.
 
 Reverse, with short staggers (`duration = "stagger"`) for inrush → `phase=idle`:
 `pa-arm-disable` → stagger → `antennas-off` → stagger → `pa-off` → stagger →
-`trx-off` → stagger → `psu-off` → stagger → `master-off`.
+`trx-off` → stagger → `psu-off` → stagger → `master-off`. `power/shack-pc-mains`
+is not in the shutdown: cutting mains hard-powers-off Windows.
 
 ### 6.1 Idle standby (`[[standby]]` / `[[wake]]`, optional)
 
@@ -290,6 +293,7 @@ sequencer's own `/cmd`. For the default §7.1 sequence this yields:
 | `muehle/hf/pa/status` | `wait-pa-power-on` liveness precondition |
 | `muehle/hf/pa/state` | `wait-pa-power-on` (`.power` = `on`) |
 | `muehle/power/antennas/status` | observability (controlled slot) |
+| `muehle/power/shack-pc-mains/status` | observability (controlled slot) |
 | `muehle/power/shack-pc/status` | observability (standby `pc-sleep` target) |
 | `muehle/hf/antenna-select/status` + `/state` | idle standby trigger (`activity`, `last_activity`) |
 | `muehle/uhf/radio/…`, `muehle/uhf/az-rotator/…`, `muehle/uhf/el-rotator/…` (`/status` + `/state`) | `[[idle.watch]]` activity sources |
