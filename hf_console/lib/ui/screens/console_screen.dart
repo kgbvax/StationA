@@ -25,14 +25,19 @@ import '../widgets/faults_bar.dart';
 import '../widgets/dx_config_sheet.dart';
 
 // The DX-spot subscription follows the active page: the UHF and CAM maps
-// (both read the VHF array) show 6m/2m/70cm only, and horstreporter drops
-// every other band server-side (`enabled_bands` stream parameter) — the
-// device never downloads them. null = every band (HF, Station).
+// (both read the VHF array) show 6m/2m/70cm only, the HF and Station compass
+// the HF bands only (no 13cm/3cm QO-100 satellite links or VHF paths, which
+// say nothing about HF propagation). horstreporter drops every other band
+// server-side (`enabled_bands` stream parameter) — the device never
+// downloads them.
 const Set<String> _vhfBands = {'6m', '2m', '70cm'};
+const Set<String> _hfBands = {
+  '160m', '80m', '60m', '40m', '30m', '20m', '17m', '15m', '12m', '10m',
+};
 
 @visibleForTesting
-Set<String>? dxBandsForPage(String page) =>
-    (page == 'uhf' || page == 'cam') ? _vhfBands : null;
+Set<String> dxBandsForPage(String page) =>
+    (page == 'uhf' || page == 'cam') ? _vhfBands : _hfBands;
 
 /// The radio whose mode sets the map's SNR gate: VHF spots follow the
 /// IC-9700, not whatever mode the HF rig happens to be in.
@@ -51,11 +56,20 @@ class ConsoleScreen extends StatefulWidget {
 class _ConsoleScreenState extends State<ConsoleScreen> {
   String _page = 'hf';
 
+  @override
+  void initState() {
+    super.initState();
+    // The feed starts before the console exists; narrow it to the opening
+    // page's bands (a no-op re-dial when already narrowed).
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) context.read<DxSpotService>().setBands(dxBandsForPage(_page));
+    });
+  }
+
   void _setPage(String page) {
     setState(() => _page = page);
     final dx = context.read<DxSpotService>();
-    // Mode first: a band change re-dials, and the history replay is filtered
-    // with whatever threshold is set at that moment.
+    // The SNR gate follows the radio of the page; the band set re-dials.
     dx.modeRadio = dxModeRadioForPage(page);
     dx.setMode(context.read<BusStore>().stateValueAs<String>(dx.modeRadio, 'mode'));
     dx.setBands(dxBandsForPage(page));

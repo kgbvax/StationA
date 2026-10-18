@@ -2,30 +2,30 @@
 //
 // dart:io has no EventSource, so we stream the response body and parse SSE frames
 // ourselves. No internal reconnect: on EOF/error we call onDisconnected and let the
-// service own backoff. `Accept-Encoding: identity` keeps the long-lived stream as
-// plain text (gzip on a streaming body is awkward to decode incrementally).
+// service own backoff. The stream is gzip-encoded (HttpClient's default
+// Accept-Encoding + autoUncompress): horstreporter flushes its gzip writer per
+// SSE batch (gzip.go), so it decodes incrementally at ~1/5 of the wire bytes.
 //
-// Liveness: horstreporter's live SSE loop sends NO keepalive comments — it only
-// writes `data:` when a spot arrives (server.go:392-410). So a half-open TCP socket
-// (NAT/firewall dropped the connection without FIN/RST) would otherwise hang
-// forever: the response stream never completes or errors, onDone/onError never
-// fire, and the service never reconnects. We guard two ways:
+// Liveness: horstreporter writes a `: hb` comment after 25 s without spots
+// (stream.go), so silence means a dead link, not a quiet band. A half-open TCP
+// socket (NAT/firewall dropped the connection without FIN/RST) would otherwise
+// hang forever. We guard two ways:
 //   1. HttpClient.connectionTimeout bounds the connect phase (server accepts TCP but
 //      never answers the HTTP request).
-//   2. An idle watchdog resets on EVERY received line; if nothing arrives for
-//      [_idleTimeout] we force-close and call onDisconnected so backoff takes over.
-//      horstreporter republishes the last `minutes=15` of spots on reconnect, so a
-//      periodic reconnect on a genuinely quiet band is a harmless refresh (the
-//      overlay keeps showing recent activity) while still recovering a dead link.
+//   2. An idle watchdog resets on EVERY received line (comments included); after
+//      [_idleTimeout] (three missed heartbeats) we force-close and call
+//      onDisconnected so backoff takes over. The reconnect replays the
+//      `minutes` window, so the overlay refills at once.
 
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
 import 'dxspot_source.dart';
+import 'sse_parser.dart';
 
 const _connectTimeout = Duration(seconds: 15);
-const _idleTimeout = Duration(minutes: 5);
+const _idleTimeout = Duration(seconds: 90);
 
 class _IoDxSpotSource extends DxSpotSource {
   HttpClient? _client;
@@ -34,7 +34,7 @@ class _IoDxSpotSource extends DxSpotSource {
   void Function(String)? _onData;
   void Function()? _onDisconnected;
   bool _stopped = false;
-  final StringBuffer _data = StringBuffer(); // accumulated `data:` lines for the current event
+  late final SseParser _parser = SseParser((d) => _onData?.call(d));
 
   @override
   void start(
@@ -43,7 +43,7 @@ class _IoDxSpotSource extends DxSpotSource {
     required void Function() onDisconnected,
   }) {
     _stopped = false;
-    _data.clear();
+    _parser.reset();
     _onData = onData;
     _onDisconnected = onDisconnected;
     _connect(url);
@@ -51,14 +51,20 @@ class _IoDxSpotSource extends DxSpotSource {
 
   Future<void> _connect(String url) async {
     if (_stopped) return;
-    _client = HttpClient()..connectionTimeout = _connectTimeout;
+    final client = HttpClient()..connectionTimeout = _connectTimeout;
+    _client = client;
     try {
-      final req = await _client!.openUrl('GET', Uri.parse(url));
+      final req = await client.openUrl('GET', Uri.parse(url));
       req.headers.set('Accept', 'text/event-stream');
-      req.headers.set('Accept-Encoding', 'identity');
       req.headers.set('Cache-Control', 'no-cache');
       final resp = await req.close();
+      // stop() may have run while we awaited: never subscribe or arm after it.
+      if (_stopped || !identical(_client, client)) {
+        client.close(force: true);
+        return;
+      }
       if (resp.statusCode != 200) {
+        resp.drain<void>().catchError((_) {});
         _disconnected();
         return;
       }
@@ -87,24 +93,11 @@ class _IoDxSpotSource extends DxSpotSource {
     _idleWatchdog = Timer(_idleTimeout, _disconnected);
   }
 
-  // SSE frame parsing (HTML spec): blank line dispatches the event; one leading
-  // space after `data:` is stripped; multiple `data:` lines join with `\n`. Lines
-  // starting with `:` are comments; `event:`/`id:`/`retry:` are ignored here. Any
-  // received line (including comments) means the link is alive → reset the watchdog.
+  // Any received line (including `: hb` comments) means the link is alive →
+  // reset the watchdog; framing lives in [SseParser].
   void _handleLine(String line) {
-    _armWatchdog(); // reset on every line; silence for _idleTimeout tears down the link
-    if (line.isEmpty) {
-      if (_data.isNotEmpty) {
-        final d = _onData;
-        if (d != null) d(_data.toString().trimRight());
-        _data.clear();
-      }
-      return;
-    }
-    if (line.startsWith('data:')) {
-      final v = line.substring(5);
-      _data.writeln(v.startsWith(' ') ? v.substring(1) : v);
-    }
+    _armWatchdog(); // silence for _idleTimeout tears down the link
+    _parser.addLine(line);
   }
 
   @override
@@ -116,7 +109,7 @@ class _IoDxSpotSource extends DxSpotSource {
     _client?.close(force: true);
     _sub = null;
     _client = null;
-    _data.clear();
+    _parser.reset();
   }
 }
 

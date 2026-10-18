@@ -614,27 +614,22 @@ class _MercatorPainter extends CustomPainter {
     final b = beam;
     if (b != null) _drawBeam(canvas, size, b);
 
-    // 4. Spot dots
+    // 4. Spot dots (two Paints for the whole loop, not two per spot)
+    final dotFill = Paint();
+    // White outline for contrast on dark fills.
+    final dotRing = Paint()
+      ..color = Colors.white.withValues(alpha: 0.6)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 0.6;
     for (final spot in spots) {
       final p = projection.project(spot.lat, spot.lng);
       if (p == null) continue;
-      final color = spot.band.isNotEmpty
+      dotFill.color = spot.band.isNotEmpty
           ? AppTheme.bandColor(spot.band)
           : AppTheme.spotColor(spot.sourceType);
-      canvas.drawCircle(
-        Offset(p.x, p.y),
-        2.5,
-        Paint()..color = color,
-      );
-      // White outline for contrast on dark fills.
-      canvas.drawCircle(
-        Offset(p.x, p.y),
-        2.5,
-        Paint()
-          ..color = Colors.white.withValues(alpha: 0.6)
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 0.6,
-      );
+      final o = Offset(p.x, p.y);
+      canvas.drawCircle(o, 2.5, dotFill);
+      canvas.drawCircle(o, 2.5, dotRing);
     }
 
     // 5. QTH marker

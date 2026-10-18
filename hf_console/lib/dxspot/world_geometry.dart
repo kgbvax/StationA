@@ -30,11 +30,12 @@ class WorldGeometry {
 
   List<List<LatLng>>? _rings;
   Future<List<List<LatLng>>>? _pending;
+  Future<List<List<LatLng>>>? _done; // one completed future: FutureBuilder keeps its snapshot
 
   /// Decoded coastline rings. First call kicks off the load; subsequent calls return
   /// the cached list.
   Future<List<List<LatLng>>> load() {
-    if (_rings != null) return Future.value(_rings);
+    if (_rings != null) return _done ??= Future.value(_rings);
     return _pending ??= _loadAndParse();
   }
 

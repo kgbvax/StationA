@@ -92,11 +92,12 @@ void main() {
       });
     }
 
-    test('UHF and CAM maps subscribe to 6m/2m/70cm only; HF and Station to every band', () {
+    test('UHF and CAM maps subscribe to 6m/2m/70cm only; HF and Station to the HF bands', () {
       expect(dxBandsForPage('uhf'), {'6m', '2m', '70cm'});
       expect(dxBandsForPage('cam'), {'6m', '2m', '70cm'});
-      expect(dxBandsForPage('hf'), isNull);
-      expect(dxBandsForPage('station'), isNull);
+      const hf = {'160m', '80m', '60m', '40m', '30m', '20m', '17m', '15m', '12m', '10m'};
+      expect(dxBandsForPage('hf'), hf);
+      expect(dxBandsForPage('station'), hf);
     });
 
     testWidgets('the SNR gate follows the IC-9700 on UHF/CAM and the HF rig elsewhere', (tester) async {

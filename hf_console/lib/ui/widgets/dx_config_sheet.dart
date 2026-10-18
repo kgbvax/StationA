@@ -37,12 +37,13 @@ class _DxConfigDialogState extends State<_DxConfigDialog> {
   final _storage = CredentialStore();
   final _locator = TextEditingController();
   final _url = TextEditingController(text: 'https://horstreporter.kgbvax.net');
+  final _callsign = TextEditingController();
   final _camUrl = TextEditingController(text: defaultVhfcamBaseUrl);
   bool _loading = true;
 
   @override
   void dispose() {
-    for (final c in [_locator, _url, _camUrl]) {
+    for (final c in [_locator, _url, _callsign, _camUrl]) {
       c.dispose();
     }
     super.dispose();
@@ -60,6 +61,7 @@ class _DxConfigDialogState extends State<_DxConfigDialog> {
     setState(() {
       _locator.text = values['station_locator'] ?? '';
       _url.text = values['horstreporter_base_url'] ?? 'https://horstreporter.kgbvax.net';
+      _callsign.text = values['station_callsign'] ?? '';
       _camUrl.text = resolveVhfcamBaseUrl(values['vhfcam_base_url']);
       _loading = false;
     });
@@ -68,15 +70,17 @@ class _DxConfigDialogState extends State<_DxConfigDialog> {
   Future<void> _save() async {
     final locator = _locator.text.trim().toUpperCase();
     final baseUrl = _url.text.trim();
+    final callsign = _callsign.text.trim().toUpperCase();
     final camUrl = _camUrl.text.trim();
     await _storage.writeAll({
       'station_locator': locator,
       'horstreporter_base_url': baseUrl,
+      'station_callsign': callsign,
       'vhfcam_base_url': camUrl,
     });
     if (!mounted) return;
     final dx = context.read<DxSpotService>();
-    dx.configure(baseUrl: baseUrl, locator: locator);
+    dx.configure(baseUrl: baseUrl, locator: locator, callsign: callsign);
     dx.restart();
     // The cam service re-polls and re-probes immediately under the new URL;
     // the feed panel reacts through its listener.
@@ -125,6 +129,13 @@ class _DxConfigDialogState extends State<_DxConfigDialog> {
                         ),
                       );
                     },
+                  ),
+                  const SizedBox(height: 12),
+                  _field('DX spot callsign', _callsign, hint: 'blank = all spots of the locator square'),
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Text('With a callsign the maps show only reports of this station (who heard it, whom it heard).',
+                        style: AppTheme.body(11, color: AppTheme.txtMute)),
                   ),
                   const SizedBox(height: 12),
                   _field('Horstreporter URL', _url, hint: 'https://…'),

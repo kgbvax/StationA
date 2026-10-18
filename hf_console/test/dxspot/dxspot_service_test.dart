@@ -53,9 +53,11 @@ void main() {
       expect(url, startsWith('https://horstreporter.kgbvax.net/api/stream'));
     });
 
-    test('encodes QTH and requests 30 min + surroundings', () {
+    test('encodes QTH, requests the 10-min window, drops WSPR/DX-cluster server-side', () {
       final url = DxSpotService.streamUrl('https://example.com', 'JO31OM');
-      expect(url, 'https://example.com/api/stream?qth=JO31OM&minutes=30&surroundings=true');
+      expect(url,
+          'https://example.com/api/stream?qth=JO31OM&minutes=10&include_wspr=false&include_dxcluster=false');
+      expect(url, isNot(contains('surroundings')));
     });
   });
 
@@ -102,20 +104,93 @@ void main() {
         }));
       }
       expect(service.rebuildCount, 0);
-      expect(service.spots.length, 80); // capped at _maxSpots
+      expect(service.spots.length, 2000); // the whole window, not a freshest-N slice
       expect(service.gridSquares, isNotEmpty);
       expect(service.rebuildCount, 1); // spots + gridSquares share one pass
       service.spots;
       expect(service.rebuildCount, 1); // unchanged store: no re-derivation
     });
 
-    test('keeps mqtt spots, drops other source types', () {
+    test('keeps PSKReporter (mqtt) and RBN spots, drops other source types', () {
       service.ingest(spotJson(sourceType: 'mqtt', snr: 5, locator: 'JO31'));
       service.ingest(spotJson(sourceType: 'dxcluster', snr: 5, locator: 'JO31'));
       service.ingest(spotJson(sourceType: 'rbn', snr: 5, locator: 'JO31'));
       service.ingest(spotJson(sourceType: 'wspr', snr: 5, locator: 'JO31'));
-      expect(service.spots.length, 1);
-      expect(service.spots.first.sourceType, 'mqtt');
+      expect(service.spots.map((s) => s.sourceType).toSet(), {'mqtt', 'rbn'});
+    });
+
+    test('a burst of new squares does not evict the squares already in the window', () {
+      // Regression: the overlay showed only the 80 freshest keys, so on a busy
+      // feed every new spot pushed an older square off the map.
+      for (var i = 0; i < 5; i++) {
+        service.ingest(spotJson(sourceType: 'mqtt', snr: 5, locator: 'JN${10 + i}'));
+      }
+      for (var i = 0; i < 200; i++) {
+        service.ingest(jsonEncode({
+          'lat': 51.0, 'lng': 7.0, 'snr': 5, 'ageSeconds': 0,
+          'locator': 'K${String.fromCharCode(65 + i % 18)}${(i ~/ 18) % 10}${i % 10}',
+          'band': '20m', 'sender': 'X$i', 'sourceType': 'mqtt',
+        }));
+      }
+      final locs = service.gridSquares.map((q) => q.locator).toSet();
+      for (var i = 0; i < 5; i++) {
+        expect(locs, contains('JN${10 + i}'));
+      }
+    });
+
+    test('a replayed older report does not make a key look fresh', () {
+      // Live report heard 300 s ago (as seen from the receipt instant).
+      service.ingest(jsonEncode({
+        'lat': 51.0, 'lng': 7.0, 'snr': 3, 'ageSeconds': 300,
+        'locator': 'JO31', 'band': '20m', 'sourceType': 'mqtt',
+      }));
+      // Reconnect replay of an even older report of the same key.
+      service.ingest(jsonEncode({
+        'lat': 51.0, 'lng': 7.0, 'snr': 12, 'ageSeconds': 500,
+        'locator': 'JO31', 'band': '20m', 'sourceType': 'mqtt',
+      }));
+      final s = service.spots.single;
+      final now = DateTime.now().millisecondsSinceEpoch;
+      expect(s.liveAgeSecondsAt(now), greaterThanOrEqualTo(300));
+      expect(s.snr, 3); // the latest report's SNR, not the session max
+      expect(s.reports, 2);
+    });
+
+    test('drops reports older than the age window at ingest', () {
+      service.ingest(jsonEncode({
+        'lat': 51.0, 'lng': 7.0, 'snr': 3, 'ageSeconds': 700,
+        'locator': 'JO31', 'band': '20m', 'sourceType': 'mqtt',
+      }));
+      expect(service.spots, isEmpty);
+    });
+
+    test('an SNR-gate change re-filters the stored window at once', () {
+      service.setFilter(const DxSpotFilter(mode: 'ssb', ssbMinDb: 0));
+      service.ingest(spotJson(sourceType: 'mqtt', snr: -10, locator: 'JO31'));
+      expect(service.spots, isEmpty);
+      service.setMode('cw');
+      expect(service.spots.single.snr, -10);
+    });
+
+    test('unchanged squares keep their list instance (no repaint)', () {
+      service.ingest(spotJson(sourceType: 'mqtt', snr: 5, locator: 'JO31'));
+      final first = service.gridSquares;
+      service.ingest(spotJson(sourceType: 'mqtt', snr: 5, locator: 'JO31'));
+      expect(identical(service.gridSquares, first), isTrue);
+    });
+
+    test('dominant band follows the report count, ties broken deterministically', () {
+      for (final b in ['40m', '20m', '20m']) {
+        service.ingest(spotJson(sourceType: 'mqtt', snr: 5, locator: 'JO31', band: b));
+      }
+      expect(service.gridSquares.single.dominantBand, '20m');
+    });
+
+    test('configure with a new QTH purges the previous spots', () {
+      service.ingest(spotJson(sourceType: 'mqtt', snr: 5, locator: 'JO31'));
+      expect(service.spots, isNotEmpty);
+      service.configure(locator: 'JO40');
+      expect(service.spots, isEmpty);
     });
 
     test('drops mqtt spots below the SSB threshold', () {
@@ -173,6 +248,7 @@ void main() {
         'ageSeconds': 0,
         'locator': 'JO31',
         'band': '20m',
+        'sender': 'DL1AA',
         'sourceType': 'mqtt',
       }));
       service.ingest(jsonEncode({
@@ -180,8 +256,9 @@ void main() {
         'lng': 7.1,
         'snr': 6,
         'ageSeconds': 0,
-        'locator': 'JO31',
+        'locator': 'JO31AB',
         'band': '20m',
+        'sender': 'DL2BB',
         'sourceType': 'mqtt',
       }));
       expect(service.gridSquares.length, 1);
@@ -212,11 +289,12 @@ void main() {
     test('streamUrl carries enabled_bands when set, omits it otherwise', () {
       expect(
         DxSpotService.streamUrl('https://example.com', 'JO31OM', bands: const {'2m', '70cm'}),
-        'https://example.com/api/stream?qth=JO31OM&minutes=30&surroundings=true&enabled_bands=2m,70cm',
+        'https://example.com/api/stream?qth=JO31OM&minutes=10&include_wspr=false&include_dxcluster=false'
+        '&enabled_bands=2m,70cm',
       );
       expect(
         DxSpotService.streamUrl('https://example.com', 'JO31OM'),
-        'https://example.com/api/stream?qth=JO31OM&minutes=30&surroundings=true',
+        'https://example.com/api/stream?qth=JO31OM&minutes=10&include_wspr=false&include_dxcluster=false',
       );
     });
 

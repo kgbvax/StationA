@@ -3,8 +3,9 @@
 // EventSource gives native SSE parsing + auto-reconnect, but for uniform behaviour
 // with the native impl (and so the service can surface feed health), we treat an
 // error as a disconnect and let the service close + reopen with backoff. Each new
-// connection re-fetches the `minutes=15` history window, so losing EventSource's
-// Last-Event-ID resume is harmless.
+// connection re-fetches the `minutes` history window, so losing EventSource's
+// Last-Event-ID resume is harmless. onMessage sees only default (unnamed)
+// events — the named `history_end`/`server_error` frames never reach onData.
 //
 // CORS: a cross-origin EventSource requires horstreporter to send
 // `Access-Control-Allow-Origin` for the page origin (http://scmino:8091). The native

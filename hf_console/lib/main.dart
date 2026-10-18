@@ -200,7 +200,12 @@ class _AppRootState extends State<_AppRoot> with WidgetsBindingObserver {
                                 } catch (_) {
                                   // keep going; console will show the offline indicator
                                 }
-                                _dxSpot.configure(baseUrl: baseUrl, locator: locator);
+                                final stored = await _storage.readAll();
+                                _dxSpot.configure(
+                                  baseUrl: baseUrl,
+                                  locator: locator,
+                                  callsign: stored['station_callsign'],
+                                );
                                 _dxSpot.restart();
                                 if (mounted) {
                                   setState(() => _showConsole = true);

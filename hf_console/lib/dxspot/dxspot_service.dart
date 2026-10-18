@@ -21,15 +21,29 @@ import 'projection.dart';
 
 const _defaultBaseUrl = 'https://horstreporter.kgbvax.net';
 const _maxAgeSeconds = 600; // drop spots not heard again within 10 min
-const _maxSpots = 80;
+const _historyMinutes = _maxAgeSeconds ~/ 60; // replay exactly the window we keep
+// Safety bound on the derived dot list only; the grid squares aggregate the
+// whole age window. At ~5 spots/s (qth without surroundings) the 10-min
+// store holds well under this, so the bound is not hit in normal operation —
+// a small freshest-N cap here was what made the map churn (every new spot
+// evicted an old square).
+const _maxSpots = 3000;
 const _minBackoffSeconds = 2;
 const _maxBackoffSeconds = 60;
 const _notifyThrottle = Duration(milliseconds: 500);
 const _pruneInterval = Duration(seconds: 60); // age out stale spots without new traffic
 
-/// One DX spot from horstreporter's `streamSpot` (server.go:233-244). `lat`/`lng` are
-/// already the *remote* station's position. `sender`/`receiver` are present only for
-/// `sourceType == "dxcluster"`.
+/// The horstreporter source families the overlay keeps: `mqtt` = PSKReporter
+/// (horstreporter ingests only FT8/FT4 from it, mqtt.go pskrModeFeedsBaseline)
+/// and `rbn` = Reverse Beacon Network skimmers (CW, plus some RTTY — the wire
+/// carries no mode field to tell them apart). WSPR and DX-cluster are not
+/// propagation evidence for the operator's bands and are dropped server-side
+/// (`include_wspr=false&include_dxcluster=false`).
+const Set<String> kDxSourceTypes = {'mqtt', 'rbn'};
+
+/// One DX spot from horstreporter's v1 `streamSpot` (stream_wire.go). `lat`/`lng`
+/// are already the *far* station's position. `sender`/`receiver` are present only
+/// for `sourceType == "dxcluster"`.
 class DxSpot {
   final double lat;
   final double lng;
@@ -40,7 +54,10 @@ class DxSpot {
   final String sourceType;
   final String? sender;
   final String? receiver;
-  final int receivedAtMs; // wall-clock receive time (for aging out)
+  final int receivedAtMs; // wall-clock receive time
+  /// Number of reports merged into this key while it stayed in the window.
+  /// Drives the dominant-band count, like horstreporter's per-report tally.
+  final int reports;
 
   DxSpot({
     required this.lat,
@@ -53,16 +70,21 @@ class DxSpot {
     this.sender,
     this.receiver,
     required this.receivedAtMs,
+    this.reports = 1,
   });
+
+  /// Absolute wall-clock time the report was made (receipt minus server age).
+  /// Comparable across receipts — unlike [ageSeconds], which is relative to
+  /// each spot's own receipt time.
+  int get heardAtMs => receivedAtMs - ageSeconds * 1000;
 
   /// Callsign to label, if any (dxcluster `receiver` is the DX call); else the grid.
   String get label =>
       (receiver != null && receiver!.isNotEmpty) ? receiver! : ((sender != null && sender!.isNotEmpty) ? sender! : locator);
 
-  /// Server age plus elapsed since receipt — the spot's true current age in seconds.
-  /// Use this (with a single `nowMs` snapshot) for freshness gating/sort/prune so a
-  /// spot kept across re-broadcasts doesn't keep a frozen first-seen age.
-  int liveAgeSecondsAt(int nowMs) => ageSeconds + ((nowMs - receivedAtMs) ~/ 1000);
+  /// The spot's true current age in seconds. Use with a single `nowMs` snapshot
+  /// for gating/sort/prune.
+  int liveAgeSecondsAt(int nowMs) => (nowMs - heardAtMs) ~/ 1000;
 }
 
 /// Maidenhead 4-character grid-square aggregate of the spots currently in view.
@@ -86,6 +108,7 @@ class GridSquare {
 
 class _SquareAccum {
   final Map<String, int> counts = {};
+  final Map<String, int> bestSnr = {};
   final List<int> snrs = [];
 }
 
@@ -160,6 +183,7 @@ class DxSpotService extends ChangeNotifier {
   /// (Safari's Enhanced Security web process, used for plain-http pages).
   bool _rebuildPending = false;
   int _rebuilds = 0;
+  String _squareSig = ''; // _gridSquares content signature (keep the instance if unchanged)
 
   String? _baseUrl;
   String? _locator;
@@ -191,9 +215,14 @@ class DxSpotService extends ChangeNotifier {
   /// spots if no locator (overlay off). Does NOT (re)start the feed — callers start()
   /// or restart() as appropriate, so there is no double-restart on the change path.
   void configure({String? baseUrl, String? locator, String? callsign}) {
+    final feedChanged = baseUrl != _baseUrl || locator != _locator || callsign != _callsign;
     _baseUrl = baseUrl;
     _locator = locator;
     _callsign = callsign;
+    if (feedChanged) {
+      // Spots of the previous QTH/endpoint must not linger until the age-out.
+      _purge();
+    }
     if (locator != null && locator.isNotEmpty) {
       final c = locatorToLatLng(locator);
       _centerLat = c.lat;
@@ -201,10 +230,7 @@ class DxSpotService extends ChangeNotifier {
     } else {
       _centerLat = null;
       _centerLng = null;
-      _byKey.clear();
-      _spots = const [];
-      _gridSquares = const [];
-      _rebuildPending = false;
+      _purge();
     }
     notifyListeners();
   }
@@ -230,11 +256,12 @@ class DxSpotService extends ChangeNotifier {
   bool get active => _centerLat != null; // overlay enabled iff a center exists
   DxSpotFilter get filter => _filter;
 
-  /// Update the SNR filter. Changing the filter does NOT clear existing spots,
-  /// but a reconnect will re-ingest history with the new threshold; live spots
-  /// are re-evaluated on the next broadcast.
+  /// Update the SNR filter. The store keeps every spot; the gate applies when
+  /// the visible lists are derived, so a change re-filters the whole window
+  /// at once (no re-dial, no 10-minute mix of old and new thresholds).
   void setFilter(DxSpotFilter filter) {
     _filter = filter;
+    _rebuildPending = true;
     notifyListeners();
   }
 
@@ -250,6 +277,7 @@ class DxSpotService extends ChangeNotifier {
         next.ssbMinDb != _filter.ssbMinDb ||
         next.cwMinDb != _filter.cwMinDb) {
       _filter = next;
+      _rebuildPending = true;
       notifyListeners();
     }
   }
@@ -267,12 +295,17 @@ class DxSpotService extends ChangeNotifier {
     final next = (bands == null || bands.isEmpty) ? null : Set.unmodifiable(bands);
     if (_bandsEqual(next, _enabledBands)) return;
     _enabledBands = next;
+    _purge();
+    notifyListeners();
+    if (_running) _connect();
+  }
+
+  void _purge() {
     _byKey.clear();
     _spots = const [];
     _gridSquares = const [];
+    _squareSig = '';
     _rebuildPending = false;
-    notifyListeners();
-    if (_running) _connect();
   }
 
   static bool _bandsEqual(Set<String>? a, Set<String>? b) {
@@ -336,11 +369,21 @@ class DxSpotService extends ChangeNotifier {
   }
 
   /// Build the SSE URL used by this service. Public so tests can assert the
-  /// query parameters without starting a real connection. [bands] narrows the
-  /// feed server-side via horstreporter's `enabled_bands` stream parameter.
+  /// query parameters without starting a real connection.
+  ///
+  /// - `qth` is the callsign when one is configured (reports of the own
+  ///   station: who heard me / whom did I hear), else the locator (every
+  ///   PSKReporter/RBN report to or from a station in that 4-char square).
+  ///   No `surroundings`: that widens the match to the 3×3 block of squares
+  ///   around the QTH — ~8× the traffic, a regional view rather than ours.
+  /// - `minutes` matches the client's age window; older history would only be
+  ///   downloaded and pruned.
+  /// - WSPR and DX-cluster are dropped server-side ([kDxSourceTypes]).
+  /// - [bands] narrows via horstreporter's `enabled_bands` parameter.
   static String streamUrl(String baseUrl, String qth, {Set<String>? bands}) {
     final base = baseUrl.isEmpty ? _defaultBaseUrl : baseUrl;
-    var url = '$base/api/stream?qth=${Uri.encodeComponent(qth)}&minutes=30&surroundings=true';
+    var url = '$base/api/stream?qth=${Uri.encodeComponent(qth)}&minutes=$_historyMinutes'
+        '&include_wspr=false&include_dxcluster=false';
     if (bands != null && bands.isNotEmpty) {
       url += '&enabled_bands=${bands.join(',')}';
     }
@@ -389,16 +432,15 @@ class DxSpotService extends ChangeNotifier {
     final sender = j['sender'] as String?;
     final band = (j['band'] as String?) ?? '';
     final sourceType = (j['sourceType'] as String?) ?? '';
-    // The console DX overlay mirrors horstreporter's own azimuthal view, which
-    // only consumes FT8/FT4 spots published as sourceType == "mqtt". Drop the
-    // other source families (dxcluster, rbn, wspr) at ingest so the band-key
-    // rail and grid-square palette stay consistent with the web frontend.
-    if (sourceType != 'mqtt') return;
+    // PSKReporter (FT8/FT4) and RBN (CW) only; the server already drops WSPR
+    // and DX-cluster, this is a guard.
+    if (!kDxSourceTypes.contains(sourceType)) return;
 
     final snr = (j['snr'] as num?)?.toInt() ?? 0;
-    // Mode-aware SNR gate: only FT8/FT4 (mqtt) spots are filtered this way,
-    // matching horstreporter's streamClientFilter.
-    if (!_filter.allows(snr)) return;
+    final ageSeconds = (j['ageSeconds'] as num?)?.toInt() ?? 0;
+    // The server's history cutoff is not exact (arrival-ordered history), so
+    // drop what the prune would remove on the next rebuild anyway.
+    if (ageSeconds > _maxAgeSeconds) return;
 
     // Need a callsign or grid to place/label the spot meaningfully.
     if (locator.isEmpty && (receiver == null || receiver.isEmpty) && (sender == null || sender.isEmpty)) {
@@ -409,7 +451,7 @@ class DxSpotService extends ChangeNotifier {
       lat: lat,
       lng: lng,
       snr: snr,
-      ageSeconds: (j['ageSeconds'] as num?)?.toInt() ?? 0,
+      ageSeconds: ageSeconds,
       locator: locator,
       band: band,
       sourceType: sourceType,
@@ -420,14 +462,26 @@ class DxSpotService extends ChangeNotifier {
 
     final key = '$locator|${receiver ?? ''}|${sender ?? ''}|$band|$sourceType';
     final prev = _byKey[key];
-    // Keep the freshest (lowest ageSeconds); tie-break by stronger snr. Either way the
-    // key was heard NOW, so refresh its last-heard time — otherwise an actively
-    // re-spotted station whose first spot had the best SNR would never get its
-    // receivedAtMs updated and the age-prune would blink it off every 10 min.
-    if (prev == null ||
-        spot.ageSeconds < prev.ageSeconds ||
-        (spot.ageSeconds == prev.ageSeconds && spot.snr > prev.snr)) {
+    // The latest report wins (its SNR included), compared by absolute heard
+    // time: ageSeconds values from different receipts are not comparable. A
+    // replayed/late older report of the same key only bumps the report count;
+    // it must not make the key look fresh (a reconnect replays the window).
+    if (prev == null) {
       _byKey[key] = spot;
+    } else if (spot.heardAtMs >= prev.heardAtMs) {
+      _byKey[key] = DxSpot(
+        lat: spot.lat,
+        lng: spot.lng,
+        snr: spot.snr,
+        ageSeconds: spot.ageSeconds,
+        locator: spot.locator,
+        band: spot.band,
+        sourceType: spot.sourceType,
+        sender: spot.sender,
+        receiver: spot.receiver,
+        receivedAtMs: spot.receivedAtMs,
+        reports: prev.reports + 1,
+      );
     } else {
       _byKey[key] = DxSpot(
         lat: prev.lat,
@@ -439,7 +493,8 @@ class DxSpotService extends ChangeNotifier {
         sourceType: prev.sourceType,
         sender: prev.sender,
         receiver: prev.receiver,
-        receivedAtMs: spot.receivedAtMs,
+        receivedAtMs: prev.receivedAtMs,
+        reports: prev.reports + 1,
       );
     }
 
@@ -475,25 +530,37 @@ class DxSpotService extends ChangeNotifier {
       final band = s.band;
       if (band.isEmpty) continue;
       final acc = byLoc.putIfAbsent(loc, () => _SquareAccum());
-      acc.counts[band] = (acc.counts[band] ?? 0) + 1;
+      acc.counts[band] = (acc.counts[band] ?? 0) + s.reports;
+      final best = acc.bestSnr[band];
+      if (best == null || s.snr > best) acc.bestSnr[band] = s.snr;
       acc.snrs.add(s.snr);
     }
+    // Stable order (by locator) and a deterministic dominant-band tie-break
+    // (count, then best SNR, then band name): input order is freshness order,
+    // and letting it decide made squares flip colour without new data.
+    final locs = byLoc.keys.toList()..sort();
     final out = <GridSquare>[];
-    for (final entry in byLoc.entries) {
+    for (final loc in locs) {
+      final acc = byLoc[loc]!;
       String dominant = '';
       int maxCount = 0;
-      entry.value.counts.forEach((band, count) {
-        if (count > maxCount) {
+      int maxSnr = 0;
+      acc.counts.forEach((band, count) {
+        final snr = acc.bestSnr[band]!;
+        if (dominant.isEmpty ||
+            count > maxCount ||
+            (count == maxCount && (snr > maxSnr || (snr == maxSnr && band.compareTo(dominant) < 0)))) {
           maxCount = count;
+          maxSnr = snr;
           dominant = band;
         }
       });
       if (dominant.isEmpty) continue;
-      final score = _topQuartileMean(entry.value.snrs);
+      final score = _topQuartileMean(acc.snrs);
       out.add(GridSquare(
-        locator: entry.key,
+        locator: loc,
         dominantBand: dominant,
-        snrs: entry.value.snrs,
+        snrs: acc.snrs,
         score: score.isFinite ? score : 0.0,
       ));
     }
@@ -508,22 +575,43 @@ class DxSpotService extends ChangeNotifier {
     _notify();
   }
 
-  /// Prune stale spots (live age > [_maxAgeSeconds]) and cap to [_maxSpots] by
-  /// freshness. Freshness uses live age (server age + elapsed since receipt),
-  /// computed against a single `now` so the comparator is consistent.
+  /// Prune stale spots (live age > [_maxAgeSeconds]), apply the SNR gate and
+  /// derive the visible lists. The grid squares aggregate EVERY spot in the
+  /// window (as horstreporter's own map does); only the dot list is bounded.
+  /// When the squares come out identical, the previous list instance is kept so
+  /// the painters (identity-based shouldRepaint) skip the repaint.
   void _rebuildIfPending() {
     if (!_rebuildPending) return;
     _rebuildPending = false;
     _rebuilds++;
     final now = DateTime.now().millisecondsSinceEpoch;
     _byKey.removeWhere((_, s) => s.liveAgeSecondsAt(now) > _maxAgeSeconds);
-    final list = _byKey.values.toList()
-      ..sort((a, b) {
-        final age = a.liveAgeSecondsAt(now).compareTo(b.liveAgeSecondsAt(now));
-        return age != 0 ? age : b.snr.compareTo(a.snr);
-      });
-    _spots = list.length > _maxSpots ? List.unmodifiable(list.sublist(0, _maxSpots)) : List.unmodifiable(list);
-    _gridSquares = _collectGridSquares(_spots);
+    final visible = _byKey.values.where((s) => _filter.allows(s.snr)).toList();
+    final squares = _collectGridSquares(visible);
+    final sig = _signature(squares);
+    if (sig != _squareSig) {
+      _squareSig = sig;
+      _gridSquares = squares;
+    }
+    if (visible.length > _maxSpots) {
+      visible.sort((a, b) => b.heardAtMs.compareTo(a.heardAtMs));
+      _spots = List.unmodifiable(visible.sublist(0, _maxSpots));
+    } else {
+      _spots = List.unmodifiable(visible);
+    }
+  }
+
+  /// What the painters draw per square: locator, colour and opacity score.
+  static String _signature(List<GridSquare> squares) {
+    final b = StringBuffer();
+    for (final q in squares) {
+      b
+        ..write(q.locator)
+        ..write(q.dominantBand)
+        ..write(q.score.round())
+        ..write(';');
+    }
+    return b.toString();
   }
 
 
