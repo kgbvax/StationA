@@ -126,7 +126,14 @@ func New(ctx context.Context, cfg config.Config, log *slog.Logger) (*Client, *se
 		opts.SetPassword(cfg.MQTT.Password)
 	}
 	opts.SetAutoReconnect(true)
-	opts.SetCleanSession(false)
+	// Clean session on every connect. Every input powerseq reads is retained
+	// and the broker re-sends retained values on each SUBSCRIBE, so a
+	// persistent session buys nothing. It cost a lot: on 2026-10-18 the HA
+	// broker stopped delivering every QoS-1 message to the resumed session
+	// (only the PLC's QoS-0 bridged topics still arrived), so hf/radio and
+	// hf/pa were never seen and every cold start timed out. A clean session
+	// also drops subscriptions left over from an older config.
+	opts.SetCleanSession(true)
 	opts.SetWill(s.SelfBase()+"/status", "offline", 1, true)
 
 	opts.OnConnect = func(cl pahomqtt.Client) {
@@ -194,6 +201,7 @@ func (c *Client) subscribeAll(cl pahomqtt.Client) {
 		topic := slot + "/status"
 		c.subscribe(cl, topic, func(_ pahomqtt.Client, m pahomqtt.Message) {
 			online := strings.EqualFold(strings.TrimSpace(string(m.Payload())), "online")
+			c.log.Debug("observed status", "topic", m.Topic(), "online", online, "retained", m.Retained())
 			c.seq.SetStatus(slot, online)
 		})
 	}
@@ -201,17 +209,17 @@ func (c *Client) subscribeAll(cl pahomqtt.Client) {
 	for _, slot := range stateSlots {
 		topic := slot + "/state"
 		c.subscribe(cl, topic, func(_ pahomqtt.Client, m pahomqtt.Message) {
+			c.log.Debug("observed state", "topic", m.Topic(), "bytes", len(m.Payload()), "retained", m.Retained())
 			c.seq.SetState(slot, m.Payload())
 		})
 	}
 	// Operator one-button command. NOT retained (one-shot). Subscribed at QoS 0
-	// ON PURPOSE: with a persistent session (CleanSession=false) a QoS-1
-	// subscription would let the broker QUEUE a /cmd published while powerseq is
-	// offline and replay it on reconnect — re-energizing the station, the exact
-	// case the "own /cmd NOT retained" rule guards against. QoS 0 means the
-	// broker never queues it; a /cmd issued while we are down is simply lost
-	// (correct for a one-shot operator command). /status + /state keep QoS 1 +
-	// the persistent session so their last retained value replays on reconnect.
+	// ON PURPOSE: should the session ever be persistent again, a QoS-1
+	// subscription would let the broker QUEUE a /cmd published while powerseq
+	// is offline and replay it on reconnect — re-energizing the station, the
+	// exact case the "own /cmd NOT retained" rule guards against. A /cmd issued
+	// while we are down is simply lost (correct for a one-shot operator
+	// command). /status + /state replay as retained values on each subscribe.
 	c.subscribeQoS(cl, c.seq.CmdTopic(), 0, func(_ pahomqtt.Client, m pahomqtt.Message) {
 		var cmd struct {
 			Action string `json:"action"`
@@ -220,6 +228,9 @@ func (c *Client) subscribeAll(cl pahomqtt.Client) {
 			c.log.Warn("bad /cmd", "err", err)
 			return
 		}
+		// Info, always: an unexplained stop shut the station down on
+		// 2026-10-18 and nothing recorded it.
+		c.log.Info("cmd received", "action", cmd.Action, "retained", m.Retained(), "payload", string(m.Payload()))
 		switch cmd.Action {
 		case "start":
 			c.seq.Start()
