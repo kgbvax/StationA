@@ -58,17 +58,26 @@ CLI flags:
 5. `internal/ha` — legacy embedded HA discovery payload builders (gated off by
    default; slated for deletion once `hadiscovery` is proven, model §9).
 
+**Liveness and re-arm** (`acom.Device.Run`): keyed on **decoded telemetry
+frames**, never raw bytes. Enable-telemetry is re-sent every 3 s while no
+frame has decoded for 3 s, or while the amp reports OFF/RESET/INIT (a booting
+amp needs an enable *after* its boot; one sent while it is off is lost). No
+frame for 30 s is an outage: the link-down handler publishes
+`device_online:false` once (Warn once per outage), band/mode are forgotten,
+and **the port stays open** with the re-arm running — so a remote-on gets the
+amp streaming within seconds. `/status` stays `online` throughout; only
+`/state.device_online` flips, and only the first decoded frame raises it
+(opening the port never does). Discarded bytes and non-telemetry frames are
+counted and logged with the re-arm/outage lines; the first frame logs
+`telemetry streaming: mode=…`. 2026-10-18 history: a byte-keyed 5 s re-send
+plus close + 60 s backoff left a freshly powered amp unarmed for minutes and
+powerseq's `wait-pa-power-on` timed out. The bridge never drives the amp's
+power state; re-arming telemetry is not a power command.
+
 **Restart loop** (`serialLoop`): opens the port, publishes meta, runs the
-telemetry loop until the port errors / 30 s silence / ctx cancel, then marks
-the device offline and backs off and retries. `/status` stays `online` while
-the bridge retries — only `/state.device_online` flips, and it is raised only
-by the first telemetry frame of a session, never by opening the port (a
-switched-off amp opens fine and stays silent). The loop is a pure
-observer: it neither drives the amp's power state nor parks. When the amp is
-unpowered (its remote-on relay released by the `hf/switch` slot) the port goes
-silent and the loop backs off; once the amp is powered again telemetry resumes
-and the loop reconnects (Open re-sends the enable-telemetry command). There is
-no watchdog and no `power_default`.
+telemetry loop. A run ends only when the port is unrecoverable (faults with no
+successful read for 30 s) or on ctx cancel; then the loop backs off
+exponentially and re-opens. There is no `power_default` and no parking.
 
 **Serial self-heal** (`acom.Device.reopen`): a transient port fault — the
 live failure mode is EIO after the USB-serial adapter drops and the kernel
@@ -81,11 +90,11 @@ with ENOENT is retried in place (spaced by `reopenMinInterval`, 2 s) until
 it lands — the adapter is coming back, and this is exactly the fault the
 in-place heal exists for. A link that *opens* but faults again inside the
 window is treated as persistently broken and falls through to the serialLoop
-restart path and its backoff. The 30 s silence watchdog also covers the
-fault path and the reopen-retry path, and is refreshed only by real data,
-never by a reopen: a flapping link that delivers no data for 30 s goes
-offline however often the port reopens (or fails to), so `device_online`
-cannot be held true by a dead link (two-layer liveness stays honest). The
+restart path and its backoff. The 30 s port watchdog covers the fault path
+and the reopen-retry path and is refreshed only by a successful read, never
+by a reopen, so a flapping adapter ends the run however often it reopens.
+`device_online` is independent of this: it follows decoded frames, so a dead
+link cannot hold it true (two-layer liveness stays honest). The
 serialLoop backoff resets to the initial value after a run that lasted
 ≥ 1 min (measured on run duration, applied before the wait), so escalation
 belongs to the episode that broke the link rather than to history.

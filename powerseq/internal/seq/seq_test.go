@@ -1309,3 +1309,34 @@ func TestMagicPacket(t *testing.T) {
 		}
 	}
 }
+
+func TestWaitTimeoutReportsObserved(t *testing.T) {
+	// The fault must say what the sequencer saw, not just "timeout".
+	up := []Step{
+		{Name: "wait-radio-online", Kind: KindWaitStatus, Slots: []string{"hf/radio", "hf/switch"}},
+	}
+	s, _ := newTestSeqWith(t, up, exampleShutdown())
+	s.SetBrokerOnline(true)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go s.Run(ctx)
+
+	s.SetStatus(abs("hf/radio"), true)
+	s.SetState(abs("hf/radio"), []byte(`{"device_online":false}`))
+	s.Start()
+	runUntil(t, s, func() bool {
+		ph, _, fault := s.Phase()
+		return ph == PhaseIdle && fault != ""
+	}, time.Second)
+
+	_, _, fault := s.Phase()
+	for _, want := range []string{
+		"wait-radio-online: timeout (",
+		"hf/radio status=online device_online=false",
+		"hf/switch status=none state=none",
+	} {
+		if !strings.Contains(fault, want) {
+			t.Errorf("fault = %q, want it to contain %q", fault, want)
+		}
+	}
+}

@@ -283,7 +283,7 @@ address   = "muehle/hf/power-seq"
 component = "powerseq"
 device    = "logic slot — startup/shutdown sequencer"
 link      = "none"
-host      = "shari"
+host      = "scmino"
 
 [[slot]]
 address   = "muehle/hf/discovery"
@@ -462,7 +462,7 @@ slots = ["muehle/hf/beam-steer"]
 name  = "powerseq"
 path  = "powerseq/"
 kind  = "logic"
-host  = "shari"
+host  = "scmino"
 unit  = "powerseq"
 slots = ["muehle/hf/power-seq"]
 

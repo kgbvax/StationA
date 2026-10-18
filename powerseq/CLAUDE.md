@@ -139,10 +139,13 @@ muehle/hf/power-seq/cmd      not retained   start | stop (operator one-button)
 `/cmd` is **not retained** (a one-shot operator command; a stale retained
 `start` replaying on service restart could re-energize the station
 unexpectedly). It is also **subscribed at QoS 0** so the broker never queues a
-`/cmd` published while powerseq is offline for replay on reconnect (a
-persistent session would otherwise queue a QoS-1 `/cmd`). `/status` and
-`/state` keep QoS 1 + the persistent session so their last retained value
-replays on reconnect. On (re)connect the runner re-publishes the retained
+`/cmd` for replay. Every received `/cmd` and every phase change is logged at
+Info. The MQTT session is **clean** (`CleanSession=true`): all inputs are
+retained and replay on each subscribe. The persistent session it replaced
+stopped receiving every QoS-1 message on the HA broker on 2026-10-18 (only
+the PLC's QoS-0 bridged topics arrived), so `hf/radio`/`hf/pa` were never seen
+and cold starts timed out. A wait timeout now names what was seen, e.g.
+`wait-radio-online: timeout (hf/radio status=none state=none)`. On (re)connect the runner re-publishes the retained
 `/state` (in addition to `/meta` and `/status=online`) so a broker wipe that
 drops retained messages restores an idle sequencer's `/state`. The controlled
 slots' `/cmd` (which the sequencer *emits*) **are** retained — power slots and
@@ -172,7 +175,9 @@ overrides: `POWERSEQ_MQTT_BROKER`/`_CLIENT_ID`/`_USER`/`_PASSWORD`/`_SITE`. See
 
 ## Deployment
 
-Target: Raspberry Pi (`shari`, `192.168.1.139`, user `io`).
+Target: Raspberry Pi **scmino** (`192.168.1.178`, user `io`) since 2026-10-18.
+The shari copy (`192.168.1.139`) is disabled, not removed (rollback). Never run
+both: they share the client_id and the one-button `/cmd`.
 
 ```bash
 ./deploy.sh              # cross-compile, ship, install as a hardened systemd service

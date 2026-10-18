@@ -41,7 +41,7 @@ Code-check verdict (2026-09-03): **still open** — `powerseq/internal/mqtt/clie
 
 With a persistent MQTT session (`CleanSession=false`), changing the config (and thus the derived subscription set) re-subscribes on top of the old session. Subscriptions for slots no longer referenced are never unsubscribed, so the broker keeps delivering (and the sequencer keeps discarding) their messages until the session is reset.
 
-Code-check verdict (2026-09-03): **still open** — no `Unsubscribe` call anywhere in `powerseq/internal/`; `subscribeAll` only adds.
+Resolved 2026-10-18: the session is clean (`CleanSession=true`), so every connect starts with only the current subscription set. Same change fixed the live failure where the resumed persistent session received no QoS-1 messages at all.
 
 ## [defect] No self-watchdog
 

@@ -41,10 +41,10 @@ frame, mod 256, is zero**. A received frame is valid only if its declared length
 byte-sum is 0 (mod 256). The sender computes the checksum as `0 − sum(all other bytes)` (mod 256)
 and appends it. The smallest valid frame is 4 bytes.
 
-**Exception [critical quirk]**: the sender transmits the enable-telemetry frame as a fixed
-4-byte sequence with **no checksum byte**. Any re-implementation that blindly appends checksums to
-every frame corrupts the enable command. (Code: `internal/acom/device.go` `write()` skips the
-checksum for `MsgEnableAuto`.)
+**Enable-telemetry frame**: the sender transmits it as the fixed 4-byte constant `55 92 04 15`,
+whose last byte already is the zero-sum checksum (see §2.4). Appending another checksum would
+make it a 5-byte frame with a wrong length byte. (Code: `internal/acom/device.go` `write()` skips
+the append for `MsgEnableAuto`.)
 
 ### Receive path: resynchronization and ACK (§2.3)
 
@@ -70,36 +70,47 @@ see the open decisions below.)
 
 ### Enable-telemetry command (§2.4)
 
-The bridge sends this frame on port open, and re-sends it during silence. Exact bytes on the wire:
+The bridge sends this frame on port open, and re-sends it while no telemetry frame decodes (see §2.6). Exact bytes on the wire:
 
 ```
 55 92 04 15
 ```
 
-(start `0x55`, type `0x92` = "enable automatic telemetry", length `0x04`, payload byte `0x15`.
-The vendor document does not explain `0x15`). **The bridge appends no checksum byte.** Once the
-amplifier receives this frame, it streams 72-byte telemetry frames automatically.
+(start `0x55`, type `0x92` = "enable automatic telemetry", length `0x04`, checksum `0x15`:
+`0x55+0x92+0x04+0x15 = 0x100`, the normal zero-sum checksum of a frame with no payload, so the
+bridge writes the frame as a constant.) Once the amplifier receives this frame, it streams
+72-byte telemetry frames automatically. The amp does not keep this across a power cycle: an
+enable sent while it is off or still booting is lost, and it needs one after its boot.
 
 ### Silence handling and connection-loss detection (§2.6)
 
-Within one open-port session:
+Liveness is keyed on **decoded telemetry frames** (valid 72-byte `0x2F`), not on raw bytes.
+A booting amp can send bytes that never decode, and an amp in mode OFF sends valid frames but
+is not running. Within one open-port session:
 
-- Any byte received resets the silence timer.
-- On each 1 s read timeout with no bytes:
-  - If silence has lasted **more than 30 s**: the session ends with error text
-    `no data received for 30s, restarting monitor` → device marked offline, port closed. The
-    bridge restarts with backoff.
-  - Else, if silence has lasted **more than 5 s** and the last retry was more than 5 s ago:
-    re-send the enable-telemetry command (`55 92 04 15`) and log
-    `no data for 5s, re-sending enable telemetry`. This repeats at most once per 5 s until data
-    resumes or the 30 s limit trips.
-- A read error (port gone, USB replug) ends the session immediately. A shutdown signal also ends
-  the session (by closing the port, unblocking the read).
+- Bytes that do not decode are counted (discarded resync bytes, non-telemetry frames,
+  wrong-length telemetry) and reported in the re-arm and outage log lines.
+- **Re-arm:** if no telemetry frame has decoded for **3 s**, or the last decoded mode is
+  `OFF`, `RESET` or `INIT`, re-send enable-telemetry (`55 92 04 15`) at most once per 3 s.
+  The first re-send of an outage (and any re-send after undecodable traffic) logs at Info,
+  the steady re-sends to a switched-off amp at Debug. A streaming amp sends frames far faster
+  than 3 s, so a healthy link never sees a re-send.
+- **Outage:** no decoded frame for **30 s** → the bridge logs `telemetry lost: …` once, publishes
+  `device_online:false` / `power:"off"` once (Warn `PA telemetry lost`), and forgets the last
+  mode and band. **The port stays open** and the re-arm keeps running.
+- **First frame** after open or after an outage logs `telemetry streaming: mode=… band=…` with
+  the time since open and since the last enable.
+- A read error (port gone, USB replug) is self-healed in place (reopen). Only a port that keeps
+  faulting with no successful read for 30 s ends the session; the serial restart loop then
+  re-opens with backoff. A shutdown signal also ends the session (closing the port unblocks
+  the read).
 
-Practical effect: when the operator powers the amplifier off through the `hf/switch` relays, the
-port goes silent and the session exits after 30 s and publishes `device_online:false`. When power
-returns, the next restart cycle re-opens the port and re-sends enable-telemetry. Telemetry then
-resumes without operator action.
+Practical effect: when the operator powers the amplifier off through the `hf/switch` relays,
+`device_online` goes `false` 30 s later. On remote-on, the next 3 s re-arm after the amp's
+boot (well under 20 s) starts telemetry. History: until 2026-10-18 the re-send was keyed on
+"no byte for 5 s" and the session closed after 30 s with a 60 s backoff; a booting amp that
+sent a few bytes reset that timer, was never re-armed, and powerseq timed out waiting for
+`power:"on"`.
 
 ## [protocol] Telemetry frame decode — 72-byte `0x2F` frame, offsets, mode and band tables
 
@@ -304,7 +315,7 @@ Cadence summary:
 | Event | Publishes |
 |---|---|
 | MQTT (re)connect | `/status` = `online`. Re-subscribe `/cmd` |
-| Serial port opened (each restart cycle) | `/meta` (full, incl. `expose`). `/state` snapshot with `device_online:true` |
+| Serial port opened (each restart cycle) | `/meta` (full, incl. `expose`). `device_online` is not raised: the first decoded telemetry frame does that |
 | Each telemetry frame | `/state` **if** dedup allows |
 | Serial port lost | `/state` with `device_online:false`, `power:"off"`, `error:"serial: <cause>"`. `/status` stays `online` |
 | Bridge crash / unclean death | `/status` = `offline` (broker LWT) |
@@ -417,9 +428,10 @@ see the transport section above):
   unobservable in the current system; a re-implementation can add them, but that is new behavior.
 - **Are there other inbound frame types?** The bridge consumes only `0x2F` (telemetry). Whether the
   vendor protocol defines more inbound frame types is unknown.
-- **Meaning of the enable-frame payload byte `0x15`** (`55 92 04 15`) — undocumented. The bytes
-  are cargo-culted from the vendor protocol document, and the bridge must send them exactly
-  as-is.
+- **Enable-frame byte `0x15`** (`55 92 04 15`) — resolved: it is the zero-sum checksum of a
+  frame with no payload (§2.4). Still open: whether the amp ignores an enable received during
+  RESET/INIT, and what (if anything) it sends while booting. A `-debug` capture of a
+  remote-on power-up would answer both.
 - **Precise telemetry frame rate** — not documented anywhere. Only one fact exists: the rate is
   "high even in OPR/RX" (a code comment that motivates the dedup). A re-implementation must treat
   the frame rate as unspecified and design dedup accordingly.
@@ -443,8 +455,9 @@ see the transport section above):
 
 The bridge is a pure observer of the amplifier's power state. An earlier RTS-wake-line `set_power`
 mechanism never worked reliably, so the project removed it — along with the amp-power-cycle
-"watchdog" that re-armed telemetry after a power cycle. What remains inside a live session is the
-5 s silence re-send; the other guard is the 30 s silence reconnect. A re-implementation must not
+"watchdog" that re-armed telemetry after a power cycle. That re-arm is back since 2026-10-18,
+inside the run loop (§2.6): it re-sends enable-telemetry, which is not a power command. A
+re-implementation must not
 reintroduce `set_power`, `power_default`, or RTS-line manipulation; the `muehle/hf/switch` slot
 owns PA mains power, and `power` in `/state` is read-only telemetry (`off` only when
 `pa_state == OFF` or the port is lost).

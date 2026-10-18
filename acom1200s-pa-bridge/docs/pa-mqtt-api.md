@@ -54,7 +54,7 @@ Plain string, retained, QoS 1. Written by the MQTT client LWT, not the bridge.
 | `offline` | broker Last Will on unclean disconnect |
 
 `/status` reflects the **bridge** process, not the amplifier. When the serial
-port is lost (30 s silence / read error) the bridge stays up: `/status` stays
+link is lost (no telemetry frame for 30 s, or a dead adapter) the bridge stays up: `/status` stays
 `online` while `/state.device_online` goes `false` (see model §3). This lets a
 dashboard distinguish "bridge crashed" from "amplifier unplugged / powered off".
 
@@ -252,8 +252,8 @@ on/off is owned by the power-distribution layer — the `hf/switch` slot's
 remote-on relays assert the amp's remote-power-on input. The bridge simply
 reports the resulting state in telemetry: `pa.power` mirrors the firmware mode
 (`on` unless the amp reports fully-off, `off` otherwise, plus `off` when the
-serial port is lost). When the amp is unpowered the serial port goes silent
-and the bridge backs off and reconnects once telemetry returns; there is no
+telemetry link is lost). When the amp is unpowered the bridge keeps the port
+open and re-arms telemetry every 3 s until frames return; there is no
 "park" state and no `power_default` config. (The previous RTS-wake-line
 `set_power` mechanism never worked reliably and has been removed.)
 
@@ -325,12 +325,15 @@ The bridge itself contains no HA knowledge in this path. See
 |---|---|
 | Connect / reconnect | `/status` (`online`); `/meta` (incl. `expose`); embedded HA discovery only if `publish_ha_discovery = true` |
 | Each telemetry frame | `/state` (full snapshot, incl. `power`) |
-| Serial port lost (30 s silence / read error) | `/state` with `device_online:false`, `power:"off"`, `error:"..."`; `/status` stays `online` |
-| Amp powered on via `hf/switch` `pa` relay | serial loop reconnects; `device_online` stays `false` until the first frame, then `/state` resumes with `power:"on"` |
-| Amp powered off via `hf/switch` `pa` relay | port goes silent → serial loop backs off; `/state` stays `device_online:false`, `power:"off"` (retries every 30 s do not flip it back) |
+| Telemetry lost (no decoded frame for 30 s) or adapter gone | `/state` with `device_online:false`, `power:"off"`, `error:"..."`; `/status` stays `online` |
+| Amp powered on via `hf/switch` `pa` relay | the 3 s re-arm reaches the booted amp; `device_online` stays `false` until the first frame, then `/state` resumes with `power:"on"` |
+| Amp powered off via `hf/switch` `pa` relay | no frames → after 30 s one `device_online:false`, `power:"off"` publish; the port stays open and the re-arm keeps running |
 | Disconnect / crash | `/status` → `offline` (broker LWT) |
 
 > The bridge no longer issues any power command or drives the RTS line — power
-> on/off is observed, not commanded. (The former watchdog that re-armed
-> telemetry after an amp-initiated power cycle is gone with the `set_power`
-> machinery; the 30 s-silence reconnect path handles amp power cycles.)
+> on/off is observed, not commanded. Re-arming telemetry is not a power
+> command: the bridge re-sends enable-telemetry whenever no telemetry frame
+> has decoded for 3 s, or the amp reports OFF/RESET/INIT. (8880405 removed the
+> original OFF-mode re-arm on the premise that the 30 s-silence reconnect
+> covers power cycles; it does not when the booting amp sends bytes that do
+> not decode — 2026-10-18 startup failure.)

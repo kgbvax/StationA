@@ -147,8 +147,8 @@ func TestRunReopensAfterReadFault(t *testing.T) {
 // TestRunSurfacesErrorWhenReopenFails ensures a permanently broken link still
 // surfaces an error (no infinite silent retry): when the by-id path can never
 // be re-resolved, the in-place reopen retries continue at the rate-bound
-// cadence until the silence watchdog ends the run for the serial restart
-// loop's backoff — the same budget a connected-but-silent amp gets.
+// cadence until the port watchdog (silenceLimit without a successful read)
+// ends the run for the serial restart loop's backoff.
 func TestRunSurfacesErrorWhenReopenFails(t *testing.T) {
 	setKnobs(t, 20*time.Millisecond, 150*time.Millisecond)
 
@@ -169,8 +169,8 @@ func TestRunSurfacesErrorWhenReopenFails(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected Run to return when the adapter is gone for good, got nil")
 	}
-	if !strings.Contains(err.Error(), "no data received") {
-		t.Fatalf("expected the silence watchdog to end the run, got: %v", err)
+	if !strings.Contains(err.Error(), "no working serial port") {
+		t.Fatalf("expected the port watchdog to end the run, got: %v", err)
 	}
 	if elapsed := time.Since(start); elapsed > 2*time.Second {
 		t.Fatalf("Run took %v to give up on a missing adapter", elapsed)
@@ -366,12 +366,11 @@ func TestRunRehealsAfterWindow(t *testing.T) {
 	}
 }
 
-// TestRunSilenceWatchdogCoversFaultPath pins the two-layer-liveness contract:
-// a link that keeps faulting (so reads error, never time out) while delivering
-// NO data must not be held online by repeated successful reopens — Run must
-// return within the silence budget so serialLoop flips /state.device_online,
-// regardless of how often the by-id path resolves. A reopen that delivers
-// nothing is still silence; only real data refreshes the watchdog.
+// TestRunSilenceWatchdogCoversFaultPath pins the port watchdog: a link that
+// keeps faulting (so reads error, never time out) must not be held up by
+// repeated successful reopens — Run must return within the silence budget so
+// serialLoop restarts it, regardless of how often the by-id path resolves. A
+// reopen is not a successful read; only a read refreshes the watchdog.
 func TestRunSilenceWatchdogCoversFaultPath(t *testing.T) {
 	setKnobs(t, 20*time.Millisecond, 150*time.Millisecond)
 
@@ -402,8 +401,8 @@ func TestRunSilenceWatchdogCoversFaultPath(t *testing.T) {
 	if elapsed := time.Since(start); elapsed > 2*time.Second {
 		t.Fatalf("silence watchdog took %v on the fault path; reopens masked a dead link", elapsed)
 	}
-	if !strings.Contains(err.Error(), "no data received") {
-		t.Fatalf("expected silence error, got: %v", err)
+	if !strings.Contains(err.Error(), "serial port faulting") {
+		t.Fatalf("expected port-watchdog error, got: %v", err)
 	}
 	if n := opens.Load(); n < 2 {
 		t.Fatalf("expected the watchdog to allow in-place reopens first (opens=%d), then give up", n)
