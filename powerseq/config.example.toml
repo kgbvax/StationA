@@ -80,6 +80,9 @@ level = "info"
 #     slots     = ["hf/switch", "hf/pa-arm"]   # site-relative; logical AND;
 #                                             # every entry must be non-empty
 #     state     = "online"                     # optional, default "online";
+#                                             # "online" is two-layer: /status
+#                                             # online AND /state.device_online
+#                                             # not "false" (when present)
 #                                             # "offline" confirms a slot went
 #                                             # down (an actual offline payload,
 #                                             # not absence)
