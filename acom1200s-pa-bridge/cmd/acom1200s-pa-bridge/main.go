@@ -215,11 +215,12 @@ func cmdMessageHandler(log *slog.Logger, dispatch func([]byte)) pahomqtt.Message
 // failure with exponential backoff until ctx is cancelled.
 //
 // The loop is a pure observer: it does not drive the amp's power state and
-// touches no host control lines. When the amp is unpowered (its remote-on
-// relay released by the hf/switch slot) the serial port goes silent and the
-// loop backs off; once the amp is powered on again telemetry resumes and the
-// loop reconnects. There is no "park" mode — the loop simply keeps retrying
-// while the bridge process is up.
+// touches no host control lines. A switched-off amp does NOT end the run:
+// Device.Run keeps the port open, reports the outage once through the
+// link-down handler (device_online → false, Warn once per outage) and keeps
+// re-arming telemetry, so a remote-on is answered within seconds. A run ends
+// only when the port itself is unrecoverable (adapter gone); only that case
+// enters the backoff below.
 func serialLoop(ctx context.Context, cfg config.Config, b *bridge.Bridge, dev *acom.Device, log *slog.Logger) error {
 	const maxBackoff = 60 * time.Second
 	const initialBackoff = 2 * time.Second
@@ -285,6 +286,14 @@ func runOnce(ctx context.Context, cfg config.Config, b *bridge.Bridge, dev *acom
 	b.PublishMeta()
 	b.PublishDiscovery()
 
+	// A telemetry outage (amp switched off, or booting and not yet armed) is
+	// reported here once per outage; the port stays open and Run keeps
+	// re-arming. Bridge.HandleTelemetry raises device_online again with the
+	// next frame.
+	dev.SetLinkDownHandler(func(reason string) {
+		log.Warn("PA telemetry lost; device offline", "reason", reason)
+		b.SetDeviceOnline(false, "serial: "+reason)
+	})
 	return dev.Run(ctx, b.HandleTelemetry)
 }
 

@@ -75,7 +75,7 @@ and `go work sync` operate over the whole workspace at once.
 | `muehle/hf/tuner` | atr1k-tuner-bridge | ATR-1000 ATU, wifi (binary WebSocket) — bridge on scmino since 2026-10-12 |
 | `muehle/hf/spots` | logger-spot-bridge | DXLog/Log4OM broadcasts (LAN-wide UDP) → operator-keyed station feed (role `bandmap`; systemd service on scmino since 2026-10-18) |
 | `muehle/hf/beam-steer` | beamsteer | logic slot — no device (runs on scmino); logger PstRotator UDP :12050 (logger must target scmino) → `hf/rotator` + `hf/ant-ctrl` direction |
-| `muehle/hf/power-seq` | powerseq | logic slot — no device (runs on scmino); startup/shutdown sequencer |
+| `muehle/hf/power-seq` | powerseq | logic slot — no device (runs on scmino since 2026-10-18); startup/shutdown sequencer |
 | `muehle/uhf/pol-ctrl` | m5stamp-pol-ctrl | M5 Stamp PLC #2 — X-Quad polarization (ESPHome), wifi |
 | `muehle/uhf/radio` | icom9700-radio-bridge | Icom IC-9700 — RS-BA1 LAN session carries RX audio capture (demand-driven) + read-only serial CI-V telemetry; no remote TX (2026-09 pivot) |
 | `muehle/uhf/sat-track` | oscarwatch-sattrack-bridge | software source — OscarWatch on BWPC (`ws://192.168.1.197:7373/`); bridge on scmino (192.168.1.178), read-only |

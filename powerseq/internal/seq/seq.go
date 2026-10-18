@@ -6,6 +6,9 @@
 //
 //	cmd          emit a retained /cmd {action, value} to a slot
 //	wait_status  wait until N slots' /status == online|offline
+//	             (state="online" is two-layer: each slot's /state.device_online
+//	             must also not be "false" when present — a bridge whose LWT is
+//	             online in front of a still-booting device does not pass)
 //	wait_state   wait until a slot's /state top-level field == value
 //	             (implicit two-layer liveness precondition: the slot's /status
 //	             must be online AND its /state.device_online must not be "false"
@@ -41,6 +44,7 @@ import (
 	"net"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -372,7 +376,8 @@ func (s *Sequencer) CmdTopic() string { return s.self + "/cmd" }
 // cmd, wait_status, or wait_state step). The /status of every such slot is
 // subscribed (so the sequencer observes outage/liveness of every slot it
 // touches, not only the ones it waits on — model §7.1); the /state of every
-// wait_state slot is subscribed. With idle standby configured, the activity
+// wait_state slot and every wait_status state="online" slot (for its
+// device_online) is subscribed. With idle standby configured, the activity
 // slot and every watch slot are subscribed too (/status + /state).
 func (s *Sequencer) Subscriptions() (statusSlots, stateSlots []string) {
 	status := map[string]struct{}{}
@@ -393,6 +398,9 @@ func (s *Sequencer) Subscriptions() (statusSlots, stateSlots []string) {
 		case KindWaitStatus:
 			for _, slot := range st.Slots {
 				note(slot)
+				if st.State == "online" {
+					state[slot] = struct{}{}
+				}
 			}
 		case KindWaitState:
 			note(st.Slot)
@@ -431,7 +439,7 @@ func (s *Sequencer) SetStatus(slot string, online bool) {
 	s.mu.Unlock()
 }
 
-// SetState records a /state snapshot from a wait_state slot. Called from the
+// SetState records a /state snapshot from a subscribed /state slot. Called from the
 // mqtt layer. A malformed payload drops the slot's prior snapshot (logged) so a
 // good→malformed transition does NOT keep the stale prior value — the wait then
 // sees no field and yields false for that poll, not a poisoned map.
@@ -754,24 +762,71 @@ func (s *Sequencer) execStep(ctx context.Context, st *resolvedStep) (string, boo
 		}
 		return "", true
 	case KindWaitStatus:
-		return s.wait(ctx, st, func() bool {
+		reason, ok := s.wait(ctx, st, func() bool {
 			for _, slot := range st.Slots {
-				if s.statusOf(slot) != st.State {
+				if st.State == "online" {
+					// Two-layer liveness: bridge LWT AND device_online. The
+					// bridge LWT alone is online while the device behind it
+					// is still booting (flexbridge on scmino, 2026-10-18).
+					if !s.isOnline(slot) {
+						return false
+					}
+				} else if s.statusOf(slot) != st.State {
 					return false
 				}
 			}
 			return true
 		})
+		return s.withObserved(st.Slots, "", reason, ok)
 	case KindWaitState:
-		return s.wait(ctx, st, func() bool {
+		reason, ok := s.wait(ctx, st, func() bool {
 			if !s.isOnline(st.Slot) {
 				return false // implicit liveness precondition
 			}
 			return s.stateField(st.Slot, st.Field) == st.Value
 		})
+		return s.withObserved([]string{st.Slot}, st.Field, reason, ok)
 	default:
 		return "unknown step kind " + st.Kind, false
 	}
+}
+
+// withObserved appends what the sequencer last saw for slots to a wait
+// timeout, so the fault on the bus and in the journal says WHY the condition
+// never held (2026-10-18: "wait-radio-online: timeout" alone did not tell a
+// stale device_online from a missing /state).
+func (s *Sequencer) withObserved(slots []string, field, reason string, ok bool) (string, bool) {
+	if ok || reason != "timeout" {
+		return reason, ok
+	}
+	parts := make([]string, 0, len(slots))
+	for _, slot := range slots {
+		parts = append(parts, s.observed(slot, field))
+	}
+	return reason + " (" + strings.Join(parts, "; ") + ")", false
+}
+
+// observed renders a slot's last /status and /state view, e.g.
+// "hf/radio status=online device_online=false".
+func (s *Sequencer) observed(slot, field string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	status := s.status[slot]
+	if status == "" {
+		status = "none"
+	}
+	out := strings.TrimPrefix(slot, s.cfg.Site+"/") + " status=" + status
+	m, ok := s.state[slot].(map[string]any)
+	if !ok {
+		return out + " state=none"
+	}
+	if v, present := m["device_online"]; present {
+		out += " device_online=" + coerceToString(v)
+	}
+	if field != "" && field != "device_online" {
+		out += " " + field + "=" + coerceToString(m[field])
+	}
+	return out
 }
 
 // wait polls cond with a deadline + optional hold (debounce). It faults on ctx
@@ -915,10 +970,14 @@ func (s *Sequencer) setPhase(phase, step, fault string) {
 	case phase == PhaseStandby && s.phase != PhaseStandby:
 		s.standbySince = time.Now()
 	}
+	prev := s.phase
 	s.phase = phase
 	s.step = step
 	s.fault = fault
 	s.mu.Unlock()
+	if prev != phase {
+		s.log.Infof("phase %s -> %s", prev, phase)
+	}
 	s.publishState()
 }
 

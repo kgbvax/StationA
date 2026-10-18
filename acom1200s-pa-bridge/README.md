@@ -38,9 +38,10 @@ go build ./cmd/acom1200s-pa-bridge                 # local build
 | `-log.level` | (from config) | `debug` \| `info` \| `warn` \| `error` |
 | `-debug` | `false` | Hex-dump all serial I/O to stderr |
 
-The service auto-reconnects to the broker and reopens the serial port on
-failure (exponential backoff), and re-enables amplifier telemetry when it
-detects the amplifier has been switched off and back on (watchdog).
+The service auto-reconnects to the broker and reopens the serial port on a
+port fault (exponential backoff). While the amplifier is off the port stays
+open and the bridge re-sends enable-telemetry every 3 s (also while the amp
+reports OFF/RESET/INIT), so the amp streams again within seconds of power-on.
 
 ## Configuration
 

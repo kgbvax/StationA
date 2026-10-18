@@ -32,10 +32,11 @@ change the order, targets, waits, or delays. The subscribed topics (§7) and the
 The initial connect is ctx-aware: a SIGTERM while the broker is unreachable
 interrupts the connect (it does not hang until systemd SIGKILL).
 
-The persistent session (`CleanSession=false`) keeps the `/status` and `/state`
-subscriptions across reconnects so their last retained value replays. The
-**own `/cmd` subscription is QoS 0** on purpose: a QoS-1 subscription would let
-the broker queue a `/cmd` published while powerseq is offline and replay it on
+The session is clean (`CleanSession=true`, since 2026-10-18): every input is
+retained and replays on each subscribe, and a resumed persistent session on
+the HA broker stopped delivering QoS-1 messages. The
+**own `/cmd` subscription is QoS 0** on purpose: with a persistent session a
+QoS-1 subscription would let the broker queue a `/cmd` published while powerseq is offline and replay it on
 reconnect — re-energizing the station, the exact case the "own `/cmd` not
 retained" rule guards against. QoS 0 means the broker never queues it; a
 `/cmd` issued while we are down is simply lost (correct for a one-shot

@@ -80,6 +80,9 @@ level = "info"
 #     slots     = ["hf/switch", "hf/pa-arm"]   # site-relative; logical AND;
 #                                             # every entry must be non-empty
 #     state     = "online"                     # optional, default "online";
+#                                             # "online" is two-layer: /status
+#                                             # online AND /state.device_online
+#                                             # not "false" (when present)
 #                                             # "offline" confirms a slot went
 #                                             # down (an actual offline payload,
 #                                             # not absence)
@@ -237,10 +240,13 @@ action = "set_power"
 value = "on"
 
 # 10. Wait for the radio to come online after TRX power-on.
+#     The FLEX-8400 needs ~100 s from remote-on to a SmartSDR handshake
+#     (2026-10-18, twice), too close to the 120 s default step timeout.
 [[startup]]
 name = "wait-radio-online"
 kind = "wait_status"
 slots = ["hf/radio"]
+timeout_s = 180
 
 # 11. Wait for the PA to report power on (state.power == "on"). The implicit
 #     two-layer liveness precondition means a dead bridge (LWT) or a dead PA
