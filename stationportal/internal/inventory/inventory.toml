@@ -190,7 +190,7 @@ host      = "shari"
 [[slot]]
 address   = "muehle/power/antennas"
 component = "shelly-power-bridge"
-device    = "Shelly Plus 1PM — antenna power (HF + UHF rotators, Ultrabeam RCU-06)"
+device    = "Shelly Plug S Gen3 \"antennasPwr\" (192.168.1.198) — antenna power (HF + UHF rotators, Ultrabeam RCU-06)"
 link      = "wifi"
 host      = "shari"
 

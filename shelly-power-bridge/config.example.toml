@@ -93,9 +93,9 @@ feeds = [
 station       = "power"
 slot          = "antennas"
 location      = "bauwagen"
-device_model  = "Shelly Plus 1PM"
-device_serial = "shellyplus1pm-C3"
-shelly_id     = "shellyplus1pm-ccddeeff0011"
+device_model  = "Shelly Plug S Gen3"
+device_serial = "shellyplugsg3-e4b063d86c98"
+shelly_id     = "shellyplugsg3-e4b063d86c98"
 fail_safe     = "off"
 feeds = [
   "hf/ant-ctrl",
