@@ -81,11 +81,11 @@ Retained. Published on every (re)connect.
   "host": "shari",
   "capabilities": {
     "controls": [
-      "muehle/power/master", "muehle/power/psu-13v8",
+      "muehle/power/psu-13v8",
       "muehle/hf/switch", "muehle/hf/pa-arm"
     ],
     "watches": [
-      "muehle/power/master", "muehle/power/psu-13v8",
+      "muehle/power/psu-13v8",
       "muehle/hf/switch", "muehle/hf/pa-arm",
       "muehle/hf/ant-switch", "muehle/hf/radio", "muehle/hf/pa"
     ]
@@ -182,7 +182,7 @@ is one of five kinds:
 | `delay` | sleep a fixed duration | `duration_s` (literal) **or** `duration` (`network`\|`stagger`, refs `[timing]`) |
 | `wol` | send a Wake-on-LAN magic packet (UDP) | `mac`, `broadcast?` (`host:port`, default `255.255.255.255:9`) |
 
-`slot` addresses are site-relative (e.g. `power/master` → `muehle/power/master`).
+`slot` addresses are site-relative (e.g. `power/psu-13v8` → `muehle/power/psu-13v8`).
 `value` is always a string (the value-key convention; model value_type is
 string|int|float, no bool). For `wait_state`, `value` may be the empty string —
 this waits for the field to **clear** (become absent/`nil`/`""`), which is a
@@ -217,8 +217,6 @@ the radio / PA confirmations before the PA is armed.
 
 | Step | Kind | Emit / wait |
 |------|------|-------------|
-| `master-on` | `cmd` | `power/master` `set_power` `on` |
-| `network-delay` | `delay` | ~30 s (`duration = "network"`) |
 | `pc-mains-on` | `cmd` | `power/shack-pc-mains` `set_power` `on` (never switched off by the sequencer) |
 | `psu-on` | `cmd` | `power/psu-13v8` `set_power` `on` |
 | `psu-settle` | `delay` | 5 s |
@@ -236,7 +234,7 @@ the radio / PA confirmations before the PA is armed.
 
 Reverse, with short staggers (`duration = "stagger"`) for inrush → `phase=idle`:
 `pa-arm-disable` → stagger → `antennas-off` → stagger → `pa-off` → stagger →
-`trx-off` → stagger → `psu-off` → stagger → `master-off`. `power/shack-pc-mains`
+`trx-off` → stagger → `psu-off`. The site master mains is out of scope. `power/shack-pc-mains`
 is not in the shutdown: cutting mains hard-powers-off Windows.
 
 ### 6.1 Idle standby (`[[standby]]` / `[[wake]]`, optional)
@@ -284,7 +282,6 @@ sequencer's own `/cmd`. For the default §7.1 sequence this yields:
 
 | Topic | Used for |
 |-------|----------|
-| `muehle/power/master/status` | observability (controlled slot, model §7.1) |
 | `muehle/power/psu-13v8/status` | observability (controlled slot) |
 | `muehle/hf/switch/status` | `wait-controllers-online` liveness gate |
 | `muehle/hf/pa-arm/status` | `wait-controllers-online` liveness gate |

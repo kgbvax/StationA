@@ -123,7 +123,7 @@ number) per the rule above.
 | `hadiscovery` | — | logic slot (exception) |
 | _(new)_ `atr1k-tuner-bridge` | `atr1k-tuner-bridge` | device (convention; ATR-1000 / N7DDC family) |
 | _(renamed)_ `antswitchbridge` | `waveshare_relay-antswitch-bridge` | device (formerly contract-first exception; **renamed 2026-07** to follow the family-tag pattern; `_` in `waveshare_relay` is a recorded deviation, see §1) |
-| _(new)_ `shelly-power-bridge` | `shelly-power-bridge` | device (convention; Shelly family; fronts `power/master` + `power/psu-13v8`) |
+| _(new)_ `shelly-power-bridge` | `shelly-power-bridge` | device (convention; Shelly family; fronts `power/psu-13v8` + `power/antennas` + `power/shack-pc-mains`) |
 | _(new)_ `m5stamp-hf-ctrl` | `m5stamp-hf-ctrl` | embedded firmware (M5Stamp family; fronts `hf/pa-arm` + `hf/switch`) |
 | _(new)_ `powerseq` | — | logic slot (exception; the `hf/power-seq` sequencer) |
 | _(new)_ `icom9700-radio-bridge` | `icom9700-radio-bridge` | device (convention; Icom CI-V/RS-BA1 family; fronts `muehle/uhf/radio`; `ICOM9700_` env prefix is a recorded deviation, see §1) |

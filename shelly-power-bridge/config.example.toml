@@ -27,7 +27,7 @@ broker           = "tcp://127.0.0.1:1883"
 client_id        = ""
 # Station-model addressing: the SITE here prefixes every slot address. For the
 # site-level power layer the site is "muehle" and each [[slot]] sets its own
-# station/slot (e.g. station="power", slot="master").
+# station/slot (e.g. station="power", slot="psu-13v8").
 site             = "muehle"
 # Home Assistant discovery is rendered by the standalone hadiscovery consumer
 # from this bridge's expose block in /meta (model §9) — no embedded discovery.
@@ -56,19 +56,11 @@ level = "info"
 # fail_safe   = the Shelly power-on default published in capabilities:
 #               "off" means the plug restores OFF after a mains blip (a power
 #               blip drops the station rather than re-energizing it). Default "off".
-# feeds       = downstream slot addresses this supply powers (model §4). Empty
-#               for the station master mains; populated for the 13.8 V PSU.
-
-# Station master mains — the upstream supply for the whole station.
-[[slot]]
-station       = "power"
-slot          = "master"
-location      = "bauwagen"
-device_model  = "Shelly Plus 1PM"
-device_serial = "shellyplus1pm-A1"
-shelly_id     = "shellyplus1pm-aabbccddeeff"
-fail_safe     = "off"
-# master feeds everything; feeds is left empty — it is the top of the tree.
+# feeds       = downstream slot addresses this supply powers (model §4).
+#
+# The site's master mains (an Athom ESPHome plug in Home Assistant) is out of
+# StationA's scope: it also powers the Pis and the network, so nothing here
+# may switch it.
 
 # 13.8 V PSU (the TRX PSU) — site-level DC rail feeding both HF and UHF (radio,
 # tuner, ant-switch, the M5 Stamps). Declares `feeds` so consumers know what

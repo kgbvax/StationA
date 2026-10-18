@@ -14,10 +14,6 @@ class PowerPanel extends StatelessWidget {
     final store = context.watch<BusStore>();
     final mqtt = context.read<MqttService>();
 
-    final master = store.slots['muehle/power/master'];
-    final masterOn = (store.stateValueAs<String>('muehle/power/master', 'power') ?? 'off') == 'on';
-    final masterOnline = (master?.isOnline ?? false) && store.linkUp;
-
     final psu = store.slots['muehle/power/psu-13v8'];
     final psuOn = (store.stateValueAs<String>('muehle/power/psu-13v8', 'power') ?? 'off') == 'on';
     final psuOnline = (psu?.isOnline ?? false) && store.linkUp;
@@ -62,15 +58,6 @@ class PowerPanel extends StatelessWidget {
     // The step within a transition phase (e.g. `psu-on`); "" at
     // idle/running/standby.
     final seqStep = store.stateValueAs<String>('muehle/hf/power-seq', 'step') ?? '';
-
-    void setMaster(bool on) {
-      if (!masterOnline) return;
-      mqtt.publish(
-        cmdTopic('power/master'),
-        powerSetPayload(on ? 'on' : 'off'),
-        retain: cmdRetain['muehle/power/master']!,
-      );
-    }
 
     void setPsu(bool on) {
       if (!psuOnline) return;
@@ -255,7 +242,6 @@ class PowerPanel extends StatelessWidget {
                   spacing: 8,
                   runSpacing: 8,
                   children: [
-                    _Relay(name: 'MAINS', on: masterOn, online: masterOnline, onToggle: setMaster),
                     _Relay(name: 'PSU 13.8V', on: psuOn, online: psuOnline, onToggle: setPsu),
                     _Relay(name: 'ANT PWR', on: antOn, online: antOnline, onToggle: setAnt),
                     _Relay(name: 'TRX', on: trxOn, online: switchOnline, onToggle: setTrx),
@@ -280,7 +266,6 @@ class PowerPanel extends StatelessWidget {
             // Worst case across everything this module switches and sequences.
             child: StatusPill(
               slots: const [
-                'muehle/power/master',
                 'muehle/power/psu-13v8',
                 'muehle/power/antennas',
                 'muehle/power/shack-pc-mains',

@@ -29,7 +29,7 @@ void main() {
     test('hf slots keep their existing retention posture', () {
       expect(cmdRetain['muehle/hf/rotator'], isFalse);
       expect(cmdRetain['muehle/hf/ant-ctrl'], isTrue);
-      expect(cmdRetain['muehle/power/master'], isTrue);
+      expect(cmdRetain.containsKey('muehle/power/master'), isFalse); // site mains: out of scope (HA)
     });
   });
 

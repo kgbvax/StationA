@@ -33,13 +33,12 @@
 #   MQTT_USER       mqtt.user             (default: hf)
 #   MQTT_PASSWORD   SHELLY_POWER_BRIDGE_MQTT_PASSWORD (default: empty -> set on device)
 #
-#   MASTER_SHELLY_ID   [[slot]] shelly_id for the master mains plug
 #   PSU_SHELLY_ID     [[slot]] shelly_id for the 13.8 V PSU plug
 #   ANTENNAS_SHELLY_ID [[slot]] shelly_id for the antenna-power plug (rotators + RCU-06)
 #   PC_SHELLY_ID       [[slot]] shelly_id for the shack-PC (bwpc) mains plug
 #
 # Per-slot [[slot]] blocks are seeded from the example config. The Shelly ids
-# (MASTER_SHELLY_ID / PSU_SHELLY_ID / ANTENNAS_SHELLY_ID / PC_SHELLY_ID) MUST be set to the real
+# (PSU_SHELLY_ID / ANTENNAS_SHELLY_ID / PC_SHELLY_ID) MUST be set to the real
 # Gen2 device ids of the plugs; deploy refuses to SEED a placeholder id (an
 # existing on-device config is left alone either way). Other slot fields
 # (station/slot/device_model/device_serial/feeds) keep their example values —
@@ -77,13 +76,12 @@ MQTT_PASSWORD="${MQTT_PASSWORD:-}"
 
 # Shelly Gen2+ device ids (MQTT prefixes). MUST be set to the real plug ids
 # before first deploy; a placeholder is refused.
-MASTER_SHELLY_ID="${MASTER_SHELLY_ID:-shellyplus1pm-aabbccddeeff}"
 PSU_SHELLY_ID="${PSU_SHELLY_ID:-shellyplug-s-A71704}"   # "TrxPsu", Gen1 Plug S, 192.168.1.150
 ANTENNAS_SHELLY_ID="${ANTENNAS_SHELLY_ID:-shellyplugsg3-e4b063d86c98}"   # "antennasPwr", 192.168.1.198
 PC_SHELLY_ID="${PC_SHELLY_ID:-shellyplugsg3-e4b063e3cba8}"   # bwpc plug, 192.168.1.176
 PLACEHOLDER_IDS=0
-case "$MASTER_SHELLY_ID $PSU_SHELLY_ID $ANTENNAS_SHELLY_ID $PC_SHELLY_ID" in
-  *aabbccddeeff*) PLACEHOLDER_IDS=1 ;;
+case "$PSU_SHELLY_ID $ANTENNAS_SHELLY_ID $PC_SHELLY_ID" in
+  *aabbccddeeff*|*112233445566*|*ccddeeff0011*|*ddeeff001122*) PLACEHOLDER_IDS=1 ;;
 esac
 
 # Allow "user@host" in SSH_HOST; otherwise prepend SSH_USER.
@@ -132,16 +130,6 @@ trap 'rm -f "$SEED_CONFIG" "$SEED_ENV" "${UNIT_FILE:-}"' EXIT
   echo ""
   echo "[log]"
   echo "level = \"$(toml_escape "$LOG_LEVEL")\""
-  echo ""
-  echo "# --- station master mains ---"
-  echo "[[slot]]"
-  echo "station       = \"power\""
-  echo "slot          = \"master\""
-  echo "location      = \"bauwagen\""
-  echo "device_model  = \"Shelly Plus 1PM\""
-  echo "device_serial = \"$(toml_escape "$MASTER_SHELLY_ID")\""
-  echo "shelly_id     = \"$(toml_escape "$MASTER_SHELLY_ID")\""
-  echo "fail_safe     = \"off\""
   echo ""
   echo "# --- 13.8 V PSU (site-level DC rail; feeds both HF and UHF) ---"
   echo "[[slot]]"
@@ -289,7 +277,7 @@ if [ -e "$CONFIG_FILE" ]; then
   echo "   config exists at $CONFIG_FILE -- leaving it untouched (seed-once)."
 elif [ "$PLACEHOLDER_IDS" = "1" ]; then
   echo "!! refusing to seed $CONFIG_FILE with placeholder Shelly ids:" >&2
-  echo "!! set MASTER_SHELLY_ID / PSU_SHELLY_ID / ANTENNAS_SHELLY_ID / PC_SHELLY_ID to the real Gen2 device ids." >&2
+  echo "!! set PSU_SHELLY_ID / ANTENNAS_SHELLY_ID / PC_SHELLY_ID to the real device ids." >&2
   exit 1
 else
   sudo install -o "$SERVICE_USER" -g "$SERVICE_USER" -m 0600 "$SEED_CFG" "$CONFIG_FILE"
@@ -320,5 +308,5 @@ echo ">> Done. shelly-power-bridge deployed to ${SSH_TARGET} as systemd service 
 echo "   Logs:    ssh ${SSH_TARGET} 'journalctl -u ${SERVICE_NAME} -f'"
 echo "   Config:  ${CONFIG_FILE}"
 echo "   Secret:  ${ENV_FILE}  (set SHELLY_POWER_BRIDGE_MQTT_PASSWORD if not seeded)"
-echo "   Topics:  muehle/power/{master,psu-13v8}/{meta,state,status,cmd}"
+echo "   Topics:  muehle/power/{psu-13v8,antennas,shack-pc-mains}/{meta,state,status,cmd}"
 echo "   !! Verify each [[slot]] shelly_id in ${CONFIG_FILE} matches the real Shelly device id."

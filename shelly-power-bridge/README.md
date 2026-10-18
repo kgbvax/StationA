@@ -9,8 +9,9 @@ It is a **compound bridge**: one process fronts N Shelies. Each `[[slot]]`
 runs its own paho client with its own LWT, so a process death takes every
 fronted slot offline with no stale-online gap.
 
-The two slots in use today are the station **master mains** (`power/master`)
-and the **13.8 V PSU** (`power/psu-13v8`). The PSU is a site-level DC rail
+The slots in use today are the **13.8 V PSU** (`power/psu-13v8`), the
+**antenna power** (`power/antennas`) and the **shack PC mains**
+(`power/shack-pc-mains`). The site master mains is out of scope (Home Assistant). The PSU is a site-level DC rail
 feeding both HF and UHF, which is why the power layer sits at site level rather
 than under one station. Historically the Shelies were controlled only through
 Home Assistant — an HA-as-control-path anti-pattern; this bridge brings them

@@ -479,7 +479,7 @@ Each vector states the surface, the exposure, and the decision:
    down with the broker or the tablet. During that window the rotctld/PstRotator
    listeners retain motion authority with no operator e-stop on the bus.
    *Accepted, with a documented physical fallback:* the **station master mains**
-   (`muehle/power/master` / the physical breaker) is the sanctioned halt of last
+   (the site master mains — HA-owned, out of StationA's scope — or the physical breaker) is the sanctioned halt of last
    resort — and closing the tracking client (gpredict/PstRotator) is the durable
    halt for a runaway pass. Recorded consequence (KTD8): an operator STOP against
    a live tracker is transient by design — free motion resumes on the client's
