@@ -183,7 +183,7 @@ host      = "shari"
 [[slot]]
 address   = "muehle/power/psu-13v8"
 component = "shelly-power-bridge"
-device    = "Shelly Plus 1PM — 13.8 V TRX PSU (feeds HF + UHF)"
+device    = "Shelly Plug S (Gen1) \"TrxPsu\" (192.168.1.150) — 13.8 V TRX PSU (feeds HF + UHF)"
 link      = "wifi"
 host      = "shari"
 

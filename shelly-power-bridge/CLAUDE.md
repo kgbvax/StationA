@@ -1,7 +1,9 @@
 # CLAUDE.md — shelly-power-bridge
 
-shelly-power-bridge fronts **Shelly Gen2+ smart plugs** (Plus / Mini / Pro …)
-that speak MQTT natively, translating them into the station integration-model
+shelly-power-bridge fronts **Shelly smart plugs** that speak MQTT natively —
+Gen2+ (Plus / Mini / Pro / Gen3, the default) and, per slot with
+`generation = "gen1"`, Gen1 (Plug S: `shellies/<id>/relay/0` + `…/relay/0/command`,
+used by the TRX PSU plug "TrxPsu") — translating them into the station integration-model
 **`power`** slots. It is a **compound bridge**: one process fronts N Shelies,
 each becoming a site-level power slot at `muehle/power/<slot>/{meta,state,status,cmd}`.
 Each `[[slot]]` runs its own paho client with its own LWT, so a process death
@@ -70,7 +72,8 @@ CLI flags:
    `select` on `ctx.Done()`) so a SIGTERM while the broker is unreachable can
    interrupt the connect — otherwise systemd must SIGKILL after
    `TimeoutStopSec`.
-2. `internal/shelly` — Gen2+ wire codec: `StatusTopic`/`RPCTopic`, `ParseStatus`
+2. `internal/shelly` — wire codecs. `WireFor(generation, id)` picks the topics,
+   parser and command payload per slot (gen1 | gen2). Gen2+: `StatusTopic`/`RPCTopic`, `ParseStatus`
    (decodes `<id>/status/switch:0` `output` → canonical `on`/`off`),
    `SwitchSet` (builds the `<id>/rpc` `Switch.Set` payload). No MQTT client.
 3. `internal/bridge` — canonical `power` slot model + MQTT publishing: `/meta`

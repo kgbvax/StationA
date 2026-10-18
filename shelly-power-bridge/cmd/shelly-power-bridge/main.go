@@ -96,12 +96,16 @@ func runSlot(ctx context.Context, cfg config.Config, sc config.SlotConfig, log *
 	adapter := &slogAdapter{l: slotLog}
 	avail := schema.StatusTopic(cfg.MQTT.Site, sc.Station, sc.Slot)
 	cmdTopic := schema.CmdTopic(cfg.MQTT.Site, sc.Station, sc.Slot)
-	nativeStatus := shelly.StatusTopic(sc.ShellyID)
-	nativeOnline := sc.ShellyID + "/online"
-	nativeRPC := shelly.RPCTopic(sc.ShellyID)
+	wire, err := shelly.WireFor(sc.Generation, sc.ShellyID)
+	if err != nil {
+		return err
+	}
+	nativeStatus := wire.StatusTopic
+	nativeOnline := wire.OnlineTopic
+	nativeRPC := wire.CmdTopic
 
 	pub := &bridge.PahoPublisher{}
-	cmd := &shellyCommander{}
+	cmd := &shellyCommander{command: wire.Command}
 
 	b := bridge.New(bridge.Config{
 		Site:            cfg.MQTT.Site,
@@ -189,7 +193,7 @@ func runSlot(ctx context.Context, cfg config.Config, sc config.SlotConfig, log *
 
 		// Shelly native relay status → canonical power telemetry.
 		if tok := c.Subscribe(nativeStatus, 1, func(_ pahomqtt.Client, m pahomqtt.Message) {
-			_, power, err := shelly.ParseStatus(m.Payload())
+			power, err := wire.ParseStatus(m.Payload())
 			if err != nil {
 				slotLog.Warn("bad shelly status", "topic", m.Topic(), "err", err)
 				return
@@ -242,14 +246,16 @@ func runSlot(ctx context.Context, cfg config.Config, sc config.SlotConfig, log *
 	return ctx.Err()
 }
 
-// shellyCommander implements bridge.Commander by publishing the Gen2+
-// Switch.Set RPC over MQTT to the Shelly's "<id>/rpc" topic. Runs in the jobs
+// shellyCommander implements bridge.Commander by publishing the native relay
+// command (Gen2+ Switch.Set RPC to "<id>/rpc", or Gen1 on/off to
+// "shellies/<id>/relay/0/command"). Runs in the jobs
 // worker (from HandleCommand), so blocking on the publish token is safe — it is
 // never on a paho message-handler goroutine.
 type shellyCommander struct {
 	mu       sync.Mutex
 	client   pahomqtt.Client
 	rpcTopic string
+	command  func(on bool) []byte // the generation's payload builder
 }
 
 // rpcPublishTimeout bounds the Shelly RPC publish Wait (review S1b; mirrors
@@ -271,7 +277,7 @@ func (s *shellyCommander) SetPower(on bool) error {
 	if c == nil {
 		return fmt.Errorf("mqtt client not connected")
 	}
-	tok := c.Publish(topic, 1, false, shelly.SwitchSet(on))
+	tok := c.Publish(topic, 1, false, s.command(on))
 	// Bounded Wait (review S1b): an unbounded Wait here parks the /cmd path
 	// on a stalled broker forever.
 	if !tok.WaitTimeout(rpcPublishTimeout) {

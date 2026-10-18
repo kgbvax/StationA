@@ -78,12 +78,12 @@ MQTT_PASSWORD="${MQTT_PASSWORD:-}"
 # Shelly Gen2+ device ids (MQTT prefixes). MUST be set to the real plug ids
 # before first deploy; a placeholder is refused.
 MASTER_SHELLY_ID="${MASTER_SHELLY_ID:-shellyplus1pm-aabbccddeeff}"
-PSU_SHELLY_ID="${PSU_SHELLY_ID:-shellyplus1pm-112233445566}"
+PSU_SHELLY_ID="${PSU_SHELLY_ID:-shellyplug-s-A71704}"   # "TrxPsu", Gen1 Plug S, 192.168.1.150
 ANTENNAS_SHELLY_ID="${ANTENNAS_SHELLY_ID:-shellyplugsg3-e4b063d86c98}"   # "antennasPwr", 192.168.1.198
 PC_SHELLY_ID="${PC_SHELLY_ID:-shellyplugsg3-e4b063e3cba8}"   # bwpc plug, 192.168.1.176
 PLACEHOLDER_IDS=0
 case "$MASTER_SHELLY_ID $PSU_SHELLY_ID $ANTENNAS_SHELLY_ID $PC_SHELLY_ID" in
-  *aabbccddeeff*|*112233445566*) PLACEHOLDER_IDS=1 ;;
+  *aabbccddeeff*) PLACEHOLDER_IDS=1 ;;
 esac
 
 # Allow "user@host" in SSH_HOST; otherwise prepend SSH_USER.
@@ -148,10 +148,11 @@ trap 'rm -f "$SEED_CONFIG" "$SEED_ENV" "${UNIT_FILE:-}"' EXIT
   echo "station       = \"power\""
   echo "slot          = \"psu-13v8\""
   echo "location      = \"bauwagen\""
-  echo "device_model  = \"Shelly Plus 1PM\""
+  echo "device_model  = \"Shelly Plug S\""
   echo "device_serial = \"$(toml_escape "$PSU_SHELLY_ID")\""
+  echo "generation    = \"gen1\""
   echo "shelly_id     = \"$(toml_escape "$PSU_SHELLY_ID")\""
-  echo "fail_safe     = \"off\""
+  echo "fail_safe     = \"on\""
   echo "feeds = ["
   echo "  \"hf/radio\", \"uhf/radio\", \"hf/tuner\","
   echo "  \"hf/ant-switch\", \"hf/switch\", \"hf/pa-arm\","

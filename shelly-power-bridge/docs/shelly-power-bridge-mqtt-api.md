@@ -192,6 +192,18 @@ from the `[[slot]]` config.
 | `<shelly_id>/online` | Shelly → broker | `true` / `false` | `device_online` only — never `power`; retained `true` on connect, `false` is the Shelly's last will |
 | `<shelly_id>/rpc` | bridge → Shelly | `Switch.Set` RPC | drive relay 0 on `set_power` |
 
+Gen1 slots (`generation = "gen1"`, e.g. the Plug S "TrxPsu") use the Gen1 protocol
+instead; `<shelly_id>` is the Gen1 MQTT id (`shellyplug-s-A71704`):
+
+| Topic | Direction | Payload | Used for |
+|-------|-----------|---------|----------|
+| `shellies/<shelly_id>/relay/0` | Shelly → bridge | `on` \| `off` \| `overpower` (= off) | canonical `power` + `device_online=true` |
+| `shellies/<shelly_id>/online` | Shelly → broker | `true` / `false` | `device_online` only (same semantics as Gen2+) |
+| `shellies/<shelly_id>/relay/0/command` | bridge → Shelly | `on` \| `off` | drive relay 0 on `set_power` |
+
+On a Gen1 device, enabling MQTT disables its Shelly Cloud connection (firmware
+limitation); local HTTP/CoIoT (Home Assistant's Shelly integration) keeps working.
+
 A status announce sets `device_online=true` and updates `power`. `<id>/online`
 sets `device_online` only. The Shelly does not repeat `true`, so silence is not an
 outage. The watcher (10 s tick) marks the device offline when its last word was

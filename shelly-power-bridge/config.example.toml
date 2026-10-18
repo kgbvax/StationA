@@ -50,6 +50,9 @@ level = "info"
 #               and commands "<shelly_id>/rpc".
 # device_model / device_serial = the Shelly identity published in /meta.
 #               Use device_serial = shelly_id (the stable Gen2 device id).
+# generation  = "gen2" (default; Plus / Pro / Gen3) or "gen1" (Plug S, Shelly 1).
+#               Gen1 speaks "shellies/<id>/relay/0" + "…/relay/0/command"; its
+#               shelly_id is the Gen1 MQTT id (e.g. "shellyplug-s-A71704").
 # fail_safe   = the Shelly power-on default published in capabilities:
 #               "off" means the plug restores OFF after a mains blip (a power
 #               blip drops the station rather than re-energizing it). Default "off".
@@ -74,10 +77,12 @@ fail_safe     = "off"
 station       = "power"
 slot          = "psu-13v8"
 location      = "bauwagen"
-device_model  = "Shelly Plus 1PM"
-device_serial = "shellyplus1pm-B2"
-shelly_id     = "shellyplus1pm-112233445566"
-fail_safe     = "off"
+device_model  = "Shelly Plug S"
+device_serial = "shellyplug-s-A71704"
+# Gen1 plug ("TrxPsu", 192.168.1.150, fw 1.14): MQTT ids are "shellies/<id>/…".
+generation    = "gen1"
+shelly_id     = "shellyplug-s-A71704"
+fail_safe     = "on"    # relay default_state "last" — it comes back as it was (normally on)
 feeds = [
   "hf/radio",
   "uhf/radio",
