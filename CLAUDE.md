@@ -157,8 +157,9 @@ from `flexbridge/`). Cross-cutting Go code, not docs, lives in the `shared/` mod
 
 ## MQTT broker access
 
-> **Live state (2026-10-03):** every station client except the M5 Stamp PLC #1
-> (`hf/switch` + `hf/pa-arm`) still uses the HA broker `192.168.1.50:1883`.
+> **Live state (2026-10-18):** every station client except the M5 Stamp PLC #1
+> (`hf/switch` + `hf/pa-arm`) and shelly-power-bridge + its Shelly plugs
+> (`power/*`) still uses the HA broker `192.168.1.50:1883`.
 > shari runs no mosquitto. A new station broker runs on **scmino**
 > (`192.168.1.178:1883`) as a bridged `muehle/#` mirror of `.50`; the PLC
 > moved there first — see `mqtt-broker/CLAUDE.md`. The shari-centric
