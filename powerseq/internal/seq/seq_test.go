@@ -492,7 +492,10 @@ func TestSubscriptionDerivation(t *testing.T) {
 	if fmt.Sprint(statusSlots) != fmt.Sprint(wantStatus) {
 		t.Errorf("statusSlots = %v, want %v (§7.1 — every referenced slot)", statusSlots, wantStatus)
 	}
-	wantState := []string{abs("hf/pa")}
+	// wait_state slots + every wait_status online slot (device_online gate).
+	wantState := []string{
+		abs("hf/ant-switch"), abs("hf/pa"), abs("hf/pa-arm"), abs("hf/radio"), abs("hf/switch"),
+	}
 	if fmt.Sprint(stateSlots) != fmt.Sprint(wantState) {
 		t.Errorf("stateSlots = %v, want %v", stateSlots, wantState)
 	}
@@ -830,6 +833,30 @@ func TestWaitStatusOffline(t *testing.T) {
 	}
 	// An explicit offline payload satisfies it.
 	s.markOffline("hf/radio")
+	runUntil(t, s, func() bool { return phaseIs(s, PhaseRunning) }, time.Second)
+}
+
+func TestWaitStatusOnlineRequiresDeviceOnline(t *testing.T) {
+	// 2026-10-18: flexbridge /status was online (bridge up) while the FLEX was
+	// still booting (device_online=false); wait-radio-online passed at once.
+	// state="online" must be two-layer: LWT online AND device_online not false.
+	up := []Step{
+		{Name: "wait-radio-online", Kind: KindWaitStatus, Slots: []string{"hf/radio"}},
+	}
+	s, _ := newTestSeqWith(t, up, exampleShutdown())
+	s.SetBrokerOnline(true)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go s.Run(ctx)
+
+	s.SetStatus(abs("hf/radio"), true)
+	s.SetState(abs("hf/radio"), []byte(`{"freq_hz":0,"device_online":false}`))
+	s.Start()
+	time.Sleep(StepTimeoutInTest() / 2)
+	if phaseIs(s, PhaseRunning) {
+		t.Fatal("passed with device_online=false behind an online bridge")
+	}
+	s.SetState(abs("hf/radio"), []byte(`{"freq_hz":14074000,"device_online":true}`))
 	runUntil(t, s, func() bool { return phaseIs(s, PhaseRunning) }, time.Second)
 }
 

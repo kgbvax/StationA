@@ -6,6 +6,9 @@
 //
 //	cmd          emit a retained /cmd {action, value} to a slot
 //	wait_status  wait until N slots' /status == online|offline
+//	             (state="online" is two-layer: each slot's /state.device_online
+//	             must also not be "false" when present — a bridge whose LWT is
+//	             online in front of a still-booting device does not pass)
 //	wait_state   wait until a slot's /state top-level field == value
 //	             (implicit two-layer liveness precondition: the slot's /status
 //	             must be online AND its /state.device_online must not be "false"
@@ -372,7 +375,8 @@ func (s *Sequencer) CmdTopic() string { return s.self + "/cmd" }
 // cmd, wait_status, or wait_state step). The /status of every such slot is
 // subscribed (so the sequencer observes outage/liveness of every slot it
 // touches, not only the ones it waits on — model §7.1); the /state of every
-// wait_state slot is subscribed. With idle standby configured, the activity
+// wait_state slot and every wait_status state="online" slot (for its
+// device_online) is subscribed. With idle standby configured, the activity
 // slot and every watch slot are subscribed too (/status + /state).
 func (s *Sequencer) Subscriptions() (statusSlots, stateSlots []string) {
 	status := map[string]struct{}{}
@@ -393,6 +397,9 @@ func (s *Sequencer) Subscriptions() (statusSlots, stateSlots []string) {
 		case KindWaitStatus:
 			for _, slot := range st.Slots {
 				note(slot)
+				if st.State == "online" {
+					state[slot] = struct{}{}
+				}
 			}
 		case KindWaitState:
 			note(st.Slot)
@@ -431,7 +438,7 @@ func (s *Sequencer) SetStatus(slot string, online bool) {
 	s.mu.Unlock()
 }
 
-// SetState records a /state snapshot from a wait_state slot. Called from the
+// SetState records a /state snapshot from a subscribed /state slot. Called from the
 // mqtt layer. A malformed payload drops the slot's prior snapshot (logged) so a
 // good→malformed transition does NOT keep the stale prior value — the wait then
 // sees no field and yields false for that poll, not a poisoned map.
@@ -756,7 +763,14 @@ func (s *Sequencer) execStep(ctx context.Context, st *resolvedStep) (string, boo
 	case KindWaitStatus:
 		return s.wait(ctx, st, func() bool {
 			for _, slot := range st.Slots {
-				if s.statusOf(slot) != st.State {
+				if st.State == "online" {
+					// Two-layer liveness: bridge LWT AND device_online. The
+					// bridge LWT alone is online while the device behind it
+					// is still booting (flexbridge on scmino, 2026-10-18).
+					if !s.isOnline(slot) {
+						return false
+					}
+				} else if s.statusOf(slot) != st.State {
 					return false
 				}
 			}
