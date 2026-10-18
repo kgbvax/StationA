@@ -96,7 +96,7 @@ resources** — `ant/ultrabeam` (port 3), `ant/fan-dipole` 80/40 (port 6),
 ## shari — the deployment target
 
 All services run on shari, a Raspberry Pi at `192.168.1.139` — except
-flexbridge, acom1200s-pa-bridge, wrc-rotator-bridge, antenna-select, beamsteer, atr1k-tuner-bridge and hadiscovery (since 2026-10-12), powerseq, shelly-power-bridge and logger-spot-bridge (since 2026-10-18), vhfcam-restream (since 2026-09-30), the station Mosquitto mirror, the
+flexbridge, acom1200s-pa-bridge, wrc-rotator-bridge, antenna-select, beamsteer, atr1k-tuner-bridge and hadiscovery (since 2026-10-12), icom9700-radio-bridge, powerseq, shelly-power-bridge and logger-spot-bridge (since 2026-10-18), vhfcam-restream (since 2026-09-30), the station Mosquitto mirror, the
 hf_console web channel `hf-console-web` (:8091), testui (:8090) and the landing
 page stationportal (:80) (all since 2026-10-02) and ultrabridge (:8080, RCU-06
 FTDI cable on scmino's USB; since 2026-10-09), which run on **scmino** (`192.168.1.178`, Raspberry Pi CM5, same `ssh io@` access).

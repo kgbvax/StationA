@@ -400,9 +400,9 @@ slots = ["muehle/power/shack-pc"]
 name  = "icom9700-radio-bridge"
 path  = "icom9700-radio-bridge/"
 kind  = "bridge"
-host  = "shari"
+host  = "scmino"
 unit  = "icom9700-radio-bridge"
-note  = "RX audio UDP -> scmino:45031"
+note  = "RX audio UDP -> local :45031 (vhfcam-restream)"
 slots = ["muehle/uhf/radio"]
 
 [[software]]
