@@ -43,6 +43,19 @@ type Device struct {
 	mode    string // raw firmware mode (diagnostic)
 	band    int    // amp band index 1..10 (0 = unknown), for navigation
 	online  bool
+
+	// onLinkDown is called (from the Run goroutine) once per telemetry outage,
+	// when no decoded telemetry frame has arrived for silenceLimit. Run keeps
+	// the port open and keeps re-arming; the callback only lets the bridge flip
+	// /state.device_online. Set before Run via SetLinkDownHandler.
+	onLinkDown func(reason string)
+
+	// Receive counters, owned by the Run goroutine (processBuffer/handlePacket
+	// run only there). They make "bytes arrive but nothing decodes" visible in
+	// the journal: before them, discarded bytes left no trace.
+	rxFrames    uint64 // decoded 72-byte telemetry frames
+	rxDiscarded uint64 // bytes dropped while resyncing (no start byte, bad length/checksum)
+	rxIgnored   uint64 // valid frames that are not telemetry (or telemetry of a wrong length)
 }
 
 // New constructs a Device for the given port path and averaging window.
@@ -64,6 +77,10 @@ func New(portPath string, avgMs int, debug bool, log Logger) *Device {
 	}
 	return d
 }
+
+// SetLinkDownHandler registers the telemetry-outage callback (see
+// Device.onLinkDown). Call before Run.
+func (d *Device) SetLinkDownHandler(fn func(reason string)) { d.onLinkDown = fn }
 
 // openPort dials the port via d.open and applies the standard setup (1 s read
 // timeout, flushed buffers). It does not touch Device state; callers own the
@@ -99,6 +116,10 @@ func (d *Device) Open() error {
 	d.closed = false
 	d.mu.Unlock()
 
+	// Mode and band from an earlier session are stale until the first frame:
+	// SetBand must not walk the amp from an old band index, and the re-arm
+	// rule must not act on an old mode.
+	d.resetProtocolState()
 	d.setOnline(true)
 	if err := d.EnableTelemetry(); err != nil {
 		return fmt.Errorf("failed to enable telemetry: %w", err)
@@ -107,11 +128,25 @@ func (d *Device) Open() error {
 	return nil
 }
 
-// Run is the read loop. It blocks reading frames, ACKing each and emitting
-// telemetry observations to onObs, until the port errors, 30 s of silence
-// elapses, or ctx is cancelled. Closing the port (from Close or ctx cancel)
-// unblocks the read. Port faults are self-healed in place when possible: see
-// the port == nil branch below for the reopen-retry half.
+// Run is the read loop. It reads frames, ACKs each and emits telemetry
+// observations to onObs until the port is unrecoverable or ctx is cancelled.
+// Closing the port (from Close or ctx cancel) unblocks the read.
+//
+// Liveness is keyed on DECODED telemetry frames, not raw bytes. An amp that
+// is switched off is silent; an amp that is booting can send bytes that
+// never decode (or OFF-mode frames) and does not stream telemetry until it
+// gets an enable command AFTER its boot. So:
+//
+//   - The enable command is re-sent every rearmEvery while no telemetry frame
+//     has decoded for rearmAfter, or while the amp reports OFF/RESET/INIT.
+//   - No decoded frame for silenceLimit is a telemetry outage: onLinkDown is
+//     called once (device_online → false) and the port STAYS OPEN with the
+//     re-arm running, so a remote-on is answered within one re-arm period
+//     (2026-10-18: the old close + 60 s backoff cycle plus a byte-keyed timer
+//     left a freshly powered amp unarmed for minutes).
+//
+// Port faults are self-healed in place when possible (see reopen). Run returns
+// only when the port has faulted with no successful read for silenceLimit.
 func (d *Device) Run(ctx context.Context, onObs func(Observation)) error {
 	// Arrange for ctx cancellation to close the port and unblock the read.
 	stop := make(chan struct{})
@@ -127,30 +162,80 @@ func (d *Device) Run(ctx context.Context, onObs func(Observation)) error {
 	fwdAvg := NewPowerAverager(d.avgMs)
 	rxBuf := make([]byte, 0, 1024)
 	tmpBuf := make([]byte, 128)
-	lastDataTime := time.Now()
-	lastRetryTime := time.Now()
+	runStart := time.Now()
+	lastFrameTime := runStart // last decoded telemetry frame
+	lastGoodRead := runStart  // last read without a port fault (a timeout counts)
+	lastRetryTime := runStart // last enable command (Open sent one)
+	streaming := false        // a frame decoded since open / the last outage
+	linkDown := false         // onLinkDown already called for this outage
+	rearming := false         // the current outage was already logged at Info
+	var discardedAtRearm, ignoredAtRearm uint64
+	lastMode := ""
+
+	// tick runs the frame-keyed liveness and re-arm rules. Called on every
+	// loop iteration, whether the read returned data, timed out, or faulted.
+	tick := func(portOpen bool) {
+		silent := time.Since(lastFrameTime)
+		if silent > silenceLimit && !linkDown {
+			linkDown = true
+			streaming = false
+			d.resetProtocolState()
+			reason := fmt.Sprintf("no telemetry frame for %s (%d bytes discarded, %d non-telemetry frames)",
+				silenceLimit, d.rxDiscarded, d.rxIgnored)
+			d.log.Infof("telemetry lost: %s; port stays open, re-arming every %s", reason, rearmEvery)
+			if d.onLinkDown != nil {
+				d.onLinkDown(reason)
+			}
+		}
+		mode := d.CurrentMode()
+		needRearm := silent > rearmAfter || modeNeedsRearm(mode)
+		if !portOpen || !needRearm || time.Since(lastRetryTime) < rearmEvery {
+			return
+		}
+		why := fmt.Sprintf("no telemetry frame for %s", silent.Round(100*time.Millisecond))
+		if silent <= rearmAfter {
+			why = "amp reports " + mode
+		}
+		newDiscarded, newIgnored := d.rxDiscarded-discardedAtRearm, d.rxIgnored-ignoredAtRearm
+		if !rearming || newDiscarded > 0 || newIgnored > 0 {
+			// Info once per outage, and whenever undecodable traffic arrived
+			// since the last re-arm (the 2026-10-18 shape); the steady
+			// every-3-s re-arm of a switched-off amp stays at Debug.
+			d.log.Infof("%s (%d bytes discarded, %d non-telemetry frames since last re-arm), re-sending enable telemetry",
+				why, newDiscarded, newIgnored)
+			rearming = true
+		} else {
+			d.log.Debugf("%s, re-sending enable telemetry", why)
+		}
+		discardedAtRearm, ignoredAtRearm = d.rxDiscarded, d.rxIgnored
+		if err := d.EnableTelemetry(); err != nil {
+			d.log.Warnf("re-send enable telemetry: %v", err)
+		}
+		lastRetryTime = time.Now()
+	}
 
 	for {
 		d.mu.Lock()
 		port := d.port
 		d.mu.Unlock()
 		if port == nil {
+			tick(false)
 			// A previous reopen failed — typically ENOENT because udev has not
 			// yet recreated the by-id path after the adapter re-enumerated.
 			// Retry the open in place, spaced by reopenMinInterval and bounded
-			// by the silence watchdog, rather than tearing the run down: the
+			// by the port watchdog, rather than tearing the run down: the
 			// canonical drop + re-enumeration fault heals here without
 			// flipping /state.device_online. (This is ultrabridge's "rw == nil,
 			// next poll tick retries" half, adapted to a push-based loop; the
 			// sleep is only a spin guard — the rate bound does the pacing.)
-			if time.Since(lastDataTime) > silenceLimit {
-				return fmt.Errorf("no data received for %s (port unrecoverable)", silenceLimit)
+			if time.Since(lastGoodRead) > silenceLimit {
+				return fmt.Errorf("no working serial port for %s (port unrecoverable)", silenceLimit)
 			}
 			if d.selfHealAllowed() {
 				if rerr := d.reopen(); rerr == nil {
 					// Fresh link: partial frames from the old handle no longer
-					// apply. (Silence timers DO carry over — a reopened port
-					// that delivers nothing is still silent.)
+					// apply. (The port watchdog carries over — a reopened port
+					// that faults again is still broken.)
 					rxBuf = rxBuf[:0]
 					lastRetryTime = time.Now() // reopen re-armed telemetry already
 					continue
@@ -171,13 +256,15 @@ func (d *Device) Run(ctx context.Context, onObs func(Observation)) error {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
-			// The silence watchdog applies on the fault path too: a link that
-			// faults (rather than times out) without delivering data for
-			// silenceLimit must not be held online by repeated reopens —
-			// device_online must reflect a dead link. lastDataTime is only
-			// ever reset by real data, never by a reopen.
-			if time.Since(lastDataTime) > silenceLimit {
-				return fmt.Errorf("no data received for %s (last fault: %w)", silenceLimit, err)
+			tick(true)
+			// The port watchdog applies on the fault path: a link that keeps
+			// faulting (rather than reading or timing out) for silenceLimit is
+			// handed to the serial restart loop, however often it reopens.
+			// lastGoodRead is only ever reset by a successful read, never by
+			// a reopen. (device_online is owned by the frame-keyed outage
+			// rule in tick, independently of this.)
+			if time.Since(lastGoodRead) > silenceLimit {
+				return fmt.Errorf("serial port faulting for %s (last fault: %w)", silenceLimit, err)
 			}
 			// Port-level fault — typically EIO after the USB-serial adapter
 			// dropped and the kernel re-enumerated it under a new tty. Try one
@@ -188,7 +275,7 @@ func (d *Device) Run(ctx context.Context, onObs func(Observation)) error {
 			if d.selfHealAllowed() {
 				if rerr := d.reopen(); rerr == nil {
 					// Fresh link: partial frames from the old handle no longer
-					// apply. (Silence timers DO carry over — see above.)
+					// apply. (The port watchdog carries over — see above.)
 					rxBuf = rxBuf[:0]
 					lastRetryTime = time.Now()
 					continue
@@ -204,29 +291,52 @@ func (d *Device) Run(ctx context.Context, onObs func(Observation)) error {
 			}
 			return err
 		}
+		lastGoodRead = time.Now()
 
 		if n > 0 {
-			lastDataTime = time.Now()
+			before := d.rxFrames
 			rxBuf = append(rxBuf, tmpBuf[:n]...)
 			rxBuf = d.processBuffer(rxBuf, fwdAvg, onObs)
-			continue
-		}
-
-		// n == 0: read timeout.
-		if time.Since(lastDataTime) > silenceLimit {
-			return fmt.Errorf("no data received for %s, restarting monitor", silenceLimit)
-		}
-		if time.Since(lastDataTime) > 5*time.Second && time.Since(lastRetryTime) > 5*time.Second {
-			// The re-send is routine recovery inside one run (Info): a link
-			// that stays quiet ends the run, and serialLoop reports that
-			// failure — once per outage — at Warn.
-			d.log.Infof("no data for 5s, re-sending enable telemetry")
-			if err := d.EnableTelemetry(); err != nil {
-				d.log.Warnf("re-send enable telemetry: %v", err)
+			if d.rxFrames != before {
+				lastFrameTime = time.Now()
+				mode := d.CurrentMode()
+				if !streaming {
+					streaming = true
+					d.log.Infof("telemetry streaming: mode=%s band=%d (%s after open, %s after last enable)",
+						mode, d.CurrentBand(), time.Since(runStart).Round(100*time.Millisecond),
+						time.Since(lastRetryTime).Round(100*time.Millisecond))
+				} else if mode != lastMode && (modeNeedsRearm(mode) || modeNeedsRearm(lastMode)) {
+					d.log.Infof("amp mode %s -> %s", lastMode, mode)
+				}
+				lastMode = mode
+				linkDown = false
+				if !modeNeedsRearm(mode) {
+					rearming = false // outage over; an OFF stream keeps re-arming at Debug
+				}
 			}
-			lastRetryTime = time.Now()
 		}
+		tick(true)
 	}
+}
+
+// modeNeedsRearm reports whether the amp's raw mode is one in which it may
+// not (yet) be streaming normally: switched off, or still booting. Re-arming
+// in these modes restores the power-cycle watchdog removed in 8880405.
+func modeNeedsRearm(mode string) bool {
+	switch mode {
+	case "OFF", "RESET", "INIT":
+		return true
+	}
+	return false
+}
+
+// resetProtocolState forgets the last decoded mode and band (stale after a
+// reopen or a telemetry outage).
+func (d *Device) resetProtocolState() {
+	d.stateMu.Lock()
+	d.mode = ""
+	d.band = 0
+	d.stateMu.Unlock()
 }
 
 // Close closes the serial port and marks the device offline. Safe to call
@@ -258,12 +368,18 @@ var (
 	// tick spaces retries" bound, adapted to acom's push-based read loop.
 	reopenMinInterval = 2 * time.Second
 
-	// silenceLimit is how long the run loop tolerates a silent link (read
-	// timeouts OR read faults healed by reopen) before giving up and letting
-	// the serial restart loop mark the device offline. It applies to both the
-	// timeout path and the fault path: a link that keeps faulting but never
-	// delivers data is silent, however many times the port reopens.
+	// silenceLimit is how long the run loop tolerates (a) no decoded telemetry
+	// frame before reporting a telemetry outage via onLinkDown (the port stays
+	// open), and (b) a port that only faults (no successful read, however
+	// often it reopens) before returning for the serial restart loop.
 	silenceLimit = 30 * time.Second
+
+	// rearmAfter is how long without a decoded telemetry frame before the
+	// enable command is re-sent; rearmEvery spaces the re-sends. A streaming
+	// amp sends frames far faster than rearmAfter, so a healthy link never
+	// sees a re-send. The amp boots in well under 20 s.
+	rearmAfter = 3 * time.Second
+	rearmEvery = 3 * time.Second
 
 	// reopenRetrySleep spaces the idle loop between failed reopen attempts.
 	// Purely a spin guard while waiting out the reopenMinInterval window —
@@ -357,6 +473,7 @@ func (d *Device) processBuffer(buf []byte, fwdAvg *PowerAverager, onObs func(Obs
 	for len(buf) >= 3 {
 		if buf[0] != StartByte {
 			buf = buf[1:]
+			d.rxDiscarded++
 			continue
 		}
 		pktLen := int(buf[2])
@@ -367,6 +484,7 @@ func (d *Device) processBuffer(buf []byte, fwdAvg *PowerAverager, onObs func(Obs
 		// handlePacket, or pass verifyChecksum vacuously on an empty slice).
 		if pktLen < 4 {
 			buf = buf[1:]
+			d.rxDiscarded++
 			continue
 		}
 		if len(buf) < pktLen {
@@ -378,6 +496,7 @@ func (d *Device) processBuffer(buf []byte, fwdAvg *PowerAverager, onObs func(Obs
 			buf = buf[pktLen:]
 		} else {
 			buf = buf[1:]
+			d.rxDiscarded++
 		}
 	}
 	return buf
@@ -394,18 +513,22 @@ func (d *Device) handlePacket(packet []byte, fwdAvg *PowerAverager, onObs func(O
 	}
 	addr := packet[1]
 	_ = d.sendAck(addr)
-	if addr == MsgTelemetry {
-		obs, ok := ParseTelemetry(packet, fwdAvg)
-		if !ok {
-			return
-		}
-		d.stateMu.Lock()
-		d.mode = obs.ModeRaw
-		d.band = obs.BandIndex
-		d.stateMu.Unlock()
-		if onObs != nil {
-			onObs(obs)
-		}
+	if addr != MsgTelemetry {
+		d.rxIgnored++
+		return
+	}
+	obs, ok := ParseTelemetry(packet, fwdAvg)
+	if !ok {
+		d.rxIgnored++
+		return
+	}
+	d.rxFrames++
+	d.stateMu.Lock()
+	d.mode = obs.ModeRaw
+	d.band = obs.BandIndex
+	d.stateMu.Unlock()
+	if onObs != nil {
+		onObs(obs)
 	}
 }
 
