@@ -56,7 +56,7 @@
 set -euo pipefail
 
 # --- configuration ----------------------------------------------------------
-SSH_HOST="${SSH_HOST:-192.168.1.139}"
+SSH_HOST="${SSH_HOST:-192.168.1.178}"
 SSH_USER="${SSH_USER:-io}"
 SERVICE_NAME="${SERVICE_NAME:-shelly-power-bridge}"
 SERVICE_USER="${SERVICE_USER:-shelly-power-bridge}"
@@ -67,7 +67,7 @@ ENV_FILE="${ENV_FILE:-${CONFIG_DIR}/shelly-power-bridge.env}"
 BINARY="${BINARY:-shelly-power-bridge}"
 PKG="./cmd/shelly-power-bridge"
 
-HOST_NAME="${HOST_NAME:-shari}"
+HOST_NAME="${HOST_NAME:-scmino}"
 LOG_LEVEL="${LOG_LEVEL:-info}"
 MQTT_BROKER="${MQTT_BROKER:-tcp://192.168.1.178:1883}"
 MQTT_SITE="${MQTT_SITE:-muehle}"

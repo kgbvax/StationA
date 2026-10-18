@@ -6,7 +6,7 @@
 # The bridge fronts the shack logging software (DXLog, Log4OM) as the canonical
 # muehle/hf/spots slot. It LISTENS on UDP next to the loggers:
 #   12060  N1MM-family lookupinfo (DXLog Options|Broadcast — subnet broadcast)
-#   2249   Log4OM outbound CALLSIGN (point Log4OM at shari:2249)
+#   2249   Log4OM outbound CALLSIGN (point Log4OM at scmino:2249)
 # UDP broadcast is LAN-wide, so the bridge does NOT need to run on the logging
 # PC; on shari it gets auto-start, restart supervision and the standard unit
 # hardening like every other bridge. (It lived on the Windows shack PC as a
@@ -28,7 +28,7 @@
 set -euo pipefail
 
 # --- configuration ----------------------------------------------------------
-SSH_HOST="${SSH_HOST:-192.168.1.139}"
+SSH_HOST="${SSH_HOST:-192.168.1.178}"
 SSH_USER="${SSH_USER:-io}"
 SERVICE_NAME="${SERVICE_NAME:-logger-spot-bridge}"
 SERVICE_USER="${SERVICE_USER:-logger-spot-bridge}"
@@ -39,7 +39,7 @@ ENV_FILE="${ENV_FILE:-${CONFIG_DIR}/logger-spot-bridge.env}"
 BINARY="${BINARY:-logger-spot-bridge}"
 PKG="./cmd/logger-spot-bridge"
 
-HOST_NAME="${HOST_NAME:-shack-pc}"   # host identity published in /meta
+HOST_NAME="${HOST_NAME:-scmino}"   # host identity published in /meta
 STATION_LOCATOR="${STATION_LOCATOR:-JO32WE}"
 N1MM_ENABLED="${N1MM_ENABLED:-true}"
 N1MM_PORT="${N1MM_PORT:-12060}"
@@ -96,7 +96,7 @@ trap 'rm -f "$SEED_CONFIG" "$SEED_ENV" "${UNIT_FILE:-}"' EXIT
   echo ""
   echo "# One [[listener]] per logger broadcast stream. Broadcasts travel the"
   echo "# whole LAN — the loggers do not need to know about this host beyond"
-  echo "# Log4OM's outbound target (which must be shari:${LOG4OM_PORT})."
+  echo "# Log4OM's outbound target (which must be scmino:${LOG4OM_PORT})."
   if [[ "$N1MM_ENABLED" == "true" ]]; then
     echo "[[listener]]"
     echo "name = \"dxlog\""

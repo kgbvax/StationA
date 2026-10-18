@@ -178,21 +178,21 @@ address   = "muehle/power/psu-13v8"
 component = "shelly-power-bridge"
 device    = "Shelly Plug S (Gen1) \"TrxPsu\" (192.168.1.150) — 13.8 V TRX PSU (feeds HF + UHF)"
 link      = "wifi"
-host      = "shari"
+host      = "scmino"
 
 [[slot]]
 address   = "muehle/power/antennas"
 component = "shelly-power-bridge"
 device    = "Shelly Plug S Gen3 \"antennasPwr\" (192.168.1.198) — antenna power (HF + UHF rotators, Ultrabeam RCU-06)"
 link      = "wifi"
-host      = "shari"
+host      = "scmino"
 
 [[slot]]
 address   = "muehle/power/shack-pc-mains"
 component = "shelly-power-bridge"
 device    = "Shelly Plug S Gen3 (192.168.1.176) — shack PC (bwpc) mains; on at cold start, never off by powerseq"
 link      = "wifi"
-host      = "shari"
+host      = "scmino"
 
 [[slot]]
 address   = "muehle/power/shack-pc"
@@ -269,7 +269,7 @@ address   = "muehle/hf/spots"
 component = "logger-spot-bridge"
 device    = "DXLog / Log4OM UDP broadcasts"
 link      = "LAN UDP"
-host      = "shari"
+host      = "scmino"
 
 [[slot]]
 address   = "muehle/hf/beam-steer"
@@ -283,7 +283,7 @@ address   = "muehle/hf/power-seq"
 component = "powerseq"
 device    = "logic slot — startup/shutdown sequencer"
 link      = "none"
-host      = "shari"
+host      = "scmino"
 
 [[slot]]
 address   = "muehle/hf/discovery"
@@ -384,7 +384,7 @@ slots = ["muehle/hf/tuner"]
 name  = "shelly-power-bridge"
 path  = "shelly-power-bridge/"
 kind  = "bridge"
-host  = "shari"
+host  = "scmino"
 unit  = "shelly-power-bridge"
 slots = ["muehle/power/psu-13v8", "muehle/power/antennas", "muehle/power/shack-pc-mains"]
 
@@ -436,7 +436,7 @@ slots = ["muehle/uhf/sat-track"]
 name  = "logger-spot-bridge"
 path  = "logger-spot-bridge/"
 kind  = "bridge"
-host  = "shari"
+host  = "scmino"
 unit  = "logger-spot-bridge"
 ports = "12060/udp, 2249/udp"
 slots = ["muehle/hf/spots"]
@@ -462,7 +462,7 @@ slots = ["muehle/hf/beam-steer"]
 name  = "powerseq"
 path  = "powerseq/"
 kind  = "logic"
-host  = "shari"
+host  = "scmino"
 unit  = "powerseq"
 slots = ["muehle/hf/power-seq"]
 

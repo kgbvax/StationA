@@ -48,7 +48,7 @@
 set -euo pipefail
 
 # --- configuration ----------------------------------------------------------
-SSH_HOST="${SSH_HOST:-192.168.1.139}"
+SSH_HOST="${SSH_HOST:-192.168.1.178}"
 SSH_USER="${SSH_USER:-io}"
 SERVICE_NAME="${SERVICE_NAME:-powerseq}"
 SERVICE_USER="${SERVICE_USER:-powerseq}"
@@ -59,7 +59,7 @@ ENV_FILE="${ENV_FILE:-${CONFIG_DIR}/powerseq.env}"
 BINARY="${BINARY:-powerseq}"
 PKG="./cmd/powerseq"
 
-HOST_NAME="${HOST_NAME:-shari}"
+HOST_NAME="${HOST_NAME:-scmino}"
 LOCATION="${LOCATION:-bauwagen}"
 LOG_LEVEL="${LOG_LEVEL:-info}"
 MQTT_BROKER="${MQTT_BROKER:-tcp://127.0.0.1:1883}"
