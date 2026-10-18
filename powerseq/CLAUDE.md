@@ -172,7 +172,9 @@ overrides: `POWERSEQ_MQTT_BROKER`/`_CLIENT_ID`/`_USER`/`_PASSWORD`/`_SITE`. See
 
 ## Deployment
 
-Target: Raspberry Pi (`shari`, `192.168.1.139`, user `io`).
+Target: Raspberry Pi **scmino** (`192.168.1.178`, user `io`) since 2026-10-18.
+The shari copy (`192.168.1.139`) is disabled, not removed (rollback). Never run
+both: they share the client_id and the one-button `/cmd`.
 
 ```bash
 ./deploy.sh              # cross-compile, ship, install as a hardened systemd service

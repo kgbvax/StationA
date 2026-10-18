@@ -12,18 +12,18 @@
 # the strictest sandbox (PrivateDevices=true) with only AF_INET/AF_INET6.
 #
 # Usage:
-#   ./deploy.sh                       # deploy to default host "shari"
-#   SSH_HOST=pi@shari.local ./deploy.sh
+#   ./deploy.sh                       # deploy to default host "scmino"
+#   SSH_HOST=io@192.168.1.139 ./deploy.sh   # shari (former host, disabled there)
 #
 # Configurable via environment variables (with defaults):
-#   SSH_HOST        SSH target            (default: 192.168.1.139)
+#   SSH_HOST        SSH target            (default: 192.168.1.178, scmino)
 #   SSH_USER        SSH user              (default: io)  [used only if SSH_HOST has no user@]
 #   SERVICE_NAME    systemd service name  (default: powerseq)
 #   SERVICE_USER    system user to run as (default: powerseq)
 #   INSTALL_DIR     remote install dir    (default: /opt/powerseq)
 #   BINARY          binary name           (default: powerseq)
 #
-#   HOST_NAME       host value            (default: shari)     [published in /meta]
+#   HOST_NAME       host value            (default: scmino)    [published in /meta]
 #   LOCATION        location value        (default: bauwagen)  [published in /meta]
 #   LOG_LEVEL       log.level value       (default: info)
 #   MQTT_BROKER     mqtt.broker value     (default: tcp://127.0.0.1:1883)
@@ -48,7 +48,7 @@
 set -euo pipefail
 
 # --- configuration ----------------------------------------------------------
-SSH_HOST="${SSH_HOST:-192.168.1.139}"
+SSH_HOST="${SSH_HOST:-192.168.1.178}"
 SSH_USER="${SSH_USER:-io}"
 SERVICE_NAME="${SERVICE_NAME:-powerseq}"
 SERVICE_USER="${SERVICE_USER:-powerseq}"
@@ -59,7 +59,7 @@ ENV_FILE="${ENV_FILE:-${CONFIG_DIR}/powerseq.env}"
 BINARY="${BINARY:-powerseq}"
 PKG="./cmd/powerseq"
 
-HOST_NAME="${HOST_NAME:-shari}"
+HOST_NAME="${HOST_NAME:-scmino}"
 LOCATION="${LOCATION:-bauwagen}"
 LOG_LEVEL="${LOG_LEVEL:-info}"
 MQTT_BROKER="${MQTT_BROKER:-tcp://127.0.0.1:1883}"
@@ -186,8 +186,8 @@ RemoveIPC=true
 CapabilityBoundingSet=
 AmbientCapabilities=
 ReadWritePaths=/var/lib/${SERVICE_NAME}
-# Resource ceilings. shari is the single shared host running every station
-# service; a leaky service with no limit could OOM the whole Pi and take the
+# Resource ceilings. The station Pis (shari, scmino) each run many station
+# services; a leaky service with no limit could OOM the whole Pi and take the
 # entire station down.
 MemoryMax=256M
 TasksMax=64
