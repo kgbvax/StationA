@@ -126,14 +126,14 @@ for unchanged telemetry). Not published while the bridge client is disconnected
 }
 ```
 
-On a heartbeat loss / Shelly unreachable:
+When the Shelly goes away (its last will `<id>/online` = `false`):
 
 ```json
 {
   "ts": "2026-07-14T18:43:02Z",
   "power": "on",
   "device_online": false,
-  "error": "shelly heartbeat lost"
+  "error": "shelly online=false"
 }
 ```
 
@@ -141,7 +141,7 @@ On a heartbeat loss / Shelly unreachable:
 |-------|------|---------|
 | `ts` | string (RFC3339) | snapshot timestamp (UTC) |
 | `power` | `on` \| `off` | the **actual** relay position, read back from the Shelly's native announce (not the last command) |
-| `device_online` | bool | Shelly reachability: true while its `<id>/online` heartbeat arrives |
+| `device_online` | bool | Shelly reachability: follows `<id>/online` (`true` on connect, `false` = its last will); a status announce also sets it true |
 | `error` | string, omitempty | reason the device was marked offline |
 
 `power` reflects the **actual** relay position, confirmed by the Shelly's own
@@ -188,11 +188,13 @@ from the `[[slot]]` config.
 
 | Topic | Direction | Payload | Used for |
 |-------|-----------|---------|----------|
-| `<shelly_id>/status/switch:0` | Shelly → bridge | `{"output":true,"apower":…}` | canonical `power` + `device_online=true` |
-| `<shelly_id>/online` | Shelly → broker | `true` / `false` | heartbeat → `device_online`; staleness watcher marks offline after 75 s without `true` |
+| `<shelly_id>/status/switch:0` | Shelly → bridge | `{"output":true,"apower":…,"aenergy":{"total":…}}` | canonical `power` + `device_online=true` (needs "Generic status update over MQTT" on the plug) |
+| `<shelly_id>/online` | Shelly → broker | `true` / `false` | `device_online` only — never `power`; retained `true` on connect, `false` is the Shelly's last will |
 | `<shelly_id>/rpc` | bridge → Shelly | `Switch.Set` RPC | drive relay 0 on `set_power` |
 
-A status announce sets `device_online=true` and updates `power`; the `<id>/online`
-heartbeat keeps it true. The staleness watcher (10 s tick) marks the device
-offline if no heartbeat arrives within 75 s, publishing a `/state` snapshot
-with `device_online=false` and an `error` reason.
+A status announce sets `device_online=true` and updates `power`. `<id>/online`
+sets `device_online` only. The Shelly does not repeat `true`, so silence is not an
+outage. The watcher (10 s tick) marks the device offline when its last word was
+`false`, or when it was never heard within 75 s of bridge start ("shelly never
+heard"), publishing a `/state` snapshot with `device_online=false` and an `error`.
+The plug must publish to the same broker as the bridge.

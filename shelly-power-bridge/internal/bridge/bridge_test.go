@@ -147,6 +147,30 @@ func TestHandleTelemetryDedup(t *testing.T) {
 	}
 }
 
+// "<id>/online" = "true" proves the link only: a plug that is off must stay
+// off, and recovering from an outage must keep the last relay reading.
+func TestMarkDeviceOnlineKeepsPower(t *testing.T) {
+	b, pub := newTestBridge(t, &fakeCommander{})
+	b.HandleTelemetry("off")
+	b.MarkDeviceOffline("shelly online=false")
+	b.MarkDeviceOnline()
+	msg, ok := lastMsg(pub.Msgs, "muehle/power/master/state")
+	if !ok {
+		t.Fatal("no /state published")
+	}
+	var snap struct {
+		Power        string `json:"power"`
+		DeviceOnline bool   `json:"device_online"`
+		Error        string `json:"error"`
+	}
+	if err := json.Unmarshal(msg.Payload, &snap); err != nil {
+		t.Fatalf("unmarshal state: %v", err)
+	}
+	if snap.Power != "off" || !snap.DeviceOnline || snap.Error != "" {
+		t.Errorf("state = %+v, want power=off device_online=true no error", snap)
+	}
+}
+
 func TestHandleCommandSetPower(t *testing.T) {
 	cmd := &fakeCommander{}
 	b, _ := newTestBridge(t, cmd)

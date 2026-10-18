@@ -19,6 +19,17 @@ the same stale "no-op if power unchanged" comment; `internal/bridge/bridge.go`
 to enqueue a dedicated heartbeat-refresh path that touches only
 `device_online`/`error` and leaves `power` to the native status announce.
 
+**Fixed 2026-10-18:** `<id>/online` = `true` now calls `MarkDeviceOnline`, which
+sets `device_online`/`error` only; `power` comes from `<id>/status/switch:0` alone.
+
+## [defect] `aenergy` decode failure dropped real status announces (fixed 2026-10-18)
+
+`SwitchStatus.Aenergy` was a `float64`, but real firmware (Plug S Gen3 2.1.0, the
+first plug actually on the bus) sends `aenergy` as an object (`{"total":…,
+"by_minute":[…]}`). Every full status announce failed to decode ("bad shelly
+status") and the relay position was never read. Now an `Energy{Total}` struct; a
+payload without `output` is an error instead of reading as `off`.
+
 ## [defect] Metering parsed but discarded (the metering gap)
 
 The Plus 1PM reports `apower`/`aenergy`/`voltage`/`current` in every native
@@ -68,6 +79,12 @@ slot flaps offline.
 Code-check verdict (2026-09-03): **still open.** `main.go` hard-codes
 `const heartbeatTimeout = 75 * time.Second` (and a 10 s ticker); neither is
 configurable.
+
+**Fixed 2026-10-18 (the premise was wrong):** a Gen2+ Shelly publishes
+`<id>/online` = `true` once on connect (retained) and `false` as its MQTT last
+will — no periodic heartbeat — so the 75 s timeout marked every real plug
+offline. `device_online` now follows that topic (plus any status announce); the
+watcher only reports a Shelly never heard within 75 s of bridge start.
 
 ## [defect] `/state` is not refreshed on reconnect
 
@@ -128,7 +145,7 @@ it, but the deployed `/state` schema has none of it. Any addition changes the
 `/state` contract — coordinate with `docs/station-integration-model.md`. (See the
 metering-gap defect above.)
 
-## [decision] Heartbeat false-on fix: preserve or fix
+## [decision] Heartbeat false-on fix: preserve or fix — RESOLVED 2026-10-18: fixed
 
 Preserve the falsifying heartbeat behavior exactly, or fix the handler to refresh
 only `device_online`? The recommendation is the fix, but it changes observable

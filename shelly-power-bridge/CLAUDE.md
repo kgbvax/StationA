@@ -63,8 +63,8 @@ CLI flags:
 
 1. `cmd/shelly-power-bridge/main.go` — flags, config load, signal ctx, one
    runtime goroutine **per `[[slot]]`**. Each `runSlot` owns its own paho client
-   (with the slot LWT), a single `jobs` worker goroutine, and a heartbeat
-   staleness watcher. On (re)connect it publishes online + `/meta` and
+   (with the slot LWT), a single `jobs` worker goroutine, and a link
+   watcher. On (re)connect it publishes online + `/meta` and
    subscribes the Shelly native topics + the canonical `/cmd`. The initial
    paho `Connect()` is ctx-aware (a `tok.Wait()` bridged through a goroutine +
    `select` on `ctx.Done()`) so a SIGTERM while the broker is unreachable can
@@ -87,8 +87,10 @@ a live hadiscovery deadlock). The single `jobs` worker serializes all bridge
 state mutation + publishing for the slot. The shelly RPC `Publish` (from
 `HandleCommand`) runs in that worker, not on a paho handler, so blocking on the
 token is safe. `bridge.SlotBridge.mu` guards the canonical state + dedup
-snapshot. The heartbeat watcher enqueues `MarkDeviceOffline` when the Shelly's
-`<id>/online` heartbeat is lost.
+snapshot. `device_online` follows the Shelly's
+`<id>/online` (`true` once on connect, `false` = its last will — there is no
+periodic heartbeat) and never touches `power`; the watcher enqueues
+`MarkDeviceOffline` on `false` or when a Shelly was never heard after 75 s.
 
 **Compound-device / multi-client note:** MQTT 3.1.1 allows only one Will per
 client, so the compound bridge uses **one paho client per slot** (each with its

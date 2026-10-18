@@ -32,18 +32,34 @@ func RPCTopic(shellyID string) string {
 type SwitchStatus struct {
 	Output  bool    `json:"output"`
 	Apower  float64 `json:"apower,omitempty"`
-	Aenergy float64 `json:"aenergy,omitempty"` // total Wmin
+	Aenergy Energy  `json:"aenergy,omitempty"`
 	Voltage float64 `json:"voltage,omitempty"`
 	Current float64 `json:"current,omitempty"`
 }
 
+// Energy is the switch's `aenergy` object. Real firmware sends an object
+// ({"total":…,"by_minute":[…],"minute_ts":…}), not a number.
+type Energy struct {
+	Total float64 `json:"total"` // Wh
+}
+
 // ParseStatus decodes a "<id>/status/switch:0" payload into a SwitchStatus.
 // Returns the canonical power string ("on"|"off") derived from `output`.
+// A payload without `output` is an error, not "off": reading a missing field
+// as false would report the relay off when it is on.
 func ParseStatus(payload []byte) (SwitchStatus, string, error) {
-	var s SwitchStatus
-	if err := json.Unmarshal(payload, &s); err != nil {
+	var raw struct {
+		SwitchStatus
+		Output *bool `json:"output"`
+	}
+	if err := json.Unmarshal(payload, &raw); err != nil {
 		return SwitchStatus{}, "", fmt.Errorf("decode switch:0: %w", err)
 	}
+	if raw.Output == nil {
+		return SwitchStatus{}, "", fmt.Errorf("decode switch:0: no output field")
+	}
+	s := raw.SwitchStatus
+	s.Output = *raw.Output
 	if s.Output {
 		return s, "on", nil
 	}

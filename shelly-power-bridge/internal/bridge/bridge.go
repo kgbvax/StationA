@@ -201,6 +201,27 @@ func (b *SlotBridge) HandleTelemetry(power string) {
 	}
 }
 
+// MarkDeviceOnline records that the Shelly is connected to the broker (its
+// "<id>/online" = "true") WITHOUT touching power: that topic says nothing about
+// the relay, and only "<id>/status/switch:0" may set it.
+func (b *SlotBridge) MarkDeviceOnline() {
+	b.mu.Lock()
+	st := b.state
+	wasOffline := !st.DeviceOnline
+	prevErr := st.Error
+	st.DeviceOnline = true
+	st.Error = ""
+	snap, changed := b.snapshotLocked(st)
+	b.mu.Unlock()
+	if changed {
+		if wasOffline && prevErr != "" {
+			b.log.Warnf("shelly reachable again: device_online=true (cleared: %s)", prevErr)
+		}
+		b.log.Infof("state published: power=%s device_online=true", st.Power)
+		b.publishState(snap)
+	}
+}
+
 // MarkDeviceOffline sets the Shelly unreachable (no native announce within the
 // staleness window) and publishes a snapshot. Called by the staleness watcher.
 func (b *SlotBridge) MarkDeviceOffline(reason string) {
