@@ -197,7 +197,7 @@ host      = "shari"
 [[slot]]
 address   = "muehle/power/shack-pc-mains"
 component = "shelly-power-bridge"
-device    = "Shelly Plus 1PM — shack PC (bwpc) mains; on at cold start, never off by powerseq"
+device    = "Shelly Plug S Gen3 (192.168.1.176) — shack PC (bwpc) mains; on at cold start, never off by powerseq"
 link      = "wifi"
 host      = "shari"
 
