@@ -93,7 +93,7 @@ traffic record including every published `/state.error` value lives separately i
 
 ### 5. The `Logger{Infof,Warnf,Debugf}` bridge interface
 
-`flexbridge` (mirrored by atr1k, acom, wrc, shelly, pelcobridge2's mqtt slot) passes a
+`flexbridge` (mirrored by atr1k, acom, wrc, shelly) passes a
 minimal interface into bridge/device code. Keep it, with two constraints:
 
 - Its adapter wraps the service's slog logger (so `component`/`slot` attrs are already
@@ -123,9 +123,6 @@ sudo grep 'error' /var/log/hf-mqtt-capture/$(date +%Y-%m-%d)/$(date +%H).log
 - **ultrabridge, antennaselect, hadiscovery, testui** — replace std `log` with slog per
   §1; keep the existing `[mqtt]`/`[reconcile]` style as a short message prefix or a
   `subsys` attr, whichever reads better; re-level their error paths per §3.
-- **pelcobridge2** — it is interactive: engine/rotctld events stay in the TUI log pane,
-  but `Warn`+ events MUST be mirrored to stderr slog so an operator session also lands
-  in the journal. The MQTT slot already logs via `stderrLogger`; migrate it to slog.
 - **shelly-power-bridge** — one child logger per slot with `slot` attr (§2).
 - **flexbridge** — publishes `device_online` but no `/state.error`; see
   `docs/station-integration-model.md` §3 for the error-field contract it must adopt.

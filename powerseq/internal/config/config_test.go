@@ -1,6 +1,7 @@
 package config
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -247,13 +248,95 @@ func TestExampleFileDecodesAndValidates(t *testing.T) {
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("Validate example: %v", err)
 	}
-	if len(cfg.Startup) != 9 || len(cfg.Shutdown) != 9 {
-		t.Errorf("example sequence = %d/%d steps, want 9/9 (§7.1)", len(cfg.Startup), len(cfg.Shutdown))
+	if len(cfg.Startup) != 14 || len(cfg.Shutdown) != 11 {
+		t.Errorf("example sequence = %d/%d steps, want 14/11", len(cfg.Startup), len(cfg.Shutdown))
+	}
+	// Cold-start order: PC mains → PSU → 5 s → PC WOL → (PLC online) → TRX → 1 s → PA → antenna power.
+	var order []string
+	for _, st := range cfg.Startup {
+		order = append(order, st.Name)
+	}
+	want := "master-on network-delay pc-mains-on psu-on psu-settle pc-boot wait-plc-online trx-on trx-settle pa-on antennas-on wait-radio-online wait-pa-power-on pa-arm-enable"
+	if got := strings.Join(order, " "); got != want {
+		t.Errorf("startup order:\n got  %s\n want %s", got, want)
+	}
+	if len(cfg.Standby) != 2 || len(cfg.Wake) != 3 {
+		t.Errorf("standby/wake = %d/%d steps, want 2/3", len(cfg.Standby), len(cfg.Wake))
+	}
+	for _, st := range cfg.Standby {
+		if st.Slot == "power/shack-pc" && (st.Retain == nil || *st.Retain) {
+			t.Errorf("pc-sleep must be retain=false (a retained sleep replays on wake)")
+		}
+	}
+	// The shack PC plug is switched on at cold start and never off by the
+	// sequencer: cutting mains hard-powers-off Windows.
+	for name, steps := range map[string][]Step{"shutdown": cfg.Shutdown, "standby": cfg.Standby, "wake": cfg.Wake} {
+		for _, st := range steps {
+			if st.Slot == "power/shack-pc-mains" && st.Value == "off" {
+				t.Errorf("%s step %q switches the shack PC mains off", name, st.Name)
+			}
+		}
+	}
+	if cfg.Idle.ActivitySlot != "hf/antenna-select" || len(cfg.Idle.Watches) != 3 {
+		t.Errorf("idle = %+v", cfg.Idle)
 	}
 	if cfg.Startup[0].Name != "master-on" || cfg.Startup[0].Slot != "power/master" {
 		t.Errorf("startup[0] = %+v, want master-on/power/master", cfg.Startup[0])
 	}
 	if cfg.Shutdown[0].Name != "pa-arm-disable" {
 		t.Errorf("shutdown[0] = %+v, want pa-arm-disable", cfg.Shutdown[0])
+	}
+}
+
+func validWithStandby() Config {
+	cfg := Defaults()
+	cfg.Startup = exampleStartup()
+	cfg.Shutdown = exampleShutdown()
+	f := false
+	cfg.Standby = []Step{
+		{Name: "antennas-off", Kind: KindCmd, Slot: "power/antennas", Action: "set_power", Value: "off"},
+		{Name: "pc-sleep", Kind: KindCmd, Slot: "power/shack-pc", Action: "sleep", Value: "now", Retain: &f},
+	}
+	cfg.Wake = []Step{
+		{Name: "pc-wake", Kind: KindWOL, MAC: "aa:bb:cc:dd:ee:ff", Broadcast: "192.168.1.255:9"},
+		{Name: "antennas-on", Kind: KindCmd, Slot: "power/antennas", Action: "set_power", Value: "on"},
+	}
+	cfg.Idle = IdleConfig{ActivitySlot: "hf/antenna-select", TimeoutMinutes: 30,
+		Watches: []Watch{{Slot: "uhf/radio", Field: "freq_hz"}}}
+	return cfg
+}
+
+func TestStandbyConfigValidates(t *testing.T) {
+	if err := validWithStandby().Validate(); err != nil {
+		t.Fatalf("valid standby config rejected: %v", err)
+	}
+}
+
+func TestStandbyConfigRejects(t *testing.T) {
+	cases := map[string]func(*Config){
+		"standby without wake":   func(c *Config) { c.Wake = nil },
+		"wake without standby":   func(c *Config) { c.Standby = nil },
+		"no activity slot":       func(c *Config) { c.Idle.ActivitySlot = "" },
+		"zero timeout":           func(c *Config) { c.Idle.TimeoutMinutes = 0 },
+		"watch without field":    func(c *Config) { c.Idle.Watches[0].Field = "" },
+		"negative deadband":      func(c *Config) { c.Idle.Watches[0].MinDelta = -1 },
+		"bad mac":                func(c *Config) { c.Wake[0].MAC = "nope" },
+		"broadcast without port": func(c *Config) { c.Wake[0].Broadcast = "192.168.1.255" },
+	}
+	for name, mut := range cases {
+		cfg := validWithStandby()
+		mut(&cfg)
+		if err := cfg.Validate(); err == nil {
+			t.Errorf("%s: expected a validation error", name)
+		}
+	}
+}
+
+func TestNoStandbyIsValid(t *testing.T) {
+	cfg := Defaults()
+	cfg.Startup = exampleStartup()
+	cfg.Shutdown = exampleShutdown()
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("config without standby rejected: %v", err)
 	}
 }

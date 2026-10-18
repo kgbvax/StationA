@@ -94,7 +94,8 @@ Retained. Published on every (re)connect.
     "device": { "name": "Station power sequencer" },
     "fields": [
       { "key": "phase", "name": "Phase", "type": "enum",
-        "options": ["idle", "starting", "running", "stopping"] },
+        "options": ["idle", "starting", "running", "stopping",
+                    "entering_standby", "standby", "waking"] },
       { "key": "step",  "name": "Step",  "type": "string" },
       { "key": "fault", "name": "Fault", "type": "string" }
     ]
@@ -124,8 +125,8 @@ Retained. Published on every phase/step/fault change.
 | Field | Type | Meaning |
 |-------|------|---------|
 | `ts` | string (RFC3339) | snapshot timestamp (UTC) |
-| `phase` | `idle` \| `starting` \| `running` \| `stopping` | sequencer state |
-| `step` | string (always present) | the current step within starting/stopping (e.g. `psu-on`); empty at idle/running |
+| `phase` | `idle` \| `starting` \| `running` \| `stopping` \| `entering_standby` \| `standby` \| `waking` | sequencer state (`idle` = station stopped; `standby` = idle power-down, §6.1) |
+| `step` | string (always present) | the current step within a sequence (e.g. `psu-on`); empty at idle/running/standby |
 | `fault` | string, omitempty | why a sequence aborted; omitted when there is no fault |
 
 `step` is always present (only `fault` is omitempty), per model §7.1 — a
@@ -149,8 +150,9 @@ restores an idle sequencer's `/state` instead of leaving it absent.
 { "action": "stop" }
 ```
 
-- `start` is honored only when `phase=idle`; runs the startup sequence.
-- `stop` is honored when `phase=running` or `phase=idle`; runs the shutdown
+- `start` is honored when `phase=idle` (runs the startup sequence) or
+  `phase=standby` (runs the **wake** sequence — the station is already energized).
+- `stop` is honored when `phase=running`, `phase=standby` or `phase=idle`; runs the shutdown
   sequence. An idle stop is the teardown path for slots a faulted sequence
   left energized: the in-memory fault latch does not survive a restart, and
   the shutdown re-states "off" — it never energizes.
@@ -170,7 +172,7 @@ mosquitto_pub -h 192.168.1.139 -t 'muehle/hf/power-seq/cmd' \
 ## 6. Sequences
 
 The startup and shutdown sequences are **config-driven** step lists. Each step
-is one of four kinds:
+is one of five kinds:
 
 | Kind | Action | Fields |
 |------|--------|--------|
@@ -178,6 +180,7 @@ is one of four kinds:
 | `wait_status` | wait until every listed slot's `/status` == `state` | `slots` (AND), `state?` (`online`\|`offline`, default `online`), `hold_ms?`, `timeout_s?` |
 | `wait_state` | wait until a slot's `/state` field == `value` | `slot`, `field`, `value`, `hold_ms?`, `timeout_s?` |
 | `delay` | sleep a fixed duration | `duration_s` (literal) **or** `duration` (`network`\|`stagger`, refs `[timing]`) |
+| `wol` | send a Wake-on-LAN magic packet (UDP) | `mac`, `broadcast?` (`host:port`, default `255.255.255.255:9`) |
 
 `slot` addresses are site-relative (e.g. `power/master` → `muehle/power/master`).
 `value` is always a string (the value-key convention; model value_type is
@@ -207,25 +210,62 @@ completing the last → `idle`. A wait that times out → `phase=idle`, `fault =
 `/cmd`). A broker disconnect gates `cmd` + wait steps (fault, no stall); `delay`
 steps are local and continue.
 
-### Default startup (`start`) — model §7.1
+### Default startup (`start`)
+
+Cold start (2026-10-10): TRX PSU → 5 s → TRX → 1 s → PA → antenna power, then
+the radio / PA confirmations before the PA is armed.
 
 | Step | Kind | Emit / wait |
 |------|------|-------------|
 | `master-on` | `cmd` | `power/master` `set_power` `on` |
 | `network-delay` | `delay` | ~30 s (`duration = "network"`) |
+| `pc-mains-on` | `cmd` | `power/shack-pc-mains` `set_power` `on` (never switched off by the sequencer) |
 | `psu-on` | `cmd` | `power/psu-13v8` `set_power` `on` |
-| `wait-controllers-online` | `wait_status` | `hf/switch` + `hf/pa-arm` + `hf/ant-switch` `/status` = `online` |
+| `psu-settle` | `delay` | 5 s |
+| `pc-boot` | `wol` | Wake-on-LAN to the bwpc MAC (no-op when the PC already runs) |
+| `wait-plc-online` | `wait_status` | `hf/switch` `/status` = `online` — guard: `hf/switch/cmd` is ONE retained topic, so `set_trx` + `set_pa` published while the PLC boots would collapse to `set_pa` only |
 | `trx-on` | `cmd` | `hf/switch` `set_trx` `on` |
-| `wait-radio-online` | `wait_status` | `hf/radio` `/status` = `online` |
+| `trx-settle` | `delay` | 1 s |
 | `pa-on` | `cmd` | `hf/switch` `set_pa` `on` |
+| `antennas-on` | `cmd` | `power/antennas` `set_power` `on` |
+| `wait-radio-online` | `wait_status` | `hf/radio` `/status` = `online` |
 | `wait-pa-power-on` | `wait_state` | `hf/pa` `/state` `.power` = `on` (+ `/status` online) |
 | `pa-arm-enable` | `cmd` | `hf/pa-arm` `set_enabled` `true` → `phase=running` |
 
 ### Default shutdown (`stop`)
 
 Reverse, with short staggers (`duration = "stagger"`) for inrush → `phase=idle`:
-`pa-arm-disable` → stagger → `pa-off` → stagger → `trx-off` → stagger → `psu-off`
-→ stagger → `master-off`.
+`pa-arm-disable` → stagger → `antennas-off` → stagger → `pa-off` → stagger →
+`trx-off` → stagger → `psu-off` → stagger → `master-off`. `power/shack-pc-mains`
+is not in the shutdown: cutting mains hard-powers-off Windows.
+
+### 6.1 Idle standby (`[[standby]]` / `[[wake]]`, optional)
+
+Configured with an `[idle]` block; omit all three to disable.
+
+- **Standby** (from `running`): `[idle].activity_slot` (`hf/antenna-select`) is
+  fit and reports `/state.activity = "inactive"` (it has grounded the antenna),
+  no `[[idle.watch]]` field moved within `timeout_minutes`, and `running` has
+  lasted at least `timeout_minutes` (no standby right after a start or wake).
+  → `entering_standby` → `[[standby]]` → `standby`.
+- **Wake** (from `standby`): the activity slot reports a `last_activity` newer
+  than the standby entry (VFO change, TX, operator hold — antennaselect
+  publishes no `last_activity` after a restart, so a restart never wakes), a
+  watch moves, or `start` arrives. → `waking` → `[[wake]]` → `running`.
+  antennaselect reconnects the antenna on the same activity.
+- A watch is a `/state` field (`slot`, `field`, `min_delta?`): a change of at
+  least `min_delta` (numeric) since the last counted value is activity. Changes
+  while the slot is offline / `device_online=false`, and a field appearing or
+  vanishing, are not — so the antenna power going off is not read as activity.
+  The defaults watch UHF use (`uhf/radio.freq_hz`, `uhf/az-rotator.az`,
+  `uhf/el-rotator.el` with a 2° deadband against the el readback dither).
+- Idle is evaluated only in `running` and only with the broker connected. A
+  fault in either list → `phase=idle` + `fault`, like startup.
+
+| List | Steps |
+|------|-------|
+| standby | `antennas-off` (`power/antennas` off) → `pc-sleep` (`power/shack-pc` `sleep`, **`retain = false`** — a retained sleep would replay on wake) |
+| wake | `pc-wake` (`wol`, shack-PC MAC) → `antennas-on` → `wait-antenna-gear-online` (`hf/ant-ctrl` + `hf/rotator` online, 120 s) |
 
 All emitted `/cmd` use the stationa value-key convention
 (`{"action":"<act>","value":"<val>"}`) and are **retained** (the steady-state
@@ -252,6 +292,11 @@ sequencer's own `/cmd`. For the default §7.1 sequence this yields:
 | `muehle/hf/radio/status` | `wait-radio-online` gate (radio online) |
 | `muehle/hf/pa/status` | `wait-pa-power-on` liveness precondition |
 | `muehle/hf/pa/state` | `wait-pa-power-on` (`.power` = `on`) |
+| `muehle/power/antennas/status` | observability (controlled slot) |
+| `muehle/power/shack-pc-mains/status` | observability (controlled slot) |
+| `muehle/power/shack-pc/status` | observability (standby `pc-sleep` target) |
+| `muehle/hf/antenna-select/status` + `/state` | idle standby trigger (`activity`, `last_activity`) |
+| `muehle/uhf/radio/…`, `muehle/uhf/az-rotator/…`, `muehle/uhf/el-rotator/…` (`/status` + `/state`) | `[[idle.watch]]` activity sources |
 | `muehle/hf/power-seq/cmd` | operator one-button `start` \| `stop` (not retained) |
 
 A `/status` of `online`/`offline` sets the slot's liveness (absent ≠ offline —

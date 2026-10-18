@@ -20,7 +20,7 @@ go build ./cmd/logger-spot-bridge
 go test ./...
 go test ./... -race
 go vet ./... && gofmt -s -w .
-./deploy.sh          # cross-compile windows/amd64 → shack PC (pelcobridge2 pattern)
+./deploy.sh          # cross-compile linux/arm64 → shari, hardened systemd unit
 ```
 
 Flags: `-config <path>` (default: `config.toml` next to the exe; the service

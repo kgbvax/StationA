@@ -27,17 +27,21 @@
 #
 #   HOST_NAME       host value            (default: shari)     [published in /meta]
 #   LOG_LEVEL       log.level value       (default: info)
-#   MQTT_BROKER     mqtt.broker value     (default: tcp://127.0.0.1:1883)
+#   MQTT_BROKER     mqtt.broker value     (default: tcp://192.168.1.178:1883, scmino;
+#                   the Shelly plugs must publish to this same broker)
 #   MQTT_SITE       mqtt.site             (default: muehle)
 #   MQTT_USER       mqtt.user             (default: hf)
 #   MQTT_PASSWORD   SHELLY_POWER_BRIDGE_MQTT_PASSWORD (default: empty -> set on device)
 #
 #   MASTER_SHELLY_ID   [[slot]] shelly_id for the master mains plug
 #   PSU_SHELLY_ID     [[slot]] shelly_id for the 13.8 V PSU plug
+#   ANTENNAS_SHELLY_ID [[slot]] shelly_id for the antenna-power plug (rotators + RCU-06)
+#   PC_SHELLY_ID       [[slot]] shelly_id for the shack-PC (bwpc) mains plug
 #
 # Per-slot [[slot]] blocks are seeded from the example config. The Shelly ids
-# (MASTER_SHELLY_ID / PSU_SHELLY_ID) MUST be set to the real Gen2 device ids of
-# the two plugs; deploy will refuse to seed a placeholder id. Other slot fields
+# (MASTER_SHELLY_ID / PSU_SHELLY_ID / ANTENNAS_SHELLY_ID / PC_SHELLY_ID) MUST be set to the real
+# Gen2 device ids of the plugs; deploy refuses to SEED a placeholder id (an
+# existing on-device config is left alone either way). Other slot fields
 # (station/slot/device_model/device_serial/feeds) keep their example values —
 # edit the on-device config.toml after first deploy to correct them.
 #
@@ -66,7 +70,7 @@ PKG="./cmd/shelly-power-bridge"
 
 HOST_NAME="${HOST_NAME:-shari}"
 LOG_LEVEL="${LOG_LEVEL:-info}"
-MQTT_BROKER="${MQTT_BROKER:-tcp://127.0.0.1:1883}"
+MQTT_BROKER="${MQTT_BROKER:-tcp://192.168.1.178:1883}"
 MQTT_SITE="${MQTT_SITE:-muehle}"
 MQTT_USER="${MQTT_USER:-hf}"
 MQTT_PASSWORD="${MQTT_PASSWORD:-}"
@@ -74,7 +78,13 @@ MQTT_PASSWORD="${MQTT_PASSWORD:-}"
 # Shelly Gen2+ device ids (MQTT prefixes). MUST be set to the real plug ids
 # before first deploy; a placeholder is refused.
 MASTER_SHELLY_ID="${MASTER_SHELLY_ID:-shellyplus1pm-aabbccddeeff}"
-PSU_SHELLY_ID="${PSU_SHELLY_ID:-shellyplus1pm-112233445566}"
+PSU_SHELLY_ID="${PSU_SHELLY_ID:-shellyplug-s-A71704}"   # "TrxPsu", Gen1 Plug S, 192.168.1.150
+ANTENNAS_SHELLY_ID="${ANTENNAS_SHELLY_ID:-shellyplugsg3-e4b063d86c98}"   # "antennasPwr", 192.168.1.198
+PC_SHELLY_ID="${PC_SHELLY_ID:-shellyplugsg3-e4b063e3cba8}"   # bwpc plug, 192.168.1.176
+PLACEHOLDER_IDS=0
+case "$MASTER_SHELLY_ID $PSU_SHELLY_ID $ANTENNAS_SHELLY_ID $PC_SHELLY_ID" in
+  *aabbccddeeff*) PLACEHOLDER_IDS=1 ;;
+esac
 
 # Allow "user@host" in SSH_HOST; otherwise prepend SSH_USER.
 if [[ "$SSH_HOST" == *"@"* ]]; then
@@ -138,13 +148,40 @@ trap 'rm -f "$SEED_CONFIG" "$SEED_ENV" "${UNIT_FILE:-}"' EXIT
   echo "station       = \"power\""
   echo "slot          = \"psu-13v8\""
   echo "location      = \"bauwagen\""
-  echo "device_model  = \"Shelly Plus 1PM\""
+  echo "device_model  = \"Shelly Plug S\""
   echo "device_serial = \"$(toml_escape "$PSU_SHELLY_ID")\""
+  echo "generation    = \"gen1\""
   echo "shelly_id     = \"$(toml_escape "$PSU_SHELLY_ID")\""
-  echo "fail_safe     = \"off\""
+  echo "fail_safe     = \"on\""
   echo "feeds = ["
-  echo "  \"hf/radio\", \"uhf/radio\", \"hf/tuner\", \"hf/ant-ctrl\","
-  echo "  \"hf/ant-switch\", \"hf/rotator\", \"hf/switch\", \"hf/pa-arm\","
+  echo "  \"hf/radio\", \"uhf/radio\", \"hf/tuner\","
+  echo "  \"hf/ant-switch\", \"hf/switch\", \"hf/pa-arm\","
+  echo "]"
+  echo ""
+  echo "# --- antenna power (HF + UHF rotators, Ultrabeam RCU-06) ---"
+  echo "[[slot]]"
+  echo "station       = \"power\""
+  echo "slot          = \"antennas\""
+  echo "location      = \"bauwagen\""
+  echo "device_model  = \"Shelly Plug S Gen3\""
+  echo "device_serial = \"$(toml_escape "$ANTENNAS_SHELLY_ID")\""
+  echo "shelly_id     = \"$(toml_escape "$ANTENNAS_SHELLY_ID")\""
+  echo "fail_safe     = \"on\""
+  echo "feeds = ["
+  echo "  \"hf/ant-ctrl\", \"hf/rotator\", \"uhf/az-rotator\", \"uhf/el-rotator\","
+  echo "]"
+  echo ""
+  echo "# --- shack PC (bwpc) mains — powerseq turns it on, never off ---"
+  echo "[[slot]]"
+  echo "station       = \"power\""
+  echo "slot          = \"shack-pc-mains\""
+  echo "location      = \"bauwagen\""
+  echo "device_model  = \"Shelly Plug S Gen3\""
+  echo "device_serial = \"$(toml_escape "$PC_SHELLY_ID")\""
+  echo "shelly_id     = \"$(toml_escape "$PC_SHELLY_ID")\""
+  echo "fail_safe     = \"on\""
+  echo "feeds = ["
+  echo "  \"power/shack-pc\", \"uhf/sat-track\","
   echo "]"
 } > "$SEED_CONFIG"
 
@@ -233,7 +270,7 @@ scp "$SEED_ENV" "${SSH_TARGET}:/tmp/${SERVICE_NAME}.env.seed"
 
 # --- install remotely -------------------------------------------------------
 echo ">> Installing on ${SSH_TARGET}..."
-ssh "$SSH_TARGET" "INSTALL_DIR='${INSTALL_DIR}' BINARY='${BINARY}' SERVICE_NAME='${SERVICE_NAME}' SERVICE_USER='${SERVICE_USER}' CONFIG_DIR='${CONFIG_DIR}' CONFIG_FILE='${CONFIG_FILE}' ENV_FILE='${ENV_FILE}' bash -s" <<'REMOTE'
+ssh "$SSH_TARGET" "INSTALL_DIR='${INSTALL_DIR}' BINARY='${BINARY}' SERVICE_NAME='${SERVICE_NAME}' SERVICE_USER='${SERVICE_USER}' CONFIG_DIR='${CONFIG_DIR}' CONFIG_FILE='${CONFIG_FILE}' ENV_FILE='${ENV_FILE}' PLACEHOLDER_IDS='${PLACEHOLDER_IDS}' bash -s" <<'REMOTE'
 set -euo pipefail
 SEED_CFG="/tmp/${SERVICE_NAME}.config.seed"
 SEED_ENV="/tmp/${SERVICE_NAME}.env.seed"
@@ -250,6 +287,10 @@ sudo install -d -o "$SERVICE_USER" -g "$SERVICE_USER" -m 0755 "$CONFIG_DIR"
 # Seed the config ONCE: install only if the device has no config yet.
 if [ -e "$CONFIG_FILE" ]; then
   echo "   config exists at $CONFIG_FILE -- leaving it untouched (seed-once)."
+elif [ "$PLACEHOLDER_IDS" = "1" ]; then
+  echo "!! refusing to seed $CONFIG_FILE with placeholder Shelly ids:" >&2
+  echo "!! set MASTER_SHELLY_ID / PSU_SHELLY_ID / ANTENNAS_SHELLY_ID / PC_SHELLY_ID to the real Gen2 device ids." >&2
+  exit 1
 else
   sudo install -o "$SERVICE_USER" -g "$SERVICE_USER" -m 0600 "$SEED_CFG" "$CONFIG_FILE"
   echo "   seeded config at $CONFIG_FILE (0600, owner $SERVICE_USER)."

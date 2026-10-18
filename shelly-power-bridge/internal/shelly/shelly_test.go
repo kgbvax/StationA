@@ -28,6 +28,27 @@ func TestParseStatus(t *testing.T) {
 	}
 }
 
+// A real Plug S Gen3 (fw 2.1.0) switch:0 status: aenergy/ret_aenergy are
+// objects, not numbers.
+func TestParseStatusRealGen3Payload(t *testing.T) {
+	payload := `{"id":0,"source":"init","output":true,"apower":58.4,"voltage":240.6,"freq":49.9,"current":0.343,` +
+		`"aenergy":{"total":5557.293,"by_minute":[1048.143,1048.143,838.514],"minute_ts":1792318020},` +
+		`"ret_aenergy":{"total":0.000,"by_minute":[0.000,0.000,0.000],"minute_ts":1792318020},"temperature":{"tC":31.2,"tF":88.2}}`
+	s, power, err := ParseStatus([]byte(payload))
+	if err != nil {
+		t.Fatalf("ParseStatus: %v", err)
+	}
+	if power != "on" || s.Apower != 58.4 || s.Aenergy.Total != 5557.293 {
+		t.Errorf("got power=%q apower=%v aenergy=%v", power, s.Apower, s.Aenergy.Total)
+	}
+}
+
+func TestParseStatusRequiresOutput(t *testing.T) {
+	if _, _, err := ParseStatus([]byte(`{"apower":3.1}`)); err == nil {
+		t.Error("a payload without output must not read as off")
+	}
+}
+
 func TestParseStatusRejectsGarbage(t *testing.T) {
 	if _, _, err := ParseStatus([]byte(`{not json`)); err == nil {
 		t.Error("ParseStatus should reject malformed JSON")

@@ -76,6 +76,12 @@ type SlotConfig struct {
 	// the station rather than re-energizing it unexpectedly). Default "off".
 	FailSafe string `toml:"fail_safe"`
 
+	// Generation selects the native MQTT protocol: "gen2" (default; Plus / Pro /
+	// Gen3 — "<id>/status/switch:0" + "<id>/rpc") or "gen1" (Plug S, Shelly 1 —
+	// "shellies/<id>/relay/0" + "…/relay/0/command"). For gen1, shelly_id is
+	// the Gen1 MQTT id, e.g. "shellyplug-s-A71704".
+	Generation string `toml:"generation"`
+
 	// Feeds lists the downstream slot addresses this supply powers (model §4
 	// `power` capability `feeds`). Empty for the station master mains; populated
 	// for the 13.8 V PSU (hf/radio, uhf/radio, hf/tuner, …).
@@ -179,6 +185,11 @@ func (c Config) Validate() error {
 		}
 		if s.DeviceSerial == "" {
 			return fmt.Errorf("slot[%d]: device_serial must be set", i)
+		}
+		switch s.Generation {
+		case "", "gen1", "gen2":
+		default:
+			return fmt.Errorf("slot[%d]: generation must be \"gen1\" or \"gen2\" (got %q)", i, s.Generation)
 		}
 		switch s.FailSafe {
 		case "off", "on":

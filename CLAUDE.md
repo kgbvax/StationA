@@ -30,14 +30,14 @@ separate per-component remotes to push to.
 | wrc-rotator-bridge | `wrc-rotator-bridge/` | HF rotator bridge (Yaesu G-450DC via AF6SA WRC, websocket) |
 | atr1k-tuner-bridge | `atr1k-tuner-bridge/` | ATR-1000 ATU bridge (in-line/bypass + tune, binary WebSocket) |
 | waveshare_relay-antswitch-bridge | `waveshare_relay-antswitch-bridge/` | 1:6 antenna switch bridge (ESPHome, WaveShare relay-board family) |
-| shelly-power-bridge | `shelly-power-bridge/` | Shelly smart-plug bridge → `power/master` + `power/psu-13v8` (supply layer) |
+| shelly-power-bridge | `shelly-power-bridge/` | Shelly smart-plug bridge → `power/master` + `power/psu-13v8` + `power/antennas` + `power/shack-pc-mains` (supply layer) |
 | m5stamp-hf-ctrl | `m5stamp-hf-ctrl/` | M5 Stamp PLC #1 firmware → `hf/pa-arm` + `hf/switch` (PA/TRX remote-on + arm) |
 | m5stamp-pol-ctrl | `m5stamp-pol-ctrl/` | M5 Stamp PLC #2 firmware → `uhf/pol-ctrl` (X-Quad polarization, ESPHome) |
-| powerseq | `powerseq/` | Startup/shutdown sequencer → `hf/power-seq` (ordered, delay + liveness confirmations) |
+| powerseq | `powerseq/` | Startup/shutdown sequencer → `hf/power-seq` (ordered, delay + liveness confirmations); idle standby: antenna power off + bwpc sleep when antenna-select reports inactive, WOL + antenna power on at wake |
+| winpc-power-bridge | `winpc-power-bridge/` | Windows agent on bwpc → `power/shack-pc` (`sleep` cmd from powerseq standby, refused while the operator uses the PC; runs at logon via Task Scheduler) |
 | antennaselect | `antennaselect/` | Antenna-selection reconciler (live on scmino since 2026-10-12, unit `antenna-select`) |
 | beamsteer | `beamsteer/` | Smart rotation → `hf/beam-steer`: PstRotator UDP emulator (:12050) for the contest logger; station behind → Ultrabeam 180° flip, outside both lobes → rotate to the cheaper lobe (±30°, bi-dir ±45° no flips); toggle = hf_console Ultrabeam `AUTO` |
 | hadiscovery | `hadiscovery/` | Home Assistant discovery consumer (reads `/meta` `expose`, renders HA discovery) |
-| pelcobridge2 | `pelcobridge2/` | UHF rotator TUI + rotctld server (Pelco-D/P pan/tilt head over RS-485) |
 | spid-ercm-rotator-bridge | `spid-ercm-rotator-bridge/` | Sat-ops az/el rotator bridge → `uhf/az-rotator` (SPID) + `uhf/el-rotator` (GS-500 via ERC-M); rotctld :4534 + PstRotator UDP :12041 listeners (free motion, no arming gate) |
 | icom9700-radio-bridge | `icom9700-radio-bridge/` | IC-9700 UHF radio bridge → `muehle/uhf/radio` (RS-BA1 LAN session for RX audio capture only + read-only serial CI-V telemetry; no remote TX) |
 | m5dial-hf-rotctrl | `m5dial-hf-rotctrl/` | M5Stack Dial firmware — HF rotator control head (analog meter face + knob; not a slot; consumer + /cmd stimulator) |
@@ -61,7 +61,10 @@ and `go work sync` operate over the whole workspace at once.
 | Slot address | Component | Physical device |
 |-------------|-----------|-----------------|
 | `muehle/power/master` | shelly-power-bridge | Shelly plug — station master mains, wifi |
-| `muehle/power/psu-13v8` | shelly-power-bridge | Shelly plug — 13.8 V PSU (site-level; feeds HF+UHF), wifi |
+| `muehle/power/psu-13v8` | shelly-power-bridge | Shelly plug — 13.8 V TRX PSU (site-level; feeds HF+UHF), wifi |
+| `muehle/power/antennas` | shelly-power-bridge | Shelly plug — antenna power: HF + UHF rotators and the Ultrabeam RCU-06, wifi |
+| `muehle/power/shack-pc-mains` | shelly-power-bridge | Shelly plug — shack PC (bwpc) mains; on at cold start, never off by powerseq, wifi |
+| `muehle/power/shack-pc` | winpc-power-bridge | Shack PC bwpc (`192.168.1.197`) — sleep/wake (offline = asleep), ethernet |
 | `muehle/hf/radio` | flexbridge | FLEX-8400, ethernet |
 | `muehle/hf/ant-ctrl` | ultrabridge | Ultrabeam RCU-06, USB-serial via FTDI — on scmino since 2026-10-09 (HamClock took :8080 on shari) |
 | `muehle/hf/ant-switch` | waveshare_relay-antswitch-bridge | 1:6 antenna switch, wifi (ESPHome) |
@@ -79,7 +82,6 @@ and `go work sync` operate over the whole workspace at once.
 | `muehle/uhf/sat-track` | oscarwatch-sattrack-bridge | software source — OscarWatch on BWPC (`ws://192.168.1.197:7373/`); bridge on scmino (192.168.1.178), read-only |
 | `muehle/uhf/az-rotator` | spid-ercm-rotator-bridge | SPID azimuth rotator, serial (Rot1Prog) — runs on shari with rotctld :4534 + PstRotator :12041; free motion, no arming gate |
 | `muehle/uhf/el-rotator` | spid-ercm-rotator-bridge | GS-500 elevation via ERC-M controller, serial (GS-232B) — same compound bridge as az-rotator (one process, two slots, per-axis device_online) |
-| `muehle/uhf/rotator` | pelcobridge2 | PTS-303Z/3050DZ pan/tilt head, RS-485 — interactive TUI on shack-pc (arming is manual, never remote) |
 | `muehle/hf/discovery` | hadiscovery | logic slot — no device (runs on scmino); passive consumer of `/meta` |
 
 **Antennas are not slots.** `ant-ctrl` is the *controller* that tunes the Ultrabeam
@@ -155,8 +157,9 @@ from `flexbridge/`). Cross-cutting Go code, not docs, lives in the `shared/` mod
 
 ## MQTT broker access
 
-> **Live state (2026-10-03):** every station client except the M5 Stamp PLC #1
-> (`hf/switch` + `hf/pa-arm`) still uses the HA broker `192.168.1.50:1883`.
+> **Live state (2026-10-18):** every station client except the M5 Stamp PLC #1
+> (`hf/switch` + `hf/pa-arm`) and shelly-power-bridge + its Shelly plugs
+> (`power/*`) still uses the HA broker `192.168.1.50:1883`.
 > shari runs no mosquitto. A new station broker runs on **scmino**
 > (`192.168.1.178:1883`) as a bridged `muehle/#` mirror of `.50`; the PLC
 > moved there first — see `mqtt-broker/CLAUDE.md`. The shari-centric

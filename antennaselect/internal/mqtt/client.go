@@ -57,6 +57,18 @@ type Client struct {
 	// time.Since(lastActivity) exceeds the timeout the reconciler grounds the antenna.
 	// Only touched on the jobs worker (under c.mu), so no cross-goroutine race.
 	lastActivity time.Time
+	// activitySeen is true once real activity was observed in this process (a VFO
+	// change / TX after the first radio/state, or an operator hold). Until then /state
+	// carries no last_activity: lastActivity is only the process start time, and
+	// publishing it would read as fresh activity to powerseq (a restart would wake a
+	// station in standby). seenRadio marks the first radio/state as the baseline.
+	activitySeen bool
+	seenRadio    bool
+	// pubActivity / pubHasLast are what the last published /state carried, so /state
+	// is re-published when the activity flips (not only when the decision changes —
+	// in manual mode the decision never changes) and when last_activity first appears.
+	pubActivity string
+	pubHasLast  bool
 
 	// RadioOnline (in.RadioOnline) is the AND of the two radio-liveness signals below;
 	// both are recomputed in onRadioStatus/onRadioState under c.mu.
@@ -223,11 +235,13 @@ func (c *Client) onRadioState(_ paho.Client, msg paho.Message) {
 		c.update(func(in *reconcile.Inputs) {
 			c.radioDeviceOnline = s.DeviceOnline
 			// Activity = a VFO/frequency change or a transmit. Either marks the station
-			// active and resets the idle clock (walk-away safety, §10).
-			if s.FreqHz != in.RadioFreqHz || s.TX == reconcile.TXTransmit {
-				c.lastActivity = time.Now()
-				in.StationActivity = "active"
+			// active and resets the idle clock (walk-away safety, §10). The first
+			// radio/state after start (the retained replay) is the baseline, not
+			// activity: the idle clock already starts at process start.
+			if c.seenRadio && (s.FreqHz != in.RadioFreqHz || s.TX == reconcile.TXTransmit) {
+				c.markActive(in)
 			}
+			c.seenRadio = true
 			in.RadioBand = s.Band
 			in.RadioFreqHz = s.FreqHz
 			in.RadioTX = s.TX
@@ -319,8 +333,23 @@ func validRequest(req string) bool {
 // [idle].timeout_minutes with no further hold or radio activity.
 func (c *Client) applyOperatorHold(in *reconcile.Inputs, req string) {
 	in.OperatorRequest = req
+	c.markActive(in)
+}
+
+// markActive records real station activity now (caller holds c.mu via update).
+func (c *Client) markActive(in *reconcile.Inputs) {
 	c.lastActivity = time.Now()
+	c.activitySeen = true
 	in.StationActivity = "active"
+}
+
+// activityLabel maps the reconciler input to the published value: unknown ("")
+// is treated as active, exactly as the reconciler treats it.
+func activityLabel(a string) string {
+	if a == "inactive" {
+		return "inactive"
+	}
+	return "active"
 }
 
 // --- the reconcile step -----------------------------------------------------
@@ -340,14 +369,22 @@ func (c *Client) update(mutate func(*reconcile.Inputs)) {
 		pubInline *bool
 	)
 
-	if !c.haveDecision || act.Decision != c.lastDecision {
+	activity := activityLabel(c.in.StationActivity)
+	if !c.haveDecision || act.Decision != c.lastDecision ||
+		activity != c.pubActivity || (c.activitySeen && !c.pubHasLast) {
 		c.lastDecision = act.Decision
 		c.haveDecision = true
+		c.pubActivity = activity
+		c.pubHasLast = c.activitySeen
 		pubState = &statePayload{
-			TS:     time.Now().UTC().Format(time.RFC3339),
-			Mode:   act.Decision.Mode,
-			Target: act.Decision.Target,
-			Source: act.Decision.Source,
+			TS:       time.Now().UTC().Format(time.RFC3339),
+			Mode:     act.Decision.Mode,
+			Target:   act.Decision.Target,
+			Source:   act.Decision.Source,
+			Activity: activity,
+		}
+		if c.activitySeen {
+			pubState.LastActivity = c.lastActivity.UTC().Format(time.RFC3339Nano)
 		}
 	}
 	if act.SelectPort != "" {
@@ -429,6 +466,15 @@ type statePayload struct {
 	Mode   string `json:"mode"`
 	Target string `json:"target"`
 	Source string `json:"source"`
+	// Activity is the station activity the idle ladder tier uses: "active" |
+	// "inactive" (after [idle].timeout_minutes with no VFO change, TX or operator
+	// hold). powerseq keys its idle standby on it.
+	Activity string `json:"activity"`
+	// LastActivity (RFC3339Nano) is the time of the last real activity seen by this
+	// process; absent until the first one (a restart publishes none, so it never
+	// reads as fresh activity). Re-published on every activity flip, not on every
+	// VFO step.
+	LastActivity string `json:"last_activity,omitempty"`
 }
 
 func (c *Client) publishMeta() {
@@ -475,6 +521,8 @@ func (c *Client) publishMeta() {
 				{"key": "source", "name": "Source", "type": "enum", "options_ref": "ladder"},
 				{"key": "target", "name": "Target", "type": "string"},
 				{"key": "mode", "name": "Mode", "type": "string"},
+				{"key": "activity", "name": "Activity", "type": "enum", "options": []string{"active", "inactive"}},
+				{"key": "last_activity", "name": "Last activity", "type": "string"},
 			},
 		},
 	}

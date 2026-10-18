@@ -159,7 +159,7 @@ name     = "bwpc"
 addr     = "192.168.1.197"
 hardware = "Shack PC"
 os       = "Windows"
-role     = "DXLog / Log4OM logger, PstRotator, OscarWatch (Satellite link ws :7373), pelcobridge2 TUI (UHF pan/tilt)"
+role     = "DXLog / Log4OM logger, PstRotator, OscarWatch (Satellite link ws :7373); winpc-power-bridge (sleeps in idle standby, woken by WOL)"
 
 [[host]]
 name     = "lenovo-tab"
@@ -183,9 +183,30 @@ host      = "shari"
 [[slot]]
 address   = "muehle/power/psu-13v8"
 component = "shelly-power-bridge"
-device    = "Shelly Plus 1PM — 13.8 V PSU (feeds HF + UHF)"
+device    = "Shelly Plug S (Gen1) \"TrxPsu\" (192.168.1.150) — 13.8 V TRX PSU (feeds HF + UHF)"
 link      = "wifi"
 host      = "shari"
+
+[[slot]]
+address   = "muehle/power/antennas"
+component = "shelly-power-bridge"
+device    = "Shelly Plug S Gen3 \"antennasPwr\" (192.168.1.198) — antenna power (HF + UHF rotators, Ultrabeam RCU-06)"
+link      = "wifi"
+host      = "shari"
+
+[[slot]]
+address   = "muehle/power/shack-pc-mains"
+component = "shelly-power-bridge"
+device    = "Shelly Plug S Gen3 (192.168.1.176) — shack PC (bwpc) mains; on at cold start, never off by powerseq"
+link      = "wifi"
+host      = "shari"
+
+[[slot]]
+address   = "muehle/power/shack-pc"
+component = "winpc-power-bridge"
+device    = "Shack PC bwpc — sleep on idle standby (offline = asleep)"
+link      = "ethernet (192.168.1.197)"
+host      = "bwpc"
 
 [[slot]]
 address   = "muehle/hf/radio"
@@ -320,14 +341,6 @@ device    = "GS-500 elevation via ERC-M"
 link      = "serial (FTDI FT230X)"
 host      = "shari"
 
-[[slot]]
-address   = "muehle/uhf/rotator"
-component = "pelcobridge2"
-device    = "PTS-303Z/3050DZ pan/tilt head"
-link      = "RS-485"
-host      = "bwpc"
-note      = "Interactive TUI — only on the bus while it runs"
-
 # ---------------------------------------------------------------------------
 # Software components (repo components first, then external programs)
 # ---------------------------------------------------------------------------
@@ -380,7 +393,15 @@ path  = "shelly-power-bridge/"
 kind  = "bridge"
 host  = "shari"
 unit  = "shelly-power-bridge"
-slots = ["muehle/power/master", "muehle/power/psu-13v8"]
+slots = ["muehle/power/master", "muehle/power/psu-13v8", "muehle/power/antennas", "muehle/power/shack-pc-mains"]
+
+[[software]]
+name  = "winpc-power-bridge"
+path  = "winpc-power-bridge/"
+kind  = "bridge"
+host  = "bwpc"
+note  = "Task Scheduler at logon (user session); sleep cmd from powerseq standby"
+slots = ["muehle/power/shack-pc"]
 
 [[software]]
 name  = "icom9700-radio-bridge"
@@ -522,14 +543,6 @@ path  = "hf_console/"
 kind  = "ui"
 host  = "lenovo-tab"
 note  = "Android tablet app, direct MQTT TCP"
-
-[[software]]
-name  = "pelcobridge2"
-path  = "pelcobridge2/"
-kind  = "bridge"
-host  = "bwpc"
-note  = "Interactive TUI + rotctld; arming is manual"
-slots = ["muehle/uhf/rotator"]
 
 [[software]]
 name  = "waveshare_relay-antswitch-bridge"

@@ -14,6 +14,12 @@ const antennaMap = {
 const cmdRetain = {
   'muehle/power/master': true,
   'muehle/power/psu-13v8': true,
+  // Antenna-side Shelly plug (HF + UHF rotators, Ultrabeam controller) —
+  // same set_power steady state as the PSU plug.
+  'muehle/power/antennas': true,
+  // Shack PC (bwpc) mains plug — same set_power steady state. powerseq
+  // switches it on at cold start and never off (PC PWR toggle).
+  'muehle/power/shack-pc-mains': true,
   'muehle/hf/switch': true,
   'muehle/hf/pa-arm': true,
   'muehle/hf/ant-ctrl': true,
@@ -28,6 +34,9 @@ const cmdRetain = {
   'muehle/hf/tuner': false,
   'muehle/hf/power-seq': false,
   'muehle/hf/radio': false, // DVK play/stop are one-shot
+  // Shack PC agent (bwpc): `sleep` is one-shot — a retained sleep would put
+  // the PC straight back to sleep every time it wakes and reconnects.
+  'muehle/power/shack-pc': false,
   // Sat rotators (spid-ercm-rotator-bridge) — one-shot per KTD13: a stale
   // retained or queued goto must never replay against real antennas.
   'muehle/uhf/az-rotator': false,
@@ -56,6 +65,9 @@ String cmdTopic(String slot) => 'muehle/$slot/cmd';
 const expectedSlots = [
   'muehle/power/master',
   'muehle/power/psu-13v8',
+  'muehle/power/antennas',
+  'muehle/power/shack-pc-mains',
+  'muehle/power/shack-pc',
   'muehle/hf/radio',
   'muehle/hf/ant-ctrl',
   'muehle/hf/ant-switch',
@@ -68,7 +80,6 @@ const expectedSlots = [
   'muehle/hf/tuner',
   'muehle/hf/power-seq',
   'muehle/hf/discovery',
-  'muehle/uhf/rotator',
   'muehle/uhf/pol-ctrl',
   'muehle/uhf/az-rotator',
   'muehle/uhf/el-rotator',
@@ -92,6 +103,18 @@ String powerSetPayload(String onOff) => cmdPayload('set_power', onOff);
 
 String powerSeqStartPayload() => jsonEncode({'action': 'start'});
 String powerSeqStopPayload() => jsonEncode({'action': 'stop'});
+
+/// Put the shack PC to sleep (bwpc agent). No value; publish unretained
+/// (cmdRetain['muehle/power/shack-pc']! = false).
+String shackPcSleepPayload() => jsonEncode({'action': 'sleep'});
+
+/// power-seq phases in which the station is mid-transition. The sequencer
+/// rejects `start` in all of them; the console shows them amber with the
+/// current /state.step.
+const powerSeqTransitionPhases = {'starting', 'stopping', 'entering_standby', 'waking'};
+
+/// power-seq phases that accept `start` (start from standby = wake).
+const powerSeqStartablePhases = {'idle', 'standby'};
 
 // --- HF switch / PA arm ------------------------------------------------------
 

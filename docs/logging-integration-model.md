@@ -250,7 +250,7 @@ Consumers build their own bandmap from the event stream. `source` ∈ `rbn|clust
 | Log / update / delete contact | `…/log/event` + `…/log/state` rollup | ingest → bus → outbound logbook |
 | QSY / radio state | **existing** `muehle/hf/radio/state` (freq_hz/band/mode/tx) | bus → logger (read) |
 | Command radio (QSY) | **existing** `muehle/hf/radio/cmd` | deferred (observe-only, §11) |
-| Control rotator | **existing** `muehle/hf/rotator/cmd`, `muehle/uhf/rotator/cmd` | deferred (observe-only, §11) |
+| Control rotator | **existing** `muehle/hf/rotator/cmd`, `muehle/uhf/az-rotator/cmd` + `muehle/uhf/el-rotator/cmd` | deferred (observe-only, §11) |
 | Publish score | `…/log/state.score` (retained) | ingest → bus → scoreboard |
 | Spots / bandmap | `…/spots/event` (not retained) | cluster ↔ bus ↔ loggers |
 | Callsign lookup (pre-QSO) | request/reply — awkward on MQTT | deferred (§11) |

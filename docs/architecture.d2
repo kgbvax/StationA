@@ -141,10 +141,6 @@ bridges: {
     label: "shelly-power-bridge\nShelly plugs (wifi HTTP)\npower/master + power/psu-13v8"
     class: bridge
   }
-  pelco: {
-    label: "pelcobridge2\nPelco-D/P pan/tilt (RS-485)\nTUI + rotctld on shack-pc;\narming manual, never remote"
-    class: bridge
-  }
 }
 
 # ---------------- firmware (non-Go) ----------------
@@ -188,7 +184,6 @@ devices: {
   shellyhw: { label: "Shelly plugs ×2\n(master mains, 13.8 V PSU)"; class: device }
   plc1hw: { label: "M5 Stamp PLC #1"; class: device }
   plc2hw: { label: "M5 Stamp PLC #2"; class: device }
-  pelcohw: { label: "PTS-303Z/3050DZ\npan/tilt head"; class: device }
   uhfrot: { label: "X-Quad\npolarization"; class: device }
 }
 
@@ -224,7 +219,6 @@ bridges.shelly -> bus: "muehle/power/master\nmuehle/power/psu-13v8"
 firmware.antswitch -> bus: "muehle/hf/ant-switch"
 firmware.plc1 -> bus: "muehle/hf/pa-arm\nmuehle/hf/switch"
 firmware.plc2 -> bus: "muehle/uhf/pol-ctrl"
-bridges.pelco -> bus: "muehle/uhf/rotator"
 
 firmware.m5dial <-> bus: "muehle/hf/rotator\n(/cmd stimulator)"
 consumers.tablet <-> bus: "console acct"
@@ -240,7 +234,6 @@ firmware.antswitch -> devices.switchhw: "relay GPIO"
 bridges.shelly -> devices.shellyhw: "wifi HTTP"
 firmware.plc1 -> devices.plc1hw: "same firmware, two slots"
 firmware.plc2 -> devices.plc2hw: "same firmware, two slots"
-bridges.pelco -> devices.pelcohw: "RS-485 Pelco-D/P"
 devices.plc2hw -> devices.uhfrot: "drives"
 
 # ---------------- RF chain ----------------

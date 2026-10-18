@@ -8,8 +8,8 @@ canonical rotator state snapshot, dispatches `/cmd` intent (`set_az`, `stop`,
 control paths: a GS-232B TCP server on port 7373 and a PSTRotator-compatible
 UDP listener on port 12040. Either path lets rotator-control software drive the
 rotator directly; resulting motion still surfaces in `/state`. It is
-**read-write**. The UHF sat rotator is a separate slot (`muehle/uhf/rotator`)
-— no collision.
+**read-write**. The UHF sat rotators are separate slots (`muehle/uhf/az-rotator`,
+`muehle/uhf/el-rotator`, spid-ercm-rotator-bridge) — no collision.
 
 ---
 

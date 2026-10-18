@@ -11,7 +11,6 @@ use (
 	./icom9700-radio-bridge
 	./logger-spot-bridge
 	./oscarwatch-sattrack-bridge
-	./pelcobridge2
 	./powerseq
 	./shared
 	./shelly-power-bridge
@@ -20,5 +19,6 @@ use (
 	./testui
 	./ultrabridge
 	./vhfcam-restream
+	./winpc-power-bridge
 	./wrc-rotator-bridge
 )

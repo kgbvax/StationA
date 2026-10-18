@@ -22,6 +22,34 @@ class PowerPanel extends StatelessWidget {
     final psuOn = (store.stateValueAs<String>('muehle/power/psu-13v8', 'power') ?? 'off') == 'on';
     final psuOnline = (psu?.isOnline ?? false) && store.linkUp;
 
+    final ant = store.slots['muehle/power/antennas'];
+    final antOn = (store.stateValueAs<String>('muehle/power/antennas', 'power') ?? 'off') == 'on';
+    final antOnline = (ant?.isOnline ?? false) && store.linkUp;
+
+    final pcMains = store.slots['muehle/power/shack-pc-mains'];
+    final pcMainsOn = (store.stateValueAs<String>('muehle/power/shack-pc-mains', 'power') ?? 'off') == 'on';
+    final pcMainsOnline = (pcMains?.isOnline ?? false) && store.linkUp;
+    // Only a plug that is reachable AND reports off proves the PC is unpowered.
+    final pcUnpowered = pcMainsOnline &&
+        store.stateValueAs<bool>('muehle/power/shack-pc-mains', 'device_online') != false &&
+        !pcMainsOn;
+
+    // Shack PC (bwpc agent): its LWT flips /status offline when the PC
+    // sleeps, so offline here is a normal state, not a fault.
+    final pcStatus = store.slots['muehle/power/shack-pc']?.status;
+    final pcError = (store.stateValueAs<String>('muehle/power/shack-pc', 'error') ?? '').trim();
+    final (pcLabel, pcColor) = !store.linkUp
+        ? ('UNKNOWN', AppTheme.txtFaint)
+        : pcUnpowered
+            ? ('NO POWER', AppTheme.txtFaint)
+            : pcStatus == 'online'
+            ? ('AWAKE', AppTheme.green)
+            // The agent's LWT: the PC went to sleep (or was shut down).
+            : pcStatus == 'offline'
+                ? ('ASLEEP', AppTheme.txtMute)
+                // Never heard, or a cleared status: no agent on the bus.
+                : ('OFFLINE', AppTheme.txtFaint);
+
     final sw = store.slots['muehle/hf/switch'];
     final paOn = (store.stateValueAs<String>('muehle/hf/switch', 'pa') ?? 'off') == 'on';
     final trxOn = (store.stateValueAs<String>('muehle/hf/switch', 'trx') ?? 'off') == 'on';
@@ -31,7 +59,8 @@ class PowerPanel extends StatelessWidget {
     final seqOnline = (seq?.isOnline ?? false) && store.linkUp;
     final seqPhase = store.stateValueAs<String>('muehle/hf/power-seq', 'phase') ?? 'idle';
     final seqFault = store.stateValueAs<String>('muehle/hf/power-seq', 'fault') ?? '';
-    // The step within starting/stopping (e.g. `psu-on`); "" at idle/running.
+    // The step within a transition phase (e.g. `psu-on`); "" at
+    // idle/running/standby.
     final seqStep = store.stateValueAs<String>('muehle/hf/power-seq', 'step') ?? '';
 
     void setMaster(bool on) {
@@ -49,6 +78,47 @@ class PowerPanel extends StatelessWidget {
         cmdTopic('power/psu-13v8'),
         powerSetPayload(on ? 'on' : 'off'),
         retain: cmdRetain['muehle/power/psu-13v8']!,
+      );
+    }
+
+    void setAnt(bool on) {
+      if (!antOnline) return;
+      mqtt.publish(
+        cmdTopic('power/antennas'),
+        powerSetPayload(on ? 'on' : 'off'),
+        retain: cmdRetain['muehle/power/antennas']!,
+      );
+    }
+
+    Future<void> setPcMains(bool on) async {
+      if (!pcMainsOnline) return;
+      // Cutting mains hard-powers-off Windows — confirm, and say so.
+      if (!on) {
+        final ok = await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: Text('Shack PC power off?', style: AppTheme.mono(14, weight: FontWeight.w700)),
+            content: const Text('This cuts mains to bwpc. Shut Windows down first, or unsaved work is lost.'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(false),
+                child: const Text('Cancel'),
+              ),
+              ElevatedButton(
+                key: const ValueKey('pc-mains-off-confirm'),
+                style: AppTheme.actionButton(danger: true),
+                onPressed: () => Navigator.of(ctx).pop(true),
+                child: const Text('Power off'),
+              ),
+            ],
+          ),
+        );
+        if (ok != true) return;
+      }
+      mqtt.publish(
+        cmdTopic('power/shack-pc-mains'),
+        powerSetPayload(on ? 'on' : 'off'),
+        retain: cmdRetain['muehle/power/shack-pc-mains']!,
       );
     }
 
@@ -86,20 +156,35 @@ class PowerPanel extends StatelessWidget {
       );
     }
 
-    final seqRunning = const {'running', 'starting'}.contains(seqPhase);
+    // START (or wake, from standby) only where the sequencer accepts it.
+    final canStart = powerSeqStartablePhases.contains(seqPhase);
+    final inTransition = powerSeqTransitionPhases.contains(seqPhase);
+    // Standby and its two transitions are deliberate low-power states —
+    // amber, never fault-red.
+    final standbyish = const {'standby', 'entering_standby', 'waking'}.contains(seqPhase);
 
     final seqColor = seqFault.isNotEmpty
         ? AppTheme.red
-        : const {'running': true, 'starting': true}.containsKey(seqPhase)
+        : const {'running', 'starting'}.contains(seqPhase)
             ? AppTheme.green
-            : AppTheme.txtMute;
+            : standbyish
+                ? AppTheme.amber
+                : AppTheme.txtMute;
     final seqLabel = seqFault.isNotEmpty
         ? 'FAULT'
-        : const {'running': 'ON', 'starting': 'STARTING', 'stopping': 'STOPPING'}[seqPhase] ?? 'IDLE';
+        : const {
+              'running': 'ON',
+              'starting': 'STARTING',
+              'stopping': 'STOPPING',
+              'entering_standby': 'ENTER STANDBY',
+              'standby': 'STANDBY',
+              'waking': 'WAKING',
+            }[seqPhase] ??
+            'IDLE';
 
     final (pillSuffix, pillColor) = seqFault.isNotEmpty
         ? ('FAULT', AppTheme.red)
-        : const {'starting', 'stopping'}.contains(seqPhase)
+        : inTransition || seqPhase == 'standby'
             ? (seqLabel, AppTheme.amber)
             : ('', null);
 
@@ -118,8 +203,9 @@ class PowerPanel extends StatelessWidget {
             // Top padding clears the corner-overlaid status pill.
             padding: const EdgeInsets.fromLTRB(12, 26, 12, 10),
             // Two rows: the sequencer (START/STOP + phase readout), then all
-            // four relays. The relays used to share one row with a sideways
-            // scroll that hid TRX and PA off-screen on the tablet.
+            // relays plus the shack-PC chip in one wrapping group. The relays
+            // used to share one row with a sideways scroll that hid TRX and PA
+            // off-screen on the tablet — keep them in the Wrap.
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -127,7 +213,7 @@ class PowerPanel extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
                     ElevatedButton(
-                      onPressed: seqOnline && !seqRunning ? startStation : null,
+                      onPressed: seqOnline && canStart ? startStation : null,
                       style: AppTheme.actionButton().copyWith(
                         backgroundColor: const WidgetStatePropertyAll(Color(0x1E5CCB8A)),
                         foregroundColor: WidgetStatePropertyAll(AppTheme.green),
@@ -154,7 +240,7 @@ class PowerPanel extends StatelessWidget {
                         children: [
                           Text('SEQUENCE', style: AppTheme.mono(10, color: AppTheme.txtFaint, letterSpacing: 0.12)),
                           Text(seqLabel, style: AppTheme.mono(14, color: seqColor, weight: FontWeight.w700)),
-                          if (seqFault.isEmpty && const {'starting', 'stopping'}.contains(seqPhase) && seqStep.isNotEmpty)
+                          if (seqFault.isEmpty && inTransition && seqStep.isNotEmpty)
                             Text(seqStep,
                                 key: const ValueKey('seq-step'),
                                 overflow: TextOverflow.ellipsis,
@@ -171,8 +257,17 @@ class PowerPanel extends StatelessWidget {
                   children: [
                     _Relay(name: 'MAINS', on: masterOn, online: masterOnline, onToggle: setMaster),
                     _Relay(name: 'PSU 13.8V', on: psuOn, online: psuOnline, onToggle: setPsu),
+                    _Relay(name: 'ANT PWR', on: antOn, online: antOnline, onToggle: setAnt),
                     _Relay(name: 'TRX', on: trxOn, online: switchOnline, onToggle: setTrx),
                     _Relay(name: 'PA', on: paOn, online: switchOnline, onToggle: setPa),
+                    _Relay(name: 'PC PWR', on: pcMainsOn, online: pcMainsOnline, onToggle: setPcMains),
+                    _Indicator(
+                      key: const ValueKey('shack-pc'),
+                      name: 'SHACK PC',
+                      value: pcLabel,
+                      color: pcColor,
+                      error: pcError,
+                    ),
                   ],
                 ),
               ],
@@ -187,6 +282,8 @@ class PowerPanel extends StatelessWidget {
               slots: const [
                 'muehle/power/master',
                 'muehle/power/psu-13v8',
+                'muehle/power/antennas',
+                'muehle/power/shack-pc-mains',
                 'muehle/hf/switch',
                 'muehle/hf/power-seq',
               ],
@@ -198,6 +295,61 @@ class PowerPanel extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Read-only sibling of [_Relay]: same chip, a status word instead of the
+/// switch track. An agent-reported error replaces the word (truncated, full
+/// text in the tooltip) so the chip never grows the panel.
+class _Indicator extends StatelessWidget {
+  final String name;
+  final String value;
+  final Color color;
+  final String error;
+
+  const _Indicator({super.key, required this.name, required this.value, required this.color, this.error = ''});
+
+  @override
+  Widget build(BuildContext context) {
+    final hasError = error.isNotEmpty;
+    return Tooltip(
+      message: hasError ? '$name: $error' : '',
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        constraints: const BoxConstraints(maxWidth: 260),
+        decoration: BoxDecoration(
+          color: AppTheme.pane,
+          border: Border.all(color: AppTheme.cardLine),
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(name, style: AppTheme.mono(11, weight: FontWeight.w700, letterSpacing: 0.06, color: AppTheme.txtMute)),
+            const SizedBox(width: 8),
+            // Height of the relay switch track, so the chips line up.
+            SizedBox(
+              height: 18,
+              child: Center(
+                child: Text(value, style: AppTheme.mono(11, color: color, weight: FontWeight.w700)),
+              ),
+            ),
+            if (hasError) ...[
+              const SizedBox(width: 8),
+              Flexible(
+                child: Text(
+                  error,
+                  key: const ValueKey('shack-pc-error'),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppTheme.mono(11, color: AppTheme.red, weight: FontWeight.w700),
+                ),
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }

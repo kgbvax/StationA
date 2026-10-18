@@ -83,7 +83,7 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 }
 
 // runSlot runs one Shelly → one canonical power slot. It owns a paho client
-// (with the slot LWT), subscribes to the Shelly native status + heartbeat topics
+// (with the slot LWT), subscribes to the Shelly native status + online topics
 // and the canonical /cmd, and translates between them. Returns ctx.Err() on
 // shutdown.
 func runSlot(ctx context.Context, cfg config.Config, sc config.SlotConfig, log *slog.Logger) error {
@@ -96,12 +96,16 @@ func runSlot(ctx context.Context, cfg config.Config, sc config.SlotConfig, log *
 	adapter := &slogAdapter{l: slotLog}
 	avail := schema.StatusTopic(cfg.MQTT.Site, sc.Station, sc.Slot)
 	cmdTopic := schema.CmdTopic(cfg.MQTT.Site, sc.Station, sc.Slot)
-	nativeStatus := shelly.StatusTopic(sc.ShellyID)
-	nativeOnline := sc.ShellyID + "/online"
-	nativeRPC := shelly.RPCTopic(sc.ShellyID)
+	wire, err := shelly.WireFor(sc.Generation, sc.ShellyID)
+	if err != nil {
+		return err
+	}
+	nativeStatus := wire.StatusTopic
+	nativeOnline := wire.OnlineTopic
+	nativeRPC := wire.CmdTopic
 
 	pub := &bridge.PahoPublisher{}
-	cmd := &shellyCommander{}
+	cmd := &shellyCommander{command: wire.Command}
 
 	b := bridge.New(bridge.Config{
 		Site:            cfg.MQTT.Site,
@@ -134,21 +138,26 @@ func runSlot(ctx context.Context, cfg config.Config, sc config.SlotConfig, log *
 	jobs := make(chan func(), 64)
 	go sharedmqtt.RunJobs(slotCtx, jobs)
 
-	// Heartbeat-driven device_online: the Shelly publishes "<id>/online"
-	// "true" periodically and "false" on graceful disconnect. A watcher marks
-	// the device offline if no heartbeat arrives within the staleness window.
-	const heartbeatTimeout = 75 * time.Second
-	lastHeartbeat := &heartbeatClock{}
+	// device_online follows the Shelly's own "<id>/online": a Gen2+ Shelly
+	// publishes "true" (retained) when it connects and sets "false" as its MQTT
+	// last will. It does NOT repeat "true" periodically, so silence is not an
+	// outage. A status announce also proves the link. The watcher only reports
+	// a Shelly that has never been heard since startup (or said "false").
+	link := &shellyLink{}
 	tick := time.NewTicker(10 * time.Second)
 	defer tick.Stop()
+	const neverHeardAfter = 75 * time.Second
+	started := time.Now()
 	go func() {
 		for {
 			select {
 			case <-slotCtx.Done():
 				return
 			case <-tick.C:
-				if lastHeartbeat.since() > heartbeatTimeout {
-					sharedmqtt.Enqueue(jobs, func() { b.MarkDeviceOffline("shelly heartbeat lost") })
+				if online, known := link.get(); known && !online {
+					sharedmqtt.Enqueue(jobs, func() { b.MarkDeviceOffline("shelly online=false") })
+				} else if !known && time.Since(started) > neverHeardAfter {
+					sharedmqtt.Enqueue(jobs, func() { b.MarkDeviceOffline("shelly never heard") })
 				}
 			}
 		}
@@ -184,22 +193,24 @@ func runSlot(ctx context.Context, cfg config.Config, sc config.SlotConfig, log *
 
 		// Shelly native relay status → canonical power telemetry.
 		if tok := c.Subscribe(nativeStatus, 1, func(_ pahomqtt.Client, m pahomqtt.Message) {
-			_, power, err := shelly.ParseStatus(m.Payload())
+			power, err := wire.ParseStatus(m.Payload())
 			if err != nil {
 				slotLog.Warn("bad shelly status", "topic", m.Topic(), "err", err)
 				return
 			}
+			link.set(true)
 			sharedmqtt.Enqueue(jobs, func() { b.HandleTelemetry(power) })
 		}); !tok.WaitTimeout(subTimeout) || tok.Error() != nil {
 			slotLog.Warn("subscribe shelly status failed", "err", tok.Error())
 		}
 
-		// Shelly native heartbeat → device_online.
+		// Shelly native online flag → device_online.
 		if tok := c.Subscribe(nativeOnline, 1, func(_ pahomqtt.Client, m pahomqtt.Message) {
 			if string(m.Payload()) == "true" {
-				lastHeartbeat.touch()
-				sharedmqtt.Enqueue(jobs, func() { b.HandleTelemetry("on") }) // refresh device_online true (no-op if power unchanged)
+				link.set(true)
+				sharedmqtt.Enqueue(jobs, b.MarkDeviceOnline) // never sets power: this topic says nothing about the relay
 			} else {
+				link.set(false)
 				sharedmqtt.Enqueue(jobs, func() { b.MarkDeviceOffline("shelly online=false") })
 			}
 		}); !tok.WaitTimeout(subTimeout) || tok.Error() != nil {
@@ -235,14 +246,16 @@ func runSlot(ctx context.Context, cfg config.Config, sc config.SlotConfig, log *
 	return ctx.Err()
 }
 
-// shellyCommander implements bridge.Commander by publishing the Gen2+
-// Switch.Set RPC over MQTT to the Shelly's "<id>/rpc" topic. Runs in the jobs
+// shellyCommander implements bridge.Commander by publishing the native relay
+// command (Gen2+ Switch.Set RPC to "<id>/rpc", or Gen1 on/off to
+// "shellies/<id>/relay/0/command"). Runs in the jobs
 // worker (from HandleCommand), so blocking on the publish token is safe — it is
 // never on a paho message-handler goroutine.
 type shellyCommander struct {
 	mu       sync.Mutex
 	client   pahomqtt.Client
 	rpcTopic string
+	command  func(on bool) []byte // the generation's payload builder
 }
 
 // rpcPublishTimeout bounds the Shelly RPC publish Wait (review S1b; mirrors
@@ -264,7 +277,7 @@ func (s *shellyCommander) SetPower(on bool) error {
 	if c == nil {
 		return fmt.Errorf("mqtt client not connected")
 	}
-	tok := c.Publish(topic, 1, false, shelly.SwitchSet(on))
+	tok := c.Publish(topic, 1, false, s.command(on))
 	// Bounded Wait (review S1b): an unbounded Wait here parks the /cmd path
 	// on a stalled broker forever.
 	if !tok.WaitTimeout(rpcPublishTimeout) {
@@ -273,28 +286,24 @@ func (s *shellyCommander) SetPower(on bool) error {
 	return tok.Error()
 }
 
-// heartbeatClock tracks the last Shelly "online" heartbeat; monotonic via a
-// mutex-guarded time.Time. Safe for concurrent touch/since.
-type heartbeatClock struct {
-	mu   sync.Mutex
-	last time.Time
+// shellyLink is the Shelly's last reported broker link ("<id>/online").
+// Safe for concurrent set/get (paho handler vs watcher).
+type shellyLink struct {
+	mu     sync.Mutex
+	known  bool
+	online bool
 }
 
-func (h *heartbeatClock) touch() {
-	h.mu.Lock()
-	h.last = time.Now()
-	h.mu.Unlock()
+func (l *shellyLink) set(online bool) {
+	l.mu.Lock()
+	l.known, l.online = true, online
+	l.mu.Unlock()
 }
 
-func (h *heartbeatClock) since() time.Duration {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	if h.last.IsZero() {
-		// No heartbeat yet since startup: count as stale so a never-heard Shelly
-		// is reported offline rather than stuck online-default.
-		return time.Hour
-	}
-	return time.Since(h.last)
+func (l *shellyLink) get() (online, known bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.online, l.known
 }
 
 func newLogger(level string) *slog.Logger {

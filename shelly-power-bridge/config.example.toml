@@ -50,6 +50,9 @@ level = "info"
 #               and commands "<shelly_id>/rpc".
 # device_model / device_serial = the Shelly identity published in /meta.
 #               Use device_serial = shelly_id (the stable Gen2 device id).
+# generation  = "gen2" (default; Plus / Pro / Gen3) or "gen1" (Plug S, Shelly 1).
+#               Gen1 speaks "shellies/<id>/relay/0" + "…/relay/0/command"; its
+#               shelly_id is the Gen1 MQTT id (e.g. "shellyplug-s-A71704").
 # fail_safe   = the Shelly power-on default published in capabilities:
 #               "off" means the plug restores OFF after a mains blip (a power
 #               blip drops the station rather than re-energizing it). Default "off".
@@ -67,26 +70,61 @@ shelly_id     = "shellyplus1pm-aabbccddeeff"
 fail_safe     = "off"
 # master feeds everything; feeds is left empty — it is the top of the tree.
 
-# 13.8 V PSU — site-level DC rail feeding both HF and UHF (radio, tuner,
-# ant-ctrl, ant-switch, rotator, the M5 Stamps). Declares `feeds` so consumers
-# know what goes dark when this supply drops.
+# 13.8 V PSU (the TRX PSU) — site-level DC rail feeding both HF and UHF (radio,
+# tuner, ant-switch, the M5 Stamps). Declares `feeds` so consumers know what
+# goes dark when this supply drops.
 [[slot]]
 station       = "power"
 slot          = "psu-13v8"
 location      = "bauwagen"
-device_model  = "Shelly Plus 1PM"
-device_serial = "shellyplus1pm-B2"
-shelly_id     = "shellyplus1pm-112233445566"
-fail_safe     = "off"
+device_model  = "Shelly Plug S"
+device_serial = "shellyplug-s-A71704"
+# Gen1 plug ("TrxPsu", 192.168.1.150, fw 1.14): MQTT ids are "shellies/<id>/…".
+generation    = "gen1"
+shelly_id     = "shellyplug-s-A71704"
+fail_safe     = "on"    # relay default_state "last" — it comes back as it was (normally on)
 feeds = [
   "hf/radio",
   "uhf/radio",
   "hf/tuner",
-  "hf/ant-ctrl",
   "hf/ant-switch",
-  "hf/rotator",
   "hf/switch",
   "hf/pa-arm",
+]
+
+# Antenna power — the HF + UHF rotators and the Ultrabeam RCU-06. powerseq
+# switches it on in the cold start and off in idle standby (and back on at wake).
+[[slot]]
+station       = "power"
+slot          = "antennas"
+location      = "bauwagen"
+device_model  = "Shelly Plug S Gen3"
+device_serial = "shellyplugsg3-e4b063d86c98"
+shelly_id     = "shellyplugsg3-e4b063d86c98"
+fail_safe     = "on"    # the plug restores ON after a mains blip (initial_state=on)
+feeds = [
+  "hf/ant-ctrl",
+  "hf/rotator",
+  "uhf/az-rotator",
+  "uhf/el-rotator",
+]
+
+# Shack PC mains — the plug in front of bwpc. powerseq switches it on in the
+# cold start (then Wake-on-LAN) and NEVER off: shutdown and standby leave it on,
+# because cutting mains hard-powers-off Windows. Turning it off is a manual
+# hf_console switch. `power/shack-pc` (winpc-power-bridge) is the PC's own
+# sleep agent, downstream of this plug.
+[[slot]]
+station       = "power"
+slot          = "shack-pc-mains"
+location      = "bauwagen"
+device_model  = "Shelly Plug S Gen3"
+device_serial = "shellyplugsg3-e4b063e3cba8"
+shelly_id     = "shellyplugsg3-e4b063e3cba8"
+fail_safe     = "on"    # the plug restores ON after a mains blip (initial_state=on)
+feeds = [
+  "power/shack-pc",
+  "uhf/sat-track",
 ]
 
 # --- env overrides (systemd EnvironmentFile) ---------------------------------

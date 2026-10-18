@@ -81,14 +81,17 @@ tiers); `target` and `mode` are strings with no fixed capability list to referen
 
 ## 3. `/state` — resolved decision
 
-Retained JSON snapshot, QoS 1. Published whenever the resolution changes.
+Retained JSON snapshot, QoS 1. Published whenever the resolution changes, the station
+activity flips, or `last_activity` first appears (not on every VFO step).
 
 ```json
 {
-  "ts":     "2026-07-06T12:34:56Z",
-  "mode":   "auto",
-  "target": "port4",
-  "source": "auto"
+  "ts":            "2026-07-06T12:34:56Z",
+  "mode":          "auto",
+  "target":        "port4",
+  "source":        "auto",
+  "activity":      "active",
+  "last_activity": "2026-07-06T12:34:55.912Z"
 }
 ```
 
@@ -98,6 +101,8 @@ Retained JSON snapshot, QoS 1. Published whenever the resolution changes.
 | `mode` | string | `auto` \| `manual`. **Derived**: `manual` whenever an operator hold is active, else `auto`. There is no separate auto/manual switch — the presence of a hold *is* manual. |
 | `target` | string | the port the reconciler currently wants: `off` \| `port1`..`port6`. **Empty under a `manual` stand-down** — the reconciler resolves nothing while the operator owns the switch (§4). |
 | `source` | string | *why* the target is what it is: `idle` \| `operator` \| `auto` (model §5). Published so the live config documents the reason, not just the value. |
+| `activity` | string | `active` \| `inactive` — the station activity the idle tier uses (`inactive` after `[idle].timeout_minutes` with no VFO change, TX or operator hold). powerseq keys its idle standby (antenna power off, shack PC to sleep) on it. |
+| `last_activity` | string | RFC 3339 (nano) time of the last real activity seen by this process. **Absent until the first one**: the retained `radio/state` replay at start is the baseline, not activity, so a restart never reads as fresh activity (powerseq wakes from standby only on a `last_activity` newer than its standby entry). |
 
 `target` is what the reconciler *wants*; the switch's own `selected`/`settled` report what
 *is*. Consumers wanting ground truth read `ant-switch/state`.

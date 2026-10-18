@@ -1,16 +1,22 @@
 # CLAUDE.md — shelly-power-bridge
 
-shelly-power-bridge fronts **Shelly Gen2+ smart plugs** (Plus / Mini / Pro …)
-that speak MQTT natively, translating them into the station integration-model
+shelly-power-bridge fronts **Shelly smart plugs** that speak MQTT natively —
+Gen2+ (Plus / Mini / Pro / Gen3, the default) and, per slot with
+`generation = "gen1"`, Gen1 (Plug S: `shellies/<id>/relay/0` + `…/relay/0/command`,
+used by the TRX PSU plug "TrxPsu") — translating them into the station integration-model
 **`power`** slots. It is a **compound bridge**: one process fronts N Shelies,
 each becoming a site-level power slot at `muehle/power/<slot>/{meta,state,status,cmd}`.
 Each `[[slot]]` runs its own paho client with its own LWT, so a process death
 takes every fronted slot offline with no stale-online gap.
 
-The Shelies today are the **station master mains** (`power/master`) and the
-**13.8 V PSU** (`power/psu-13v8`). The PSU is a site-level DC rail feeding both
-HF and UHF (radio, tuner, ant-ctrl, ant-switch, rotator, the M5 Stamps), which
-is why the power layer sits at site level rather than under one station.
+The Shelies today are the **station master mains** (`power/master`), the
+**13.8 V PSU** (`power/psu-13v8`, the TRX PSU), the **antenna power**
+(`power/antennas`) and the **shack PC mains** (`power/shack-pc-mains`, bwpc —
+powerseq switches it on at cold start and never off). The PSU is a site-level DC rail feeding both HF and UHF
+(radio, tuner, ant-switch, the M5 Stamps); the antenna-power plug feeds the HF
+and UHF rotators and the Ultrabeam RCU-06 (powerseq switches it off in idle
+standby). That is why the power layer sits at site level rather than under
+one station.
 Historically the Shelies were controlled only through Home Assistant — an
 HA-as-control-path anti-pattern (integration model §9); this bridge brings them
 onto the canonical bus so the sequencer (`powerseq`) and operators drive them
@@ -59,14 +65,15 @@ CLI flags:
 
 1. `cmd/shelly-power-bridge/main.go` — flags, config load, signal ctx, one
    runtime goroutine **per `[[slot]]`**. Each `runSlot` owns its own paho client
-   (with the slot LWT), a single `jobs` worker goroutine, and a heartbeat
-   staleness watcher. On (re)connect it publishes online + `/meta` and
+   (with the slot LWT), a single `jobs` worker goroutine, and a link
+   watcher. On (re)connect it publishes online + `/meta` and
    subscribes the Shelly native topics + the canonical `/cmd`. The initial
    paho `Connect()` is ctx-aware (a `tok.Wait()` bridged through a goroutine +
    `select` on `ctx.Done()`) so a SIGTERM while the broker is unreachable can
    interrupt the connect — otherwise systemd must SIGKILL after
    `TimeoutStopSec`.
-2. `internal/shelly` — Gen2+ wire codec: `StatusTopic`/`RPCTopic`, `ParseStatus`
+2. `internal/shelly` — wire codecs. `WireFor(generation, id)` picks the topics,
+   parser and command payload per slot (gen1 | gen2). Gen2+: `StatusTopic`/`RPCTopic`, `ParseStatus`
    (decodes `<id>/status/switch:0` `output` → canonical `on`/`off`),
    `SwitchSet` (builds the `<id>/rpc` `Switch.Set` payload). No MQTT client.
 3. `internal/bridge` — canonical `power` slot model + MQTT publishing: `/meta`
@@ -83,8 +90,10 @@ a live hadiscovery deadlock). The single `jobs` worker serializes all bridge
 state mutation + publishing for the slot. The shelly RPC `Publish` (from
 `HandleCommand`) runs in that worker, not on a paho handler, so blocking on the
 token is safe. `bridge.SlotBridge.mu` guards the canonical state + dedup
-snapshot. The heartbeat watcher enqueues `MarkDeviceOffline` when the Shelly's
-`<id>/online` heartbeat is lost.
+snapshot. `device_online` follows the Shelly's
+`<id>/online` (`true` once on connect, `false` = its last will — there is no
+periodic heartbeat) and never touches `power`; the watcher enqueues
+`MarkDeviceOffline` on `false` or when a Shelly was never heard after 75 s.
 
 **Compound-device / multi-client note:** MQTT 3.1.1 allows only one Will per
 client, so the compound bridge uses **one paho client per slot** (each with its
@@ -97,7 +106,7 @@ once — no stale-online gap. Each client's id defaults to
 ## MQTT topics
 
 shelly-power-bridge publishes to the station integration model topics, per
-fronted Shelly (`<slot>` = `master` | `psu-13v8` | …):
+fronted Shelly (`<slot>` = `master` | `psu-13v8` | `antennas` | `shack-pc-mains`):
 
 ```
 muehle/power/<slot>/meta     retained  birth certificate (capabilities + expose)
@@ -146,7 +155,8 @@ Target: Raspberry Pi (`shari`, `192.168.1.139`, user `io`).
 ```bash
 ./deploy.sh              # cross-compile, ship, install as a hardened systemd service
 # Set the real Shelly device ids before first deploy:
-MASTER_SHELLY_ID=shellyplus1pm-<mac> PSU_SHELLY_ID=shellyplus1pm-<mac> ./deploy.sh
+MASTER_SHELLY_ID=shellyplus1pm-<mac> PSU_SHELLY_ID=shellyplus1pm-<mac> \
+  ANTENNAS_SHELLY_ID=shellyplus1pm-<mac> PC_SHELLY_ID=shellyplus1pm-<mac> ./deploy.sh   # placeholder ids are refused at seed time
 ```
 
 The unit is hardened like atr1k-tuner-bridge (network-only):
