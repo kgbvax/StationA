@@ -311,7 +311,7 @@ address   = "muehle/uhf/radio"
 component = "icom9700-radio-bridge"
 device    = "Icom IC-9700"
 link      = "LAN RS-BA1 (RX audio) + serial CI-V (read-only)"
-host      = "shari"
+host      = "scmino"
 
 [[slot]]
 address   = "muehle/uhf/sat-track"
