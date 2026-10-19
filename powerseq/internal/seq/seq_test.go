@@ -1045,6 +1045,12 @@ const testIdleTimeout = 80 * time.Millisecond
 // in phase=running (startup = one cmd step so it reaches running at once).
 func newStandbySeq(t *testing.T) (*Sequencer, *recPublisher, *wolRec, context.CancelFunc) {
 	t.Helper()
+	return newStandbySeqWith(t, nil)
+}
+
+// newStandbySeqWith is newStandbySeq with a config hook applied before New.
+func newStandbySeqWith(t *testing.T, mut func(*Config)) (*Sequencer, *recPublisher, *wolRec, context.CancelFunc) {
+	t.Helper()
 	pub := &recPublisher{}
 	wol := &wolRec{}
 	cfg := baseConfig(
@@ -1060,6 +1066,9 @@ func newStandbySeq(t *testing.T) (*Sequencer, *recPublisher, *wolRec, context.Ca
 		{Slot: "uhf/el-rotator", Field: "el", MinDelta: 2},
 	}
 	cfg.WOL = wol.send
+	if mut != nil {
+		mut(&cfg)
+	}
 	s, err := New(cfg, pub, &testLogger{t})
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -1337,6 +1346,169 @@ func TestWaitTimeoutReportsObserved(t *testing.T) {
 	} {
 		if !strings.Contains(fault, want) {
 			t.Errorf("fault = %q, want it to contain %q", fault, want)
+		}
+	}
+}
+
+// ----- idle shutdown ---------------------------------------------------------
+
+const testShutdownTimeout = 300 * time.Millisecond
+
+func idleShutdownSteps() []Step {
+	f := false
+	return append(exampleShutdown(),
+		Step{Name: "pc-sleep", Kind: KindCmd, Slot: "power/shack-pc", Action: "sleep", Value: "now", Retain: &f})
+}
+
+func newIdleShutdownSeq(t *testing.T) (*Sequencer, *recPublisher, *wolRec, context.CancelFunc) {
+	t.Helper()
+	return newStandbySeqWith(t, func(c *Config) {
+		c.IdleShutdown = idleShutdownSteps()
+		c.ShutdownTimeout = testShutdownTimeout
+	})
+}
+
+func lastState(pub *recPublisher) statePayload {
+	st := pub.states()
+	if len(st) == 0 {
+		return statePayload{}
+	}
+	return st[len(st)-1]
+}
+
+func TestIdleShutdownAfterTimeoutThenStart(t *testing.T) {
+	s, pub, _, cancel := newIdleShutdownSeq(t)
+	defer cancel()
+	s.setActivity("inactive", time.Time{})
+	runUntil(t, s, func() bool { return phaseIs(s, PhaseStandby) }, time.Second)
+	runUntil(t, s, func() bool { return phaseIs(s, PhaseIdle) }, 2*time.Second)
+
+	if _, _, fault := s.Phase(); fault != "" {
+		t.Fatalf("idle shutdown faulted: %s", fault)
+	}
+	if got := lastState(pub).StopReason; got != "idle_shutdown" {
+		t.Errorf("stop_reason = %q, want idle_shutdown", got)
+	}
+	if sw := cmdsTo(pub, "hf/switch"); len(sw) != 2 || sw[0].value != "off" || sw[1].value != "off" {
+		t.Errorf("hf/switch cmds = %+v, want pa off + trx off", sw)
+	}
+	if arm := cmdsTo(pub, "hf/pa-arm"); len(arm) != 1 || arm[0].value != "false" {
+		t.Errorf("pa-arm cmds = %+v, want one disable", arm)
+	}
+	if pc := cmdsTo(pub, "power/shack-pc"); len(pc) != 2 || pc[1].retained {
+		t.Errorf("shack-pc cmds = %+v, want standby + idle-shutdown sleep (not retained)", pc)
+	}
+
+	// A start after an idle shutdown is a full cold start and clears the reason.
+	s.setActivity("active", time.Now())
+	s.Start()
+	runUntil(t, s, func() bool { return phaseIs(s, PhaseRunning) }, time.Second)
+	if m := cmdsTo(pub, "power/master"); m[len(m)-1].value != "on" {
+		t.Errorf("power/master cmds = %+v, want the restart's on last", m)
+	}
+	if got := lastState(pub).StopReason; got != "" {
+		t.Errorf("stop_reason after start = %q, want empty", got)
+	}
+}
+
+func TestIdleShutdownClockFollowsLastActivity(t *testing.T) {
+	s, _, _, cancel := newIdleShutdownSeq(t)
+	defer cancel()
+	// Activity 150 ms into running, then idle: the shutdown clock starts at
+	// that last_activity, not at the running entry.
+	time.Sleep(150 * time.Millisecond)
+	last := time.Now()
+	s.setActivity("inactive", last)
+	runUntil(t, s, func() bool { return phaseIs(s, PhaseStandby) }, time.Second)
+	time.Sleep(time.Until(last.Add(testShutdownTimeout - 70*time.Millisecond)))
+	if !phaseIs(s, PhaseStandby) {
+		t.Fatalf("idle shutdown before shutdown timeout after last_activity: phase=%s", mustPhase(s))
+	}
+	runUntil(t, s, func() bool { return phaseIs(s, PhaseIdle) }, time.Second)
+}
+
+func TestIdleShutdownSurvivesAntennaselectRestart(t *testing.T) {
+	s, pub, wol, cancel := newIdleShutdownSeq(t)
+	defer cancel()
+	s.setActivity("inactive", time.Time{})
+	runUntil(t, s, func() bool { return phaseIs(s, PhaseStandby) }, time.Second)
+	// Restart publishes no last_activity: neither a wake nor a clock reset.
+	s.markOffline("hf/antenna-select")
+	s.markOnline("hf/antenna-select")
+	s.setActivity("active", time.Time{})
+	runUntil(t, s, func() bool { return phaseIs(s, PhaseIdle) }, 2*time.Second)
+	if wol.n() != 0 || lastState(pub).StopReason != "idle_shutdown" {
+		t.Errorf("wol=%d stop_reason=%q, want 0 / idle_shutdown", wol.n(), lastState(pub).StopReason)
+	}
+}
+
+func TestWatchInStandbyWakesInsteadOfShutdown(t *testing.T) {
+	s, _, wol, cancel := newIdleShutdownSeq(t)
+	defer cancel()
+	s.SetState(abs("uhf/el-rotator"), []byte(`{"el":10,"device_online":true}`))
+	s.setActivity("inactive", time.Time{})
+	runUntil(t, s, func() bool { return phaseIs(s, PhaseStandby) }, time.Second)
+	s.SetState(abs("uhf/el-rotator"), []byte(`{"el":30,"device_online":true}`))
+	runUntil(t, s, func() bool { return phaseIs(s, PhaseRunning) }, time.Second)
+	if wol.n() != 1 {
+		t.Errorf("wol calls = %d, want 1", wol.n())
+	}
+}
+
+func TestIdleShutdownGatedOnBroker(t *testing.T) {
+	s, _, _, cancel := newIdleShutdownSeq(t)
+	defer cancel()
+	s.setActivity("inactive", time.Time{})
+	runUntil(t, s, func() bool { return phaseIs(s, PhaseStandby) }, time.Second)
+	s.SetBrokerOnline(false)
+	time.Sleep(testShutdownTimeout + 100*time.Millisecond)
+	if !phaseIs(s, PhaseStandby) {
+		t.Fatalf("idle shutdown with the broker down: phase=%s", mustPhase(s))
+	}
+}
+
+func TestNoIdleShutdownWhenUnconfigured(t *testing.T) {
+	s, _, _, cancel := newStandbySeq(t)
+	defer cancel()
+	s.setActivity("inactive", time.Time{})
+	runUntil(t, s, func() bool { return phaseIs(s, PhaseStandby) }, time.Second)
+	time.Sleep(testShutdownTimeout + 100*time.Millisecond)
+	if !phaseIs(s, PhaseStandby) {
+		t.Fatalf("phase=%s, want standby (no idle shutdown configured)", mustPhase(s))
+	}
+}
+
+func TestOperatorStopSetsStopReason(t *testing.T) {
+	s, pub, _, cancel := newStandbySeq(t)
+	defer cancel()
+	s.Stop()
+	runUntil(t, s, func() bool { return phaseIs(s, PhaseIdle) }, time.Second)
+	if got := lastState(pub).StopReason; got != "operator" {
+		t.Errorf("stop_reason = %q, want operator", got)
+	}
+}
+
+func TestIdleShutdownConfigRejected(t *testing.T) {
+	cases := map[string]func(*Config){
+		"without standby": func(c *Config) {
+			c.Standby, c.Wake = nil, nil
+			c.IdleShutdown = idleShutdownSteps()
+			c.ShutdownTimeout = time.Hour
+		},
+		"timeout not above idle timeout": func(c *Config) {
+			c.IdleShutdown = idleShutdownSteps()
+			c.ShutdownTimeout = c.IdleTimeout
+		},
+	}
+	for name, mut := range cases {
+		cfg := baseConfig(exampleStartup(), exampleShutdown())
+		cfg.Standby = standbySteps()
+		cfg.Wake = wakeSteps()
+		cfg.ActivitySlot = "hf/antenna-select"
+		cfg.IdleTimeout = time.Minute
+		mut(&cfg)
+		if _, err := New(cfg, &recPublisher{}, &testLogger{t}); err == nil {
+			t.Errorf("%s: accepted", name)
 		}
 	}
 }

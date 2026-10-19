@@ -133,6 +133,12 @@ level = "info"
 # standby, a last_activity newer than the standby entry, a watch moving, or a
 # `start` cmd → [[wake]] runs (phase waking → running). `stop` works from
 # standby. A fault in either list → phase=idle + fault, like startup.
+#
+# Idle shutdown (optional — omit shutdown_minutes and [[idle_shutdown]] to
+# disable): a station still in standby shutdown_minutes after the last activity
+# (antenna-select last_activity, a watch moving, or the last start/wake) runs
+# [[idle_shutdown]] (phase stopping → idle, /state.stop_reason="idle_shutdown").
+# Only a `start` cmd brings it back (full cold start).
 
 # --- idle standby triggers ----------------------------------------------------
 [idle]
@@ -142,6 +148,9 @@ activity_slot = "hf/antenna-select"
 # Quiet window for the watches below, and the minimum time in phase=running
 # before standby (so a start/wake is not followed by an instant standby).
 timeout_minutes = 30
+# Full power-down after this long without activity (must exceed
+# timeout_minutes). 0 or absent = stay in standby indefinitely.
+shutdown_minutes = 120
 
 # UHF use counts as activity too: the antenna-power plug also feeds the UHF
 # rotators, and the shack PC runs the satellite tracker. A watch is a /state
@@ -336,6 +345,76 @@ value = "off"
 # the PC wakes and put it straight back to sleep. The agent on the PC refuses
 # while someone is using its keyboard/mouse.
 [[standby]]
+name = "pc-sleep"
+kind = "cmd"
+slot = "power/shack-pc"
+action = "sleep"
+value = "now"
+retain = false
+
+# --- idle shutdown -----------------------------------------------------------
+# The [[shutdown]] list plus a shack PC sleep (the operator's manual stop never
+# sleeps the PC; here nobody is using the station). Antenna power is already
+# off from standby; switching it off again is harmless and keeps this list
+# correct on its own.
+[[idle_shutdown]]
+name = "pa-arm-disable"
+kind = "cmd"
+slot = "hf/pa-arm"
+action = "set_enabled"
+value = "false"
+
+[[idle_shutdown]]
+name = "stagger-1"
+kind = "delay"
+duration = "stagger"
+
+[[idle_shutdown]]
+name = "antennas-off"
+kind = "cmd"
+slot = "power/antennas"
+action = "set_power"
+value = "off"
+
+[[idle_shutdown]]
+name = "stagger-2"
+kind = "delay"
+duration = "stagger"
+
+[[idle_shutdown]]
+name = "pa-off"
+kind = "cmd"
+slot = "hf/switch"
+action = "set_pa"
+value = "off"
+
+[[idle_shutdown]]
+name = "stagger-3"
+kind = "delay"
+duration = "stagger"
+
+[[idle_shutdown]]
+name = "trx-off"
+kind = "cmd"
+slot = "hf/switch"
+action = "set_trx"
+value = "off"
+
+[[idle_shutdown]]
+name = "stagger-4"
+kind = "delay"
+duration = "stagger"
+
+[[idle_shutdown]]
+name = "psu-off"
+kind = "cmd"
+slot = "power/psu-13v8"
+action = "set_power"
+value = "off"
+
+# NOT retained (see pc-sleep in [[standby]]); refused by the PC agent while
+# someone is using it.
+[[idle_shutdown]]
 name = "pc-sleep"
 kind = "cmd"
 slot = "power/shack-pc"

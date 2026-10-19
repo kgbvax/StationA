@@ -584,7 +584,8 @@ subscribes: /status of every slot a step references (power/*, hf/switch, hf/radi
             last_activity); /state of the idle watches (uhf/radio, uhf/az-rotator,
             uhf/el-rotator)
 state:      phase {idle|starting|running|stopping|entering_standby|standby|waking};
-            step <string>; fault (omitempty)
+            step <string>; fault (omitempty);
+            stop_reason {operator|idle_shutdown} (omitempty)
 intent:     start | stop                       # operator one-button; /cmd NOT retained
 ```
 Startup (confirmations + delays, cold start 2026-10-10, master mains dropped
@@ -610,8 +611,14 @@ moving, or `start` → `waking`: Wake-on-LAN to bwpc, `power/antennas` on, wait 
 on the same activity. UHF use counts as activity because the antenna plug also feeds
 the UHF rotators and bwpc runs the satellite tracker.
 
+**Idle shutdown.** A station still in `standby` 2 h (`[idle] shutdown_minutes`) after
+the last activity (antennaselect `last_activity`, an idle watch, the last start/wake)
+runs the shutdown list plus a bwpc sleep → `idle` with `stop_reason=idle_shutdown`.
+The PSU, FLEX and PA are then off; only an operator `start` (full cold start) brings
+the station back.
+
 This sequence is **config-driven** in `powerseq` (the `[[startup]]` / `[[shutdown]]` /
-`[[standby]]` / `[[wake]]` step lists in its TOML, each step `cmd` / `wait_status` /
+`[[standby]]` / `[[wake]]` / `[[idle_shutdown]]` step lists in its TOML, each step `cmd` / `wait_status` /
 `wait_state` / `delay` / `wol`); the
 text above is the default shipped in `config.example.toml`, not hard-coded. The
 subscribed topics and the `/meta` `controls`/`watches` are derived from the configured

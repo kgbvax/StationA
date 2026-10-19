@@ -98,8 +98,12 @@ when `hf/antenna-select` reports `activity=inactive` (antenna grounded), no
 lasted `timeout_minutes` → `entering_standby` → antenna power off + shack PC
 (bwpc) sleep (`retain=false`) → `standby`. A `last_activity` newer than the
 standby entry, a watch moving, or `start` → `waking` → WOL to bwpc + antenna
-power on → `running`. The idle check runs on the runner goroutine (1 s ticker),
-so it serializes with start/stop through `begin()`. Step kind `wol` sends the
+power on → `running`. **Idle shutdown** (optional `[idle] shutdown_minutes`,
+default example 120, + `[[idle_shutdown]]`): still in `standby` that long after
+the last activity (antennaselect `last_activity`, a watch, the last start/wake)
+→ `stopping` → shutdown list + bwpc sleep → `idle` with
+`/state.stop_reason=idle_shutdown`; only `start` revives it. The idle check
+runs on the runner goroutine (1 s ticker), so it serializes with start/stop through `begin()`. Step kind `wol` sends the
 magic packet (UDP broadcast; `RestrictAddressFamilies=AF_INET` covers it). A
 step that times out → `fault` + `phase=idle`; the slots driven so far remain in
 whatever state the retained `/cmd` last set them (self-healing, no rollback).
@@ -131,7 +135,7 @@ both replay the full sequence. A command that arrives mid-sequence is dropped
 
 ```
 muehle/hf/power-seq/meta     retained  birth certificate (capabilities + expose)
-muehle/hf/power-seq/state    retained  { phase, step, fault?, ts }
+muehle/hf/power-seq/state    retained  { phase, step, fault?, stop_reason?, ts }
 muehle/hf/power-seq/status   retained  online | offline (LWT — the service)
 muehle/hf/power-seq/cmd      not retained   start | stop (operator one-button)
 ```

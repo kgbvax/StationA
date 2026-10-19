@@ -98,7 +98,8 @@ Retained. Published on every (re)connect.
         "options": ["idle", "starting", "running", "stopping",
                     "entering_standby", "standby", "waking"] },
       { "key": "step",  "name": "Step",  "type": "string" },
-      { "key": "fault", "name": "Fault", "type": "string" }
+      { "key": "fault", "name": "Fault", "type": "string" },
+      { "key": "stop_reason", "name": "Stop reason", "type": "string" }
     ]
   }
 }
@@ -121,6 +122,7 @@ Retained. Published on every phase/step/fault change.
 { "ts": "2026-07-14T18:42:01Z", "phase": "starting", "step": "psu-on" }
 { "ts": "2026-07-14T18:42:31Z", "phase": "running", "step": "" }
 { "ts": "2026-07-14T18:50:02Z", "phase": "idle", "step": "", "fault": "psu liveness timeout (...)" }
+{ "ts": "2026-10-19T03:12:00Z", "phase": "idle", "step": "", "stop_reason": "idle_shutdown" }
 ```
 
 | Field | Type | Meaning |
@@ -129,6 +131,7 @@ Retained. Published on every phase/step/fault change.
 | `phase` | `idle` \| `starting` \| `running` \| `stopping` \| `entering_standby` \| `standby` \| `waking` | sequencer state (`idle` = station stopped; `standby` = idle power-down, §6.1) |
 | `step` | string (always present) | the current step within a sequence (e.g. `psu-on`); empty at idle/running/standby |
 | `fault` | string, omitempty | why a sequence aborted; omitted when there is no fault |
+| `stop_reason` | `operator` \| `idle_shutdown`, omitempty | why the station was last stopped: an operator `stop`, or the idle shutdown (§6.2); cleared by `start` |
 
 `step` is always present (only `fault` is omitempty), per model §7.1 — a
 consumer reading `state.step` gets `""` (not a missing key) at idle/running.
@@ -265,6 +268,25 @@ Configured with an `[idle]` block; omit all three to disable.
 |------|-------|
 | standby | `antennas-off` (`power/antennas` off) → `pc-sleep` (`power/shack-pc` `sleep`, **`retain = false`** — a retained sleep would replay on wake) |
 | wake | `pc-wake` (`wol`, shack-PC MAC) → `antennas-on` → `wait-antenna-gear-online` (`hf/ant-ctrl` + `hf/rotator` online, 120 s) |
+
+### 6.2 Idle shutdown (`[[idle_shutdown]]`, optional)
+
+Configured with `[idle] shutdown_minutes` (> `timeout_minutes`; default
+example 120) plus a `[[idle_shutdown]]` list; omit both to stay in standby
+indefinitely.
+
+- **Trigger** (from `standby` only, broker connected, no wake due): the last
+  activity is `shutdown_minutes` ago. The last activity is the latest of the
+  activity slot's `last_activity`, the last counted watch change, and the last
+  entry into `running` (a start or a wake). An antennaselect restart publishes
+  no `last_activity`, so it does not reset the clock.
+- → `stopping` → `[[idle_shutdown]]` → `idle` with `stop_reason =
+  "idle_shutdown"`. Only `start` revives the station (a full cold start).
+- The default list is the `[[shutdown]]` list plus `pc-sleep` (`power/shack-pc`
+  `sleep`, `retain = false`; the PC agent refuses while someone uses the PC).
+  The manual `stop` does not sleep the PC.
+- Limits: UHF TX is not visible on the bus (the IC-9700 bridge is receive-only),
+  so UHF use counts only through the watches (frequency, rotator position).
 
 All emitted `/cmd` use the stationa value-key convention
 (`{"action":"<act>","value":"<val>"}`) and are **retained** (the steady-state
