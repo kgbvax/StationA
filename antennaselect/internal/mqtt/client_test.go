@@ -1215,6 +1215,15 @@ func TestRadioDisconnectReconnectIsNotActivity(t *testing.T) {
 	if c.in.StationActivity != "inactive" || c.activitySeen {
 		t.Fatalf("disconnect/reconnect counted as activity: activity=%q seen=%v", c.in.StationActivity, c.activitySeen)
 	}
+	// A SmartSDR client connecting with the link up: flexbridge resets to
+	// freq_hz 0, then reports the new client's slice on another frequency.
+	// That is a new baseline, not a VFO turn (2026-10-19 16:38).
+	c.onRadioState(nil, radioStateMsgFreq(true, "unknown", 0))
+	c.onRadioState(nil, radioStateMsgFreq(true, "20m", 14287000))
+	drain()
+	if c.in.StationActivity != "inactive" || c.activitySeen {
+		t.Fatalf("client-connect slice reset counted as activity: activity=%q", c.in.StationActivity)
+	}
 	// A frequency reported while the link is down is not a VFO change either.
 	c.onRadioState(nil, radioStateMsgFreq(false, "40m", 7100000))
 	drain()

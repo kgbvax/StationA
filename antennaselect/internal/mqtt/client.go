@@ -67,7 +67,11 @@ type Client struct {
 	// liveFreqHz is the freq_hz of the last radio/state from a live radio link
 	// (device_online=true, freq_hz>0); 0 = none yet. A VFO change is measured
 	// against it, never against a link-down sample, so a radio power-off or a
-	// link drop and its reconnect (freq_hz → 0 → back) is not activity.
+	// link drop and its reconnect (freq_hz → 0 → back) is not activity. A
+	// freq_hz 0 sample clears it: flexbridge publishes 0 while its slice/pan
+	// tracking resets (a SmartSDR client connecting, link up), and the slice it
+	// then reports may sit elsewhere — a new baseline, not a VFO turn (that
+	// woke a powerseq standby 2026-10-19 16:38 with nobody at the shack PC).
 	liveFreqHz int64
 	// pubActivity / pubHasLast are what the last published /state carried, so /state
 	// is re-published when the activity flips (not only when the decision changes —
@@ -252,7 +256,7 @@ func (c *Client) onRadioState(_ paho.Client, msg paho.Message) {
 			if vfo || tx {
 				c.markActive(in)
 			}
-			if live {
+			if live || s.FreqHz == 0 {
 				c.liveFreqHz = s.FreqHz
 			}
 			c.seenRadio = true
