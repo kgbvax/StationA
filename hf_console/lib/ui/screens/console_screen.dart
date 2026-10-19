@@ -245,12 +245,16 @@ class _TabletShell extends StatelessWidget {
   final ValueChanged<String> onSelect;
 
   /// Which rotator the left pane's compass dial reads: the HF rotator on the
-  /// HF page, the VHF az-rotator on the UHF page, none on Station.
+  /// HF page, the VHF az-rotator on the UHF page, none on Station (no map).
   final RotatorSurface? rotator;
 
   /// The left pane shows the VHF/UHF map module ([DxMapContainer.vhf]:
   /// Mercator only, UHF beam, tap-to-aim, STOP) instead of the HF map.
   final bool vhfMap;
+
+  /// Whether the left pane draws a map at all. Off on Station: the pane stays
+  /// (the split, and with it the top-bar toggles, must not move) but is empty.
+  final bool showMap;
 
   /// Panels pinned under the map in the left pane (HF: ultrabeam + antenna).
   final List<Widget> leftUnderMap;
@@ -272,6 +276,7 @@ class _TabletShell extends StatelessWidget {
     required this.onSelect,
     required this.rotator,
     this.vhfMap = false,
+    this.showMap = true,
     this.leftTop,
     this.leftUnderMap = const [],
     required this.rightChildren,
@@ -305,9 +310,11 @@ class _TabletShell extends StatelessWidget {
                         // Tablet: direction presets live on the map's right
                         // edge (above the +/- zoom stepper) — the column no
                         // longer spends a footer row on them.
-                        child: vhfMap
-                            ? const DxMapContainer.vhf()
-                            : DxMapContainer(rotator: rotator),
+                        child: !showMap
+                            ? null
+                            : vhfMap
+                                ? const DxMapContainer.vhf()
+                                : DxMapContainer(rotator: rotator),
                       ),
                     ),
                     ...leftUnderMap,
@@ -408,9 +415,9 @@ class _StationPage extends StatelessWidget {
     return _TabletShell(
       page: 'station',
       onSelect: onSelect,
-      // Station infrastructure page: the map is a bare DX compass — no
-      // rotator needle, azimuth chip, presets or aim affordances.
+      // Station infrastructure page: no map in the left pane.
       rotator: null,
+      showMap: false,
       rightChildren: const [
         PowerPanel(),
       ],

@@ -43,8 +43,10 @@ Do NOT reuse the broad `hf` user; do not embed station-wide credentials in the A
 
 Two map modules share `DxMapContainer`:
 
-- **HF** (`DxMapContainer(rotator: hfRotator)`, HF + Station tabs): azimuthal
+- **HF** (`DxMapContainer(rotator: hfRotator)`, HF tab): azimuthal
   compass with a Mercator toggle; beam, tap-to-aim and STOP live on the compass.
+  The Station tab has no map (empty left pane; the two-column split stays so
+  the top-bar toggles don't move).
 - **VHF/UHF** (`DxMapContainer.vhf()`, UHF + CAM tabs): Mercator only, opens at
   zoom 7 on the station (up to 12), draws the UHF az rotator's great-circle
   beam (±20°) and target line, aims by tap (great-circle bearing from the

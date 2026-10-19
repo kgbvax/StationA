@@ -261,8 +261,9 @@ void main() {
       await tester.pumpWidget(TestHarness(store: store, mqtt: mqtt, child: const ConsoleScreen()));
       await tester.pump(const Duration(milliseconds: 100));
 
-      // All three pages share the _TabletShell: the toggle rail sits in the
-      // right column at one fixed spot, the map rail stays left, and the
+      // All pages share the _TabletShell: the toggle rail sits in the
+      // right column at one fixed spot, the map rail stays left (except on
+      // Station, which leaves the left pane empty), and the
       // faults bar renders exactly once per page (inside the rail).
       Offset uhfTab() => tester.getTopLeft(find.text('UHF'));
       final onHf = uhfTab();
@@ -278,7 +279,8 @@ void main() {
       await tester.tap(find.text('Station'));
       await tester.pump(const Duration(milliseconds: 100));
       expect(uhfTab(), onHf);
-      expect(find.byType(DxMapContainer), findsOneWidget);
+      // Station keeps the split but its left pane carries no map.
+      expect(find.byType(DxMapContainer), findsNothing);
       expect(find.text('FAULTS'), findsOneWidget);
     });
   });
