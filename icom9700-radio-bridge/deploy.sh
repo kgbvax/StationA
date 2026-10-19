@@ -11,11 +11,11 @@
 # sandbox.
 #
 # Usage:
-#   ./deploy.sh                       # deploy to default host (the Pi)
+#   ./deploy.sh                       # deploy to default host (scmino)
 #   SSH_HOST=io@192.168.1.178 ./deploy.sh
 #
 # Configurable via environment variables (with defaults):
-#   SSH_HOST        SSH target            (default: 192.168.1.139 = shari end0; not .140 = wifi)
+#   SSH_HOST        SSH target            (default: 192.168.1.178 = scmino, since 2026-10-18)
 #   SSH_USER        SSH user              (default: io)  [used only if SSH_HOST has no user@]
 #   SERVICE_NAME    systemd service name  (default: icom9700-radio-bridge)
 #   SERVICE_USER    system user to run as (default: icom9700-radio-bridge)
@@ -36,7 +36,8 @@
 #   CIV_USERNAME    [civ].username          (default: empty -> set on device)
 #   CIV_PASSWORD    ICOM9700_CIV_PASSWORD   (default: empty -> set on device)
 #   DISCOVERY_PREFIX mqtt.discovery_prefix  (default: homeassistant)
-#   PARK_RIGCTLD_ADDR [park].rigctld_addr   (default: empty -> park_radio rejected)
+#   PARK_RIGCTLD_ADDR [park].rigctld_addr   (default: empty -> park_radio rejected; on scmino:
+#                   "127.0.0.1:4532" — rigctld-ic9700 admits loopback only)
 #   PARK_FREQ_HZ    [park].freq_hz          (required with PARK_RIGCTLD_ADDR)
 #   PARK_MODE       [park].mode             (usb|lsb|cw|am|fm; required with PARK_RIGCTLD_ADDR)
 #

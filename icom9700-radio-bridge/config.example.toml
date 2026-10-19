@@ -61,7 +61,7 @@ power_on_frame = "1a050201"         # CI-V remote-wake frame (standby -> ON), se
 # that owns a dedicated CI-V port (scmino :4532, rigctld-scmino/) — this
 # bridge never opens a serial port for it. rigctld_addr empty = park_radio
 # is rejected and /meta advertises no park.
-rigctld_addr = ""                   # e.g. "192.168.1.178:4532"
+rigctld_addr = ""                   # on scmino: "127.0.0.1:4532" (rigctld admits loopback only)
 freq_hz      = 0                    # park frequency, Hz
 mode         = ""                   # canonical: usb | lsb | cw | am | fm
 
