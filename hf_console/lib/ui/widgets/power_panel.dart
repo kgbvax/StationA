@@ -171,8 +171,8 @@ class PowerPanel extends StatelessWidget {
     return Container(
       decoration: BoxDecoration(
         color: AppTheme.card,
+        // Square, like every panel frame (see AppTheme.cardDecoration).
         border: Border.all(color: AppTheme.blend(AppTheme.purpleBorder, 0.45)),
-        borderRadius: BorderRadius.circular(6),
       ),
       child: Stack(
         children: [

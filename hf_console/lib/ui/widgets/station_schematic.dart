@@ -81,7 +81,7 @@ class _StationSchematicState extends State<StationSchematic> {
         return CallbackShortcuts(
           bindings: {const SingleActivator(LogicalKeyboardKey.escape): _close},
           child: Focus(
-          focusNode: _focus,
+            focusNode: _focus,
             child: GestureDetector(
               behavior: HitTestBehavior.opaque,
               onTap: _close,
@@ -457,12 +457,7 @@ Widget _hostCard(StationSchematicModel m, String id, Rect r) {
     );
   }
   if (id == 'hassio') {
-    return _card(
-      r,
-      q: q,
-      sev: Severity.none,
-      rows: (w) => [_title(w, 17, h.name), _pair(w, 34, ip, '')],
-    );
+    return _card(r, q: q, sev: Severity.none, rows: (w) => [_title(w, 17, h.name), _pair(w, 34, ip, '')]);
   }
   final hh = m.hostHealth(id);
   return _card(
@@ -903,7 +898,6 @@ Widget _card(
       decoration: BoxDecoration(
         color: tone == null ? AppTheme.card : Color.alphaBlend(AppTheme.blend(tone, 0.10), AppTheme.card),
         border: Border.all(color: tone ?? AppTheme.cardLine, width: tone == null ? 1 : 1.6),
-        borderRadius: BorderRadius.circular(6),
       ),
       child: Stack(clipBehavior: Clip.none, children: [_dot(Offset(r.width - 10, 10), dot), ...rows(r.width)]),
     ),
@@ -1163,7 +1157,6 @@ class _HitTargetState extends State<_HitTarget> {
           child: DecoratedBox(
             decoration: BoxDecoration(
               border: _focus || widget.selected ? Border.all(color: AppTheme.accent, width: 2) : null,
-              borderRadius: BorderRadius.circular(6),
             ),
           ),
         ),
@@ -1693,7 +1686,7 @@ class _Popover extends StatelessWidget {
           decoration: BoxDecoration(
             color: AppTheme.card,
             border: Border.all(color: AppTheme.cardLineHi),
-            borderRadius: BorderRadius.circular(6),
+
             boxShadow: const [BoxShadow(color: Color(0x66000000), blurRadius: 24, offset: Offset(0, 8))],
           ),
           padding: const EdgeInsets.fromLTRB(12, 4, 4, 12),

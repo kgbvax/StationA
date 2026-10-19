@@ -94,7 +94,7 @@ class _DxConfigDialogState extends State<_DxConfigDialog> {
       backgroundColor: AppTheme.card,
       insetPadding: const EdgeInsets.symmetric(horizontal: 40, vertical: 24),
       contentPadding: const EdgeInsets.fromLTRB(20, 20, 20, 8),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6), side: BorderSide(color: AppTheme.cardLine)),
+      shape: RoundedRectangleBorder(side: BorderSide(color: AppTheme.cardLine)), // square frame
       content: SizedBox(
         width: 320,
         child: _loading

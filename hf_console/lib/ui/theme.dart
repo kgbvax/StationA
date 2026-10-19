@@ -256,16 +256,16 @@ class AppTheme extends ChangeNotifier {
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
       );
 
+  // Panel frames (cards, panes, sheets) are square — no corner radius.
+  // Rounding is for controls and badges only (buttons, chips, tags, pills).
   static BoxDecoration cardDecoration({bool power = false}) => BoxDecoration(
         color: power ? const Color(0x141A0F2F) : card,
         border: Border.all(color: power ? purpleBorder : cardLine),
-        borderRadius: BorderRadius.circular(6),
       );
 
   static BoxDecoration paneDecoration() => BoxDecoration(
         color: pane,
         border: Border.all(color: cardLine),
-        borderRadius: BorderRadius.circular(6),
       );
 
   static Color blend(Color c, double alpha) => Color.fromARGB(

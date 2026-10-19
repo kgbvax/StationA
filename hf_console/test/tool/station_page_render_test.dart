@@ -35,6 +35,15 @@ Future<void> _loadFonts() async {
   }
 }
 
+Future<void> _shoot(WidgetTester tester, GlobalKey key, String path) async {
+  final boundary = key.currentContext!.findRenderObject()! as RenderRepaintBoundary;
+  await tester.runAsync(() async {
+    final ui.Image img = await boundary.toImage(pixelRatio: 1);
+    final png = await img.toByteData(format: ui.ImageByteFormat.png);
+    File(path).writeAsBytesSync(png!.buffer.asUint8List());
+  });
+}
+
 void main() {
   final enabled = Platform.environment['PAGE_RENDER'] == '1';
 
@@ -63,12 +72,15 @@ void main() {
         store.markDisconnected();
         await tester.pump();
       }
-      final boundary = key.currentContext!.findRenderObject()! as RenderRepaintBoundary;
-      await tester.runAsync(() async {
-        final ui.Image img = await boundary.toImage(pixelRatio: 1);
-        final png = await img.toByteData(format: ui.ImageByteFormat.png);
-        File('${dir.path}/${scenario.name}.png').writeAsBytesSync(png!.buffer.asUint8List());
-      });
+      await _shoot(tester, key, '${dir.path}/${scenario.name}.png');
+      // The other pages once, from the running station.
+      if (scenario == StationScenario.running) {
+        for (final page in ['HF', 'UHF', 'CAM']) {
+          await tester.tap(find.widgetWithText(InkWell, page));
+          await tester.pump(const Duration(milliseconds: 100));
+          await _shoot(tester, key, '${dir.path}/page-${page.toLowerCase()}.png');
+        }
+      }
     }
   });
 }
