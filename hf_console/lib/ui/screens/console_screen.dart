@@ -573,7 +573,9 @@ class _PageTopBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final mqtt = context.read<MqttService>();
+    // No link or offline-count indicators here: a dead MQTT link is the red
+    // LINK DOWN banner, device trouble is the fault list. A healthy link is
+    // not news.
     return Container(
       color: AppTheme.card,
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
@@ -592,8 +594,6 @@ class _PageTopBar extends StatelessWidget {
               children: [
                 _PageNav(page: page, onSelect: onSelect),
                 const _DxSettingsButton(),
-                _ConnectionIndicator(mqtt: mqtt),
-                const _OnlineTag(),
               ],
             ),
           ),
@@ -601,47 +601,6 @@ class _PageTopBar extends StatelessWidget {
           const _RfAnnunciator(),
         ],
       ),
-    );
-  }
-}
-
-class _ConnectionIndicator extends StatelessWidget {
-  final MqttService mqtt;
-
-  const _ConnectionIndicator({required this.mqtt});
-
-  @override
-  Widget build(BuildContext context) {
-    return ValueListenableBuilder<bool>(
-      valueListenable: mqtt.connected,
-      builder: (context, connected, _) {
-        final color = connected ? AppTheme.green : AppTheme.red;
-        return Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 10,
-              height: 10,
-              decoration: BoxDecoration(
-                color: color,
-                shape: BoxShape.circle,
-                boxShadow: [
-                  BoxShadow(
-                    color: AppTheme.blend(color, 0.6),
-                    blurRadius: 6,
-                    spreadRadius: 1,
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(width: 6),
-            Text(
-              connected ? 'MQTT' : 'OFFLINE',
-              style: AppTheme.mono(10, color: AppTheme.txtMute, weight: FontWeight.w600, letterSpacing: 0.08),
-            ),
-          ],
-        );
-      },
     );
   }
 }
@@ -756,30 +715,6 @@ class _RfAnnunciator extends StatelessWidget {
               weight: FontWeight.w700,
               letterSpacing: 0.1),
         ),
-      ),
-    );
-  }
-}
-
-class _OnlineTag extends StatelessWidget {
-  const _OnlineTag();
-
-  @override
-  Widget build(BuildContext context) {
-    final store = context.watch<BusStore>();
-    final offline = store.offlineList.length;
-    final allOk = offline == 0;
-    final color = allOk ? AppTheme.green : AppTheme.red;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-      decoration: BoxDecoration(
-        color: AppTheme.blend(color, 0.12),
-        border: Border.all(color: AppTheme.blend(color, 0.45)),
-        borderRadius: BorderRadius.circular(4),
-      ),
-      child: Text(
-        allOk ? '● all online' : '● $offline offline',
-        style: AppTheme.mono(12, color: color, weight: FontWeight.w600),
       ),
     );
   }

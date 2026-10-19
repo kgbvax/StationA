@@ -157,7 +157,6 @@ const _hostBoxes = [
   (id: 'scmino', x: 162.0, w: 174.0),
   (id: 'hassio', x: 352.0, w: 118.0),
   (id: 'shari', x: 486.0, w: 118.0),
-  (id: 'console', x: 620.0, w: 124.0),
 ];
 
 class _Hit {
@@ -196,7 +195,7 @@ class _Sheet extends StatelessWidget {
     for (final hb in _hostBoxes) {
       final r = Rect.fromLTWH(hb.x, 30, hb.w, 56);
       kids.add(_hostCard(m, hb.id, r));
-      hits.add(_Hit('host:${hb.id}', hb.id == 'console' ? 'This console' : stationHosts[hb.id]!.name, r));
+      hits.add(_Hit('host:${hb.id}', stationHosts[hb.id]!.name, r));
     }
 
     // ── Power ────────────────────────────────────────────────────────────
@@ -424,19 +423,9 @@ bool _bad(SlotQuality q) =>
 // ── Blocks ────────────────────────────────────────────────────────────────
 
 Widget _hostCard(StationSchematicModel m, String id, Rect r) {
+  // No card for this console: a healthy link is not news, and a dead one is
+  // the red LINK DOWN banner across the whole screen.
   final link = m.linkUp;
-  if (id == 'console') {
-    return _card(
-      r,
-      q: SlotQuality.ok,
-      sev: link ? Severity.none : Severity.alarm,
-      rows: (w) => [
-        _title(w, 17, 'This console'),
-        _pair(w, 34, 'MQTT', link ? 'UP' : 'DOWN', color: link ? null : AppTheme.red),
-        _pair(w, 50, 'Data', link ? 'LIVE' : 'STALE', color: link ? null : AppTheme.red),
-      ],
-    );
-  }
   final h = stationHosts[id]!;
   final ip = h.address.replaceFirst('192.168.1', '');
   final q = link ? SlotQuality.ok : SlotQuality.stale;
@@ -460,11 +449,10 @@ Widget _hostCard(StationSchematicModel m, String id, Rect r) {
       sev: m.problemText(shackPcSlot) != null && pcQ == SlotQuality.ok ? Severity.alarm : Severity.none,
       off: !awake,
       rows: (w) => [
-        _title(w, 17, h.name, right: h.kind),
+        _title(w, 17, h.name),
         // The PC's state is the point of this card: its own row, never a
         // title tag that may be dropped for width.
         _pair(w, 34, ip, word, color: awake ? AppTheme.green : AppTheme.txtMute),
-        _pair(w, 50, 'Logger PC', ''),
       ],
     );
   }
@@ -473,7 +461,7 @@ Widget _hostCard(StationSchematicModel m, String id, Rect r) {
       r,
       q: q,
       sev: Severity.none,
-      rows: (w) => [_title(w, 17, h.name), _pair(w, 34, ip, ''), _pair(w, 50, 'MQTT', ':1883', q: q)],
+      rows: (w) => [_title(w, 17, h.name), _pair(w, 34, ip, '')],
     );
   }
   final hh = m.hostHealth(id);
@@ -482,7 +470,7 @@ Widget _hostCard(StationSchematicModel m, String id, Rect r) {
     q: q,
     sev: link && hh.up < hh.total ? Severity.warn : Severity.none,
     rows: (w) => [
-      _title(w, 17, h.name, right: h.kind),
+      _title(w, 17, h.name),
       _pair(w, 34, ip, ''),
       _pair(w, 50, 'Bridges', '${hh.up}/${hh.total}', q: q, color: link && hh.up < hh.total ? AppTheme.amber : null),
     ],
@@ -776,7 +764,7 @@ Widget _ic9700(StationSchematicModel m, List<_Hit> hits) {
     rows: (w) => [
       _title(w, 17, 'IC-9700'),
       _big(w, 43, _freq(m.value<num>(a, 'freq_hz')), q: q),
-      _pair(w, 62, (m.value<String>(a, 'mode') ?? '—').toUpperCase(), 'RX ONLY', q: q, color: AppTheme.txtMute),
+      _pair(w, 62, (m.value<String>(a, 'mode') ?? '—').toUpperCase(), '', q: q),
       _pair(
         w,
         77,
@@ -1208,7 +1196,7 @@ class _SchematicPainter extends CustomPainter {
     }
 
     // Hosts on the LAN.
-    _wire(c, const [Offset(16, 102), Offset(744, 102)], _Medium.lan, live: s.link);
+    _wire(c, const [Offset(16, 102), Offset(604, 102)], _Medium.lan, live: s.link);
     for (final hb in _hostBoxes) {
       _wire(c, [Offset(hb.x + 28, 86), Offset(hb.x + 28, 102)], _Medium.lan, live: s.link);
     }
@@ -1582,12 +1570,6 @@ String _clock(DateTime? t) {
 _Details _details(StationSchematicModel m, String id) {
   if (id.startsWith('host:')) {
     final host = id.substring(5);
-    if (host == 'console') {
-      return _Details('This console', 'MQTT client', [
-        ('MQTT link', m.linkUp ? 'up' : 'down', m.linkUp ? AppTheme.green : AppTheme.red),
-        ('Data', m.linkUp ? 'live' : 'stale, commands not delivered', m.linkUp ? null : AppTheme.red),
-      ]);
-    }
     final h = stationHosts[host]!;
     final rows = <(String, String, Color?)>[
       ('Address', h.address, null),

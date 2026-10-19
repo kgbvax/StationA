@@ -31,14 +31,19 @@ void main() {
     await _pump(tester, StationScenario.running);
     for (final t in [
       'FLEX-8400', '14.074.000', 'DATA', 'RX', 'ACOM', 'OPER', 'ATR-1000', 'INLINE', '13.8 V', 'AUTO',
-      'Ultrabeam', '20 m Forward', '212°', '145.212.500', 'IDLE', 'RX ONLY', '200°', 'AWAKE',
-      '13/13', '1/1', 'UP', 'LIVE', 'TRX ON', 'PA ON', 'ARMED', 'NO PASS',
+      'Ultrabeam', '20 m Forward', '212°', '145.212.500', 'IDLE', '200°', 'AWAKE',
+      '13/13', '1/1', 'TRX ON', 'PA ON', 'ARMED', 'NO PASS',
     ]) {
       expect(find.text(t), findsOneWidget, reason: t);
     }
     // Three plugs (relay word until the bridge publishes apower), the
     // sequencer in the power panel's vocabulary, beam steer.
     expect(find.text('ON'), findsNWidgets(5));
+    // No card for this console and no static text: a healthy link is not
+    // news (a dead one is the LINK DOWN banner).
+    for (final t in ['This console', 'RX ONLY', 'Logger PC', ':1883']) {
+      expect(find.text(t), findsNothing, reason: t);
+    }
     expect(find.text('RHCP'), findsNWidgets(2)); // PLC #2 and the X-Quad caption
   });
 
@@ -101,10 +106,8 @@ void main() {
     expect(find.text('STANDBY'), findsOneWidget); // the deaf IC-9700
   });
 
-  testWidgets('link down: the console says so and values stay last-known', (tester) async {
+  testWidgets('link down: values stay last-known, the PC state is unknown', (tester) async {
     await _pump(tester, StationScenario.linkDown);
-    expect(find.text('DOWN'), findsOneWidget);
-    expect(find.text('STALE'), findsOneWidget);
     expect(find.text('UNKNOWN'), findsOneWidget);
     expect(find.text('14.074.000'), findsOneWidget);
   });

@@ -9,6 +9,39 @@ import '../../support/test_harness.dart';
 
 void main() {
   group('PowerPanel', () {
+    testWidgets('no SEQUENCE label; an idle sequencer shows no phase word', (tester) async {
+      final store = BusStore();
+      store.setPower();
+      store.applyState('muehle/hf/power-seq', {'phase': 'idle', 'fault': '', 'device_online': true});
+
+      await tester.pumpWidget(TestHarness(store: store, mqtt: FakeMqttService(store), child: const PowerPanel()));
+      await tester.pumpAndSettle();
+
+      expect(find.text('SEQUENCE'), findsNothing);
+      expect(find.text('IDLE'), findsNothing);
+      expect(find.widgetWithText(ElevatedButton, 'START'), findsOneWidget);
+      expect(find.widgetWithText(ElevatedButton, 'STOP'), findsOneWidget);
+
+      store.applyState('muehle/hf/power-seq', {'phase': 'running', 'fault': '', 'device_online': true});
+      await tester.pumpAndSettle();
+      expect(find.text('ON'), findsOneWidget); // the phase word, not a relay chip
+    });
+
+    testWidgets('relay chips carry no ON/OFF words, only OFFLINE when out of reach', (tester) async {
+      final store = BusStore();
+      store.setPower(psu: true, trx: false, pa: true);
+      store.applyState('muehle/hf/power-seq', {'phase': 'idle', 'fault': '', 'device_online': true});
+
+      await tester.pumpWidget(TestHarness(store: store, mqtt: FakeMqttService(store), child: const PowerPanel()));
+      await tester.pumpAndSettle();
+
+      expect(find.text('ON'), findsNothing);
+      expect(find.text('OFF'), findsNothing);
+      // ANT PWR and PC PWR plugs were never heard: their chips read OFFLINE,
+      // as does the shack-PC agent's indicator.
+      expect(find.text('OFFLINE'), findsNWidgets(3));
+    });
+
     testWidgets('shows relay states and publishes toggle commands', (tester) async {
       final store = BusStore();
       final mqtt = FakeMqttService(store);
@@ -22,7 +55,7 @@ void main() {
       expect(find.text('TRX'), findsOneWidget);
       expect(find.text('PA'), findsOneWidget);
 
-      await tester.tap(find.widgetWithText(ElevatedButton, 'STOP\nSTATION'));
+      await tester.tap(find.widgetWithText(ElevatedButton, 'STOP'));
       await tester.pumpAndSettle();
 
       expect(mqtt.publishes.length, 1);
@@ -38,9 +71,9 @@ void main() {
       await tester.pumpWidget(TestHarness(store: store, mqtt: mqtt, child: const PowerPanel()));
       await tester.pumpAndSettle();
 
-      final start = tester.widget<ElevatedButton>(find.widgetWithText(ElevatedButton, 'START\nSTATION'));
+      final start = tester.widget<ElevatedButton>(find.widgetWithText(ElevatedButton, 'START'));
       expect(start.onPressed, isNull);
-      await tester.tap(find.widgetWithText(ElevatedButton, 'START\nSTATION'), warnIfMissed: false);
+      await tester.tap(find.widgetWithText(ElevatedButton, 'START'), warnIfMissed: false);
       await tester.pumpAndSettle();
       expect(mqtt.publishes, isEmpty);
     });
@@ -54,9 +87,9 @@ void main() {
       await tester.pumpWidget(TestHarness(store: store, mqtt: mqtt, child: const PowerPanel()));
       await tester.pumpAndSettle();
 
-      final start = tester.widget<ElevatedButton>(find.widgetWithText(ElevatedButton, 'START\nSTATION'));
+      final start = tester.widget<ElevatedButton>(find.widgetWithText(ElevatedButton, 'START'));
       expect(start.onPressed, isNotNull);
-      await tester.tap(find.widgetWithText(ElevatedButton, 'START\nSTATION'));
+      await tester.tap(find.widgetWithText(ElevatedButton, 'START'));
       await tester.pumpAndSettle();
 
       expect(mqtt.publishes.length, 1);
@@ -197,7 +230,7 @@ void main() {
       expect(label.style?.color, AppTheme.amber);
       expect(find.byKey(const ValueKey('seq-step')), findsNothing);
 
-      await tester.tap(find.widgetWithText(ElevatedButton, 'START\nSTATION'));
+      await tester.tap(find.widgetWithText(ElevatedButton, 'START'));
       await tester.pumpAndSettle();
       expect(mqtt.publishes.single.payload, contains('start'));
     });
@@ -213,9 +246,9 @@ void main() {
 
         expect(tester.widget<Text>(find.text(label)).style?.color, AppTheme.amber);
         expect(find.text('ant-plug'), findsOneWidget);
-        final start = tester.widget<ElevatedButton>(find.widgetWithText(ElevatedButton, 'START\nSTATION'));
+        final start = tester.widget<ElevatedButton>(find.widgetWithText(ElevatedButton, 'START'));
         expect(start.onPressed, isNull);
-        final stop = tester.widget<ElevatedButton>(find.widgetWithText(ElevatedButton, 'STOP\nSTATION'));
+        final stop = tester.widget<ElevatedButton>(find.widgetWithText(ElevatedButton, 'STOP'));
         expect(stop.onPressed, isNotNull);
       });
     }

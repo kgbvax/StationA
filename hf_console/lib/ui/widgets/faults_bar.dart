@@ -116,12 +116,15 @@ class FaultsBar extends StatelessWidget {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text('FAULTS', style: AppTheme.mono(12, weight: FontWeight.w700, letterSpacing: 0.14, color: AppTheme.txtMute)),
-              _Tag(activeCount > 0 ? '$activeCount ACTIVE' : 'ALL OK', activeCount > 0 ? AppTheme.red : AppTheme.green),
+              // Whether anything is wrong, not how many: the rows say what.
+              // All clear needs no tag — the empty-list row says so.
+              if (activeCount > 0) _Tag('ACTIVE', AppTheme.red),
             ],
           ),
           const SizedBox(height: 6),
           if (visible.isEmpty)
-            _FaultRow(fault: _Fault(time, now, 'No faults or offline devices', active: false))
+            // No timestamp: "now" is not when anything happened.
+            _FaultRow(fault: _Fault('', now, 'No faults', active: false))
           else if (expanded)
             Expanded(
               child: ListView(
@@ -171,14 +174,17 @@ class _FaultRow extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            fault.ts,
-            style: AppTheme.mono(13, color: AppTheme.txtFaint, weight: FontWeight.w500),
-          ),
-          const SizedBox(width: 10),
+          if (fault.ts.isNotEmpty) ...[
+            Text(
+              fault.ts,
+              style: AppTheme.mono(13, color: AppTheme.txtFaint, weight: FontWeight.w500),
+            ),
+            const SizedBox(width: 10),
+          ],
           Expanded(
             child: Text(
-              fault.text,
+              // Every slot lives under muehle/; the prefix says nothing.
+              fault.text.startsWith('muehle/') ? fault.text.substring(7) : fault.text,
               style: AppTheme.mono(14,
                   color: fault.active ? AppTheme.red : AppTheme.txtMute,
                   weight: fault.active ? FontWeight.w700 : FontWeight.w500),

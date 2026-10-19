@@ -15,8 +15,10 @@ void main() {
       await tester.pumpWidget(TestHarness(store: store, mqtt: mqtt, child: const FaultsBar()));
       await tester.pumpAndSettle();
 
-      expect(find.text('ALL OK'), findsOneWidget);
-      expect(find.text('No faults or offline devices'), findsOneWidget);
+      expect(find.text('ACTIVE'), findsNothing);
+      expect(find.text('No faults'), findsOneWidget);
+      // The placeholder carries no timestamp.
+      expect(find.textContaining(RegExp(r'^\d\d:\d\d:\d\d$')), findsNothing);
     });
 
     testWidgets('renders an active PA fault in red', (tester) async {
@@ -27,8 +29,19 @@ void main() {
       await tester.pumpWidget(TestHarness(store: store, mqtt: mqtt, child: const FaultsBar()));
       await tester.pumpAndSettle();
 
-      expect(find.text('1 ACTIVE'), findsOneWidget);
+      expect(find.text('ACTIVE'), findsOneWidget);
       expect(find.textContaining('HOT SWITCHING ATTEMPT'), findsOneWidget);
+    });
+
+    testWidgets('rows drop the muehle/ prefix every slot shares', (tester) async {
+      final store = BusStore();
+      store.setBridgeOffline('muehle/hf/radio');
+
+      await tester.pumpWidget(TestHarness(store: store, mqtt: FakeMqttService(store), child: const FaultsBar()));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('hf/radio: bridge down'), findsOneWidget);
+      expect(find.textContaining('muehle/'), findsNothing);
     });
 
     testWidgets('renders offline warnings', (tester) async {
@@ -39,8 +52,8 @@ void main() {
       await tester.pumpWidget(TestHarness(store: store, mqtt: mqtt, child: const FaultsBar()));
       await tester.pumpAndSettle();
 
-      expect(find.text('1 ACTIVE'), findsOneWidget);
-      expect(find.textContaining('muehle/hf/radio: bridge down'), findsOneWidget);
+      expect(find.text('ACTIVE'), findsOneWidget);
+      expect(find.textContaining('hf/radio: bridge down'), findsOneWidget);
     });
 
     testWidgets('active fault suppresses generic offline line for same address', (tester) async {
@@ -55,7 +68,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.textContaining('HOT SWITCHING ATTEMPT'), findsOneWidget);
-      expect(find.textContaining('muehle/hf/pa: bridge down'), findsNothing);
+      expect(find.textContaining('hf/pa: bridge down'), findsNothing);
     });
 
     testWidgets('caps visible list at 3 entries', (tester) async {
@@ -86,7 +99,7 @@ void main() {
         await tester.pumpWidget(TestHarness(store: store, mqtt: mqtt, child: const FaultsBar()));
         await tester.pumpAndSettle();
 
-        expect(find.textContaining('muehle/power/psu-13v8: PSU OFF'), findsOneWidget);
+        expect(find.textContaining('power/psu-13v8: PSU OFF'), findsOneWidget);
       });
 
       testWidgets('does not name the PSU while it is on', (tester) async {
@@ -150,12 +163,12 @@ void main() {
         await tester.pumpWidget(TestHarness(store: store, child: const FaultsBar(expanded: true)));
         await tester.pumpAndSettle();
 
-        expect(find.text('ALL OK'), findsOneWidget);
+        expect(find.text('ACTIVE'), findsNothing);
         expect(find.textContaining('ANT PWR OFF — rotators/Ultrabeam unpowered'), findsOneWidget);
-        expect(find.textContaining('muehle/hf/ant-ctrl'), findsNothing);
-        expect(find.textContaining('muehle/hf/rotator'), findsNothing);
-        expect(find.textContaining('muehle/uhf/az-rotator'), findsNothing);
-        expect(find.textContaining('muehle/uhf/el-rotator'), findsNothing);
+        expect(find.textContaining('hf/ant-ctrl'), findsNothing);
+        expect(find.textContaining('hf/rotator'), findsNothing);
+        expect(find.textContaining('uhf/az-rotator'), findsNothing);
+        expect(find.textContaining('uhf/el-rotator'), findsNothing);
       });
 
       testWidgets('power-seq standby suppresses them even without the plug state', (tester) async {
@@ -167,7 +180,7 @@ void main() {
         await tester.pumpWidget(TestHarness(store: store, child: const FaultsBar(expanded: true)));
         await tester.pumpAndSettle();
 
-        expect(find.text('ALL OK'), findsOneWidget);
+        expect(find.text('ACTIVE'), findsNothing);
         expect(find.textContaining('STANDBY — rotators/Ultrabeam unpowered'), findsOneWidget);
       });
 
@@ -181,7 +194,7 @@ void main() {
         await tester.pumpWidget(TestHarness(store: store, child: const FaultsBar(expanded: true)));
         await tester.pumpAndSettle();
 
-        expect(find.text('ALL OK'), findsOneWidget);
+        expect(find.text('ACTIVE'), findsNothing);
         expect(find.textContaining('NO REPLY'), findsOneWidget);
       });
 
@@ -195,8 +208,8 @@ void main() {
         await tester.pumpWidget(TestHarness(store: store, child: const FaultsBar()));
         await tester.pumpAndSettle();
 
-        expect(find.text('1 ACTIVE'), findsOneWidget);
-        expect(find.textContaining('muehle/hf/rotator: bridge down'), findsOneWidget);
+        expect(find.text('ACTIVE'), findsOneWidget);
+        expect(find.textContaining('hf/rotator: bridge down'), findsOneWidget);
         expect(find.textContaining('unpowered'), findsNothing);
       });
 
@@ -210,7 +223,7 @@ void main() {
         await tester.pumpWidget(TestHarness(store: store, child: const FaultsBar(expanded: true)));
         await tester.pumpAndSettle();
 
-        expect(find.textContaining('muehle/hf/rotator: bridge down'), findsOneWidget);
+        expect(find.textContaining('hf/rotator: bridge down'), findsOneWidget);
         expect(find.textContaining('rotators/Ultrabeam unpowered'), findsNothing);
       });
     });
@@ -223,7 +236,7 @@ void main() {
       await tester.pumpWidget(TestHarness(store: store, child: const FaultsBar()));
       await tester.pumpAndSettle();
 
-      expect(find.text('ALL OK'), findsOneWidget);
+      expect(find.text('ACTIVE'), findsNothing);
       expect(find.textContaining('shack-pc'), findsNothing);
     });
 
