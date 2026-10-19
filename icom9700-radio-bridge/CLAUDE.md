@@ -124,8 +124,10 @@ to `[park]` (`freq_hz`, `mode`) and reads split, frequency and mode back (an err
 disagrees — live, a radio in sat mode answered `M` with RPRT 0 and stayed LSB;
 leaving sat mode also restores a different main frequency, so the order is
 satmode off → split off → frequency → mode: the radio restores a per-band stored mode, here CW, on the band change) through a hamlib **rigctld on scmino** (`park.rigctld_addr`,
-`rigctld-scmino/` holds its hardened unit + `deploy.sh`; reachable from shari
-only, via systemd `IPAddressAllow`). `internal/rigctl` can send exactly satmode-off, split-off, mode and
+`rigctld-scmino/` holds its hardened unit + `deploy.sh`; loopback only, via systemd
+`IPAddressAllow` — the bridge runs next to it on scmino and dials `127.0.0.1:4532`; until
+2026-10-19 the scmino config still dialled the LAN address, which rigctld refused, so park_radio
+failed after the move). `internal/rigctl` can send exactly satmode-off, split-off, mode and
 frequency (plus the three readbacks) — no PTT/power/raw CI-V. The bridge itself never opens a serial port
 for control; the radio's COM port belongs to other software.
 
@@ -162,11 +164,13 @@ See `../docs/conventions/config-and-secrets.md` for the full convention.
 
 ## Deployment
 
-Target: `shari` at `192.168.1.139` (wired; `deploy.sh` default, user `io`).
-`192.168.1.140` is the same Pi's wifi address — do not deploy over it (scp
-timeouts). The serial monitor needs the radio's USB CI-V cable on the deploy
-host; `serial.device` is currently unset on shari, so the monitor and
-`power_on` are disabled there.
+Target: **scmino** at `192.168.1.178` (since 2026-10-18; `deploy.sh` default,
+user `io`). `serial.device` is unset there **by design**: the only IC-9700 CI-V
+adapter on scmino (Prolific `AMBVb148313`) belongs to `rigctld-ic9700` for
+park_radio, and the bridge opens no serial port (2026-10-08 decision), so the
+monitor and `power_on` are disabled. Enabling them needs a second CI-V port —
+and a unit change too: `PrivateDevices=true` gives the service a private `/dev`
+without real ttys, so the `DeviceAllow` lines alone do not expose one.
 
 ```bash
 ./deploy.sh              # cross-compile, ship, install as a hardened systemd service

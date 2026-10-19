@@ -9,10 +9,11 @@ ExecStart=/usr/bin/rigctld -m 3081 -r /dev/serial/by-id/usb-Prolific_Technology_
 Restart=always
 RestartSec=5
 
-# rigctld has no authentication and can key PTT: only shari (the
-# icom9700-radio-bridge host) and localhost may connect.
+# rigctld has no authentication and can key PTT: only localhost may connect.
+# icom9700-radio-bridge runs on this host (scmino, since 2026-10-18) and dials
+# park.rigctld_addr = "127.0.0.1:4532".
 IPAddressDeny=any
-IPAddressAllow=127.0.0.1 192.168.1.139
+IPAddressAllow=127.0.0.1
 
 DynamicUser=yes
 SupplementaryGroups=dialout
