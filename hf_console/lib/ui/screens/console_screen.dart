@@ -22,12 +22,15 @@ import '../widgets/cam_feed_panel.dart';
 import '../widgets/cam_radio_controls.dart';
 import '../widgets/cam_record_controls.dart';
 import '../widgets/faults_bar.dart';
+import '../widgets/station_schematic.dart';
 import '../widgets/dx_config_sheet.dart';
 
 // The DX-spot subscription follows the active page: the UHF and CAM maps
-// (both read the VHF array) show 6m/2m/70cm only, the HF and Station compass
-// the HF bands only (no 13cm/3cm QO-100 satellite links or VHF paths, which
-// say nothing about HF propagation). horstreporter drops every other band
+// (both read the VHF array) show 6m/2m/70cm only, the HF compass the HF
+// bands only (no 13cm/3cm QO-100 satellite links or VHF paths, which say
+// nothing about HF propagation). Station draws no map on tablets (the
+// schematic takes its pane) and keeps the HF set, so going back to HF needs
+// no re-dial. horstreporter drops every other band
 // server-side (`enabled_bands` stream parameter) — the device never
 // downloads them.
 const Set<String> _vhfBands = {'6m', '2m', '70cm'};
@@ -245,8 +248,11 @@ class _TabletShell extends StatelessWidget {
   final ValueChanged<String> onSelect;
 
   /// Which rotator the left pane's compass dial reads: the HF rotator on the
-  /// HF page, the VHF az-rotator on the UHF page, none on Station.
+  /// HF page, the VHF az-rotator on the UHF page.
   final RotatorSurface? rotator;
+
+  /// Replaces the map in the left pane (Station: the station schematic).
+  final Widget? leftPane;
 
   /// The left pane shows the VHF/UHF map module ([DxMapContainer.vhf]:
   /// Mercator only, UHF beam, tap-to-aim, STOP) instead of the HF map.
@@ -271,6 +277,7 @@ class _TabletShell extends StatelessWidget {
     required this.page,
     required this.onSelect,
     required this.rotator,
+    this.leftPane,
     this.vhfMap = false,
     this.leftTop,
     this.leftUnderMap = const [],
@@ -305,9 +312,8 @@ class _TabletShell extends StatelessWidget {
                         // Tablet: direction presets live on the map's right
                         // edge (above the +/- zoom stepper) — the column no
                         // longer spends a footer row on them.
-                        child: vhfMap
-                            ? const DxMapContainer.vhf()
-                            : DxMapContainer(rotator: rotator),
+                        child: leftPane ??
+                            (vhfMap ? const DxMapContainer.vhf() : DxMapContainer(rotator: rotator)),
                       ),
                     ),
                     ...leftUnderMap,
@@ -408,9 +414,11 @@ class _StationPage extends StatelessWidget {
     return _TabletShell(
       page: 'station',
       onSelect: onSelect,
-      // Station infrastructure page: the map is a bare DX compass — no
-      // rotator needle, azimuth chip, presets or aim affordances.
+      // Station page = station health: the left pane is the station
+      // schematic (power path, RF chains, hosts) instead of a map. Phones
+      // keep the power card + faults column — the sheet is too dense there.
       rotator: null,
+      leftPane: const StationSchematic(),
       rightChildren: const [
         PowerPanel(),
       ],

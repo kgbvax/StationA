@@ -44,6 +44,11 @@ Code-check verdict (2026-09-03): **still open.** `internal/shelly/shelly.go`
 `Current`, but `main.go` discards the struct and uses only the canonical power
 string; `internal/bridge` has no metering fields.
 
+Consumer waiting (2026-10-19): the hf_console station schematic shows each plug's
+draw from `/state.apower` (W) when present and the relay word (ON/OFF) until then —
+publishing `apower` lights it up with no console change. The Gen1 TRX PSU plug
+reports power on its own topic (`shellies/<id>/relay/0/power`).
+
 ## [defect] Shared `client_id` is a collision trap
 
 Setting `mqtt.client_id` non-empty makes all slots share one MQTT client id. The

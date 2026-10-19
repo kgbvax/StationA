@@ -66,7 +66,7 @@ Code-check verdict (2026-09-03): **still open** — `hf-mqtt-capture/cmd/hf-mqtt
 
 Repo-root documentation and the integration model say the Ultrabeam beam is on antenna-switch port 3 (fan dipole port 6, dummy load port 1). The deployed reconciler seed config *and* the console's antenna map say port 4. A third conflicting claim exists inside the integration model itself: its passive-resource list says the fan dipole is on port 2. The authoritative artifact — the live config on the Raspberry Pi — stayed unreadable while the PRD was written. Port numbers are per-site configuration. Never hard-code them. The deployed on-device config plus physical inspection is the only resolution path.
 
-Code-check verdict (2026-09-03): **still unresolved** — the conflict persists in-tree: repo docs/CLAUDE.md say port 3; `antennaselect/config.example.toml` (`port4 = "ultrabeam"`) and `hf_console/lib/store/wiring.dart` (`'port4': 'Ultrabeam'`) say port 4. Only reading the live config on shari + physical inspection settles it.
+Code-check verdict (2026-09-03): **still unresolved** — the conflict persists in-tree: repo docs/CLAUDE.md say port 3; `antennaselect/config.example.toml` (`port4 = "ultrabeam"`) and `hf_console/lib/store/wiring.dart` (`'port4': 'Ultrabeam'`) say port 4. Only reading the live config on shari + physical inspection settles it. The hf_console station schematic (`hf_console/lib/ui/widgets/station_schematic.dart`, `schematicPorts`) draws the Ultrabeam on port 4 too; a test ties it to `antennaMap`, so fixing `wiring.dart` moves the drawing with it.
 
 ## [decision] `device_online` publication form: explicit vs omitted-when-true (PRD §6.3)
 
