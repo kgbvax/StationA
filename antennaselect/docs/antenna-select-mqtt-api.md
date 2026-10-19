@@ -277,7 +277,9 @@ the tuner's resource is selected and the band is non-resonant; gated by
 `[tuner_follow].enabled`).
 
 **Idle timeout (walk-away safety, §10):** the reconciler infers `activity` itself — a
-`freq_hz` change or `tx == "tx"` marks the station `active`; after `[idle].timeout_minutes`
+`freq_hz` change or `tx == "tx"` on a live radio link (`device_online=true`, `freq_hz>0`)
+marks the station `active` — a link drop and its reconnect (`freq_hz` → 0 → back) does not,
+so a radio/client disconnect never wakes a powerseq standby; after `[idle].timeout_minutes`
 (default 30m) with neither, it marks `inactive` and resolves `target = off` (tier 1). The
 switch's `off` position shorts the open ports to ground (lightning protection). There is no
 dedicated override command, but **an operator hold is presence**: a non-empty, non-`auto`

@@ -92,7 +92,8 @@ The seed config bakes the Mühle wiring map and band policy (matching
 ## Known dependencies / residuals
 
 - The station `activity` flag is **inferred** by this reconciler (not operator-set): a
-  `freq_hz` change or `tx == "tx"` marks `active`; after `[idle].timeout_minutes` (default 30)
+  `freq_hz` change or `tx == "tx"` on a live radio link marks `active` (a link drop and
+  reconnect, `freq_hz` → 0 → back, does not); after `[idle].timeout_minutes` (default 30)
   with neither, it marks `inactive` and resolves `target = off` (walk-away lightning
   protection). No dedicated override command, but an operator **hold is presence**: a
   non-empty non-`auto` `/cmd` request resets the idle clock, so a hold doubles as a manual
