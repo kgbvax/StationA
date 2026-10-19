@@ -248,7 +248,7 @@ class _TabletShell extends StatelessWidget {
   final ValueChanged<String> onSelect;
 
   /// Which rotator the left pane's compass dial reads: the HF rotator on the
-  /// HF page, the VHF az-rotator on the UHF page.
+  /// HF page, the VHF az-rotator on the UHF page, none on Station (no map).
   final RotatorSurface? rotator;
 
   /// Replaces the map in the left pane (Station: the station schematic).
@@ -414,9 +414,10 @@ class _StationPage extends StatelessWidget {
     return _TabletShell(
       page: 'station',
       onSelect: onSelect,
-      // Station page = station health: the left pane is the station
-      // schematic (power path, RF chains, hosts) instead of a map. Phones
-      // keep the power card + faults column — the sheet is too dense there.
+      // Station page = station health: no map — the left pane is the
+      // station schematic (power path, RF chains, hosts). The split stays so
+      // the top-bar toggles don't move. Phones keep the power card + faults
+      // column — the sheet is too dense there.
       rotator: null,
       leftPane: const StationSchematic(),
       rightChildren: const [
