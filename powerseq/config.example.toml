@@ -151,6 +151,11 @@ timeout_minutes = 30
 # Full power-down after this long without activity (must exceed
 # timeout_minutes). 0 or absent = stay in standby indefinitely.
 shutdown_minutes = 120
+# For this long after every phase change a watch change is not activity (it
+# re-baselines the watch): standby switches the antenna power off, and the UHF
+# rotator controllers then report a stepped position with device_online still
+# true — counted, that woke every standby ~2 s later. 0 or absent = 30.
+settle_s = 30
 
 # UHF use counts as activity too: the antenna-power plug also feeds the UHF
 # rotators, and the shack PC runs the satellite tracker. A watch is a /state

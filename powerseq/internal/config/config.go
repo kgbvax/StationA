@@ -88,6 +88,9 @@ type TimingConfig struct {
 	DefaultHoldMs int `toml:"default_hold_ms"`
 }
 
+// DefaultSettleSeconds is the watch settle window when [idle] settle_s is unset.
+const DefaultSettleSeconds = 30
+
 // IdleConfig configures the standby/wake triggers.
 //
 // The station is idle when the activity slot's /state.activity is "inactive"
@@ -106,6 +109,11 @@ type IdleConfig struct {
 	// station in standby runs [[idle_shutdown]]. 0 = never (stay in standby).
 	// Must exceed TimeoutMinutes.
 	ShutdownMinutes int `toml:"shutdown_minutes"`
+	// SettleSeconds is how long after every phase change a watch change is
+	// not activity (it re-baselines the watch): the sequencer's own power
+	// steps move readbacks, e.g. the UHF rotator position when the antenna
+	// supply goes off. 0 or unset = DefaultSettleSeconds.
+	SettleSeconds int `toml:"settle_s"`
 	// Watches are extra activity sources: a change of the /state field counts
 	// as activity (e.g. UHF radio frequency, UHF rotator position).
 	Watches []Watch `toml:"watch"`
@@ -321,6 +329,9 @@ func (c Config) Validate() error {
 				return fmt.Errorf("idle.watch[%d]: min_delta must be >= 0", i)
 			}
 		}
+	}
+	if c.Idle.SettleSeconds < 0 {
+		return fmt.Errorf("[idle] settle_s must be >= 0 (got %d; 0 = default %d)", c.Idle.SettleSeconds, DefaultSettleSeconds)
 	}
 	if c.Idle.ShutdownMinutes < 0 {
 		return fmt.Errorf("[idle] shutdown_minutes must be >= 0 (got %d; 0 = off)", c.Idle.ShutdownMinutes)

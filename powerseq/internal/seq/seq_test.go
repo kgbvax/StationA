@@ -1512,3 +1512,39 @@ func TestIdleShutdownConfigRejected(t *testing.T) {
 		}
 	}
 }
+
+// Regression 2026-10-19: standby switches the antenna power off; the UHF
+// rotator controllers keep their link up (device_online=true) but report a
+// stepped position. Counted as a watch move, that woke every standby ~2 s
+// after entry, so the station cycled running→standby→running every 30 min and
+// the idle shutdown could never fire. A change within the settle window after
+// a phase change re-baselines the watch; a later real move still wakes.
+func TestPowerStepInSettleWindowDoesNotWake(t *testing.T) {
+	const settle = 60 * time.Millisecond
+	s, _, wol, cancel := newStandbySeqWith(t, func(c *Config) { c.WatchSettle = settle })
+	defer cancel()
+	s.SetState(abs("uhf/el-rotator"), []byte(`{"el":3,"device_online":true}`))
+	s.setActivity("inactive", time.Time{})
+	runUntil(t, s, func() bool { return phaseIs(s, PhaseStandby) }, time.Second)
+
+	// Antenna supply off: readback steps 3 → 0 with the link still up.
+	s.SetState(abs("uhf/el-rotator"), []byte(`{"el":0,"device_online":true}`))
+	time.Sleep(settle + 20*time.Millisecond)
+	// Heartbeat of the new (unpowered) value after the window: not a move.
+	s.SetState(abs("uhf/el-rotator"), []byte(`{"el":0,"device_online":true}`))
+	time.Sleep(20 * time.Millisecond)
+	if !phaseIs(s, PhaseStandby) || wol.n() != 0 {
+		t.Fatalf("woke on the standby power step: phase=%s wol=%d", mustPhase(s), wol.n())
+	}
+
+	// A real move after the window still wakes the station.
+	s.SetState(abs("uhf/el-rotator"), []byte(`{"el":10,"device_online":true}`))
+	runUntil(t, s, func() bool { return phaseIs(s, PhaseRunning) }, time.Second)
+
+	// Wake powers the antennas on again: the readback steps back within the
+	// window. That is not activity, so standby follows one idle timeout after
+	// the wake instead of being deferred by the power step.
+	s.SetState(abs("uhf/el-rotator"), []byte(`{"el":3,"device_online":true}`))
+	s.setActivity("inactive", time.Time{})
+	runUntil(t, s, func() bool { return phaseIs(s, PhaseStandby) }, time.Second)
+}

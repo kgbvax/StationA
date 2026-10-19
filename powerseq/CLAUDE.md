@@ -99,7 +99,11 @@ when `hf/antenna-select` reports `activity=inactive` (antenna grounded), no
 lasted `timeout_minutes` → `entering_standby` → antenna power off + shack PC
 (bwpc) sleep (`retain=false`) → `standby`. A `last_activity` newer than the
 standby entry, a watch moving, or `start` → `waking` → WOL to bwpc + antenna
-power on → `running`. **Idle shutdown** (optional `[idle] shutdown_minutes`,
+power on → `running`. A watch change during a sequence or within `[idle]
+settle_s` (default 30) of a phase change only re-baselines the watch: the UHF
+rotator readbacks step when standby cuts the antenna power (link still up),
+which woke every standby ~2 s later until 2026-10-19. A wake logs its reason.
+**Idle shutdown** (optional `[idle] shutdown_minutes`,
 default example 120, + `[[idle_shutdown]]`): still in `standby` that long after
 the last activity (antennaselect `last_activity`, a watch, the last start/wake)
 → `stopping` → shutdown list + bwpc sleep → `idle` with

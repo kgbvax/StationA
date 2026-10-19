@@ -259,6 +259,12 @@ Configured with an `[idle]` block; omit all three to disable.
   least `min_delta` (numeric) since the last counted value is activity. Changes
   while the slot is offline / `device_online=false`, and a field appearing or
   vanishing, are not — so the antenna power going off is not read as activity.
+  Nor is a change during a sequence or within `[idle] settle_s` (default 30)
+  of any phase change: it re-baselines the watch. The UHF rotator controllers
+  keep `device_online=true` but report a stepped position when the antenna
+  supply goes off; counted, that woke every standby ~2 s after entry
+  (2026-10-19). A wake logs its reason (`wake: watch moved (slot.field a→b)`
+  or `wake: <activity slot> last_activity <ts>`).
   The defaults watch UHF use (`uhf/radio.freq_hz`, `uhf/az-rotator.az`,
   `uhf/el-rotator.el` with a 2° deadband against the el readback dither).
 - Idle is evaluated only in `running` and only with the broker connected. A

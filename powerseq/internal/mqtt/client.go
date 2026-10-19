@@ -101,6 +101,7 @@ func New(ctx context.Context, cfg config.Config, log *slog.Logger) (*Client, *se
 		ActivitySlot:    cfg.Idle.ActivitySlot,
 		IdleTimeout:     time.Duration(cfg.Idle.TimeoutMinutes) * time.Minute,
 		ShutdownTimeout: time.Duration(cfg.Idle.ShutdownMinutes) * time.Minute,
+		WatchSettle:     watchSettle(cfg.Idle.SettleSeconds),
 		Watches:         toSeqWatches(cfg.Idle.Watches),
 		NetworkDelay:    time.Duration(cfg.Timing.NetworkDelayS) * time.Second,
 		StepTimeout:     time.Duration(cfg.Timing.StepTimeoutS) * time.Second,
@@ -283,6 +284,14 @@ func toSeqSteps(cs []config.Step) []seq.Step {
 		}
 	}
 	return out
+}
+
+// watchSettle resolves [idle] settle_s (0 = the default).
+func watchSettle(secs int) time.Duration {
+	if secs == 0 {
+		secs = config.DefaultSettleSeconds
+	}
+	return time.Duration(secs) * time.Second
 }
 
 // toSeqWatches converts the [[idle.watch]] list to seq watches.

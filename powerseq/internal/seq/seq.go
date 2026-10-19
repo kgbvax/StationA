@@ -167,6 +167,12 @@ type Config struct {
 	// ShutdownTimeout is the time since the last activity after which a
 	// station in standby runs IdleShutdown (must exceed IdleTimeout).
 	ShutdownTimeout time.Duration
+	// WatchSettle is how long after a phase change a watch change is not
+	// activity (the change re-baselines the watch instead). The sequencer's
+	// own steps switch power: a rotator readback that steps when the antenna
+	// supply goes off (device link still up) is the sequencer's doing, not an
+	// operator's. 0 = no settle window.
+	WatchSettle time.Duration
 
 	// WOL sends wol steps; nil → SendMagicPacket.
 	WOL WOLSender
@@ -234,6 +240,8 @@ type Sequencer struct {
 	runningSince time.Time // last entry into phase=running
 	standbySince time.Time // last entry into phase=standby
 	lastWatch    time.Time // last counted watch change
+	lastWatchWhy string    // which watch moved last ("slot.field a→b"), for the wake log
+	settleUntil  time.Time // watch changes before this re-baseline (see WatchSettle)
 
 	cmdCh       chan string   // "start" | "stop" → runner
 	republishCh chan struct{} // mqtt layer → runner: re-publish retained /state
@@ -490,8 +498,16 @@ func (s *Sequencer) SetState(slot string, payload []byte) {
 // and only between two real values: a field appearing or vanishing (device
 // powered down, invalid readback) is not activity — otherwise switching the
 // antenna power off in standby would read as activity and wake the station.
+//
+// Nor does a change while a sequence runs or within WatchSettle of a phase
+// change: the sequencer's own power steps move readbacks of devices whose link
+// stays up (the UHF rotator controllers report a stepped position with
+// device_online=true when the antenna supply goes off — 2026-10-19, every
+// standby woke ~2 s later). Such a change re-baselines the watch instead.
 func (s *Sequencer) noteWatchesLocked(slot string, m map[string]any) {
 	fit := s.status[slot] == "online" && coerceToString(m["device_online"]) != "false"
+	now := time.Now()
+	settled := (s.phase == PhaseRunning || s.phase == PhaseStandby) && !now.Before(s.settleUntil)
 	for _, w := range s.watches {
 		if w.Slot != slot {
 			continue
@@ -500,13 +516,14 @@ func (s *Sequencer) noteWatchesLocked(slot string, m map[string]any) {
 		if v == "" || !fit {
 			continue
 		}
-		if w.anchor == "" {
-			w.anchor = v // first real value is the baseline, not activity
+		if w.anchor == "" || !settled {
+			w.anchor = v // baseline: first real value, or a self-inflicted change
 			continue
 		}
 		if watchMoved(w.anchor, v, w.MinDelta) {
+			s.lastWatchWhy = fmt.Sprintf("%s.%s %s→%s", w.Slot, w.Field, w.anchor, v)
 			w.anchor = v
-			s.lastWatch = time.Now()
+			s.lastWatch = now
 		}
 	}
 }
@@ -684,10 +701,12 @@ func (s *Sequencer) idleDecision(now time.Time) string {
 		return "standby"
 	case PhaseStandby:
 		if s.lastWatch.After(s.standbySince) {
+			s.log.Infof("wake: watch moved (%s)", s.lastWatchWhy)
 			return "wake"
 		}
 		if m != nil {
 			if ts, err := time.Parse(time.RFC3339Nano, coerceToString(m["last_activity"])); err == nil && ts.After(s.standbySince) {
+				s.log.Infof("wake: %s last_activity %s", s.activitySlot, ts.Format(time.RFC3339))
 				return "wake"
 			}
 		}
@@ -1028,6 +1047,9 @@ func (s *Sequencer) setPhase(phase, step, fault string) {
 		s.standbySince = time.Now()
 	}
 	prev := s.phase
+	if prev != phase {
+		s.settleUntil = time.Now().Add(s.cfg.WatchSettle)
+	}
 	s.phase = phase
 	s.step = step
 	s.fault = fault
