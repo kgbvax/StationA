@@ -45,6 +45,16 @@
 # after the first deploy, edit the file on the device (or delete it and
 # redeploy to re-seed).
 #
+# Exception — config migrations: when a release needs a new config section,
+# migrate-config.sh adds it to the existing on-device config.toml in place
+# (idempotent; an up-to-date file is left untouched). A migrated file is
+# backed up first (config.toml.pre-migrate-<timestamp>) and validated with the
+# NEW binary (`powerseq -check`) before the service is stopped; a migration
+# that does not validate is rolled back and the deploy aborts with the old
+# service still running.
+#   SHUTDOWN_MINUTES  [idle] shutdown_minutes the idle-shutdown migration adds
+#                     (default: 120)
+#
 set -euo pipefail
 
 # --- configuration ----------------------------------------------------------
@@ -71,6 +81,7 @@ MQTT_PASSWORD="${MQTT_PASSWORD:-}"
 NETWORK_DELAY_S="${NETWORK_DELAY_S:-30}"
 STEP_TIMEOUT_S="${STEP_TIMEOUT_S:-120}"
 SHUTDOWN_STAGGER_S="${SHUTDOWN_STAGGER_S:-2}"
+SHUTDOWN_MINUTES="${SHUTDOWN_MINUTES:-120}"
 
 # Allow "user@host" in SSH_HOST; otherwise prepend SSH_USER.
 if [[ "$SSH_HOST" == *"@"* ]]; then
@@ -205,14 +216,17 @@ scp "$OUT" "${SSH_TARGET}:/tmp/${BINARY}.new"
 scp "$UNIT_FILE" "${SSH_TARGET}:/tmp/${SERVICE_NAME}.service"
 scp "$SEED_CONFIG" "${SSH_TARGET}:/tmp/${SERVICE_NAME}.config.seed"
 scp "$SEED_ENV" "${SSH_TARGET}:/tmp/${SERVICE_NAME}.env.seed"
+scp migrate-config.sh "${SSH_TARGET}:/tmp/${SERVICE_NAME}.migrate-config.sh"
 
 # --- install remotely -------------------------------------------------------
 echo ">> Installing on ${SSH_TARGET}..."
-ssh "$SSH_TARGET" "INSTALL_DIR='${INSTALL_DIR}' BINARY='${BINARY}' SERVICE_NAME='${SERVICE_NAME}' SERVICE_USER='${SERVICE_USER}' CONFIG_DIR='${CONFIG_DIR}' CONFIG_FILE='${CONFIG_FILE}' ENV_FILE='${ENV_FILE}' bash -s" <<'REMOTE'
+ssh "$SSH_TARGET" "INSTALL_DIR='${INSTALL_DIR}' BINARY='${BINARY}' SERVICE_NAME='${SERVICE_NAME}' SERVICE_USER='${SERVICE_USER}' CONFIG_DIR='${CONFIG_DIR}' CONFIG_FILE='${CONFIG_FILE}' ENV_FILE='${ENV_FILE}' SHUTDOWN_MINUTES='${SHUTDOWN_MINUTES}' bash -s" <<'REMOTE'
 set -euo pipefail
 SEED_CFG="/tmp/${SERVICE_NAME}.config.seed"
 SEED_ENV="/tmp/${SERVICE_NAME}.env.seed"
-trap 'rm -f "$SEED_CFG" "$SEED_ENV"' EXIT
+MIGRATE="/tmp/${SERVICE_NAME}.migrate-config.sh"
+NEW_BIN="/tmp/${BINARY}.new"
+trap 'rm -f "$SEED_CFG" "$SEED_ENV" "$MIGRATE"' EXIT
 if ! id -u "$SERVICE_USER" >/dev/null 2>&1; then
   sudo useradd --system --no-create-home --shell /usr/sbin/nologin "$SERVICE_USER"
 fi
@@ -231,8 +245,27 @@ else
   echo "   seeded env file at $ENV_FILE (0600, owner $SERVICE_USER)."
   echo "   !! Set POWERSEQ_MQTT_PASSWORD in $ENV_FILE before relying on the service."
 fi
+# Config migrations (see header). Runs before the service is stopped, so a
+# failed migration leaves the old service running on the old config.
+chmod 755 "$NEW_BIN"
+BACKUP="${CONFIG_FILE}.pre-migrate-$(date +%Y%m%d-%H%M%S)"
+sudo cp -p "$CONFIG_FILE" "$BACKUP"
+sudo SHUTDOWN_MINUTES="$SHUTDOWN_MINUTES" bash "$MIGRATE" "$CONFIG_FILE"
+if sudo cmp -s "$CONFIG_FILE" "$BACKUP"; then
+  sudo rm -f "$BACKUP"
+  if ! sudo "$NEW_BIN" -check -config "$CONFIG_FILE"; then
+    echo "   !! $CONFIG_FILE does not validate with the new binary (not a migration issue) -- fix it on the device."
+  fi
+else
+  echo "   config migrated; backup at $BACKUP"
+  if ! sudo "$NEW_BIN" -check -config "$CONFIG_FILE"; then
+    sudo cp -p "$BACKUP" "$CONFIG_FILE"
+    echo "   !! migrated config does not validate -- restored $BACKUP, deploy aborted (service untouched)." >&2
+    exit 1
+  fi
+fi
 sudo systemctl stop "${SERVICE_NAME}.service" 2>/dev/null || true
-sudo mv "/tmp/${BINARY}.new" "${INSTALL_DIR}/${BINARY}"
+sudo mv "$NEW_BIN" "${INSTALL_DIR}/${BINARY}"
 sudo chmod 755 "${INSTALL_DIR}/${BINARY}"
 sudo mv "/tmp/${SERVICE_NAME}.service" "/etc/systemd/system/${SERVICE_NAME}.service"
 sudo systemctl daemon-reload

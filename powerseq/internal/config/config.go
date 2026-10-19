@@ -211,6 +211,9 @@ func Defaults() Config {
 type Flags struct {
 	ConfigPath string
 	LogLevel   string
+	// Check loads + validates the config and exits (deploy.sh runs it on a
+	// migrated config before restarting the service).
+	Check bool
 }
 
 // RegisterFlags wires powerseq's flags onto fs.
@@ -218,6 +221,7 @@ func RegisterFlags(fs *flag.FlagSet) *Flags {
 	var f Flags
 	fs.StringVar(&f.ConfigPath, "config", "/etc/powerseq/config.toml", "path to config file")
 	fs.StringVar(&f.LogLevel, "log.level", "", "log level (debug|info|warn|error); overrides config")
+	fs.BoolVar(&f.Check, "check", false, "validate the config file and exit (0 = valid)")
 	return &f
 }
 

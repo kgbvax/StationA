@@ -41,6 +41,7 @@ go test ./... -race                              # tests with race detector
 go vet ./...                                     # vet
 gofmt -s -w .                                    # fmt
 ./deploy.sh                                      # cross-compile, ship, install as hardened systemd service
+./powerseq -check -config config.toml            # validate a config and exit
 ```
 
 Run a single test:
@@ -186,6 +187,16 @@ both: they share the client_id and the one-button `/cmd`.
 ```bash
 ./deploy.sh              # cross-compile, ship, install as a hardened systemd service
 ```
+
+Config is seed-once, with one exception: **config migrations**. When a release
+needs a new config section, `migrate-config.sh` (run by `deploy.sh` on the
+target) adds it to the existing `/etc/powerseq/config.toml` in place. It is
+idempotent, backs the file up first (`config.toml.pre-migrate-<ts>`) and the
+migrated file must pass `powerseq -check` with the new binary before the
+service is stopped — otherwise the backup is restored and the deploy aborts.
+Current migration: idle shutdown (`shutdown_minutes`, env `SHUTDOWN_MINUTES`
+default 120, + `[[idle_shutdown]]` = the live `[[shutdown]]` + bwpc sleep).
+Add future migrations to that script as their own idempotent block.
 
 The unit is hardened like atr1k-tuner-bridge (network-only):
 `ProtectSystem=strict`, `PrivateDevices=true` (no serial devices),
