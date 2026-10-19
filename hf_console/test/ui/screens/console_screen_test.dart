@@ -5,6 +5,7 @@ import 'package:hf_console/store/bus_store.dart';
 import 'package:hf_console/ui/screens/console_screen.dart';
 import 'package:hf_console/ui/widgets/cam_record_controls.dart';
 import 'package:hf_console/ui/widgets/dx_map_container.dart';
+import 'package:hf_console/ui/widgets/station_schematic.dart';
 import '../../support/fake_mqtt_service.dart';
 import '../../support/fixtures.dart';
 import '../../support/test_harness.dart';
@@ -261,10 +262,11 @@ void main() {
       await tester.pumpWidget(TestHarness(store: store, mqtt: mqtt, child: const ConsoleScreen()));
       await tester.pump(const Duration(milliseconds: 100));
 
-      // All three pages share the _TabletShell: the toggle rail sits in the
-      // right column at one fixed spot, the map rail stays left, and the
+      // All pages share the _TabletShell: the toggle rail sits in the
+      // right column at one fixed spot, the map rail stays left (except on
+      // Station, whose left pane is the station schematic), and the
       // faults bar renders exactly once per page (inside the rail).
-      Offset uhfTab() => tester.getTopLeft(find.text('UHF'));
+      Offset uhfTab() => tester.getTopLeft(find.widgetWithText(InkWell, 'UHF'));
       final onHf = uhfTab();
       expect(find.byType(DxMapContainer), findsOneWidget);
       expect(find.text('FAULTS'), findsOneWidget);
@@ -278,7 +280,9 @@ void main() {
       await tester.tap(find.text('Station'));
       await tester.pump(const Duration(milliseconds: 100));
       expect(uhfTab(), onHf);
-      expect(find.byType(DxMapContainer), findsOneWidget);
+      // Station keeps the split; its left pane is the schematic, not a map.
+      expect(find.byType(DxMapContainer), findsNothing);
+      expect(find.byType(StationSchematic), findsOneWidget);
       expect(find.text('FAULTS'), findsOneWidget);
     });
   });

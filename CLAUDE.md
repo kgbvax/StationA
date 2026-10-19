@@ -231,4 +231,7 @@ All components follow these shared conventions:
     device facts (model/serial/firmware from `/meta`) need no edit; everything
     hand-written there (links, IPs, hosts, slot→component map, software list)
     does. `go test` fails on a misplaced key or a slot whose component is
-    missing from `[[software]]`.
+    missing from `[[software]]`. When a bridge moves host, also update the
+    hf_console station schematic's host map
+    (`hf_console/lib/store/station_hosts.dart`); its test cross-checks the
+    inventory and fails on a stale entry.

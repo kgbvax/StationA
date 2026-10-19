@@ -148,7 +148,7 @@ class PowerPanel extends StatelessWidget {
     final inTransition = powerSeqTransitionPhases.contains(seqPhase);
     // Standby and its two transitions are deliberate low-power states —
     // amber, never fault-red.
-    final standbyish = const {'standby', 'entering_standby', 'waking'}.contains(seqPhase);
+    final standbyish = powerSeqStandbyPhases.contains(seqPhase);
 
     final seqColor = seqFault.isNotEmpty
         ? AppTheme.red
@@ -157,17 +157,7 @@ class PowerPanel extends StatelessWidget {
             : standbyish
                 ? AppTheme.amber
                 : AppTheme.txtMute;
-    final seqLabel = seqFault.isNotEmpty
-        ? 'FAULT'
-        : const {
-              'running': 'ON',
-              'starting': 'STARTING',
-              'stopping': 'STOPPING',
-              'entering_standby': 'ENTER STANDBY',
-              'standby': 'STANDBY',
-              'waking': 'WAKING',
-            }[seqPhase] ??
-            'IDLE';
+    final seqLabel = powerSeqLabel(seqPhase, seqFault);
 
     final (pillSuffix, pillColor) = seqFault.isNotEmpty
         ? ('FAULT', AppTheme.red)

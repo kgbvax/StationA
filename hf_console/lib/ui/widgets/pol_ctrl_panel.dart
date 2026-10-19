@@ -30,7 +30,8 @@ import 'status_pill.dart';
 ///
 /// R15: this surface is purely operator-driven. Nothing here binds
 /// polarization to band, tracking, rotor position, or any policy — taps are
-/// the only publish path. A rejected command surfaces in-panel as an ERR tag
+/// the only publish path (the one other operator tap that sets it is the sat
+/// PARK key, which selects vertical: see rotator_park.dart). A rejected command surfaces in-panel as an ERR tag
 /// (the firmware publishes rejections into the retained `/state` `error`
 /// field) and, via the store, on the console faults bar.
 class PolCtrlPanel extends StatelessWidget {

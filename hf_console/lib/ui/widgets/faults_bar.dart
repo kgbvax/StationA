@@ -1,16 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../store/bus_store.dart';
+import '../../store/station_schematic.dart' show antPoweredSlots;
 import '../theme.dart';
-
-/// Slots behind the `muehle/power/antennas` plug (HF + UHF rotators and the
-/// Ultrabeam controller). They go offline by design in standby.
-const _antPoweredSlots = {
-  'muehle/hf/ant-ctrl',
-  'muehle/hf/rotator',
-  'muehle/uhf/az-rotator',
-  'muehle/uhf/el-rotator',
-};
 
 class FaultsBar extends StatelessWidget {
   /// Show every row and fill the given height (Station page — the station
@@ -39,7 +31,7 @@ class FaultsBar extends StatelessWidget {
     for (final record in store.faultHistory) {
       // An unpowered antenna device's error (link lost, no reply) is moot:
       // keep it in the list, but greyed, not as an active fault.
-      final moot = antUnpowered && _antPoweredSlots.contains(record.address);
+      final moot = antUnpowered && antPoweredSlots.contains(record.address);
       history.add(_Fault(
         _ts(record.ts, time),
         _parseTime(record.ts, now),
@@ -64,7 +56,7 @@ class FaultsBar extends StatelessWidget {
       // normal state the power panel shows as ASLEEP. Its /state.error still
       // reaches the list through the fault history.
       if (address == 'muehle/power/shack-pc') continue;
-      if (antUnpowered && _antPoweredSlots.contains(address)) {
+      if (antUnpowered && antPoweredSlots.contains(address)) {
         antRowsSuppressed = true;
         continue;
       }
@@ -89,7 +81,7 @@ class FaultsBar extends StatelessWidget {
     // alone name the PSU.
     final hfChainDead = store.offlineList.any((e) =>
         e.startsWith('muehle/hf/') &&
-        !(antUnpowered && _antPoweredSlots.contains(e.split(':').first)));
+        !(antUnpowered && antPoweredSlots.contains(e.split(':').first)));
     if (psuOnline && psuPower == 'off' && hfChainDead) {
       offline.add(_Fault(time, now, 'muehle/power/psu-13v8: PSU OFF — HF control chain unpowered', active: true));
     }

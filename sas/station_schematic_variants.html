@@ -1,0 +1,855 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Station schematic: three idioms</title>
+<style>
+@font-face{font-family:IBMPlexSans;src:url(../hf_console/assets/fonts/IBMPlexSans-Regular.ttf);font-weight:400}
+@font-face{font-family:IBMPlexSans;src:url(../hf_console/assets/fonts/IBMPlexSans-Medium.ttf);font-weight:500}
+@font-face{font-family:IBMPlexSans;src:url(../hf_console/assets/fonts/IBMPlexSans-SemiBold.ttf);font-weight:600}
+@font-face{font-family:IBMPlexSans;src:url(../hf_console/assets/fonts/IBMPlexSans-Bold.ttf);font-weight:700}
+@font-face{font-family:IBMPlexMono;src:url(../hf_console/assets/fonts/IBMPlexMono-Regular.ttf);font-weight:400}
+@font-face{font-family:IBMPlexMono;src:url(../hf_console/assets/fonts/IBMPlexMono-Medium.ttf);font-weight:500}
+@font-face{font-family:IBMPlexMono;src:url(../hf_console/assets/fonts/IBMPlexMono-SemiBold.ttf);font-weight:600}
+@font-face{font-family:IBMPlexMono;src:url(../hf_console/assets/fonts/IBMPlexMono-Bold.ttf);font-weight:700}
+@font-face{font-family:SairaCondensed;src:url(../hf_console/assets/fonts/SairaCondensed-Medium.ttf);font-weight:500}
+@font-face{font-family:SairaCondensed;src:url(../hf_console/assets/fonts/SairaCondensed-SemiBold.ttf);font-weight:600}
+@font-face{font-family:SairaCondensed;src:url(../hf_console/assets/fonts/SairaCondensed-Bold.ttf);font-weight:700}
+*{box-sizing:border-box}
+body{margin:0;background:var(--page);color:var(--txt);font:14px/1.45 IBMPlexSans,system-ui,sans-serif}
+.controls{display:flex;flex-wrap:wrap;gap:10px 26px;padding:12px 16px;background:var(--card);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
+.group{display:flex;align-items:center;gap:10px}
+.group > span{color:var(--txtMute);font-size:13px}
+.seg{display:inline-flex;border:1px solid var(--lineHi);border-radius:4px;overflow:hidden}
+.seg button{font:600 13px IBMPlexSans,sans-serif;color:var(--txtMute);background:var(--pane);border:0;border-left:1px solid var(--line);padding:0 12px;min-height:36px;cursor:pointer}
+.seg button:first-child{border-left:0}
+.seg button[aria-pressed="true"]{background:var(--accent);color:var(--onAccent)}
+.seg button:focus-visible,.hit:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+main{padding:16px;display:grid;gap:14px;justify-items:start}
+.pane{position:relative;width:min(100%,747px);aspect-ratio:747/770;background:var(--pane);border:1px solid var(--line);border-radius:6px;overflow:hidden}
+.pane svg{display:block;width:100%;height:100%}
+.note{max-width:68ch;color:var(--txtMute);margin:0}
+.note b{color:var(--txt);font-weight:600}
+.pop{position:absolute;width:260px;background:var(--card);border:1px solid var(--lineHi);border-radius:6px;padding:10px 12px 12px;font-size:12.5px;box-shadow:0 10px 28px rgba(0,0,0,.4);z-index:3}
+.pop h3{margin:0;font:600 14px IBMPlexSans,sans-serif;padding-right:28px}
+.pop .addr{font:500 11.5px IBMPlexMono,monospace;color:var(--txtFaint);margin:1px 0 8px}
+.pop dl{display:grid;grid-template-columns:auto 1fr;gap:2px 12px;margin:0}
+.pop dt{color:var(--txtMute)}
+.pop dd{margin:0;font:500 12px IBMPlexMono,monospace;text-align:right;overflow-wrap:anywhere}
+.pop .bad{color:var(--red)} .pop .warn{color:var(--amber)} .pop .ok{color:var(--green)}
+.pop .close{position:absolute;top:2px;right:2px;width:36px;height:36px;border:0;background:none;color:var(--txtMute);font-size:20px;cursor:pointer}
+.hit{cursor:pointer;outline:none}
+@media (prefers-reduced-motion:no-preference){.pop{animation:pop .12s ease-out}@keyframes pop{from{opacity:0;transform:translateY(4px)}}}
+</style>
+</head>
+<body>
+<div class="controls">
+  <div class="group"><span id="lbl-v">Idiom</span><div class="seg" role="group" aria-labelledby="lbl-v" data-key="variant"></div></div>
+  <div class="group"><span id="lbl-t">Scheme</span><div class="seg" role="group" aria-labelledby="lbl-t" data-key="theme"></div></div>
+  <div class="group"><span id="lbl-s">Scenario</span><div class="seg" role="group" aria-labelledby="lbl-s" data-key="scen"></div></div>
+</div>
+<main>
+  <div class="pane" id="pane"></div>
+  <p class="note" id="note"></p>
+</main>
+<script>
+'use strict';
+const W = 760, H = 790;
+
+// ── App palettes (hf_console/lib/ui/theme.dart) ───────────────────────────
+const THEMES = {
+  dc:     {label:'DC',     page:'#0A0C10', pane:'#0F1218', card:'#151923', land:'#232C3E', line:'#2A3142', lineHi:'#3D4558', txt:'#DEE3EC', txtMute:'#8C97AB', txtFaint:'#5B6579', accent:'#5FB2C9', green:'#5CCB8A', amber:'#D7B04A', red:'#D9685C', orange:'#D99A5F', violet:'#9384F0', onAccent:'#000', dark:true},
+  paper:  {label:'Paper',  page:'#E5E3DD', pane:'#EFEDE7', card:'#F9F8F5', land:'#D0C6B4', line:'#D4D1CA', lineHi:'#B8B4AB', txt:'#1A1A1A', txtMute:'#5E5A53', txtFaint:'#8C887E', accent:'#005F99', green:'#1E6B48', amber:'#A36A00', red:'#B52E1D', orange:'#C45F18', violet:'#5B3FD6', onAccent:'#fff', dark:false},
+  aether: {label:'Aether', page:'#000000', pane:'#0B0F16', card:'#000000', land:'#121A24', line:'#1A2530', lineHi:'#28394A', txt:'#C8D8E8', txtMute:'#8EA8C0', txtFaint:'#506070', accent:'#00B4D8', green:'#4DD87A', amber:'#FFB84D', red:'#FF4D4D', orange:'#FC4500', violet:'#9A7CFF', onAccent:'#000', dark:true},
+};
+
+// ── Station model ─────────────────────────────────────────────────────────
+const HOSTS = {
+  bwpc:    {title:'bwpc',         kind:'Windows', ip:'192.168.1.197'},
+  scmino:  {title:'scmino',       kind:'Pi CM5',  ip:'192.168.1.178'},
+  hassio:  {title:'hassio',       kind:'Broker',  ip:'192.168.1.50'},
+  shari:   {title:'shari',        kind:'Pi',      ip:'192.168.1.139'},
+  console: {title:'This console', kind:'Tablet',  ip:'MQTT client'},
+};
+const SLOTMETA = {
+  'power/psu-13v8':       {name:'PSU mains plug',     device:'Shelly plug',            host:'scmino', bridge:'shelly-power-bridge'},
+  'power/antennas':       {name:'Antenna mains plug', device:'Shelly plug',            host:'scmino', bridge:'shelly-power-bridge'},
+  'power/shack-pc-mains': {name:'PC mains plug',      device:'Shelly plug',            host:'scmino', bridge:'shelly-power-bridge'},
+  'power/shack-pc':       {name:'Shack PC agent',     device:'bwpc',                   host:'bwpc',   bridge:'winpc-power-bridge'},
+  'hf/radio':             {name:'FLEX-8400',          device:'FlexRadio FLEX-8400',    host:'scmino', bridge:'flexbridge'},
+  'hf/pa':                {name:'ACOM 1200S',         device:'ACOM 1200S',             host:'scmino', bridge:'acom1200s-pa-bridge'},
+  'hf/tuner':             {name:'ATR-1000',           device:'ATR-1000 ATU',           host:'scmino', bridge:'atr1k-tuner-bridge'},
+  'hf/ant-switch':        {name:'Antenna switch',     device:'Waveshare 1:6 relays',   host:'esp',    bridge:'ESPHome firmware'},
+  'hf/ant-ctrl':          {name:'RCU-06',             device:'Ultrabeam RCU-06',       host:'scmino', bridge:'ultrabridge'},
+  'hf/rotator':           {name:'G-450',              device:'Yaesu G-450DC via WRC',  host:'scmino', bridge:'wrc-rotator-bridge'},
+  'hf/switch':            {name:'PLC #1',             device:'M5 Stamp PLC #1',        host:'esp',    bridge:'m5stamp-hf-ctrl'},
+  'hf/pa-arm':            {name:'PLC #1 arm',         device:'M5 Stamp PLC #1',        host:'esp',    bridge:'m5stamp-hf-ctrl'},
+  'hf/antenna-select':    {name:'Antenna select',     device:'logic slot',             host:'scmino', bridge:'antennaselect'},
+  'hf/beam-steer':        {name:'Beam steer',         device:'logic slot',             host:'scmino', bridge:'beamsteer'},
+  'hf/power-seq':         {name:'Sequencer',          device:'logic slot',             host:'scmino', bridge:'powerseq'},
+  'hf/discovery':         {name:'HA discovery',       device:'logic slot',             host:'scmino', bridge:'hadiscovery'},
+  'hf/spots':             {name:'Logger spots',       device:'DXLog / Log4OM',         host:'scmino', bridge:'logger-spot-bridge'},
+  'uhf/radio':            {name:'IC-9700',            device:'Icom IC-9700',           host:'scmino', bridge:'icom9700-radio-bridge'},
+  'uhf/sat-track':        {name:'Sat track',          device:'OscarWatch on bwpc',     host:'scmino', bridge:'oscarwatch-sattrack-bridge'},
+  'uhf/az-rotator':       {name:'SPID',               device:'SPID az rotator',        host:'shari',  bridge:'spid-ercm-rotator-bridge'},
+  'uhf/el-rotator':       {name:'GS-500',             device:'GS-500 via ERC-M',       host:'shari',  bridge:'spid-ercm-rotator-bridge'},
+  'uhf/pol-ctrl':         {name:'PLC #2',             device:'M5 Stamp PLC #2',        host:'esp',    bridge:'m5stamp-pol-ctrl'},
+};
+const ANT_POWERED = ['hf/ant-ctrl', 'hf/rotator', 'uhf/az-rotator', 'uhf/el-rotator'];
+const PORTS = [
+  {port:'port4', name:'Ultrabeam',  ang:-62, row:358},
+  {port:'port6', name:'Fan dipole', ang:-24, row:398},
+  {port:'port5', name:'Port 5',     ang: 10, row:426},
+  {port:'port1', name:'Dummy load', ang: 42, row:452},
+  {port:'off',   name:'Ground',     ang: 78, row:480},
+];
+const SEL = {x:505, y:388, r:20, rt:31};
+const POL = {h:'Horizontal', v:'Vertical', cl:'LHCP', cr:'RHCP'};
+const DIR = {forward:'Forward', reverse:'Reverse', bidirectional:'Bi-dir'};
+
+const BASE = () => ({
+  link: true,
+  slots: {
+    'power/psu-13v8':       {status:'online', device_online:true, power:'on', apower:64,  voltage:231.4, current:0.41},
+    'power/antennas':       {status:'online', device_online:true, power:'on', apower:22,  voltage:231.2, current:0.17},
+    'power/shack-pc-mains': {status:'online', device_online:true, power:'on', apower:118, voltage:231.0, current:0.69},
+    'power/shack-pc':       {status:'online'},
+    'hf/switch':            {status:'online', device_online:true, trx:'on', pa:'on'},
+    'hf/pa-arm':            {status:'online', device_online:true, enabled:true, armed:true},
+    'hf/radio':             {status:'online', device_online:true, freq_hz:14074000, band:'20m', mode:'data', tx:'rx', tuning:false, drive:38},
+    'hf/pa':                {status:'online', device_online:true, power:'on', mode:'operate', keyed:'rx', fwd_power_w:0, rfl_power_w:0, swr:null, temp_c:36, fault:'none'},
+    'hf/tuner':             {status:'online', device_online:true, inline:true, swr:1.12, fwd:0, settling:false, l_uh:0.82, c_pf:47},
+    'hf/ant-switch':        {status:'online', device_online:true, selected:'port4', settled:true},
+    'hf/ant-ctrl':          {status:'online', device_online:true, band:'20m', direction:'forward', moving:false},
+    'hf/rotator':           {status:'online', device_online:true, az:212, target_az:212, moving:false},
+    'hf/antenna-select':    {status:'online', mode:'auto', activity:'active'},
+    'hf/beam-steer':        {status:'online', enabled:true},
+    'hf/power-seq':         {status:'online', phase:'running', step:'', fault:''},
+    'hf/discovery':         {status:'online'},
+    'hf/spots':             {status:'online'},
+    'uhf/radio':            {status:'online', freq_hz:145212500, mode:'fm', session_state:'idle'},
+    'uhf/sat-track':        {status:'online', device_online:true, tracking:false},
+    'uhf/az-rotator':       {status:'online', device_online:true, az:200, moving:false},
+    'uhf/el-rotator':       {status:'online', device_online:true, el:0, moving:false},
+    'uhf/pol-ctrl':         {status:'online', device_online:true, pol:'cr'},
+  },
+});
+const SCEN = {
+  running: {label:'Running', f:S => S},
+  tx: {label:'TX', f:S => {
+    Object.assign(S.slots['hf/radio'], {tx:'tx'});
+    Object.assign(S.slots['hf/pa'], {keyed:'tx', fwd_power_w:812, rfl_power_w:14, swr:1.29, temp_c:52});
+    Object.assign(S.slots['hf/tuner'], {fwd:798});
+    Object.assign(S.slots['power/psu-13v8'], {apower:246, current:1.07});
+    Object.assign(S.slots['uhf/sat-track'], {tracking:true, sat_name:'AO-91', el:18, range_km:1240});
+    Object.assign(S.slots['uhf/az-rotator'], {az:142});
+    Object.assign(S.slots['uhf/el-rotator'], {el:18});
+    Object.assign(S.slots['uhf/radio'], {session_state:'streaming', freq_hz:145960000});
+  }},
+  standby: {label:'Standby', f:S => {
+    S.slots['hf/power-seq'].phase = 'standby';
+    Object.assign(S.slots['power/antennas'], {power:'off', apower:0, current:0});
+    ANT_POWERED.forEach(a => S.slots[a].device_online = false);
+    S.slots['power/shack-pc'].status = 'offline';
+    Object.assign(S.slots['power/shack-pc-mains'], {apower:3, current:0.03});
+    S.slots['hf/pa'].mode = 'standby';
+    S.slots['hf/antenna-select'].activity = 'inactive';
+    Object.assign(S.slots['power/psu-13v8'], {apower:48, current:0.31});
+  }},
+  faults: {label:'Faults', f:S => {
+    Object.assign(S.slots['hf/pa'], {mode:'standby', fault:'HIGH SWR', swr:2.9, temp_c:63});
+    Object.assign(S.slots['hf/tuner'], {swr:2.6, inline:false});
+    S.slots['hf/ant-switch'].selected = 'port6';
+    S.slots['hf/antenna-select'].mode = 'manual';
+    S.slots['hf/ant-ctrl'].status = 'offline';
+    S.slots['uhf/el-rotator'].device_online = false;
+    S.slots['uhf/el-rotator'].error = 'ERC-M: no reply';
+  }},
+  linkdown: {label:'Link down', f:S => { S.link = false; }},
+};
+
+function quality(S, a) {
+  if (!S.link) return 'stale';
+  const s = S.slots[a];
+  // The bwpc agent's LWT goes offline whenever the PC sleeps: expected, not a fault.
+  if (a === 'power/shack-pc' && s?.status === 'offline') return 'unpowered';
+  if (!s || s.status !== 'online') return 'down';
+  if (s.device_online === false) {
+    if (ANT_POWERED.includes(a) && antOff(S)) return 'unpowered';
+    return 'lost';
+  }
+  return 'ok';
+}
+const antOff = S => S.slots['hf/power-seq'].phase === 'standby' || S.slots['power/antennas'].power === 'off';
+const bad = q => q === 'down' || q === 'lost' || q === 'stale';
+
+function levelOf(S, a) {
+  const q = quality(S, a);
+  if (q === 'down' || q === 'lost') return 'alarm';
+  if (q !== 'ok') return null;
+  const s = S.slots[a];
+  if ((s.fault && s.fault !== 'none') || s.error) return 'alarm';
+  if (a === 'hf/pa' || a === 'hf/tuner') {
+    if (s.swr > 3 || s.temp_c > 75) return 'alarm';
+    if (s.swr > 2 || s.temp_c > 60) return 'warn';
+  }
+  return null;
+}
+function hostHealth(S, h) {
+  const br = {};
+  for (const [a, m] of Object.entries(SLOTMETA)) {
+    if (m.host !== h) continue;
+    br[m.bridge] = !!br[m.bridge] || S.slots[a]?.status === 'online';
+  }
+  const names = Object.keys(br);
+  return {up: names.filter(n => br[n]).length, total: names.length, br};
+}
+const fmtFreq = hz => { const s = String(Math.round(hz)); return `${s.slice(0, -6)}.${s.slice(-6, -3)}.${s.slice(-3)}`; };
+
+// ── SVG helpers ───────────────────────────────────────────────────────────
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;'}[c]));
+const at = o => Object.entries(o).filter(([, v]) => v !== undefined && v !== null && v !== false).map(([k, v]) => `${k}="${esc(v)}"`).join(' ');
+const E = (tag, a = {}, inner = '') => `<${tag} ${at(a)}>${inner}</${tag}>`;
+const P = pts => 'M' + pts.map(p => p.join(' ')).join(' L');
+const SANS = 'IBMPlexSans', MONO = 'IBMPlexMono', COND = 'SairaCondensed';
+function T(x, y, s, o = {}) {
+  return E('text', {x, y, fill:o.fill, 'font-family':o.ff || SANS, 'font-size':o.fs || 12, 'font-weight':o.fw || 400,
+    'text-anchor':o.anchor, 'letter-spacing':o.ls, opacity:o.op, style:'font-variant-numeric:tabular-nums'}, esc(s));
+}
+const _cv = document.createElement('canvas').getContext('2d');
+function tw(str, ff, fs, fw, ls = 0) { _cv.font = `${fw} ${fs}px ${ff}`; return _cv.measureText(str).width + ls * str.length; }
+function fitsRight(o, title, right, tf, rf) { return tw(title, ...tf) + tw(right, ...rf) + 12 + (o.lampPad || 0) <= o.w - 16; }
+function hexPath(cx, cy, w, h) {
+  const a = h / 2, b = w / 2, k = a * 0.6;
+  return P([[cx - b, cy], [cx - b + k, cy - a], [cx + b - k, cy - a], [cx + b, cy], [cx + b - k, cy + a], [cx - b + k, cy + a]]) + 'Z';
+}
+
+// ── Variant renderers ─────────────────────────────────────────────────────
+// Each variant implements the same primitive set; the sheet geometry below
+// is shared, so the three idioms differ only in how a state is drawn.
+
+function variantHMI(C) {
+  const V = {key:'hmi'};
+  const valCol = q => bad(q) ? C.txtFaint : C.txt;
+  V.defs = () => `<pattern id="hatch" width="7" height="7" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="7" height="7" fill="${C.pane}"/><line x1="0" y1="0" x2="0" y2="7" stroke="${C.lineHi}" stroke-width="2"/></pattern>`;
+  V.bg = () => E('rect', {width:W, height:H, fill:C.pane});
+  V.zone = (y, label) => (y > 0 ? E('line', {x1:0, x2:W, y1:y, y2:y, stroke:C.line}) : '') + T(34, y + 18, label, {fill:C.txtFaint, fs:11, fw:500});
+  V.wire = (d, o) => {
+    if (o.m === 'rf' && !o.live && !o.tx) return E('path', {d, fill:'none', stroke:C.lineHi, 'stroke-width':1.4, 'stroke-linejoin':'round'});
+    if (o.m === 'rf') {
+      // Coax as a pipe: hollow while idle, filled while a carrier is up.
+      const outer = o.live ? C.txtMute : C.lineHi;
+      return E('path', {d, fill:'none', stroke:outer, 'stroke-width':o.tx ? 6 : 5, 'stroke-linejoin':'round'})
+           + E('path', {d, fill:'none', stroke:o.tx ? C.txt : C.pane, 'stroke-width':o.tx ? 3.6 : 2.4, 'stroke-linejoin':'round'});
+    }
+    if (o.m === 'ctl') return E('path', {d, fill:'none', stroke:o.live ? C.txtMute : C.txtFaint, 'stroke-width':1.25, 'stroke-dasharray':'4 3'});
+    if (o.m === 'data') return E('path', {d, fill:'none', stroke:C.txtFaint, 'stroke-width':1.6, 'stroke-dasharray':'0.1 3.6', 'stroke-linecap':'round'});
+    const w = o.m === 'lan' ? 1.5 : 2;
+    return E('path', {d, fill:'none', stroke:o.live ? C.txtMute : C.lineHi, 'stroke-width':o.live ? w : w * 0.7, 'stroke-linejoin':'round'});
+  };
+  V.dot = (x, y, live) => E('circle', {cx:x, cy:y, r:2.8, fill:live ? C.txtMute : C.lineHi});
+  V.box = o => {
+    const fill = bad(o.q) ? 'url(#hatch)' : (o.on === false || o.q === 'unpowered') ? C.pane : C.card;
+    const stroke = o.level === 'alarm' ? C.red : o.level === 'warn' ? C.amber : C.lineHi;
+    return E('rect', {x:o.x, y:o.y, width:o.w, height:o.h, rx:2, fill, stroke, 'stroke-width':o.level ? 2 : 1,
+      'stroke-dasharray':(o.on === false || o.q === 'unpowered') ? '3 3' : null});
+  };
+  V.row = (o, r) => {
+    const x = o.x + 8, xr = o.x + o.w - 8, y = o.y + r.y, vc = valCol(o.q);
+    switch (r.k) {
+      case 'title': return T(x, y, r.t, {fill:C.txtMute, fw:600, fs:12}) + (r.r && fitsRight(o, r.t, r.r, [SANS, 12, 600], [SANS, 11, 600]) ? T(xr, y, r.r, {fill:r.rTone ? C[r.rTone] : vc, fw:600, fs:11, anchor:'end'}) : '');
+      case 'big':   return T(x, y, r.t, {fill:vc, ff:MONO, fw:600, fs:16}) + (r.u ? T(xr, y, r.u, {fill:C.txtMute, fs:11, anchor:'end'}) : '');
+      case 'pair':  return T(x, y, r.l, {fill:C.txtMute, fs:12}) + T(xr, y, r.r, {fill:vc, ff:MONO, fs:12, fw:500, anchor:'end'});
+      case 'note':  return T(x, y, r.t, {fill:r.tone ? C[r.tone] : C.txtMute, fs:11.5, fw:600});
+      case 'meter': return meter(x, xr, y, r, o.q);
+      case 'badge': {
+        const lit = r.on && !bad(o.q), w = 28;
+        return E('rect', {x, y:y - 11, width:w, height:15, rx:2, fill:lit ? C.txt : 'none', stroke:lit ? C.txt : C.lineHi})
+             + T(x + w / 2, y, r.t, {fill:lit ? C.pane : C.txtFaint, ff:MONO, fs:10.5, fw:700, anchor:'middle'})
+             + (r.r ? T(xr, y, r.r, {fill:vc, ff:MONO, fs:12, fw:500, anchor:'end'}) : '');
+      }
+    }
+    return '';
+  };
+  // ISA-101 analog indicator: reading on the text row, bar underneath with
+  // the normal band shaded and neutral limit ticks; colour only on violation.
+  function meter(x, xr, y, r, q) {
+    const bw = xr - x, sc = v => x + Math.max(0, Math.min(1, (v - r.min) / (r.max - r.min))) * bw;
+    const has = r.v != null && !bad(q);
+    const tone = !has ? C.txtFaint : r.alarm != null && r.v > r.alarm ? C.red : r.warn != null && r.v > r.warn ? C.amber : C.txt;
+    let s = T(x, y, r.label, {fill:C.txtFaint, fs:11}) + T(xr, y, r.v == null ? '—' : r.fmt(r.v), {fill:tone, ff:MONO, fs:12, fw:500, anchor:'end'});
+    const by = y + 4;
+    s += E('rect', {x, y:by, width:bw, height:5, fill:C.pane, stroke:C.lineHi, 'stroke-width':0.8});
+    s += E('rect', {x:sc(r.normal[0]), y:by, width:sc(r.normal[1]) - sc(r.normal[0]), height:5, fill:C.lineHi});
+    for (const lim of [r.warn, r.alarm]) if (lim != null) s += E('line', {x1:sc(lim), x2:sc(lim), y1:by - 2, y2:by + 7, stroke:C.txtFaint, 'stroke-width':1});
+    if (has) s += E('rect', {x:sc(r.v) - 1.5, y:by - 3, width:3, height:11, fill:tone});
+    return s;
+  }
+  V.breaker = (x, y, o) => {
+    const s = 15, fill = bad(o.q) ? 'url(#hatch)' : o.closed ? C.txtMute : C.pane;
+    return E('rect', {x:x - s / 2, y:y - s / 2, width:s, height:s, fill, stroke:o.level === 'alarm' ? C.red : C.txtMute, 'stroke-width':1.5});
+  };
+  V.contact = (x, y, o) => contact(x, y, o, C.txtMute, C.txtFaint);
+  V.hex = o => {
+    const stroke = o.level === 'alarm' ? C.red : o.level === 'warn' ? C.amber : C.lineHi;
+    return E('path', {d:hexPath(o.cx, o.cy, o.w, o.h), fill:bad(o.q) ? 'url(#hatch)' : o.on === false ? C.pane : C.card, stroke, 'stroke-width':o.level ? 2 : 1})
+         + T(o.cx, o.cy - 3, o.title, {fill:C.txtMute, fs:11, fw:600, anchor:'middle'})
+         + T(o.cx, o.cy + 12, o.value, {fill:valCol(o.q), ff:MONO, fs:12, fw:500, anchor:'middle'});
+  };
+  V.marker = (x, y, level) => {
+    if (level === 'alarm') return E('rect', {x:x - 7, y:y - 7, width:14, height:14, fill:C.red}) + T(x, y + 4, '1', {fill:C.dark ? '#000' : '#fff', ff:MONO, fs:11, fw:700, anchor:'middle'});
+    if (level === 'warn') return E('path', {d:`M${x} ${y - 8} L${x + 8} ${y + 6} L${x - 8} ${y + 6}Z`, fill:C.amber}) + T(x, y + 4.5, '2', {fill:'#000', ff:MONO, fs:10, fw:700, anchor:'middle'});
+    return '';
+  };
+  V.ink = {line:C.txtMute, faint:C.txtFaint, label:C.txtMute, sym:C.txtMute, symDead:C.lineHi};
+  V.footer = S => {
+    const y1 = 748, y2 = 774;
+    const items = [
+      [0, y1, 'pipe', 'RF idle'], [128, y1, 'pipetx', 'RF carrier'], [262, y1, 'live', 'Energized'], [384, y1, 'dead', 'De-energized'], [524, y1, 'ctl', 'Control'], [632, y1, 'data', 'Data link'],
+      [0, y2, 'alarm', 'Alarm'], [128, y2, 'warn', 'Warning'], [262, y2, 'hatch', 'No data'], [384, y2, 'band', 'Normal range'],
+    ];
+    return items.map(([dx, y, k, l]) => {
+      const x = 18 + dx; let g = '';
+      if (k === 'pipe' || k === 'pipetx') g = V.wire(P([[x, y - 4], [x + 28, y - 4]]), {m:'rf', live:true, tx:k === 'pipetx'});
+      if (k === 'live' || k === 'dead') g = V.wire(P([[x, y - 4], [x + 28, y - 4]]), {m:'dc', live:k === 'live'});
+      if (k === 'ctl' || k === 'data') g = V.wire(P([[x, y - 4], [x + 28, y - 4]]), {m:k, live:true});
+      if (k === 'alarm' || k === 'warn') g = V.marker(x + 14, y - 4, k);
+      if (k === 'hatch') g = E('rect', {x, y:y - 11, width:28, height:14, fill:'url(#hatch)', stroke:C.lineHi});
+      if (k === 'band') g = E('rect', {x, y:y - 7, width:28, height:6, fill:'none', stroke:C.lineHi}) + E('rect', {x:x + 6, y:y - 7, width:10, height:6, fill:C.line});
+      return g + T(x + 36, y, l, {fill:C.txtMute, fs:11.5});
+    }).join('');
+  };
+  return V;
+}
+
+function variantMimic(C) {
+  const V = {key:'mimic'};
+  const hue = {ac:C.amber, dc:C.violet, rf:C.accent, lan:C.txtMute, ctl:C.green, data:C.txtMute};
+  const glow = C.dark;
+  V.defs = () => {
+    const f = Object.entries(hue).map(([k, c]) => `<filter id="g-${k}" filterUnits="userSpaceOnUse" x="-10" y="-10" width="${W + 20}" height="${H + 20}"><feDropShadow dx="0" dy="0" stdDeviation="2.2" flood-color="${c}" flood-opacity="0.75"/></filter>`).join('');
+    return f + `<filter id="g-tx" filterUnits="userSpaceOnUse" x="-10" y="-10" width="${W + 20}" height="${H + 20}"><feDropShadow dx="0" dy="0" stdDeviation="3" flood-color="${C.accent}" flood-opacity="0.95"/></filter>`
+      + `<pattern id="tiles" width="20" height="20" patternUnits="userSpaceOnUse"><rect width="20" height="20" fill="${C.page}"/><path d="M20 0H0V20" fill="none" stroke="${C.line}" stroke-width="1" opacity="${C.dark ? 0.55 : 0.8}"/></pattern>`;
+  };
+  V.bg = () => E('rect', {width:W, height:H, fill:'url(#tiles)'});
+  V.zone = (y, label) => {
+    const w = label.length * 7 + 16;
+    return E('rect', {x:34, y:y + 6, width:w, height:17, rx:1, fill:C.card, stroke:C.lineHi})
+         + T(34 + w / 2, y + 19, label.toUpperCase(), {fill:C.txtMute, ff:COND, fs:11.5, fw:600, ls:1.2, anchor:'middle'});
+  };
+  V.wire = (d, o) => {
+    const c = o.tx ? C.txt : hue[o.m];
+    if (o.m === 'data') return E('path', {d, fill:'none', stroke:c, 'stroke-width':2, 'stroke-dasharray':'0.1 4', 'stroke-linecap':'round', opacity:0.8});
+    const lit = o.live || o.tx;
+    return E('path', {d, fill:'none', stroke:c, 'stroke-width':o.tx ? 4.5 : o.m === 'lan' ? 2.5 : 3.2, 'stroke-linejoin':'round',
+      'stroke-dasharray':o.m === 'ctl' ? '6 4' : null, opacity:lit ? 1 : 0.22,
+      filter:lit && glow ? `url(#g-${o.tx ? 'tx' : o.m})` : null});
+  };
+  V.dot = (x, y, live, m = 'dc') => E('circle', {cx:x, cy:y, r:3.6, fill:hue[m], opacity:live ? 1 : 0.3});
+  const lampCol = o => o.level === 'alarm' ? C.red : o.level === 'warn' ? C.amber : bad(o.q) ? null : (o.on === false || o.q === 'unpowered') ? null : C.green;
+  V.box = o => {
+    const stroke = o.level === 'alarm' ? C.red : o.level === 'warn' ? C.amber : C.lineHi;
+    const lc = lampCol(o);
+    let s = E('rect', {x:o.x, y:o.y, width:o.w, height:o.h, rx:1.5, fill:C.card, stroke, 'stroke-width':o.level ? 2.2 : 1.5});
+    s += E('rect', {x:o.x + 1, y:o.y + 1, width:o.w - 2, height:19, fill:C.land, opacity:C.dark ? 1 : 0.55});
+    s += E('circle', {cx:o.x + o.w - 11, cy:o.y + 10.5, r:4.5, fill:lc || C.page, stroke:lc ? 'none' : C.lineHi, filter:lc && glow ? 'url(#g-ctl)' : null});
+    if (lc && lc !== C.green && glow) s = s.replace('url(#g-ctl)', lc === C.red ? 'url(#g-rf)' : 'url(#g-ac)');
+    if (bad(o.q)) s += E('path', {d:`M${o.x + o.w - 14} ${o.y + 7.5} l6 6 M${o.x + o.w - 8} ${o.y + 7.5} l-6 6`, stroke:C.txtFaint, 'stroke-width':1.4});
+    return s;
+  };
+  V.row = (o, r) => {
+    const x = o.x + 8, xr = o.x + o.w - 8, y = o.y + r.y + (r.k === 'title' ? -1 : 2);
+    const dead = bad(o.q), vc = dead ? C.txtFaint : C.txt;
+    const v = s => dead && o.q !== 'stale' ? '- - -' : s;
+    switch (r.k) {
+      case 'title': return T(x, y, r.t.toUpperCase(), {fill:C.txt, ff:COND, fs:12.5, fw:600, ls:0.8}) + (r.r && fitsRight({...o, lampPad:16}, r.t.toUpperCase(), r.r.toUpperCase(), [COND, 12.5, 600, 0.8], [COND, 11.5, 600, 0.8]) ? T(xr - 14, y, r.r.toUpperCase(), {fill:r.rTone ? C[r.rTone] : C.txtMute, ff:COND, fs:11.5, fw:600, ls:0.8, anchor:'end'}) : '');
+      case 'big':   return T(x, y, v(r.t), {fill:vc, ff:MONO, fw:600, fs:16}) + (r.u ? T(xr, y, r.u, {fill:C.txtMute, ff:COND, fs:12, fw:500, anchor:'end'}) : '');
+      case 'pair':  return T(x, y, r.l, {fill:C.txtMute, ff:COND, fs:12.5, fw:500}) + T(xr, y, v(r.r), {fill:vc, ff:MONO, fs:12, fw:500, anchor:'end'});
+      case 'note':  return T(x, y, r.t.toUpperCase(), {fill:r.tone ? C[r.tone] : C.txtMute, ff:COND, fs:12, fw:600, ls:0.6});
+      case 'meter': {
+        const tone = r.v == null || dead ? vc : r.alarm != null && r.v > r.alarm ? C.red : r.warn != null && r.v > r.warn ? C.amber : vc;
+        return T(x, y, r.label, {fill:C.txtMute, ff:COND, fs:12.5, fw:500}) + T(xr, y, r.v == null ? '—' : v(r.fmt(r.v)), {fill:tone, ff:MONO, fs:12, fw:500, anchor:'end'});
+      }
+      case 'badge': {
+        const lit = r.on && !dead;
+        return E('circle', {cx:x + 5, cy:y - 4, r:5, fill:lit ? C.red : C.page, stroke:lit ? 'none' : C.lineHi, filter:lit && glow ? 'url(#g-rf)' : null})
+             + T(x + 15, y, r.t, {fill:lit ? C.txt : C.txtFaint, ff:COND, fs:12.5, fw:600, ls:0.8})
+             + (r.r ? T(xr, y, v(r.r), {fill:vc, ff:MONO, fs:12, fw:500, anchor:'end'}) : '');
+      }
+    }
+    return '';
+  };
+  // Semaphore: the bar lies along the line when closed, across it when open.
+  V.breaker = (x, y, o) => {
+    const c = hue[o.m || 'ac'], live = o.closed && !bad(o.q);
+    const bar = o.closed ? `M${x} ${y - 7} L${x} ${y + 7}` : `M${x - 7} ${y} L${x + 7} ${y}`;
+    return E('circle', {cx:x, cy:y, r:10, fill:C.card, stroke:o.level === 'alarm' ? C.red : C.lineHi, 'stroke-width':1.6})
+         + E('path', {d:bar, stroke:live ? c : C.txtFaint, 'stroke-width':4, 'stroke-linecap':'round', filter:live && glow ? `url(#g-${o.m || 'ac'})` : null});
+  };
+  V.contact = (x, y, o) => contact(x, y, o, C.green, C.txtFaint);
+  V.hex = o => {
+    const stroke = o.level === 'alarm' ? C.red : o.level === 'warn' ? C.amber : C.lineHi;
+    return E('path', {d:hexPath(o.cx, o.cy, o.w, o.h), fill:C.card, stroke, 'stroke-width':o.level ? 2.2 : 1.5})
+         + T(o.cx, o.cy - 3, o.title.toUpperCase(), {fill:C.txtMute, ff:COND, fs:11.5, fw:600, ls:0.8, anchor:'middle'})
+         + T(o.cx, o.cy + 12, bad(o.q) && o.q !== 'stale' ? '- - -' : o.value, {fill:bad(o.q) ? C.txtFaint : o.on === false ? C.txtMute : C.txt, ff:MONO, fs:12, fw:500, anchor:'middle'});
+  };
+  V.marker = () => '';
+  V.ink = {line:C.txtMute, faint:C.txtFaint, label:C.txtMute, sym:C.accent, symDead:C.lineHi};
+  // Annunciator: one engraved window per condition, lit while it holds.
+  V.footer = (S, D) => {
+    const any = f => Object.keys(S.slots).some(f);
+    const tiles = [
+      ['Link', 'down', !S.link ? 'alarm' : null],
+      ['PSU', 'off', S.slots['power/psu-13v8'].power === 'off' ? 'alarm' : null],
+      ['Ant power', 'off', S.slots['power/antennas'].power === 'off' ? 'warn' : null],
+      ['Standby', '', S.slots['hf/power-seq'].phase === 'standby' ? 'warn' : null],
+      ['Sequence', 'fault', S.slots['hf/power-seq'].fault ? 'alarm' : null],
+      ['PA', 'fault', S.link && S.slots['hf/pa'].fault !== 'none' ? 'alarm' : null],
+      ['High', 'SWR', S.link && (S.slots['hf/pa'].swr > 2 || S.slots['hf/tuner'].swr > 2) ? 'warn' : null],
+      ['PA', 'hot', S.link && S.slots['hf/pa'].temp_c > 60 ? 'warn' : null],
+      ['Bridge', 'down', S.link && any(a => quality(S, a) === 'down') ? 'alarm' : null],
+      ['Device', 'lost', S.link && any(a => quality(S, a) === 'lost') ? 'alarm' : null],
+      ['TX', '', S.link && D.tx ? 'tx' : null],
+      ['Tune', '', S.link && D.tune ? 'tx' : null],
+    ];
+    const tw = 120, th = 28, gx = 4, x0 = 16, y0 = 730;
+    return tiles.map(([a, b, lvl], i) => {
+      const x = x0 + (i % 6) * (tw + gx), y = y0 + Math.floor(i / 6) * (th + gx);
+      const fill = lvl === 'alarm' ? C.red : lvl === 'warn' ? C.amber : lvl === 'tx' ? C.txt : C.card;
+      const ink = lvl ? (lvl === 'tx' ? C.pane : '#000') : C.txtFaint;
+      return E('rect', {x, y, width:tw, height:th, rx:1, fill, stroke:lvl ? fill : C.lineHi, 'stroke-width':1.5, opacity:lvl ? 0.95 : 1,
+          filter:lvl && glow ? `url(#g-${lvl === 'alarm' ? 'rf' : 'ac'})` : null})
+        + T(x + tw / 2, y + 19, (a + (b ? ' ' + b : '')).toUpperCase(), {fill:ink, ff:COND, fs:13, fw:700, ls:1.2, anchor:'middle'});
+    }).join('');
+  };
+  return V;
+}
+
+function variantConsole(C) {
+  const V = {key:'console'};
+  const dotCol = o => o.level === 'alarm' ? C.red : o.level === 'warn' ? C.amber : bad(o.q) ? C.txtFaint : (o.q === 'unpowered' || o.standby) ? C.amber : o.on === false ? C.txtFaint : C.green;
+  V.defs = () => '';
+  V.bg = () => E('rect', {width:W, height:H, fill:C.pane});
+  V.zone = (y, label) => (y > 0 ? E('line', {x1:0, x2:W, y1:y, y2:y, stroke:C.line}) : '') + T(34, y + 18, label.toUpperCase(), {fill:C.txtFaint, ff:MONO, fs:10.5, fw:600, ls:1.2});
+  V.wire = (d, o) => {
+    let stroke, w = 2, dash = null, op = 1;
+    if (o.m === 'rf') { stroke = o.tx ? C.red : o.live ? C.accent : C.line; w = o.tx ? 3.6 : 2.6; }
+    else if (o.m === 'ctl') { stroke = C.txtFaint; w = 1.3; dash = '4 3'; }
+    else if (o.m === 'data') { stroke = C.txtFaint; w = 1.6; dash = '0.1 3.6'; }
+    else if (o.m === 'lan') { stroke = o.live ? C.txtMute : C.red; w = 1.5; dash = o.live ? null : '5 4'; }
+    else { stroke = o.live ? C.green : C.line; }
+    return E('path', {d, fill:'none', stroke, 'stroke-width':w, 'stroke-dasharray':dash, 'stroke-linecap':o.m === 'data' ? 'round' : 'butt', 'stroke-linejoin':'round', opacity:op});
+  };
+  V.dot = (x, y, live, m) => E('circle', {cx:x, cy:y, r:3, fill:m === 'rf' ? C.accent : live ? C.green : C.line});
+  V.box = o => {
+    const tone = o.level === 'alarm' ? C.red : o.level === 'warn' ? C.amber : null;
+    const dc = dotCol(o);
+    return E('rect', {x:o.x, y:o.y, width:o.w, height:o.h, rx:6, fill:tone ? mix(C.card, tone, 0.1) : C.card, stroke:tone || C.line, 'stroke-width':tone ? 1.6 : 1})
+         + E('circle', {cx:o.x + o.w - 10, cy:o.y + 10, r:6, fill:dc, opacity:0.22})
+         + E('circle', {cx:o.x + o.w - 10, cy:o.y + 10, r:3.5, fill:dc});
+  };
+  V.row = (o, r) => {
+    const x = o.x + 9, xr = o.x + o.w - 9, y = o.y + r.y + (r.k === 'title' ? 0 : 2);
+    const dead = bad(o.q), vc = dead ? C.txtFaint : C.txt;
+    switch (r.k) {
+      case 'title': return T(x, y, r.t.toUpperCase(), {fill:C.txtMute, ff:MONO, fs:10.5, fw:700, ls:0.6}) + (r.r && fitsRight({...o, lampPad:16}, r.t.toUpperCase(), r.r.toUpperCase(), [MONO, 10.5, 700, 0.6], [MONO, 10.5, 700]) ? T(xr - 14, y, r.r.toUpperCase(), {fill:r.rTone ? C[r.rTone] : C.txtMute, ff:MONO, fs:10.5, fw:700, anchor:'end'}) : '');
+      case 'big': {
+        if (o.q === 'down' || o.q === 'lost') return T(x, y, o.q === 'down' ? 'OFFLINE' : 'UNREACHABLE', {fill:C.red, ff:MONO, fw:700, fs:12.5});
+        return T(x, y, r.t, {fill:vc, ff:MONO, fw:600, fs:16}) + (r.u ? T(xr, y, r.u, {fill:C.txtMute, ff:MONO, fs:11, anchor:'end'}) : '');
+      }
+      case 'pair': {
+        const gone = (o.q === 'down' || o.q === 'lost') && r.r === '—';
+        return T(x, y, r.l, {fill:C.txtMute, ff:MONO, fs:11.5}) + T(xr, y, gone ? (o.q === 'down' ? 'OFFLINE' : 'NO LINK') : r.r, {fill:gone ? C.red : vc, ff:MONO, fs:gone ? 10.5 : 11.5, fw:gone ? 700 : 600, anchor:'end'});
+      }
+      case 'note':  return T(x, y, r.t.toUpperCase(), {fill:r.tone ? C[r.tone] : C.txtMute, ff:MONO, fs:11, fw:700});
+      case 'meter': {
+        const tone = r.v == null || dead ? vc : r.alarm != null && r.v > r.alarm ? C.red : r.warn != null && r.v > r.warn ? C.amber : vc;
+        return T(x, y, r.label, {fill:C.txtMute, ff:MONO, fs:11.5}) + T(xr, y, r.v == null ? '—' : r.fmt(r.v), {fill:tone, ff:MONO, fs:11.5, fw:600, anchor:'end'});
+      }
+      case 'badge': {
+        const lit = r.on && !dead, w = 30;
+        return E('rect', {x, y:y - 12, width:w, height:16, rx:3, fill:lit ? C.red : C.pane, stroke:lit ? C.red : C.line})
+             + T(x + w / 2, y, r.t, {fill:lit ? (C.dark ? '#000' : '#fff') : C.txtFaint, ff:MONO, fs:10.5, fw:700, anchor:'middle'})
+             + (r.r ? T(xr, y, r.r, {fill:vc, ff:MONO, fs:11.5, fw:600, anchor:'end'}) : '');
+      }
+    }
+    return '';
+  };
+  // The console's relay chip, shrunk: track + knob, green when on.
+  V.breaker = (x, y, o) => {
+    const on = o.closed && !bad(o.q), tw = 26, th = 14;
+    return E('rect', {x:x - tw / 2, y:y - th / 2, width:tw, height:th, rx:7, fill:on ? mix(C.pane, C.green, 0.3) : C.line, stroke:o.level === 'alarm' ? C.red : 'none'})
+         + E('circle', {cx:o.closed ? x + 6 : x - 6, cy:y, r:5, fill:bad(o.q) ? C.txtFaint : on ? C.green : C.txtMute});
+  };
+  V.contact = (x, y, o) => V.breaker(x, y, o);
+  V.hex = o => {
+    const tone = o.level === 'alarm' ? C.red : o.level === 'warn' ? C.amber : null;
+    const dc = dotCol(o);
+    return E('rect', {x:o.cx - o.w / 2, y:o.cy - o.h / 2, width:o.w, height:o.h, rx:o.h / 2, fill:tone ? mix(C.card, tone, 0.1) : C.card, stroke:tone || C.line})
+         + E('circle', {cx:o.cx - o.w / 2 + 14, cy:o.cy, r:3.5, fill:dc})
+         + T(o.cx - o.w / 2 + 24, o.cy - 3, o.title.toUpperCase(), {fill:C.txtMute, ff:MONO, fs:10, fw:700, ls:0.5})
+         + T(o.cx - o.w / 2 + 24, o.cy + 12, o.value, {fill:bad(o.q) ? C.txtFaint : C.txt, ff:MONO, fs:11.5, fw:600});
+  };
+  V.marker = () => '';
+  V.ink = {line:C.txtMute, faint:C.txtFaint, label:C.txtMute, sym:C.accent, symDead:C.line};
+  V.footer = () => {
+    const y = 760;
+    const items = [
+      [0, 'pw', 'Powered'], [112, 'off', 'Off'], [196, 'rf', 'RF path'], [306, 'tx', 'Carrier'], [412, 'ctl', 'Control'], [520, 'data', 'Data link'],
+    ];
+    return items.map(([dx, k, l]) => {
+      const x = 18 + dx; let g = '';
+      if (k === 'pw' || k === 'off') g = V.wire(P([[x, y - 4], [x + 26, y - 4]]), {m:'dc', live:k === 'pw'});
+      if (k === 'rf' || k === 'tx') g = V.wire(P([[x, y - 4], [x + 26, y - 4]]), {m:'rf', live:true, tx:k === 'tx'});
+      if (k === 'ctl' || k === 'data') g = V.wire(P([[x, y - 4], [x + 26, y - 4]]), {m:k});
+      return g + T(x + 34, y, l, {fill:C.txtMute, ff:MONO, fs:11});
+    }).join('');
+  };
+  return V;
+}
+function mix(a, b, t) {
+  const p = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
+  const [x, y] = [p(a), p(b)];
+  return '#' + x.map((v, i) => Math.round(v + (y[i] - v) * t).toString(16).padStart(2, '0')).join('');
+}
+// Relay contact, shared by HMI and mimic: blade closes onto the right terminal.
+function contact(x, y, o, on, off) {
+  const c = bad(o.q) ? off : o.closed ? on : off;
+  const blade = o.closed ? `M${x - 9} ${y} L${x + 9} ${y}` : `M${x - 9} ${y} L${x + 6} ${y - 8}`;
+  return E('circle', {cx:x - 10, cy:y, r:2.4, fill:c}) + E('circle', {cx:x + 10, cy:y, r:2.4, fill:'none', stroke:c, 'stroke-width':1.4})
+       + E('path', {d:blade, stroke:c, 'stroke-width':2, 'stroke-linecap':'round'});
+}
+
+// ── Sheet geometry (shared) ───────────────────────────────────────────────
+function drawSheet(S, V, C) {
+  const sl = a => S.slots[a];
+  const D = {
+    psuOn: sl('power/psu-13v8').power === 'on',
+    antOn: sl('power/antennas').power === 'on',
+    pcOn: sl('power/shack-pc-mains').power === 'on',
+    tx: sl('hf/radio').tx === 'tx' || sl('hf/pa').keyed === 'tx',
+    tune: sl('hf/radio').tx !== 'tx' && sl('hf/radio').tuning === true,
+  };
+  const live = on => on && S.link;
+  const o = [];
+  const hit = (id, label, inner) => o.push(`<g class="hit" data-id="${esc(id)}" tabindex="0" role="button" aria-label="${esc(label)} details">${inner}</g>`);
+  const block = b => { let s = V.box(b); for (const r of b.rows) s += V.row(b, r); s += V.marker(b.x + b.w, b.y, b.level); return s; };
+
+  o.push(V.bg());
+  o.push(V.zone(0, 'Hosts & network'), V.zone(112, 'Power'), V.zone(292, 'HF'), V.zone(572, 'UHF'));
+
+  // ── Hosts & network ─────────────────────────────────────────────────────
+  const LAN = 102;
+  o.push(V.wire(P([[16, LAN], [744, LAN]]), {m:'lan', live:S.link}));
+  const hosts = [['bwpc', 16, 130], ['scmino', 162, 174], ['hassio', 352, 118], ['shari', 486, 118], ['console', 620, 124]];
+  for (const [id, x, w] of hosts) {
+    const h = HOSTS[id];
+    let q = S.link ? 'ok' : 'stale', level = null, rows = [{k:'title', y:17, t:h.title, r:h.kind}], on = true;
+    if (id === 'bwpc') {
+      const st = sl('power/shack-pc').status;
+      const word = !D.pcOn ? 'No power' : st === 'online' ? 'Awake' : 'Asleep';
+      on = word === 'Awake';
+      rows.push({k:'pair', y:34, l:h.ip.replace('192.168.1', ''), r:''}, {k:'pair', y:50, l:'Loggers, OscarWatch', r:''});
+      rows[0].r = word; rows[0].rTone = on ? null : 'txtMute';
+    } else if (id === 'console') {
+      if (!S.link) { q = 'ok'; level = 'alarm'; }
+      rows.push({k:'pair', y:34, l:'MQTT', r:S.link ? 'up' : 'down'}, {k:'pair', y:50, l:'Broker', r:'.50'});
+    } else if (id === 'hassio') {
+      rows.push({k:'pair', y:34, l:h.ip.replace('192.168.1', ''), r:''}, {k:'pair', y:50, l:'MQTT', r:':1883'});
+    } else {
+      const hh = hostHealth(S, id);
+      if (S.link && hh.up < hh.total) level = 'warn';
+      rows.push({k:'pair', y:34, l:h.ip.replace('192.168.1', ''), r:''}, {k:'pair', y:50, l:'Bridges', r:`${hh.up}/${hh.total}`});
+    }
+    o.push(V.wire(P([[x + 28, 86], [x + 28, LAN]]), {m:'lan', live:S.link}));
+    hit('host:' + id, h.title, block({x, y:30, w, h:56, q, level, on, rows}));
+  }
+
+  // ── Power ───────────────────────────────────────────────────────────────
+  const BUS = 178;
+  o.push(E('circle', {cx:30, cy:BUS, r:12, fill:'none', stroke:V.ink.sym, 'stroke-width':1.6}));
+  o.push(E('path', {d:'M22 178 q4 -7 8 0 t8 0', fill:'none', stroke:V.ink.sym, 'stroke-width':1.6}));
+  o.push(T(14, BUS + 30, 'House mains', {fill:V.ink.faint, fs:11}));
+  o.push(V.wire(P([[42, BUS], [640, BUS]]), {m:'ac', live:true}));
+
+  const plug = (a, x, y, label, feedUp) => {
+    const s = sl(a), q = quality(S, a), level = levelOf(S, a), closed = s.power === 'on';
+    const w = `${Math.round(s.apower)} W`;
+    let g = V.breaker(x, y, {closed, q, level, m:'ac'});
+    g += T(x + 16, y - 3, label, {fill:V.ink.label, fs:11.5, ff:V.key === 'console' ? MONO : V.key === 'mimic' ? COND : SANS, fw:V.key === 'mimic' ? 500 : 400});
+    g += T(x + 16, y + 12, bad(q) && q !== 'stale' ? '—' : w, {fill:bad(q) ? C.txtFaint : C.txt, ff:MONO, fs:12.5, fw:600});
+    return g;
+  };
+  // PC mains: up across the LAN (line hop) into bwpc.
+  o.push(V.wire(P([[118, BUS], [118, 156]]), {m:'ac', live:true}));
+  o.push(V.wire(`M118 136 L118 ${LAN + 5} A5 5 0 0 0 118 ${LAN - 5} L118 86`, {m:'ac', live:live(D.pcOn)}));
+  o.push(V.dot(118, BUS, true, 'ac'));
+  hit('power/shack-pc-mains', 'PC mains plug', plug('power/shack-pc-mains', 118, 146, 'PC mains'));
+
+  // PSU 13.8 V
+  o.push(V.wire(P([[250, BUS], [250, 196]]), {m:'ac', live:true}));
+  o.push(V.wire(P([[250, 216], [250, 224]]), {m:'ac', live:live(D.psuOn)}));
+  o.push(V.dot(250, BUS, true, 'ac'));
+  hit('power/psu-13v8', 'PSU mains plug', plug('power/psu-13v8', 250, 206, 'PSU mains'));
+  o.push(V.wire(P([[250, 258], [250, 276]]), {m:'dc', live:live(D.psuOn)}));
+  hit('power/psu-13v8', 'PSU', block({x:206, y:224, w:88, h:34, q:quality(S, 'power/psu-13v8'), on:D.psuOn,
+    rows:[{k:'title', y:15, t:'PSU'}, {k:'pair', y:28, l:'Out', r:D.psuOn ? '13.8 V' : '0 V'}]}));
+  // 13.8 V DC bus and its drops
+  o.push(V.wire(P([[24, 276], [505, 276]]), {m:'dc', live:live(D.psuOn)}));
+  o.push(V.wire(P([[100, 276], [100, 336]]), {m:'dc', live:live(D.psuOn)}));
+  o.push(V.wire(P([[505, 276], [505, SEL.y - SEL.r]]), {m:'dc', live:live(D.psuOn)}));
+  o.push(V.wire(P([[24, 276], [24, 640], [40, 640]]), {m:'dc', live:live(D.psuOn)}));
+  o.push(V.wire(P([[24, 512], [40, 512]]), {m:'dc', live:live(D.psuOn)}));
+  for (const [x, y] of [[250, 276], [100, 276], [24, 512]]) o.push(V.dot(x, y, live(D.psuOn), 'dc'));
+
+  // Antenna mains
+  o.push(V.wire(P([[630, BUS], [630, 196]]), {m:'ac', live:true}));
+  o.push(V.wire(P([[630, 216], [630, 276]]), {m:'ac', live:live(D.antOn)}));
+  o.push(V.dot(630, BUS, true, 'ac'));
+  hit('power/antennas', 'Antenna mains plug', plug('power/antennas', 630, 206, 'Antenna mains'));
+  o.push(V.wire(P([[572, 276], [754, 276], [754, 712], [618, 712], [618, 698]]), {m:'ac', live:live(D.antOn)}));
+  o.push(V.wire(P([[704, 712], [704, 698]]), {m:'ac', live:live(D.antOn)}));
+  o.push(V.wire(P([[617, 276], [617, 296]]), {m:'ac', live:live(D.antOn)}));
+  o.push(V.wire(P([[704, 276], [704, 296]]), {m:'ac', live:live(D.antOn)}));
+  for (const [x, y] of [[630, 276], [617, 276], [704, 276], [704, 712]]) o.push(V.dot(x, y, live(D.antOn), 'ac'));
+
+  // Sequencer
+  const seq = sl('hf/power-seq');
+  const seqWord = seq.fault ? 'Fault' : ({running:'Running', starting:'Starting', stopping:'Stopping', standby:'Standby', entering_standby:'Entering standby', waking:'Waking'}[seq.phase] || 'Idle');
+  o.push(V.wire(P([[358, 206], [262, 206]]), {m:'data'}));
+  o.push(V.wire(P([[482, 206], [618, 206]]), {m:'data'}));
+  hit('hf/power-seq', 'Sequencer', V.hex({cx:420, cy:206, w:124, h:40, title:'Sequencer', value:seqWord, q:quality(S, 'hf/power-seq'), level:levelOf(S, 'hf/power-seq'), standby:seq.phase === 'standby'}));
+
+  // ── HF ──────────────────────────────────────────────────────────────────
+  const radio = sl('hf/radio'), pa = sl('hf/pa'), tun = sl('hf/tuner'), sw = sl('hf/ant-switch');
+  const rfLive = live(D.psuOn);
+  o.push(V.wire(P([[160, 386], [186, 386]]), {m:'rf', live:rfLive, tx:D.tx && S.link}));
+  o.push(V.wire(P([[316, 386], [342, 386]]), {m:'rf', live:rfLive, tx:D.tx && S.link}));
+  o.push(V.wire(P([[458, 386], [SEL.x - SEL.r, 386]]), {m:'rf', live:rfLive, tx:D.tx && S.link}));
+
+  const qR = quality(S, 'hf/radio');
+  hit('hf/radio', 'FLEX-8400', block({x:40, y:336, w:120, h:100, q:qR, level:levelOf(S, 'hf/radio'), rows:[
+    {k:'title', y:17, t:'FLEX-8400'},
+    {k:'big', y:43, t:fmtFreq(radio.freq_hz)},
+    {k:'pair', y:63, l:radio.band.replace('m', ' m'), r:radio.mode.toUpperCase()},
+    {k:'badge', y:88, t:D.tx ? 'TX' : D.tune ? 'TUNE' : 'RX', on:D.tx || D.tune, r:`${radio.drive} %`},
+  ]}));
+  const qP = quality(S, 'hf/pa');
+  const paRows = [
+    {k:'title', y:17, t:'ACOM', r:pa.mode === 'operate' ? 'Oper' : 'Stby', rTone:pa.mode === 'operate' ? null : 'txtMute'},
+    {k:'big', y:41, t:`${pa.fwd_power_w}`, u:'W fwd'},
+    {k:'meter', y:61, label:'SWR', v:pa.keyed === 'tx' || pa.fault !== 'none' ? pa.swr : null, min:1, max:3.5, normal:[1, 1.5], warn:2, alarm:3, fmt:v => v.toFixed(2)},
+    {k:'meter', y:83, label:'Temp', v:pa.temp_c, min:20, max:90, normal:[25, 55], warn:60, alarm:75, fmt:v => `${v}°`},
+  ];
+  if (pa.fault !== 'none' && S.link) paRows.splice(1, 1, {k:'note', y:41, t:`Fault ${pa.fault}`, tone:'red'});
+  hit('hf/pa', 'ACOM 1200S', block({x:186, y:336, w:130, h:100, q:qP, level:levelOf(S, 'hf/pa'), rows:paRows}));
+  const qT = quality(S, 'hf/tuner');
+  hit('hf/tuner', 'ATR-1000', block({x:342, y:336, w:116, h:100, q:qT, level:levelOf(S, 'hf/tuner'), rows:[
+    {k:'title', y:17, t:'ATR-1000'},
+    {k:'big', y:41, t:tun.inline ? 'Inline' : 'Bypass'},
+    {k:'meter', y:61, label:'SWR', v:tun.swr, min:1, max:3.5, normal:[1, 1.5], warn:2, alarm:3, fmt:v => v.toFixed(1)},
+    {k:'pair', y:89, l:'Fwd', r:`${tun.fwd} W`},
+  ]}));
+
+  // Rotary selector: the wiper points at the selected port.
+  const qS = quality(S, 'hf/ant-switch');
+  let sel = '';
+  const term = p => [SEL.x + SEL.rt * Math.cos(p.ang * Math.PI / 180), SEL.y + SEL.rt * Math.sin(p.ang * Math.PI / 180)];
+  for (const p of PORTS) {
+    const [tx, ty] = term(p), on = sw.selected === p.port;
+    sel += V.wire(P([[tx, ty], [572, p.row], [586, p.row]]), {m:'rf', live:on && rfLive && !bad(qS), tx:on && D.tx && S.link});
+  }
+  sel += E('circle', {cx:SEL.x, cy:SEL.y, r:SEL.r, fill:V.key === 'mimic' ? C.card : C.pane, stroke:levelOf(S, 'hf/ant-switch') === 'alarm' ? C.red : V.ink.sym, 'stroke-width':1.6});
+  for (const p of PORTS) { const [tx, ty] = term(p); sel += E('circle', {cx:tx, cy:ty, r:3, fill:C.pane, stroke:V.ink.line, 'stroke-width':1.4}); }
+  const cur = PORTS.find(p => p.port === sw.selected);
+  if (cur && !bad(qS)) {
+    const [tx, ty] = term(cur);
+    sel += E('path', {d:P([[SEL.x - SEL.r, SEL.y], [SEL.x, SEL.y], [tx, ty]]), fill:'none', stroke:D.tx && S.link ? (V.key === 'console' ? C.red : C.txt) : V.key === 'console' ? C.accent : V.ink.line, 'stroke-width':3, 'stroke-linecap':'round'});
+  }
+  sel += E('circle', {cx:SEL.x, cy:SEL.y, r:3.5, fill:V.ink.line});
+  sel += T(SEL.x, SEL.y + SEL.r + 46, '', {});
+  hit('hf/ant-switch', 'Antenna switch', sel);
+  o.push(T(SEL.x - 6, 328, 'Switch', {fill:V.ink.label, fs:11, ff:V.key === 'console' ? MONO : SANS, anchor:'end'}));
+
+  // Antennas (passive, no slot) — drawn as symbols, labelled.
+  const symCol = on => on ? V.ink.line : V.ink.symDead;
+  const uOn = sw.selected === 'port4';
+  const ub = sl('hf/ant-ctrl'), qU = quality(S, 'hf/ant-ctrl');
+  // Ultrabeam, top view: boom with three elements; arrowheads = direction.
+  let ant = '';
+  const dir = ub.direction;
+  ant += E('path', {d:P([[590, 358], [642, 358]]), stroke:symCol(true), 'stroke-width':2});
+  for (const [x, h] of [[600, 22], [616, 28], [632, 20]]) ant += E('path', {d:P([[x, 358 - h / 2], [x, 358 + h / 2]]), stroke:symCol(true), 'stroke-width':2.2});
+  if (dir === 'forward' || dir === 'bidirectional') ant += E('path', {d:'M642 353 L650 358 L642 363Z', fill:symCol(true)});
+  if (dir === 'reverse' || dir === 'bidirectional') ant += E('path', {d:'M590 353 L582 358 L590 363Z', fill:symCol(true)});
+  ant += T(658, 355, 'Ultrabeam', {fill:C.txt, fs:12, fw:600, ff:V.key === 'console' ? MONO : SANS});
+  ant += T(658, 371, bad(qU) ? (qU === 'stale' ? `${ub.band.replace('m', ' m')} ${DIR[dir]}` : 'no data') : qU === 'unpowered' ? 'unpowered' : `${ub.band.replace('m', ' m')} ${DIR[dir]}${ub.moving ? ', moving' : ''}`,
+    {fill:bad(qU) || qU === 'unpowered' ? C.txtFaint : C.txtMute, fs:11.5, ff:V.key === 'console' ? MONO : SANS});
+  o.push(ant);
+  // Generic antenna symbol for the fan dipole.
+  const yD = 398;
+  o.push(E('path', {d:`M592 ${yD} L592 ${yD - 10} M584 ${yD - 20} L600 ${yD - 20} L592 ${yD - 10}Z M596 ${yD - 20} L612 ${yD - 20} L604 ${yD - 10}Z`, fill:'none', stroke:symCol(sw.selected === 'port6'), 'stroke-width':1.8, 'stroke-linejoin':'round'}));
+  o.push(E('path', {d:`M592 ${yD - 10} L604 ${yD - 10}`, stroke:symCol(sw.selected === 'port6'), 'stroke-width':1.8}));
+  o.push(T(658, yD + 4, 'Fan dipole', {fill:C.txt, fs:12, fw:600, ff:V.key === 'console' ? MONO : SANS}));
+  o.push(E('circle', {cx:590, cy:426, r:3, fill:'none', stroke:symCol(false), 'stroke-width':1.4}));
+  o.push(T(658, 430, 'Port 5', {fill:C.txtFaint, fs:12, ff:V.key === 'console' ? MONO : SANS}));
+  // Dummy load: resistor to ground.
+  o.push(E('path', {d:'M586 452 L592 452 L595 446 L601 458 L607 446 L613 458 L616 452 L622 452 L622 460 M615 460 L629 460 M618 464 L626 464 M620.5 468 L623.5 468', fill:'none', stroke:symCol(sw.selected === 'port1'), 'stroke-width':1.6, 'stroke-linejoin':'round'}));
+  o.push(T(658, 456, 'Dummy load', {fill:C.txt, fs:12, fw:600, ff:V.key === 'console' ? MONO : SANS}));
+  o.push(E('path', {d:'M586 480 L594 480 L594 486 M587 486 L601 486 M590 490 L598 490 M592.5 494 L595.5 494', fill:'none', stroke:symCol(sw.selected === 'off'), 'stroke-width':1.6}));
+  o.push(T(658, 484, 'Ground', {fill:C.txt, fs:12, fw:600, ff:V.key === 'console' ? MONO : SANS}));
+
+  // Rotator and Ultrabeam controller hang off the antenna bus, above the beam.
+  const rot = sl('hf/rotator'), qRot = quality(S, 'hf/rotator');
+  o.push(V.wire(P([[617, 330], [617, 336], [705, 336], [705, 330]]), {m:'ctl', live:!bad(qRot)}));
+  o.push(V.wire(P([[617, 336], [617, 342]]), {m:'ctl', live:!bad(qRot)}));
+  const rv0 = (q, v) => q === 'unpowered' ? 'off' : (q === 'down' || q === 'lost') ? '—' : v;
+  hit('hf/rotator', 'G-450 rotator', block({x:578, y:296, w:80, h:34, q:qRot, level:levelOf(S, 'hf/rotator'), on:D.antOn, rows:[
+    {k:'title', y:14, t:'G-450'}, {k:'pair', y:28, l:'Az', r:rv0(qRot, `${rot.az}°`)},
+  ]}));
+  hit('hf/ant-ctrl', 'RCU-06', block({x:664, y:296, w:80, h:34, q:qU, level:levelOf(S, 'hf/ant-ctrl'), on:D.antOn, rows:[
+    {k:'title', y:14, t:'RCU-06'}, {k:'pair', y:28, l:'Band', r:rv0(qU, ub.band.replace('m', ' m'))},
+  ]}));
+
+  // PLC #1 relays: remote-on lines up into FLEX and ACOM, arm into ACOM.
+  const swq = quality(S, 'hf/switch'), arm = sl('hf/pa-arm'), sws = sl('hf/switch');
+  o.push(V.wire(P([[100, 482], [100, 436]]), {m:'ctl', live:sws.trx === 'on'}));
+  o.push(V.wire(P([[222, 482], [222, 436]]), {m:'ctl', live:sws.pa === 'on'}));
+  o.push(V.wire(P([[284, 482], [284, 436]]), {m:'ctl', live:arm.armed}));
+  let plc = block({x:40, y:482, w:268, h:62, q:swq, level:levelOf(S, 'hf/switch'), rows:[{k:'title', y:17, t:'PLC #1'}]});
+  const cy = 516;
+  plc += V.contact(100, cy, {closed:sws.trx === 'on', q:swq});
+  plc += V.contact(222, cy, {closed:sws.pa === 'on', q:swq});
+  plc += V.contact(284, cy, {closed:arm.armed, q:swq});
+  const lab = (x, s) => T(x, 537, s, {fill:V.ink.label, fs:11, ff:V.key === 'console' ? MONO : V.key === 'mimic' ? COND : SANS, fw:V.key === 'mimic' ? 600 : 400, anchor:'middle'});
+  plc += lab(100, `TRX ${sws.trx}`) + lab(222, `PA ${sws.pa}`) + lab(284, arm.armed ? 'Armed' : 'Safe');
+  hit('hf/switch', 'PLC #1', plc);
+
+  // Logic near what it acts on.
+  const asel = sl('hf/antenna-select');
+  o.push(V.wire(P([[478, 512], [SEL.x, 512], [SEL.x, SEL.y + SEL.r]]), {m:'data'}));
+  hit('hf/antenna-select', 'Antenna select', V.hex({cx:420, cy:512, w:118, h:40, title:'Antenna select', value:asel.mode === 'manual' ? 'Manual hold' : asel.activity === 'inactive' ? 'Auto, idle' : 'Auto',
+    q:quality(S, 'hf/antenna-select'), level:asel.mode === 'manual' && S.link ? 'warn' : levelOf(S, 'hf/antenna-select')}));
+  const bs = sl('hf/beam-steer');
+  hit('hf/beam-steer', 'Beam steer', V.hex({cx:614, cy:530, w:112, h:36, title:'Beam steer', value:bs.enabled ? 'On' : 'Off', on:bs.enabled,
+    q:quality(S, 'hf/beam-steer'), level:levelOf(S, 'hf/beam-steer')}));
+
+  // ── UHF ─────────────────────────────────────────────────────────────────
+  const ur = sl('uhf/radio'), qUR = quality(S, 'uhf/radio');
+  o.push(V.wire(P([[164, 640], [588, 640]]), {m:'rf', live:live(D.psuOn) && !bad(qUR)}));
+  hit('uhf/radio', 'IC-9700', block({x:40, y:598, w:124, h:84, q:qUR, level:levelOf(S, 'uhf/radio'), rows:[
+    {k:'title', y:17, t:'IC-9700', r:'RX only'},
+    {k:'big', y:43, t:fmtFreq(ur.freq_hz)},
+    {k:'pair', y:62, l:ur.mode.toUpperCase(), r:''},
+    {k:'pair', y:77, l:'Audio', r:ur.session_state === 'streaming' ? 'on' : 'idle'},
+  ]}));
+  const st = sl('uhf/sat-track');
+  hit('uhf/sat-track', 'Sat track', V.hex({cx:300, cy:612, w:168, h:40, title:'Sat track', value:st.tracking ? `${st.sat_name}  EL ${st.el}°` : 'No pass', on:!!st.tracking,
+    q:quality(S, 'uhf/sat-track'), level:levelOf(S, 'uhf/sat-track')}));
+  const pol = sl('uhf/pol-ctrl'), qPol = quality(S, 'uhf/pol-ctrl');
+  o.push(V.wire(P([[530, 612], [612, 612], [612, 630]]), {m:'ctl', live:!bad(qPol)}));
+  hit('uhf/pol-ctrl', 'PLC #2', block({x:420, y:596, w:110, h:34, q:qPol, level:levelOf(S, 'uhf/pol-ctrl'), rows:[
+    {k:'title', y:14, t:'PLC #2'}, {k:'pair', y:27, l:'Pol', r:POL[pol.pol]},
+  ]}));
+  // X-Quad: boom with crossed elements.
+  let xq = E('path', {d:P([[588, 640], [642, 640]]), stroke:symCol(true), 'stroke-width':2});
+  for (const [x, h] of [[600, 20], [614, 24], [628, 18]]) xq += E('path', {d:`M${x} ${640 - h / 2} L${x} ${640 + h / 2}`, stroke:symCol(true), 'stroke-width':2.2}) + E('circle', {cx:x, cy:640, r:3.4, fill:symCol(true)});
+  xq += T(658, 636, 'X-Quad', {fill:C.txt, fs:12, fw:600, ff:V.key === 'console' ? MONO : SANS});
+  xq += T(658, 652, POL[pol.pol], {fill:bad(qPol) ? C.txtFaint : C.txtMute, fs:11.5, ff:V.key === 'console' ? MONO : SANS});
+  o.push(xq);
+  const az = sl('uhf/az-rotator'), el = sl('uhf/el-rotator'), qAz = quality(S, 'uhf/az-rotator'), qEl = quality(S, 'uhf/el-rotator');
+  o.push(V.wire(P([[618, 664], [618, 658], [704, 658], [704, 664]]), {m:'ctl', live:!bad(qAz)}));
+  o.push(V.wire(P([[618, 658], [618, 649]]), {m:'ctl', live:!bad(qAz)}));
+  const rv = (q, v) => q === 'unpowered' ? 'off' : (q === 'down' || q === 'lost') ? '—' : v;
+  hit('uhf/az-rotator', 'SPID az', block({x:578, y:664, w:80, h:34, q:qAz, level:levelOf(S, 'uhf/az-rotator'), on:D.antOn, rows:[
+    {k:'title', y:14, t:'SPID'}, {k:'pair', y:28, l:'Az', r:rv(qAz, `${az.az}°`)},
+  ]}));
+  hit('uhf/el-rotator', 'GS-500 el', block({x:664, y:664, w:80, h:34, q:qEl, level:levelOf(S, 'uhf/el-rotator'), on:D.antOn, rows:[
+    {k:'title', y:14, t:'GS-500'}, {k:'pair', y:28, l:'El', r:rv(qEl, `${el.el}°`)},
+  ]}));
+
+  o.push(E('line', {x1:0, x2:W, y1:722, y2:722, stroke:V.key === 'mimic' ? 'none' : C.line}));
+  o.push(V.footer(S, D));
+  return o.join('');
+}
+
+// ── Details popover ───────────────────────────────────────────────────────
+function details(S, id) {
+  if (id.startsWith('host:')) {
+    const h = id.slice(5), m = HOSTS[h];
+    const rows = [['Address', m.ip], ['Kind', m.kind]];
+    if (h === 'scmino' || h === 'shari') {
+      const hh = hostHealth(S, h);
+      for (const [b, up] of Object.entries(hh.br)) rows.push([b, up ? 'online' : 'down', up ? 'ok' : 'bad']);
+    }
+    if (h === 'bwpc') rows.push(['Agent', S.slots['power/shack-pc'].status === 'online' ? 'awake' : 'asleep'], ['Runs', 'DXLog, Log4OM, OscarWatch, PstRotator']);
+    if (h === 'console') rows.push(['MQTT link', S.link ? 'up' : 'down', S.link ? 'ok' : 'bad']);
+    if (h === 'hassio') rows.push(['Role', 'live broker :1883'], ['Mirror', 'scmino .178']);
+    return {title:m.title, addr:h === 'console' ? 'tablet' : m.ip, rows};
+  }
+  const m = SLOTMETA[id], s = S.slots[id], q = quality(S, id);
+  const qWord = {ok:['online', 'ok'], down:['bridge down', 'bad'], lost:['device unreachable', 'bad'], unpowered:['unpowered (expected)', 'warn'], stale:['stale, link down', 'bad']}[q];
+  const rows = [['Device', m.device], ['Bridge', `${m.bridge}`], ['Host', m.host === 'esp' ? 'own firmware' : m.host], ['State', qWord[0], qWord[1]], ['Since', '14:02:31']];
+  for (const [k, v] of Object.entries(s)) {
+    if (k === 'status') continue;
+    const tone = (k === 'fault' && v !== 'none') || k === 'error' ? 'bad' : null;
+    rows.push([k, v === null ? '—' : typeof v === 'object' ? JSON.stringify(v) : String(v), tone]);
+  }
+  return {title:m.name, addr:'muehle/' + id, rows};
+}
+
+// ── App ───────────────────────────────────────────────────────────────────
+const state = {variant:'hmi', theme:'dc', scen:'running'};
+const VARIANTS = {hmi:{label:'High-performance HMI', f:variantHMI}, mimic:{label:'Classic mimic', f:variantMimic}, console:{label:'Console-native', f:variantConsole}};
+const NOTES = {
+  hmi:'<b>Grey until something is wrong.</b> Running equipment is filled, switched-off equipment is hollow and dashed, missing data is hatched. Coax is a pipe that fills while a carrier is up. Range bars show where a reading sits against its normal band. Color appears only for abnormal states, using the ISA alarm shapes: red square 1, amber triangle 2.',
+  mimic:'<b>A lit board.</b> Each medium has its own color (mains amber, 13.8 V violet, RF cyan, LAN grey) and glows while live; dead lines stay as unlit traces. Breakers are semaphores: the bar lies along the line when closed. Every block has a status lamp, and the annunciator windows along the bottom light up per condition.',
+  console:'<b>The console\'s own language.</b> Cards, status dots and relay chips, the way they look in the panels today. Powered lines are green, the selected RF path is cyan, and a carrier turns it red to match the TX annunciator. A missing bridge reads OFFLINE, a lost device UNREACHABLE.',
+};
+const opts = {variant:Object.fromEntries(Object.entries(VARIANTS).map(([k, v]) => [k, v.label])), theme:Object.fromEntries(Object.entries(THEMES).map(([k, v]) => [k, v.label])), scen:Object.fromEntries(Object.entries(SCEN).map(([k, v]) => [k, v.label]))};
+for (const seg of document.querySelectorAll('.seg')) {
+  const key = seg.dataset.key;
+  seg.innerHTML = Object.entries(opts[key]).map(([k, l]) => `<button type="button" data-v="${k}">${l}</button>`).join('');
+  seg.addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; state[key] = b.dataset.v; render(); });
+}
+let S;
+function render() {
+  const C = THEMES[state.theme];
+  for (const [k, v] of Object.entries(C)) if (typeof v === 'string') document.documentElement.style.setProperty('--' + k, v);
+  for (const b of document.querySelectorAll('.seg button')) b.setAttribute('aria-pressed', String(state[b.parentElement.dataset.key] === b.dataset.v));
+  S = BASE(); SCEN[state.scen].f(S);
+  const V = VARIANTS[state.variant].f(C);
+  document.getElementById('pane').innerHTML = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Station schematic"><defs>${V.defs()}</defs>${drawSheet(S, V, C)}</svg>`;
+  document.getElementById('note').innerHTML = NOTES[state.variant];
+}
+const pane = document.getElementById('pane');
+function openPop(g, cx, cy) {
+  closePop();
+  const d = details(S, g.dataset.id);
+  const el = document.createElement('div');
+  el.className = 'pop'; el.setAttribute('role', 'dialog'); el.setAttribute('aria-label', d.title + ' details');
+  el.innerHTML = `<button class="close" aria-label="Close">×</button><h3>${esc(d.title)}</h3><div class="addr">${esc(d.addr)}</div><dl>${d.rows.map(([k, v, t]) => `<dt>${esc(k)}</dt><dd class="${t || ''}">${esc(v)}</dd>`).join('')}</dl>`;
+  pane.appendChild(el);
+  const r = pane.getBoundingClientRect();
+  let x = cx - r.left + 12, y = cy - r.top + 12;
+  x = Math.min(x, r.width - el.offsetWidth - 8); y = Math.min(y, r.height - el.offsetHeight - 8);
+  el.style.left = Math.max(8, x) + 'px'; el.style.top = Math.max(8, y) + 'px';
+  el.querySelector('.close').addEventListener('click', closePop);
+  el.querySelector('.close').focus({preventScroll:true});
+}
+function closePop() { pane.querySelector('.pop')?.remove(); }
+pane.addEventListener('click', e => {
+  if (e.target.closest('.pop')) return;
+  const g = e.target.closest('.hit');
+  if (g) openPop(g, e.clientX, e.clientY); else closePop();
+});
+pane.addEventListener('keydown', e => {
+  const g = e.target.closest('.hit');
+  if (g && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); const b = g.getBoundingClientRect(); openPop(g, b.left + b.width / 2, b.top + b.height / 2); }
+  if (e.key === 'Escape') closePop();
+});
+Promise.all(['IBMPlexSans', 'IBMPlexMono', 'SairaCondensed'].flatMap(f => [400, 500, 600, 700].map(w => document.fonts.load(`${w} 12px ${f}`)))).finally(render);
+</script>
+</body>
+</html>

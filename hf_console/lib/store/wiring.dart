@@ -114,6 +114,23 @@ const powerSeqTransitionPhases = {'starting', 'stopping', 'entering_standby', 'w
 /// power-seq phases that accept `start` (start from standby = wake).
 const powerSeqStartablePhases = {'idle', 'standby'};
 
+/// Deliberate low-power phases: shown amber, never fault-red.
+const powerSeqStandbyPhases = {'standby', 'entering_standby', 'waking'};
+
+/// The operator-facing word for a sequencer phase — one vocabulary for the
+/// power panel and the station schematic.
+String powerSeqLabel(String phase, String fault) => fault.isNotEmpty
+    ? 'FAULT'
+    : const {
+          'running': 'ON',
+          'starting': 'STARTING',
+          'stopping': 'STOPPING',
+          'entering_standby': 'ENTER STANDBY',
+          'standby': 'STANDBY',
+          'waking': 'WAKING',
+        }[phase] ??
+        'IDLE';
+
 // --- HF switch / PA arm ------------------------------------------------------
 
 String switchSetPaPayload(String onOff) => cmdPayload('set_pa', onOff);
