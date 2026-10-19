@@ -105,7 +105,9 @@ publishes it (the metering gap in `../shelly-power-bridge/docs/known-issues.md`)
 
 Eyeball real renders (bundled fonts, every scheme × scenario) with
 `SCHEMATIC_RENDER=1 flutter test test/tool/station_schematic_render_test.dart` → `/tmp/schematic/*.png`
-(`SCHEMATIC_TAP=muehle/hf/pa` also opens that block's popover in the running scenario). The HTML idiom study that led
+(`SCHEMATIC_TAP=muehle/hf/pa` also opens that block's popover in the running scenario). The whole tablet Station page
+(top bar, schematic, power card, faults) renders with `PAGE_RENDER=1 flutter test test/tool/station_page_render_test.dart`
+→ `/tmp/station-page/*.png`. The HTML idiom study that led
 to this design is `../sas/station_schematic_variants.html`.
 
 ## Antenna cam (CAM tab)

@@ -251,6 +251,9 @@ func TestExampleFileDecodesAndValidates(t *testing.T) {
 	if len(cfg.Startup) != 12 || len(cfg.Shutdown) != 9 {
 		t.Errorf("example sequence = %d/%d steps, want 12/9", len(cfg.Startup), len(cfg.Shutdown))
 	}
+	if cfg.Idle.ShutdownMinutes != 120 || len(cfg.IdleShutdown) != 10 {
+		t.Errorf("example idle shutdown = %d min / %d steps, want 120 / 10", cfg.Idle.ShutdownMinutes, len(cfg.IdleShutdown))
+	}
 	// Cold-start order: PC mains → PSU → 5 s → PC WOL → (PLC online) → TRX → 1 s → PA → antenna power.
 	var order []string
 	for _, st := range cfg.Startup {
@@ -347,5 +350,36 @@ func TestNoStandbyIsValid(t *testing.T) {
 	cfg.Shutdown = exampleShutdown()
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("config without standby rejected: %v", err)
+	}
+}
+
+func validWithIdleShutdown() Config {
+	cfg := validWithStandby()
+	cfg.Idle.ShutdownMinutes = 120
+	cfg.IdleShutdown = exampleShutdown()
+	return cfg
+}
+
+func TestIdleShutdownConfigValidates(t *testing.T) {
+	if err := validWithIdleShutdown().Validate(); err != nil {
+		t.Fatalf("valid idle-shutdown config rejected: %v", err)
+	}
+}
+
+func TestIdleShutdownConfigRejects(t *testing.T) {
+	cases := map[string]func(*Config){
+		"minutes without steps": func(c *Config) { c.IdleShutdown = nil },
+		"steps without minutes": func(c *Config) { c.Idle.ShutdownMinutes = 0 },
+		"negative minutes":      func(c *Config) { c.Idle.ShutdownMinutes = -1 },
+		"not above timeout":     func(c *Config) { c.Idle.ShutdownMinutes = c.Idle.TimeoutMinutes },
+		"without standby":       func(c *Config) { c.Standby, c.Wake = nil, nil },
+		"bad step":              func(c *Config) { c.IdleShutdown[0].Kind = "nope" },
+	}
+	for name, mut := range cases {
+		cfg := validWithIdleShutdown()
+		mut(&cfg)
+		if err := cfg.Validate(); err == nil {
+			t.Errorf("%s: expected a validation error", name)
+		}
 	}
 }

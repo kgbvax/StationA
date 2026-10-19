@@ -32,6 +32,10 @@ func main() {
 		fmt.Fprintf(os.Stderr, "powerseq: %v\n", err)
 		os.Exit(2)
 	}
+	if flags.Check {
+		fmt.Printf("powerseq: %s is valid\n", flags.ConfigPath)
+		return
+	}
 
 	logger := mqtt.NewLogger(cfg.Log.Level)
 	logger.Info("powerseq starting",

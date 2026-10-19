@@ -188,7 +188,11 @@ void main() {
       await tester.tap(find.text('Station'));
       await tester.pump(const Duration(milliseconds: 100));
 
-      expect(find.text('STOP\nSTATION'), findsOneWidget);
+      expect(find.text('STOP'), findsOneWidget);
+      // The top bar carries no link dot and no offline count on any page.
+      expect(find.text('MQTT'), findsNothing);
+      expect(find.textContaining(RegExp(r'\d+ offline')), findsNothing);
+      expect(find.textContaining('all online'), findsNothing);
       expect(find.text('PSU 13.8V'), findsOneWidget);
     });
 

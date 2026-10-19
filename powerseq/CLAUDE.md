@@ -41,6 +41,7 @@ go test ./... -race                              # tests with race detector
 go vet ./...                                     # vet
 gofmt -s -w .                                    # fmt
 ./deploy.sh                                      # cross-compile, ship, install as hardened systemd service
+./powerseq -check -config config.toml            # validate a config and exit
 ```
 
 Run a single test:
@@ -98,8 +99,16 @@ when `hf/antenna-select` reports `activity=inactive` (antenna grounded), no
 lasted `timeout_minutes` → `entering_standby` → antenna power off + shack PC
 (bwpc) sleep (`retain=false`) → `standby`. A `last_activity` newer than the
 standby entry, a watch moving, or `start` → `waking` → WOL to bwpc + antenna
-power on → `running`. The idle check runs on the runner goroutine (1 s ticker),
-so it serializes with start/stop through `begin()`. Step kind `wol` sends the
+power on → `running`. A watch change during a sequence or within `[idle]
+settle_s` (default 30) of a phase change only re-baselines the watch: the UHF
+rotator readbacks step when standby cuts the antenna power (link still up),
+which woke every standby ~2 s later until 2026-10-19. A wake logs its reason.
+**Idle shutdown** (optional `[idle] shutdown_minutes`,
+default example 120, + `[[idle_shutdown]]`): still in `standby` that long after
+the last activity (antennaselect `last_activity`, a watch, the last start/wake)
+→ `stopping` → shutdown list + bwpc sleep → `idle` with
+`/state.stop_reason=idle_shutdown`; only `start` revives it. The idle check
+runs on the runner goroutine (1 s ticker), so it serializes with start/stop through `begin()`. Step kind `wol` sends the
 magic packet (UDP broadcast; `RestrictAddressFamilies=AF_INET` covers it). A
 step that times out → `fault` + `phase=idle`; the slots driven so far remain in
 whatever state the retained `/cmd` last set them (self-healing, no rollback).
@@ -131,7 +140,7 @@ both replay the full sequence. A command that arrives mid-sequence is dropped
 
 ```
 muehle/hf/power-seq/meta     retained  birth certificate (capabilities + expose)
-muehle/hf/power-seq/state    retained  { phase, step, fault?, ts }
+muehle/hf/power-seq/state    retained  { phase, step, fault?, stop_reason?, ts }
 muehle/hf/power-seq/status   retained  online | offline (LWT — the service)
 muehle/hf/power-seq/cmd      not retained   start | stop (operator one-button)
 ```
@@ -182,6 +191,16 @@ both: they share the client_id and the one-button `/cmd`.
 ```bash
 ./deploy.sh              # cross-compile, ship, install as a hardened systemd service
 ```
+
+Config is seed-once, with one exception: **config migrations**. When a release
+needs a new config section, `migrate-config.sh` (run by `deploy.sh` on the
+target) adds it to the existing `/etc/powerseq/config.toml` in place. It is
+idempotent, backs the file up first (`config.toml.pre-migrate-<ts>`) and the
+migrated file must pass `powerseq -check` with the new binary before the
+service is stopped — otherwise the backup is restored and the deploy aborts.
+Current migration: idle shutdown (`shutdown_minutes`, env `SHUTDOWN_MINUTES`
+default 120, + `[[idle_shutdown]]` = the live `[[shutdown]]` + bwpc sleep).
+Add future migrations to that script as their own idempotent block.
 
 The unit is hardened like atr1k-tuner-bridge (network-only):
 `ProtectSystem=strict`, `PrivateDevices=true` (no serial devices),

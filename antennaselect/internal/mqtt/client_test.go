@@ -1191,3 +1191,49 @@ func TestStatePublishesActivity(t *testing.T) {
 		t.Errorf("VFO step while active re-published /state (%d → %d)", n, got)
 	}
 }
+
+// A radio link drop (flexbridge publishes device_online=false, freq_hz 0) and
+// the reconnect (the same frequency again) is not activity: it must not reset
+// the idle clock or wake a station in standby via powerseq. Regression for the
+// SmartSDR/client-disconnect path behind the 2026-10-19 standby wake loop.
+func TestRadioDisconnectReconnectIsNotActivity(t *testing.T) {
+	c, _, drain, cancel := idleClient(t, time.Hour)
+	defer cancel()
+	c.onRadioStatus(nil, radioStatusMsg(true))
+	c.onRadioState(nil, radioStateMsgFreq(true, "20m", 14305000))
+	drain()
+	c.lastActivity = time.Now().Add(-2 * time.Hour)
+	c.checkIdle()
+	drain()
+	if c.in.StationActivity != "inactive" {
+		t.Fatalf("setup: expected inactive, got %q", c.in.StationActivity)
+	}
+	// Link down: freq_hz 0, then the reconnect on the same frequency.
+	c.onRadioState(nil, radioStateMsgFreq(false, "", 0))
+	c.onRadioState(nil, radioStateMsgFreq(true, "20m", 14305000))
+	drain()
+	if c.in.StationActivity != "inactive" || c.activitySeen {
+		t.Fatalf("disconnect/reconnect counted as activity: activity=%q seen=%v", c.in.StationActivity, c.activitySeen)
+	}
+	// A SmartSDR client connecting with the link up: flexbridge resets to
+	// freq_hz 0, then reports the new client's slice on another frequency.
+	// That is a new baseline, not a VFO turn (2026-10-19 16:38).
+	c.onRadioState(nil, radioStateMsgFreq(true, "unknown", 0))
+	c.onRadioState(nil, radioStateMsgFreq(true, "20m", 14287000))
+	drain()
+	if c.in.StationActivity != "inactive" || c.activitySeen {
+		t.Fatalf("client-connect slice reset counted as activity: activity=%q", c.in.StationActivity)
+	}
+	// A frequency reported while the link is down is not a VFO change either.
+	c.onRadioState(nil, radioStateMsgFreq(false, "40m", 7100000))
+	drain()
+	if c.in.StationActivity != "inactive" {
+		t.Fatalf("link-down frequency counted as activity")
+	}
+	// A real VFO change on a live link still counts.
+	c.onRadioState(nil, radioStateMsgFreq(true, "20m", 14100000))
+	drain()
+	if c.in.StationActivity != "active" {
+		t.Errorf("StationActivity=%q, want active after a live VFO change", c.in.StationActivity)
+	}
+}

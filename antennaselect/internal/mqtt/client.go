@@ -64,6 +64,15 @@ type Client struct {
 	// station in standby). seenRadio marks the first radio/state as the baseline.
 	activitySeen bool
 	seenRadio    bool
+	// liveFreqHz is the freq_hz of the last radio/state from a live radio link
+	// (device_online=true, freq_hz>0); 0 = none yet. A VFO change is measured
+	// against it, never against a link-down sample, so a radio power-off or a
+	// link drop and its reconnect (freq_hz → 0 → back) is not activity. A
+	// freq_hz 0 sample clears it: flexbridge publishes 0 while its slice/pan
+	// tracking resets (a SmartSDR client connecting, link up), and the slice it
+	// then reports may sit elsewhere — a new baseline, not a VFO turn (that
+	// woke a powerseq standby 2026-10-19 16:38 with nobody at the shack PC).
+	liveFreqHz int64
 	// pubActivity / pubHasLast are what the last published /state carried, so /state
 	// is re-published when the activity flips (not only when the decision changes —
 	// in manual mode the decision never changes) and when last_activity first appears.
@@ -237,9 +246,18 @@ func (c *Client) onRadioState(_ paho.Client, msg paho.Message) {
 			// Activity = a VFO/frequency change or a transmit. Either marks the station
 			// active and resets the idle clock (walk-away safety, §10). The first
 			// radio/state after start (the retained replay) is the baseline, not
-			// activity: the idle clock already starts at process start.
-			if c.seenRadio && (s.FreqHz != in.RadioFreqHz || s.TX == reconcile.TXTransmit) {
+			// activity: the idle clock already starts at process start. Only a live
+			// radio link counts: a link drop publishes freq_hz 0 and the reconnect the
+			// real frequency again — counted, that read as activity and woke a
+			// station in standby (powerseq) after any radio/client disconnect.
+			live := s.DeviceOnline && s.FreqHz > 0
+			vfo := live && c.liveFreqHz != 0 && s.FreqHz != c.liveFreqHz
+			tx := c.seenRadio && s.DeviceOnline && s.TX == reconcile.TXTransmit
+			if vfo || tx {
 				c.markActive(in)
+			}
+			if live || s.FreqHz == 0 {
+				c.liveFreqHz = s.FreqHz
 			}
 			c.seenRadio = true
 			in.RadioBand = s.Band

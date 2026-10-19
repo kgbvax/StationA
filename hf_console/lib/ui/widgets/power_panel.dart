@@ -195,19 +195,19 @@ class PowerPanel extends StatelessWidget {
                         backgroundColor: const WidgetStatePropertyAll(Color(0x1E5CCB8A)),
                         foregroundColor: WidgetStatePropertyAll(AppTheme.green),
                         side: WidgetStatePropertyAll(BorderSide(color: AppTheme.green)),
-                        minimumSize: const WidgetStatePropertyAll(Size(76, 57)),
+                        minimumSize: const WidgetStatePropertyAll(Size(76, 48)),
                         padding: const WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: 10, vertical: 10)),
                       ),
-                      child: const Text('START\nSTATION'),
+                      child: const Text('START'),
                     ),
                     const SizedBox(width: 8),
                     ElevatedButton(
                       onPressed: seqOnline ? stopStation : null,
                       style: AppTheme.actionButton(danger: true).copyWith(
-                        minimumSize: const WidgetStatePropertyAll(Size(76, 57)),
+                        minimumSize: const WidgetStatePropertyAll(Size(76, 48)),
                         padding: const WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: 10, vertical: 10)),
                       ),
-                      child: const Text('STOP\nSTATION'),
+                      child: const Text('STOP'),
                     ),
                     const SizedBox(width: 16),
                     Flexible(
@@ -215,8 +215,10 @@ class PowerPanel extends StatelessWidget {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Text('SEQUENCE', style: AppTheme.mono(10, color: AppTheme.txtFaint, letterSpacing: 0.12)),
-                          Text(seqLabel, style: AppTheme.mono(14, color: seqColor, weight: FontWeight.w700)),
+                          // The phase word only when something is happening:
+                          // an idle sequencer is the normal state, not news.
+                          if (seqLabel != 'IDLE')
+                            Text(seqLabel, style: AppTheme.mono(14, color: seqColor, weight: FontWeight.w700)),
                           if (seqFault.isEmpty && inTransition && seqStep.isNotEmpty)
                             Text(seqStep,
                                 key: const ValueKey('seq-step'),
@@ -381,11 +383,12 @@ class _Relay extends StatelessWidget {
                 ),
               ),
             ),
-            const SizedBox(width: 8),
-            Text(
-              online ? (on ? 'ON' : 'OFF') : 'OFFLINE',
-              style: AppTheme.mono(11, color: online ? (on ? AppTheme.green : AppTheme.txtFaint) : AppTheme.red, weight: FontWeight.w700),
-            ),
+            // The track already says on/off; words only when the relay is
+            // out of reach.
+            if (!online) ...[
+              const SizedBox(width: 8),
+              Text('OFFLINE', style: AppTheme.mono(11, color: AppTheme.red, weight: FontWeight.w700)),
+            ],
           ],
         ),
       ),

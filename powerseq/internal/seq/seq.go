@@ -24,7 +24,10 @@
 // inactive and no watched /state field moved for the idle timeout, it runs the
 // standby list (antenna power off, shack PC to sleep) → phase=standby. Fresh
 // activity (a last_activity newer than the standby entry, a watch moving) or a
-// `start` runs the wake list → phase=running.
+// `start` runs the wake list → phase=running. With an idle shutdown
+// configured, a station that stays in standby until ShutdownTimeout has passed
+// since the last activity runs the idle_shutdown list (full power-down) →
+// phase=idle with stop_reason=idle_shutdown; only a `start` revives it.
 //
 // The runner is a single goroutine that executes one sequence at a time;
 // observations arrive from the mqtt layer and update a mutex-guarded input map.
@@ -152,12 +155,24 @@ type Config struct {
 	Shutdown []Step
 	Standby  []Step // optional idle power-down
 	Wake     []Step // optional revive (required with Standby)
+	// IdleShutdown is the optional full power-down run from standby once
+	// ShutdownTimeout has passed since the last activity (requires Standby).
+	IdleShutdown []Step
 
 	// Idle standby triggers (used only when Standby/Wake are configured).
 	ActivitySlot string        // site-relative; /state.activity + last_activity
 	IdleTimeout  time.Duration // watch quiet window + minimum running time
 	Watches      []Watch
 	IdleCheck    time.Duration // idle evaluation cadence (0 → 1 s)
+	// ShutdownTimeout is the time since the last activity after which a
+	// station in standby runs IdleShutdown (must exceed IdleTimeout).
+	ShutdownTimeout time.Duration
+	// WatchSettle is how long after a phase change a watch change is not
+	// activity (the change re-baselines the watch instead). The sequencer's
+	// own steps switch power: a rotator readback that steps when the antenna
+	// supply goes off (device link still up) is the sequencer's doing, not an
+	// operator's. 0 = no settle window.
+	WatchSettle time.Duration
 
 	// WOL sends wol steps; nil → SendMagicPacket.
 	WOL WOLSender
@@ -206,6 +221,7 @@ type Sequencer struct {
 	shutdown []resolvedStep
 	standby  []resolvedStep
 	wake     []resolvedStep
+	idleShut []resolvedStep // optional; run from standby after ShutdownTimeout
 
 	activitySlot string // absolute; "" = idle standby disabled
 	watches      []*resolvedWatch
@@ -216,13 +232,16 @@ type Sequencer struct {
 	state  map[string]any    // absolute slot → parsed /state JSON (map[string]any)
 	online bool              // broker connection state (set by the mqtt layer)
 
-	phase string
-	step  string
-	fault string
+	phase      string
+	step       string
+	fault      string
+	stopReason string // why the station last went to idle: "operator" | "idle_shutdown" ("" after a start)
 
 	runningSince time.Time // last entry into phase=running
 	standbySince time.Time // last entry into phase=standby
 	lastWatch    time.Time // last counted watch change
+	lastWatchWhy string    // which watch moved last ("slot.field a→b"), for the wake log
+	settleUntil  time.Time // watch changes before this re-baseline (see WatchSettle)
 
 	cmdCh       chan string   // "start" | "stop" → runner
 	republishCh chan struct{} // mqtt layer → runner: re-publish retained /state
@@ -252,6 +271,18 @@ func New(cfg Config, pub Publisher, log Logger) (*Sequencer, error) {
 	if (len(standby) == 0) != (len(wake) == 0) {
 		return nil, fmt.Errorf("standby and wake must both be configured or both absent")
 	}
+	idleShut, err := resolve(cfg.IdleShutdown, cfg, self, "idle_shutdown")
+	if err != nil {
+		return nil, err
+	}
+	if len(idleShut) > 0 {
+		if len(standby) == 0 {
+			return nil, fmt.Errorf("idle_shutdown needs standby/wake (it runs from standby)")
+		}
+		if cfg.ShutdownTimeout <= cfg.IdleTimeout {
+			return nil, fmt.Errorf("idle_shutdown needs a shutdown timeout > the idle timeout")
+		}
+	}
 	s := &Sequencer{
 		cfg:         cfg,
 		pub:         pub,
@@ -261,6 +292,7 @@ func New(cfg Config, pub Publisher, log Logger) (*Sequencer, error) {
 		shutdown:    shutdown,
 		standby:     standby,
 		wake:        wake,
+		idleShut:    idleShut,
 		wol:         cfg.WOL,
 		status:      map[string]string{},
 		state:       map[string]any{},
@@ -415,6 +447,7 @@ func (s *Sequencer) allSteps() []resolvedStep {
 	out := append([]resolvedStep{}, s.startup...)
 	out = append(out, s.shutdown...)
 	out = append(out, s.standby...)
+	out = append(out, s.idleShut...)
 	return append(out, s.wake...)
 }
 
@@ -465,8 +498,16 @@ func (s *Sequencer) SetState(slot string, payload []byte) {
 // and only between two real values: a field appearing or vanishing (device
 // powered down, invalid readback) is not activity — otherwise switching the
 // antenna power off in standby would read as activity and wake the station.
+//
+// Nor does a change while a sequence runs or within WatchSettle of a phase
+// change: the sequencer's own power steps move readbacks of devices whose link
+// stays up (the UHF rotator controllers report a stepped position with
+// device_online=true when the antenna supply goes off — 2026-10-19, every
+// standby woke ~2 s later). Such a change re-baselines the watch instead.
 func (s *Sequencer) noteWatchesLocked(slot string, m map[string]any) {
 	fit := s.status[slot] == "online" && coerceToString(m["device_online"]) != "false"
+	now := time.Now()
+	settled := (s.phase == PhaseRunning || s.phase == PhaseStandby) && !now.Before(s.settleUntil)
 	for _, w := range s.watches {
 		if w.Slot != slot {
 			continue
@@ -475,13 +516,14 @@ func (s *Sequencer) noteWatchesLocked(slot string, m map[string]any) {
 		if v == "" || !fit {
 			continue
 		}
-		if w.anchor == "" {
-			w.anchor = v // first real value is the baseline, not activity
+		if w.anchor == "" || !settled {
+			w.anchor = v // baseline: first real value, or a self-inflicted change
 			continue
 		}
 		if watchMoved(w.anchor, v, w.MinDelta) {
+			s.lastWatchWhy = fmt.Sprintf("%s.%s %s→%s", w.Slot, w.Field, w.anchor, v)
 			w.anchor = v
-			s.lastWatch = time.Now()
+			s.lastWatch = now
 		}
 	}
 }
@@ -624,7 +666,7 @@ func (s *Sequencer) RequestRepublish() {
 // ---------------------------------------------------------------------------
 
 // idleDecision evaluates the idle standby triggers at now and returns
-// "standby", "wake" or "" (nothing to do). Evaluated only with a live broker
+// "standby", "wake", "idle_shutdown" or "" (nothing to do). Evaluated only with a live broker
 // (stale inputs must not power anything down or up).
 //
 //   - standby (from running): the activity slot is fit and reports
@@ -635,6 +677,8 @@ func (s *Sequencer) RequestRepublish() {
 //     the standby entry (a real VFO change / TX / operator hold — an
 //     antennaselect restart publishes no last_activity, so it never wakes), or
 //     a watch moved after the standby entry.
+//   - idle_shutdown (from standby, when configured and no wake is due): the
+//     last activity (see lastActivityLocked) is ShutdownTimeout ago.
 func (s *Sequencer) idleDecision(now time.Time) string {
 	if !s.standbyEnabled() {
 		return ""
@@ -657,16 +701,37 @@ func (s *Sequencer) idleDecision(now time.Time) string {
 		return "standby"
 	case PhaseStandby:
 		if s.lastWatch.After(s.standbySince) {
+			s.log.Infof("wake: watch moved (%s)", s.lastWatchWhy)
 			return "wake"
 		}
-		if m == nil {
-			return ""
+		if m != nil {
+			if ts, err := time.Parse(time.RFC3339Nano, coerceToString(m["last_activity"])); err == nil && ts.After(s.standbySince) {
+				s.log.Infof("wake: %s last_activity %s", s.activitySlot, ts.Format(time.RFC3339))
+				return "wake"
+			}
 		}
-		if ts, err := time.Parse(time.RFC3339Nano, coerceToString(m["last_activity"])); err == nil && ts.After(s.standbySince) {
-			return "wake"
+		if len(s.idleShut) > 0 && now.Sub(s.lastActivityLocked(m)) >= s.cfg.ShutdownTimeout {
+			return "idle_shutdown"
 		}
 	}
 	return ""
+}
+
+// lastActivityLocked is the idle-shutdown clock: the latest of the activity
+// slot's last_activity, the last counted watch change and the last entry into
+// phase=running (a start or a wake is activity too). An antennaselect restart
+// publishes no last_activity, so it never resets the clock.
+func (s *Sequencer) lastActivityLocked(m map[string]any) time.Time {
+	last := s.runningSince
+	if s.lastWatch.After(last) {
+		last = s.lastWatch
+	}
+	if m != nil {
+		if ts, err := time.Parse(time.RFC3339Nano, coerceToString(m["last_activity"])); err == nil && ts.After(last) {
+			last = ts
+		}
+	}
+	return last
 }
 
 // begin atomically re-checks the busy guard and transitions phase to the
@@ -681,6 +746,7 @@ func (s *Sequencer) begin(cmd string) (steps []resolvedStep, endPhase string, ok
 			s.phase = PhaseStarting
 			s.step = ""
 			s.fault = ""
+			s.stopReason = ""
 			steps, endPhase, ok = s.startup, PhaseRunning, true
 		case PhaseStandby:
 			// start from standby = wake (the station is energized already).
@@ -697,7 +763,17 @@ func (s *Sequencer) begin(cmd string) (steps []resolvedStep, endPhase string, ok
 			s.phase = PhaseStopping
 			s.step = ""
 			s.fault = ""
+			s.stopReason = "operator"
 			steps, endPhase, ok = s.shutdown, PhaseIdle, true
+		}
+	case "idle_shutdown":
+		if s.phase == PhaseStandby && len(s.idleShut) > 0 {
+			s.log.Infof("idle shutdown: no activity for %s", s.cfg.ShutdownTimeout)
+			s.phase = PhaseStopping
+			s.step = ""
+			s.fault = ""
+			s.stopReason = "idle_shutdown"
+			steps, endPhase, ok = s.idleShut, PhaseIdle, true
 		}
 	case "standby":
 		if s.phase == PhaseRunning && s.standbyEnabled() {
@@ -971,6 +1047,9 @@ func (s *Sequencer) setPhase(phase, step, fault string) {
 		s.standbySince = time.Now()
 	}
 	prev := s.phase
+	if prev != phase {
+		s.settleUntil = time.Now().Add(s.cfg.WatchSettle)
+	}
 	s.phase = phase
 	s.step = step
 	s.fault = fault
@@ -994,6 +1073,9 @@ type statePayload struct {
 	Phase string `json:"phase"`
 	Step  string `json:"step"` // always present (model §7.1; only fault is omitempty)
 	Fault string `json:"fault,omitempty"`
+	// StopReason says why the station is idle: "operator" (a stop) or
+	// "idle_shutdown" (no activity for the shutdown timeout). Cleared by start.
+	StopReason string `json:"stop_reason,omitempty"`
 }
 
 // publishState publishes the retained sequencer /state snapshot. A publish
@@ -1005,6 +1087,8 @@ func (s *Sequencer) publishState() {
 		Phase: s.phase,
 		Step:  s.step,
 		Fault: s.fault,
+
+		StopReason: s.stopReason,
 	}
 	s.mu.Unlock()
 	b, err := json.Marshal(p)
@@ -1077,6 +1161,7 @@ func (s *Sequencer) MetaPayload() []byte {
 						PhaseEnteringStandby, PhaseStandby, PhaseWaking}},
 				{"key": "step", "name": "Step", "type": "string"},
 				{"key": "fault", "name": "Fault", "type": "string"},
+				{"key": "stop_reason", "name": "Stop reason", "type": "string"},
 			},
 		},
 	}

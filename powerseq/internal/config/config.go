@@ -5,7 +5,7 @@
 //
 // The startup/shutdown sequence is CONFIG-DRIVEN: it is a pair of ordered step
 // lists ([[startup]] / [[shutdown]], plus the optional idle [[standby]] /
-// [[wake]]) in this config, not hard-coded in Go. Each
+// [[wake]] / [[idle_shutdown]]) in this config, not hard-coded in Go. Each
 // step is one of five kinds — emit a retained /cmd, wait for N slots' /status,
 // wait for a slot's /state field, a fixed delay, or a Wake-on-LAN packet. The sequencer resolves the
 // site-relative slot addresses to absolute ones (model §7.1 is the default
@@ -44,6 +44,10 @@ type Config struct {
 	// Wake is the ordered revive sequence (optional, required with Standby).
 	// Run from phase=standby on activity or on `start`.
 	Wake []Step `toml:"wake"`
+	// IdleShutdown is the ordered full power-down run from phase=standby once
+	// the station has been idle for Idle.ShutdownMinutes (optional, requires
+	// Standby/Wake). Ends in phase=idle; only a `start` revives the station.
+	IdleShutdown []Step `toml:"idle_shutdown"`
 	// Idle configures when the station counts as idle (standby trigger) and
 	// what counts as activity (wake trigger). Only used with Standby/Wake.
 	Idle IdleConfig `toml:"idle"`
@@ -84,6 +88,9 @@ type TimingConfig struct {
 	DefaultHoldMs int `toml:"default_hold_ms"`
 }
 
+// DefaultSettleSeconds is the watch settle window when [idle] settle_s is unset.
+const DefaultSettleSeconds = 30
+
 // IdleConfig configures the standby/wake triggers.
 //
 // The station is idle when the activity slot's /state.activity is "inactive"
@@ -98,6 +105,15 @@ type IdleConfig struct {
 	// TimeoutMinutes is the quiet window for the watches and the minimum time
 	// in phase=running before standby (no standby right after a start/wake).
 	TimeoutMinutes int `toml:"timeout_minutes"`
+	// ShutdownMinutes is the idle time (since the last activity) after which a
+	// station in standby runs [[idle_shutdown]]. 0 = never (stay in standby).
+	// Must exceed TimeoutMinutes.
+	ShutdownMinutes int `toml:"shutdown_minutes"`
+	// SettleSeconds is how long after every phase change a watch change is
+	// not activity (it re-baselines the watch): the sequencer's own power
+	// steps move readbacks, e.g. the UHF rotator position when the antenna
+	// supply goes off. 0 or unset = DefaultSettleSeconds.
+	SettleSeconds int `toml:"settle_s"`
 	// Watches are extra activity sources: a change of the /state field counts
 	// as activity (e.g. UHF radio frequency, UHF rotator position).
 	Watches []Watch `toml:"watch"`
@@ -203,6 +219,9 @@ func Defaults() Config {
 type Flags struct {
 	ConfigPath string
 	LogLevel   string
+	// Check loads + validates the config and exits (deploy.sh runs it on a
+	// migrated config before restarting the service).
+	Check bool
 }
 
 // RegisterFlags wires powerseq's flags onto fs.
@@ -210,6 +229,7 @@ func RegisterFlags(fs *flag.FlagSet) *Flags {
 	var f Flags
 	fs.StringVar(&f.ConfigPath, "config", "/etc/powerseq/config.toml", "path to config file")
 	fs.StringVar(&f.LogLevel, "log.level", "", "log level (debug|info|warn|error); overrides config")
+	fs.BoolVar(&f.Check, "check", false, "validate the config file and exit (0 = valid)")
 	return &f
 }
 
@@ -308,6 +328,26 @@ func (c Config) Validate() error {
 			if w.MinDelta < 0 {
 				return fmt.Errorf("idle.watch[%d]: min_delta must be >= 0", i)
 			}
+		}
+	}
+	if c.Idle.SettleSeconds < 0 {
+		return fmt.Errorf("[idle] settle_s must be >= 0 (got %d; 0 = default %d)", c.Idle.SettleSeconds, DefaultSettleSeconds)
+	}
+	if c.Idle.ShutdownMinutes < 0 {
+		return fmt.Errorf("[idle] shutdown_minutes must be >= 0 (got %d; 0 = off)", c.Idle.ShutdownMinutes)
+	}
+	if (c.Idle.ShutdownMinutes > 0) != (len(c.IdleShutdown) > 0) {
+		return fmt.Errorf("[idle] shutdown_minutes > 0 and [[idle_shutdown]] must both be present or both absent")
+	}
+	if c.Idle.ShutdownMinutes > 0 {
+		if len(c.Standby) == 0 {
+			return fmt.Errorf("[[idle_shutdown]] requires [[standby]]/[[wake]] (it runs from standby)")
+		}
+		if c.Idle.ShutdownMinutes <= c.Idle.TimeoutMinutes {
+			return fmt.Errorf("[idle] shutdown_minutes (%d) must be > timeout_minutes (%d)", c.Idle.ShutdownMinutes, c.Idle.TimeoutMinutes)
+		}
+		if err := validateSteps("idle_shutdown", c.IdleShutdown); err != nil {
+			return err
 		}
 	}
 	return nil
