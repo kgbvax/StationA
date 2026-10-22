@@ -112,6 +112,7 @@ type SlotBridge struct {
 	state  powerState
 	last   powerState // last published snapshot (for change dedup)
 	online bool       // bridge (this slot's client) connected; gates state publishing
+	intent *bool      // last accepted set_power value; nil until a /cmd arrives
 }
 
 // New constructs a SlotBridge.
@@ -264,12 +265,42 @@ func (b *SlotBridge) HandleCommand(payload []byte) {
 			b.log.Warnf("cmd set_power: unknown value %q (want on|off)", c.Value)
 			return
 		}
+		b.mu.Lock()
+		b.intent = &on
+		b.mu.Unlock()
 		if err := b.cfg.Commander.SetPower(on); err != nil {
 			b.log.Warnf("cmd set_power: %v", err)
 		}
 	default:
 		b.log.Warnf("cmd: unknown action %q", c.Action)
 	}
+}
+
+// ReassertIntent re-sends the last /cmd set_power intent to the Shelly. Call
+// it when the Shelly (re)connects to the broker. The replay of the retained
+// /cmd on the bridge's own reconnect covers only half of the outage case: the
+// Shelly RPC is not retained, so after a site power cut the bridge can replay
+// the intent before the Shelly is on the broker. The command is then lost, and
+// the relay stays in its power-on default (2026-10-22: antenna power stayed on
+// although the intent was off). No-op until a /cmd has arrived.
+func (b *SlotBridge) ReassertIntent() {
+	b.mu.RLock()
+	intent := b.intent
+	b.mu.RUnlock()
+	if intent == nil || b.cfg.Commander == nil {
+		return
+	}
+	b.log.Infof("shelly reconnected: re-applying set_power %s", onOff(*intent))
+	if err := b.cfg.Commander.SetPower(*intent); err != nil {
+		b.log.Warnf("re-apply set_power: %v", err)
+	}
+}
+
+func onOff(on bool) string {
+	if on {
+		return "on"
+	}
+	return "off"
 }
 
 // snapshotLocked stores the candidate state, dedups against last, and returns

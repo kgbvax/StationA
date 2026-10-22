@@ -181,6 +181,21 @@ func TestHandleCommandSetPower(t *testing.T) {
 	}
 }
 
+func TestReassertIntent(t *testing.T) {
+	cmd := &fakeCommander{}
+	b, _ := newTestBridge(t, cmd)
+	b.ReassertIntent() // no /cmd yet: nothing to re-apply
+	if len(cmd.calls) != 0 {
+		t.Fatalf("SetPower calls before any /cmd = %v, want none", cmd.calls)
+	}
+	b.HandleCommand([]byte(`{"action":"set_power","value":"off"}`))
+	b.HandleCommand([]byte(`{"action":"set_power","value":"sleep"}`)) // rejected: must not change the intent
+	b.ReassertIntent()
+	if len(cmd.calls) != 2 || cmd.calls[0] || cmd.calls[1] {
+		t.Errorf("SetPower calls = %v, want [false false]", cmd.calls)
+	}
+}
+
 func TestHandleCommandRejectsUnknown(t *testing.T) {
 	cmd := &fakeCommander{}
 	b, _ := newTestBridge(t, cmd)

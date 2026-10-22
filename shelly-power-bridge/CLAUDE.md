@@ -120,7 +120,11 @@ muehle/power/<slot>/cmd      retained   set_power intent (bus → bridge); self-
 relay position read back from the Shelly), `device_online`, `error,omitempty`,
 plus an RFC3339 `ts`. `/cmd` is **retained** (the self-healing steady-state
 exception, model §8): a power slot holds an on/off intent, and the broker
-replays the last command on every reconnect so the bridge re-applies it. See
+replays the last command on every reconnect so the bridge re-applies it. The
+bridge also re-applies the last intent when the **Shelly** reconnects (live,
+non-retained `<id>/online=true`): after a power cut the bridge's replay can
+beat the Shelly onto the broker and be lost (2026-10-22, antenna power stayed
+on). See
 `docs/shelly-power-bridge-mqtt-api.md` for the full on-the-wire contract,
 including the Shelly native topics it subscribes (`<id>/status/switch:0`,
 `<id>/online`) and commands (`<id>/rpc`).

@@ -209,6 +209,14 @@ func runSlot(ctx context.Context, cfg config.Config, sc config.SlotConfig, log *
 			if string(m.Payload()) == "true" {
 				link.set(true)
 				sharedmqtt.Enqueue(jobs, b.MarkDeviceOnline) // never sets power: this topic says nothing about the relay
+				// A live (non-retained) "true" means the Shelly connected just now,
+				// e.g. after a power cut with its relay back at the power-on
+				// default. Re-send the intent: an RPC sent before it connected is
+				// lost. A retained "true" is the replay on our own connect, and the
+				// retained /cmd replay covers that case already.
+				if !m.Retained() {
+					sharedmqtt.Enqueue(jobs, b.ReassertIntent)
+				}
 			} else {
 				link.set(false)
 				sharedmqtt.Enqueue(jobs, func() { b.MarkDeviceOffline("shelly online=false") })

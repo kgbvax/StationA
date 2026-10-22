@@ -65,7 +65,11 @@ empty, and refuses duplicate slot addresses.
 `/cmd` is **retained** (the self-healing steady-state exception): a power slot
 holds an on/off intent. On reconnect the broker replays the last command and
 the bridge re-applies it, so the Shelly converges to the intended state even
-after a bridge restart. The Shelly's own native announce is the confirmation
+after a bridge restart. The bridge also re-applies the last intent when the
+Shelly itself reconnects (a live, non-retained `<id>/online` = `true`): the
+native RPC is not retained, so after a site power cut the bridge's replay can
+reach the broker before the Shelly does and be lost, leaving the relay at its
+power-on default. The Shelly's own native announce is the confirmation
 (fire-and-observe).
 
 ---
