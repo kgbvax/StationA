@@ -115,8 +115,9 @@ func TestSetModeBypassesDeadband(t *testing.T) {
 
 // TestRetractedLatch verifies the bridge-side retract latch the PA arm gates on: set by a
 // successful retract, kept across status refreshes (the RCU-06 reply has no retract flag),
-// NOT cleared by a deadband-suppressed retune (the elements stay retracted), and cleared
-// once a change-frequency command (new frequency or direction) reaches the controller.
+// and cleared once a change-frequency command reaches the controller — including a
+// retune within the deadband, which is not suppressed while retracted (an unlock must be
+// able to re-extend at the same frequency).
 func TestRetractedLatch(t *testing.T) {
 	ctx := context.Background()
 	ctrl := NewController(transport.NewMock())
@@ -139,11 +140,14 @@ func TestRetractedLatch(t *testing.T) {
 		t.Fatal("a status refresh cleared the retract latch")
 	}
 	cur := ctrl.State().FrequencyKHz
-	if err := ctrl.SetFrequency(ctx, cur+1, ctrl.State().ModeName); err != nil {
-		t.Fatalf("SetFrequency (deadband): %v", err)
+	if err := ctrl.SetFrequency(ctx, cur, ctrl.State().ModeName); err != nil {
+		t.Fatalf("SetFrequency (same freq while retracted): %v", err)
 	}
-	if !ctrl.State().Retracted {
-		t.Fatal("a deadband-suppressed retune cleared the retract latch")
+	if ctrl.State().Retracted {
+		t.Fatal("a same-frequency retune while retracted was swallowed by the deadband")
+	}
+	if err := ctrl.Retract(ctx); err != nil {
+		t.Fatalf("Retract: %v", err)
 	}
 	if err := ctrl.SetMode(ctx, ctrl.State().ModeName); err != nil {
 		t.Fatalf("SetMode: %v", err)
@@ -171,16 +175,16 @@ func TestOnChangeAfterAcceptedCommands(t *testing.T) {
 		t.Fatalf("after retract: hook calls = %+v, want one with Retracted", got)
 	}
 	cur := ctrl.State().FrequencyKHz
-	if err := ctrl.SetFrequency(ctx, cur+1, ctrl.State().ModeName); err != nil {
-		t.Fatalf("SetFrequency (deadband): %v", err)
-	}
-	if len(got) != 1 {
-		t.Fatalf("a deadband-suppressed retune fired the hook (%d calls)", len(got))
-	}
 	if err := ctrl.SetFrequency(ctx, cur+100, ctrl.State().ModeName); err != nil {
 		t.Fatalf("SetFrequency: %v", err)
 	}
 	if len(got) != 2 || got[1].Retracted || got[1].FrequencyKHz != cur+100 {
 		t.Fatalf("after retune: hook calls = %+v, want a second with the new freq, not retracted", got)
+	}
+	if err := ctrl.SetFrequency(ctx, cur+101, ctrl.State().ModeName); err != nil {
+		t.Fatalf("SetFrequency (deadband): %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("a deadband-suppressed retune fired the hook (%d calls)", len(got))
 	}
 }

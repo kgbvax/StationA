@@ -150,9 +150,12 @@ func (c *Controller) SetFrequency(ctx context.Context, frequencyKHz uint16, mode
 	// caller that happens to pass a different direction here. When the current
 	// frequency is unknown (0 — before the first Refresh or while the device is
 	// offline) the deadband is skipped so the command always reaches the controller.
+	// It is also skipped while retracted: the RCU-06 still reports the pre-retract
+	// frequency, so a same-band re-tune after a storm/maintenance unlock would be
+	// swallowed and the elements would stay in forever.
 	cur := c.State()
 	curModeByte, _ := protocol.ParseMode(cur.ModeName)
-	if cur.FrequencyKHz != 0 && absDiffU16(frequencyKHz, cur.FrequencyKHz) < freqDeadbandKHz && modeByte == curModeByte {
+	if !cur.Retracted && cur.FrequencyKHz != 0 && absDiffU16(frequencyKHz, cur.FrequencyKHz) < freqDeadbandKHz && modeByte == curModeByte {
 		return nil
 	}
 	return c.sendFrequency(ctx, frequencyKHz, modeByte)

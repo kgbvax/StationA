@@ -689,3 +689,35 @@ rotor through the remapped path and the 1° deadband are fine at the bench
 (2026-09-17); travel range confirmed 0–180°, configured `max=180`. The az slot
 runs against a placeholder serial path (truthful
 `device_online:false`) until the SPID azimuth bench bring-up.
+
+## [decision] HF antenna mode (storm / maintenance) — lock authority and policy (2026-10-22)
+
+`hf/ant-mode` (`antmode`, contract `antmode/docs/ant-mode-mqtt-api.md`) locks the
+Ultrabeam and the HF rotator. Decisions taken with the operator:
+
+1. **Bridges enforce, bridges park.** wrc-rotator-bridge and ultrabridge refuse motion
+   on every inbound path (MQTT, GS-232 :7373, PstRotator :12040, HTTP) and execute the
+   park from `/state.lock`. No privileged `/cmd` token: the console account can publish
+   any `/cmd` anyway, and a bridge-owned park also repairs ultrabridge's retract latch
+   after a restart or power cycle. No power-off lockout (antenna power is only borrowed).
+   `stop` and `retract` are never refused.
+2. **A locked snapshot survives its owner.** No retained state → normal (rollout-safe);
+   a locked snapshot is enforced while antmode is offline; malformed → last known.
+3. **The lock outranks antennaselect's manual stand-down** (it grounds even in manual).
+4. **Storm entry:** operator, or a NINA/DWD wind warning from level 1 "Windböen" up that
+   is **active now** (no lead time). Manned (powerseq `starting`/`running`) → suggestion
+   only; unmanned (any other phase, or powerseq offline/unknown) → automatic.
+5. **Storm exit:** an auto-entered storm returns to normal 60 min after the last
+   qualifying warning, counting only successful polls (a NINA outage never counts as
+   "no warning"). A manual storm, and maintenance, exit only manually. A manual
+   `normal` during an active warning acknowledges those warning ids.
+6. **Storm heading:** DWD day wind direction ± 90° (nearer the current azimuth,
+   `max_az` 360 until the 360–450 overlap readback is verified); stale wind → preset.
+   Parked **once**, no re-aim on veer (the G-450DC has no brake; rotating in gusts is the
+   worst case). Order: ground → retract → rotate (less wind load while turning).
+7. **Maintenance:** preset azimuth, console-only `set_az` nudges tagged
+   `override:"maintenance"` (intent tagging, not security; GS-232/PstRotator cannot carry
+   it). Antenna power, if borrowed, stays on until maintenance ends.
+8. **Unlock does not auto-extend.** The elements come back out through antennaselect
+   band-follow; to make that work at an unchanged frequency, ultrabridge skips its
+   25 kHz deadband while retracted and antennaselect resets its follow dedup on unlock.

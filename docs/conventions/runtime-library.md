@@ -27,6 +27,17 @@ as arguments: the already-configured client, the caller-created job queue and it
 and explicit `site`/`station`/`slot` strings. Buffer sizes, timeouts, and cadences live in
 components.
 
+## [decision] Shared wire-contract parsers beside the runtime library (2026-10-22)
+
+The scope rules above govern the *runtime* plumbing (`shared/mqtt`, `shared/schema`,
+`shared/logging`). The `shared` module also holds **pure wire-contract parsers** for a
+contract that several components read: `shared/pstrotator` (PstRotator UDP grammar) and
+`shared/antmode` (the `hf/ant-mode` lock read by wrc-rotator-bridge, ultrabridge,
+antennaselect, beamsteer and powerseq). They follow the same MUST NOTs — no client, no
+broker, no subscriptions, no config keys, no publishing, no secrets — and hold no
+policy: what a consumer does with a parsed lock stays in the consumer. They exist so N
+consumers cannot drift apart on how one contract is read.
+
 ## [requirement] Abortable connect: the ≤ 1 s bound
 
 **MUST** — The component must be able to cancel a connect that is in progress. On a shutdown

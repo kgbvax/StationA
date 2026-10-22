@@ -220,7 +220,11 @@ all of the following hold:
 
 - the current known frequency is nonzero,
 - `|requested − current| < 25 kHz` (a difference of exactly 25 kHz goes through),
-- the direction byte equals the current direction.
+- the direction byte equals the current direction,
+- the elements are **not** retracted (bridge-side `retracted` latch). While retracted every
+  change_frequency goes through: the RCU-06 keeps reporting the pre-retract frequency, so a
+  same-band re-tune after a storm/maintenance unlock (antenna mode) must still re-extend the
+  elements (2026-10-22; before that a retracted beam stayed in until the VFO moved ≥ 25 kHz).
 
 Rationale: re-driving the motors for a sub-25 kHz retune only wears them and churns the
 bus. 25 kHz matches the debug UI's nudge step, so one nudge still passes. A pure direction

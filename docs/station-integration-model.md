@@ -272,7 +272,9 @@ entirely).
   logic slot that runs an ordered, delay- and confirmation-based startup/shutdown over
   other slots' `/cmd`), and `sat-track` (the satellite a tracker application is
   following — identity, look angle, derived sub-satellite point; read-only, fronts
-  software, not hardware). Passive: `ant/*`, `mast/*`, `preamp/*` (masthead LNA).
+  software, not hardware), and `ant-mode` (a logic slot owning the station antenna mode
+  `normal | storm | maintenance`; its `/state.lock` is read by the enforcing bridges,
+  §7.1). Passive: `ant/*`, `mast/*`, `preamp/*` (masthead LNA).
 - **Capability keys** seen so far: `bands`, `modes`, `receivers`, `diversity`,
   `amp_key`, `tune`, `bias_t`, `band_source`, `rf_sample`, `alc_out`, `hot_switch`,
   `ports`, `off`, `exclusive`, `axes`, `polarizations`, `feeds` (a `power` slot's
@@ -328,6 +330,12 @@ stream. The actuator receives one command source and reports its state.
 2 operator:  active hold (dummy, forced)  → that selection
 3 auto:      policy(state)                → resolved selection
 ```
+
+Above the whole ladder sits the **antenna-mode lock** (`hf/ant-mode`, §7.1): while the
+mode is `storm` or `maintenance` the arbiter targets `off` with `source: lock`, even
+under antennaselect's manual stand-down. Entering a locked mode is itself an explicit
+operator decision (or the unmanned safety action), so it outranks "never move
+automatically".
 
 - `mode` is **derived**: `manual` while an operator hold is active, else `auto`. No
   separate auto/manual switch is needed — the presence of a hold *is* manual mode.
@@ -638,6 +646,27 @@ config:     wiring_map  { port1: dummy-load, port3: ultrabeam, port6: fan-dipole
 state:      mode {auto|manual}; target {off|port1..port6}; source {idle|operator|auto}
 ```
 
+**`muehle/hf/ant-mode`** — station antenna mode (logic slot, `antmode` on `scmino`;
+contract: `antmode/docs/ant-mode-mqtt-api.md`)
+```
+role:       ant-mode   # logic slot, no device
+subscribes: hf/power-seq/state (presence), hf/rotator, hf/ant-ctrl, hf/ant-switch,
+            hf/radio, power/antennas; polls NINA (DWD warnings by ARS) and DWD
+            stationOverviewExtended (day wind direction/gust)
+state:      ant_mode {normal|storm|maintenance}; source {manual|auto};
+            lock {seq, ground, retract, park_az, nudge} (only when locked);
+            phase; power_hold; presence; wind; warnings; storm_suggested
+intent:     set_ant_mode <mode> | repark | dismiss_suggestion   # one-shot, cleared
+```
+Storm and maintenance ground the antenna, retract the Ultrabeam and park the HF rotator
+(storm: boom broadside to the DWD wind direction, parked once; maintenance: a preset
+azimuth for lowering the mast). **The lock is enforced in the bridges, not here**:
+`hf/rotator` and `hf/ant-ctrl` read `/state.lock` (via `shared/antmode`), refuse motion on
+every inbound path (MQTT, GS-232, PstRotator, HTTP) and execute the park themselves; a
+locked snapshot stays enforced while antmode is offline. A DWD wind warning (level 1
+"Windböen" and up) enters storm automatically only while the station is unmanned
+(powerseq not `starting`/`running`); manned, it is a suggestion.
+
 **`muehle/hf/discovery`** — HA discovery consumer (logic slot, `hadiscovery`; see §7.3, §9)
 ```
 subscribes: <site>/+/+/meta  (reads each slot's consumer-neutral `expose` block, §3.1)
@@ -864,6 +893,7 @@ muehle/host/scmino      # Debian 12 arm64 box, taking over shari's role
 | Sat-track bridge (`oscarwatch-sattrack-bridge`) | `uhf/sat-track` (OscarWatch on shack-pc) | `scmino` |
 | FLEX bridge (flexbridge) | `hf/radio` | `scmino` |
 | HF antenna-select reconciler | `hf/antenna-select` | `scmino` |
+| Antenna mode (`antmode`) | `hf/ant-mode` | `scmino` |
 | Logging | subscriber, no slot | `shari` |
 | Shelly power bridge (`shelly-power-bridge`) | `power/psu-13v8`, `power/antennas`, `power/shack-pc-mains` | `shari` |
 | Shack-PC power agent (`winpc-power-bridge`) | `power/shack-pc` | `bwpc` |
