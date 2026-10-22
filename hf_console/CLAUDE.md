@@ -130,17 +130,23 @@ the park themselves. The console only mirrors the lock so a refused tap is never
   down the keys are off and a line names the mode that is still enforced.
 - Locked controls (greyed, with the reason in the card's pill band): Ultrabeam FORWARD / 180° / BI-DIR / AUTO and
   the 6 m forward correction (RETRACT stays live); the antenna-switch port keys (AUTO/MANUAL stay live — they act
-  once the lock is gone); compass tap-to-aim and the selected-station chip (the chip reads `STORM LOCK · parked n°`).
-  The HF map rail has only STOP, which always stays live. The reason states only what is confirmed: `parked n°`
-  needs antmode phase `parked` (else `parking → n°` / `parking`, or `PARK FAILED`); the switch card's `grounded`
+  once the lock is gone); compass tap-to-aim, Mercator tap-to-aim and the selected-station chip in storm **and**
+  maintenance (the chip reads `STORM LOCK · parked n°`, or `MAINTENANCE · NUDGE ±5° ONLY`). The HF map rail has
+  STOP, which always stays live, plus `+5°` / `−5°` nudge keys in maintenance with `lock.nudge`. The reason
+  states only what is confirmed: `parked n°` needs antmode phase `parked` (else `parking → n°` / `parking`, or
+  `PARK FAILED`); the switch card's `grounded`
   needs ant-switch `selected: off` (else `grounding…`); the Ultrabeam card's `elements held in` needs ultrabridge
   `retracted` and not `moving` (else `elements not confirmed in`).
 - Every `/cmd` to `hf/ant-mode` carries `ts` (UTC, whole seconds): antmode drops a request older than 30 s or more
   than 5 s ahead, so a request retained while antmode was dead never applies hours later. The panel re-checks
   antmode's liveness when the confirmation dialog closes.
-- Aiming (`lib/store/aim.dart`, `aimRoute`): in maintenance with `lock.nudge` an HF aim is a nudge — `set_az` with
-  `"override":"maintenance"` straight to `hf/rotator`, never through beamsteer (even with AUTO on). In storm, or
-  maintenance before the nudge is granted, nothing is sent. The sat rotators are not locked by the antenna mode.
+- Aiming (`lib/store/aim.dart`, `aimRoute`): under any lock an HF aim (disc, map or chip tap) sends nothing — a tap
+  can name any bearing, and one stray tap would slew the brakeless G-450 a full sweep with people at the mast. In
+  maintenance with `lock.nudge` the rail's `+5°` / `−5°` keys (`publishNudge`, `maintenanceNudgeStepDeg`) send
+  `set_az` = readback ± 5° (step bounded to 5°, target clamped to 0..450, never wrapped mod 360) with
+  `"override":"maintenance"` straight to `hf/rotator`, never through beamsteer (even with AUTO on); they are off
+  without a readback, the rotator bridge or the link. The rotator bridge does not bound the override itself. The sat
+  rotators are not locked by the antenna mode.
 - The faults bar carries an amber lock banner or the storm suggestion above the list (station state, not faults); a
   failed park still lands in the list via the slot's `/state.fault`. The station schematic draws an `Ant mode` pill
   beside Beam steer (warn while locked or suggesting, alarm on a fault).

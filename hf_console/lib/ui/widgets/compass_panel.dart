@@ -171,11 +171,12 @@ class _CompassBody extends StatelessWidget {
     // Tap-to-aim on the chip is offered only when it can actually work:
     // rotor online and a bearing derived (a pin from coordinates has its
     // beam answer filled by the bridge; a logger azimuth counts too).
-    // Antenna-mode lock (storm / maintenance): the rotator bridge refuses
-    // every aim except a maintenance nudge, so tap-to-aim is off unless a
-    // nudge is granted — and the chip says why (see publishAim).
+    // Antenna-mode lock (storm / maintenance): tap-to-aim (disc and chip) is
+    // off — storm refuses all motion, and in maintenance a tap could name any
+    // bearing, so only the rail's bounded ±5° nudge keys move the rotator
+    // (see publishAim / publishNudge). The chip says why.
     final antMode = store.antMode;
-    final aimLocked = surface != null && aimRoute(store, surface) == AimRoute.refused;
+    final aimLocked = surface != null && aimRoute(store, surface) != AimRoute.normal;
     // The lock reason rides on the HF dial only (the sat rotators are not
     // parked by the antenna mode).
     final hfLocked = surface?.stateSlot == hfRotator.stateSlot && antMode.locked;
@@ -194,7 +195,9 @@ class _CompassBody extends StatelessWidget {
       if (moving) 'MOVING',
       if (!rotatorOnline) 'OFFLINE',
       if (hfLocked)
-        antMode.nudgeAllowed ? '${antMode.label} · NUDGE ONLY' : antMode.lockReason,
+        antMode.nudgeAllowed
+            ? '${antMode.label} · NUDGE ±${maintenanceNudgeStepDeg.round()}° ONLY'
+            : antMode.lockReason,
     ];
     final azimuthColor = moving
         ? AppTheme.red

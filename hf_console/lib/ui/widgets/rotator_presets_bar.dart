@@ -2,12 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../mqtt/mqtt_service.dart';
+import '../../store/aim.dart';
 import '../../store/bus_store.dart';
 import '../../store/wiring.dart';
 import '../theme.dart';
 import 'rotator_park.dart';
 
-/// One-tap STOP shortcut for the rotator (plus PARK on the sat mount).
+/// One-tap STOP shortcut for the rotator (plus PARK on the sat mount, and the
+/// ±5° nudge keys on the HF rotator while the antenna mode is maintenance).
 ///
 /// Tablet: [RotatorPresetsRail] — a vertical rail on the right edge of the DX
 /// map, stacked above the +/- zoom controls, so the map column no longer
@@ -42,7 +44,7 @@ class RotatorPresetsBar extends StatelessWidget {
         crossAxisAlignment: WrapCrossAlignment.center,
         children: [
           for (final a in _presetActions(context, rotator))
-            _Preset(a.label, danger: a.danger, onPressed: a.onPressed),
+            _Preset(a.label, key: a.key, danger: a.danger, onPressed: a.onPressed),
         ],
       ),
     );
@@ -72,7 +74,8 @@ class RotatorPresetsRail extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           for (int i = 0; i < actions.length; i++) ...[
-            _Preset(actions[i].label, danger: actions[i].danger, onPressed: actions[i].onPressed),
+            _Preset(actions[i].label,
+                key: actions[i].key, danger: actions[i].danger, onPressed: actions[i].onPressed),
             if (i < actions.length - 1) const SizedBox(height: 3),
           ],
         ],
@@ -85,7 +88,8 @@ class _PresetAction {
   final String label;
   final bool danger;
   final VoidCallback? onPressed;
-  const _PresetAction(this.label, {this.danger = false, this.onPressed});
+  final Key? key;
+  const _PresetAction(this.label, {this.danger = false, this.onPressed, this.key});
 }
 
 /// The stop action, gated on rotator-bridge liveness — shared by the
@@ -109,7 +113,23 @@ List<_PresetAction> _presetActions(BuildContext context, RotatorSurface rotator)
   // bridge-side intent, both axes to the bridge's park position. Above STOP
   // so the e-stop keeps its bottom-edge spot.
   final canPark = rotatorParkSlot(store, rotator) != null;
+  // Maintenance nudge keys (HF rotator, `lock.nudge`): the only motion the
+  // console offers while the mast may be worked on — a bounded step from the
+  // readback, never a tap-to-aim to an arbitrary bearing (publishNudge).
+  // Shown for the whole nudge route so they don't vanish when the readback
+  // or link drops; enabled only when a nudge can actually go out.
+  final nudgeShown = aimRoute(store, rotator) == AimRoute.nudge;
+  final nudgeLive = canNudge(store, rotator);
+  final step = maintenanceNudgeStepDeg.round();
   return [
+    if (nudgeShown) ...[
+      _PresetAction('+$step°',
+          key: const ValueKey('rotator-nudge-cw'),
+          onPressed: nudgeLive ? () => publishNudge(mqtt, store, rotator, maintenanceNudgeStepDeg) : null),
+      _PresetAction('\u2212$step°',
+          key: const ValueKey('rotator-nudge-ccw'),
+          onPressed: nudgeLive ? () => publishNudge(mqtt, store, rotator, -maintenanceNudgeStepDeg) : null),
+    ],
     if (rotator.parkPayload != null)
       _PresetAction('PARK', onPressed: canPark ? () => sendRotatorPark(store, mqtt, rotator) : null),
     _PresetAction('STOP', danger: true, onPressed: anyOnline ? sendStop : null),
@@ -126,7 +146,7 @@ class _Preset extends StatelessWidget {
   final bool danger;
   final VoidCallback? onPressed;
 
-  const _Preset(this.label, {this.danger = false, this.onPressed});
+  const _Preset(this.label, {super.key, this.danger = false, this.onPressed});
 
   @override
   Widget build(BuildContext context) {

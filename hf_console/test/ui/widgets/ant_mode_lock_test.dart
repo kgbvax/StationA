@@ -140,16 +140,54 @@ void main() {
       expect(find.textContaining('parked'), findsNothing);
     });
 
-    testWidgets('maintenance: a tap nudges with the override', (tester) async {
+    testWidgets('maintenance: a disc tap sends nothing; the ±5° keys nudge with the override', (tester) async {
       final mqtt = await pump(tester, 'maintenance');
-      expect(find.textContaining('MAINTENANCE · NUDGE ONLY'), findsOneWidget);
+      expect(find.textContaining('MAINTENANCE · NUDGE ±5° ONLY'), findsOneWidget);
 
+      // A tap names any bearing — a stray one must not slew the boom.
       await tester.tapAt(tester.getCenter(find.byType(CompassPanel)) + const Offset(0, -80));
       await tester.pumpAndSettle();
-      final p = jsonDecode(mqtt.publishes.single.payload) as Map;
-      expect(mqtt.publishes.single.topic, 'muehle/hf/rotator/cmd');
-      expect(p['action'], 'set_az');
-      expect(p['override'], 'maintenance');
+      expect(mqtt.publishes, isEmpty);
+
+      await tester.tap(find.byKey(const ValueKey('rotator-nudge-cw')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('rotator-nudge-ccw')));
+      await tester.pumpAndSettle();
+      expect(mqtt.publishes.map((p) => p.topic), everyElement('muehle/hf/rotator/cmd'));
+      expect(jsonDecode(mqtt.publishes[0].payload), {'action': 'set_az', 'az': 181.0, 'override': 'maintenance'});
+      expect(jsonDecode(mqtt.publishes[1].payload), {'action': 'set_az', 'az': 171.0, 'override': 'maintenance'});
+    });
+
+    testWidgets('the ±5° keys exist only in maintenance with the nudge', (tester) async {
+      for (final mode in ['normal', 'storm']) {
+        await pump(tester, mode);
+        expect(find.byKey(const ValueKey('rotator-nudge-cw')), findsNothing, reason: mode);
+        expect(find.byKey(const ValueKey('rotator-nudge-ccw')), findsNothing, reason: mode);
+      }
+    });
+
+    testWidgets('maintenance: the selected-station chip does not aim', (tester) async {
+      await tester.binding.setSurfaceSize(const Size(700, 700));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      final store = BusStore()
+        ..setRotator(az: 176, targetAz: 175)
+        ..setAntMode('maintenance');
+      final now = DateTime.now().toUtc().toIso8601String();
+      store.apply(
+          'muehle/hf/spots/state',
+          jsonEncode({
+            'ts': now,
+            'device_online': true,
+            'selected': {'call': 'VK2XX', 'azimuth': 60.0, 'source': 'log4om', 'ts': now},
+          }),
+          false);
+      final mqtt = FakeMqttService(store);
+      await tester.pumpWidget(TestHarness(store: store, mqtt: mqtt, child: const CompassPanel()));
+      await tester.pump(const Duration(milliseconds: 600));
+      expect(find.textContaining('VK2XX'), findsOneWidget);
+      await tester.tap(find.textContaining('VK2XX'), warnIfMissed: false);
+      await tester.pumpAndSettle();
+      expect(mqtt.publishes, isEmpty);
     });
   });
 

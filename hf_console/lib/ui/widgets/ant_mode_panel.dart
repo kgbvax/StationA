@@ -215,7 +215,7 @@ class AntModePanel extends StatelessWidget {
       'maintenance' => (
           'Enter maintenance mode?',
           'Grounds the antenna switch, retracts the Ultrabeam elements and parks the rotator at the '
-              'maintenance preset. Only console nudges move the rotator until you return to normal.',
+              'maintenance preset. Only the console\'s ±5° nudge keys move the rotator until you return to normal.',
         ),
       _ => (
           'Return to normal?',
