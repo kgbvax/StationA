@@ -304,6 +304,47 @@ func TestNudgeBeforeParkSentEndsPark(t *testing.T) {
 	}
 }
 
+// A nudge while antmode is still grounding/retracting (lock.nudge set, no
+// park_az yet) ends the park for that seq too: when park_az lands later the
+// boom must not turn back to the preset on its own — not live, and not after
+// a bridge restart.
+func TestNudgeBeforeParkAzEndsPark(t *testing.T) {
+	const early = `{"ant_mode":"maintenance","lock":{"seq":5,"ground":true,"nudge":true}}`
+	path := filepath.Join(t.TempDir(), "park.json")
+	g, d, c := newPersistGate(t, path)
+	g.Apply([]byte(early))
+	g.Observe(online(180, false))
+	if err := g.SetAzOverride(170, "maintenance"); err != nil {
+		t.Fatal(err)
+	}
+	g.Observe(online(170, false))
+	g.Apply([]byte(maint)) // park_az 0 arrives for the same seq
+	c.add(time.Minute)
+	g.Observe(online(170, false))
+	c.add(StableFor)
+	g.Step()
+	if len(d.sets) != 1 || d.sets[0] != 170 {
+		t.Fatalf("sets %v, want only the nudge (park_az after a nudge re-armed the park)", d.sets)
+	}
+
+	// Restart: the nudge before park_az is remembered for the seq.
+	g2, d2, c2 := newPersistGate(t, path)
+	g2.Apply([]byte(maint))
+	g2.Observe(online(170, false))
+	c2.add(time.Minute)
+	g2.Step()
+	if len(d2.sets) != 0 {
+		t.Fatalf("restart re-parked a nudged seq: %v", d2.sets)
+	}
+	// A new seq parks again.
+	g2.Apply([]byte(`{"ant_mode":"maintenance","lock":{"seq":6,"park_az":0,"nudge":true}}`))
+	c2.add(StableFor)
+	g2.Step()
+	if len(d2.sets) != 1 || d2.sets[0] != 0 {
+		t.Fatalf("new seq after a nudged one: %v", d2.sets)
+	}
+}
+
 // The park write in flight and a nudge are ordered: the nudge lands last.
 func TestNudgeWaitsForParkWrite(t *testing.T) {
 	g, d, c := newGate(0)
@@ -559,5 +600,22 @@ func TestRefusalStreakWarnsAgainOnNewReason(t *testing.T) {
 	_ = g.SetAz(4) // lock label changed: Warn again
 	if n := strings.Count(out.String(), "level=WARN"); n != 3 {
 		t.Fatalf("%d Warn lines, want 3:\n%s", n, out.String())
+	}
+}
+
+// A park.json written before park_az became optional still matches.
+func TestParkRecordOldFormat(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "park.json")
+	rec := `{"ant_mode":"storm","seq":1,"park_az":180,"outcome":"arrived"}`
+	if err := os.WriteFile(path, []byte(rec), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	g, d, c := newPersistGate(t, path)
+	g.Apply([]byte(storm))
+	g.Observe(online(150, false))
+	c.add(time.Minute)
+	g.Step()
+	if len(d.sets) != 0 {
+		t.Fatalf("old-format record not honoured: %v", d.sets)
 	}
 }

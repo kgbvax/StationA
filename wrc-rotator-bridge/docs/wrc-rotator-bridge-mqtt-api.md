@@ -287,7 +287,11 @@ the rotator:
 - Once per `lock.seq`: when `park_az` is present, the WRC is online, and the
   azimuth readback has held within 1° of where it settled, with
   `moving:false`, for 3 s. A readback already within 3° of `park_az` counts as
-  parked and sends nothing.
+  parked and sends nothing. A boom creeping in gusts (readback leaving the 1°
+  band with `moving:false`) restarts the 3 s window, so the park waits for a
+  lull — deliberate: turning the brakeless G-450 in gusts is the worst case.
+  The bridge has no deadline of its own; antmode's `rotate_timeout_s` bounds
+  it (`failed`).
 - Arrival = readback within 3° of `park_az` with `moving:false`.
 - No re-aim for drift: once arrived, the bridge does not chase wind creep
   (antmode reports `drift_deg`). A republished lock with the same `seq` and
@@ -296,14 +300,20 @@ the rotator:
   (reconnect, power cycle), or if the WRC write itself failed.
 - An operator `stop` (any path) during an underway park cancels it until a new
   `seq` (antmode `repark`).
-- An accepted maintenance nudge ends the park for that `seq`, sent or not: the
-  operator has taken the azimuth over, so a later WRC reconnect does not turn
-  the boom back to `park_az`. A park write in flight lands before the nudge.
+- An accepted maintenance nudge ends the park for that `seq`, sent or not, and
+  also when it comes before `park_az` is published (`lock.nudge` is set from
+  maintenance entry, while antmode still grounds and retracts): the operator
+  has taken the azimuth over, so neither the later `park_az` nor a WRC
+  reconnect turns the boom back to the preset. A park write in flight lands
+  before the nudge. antmode does not see the nudge: unless the boom is within
+  tolerance of `park_az` it reaches `failed` at `rotate_timeout_s`, as after a
+  stop.
 - A finished park (arrived, cancelled by stop, ended by a nudge) is recorded in
   `<state_dir>/park.json` (default `/var/lib/wrc-rotator-bridge`, the systemd
   `StateDirectory`). After a bridge restart a retained lock with the same mode,
   `seq` and `park_az` is not parked again — park once means once, also across
-  restarts. A park that was underway (sent, not arrived) at the restart is sent
+  restarts. A nudge record matches on mode and `seq` alone (whatever
+  `park_az`, also one published after the nudge). A park that was underway (sent, not arrived) at the restart is sent
   again. Without the record (first start, `state_dir = ""`, unreadable file)
   the retained lock is parked once more; a rotator already at `park_az` does
   not move.

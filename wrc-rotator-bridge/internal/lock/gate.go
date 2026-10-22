@@ -16,7 +16,8 @@
 //     because of drift (the operator decided: park once, no re-aim). An
 //     operator stop during the park cancels it until a new seq (repark); so
 //     does an accepted maintenance nudge (the operator has taken the azimuth
-//     over).
+//     over), also one accepted before park_az arrived (antmode still
+//     grounding or retracting).
 //   - a finished park (arrived, cancelled, nudged) is recorded in a small
 //     state file (PersistTo), so a bridge restart does not park the same seq
 //     again. A park that was underway at the restart is sent again.
@@ -113,13 +114,25 @@ type park struct {
 
 // parkRecord is the persisted finished park. Mode, seq and park_az must all
 // match the retained lock for it to count (antmode persists seq, so a seq is
-// not reused unless antmode loses its own state file).
+// not reused unless antmode loses its own state file). A nudge ends the park
+// for its seq whatever the park_az: its record matches on mode and seq, and
+// has no park_az when the nudge came before park_az was published.
 type parkRecord struct {
 	Mode    antmode.Mode `json:"ant_mode"`
 	Seq     uint64       `json:"seq"`
-	ParkAz  int          `json:"park_az"`
+	ParkAz  *int         `json:"park_az,omitempty"`
 	Outcome string       `json:"outcome"` // arrived | cancelled | nudged
 }
+
+// matches reports whether the record finishes the park of lock l in mode m.
+func (r parkRecord) matches(m antmode.Mode, l antmode.Lock) bool {
+	if r.Seq != l.Seq || r.Mode != m || l.ParkAz == nil {
+		return false
+	}
+	return r.Outcome == outcomeNudged || (r.ParkAz != nil && *r.ParkAz == *l.ParkAz)
+}
+
+const outcomeNudged = "nudged"
 
 // New wraps dev. now may be nil (time.Now). hold is the startup window in
 // which motion is refused until the first ant-mode state arrives (0 = none,
@@ -193,7 +206,7 @@ func (g *Gate) Apply(payload []byte) (labelChanged bool) {
 			g.park = park{seq: l.Seq, az: l.ParkAz}
 			switch f := g.finished; {
 			case l.ParkAz == nil:
-			case f.Seq == l.Seq && f.Mode == st.Mode && f.ParkAz == *l.ParkAz:
+			case f.matches(st.Mode, l):
 				// Finished before a bridge restart: park once means once.
 				g.park.sent, g.park.done = true, true
 				g.log.Info("antenna mode park already finished, not re-sent",
@@ -316,17 +329,19 @@ func (g *Gate) SetAz(az float64) error {
 
 // SetAzOverride is a set_az carrying an explicit override tag. Allowed while
 // locked only for the maintenance nudge; otherwise identical to SetAz. An
-// accepted nudge ends the park for the current seq, sent or not: the
-// operator has taken the azimuth over, and neither a reconnect nor a restart
-// may turn the boom back to the preset.
+// accepted nudge ends the park for the current seq, sent or not, and also
+// before park_az is published (lock.nudge is set from maintenance entry, while
+// antmode still grounds and retracts): the operator has taken the azimuth
+// over, and neither a later park_az, a reconnect nor a restart may turn the
+// boom back to the preset.
 func (g *Gate) SetAzOverride(az float64, override string) error {
 	g.moveMu.Lock()
 	g.mu.Lock()
 	nudge := g.st.Mode == antmode.Maintenance && g.st.L().Nudge && override == antmode.NudgeOverride
-	ended, seq := false, g.park.seq
-	if nudge && g.park.az != nil && !g.park.done {
+	ended, seq, parkAzKnown := false, g.park.seq, g.park.az != nil
+	if nudge && !g.park.done {
 		g.park.sent = true
-		g.finishLocked("nudged")
+		g.finishLocked(outcomeNudged)
 		ended = true
 	}
 	g.mu.Unlock()
@@ -337,7 +352,7 @@ func (g *Gate) SetAzOverride(az float64, override string) error {
 	defer g.moveMu.Unlock()
 	if ended {
 		g.save()
-		g.log.Info("antenna mode park ended by maintenance nudge", "seq", seq)
+		g.log.Info("antenna mode park ended by maintenance nudge", "seq", seq, "park_az_known", parkAzKnown)
 	}
 	g.log.Info("maintenance nudge accepted", "az", az)
 	return g.inner.SetAz(az)
@@ -372,14 +387,18 @@ func (g *Gate) Stop() error {
 	return err
 }
 
-// finishLocked marks the current park done and records it for PersistTo.
-// Caller holds g.mu and calls save after unlocking.
+// finishLocked marks the current park done and records it for PersistTo
+// (park_az is nil only for a nudge before park_az; Apply then finds the
+// record when park_az arrives). Caller holds g.mu and calls save after
+// unlocking.
 func (g *Gate) finishLocked(outcome string) {
 	g.park.done = true
-	if g.park.az == nil {
-		return
+	var az *int
+	if g.park.az != nil {
+		v := *g.park.az
+		az = &v
 	}
-	g.finished = parkRecord{Mode: g.st.Mode, Seq: g.park.seq, ParkAz: *g.park.az, Outcome: outcome}
+	g.finished = parkRecord{Mode: g.st.Mode, Seq: g.park.seq, ParkAz: az, Outcome: outcome}
 	g.dirty = true
 }
 

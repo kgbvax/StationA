@@ -134,12 +134,15 @@ Contract: `../antmode/docs/ant-mode-mqtt-api.md`; decision record:
   drift. Re-sent only if it never arrived and the WRC reconnected (or the
   write failed). An operator stop during the park cancels it until a new seq;
   a stop racing the park write is re-sent after it. An accepted maintenance
-  nudge ends the park for its seq too (`Gate.moveMu` makes a park write in
-  flight land before the nudge).
+  nudge ends the park for its seq too, also a nudge before `park_az` was
+  published (`Gate.moveMu` makes a park write in flight land before the
+  nudge). Wind creep restarts the 3 s window (the park waits for a lull, by
+  design); antmode's `rotate_timeout_s` is the only deadline.
 - Restart: a finished park (arrived/cancelled/nudged) is recorded in
   `<state_dir>/park.json` (config `state_dir`, default the systemd
   StateDirectory `/var/lib/wrc-rotator-bridge`); the same mode+seq+park_az is
-  not parked again after a restart. A park underway at the restart is re-sent.
+  not parked again after a restart (a nudge record: mode+seq, any park_az).
+  A park underway at the restart is re-sent.
 - `/state.lock` = `storm` | `maintenance`, omitted when unlocked.
 
 ---
