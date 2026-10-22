@@ -357,6 +357,8 @@ extension BusStoreFixtures on BusStore {
     bool online = true,
     List<Map<String, dynamic>> warnings = const [],
     String reason = '',
+    bool powerHold = false,
+    Map<String, dynamic>? powerBorrow,
   }) {
     applyStatus('muehle/hf/ant-mode', online ? 'online' : 'offline');
     applyState('muehle/hf/ant-mode', {
@@ -374,7 +376,8 @@ extension BusStoreFixtures on BusStore {
         },
       'phase': phase.isNotEmpty ? phase : (mode == 'normal' ? 'idle' : 'parked'),
       'fault': fault,
-      'power_hold': false,
+      'power_hold': powerHold,
+      if (powerBorrow != null) 'power_borrow': powerBorrow,
       'presence': 'manned',
       'wind': {'dir_deg': 265, 'gust_kmh': 72, 'ts': '2026-10-22T17:00:00Z', 'stale': false},
       'warnings': warnings,

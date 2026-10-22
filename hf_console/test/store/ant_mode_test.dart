@@ -80,6 +80,43 @@ void main() {
       expect(m.lock, isNull);
     });
 
+    test('the borrow is power_borrow, not power_hold', () {
+      // power_hold = powerseq idle logic held: the whole maintenance, a
+      // storm until parked/failed, and during a borrow. It never means
+      // "borrowed" by itself.
+      final held = AntModeState.parse({'ant_mode': 'maintenance', 'power_hold': true})!;
+      expect(held.powerHold, isTrue);
+      expect(held.powerBorrow, isNull);
+
+      final m = AntModeState.parse({
+        'ant_mode': 'storm',
+        'power_hold': true,
+        'power_borrow': {'restore_to': 'off', 'powerseq_phase': 'standby', 'since': '2026-10-22T18:00:01Z'},
+      })!;
+      expect(m.powerBorrow!.restoreTo, 'off');
+      expect(m.powerBorrow!.powerseqPhase, 'standby');
+      expect(m.powerBorrow!.since, '2026-10-22T18:00:01Z');
+      expect(m.powerBorrow!.takenOver, isFalse);
+
+      final t = AntModeState.parse({
+        'ant_mode': 'storm',
+        'power_borrow': {'restore_to': 'off', 'powerseq_phase': 'standby', 'taken_over': true},
+      })!;
+      expect(t.powerBorrow!.takenOver, isTrue);
+
+      // A borrow outlives an abort back to normal while its restore waits.
+      final n = AntModeState.parse({
+        'ant_mode': 'normal',
+        'power_borrow': {'restore_to': 'off', 'powerseq_phase': 'idle'},
+      })!;
+      expect(n.powerBorrow!.restoreTo, 'off');
+
+      // A malformed borrow block is no borrow (the mode still counts).
+      final bad = AntModeState.parse({'ant_mode': 'storm', 'power_borrow': 'yes'})!;
+      expect(bad.locked, isTrue);
+      expect(bad.powerBorrow, isNull);
+    });
+
     test('malformed: unknown mode, missing mode, bad lock, park_az out of range', () {
       expect(AntModeState.parse({'ant_mode': 'hurricane'}), isNull);
       expect(AntModeState.parse({'mode': 'storm'}), isNull);

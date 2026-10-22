@@ -68,6 +68,24 @@ class AntWarning {
   const AntWarning({required this.id, this.event = '', this.ii = '', this.onset = '', this.expires = ''});
 }
 
+/// An open antmode borrow of `power/antennas` (`/state.power_borrow`):
+/// antmode switched the antenna power on to park, and puts it back to
+/// [restoreTo] when the park is done (or the mode ends).
+class AntPowerBorrow {
+  /// The power state antmode restores (`off`).
+  final String restoreTo;
+
+  /// The powerseq phase at the borrow start.
+  final String powerseqPhase;
+  final String since;
+
+  /// powerseq ran an operator-driven sequence during the borrow: the power
+  /// is powerseq's now and is not restored.
+  final bool takenOver;
+
+  const AntPowerBorrow({this.restoreTo = '', this.powerseqPhase = '', this.since = '', this.takenOver = false});
+}
+
 class AntModeState {
   /// `normal` | `storm` | `maintenance`.
   final String mode;
@@ -81,7 +99,15 @@ class AntModeState {
   final AntLock? lock;
   final String phase;
   final String fault;
+
+  /// powerseq holds its idle logic (no standby, wake or idle shutdown): the
+  /// whole maintenance, a storm until parked/failed, and during a borrow.
+  /// This is not "borrowed" — that is [powerBorrow].
   final bool powerHold;
+
+  /// The open antenna-power borrow, null when none. It can outlive the
+  /// mode: an abort to normal keeps it until the restore is sent.
+  final AntPowerBorrow? powerBorrow;
   final String presence;
   final AntWind? wind;
   final List<AntWarning> warnings;
@@ -98,6 +124,7 @@ class AntModeState {
     this.phase = '',
     this.fault = '',
     this.powerHold = false,
+    this.powerBorrow,
     this.presence = '',
     this.wind,
     this.warnings = const [],
@@ -165,6 +192,7 @@ class AntModeState {
       }
     }
     final w = s['wind'];
+    final b = s['power_borrow'];
     final warnings = <AntWarning>[];
     final ws = s['warnings'];
     if (ws is List) {
@@ -187,6 +215,14 @@ class AntModeState {
       phase: _str(s['phase']),
       fault: _str(s['fault']),
       powerHold: s['power_hold'] == true,
+      powerBorrow: b is Map
+          ? AntPowerBorrow(
+              restoreTo: _str(b['restore_to']),
+              powerseqPhase: _str(b['powerseq_phase']),
+              since: _str(b['since']),
+              takenOver: b['taken_over'] == true,
+            )
+          : null,
       presence: _str(s['presence']),
       wind: w is Map
           ? AntWind(

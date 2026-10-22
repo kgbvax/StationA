@@ -162,6 +162,52 @@ void main() {
       expect(find.textContaining('PARKED · park 175°'), findsOneWidget);
     });
 
+    testWidgets('power_hold alone is "powerseq held", never "borrowed"', (tester) async {
+      // Maintenance holds powerseq's idle logic for its whole length,
+      // borrowed or not.
+      final store = BusStore()..setAntMode('maintenance', powerHold: true);
+      await _pump(tester, store);
+      expect(find.textContaining('borrowed'), findsNothing);
+      expect(find.text('powerseq held'), findsOneWidget);
+    });
+
+    testWidgets('power_borrow shows the borrow and its restore target', (tester) async {
+      final store = BusStore()
+        ..setAntMode('storm', phase: 'rotating', powerHold: true, powerBorrow: {
+          'restore_to': 'off',
+          'powerseq_phase': 'standby',
+          'since': '2026-10-22T18:00:01Z',
+        });
+      await _pump(tester, store);
+      expect(find.text('antenna power borrowed · restores off · powerseq held'), findsOneWidget);
+    });
+
+    testWidgets('a taken-over borrow is not restored', (tester) async {
+      final store = BusStore()
+        ..setAntMode('storm', phase: 'rotating', powerHold: true, powerBorrow: {
+          'restore_to': 'off',
+          'powerseq_phase': 'standby',
+          'taken_over': true,
+        });
+      await _pump(tester, store);
+      expect(find.text('antenna power borrowed · powerseq took over · powerseq held'), findsOneWidget);
+    });
+
+    testWidgets('a borrow still open back in normal stays visible', (tester) async {
+      // Abort to normal with powerseq offline: the restore waits.
+      final store = BusStore()
+        ..setAntMode('normal', powerHold: true, powerBorrow: {'restore_to': 'off', 'powerseq_phase': 'idle'});
+      await _pump(tester, store);
+      expect(find.text('antenna power borrowed · restores off · powerseq held'), findsOneWidget);
+    });
+
+    testWidgets('normal without a hold or borrow shows no power line', (tester) async {
+      final store = BusStore()..setAntMode('normal');
+      await _pump(tester, store);
+      expect(find.textContaining('borrowed'), findsNothing);
+      expect(find.textContaining('powerseq held'), findsNothing);
+    });
+
     testWidgets('a failed park shows the fault', (tester) async {
       final store = BusStore()..setAntMode('storm', phase: 'failed', fault: 'rotator never arrived');
       await _pump(tester, store);

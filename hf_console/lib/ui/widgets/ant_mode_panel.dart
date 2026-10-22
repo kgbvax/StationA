@@ -71,9 +71,22 @@ class AntModePanel extends StatelessWidget {
             if (m.source.isNotEmpty) m.source,
             if (m.since.isNotEmpty) 'since ${_hhmm(m.since)}',
             if (m.autoExitAt.isNotEmpty) 'auto exit ${_hhmm(m.autoExitAt)}',
-            if (m.powerHold) 'antenna power borrowed',
           ].join(' · '),
           failed ? AppTheme.red : AppTheme.txt,
+        ),
+      // The borrow is power_borrow, and may outlive the mode (an abort to
+      // normal waits for powerseq to send the restore). power_hold alone
+      // only says powerseq's idle logic is held (all of maintenance).
+      if (m.powerBorrow != null || m.powerHold)
+        (
+          [
+            if (m.powerBorrow case final b?) ...[
+              'antenna power borrowed',
+              if (b.takenOver) 'powerseq took over' else if (b.restoreTo.isNotEmpty) 'restores ${b.restoreTo}',
+            ],
+            if (m.powerHold) 'powerseq held',
+          ].join(' · '),
+          AppTheme.txt,
         ),
       if (m.fault.isNotEmpty) (m.fault, AppTheme.red),
       (
