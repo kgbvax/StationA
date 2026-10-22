@@ -78,7 +78,18 @@ class DvkPanel extends StatelessWidget {
         final slotState = store.slots['muehle/$slot'];
         final online = (slotState?.isOnline ?? false) && store.linkUp;
         final currentBand = store.stateValueAs<String>('muehle/$slot', 'band') ?? '';
+        final mode = store.stateValueAs<String>('muehle/$slot', 'mode');
+        final freqHz = store.stateValueAs<num>('muehle/$slot', 'freq_hz');
         final mqtt = context.read<MqttService>();
+
+        // Tapping the band the radio is already on toggles CW <-> SSB
+        // (sideband by frequency, toggledSsbCwMode) instead of re-stacking.
+        void onBand(String band) {
+          final payload = band == currentBand
+              ? radioSetModePayload(toggledSsbCwMode(mode, freqHz))
+              : radioSetBandPayload(band);
+          mqtt.publish(topic, payload, retain: false);
+        }
 
         const bands = ['80', '40', '20', '17', '15', '12', '10'];
         // One row of equal-width buttons (a Wrap split 5 + 2 on the tablet).
@@ -94,9 +105,7 @@ class DvkPanel extends StatelessWidget {
                   child: _bandButton(
                     '${band}m',
                     active: currentBand == '${band}m',
-                    onPressed: online
-                        ? () => mqtt.publish(topic, radioSetBandPayload('${band}m'), retain: false)
-                        : null,
+                    onPressed: online ? () => onBand('${band}m') : null,
                   ),
                 ),
               ),

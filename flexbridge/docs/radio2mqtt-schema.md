@@ -12,7 +12,7 @@ flexbridge implements the `radio` slot of the station integration model
 | `/meta` | yes | bridge → bus | birth certificate: identity + capabilities |
 | `/state` | yes | bridge → bus | live radio state (JSON snapshot) |
 | `/status` | yes | broker LWT | liveness: `online` / `offline` |
-| `/cmd` | no | bus → bridge | intent: band changes (`set_band`) + DVK playback + mic-profile load (`set_mic_profile`) (one-shot, not retained) |
+| `/cmd` | no | bus → bridge | intent: band changes (`set_band`) + slice mode (`set_mode`) + DVK playback + mic-profile load (`set_mic_profile`) (one-shot, not retained) |
 
 ---
 
@@ -274,6 +274,7 @@ Accepted actions:
 | Action | `value` | Effect |
 |---|---|---|
 | `set_band` | `"<band>"` (e.g. `"20m"`) | **Native band-stacking.** Changes the band on the active slice's panadapter (`display pan s <handle> band=<wavelength>`, where the wavelength is the band number — `20m`→`20`, `160m`→`160`, `6m`→`6`) and the radio restores the last-used frequency/mode for that band. Only the FLEX-8400's regular bands (`160m`–`6m`) are supported; VHF/UHF XVTR bands and `gen`/`unknown` are rejected. Requires a panadapter to be open; if none is tracked the command is a logged no-op |
+| `set_mode` | `"cw"` / `"usb"` / `"lsb"` | **Slice mode.** Sends `slice set <idx> mode=<CW\|USB\|LSB>` to the slice `/state` reports (the TX slice, else the active one). Only these three are accepted; the caller picks the sideband (hf_console: LSB below 10 MHz, USB above). With no slice tracked the command is a logged no-op |
 | `dvk_play_<N>` | — | Play DVK memory N (1–12) and key the transmitter (SmartSDR keys TX automatically on `playback_start`; no separate `xmit` needed). The per-memory form is what the HA buttons use — no `value` to inject |
 | `dvk_play` | `"N"` | Same, value form (for scripts / Node-RED) |
 | `dvk_stop` | `"N"` | Stop memory N and unkey |
@@ -284,6 +285,7 @@ Examples:
 
 ```json
 {"action":"set_band","value":"20m"}
+{"action":"set_mode","value":"cw"}
 {"action":"dvk_play_3"}
 {"action":"dvk_play","value":"3"}
 {"action":"dvk_stop"}
@@ -292,7 +294,7 @@ Examples:
 ```
 
 **No command-ack is published.** Consumers observe the result on `/state` —
-`freq_hz`/`band`/`mode` for `set_band`, `dvk_status`/`dvk_id` for DVK,
+`freq_hz`/`band`/`mode` for `set_band`, `mode` for `set_mode`, `dvk_status`/`dvk_id` for DVK,
 `mic_profile` for mic-profile load — the stationa
 fire-and-observe plane discipline: send intent, watch state.
 
@@ -446,6 +448,7 @@ only `/state`. If multiple slices are configured in SmartSDR, the TX slice
 | Mic profile list (`profile mic list=` reply to `profile mic info`; queried on connect) | `/state` (`mic_profiles` list) |
 | `/cmd` `set_band` received | radio band command sent; radio band-stacks → confirm on `/state` (`freq_hz`, `band`, `mode`) |
 | `/cmd` DVK play/stop received | radio command sent; confirm on `/state` (`dvk_status`, `dvk_id`) |
+| `/cmd` `set_mode` received | radio `slice set <idx> mode=` sent → confirm on `/state.mode` |
 | `/cmd` `set_mic_profile` received | radio `profile mic load` sent; bridge tracks `/state.mic_profile` client-side (radio reports no active mic profile) |
 | Disconnect / crash | `/status` → `offline` (broker LWT) |
 

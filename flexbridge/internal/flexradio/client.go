@@ -274,6 +274,7 @@ type Commander interface {
 	DVKStop(id int) error                           // dvk playback_stop  id=<id>
 	SetBand(panHandle string, bandNumber int) error // display pan s <handle> band=<n>
 	SetMicProfile(name string) error                // profile mic load "<name>"
+	SetSliceMode(slice int, mode string) error      // slice set <idx> mode=<MODE>
 }
 
 // DVKPlay triggers playback of DVK memory id (1-12) and keys the transmitter.
@@ -300,6 +301,14 @@ func (c *Client) SetBand(panHandle string, bandNumber int) error {
 // (no embedded quotes/control chars) before calling.
 func (c *Client) SetMicProfile(name string) error {
 	return c.Send(context.Background(), fmt.Sprintf("profile mic load \"%s\"", name))
+}
+
+// SetSliceMode sets the demodulation mode of slice index slice (SmartSDR
+// `slice set <idx> mode=<MODE>`, from the SmartSDR TCPIP slice wiki). mode is
+// the firmware mode string (CW, USB, LSB); the bridge maps the canonical
+// vocabulary before calling. The result is observed on the slice status stream.
+func (c *Client) SetSliceMode(slice int, mode string) error {
+	return c.Send(context.Background(), fmt.Sprintf("slice set %d mode=%s", slice, mode))
 }
 
 // Run blocks reading status lines and dispatching them to the handler.

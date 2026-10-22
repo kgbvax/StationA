@@ -377,5 +377,16 @@ String dvkStopPayload([int? id]) =>
 
 String radioSetBandPayload(String band) => cmdPayload('set_band', band);
 
+// radio.set_mode value is the canonical mode: "cw" / "usb" / "lsb".
+String radioSetModePayload(String mode) => cmdPayload('set_mode', mode);
+
+/// The SSB/CW toggle behind re-tapping the active band button: CW goes to
+/// SSB with the conventional sideband for the tuned frequency (LSB below
+/// 10 MHz, USB above), every other mode (SSB, data, unknown) goes to CW.
+String toggledSsbCwMode(String? mode, num? freqHz) {
+  if (mode != 'cw') return 'cw';
+  return (freqHz != null && freqHz < 10000000) ? 'lsb' : 'usb';
+}
+
 String radioSetMicProfilePayload(String name) =>
     cmdPayload('set_mic_profile', name);

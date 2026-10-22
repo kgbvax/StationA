@@ -3,6 +3,7 @@ package bridge
 import (
 	"context"
 	"encoding/json"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -506,6 +507,25 @@ type fakeCommander struct {
 	stopCall       []int
 	bandCall       []bandCall
 	micProfileCall []string
+	modeCall       []modeCall
+}
+
+type modeCall struct {
+	Slice int
+	Mode  string
+}
+
+func (f *fakeCommander) SetSliceMode(slice int, mode string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.modeCall = append(f.modeCall, modeCall{slice, mode})
+	return nil
+}
+
+func (f *fakeCommander) modes() []modeCall {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]modeCall(nil), f.modeCall...)
 }
 
 type bandCall struct {
@@ -737,6 +757,60 @@ func TestHandleCommand_SetBand(t *testing.T) {
 // set_band command, intermediate slice status frames carrying the old frequency
 // do not publish a transient wrong band to the bus. The band is held at the
 // previous value until the panadapter reports the target band.
+// TestHandleCommand_SetMode: set_mode targets the TX slice (else the active
+// one) with the firmware mode string; unsupported modes, no tracked slice and
+// a missing commander are no-ops.
+func TestHandleCommand_SetMode(t *testing.T) {
+	t.Run("cw/lsb/usb target the TX slice", func(t *testing.T) {
+		b, _ := newTestBridge(t)
+		fc := &fakeCommander{}
+		b.SetCommander(fc)
+		for _, line := range []string{
+			"S0|slice 0 0 RF_frequency=3.700000 mode=LSB active=1",
+			"S0|slice 1 0 RF_frequency=3.550000 mode=CW tx=1",
+		} {
+			f, _ := flexradio.ParseFrame(line)
+			b.HandleStatus(f)
+		}
+		b.HandleCommand(cmdJSON("set_mode", "cw"))
+		b.HandleCommand(cmdJSON("set_mode", " LSB "))
+		b.HandleCommand(cmdJSON("set_mode", "usb"))
+		want := []modeCall{{1, "CW"}, {1, "LSB"}, {1, "USB"}}
+		if got := fc.modes(); !reflect.DeepEqual(got, want) {
+			t.Errorf("set_mode calls = %v, want %v", got, want)
+		}
+	})
+
+	t.Run("unsupported mode is a no-op", func(t *testing.T) {
+		b, _ := newTestBridge(t)
+		fc := &fakeCommander{}
+		b.SetCommander(fc)
+		f, _ := flexradio.ParseFrame("S0|slice 0 0 RF_frequency=14.200000 mode=USB active=1")
+		b.HandleStatus(f)
+		for _, v := range []string{"ssb", "data", "am", "DIGU", ""} {
+			b.HandleCommand(cmdJSON("set_mode", v))
+		}
+		if got := fc.modes(); len(got) != 0 {
+			t.Errorf("set_mode calls = %v, want none", got)
+		}
+	})
+
+	t.Run("no slice tracked is a no-op", func(t *testing.T) {
+		b, _ := newTestBridge(t)
+		fc := &fakeCommander{}
+		b.SetCommander(fc)
+		b.HandleCommand(cmdJSON("set_mode", "cw"))
+		if got := fc.modes(); len(got) != 0 {
+			t.Errorf("set_mode calls = %v, want none (no slice)", got)
+		}
+	})
+
+	t.Run("nil commander no-ops (radio offline)", func(t *testing.T) {
+		b, _ := newTestBridge(t)
+		b.HandleCommand(cmdJSON("set_mode", "cw")) // must not panic
+	})
+}
+
 func TestHandleCommand_SetBand_SuppressesTransientBand(t *testing.T) {
 	b, pub := newTestBridge(t)
 	fc := &fakeCommander{}

@@ -817,6 +817,8 @@ func (b *Bridge) handleRadio(f flexradio.Frame) {
 //	{"action":"dvk_stop"}              stop the currently-active memory (from /state)
 //	{"action":"set_band","value":"20m"} native band-stacking: radio restores the
 //	                                   last-used freq/mode for that band
+//	{"action":"set_mode","value":"cw"|"usb"|"lsb"} set the TX/active slice's
+//	                                   mode (slice set <idx> mode=<MODE>)
 //	{"action":"set_mic_profile","value":"<name>"} load mic profile <name> (SmartSDR
 //	                                   native profile mic load)
 func (b *Bridge) HandleCommand(payload []byte) {
@@ -909,6 +911,28 @@ func (b *Bridge) HandleCommand(payload []byte) {
 		b.bandTx = &bandTransition{target: bandLabel, deadline: time.Now().Add(bandTransitionHold)}
 		b.mu.Unlock()
 
+	case c.Action == "set_mode":
+		// Mode change on the slice /state reports (TX slice, else active). The
+		// operator picks the sideband (the console: LSB below 10 MHz, USB above);
+		// the bridge only maps the canonical name to the firmware string.
+		canonical := strings.ToLower(strings.TrimSpace(c.Value))
+		wire, ok := sliceModeWire[canonical]
+		if !ok {
+			b.log.Warnf("cmd set_mode: unsupported mode %q", c.Value)
+			return
+		}
+		b.mu.RLock()
+		active, hasSlice := resolveActiveSlice(b.slices)
+		b.mu.RUnlock()
+		if !hasSlice {
+			b.log.Warnf("cmd set_mode: no active slice tracked")
+			return
+		}
+		b.log.Infof("cmd set_mode: mode=%s slice=%d", canonical, active.Index)
+		if err := cmd.SetSliceMode(active.Index, wire); err != nil {
+			b.log.Warnf("cmd set_mode: %v", err)
+		}
+
 	case c.Action == "set_mic_profile":
 		// Native SmartSDR mic-profile load. The name is double-quoted on the
 		// wire, so reject names containing quotes/control chars. If the tracked
@@ -952,6 +976,11 @@ func (b *Bridge) HandleCommand(payload []byte) {
 		b.log.Warnf("cmd: unknown action %q", c.Action)
 	}
 }
+
+// sliceModeWire maps the canonical modes set_mode accepts to SmartSDR's
+// slice mode strings. Deliberately narrow: the console's SSB/CW toggle needs
+// these three; data/AM/FM stay with the radio's own band-stacking.
+var sliceModeWire = map[string]string{"cw": "CW", "usb": "USB", "lsb": "LSB"}
 
 // targetPanHandle resolves which panadapter a band change should target. It
 // prefers the panadapter the active slice is on (when the slice status carried

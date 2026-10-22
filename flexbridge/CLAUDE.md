@@ -2,8 +2,8 @@
 
 flexbridge is a **read-only** bridge for radio tuning state: it observes a FlexRadio
 6000-series radio over the SmartSDR TCP/IP API and UDP meter stream, and publishes state to
-MQTT. The three exceptions are **band changes**, the **Digital Voice Keyer (DVK)**, and
-**mic profiles**:
+MQTT. The exceptions are **band changes**, **slice mode**, the **Digital Voice Keyer
+(DVK)**, and **mic profiles**:
 
 - **Band changes** (`set_band`): the bridge drives SmartSDR's native band-stacking from
   the `/cmd` plane — `display pan s <pan_handle> band=<wavelength>` changes the band on a
@@ -11,6 +11,9 @@ MQTT. The three exceptions are **band changes**, the **Digital Voice Keyer (DVK)
   stays frequency-derived: after a band change the bridge republishes the radio's tuned
   `freq_hz` and `band` is still derived from it (the model's band/freq-can't-disagree
   invariant holds).
+- **Slice mode** (`set_mode`, `cw`/`usb`/`lsb`): `slice set <idx> mode=<MODE>` on the
+  slice `/state` reports (TX, else active). The caller picks the sideband; the bridge only
+  maps the name.
 - **DVK** (SmartSDR v4+): the bridge drives DVK playback (play/stop) from `/cmd` and
   observes DVK status on `/state`.
 - **Mic profiles** (`set_mic_profile`): the bridge drives SmartSDR's **native** mic profiles
@@ -21,7 +24,7 @@ MQTT. The three exceptions are **band changes**, the **Digital Voice Keyer (DVK)
   a custom preset layer. There is **no save** — `profile mic save` is obsolete on SmartSDR
   v4+ (malformed reply); profile creation uses a file-transfer mechanism out of scope here.
 
-Apart from band changes, DVK, and mic profiles it never sends commands to the radio.
+Apart from band changes, slice mode, DVK, and mic profiles it never sends commands to the radio.
 
 ---
 
