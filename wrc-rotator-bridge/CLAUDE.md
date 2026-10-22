@@ -114,7 +114,8 @@ never held across a device write (a WRC write can take up to 3 s).
 
 Contract: `../antmode/docs/ant-mode-mqtt-api.md`; decision record:
 `../docs/known-issues.md` ("HF antenna mode"). Config `[mqtt] ant_mode_slot`
-(default `ant-mode`; `""` disables the lock and the startup hold).
+(default `ant-mode`; `""` disables the lock and the startup hold) and
+`[mqtt] nudge_max_deg` (default 10, must be > 0; the maintenance nudge bound).
 
 - No retained ant-mode state = normal (rollout-safe). A valid locked snapshot
   is enforced even while `hf/ant-mode/status` is offline. Malformed = keep the
@@ -128,7 +129,14 @@ Contract: `../antmode/docs/ant-mode-mqtt-api.md`; decision record:
   refusal streak (`shared/logging.Streak`), callers log nothing extra. `stop`,
   `S` and `<STOP>` always pass; `C`/`AZ?` always answer.
 - Maintenance with `lock.nudge`: a `/cmd` `set_az` tagged
-  `"override":"maintenance"` passes (console intent tagging, not security).
+  `"override":"maintenance"` passes (console intent tagging, not security)
+  when its target is within `nudge_max_deg` of the current readback — linear
+  in rotor coordinates (0..450° with the overlap), never wrapped mod 360. A
+  target farther away, outside 0..450°, or any nudge while the WRC is offline (no readback to
+  bound it by), is refused with `rotor.ErrLocked` (its own Warn streak, reset
+  by an accepted nudge or a lock change) and ends nothing. The console sends
+  readback ± 5°; the bound stops any other client carrying the tag (or an old
+  APK with tap-to-aim) from slewing the brakeless G-450 a full sweep.
 - Park: once per `lock.seq`, after the WRC is online and the readback held
   within 1° for 3 s with `moving:false`; arrival = within 3°. No re-aim for
   drift. Re-sent only if it never arrived and the WRC reconnected (or the
@@ -136,7 +144,8 @@ Contract: `../antmode/docs/ant-mode-mqtt-api.md`; decision record:
   a stop racing the park write is re-sent after it. An accepted maintenance
   nudge ends the park for its seq too, also a nudge before `park_az` was
   published (`Gate.moveMu` makes a park write in flight land before the
-  nudge). Wind creep restarts the 3 s window (the park waits for a lull, by
+  nudge); antmode sees the nudge as a new `target_az` and reports `parked`
+  with the offset as `drift_deg`. Wind creep restarts the 3 s window (the park waits for a lull, by
   design); antmode's `rotate_timeout_s` is the only deadline.
 - Restart: a finished park (arrived/cancelled/nudged) is recorded in
   `<state_dir>/park.json` (config `state_dir`, default the systemd

@@ -153,6 +153,7 @@ func TestMalformedKeepsLastKnown(t *testing.T) {
 func TestMaintenanceNudge(t *testing.T) {
 	g, d, _ := newGate(0)
 	g.Apply([]byte(`{"ant_mode":"maintenance","lock":{"seq":2,"nudge":true}}`))
+	g.Observe(online(95, false))
 	if err := g.SetAz(100); !errors.Is(err, rotor.ErrLocked) {
 		t.Fatal("untagged set_az accepted in maintenance")
 	}
@@ -273,7 +274,7 @@ func TestNudgeEndsUnderwayPark(t *testing.T) {
 	g.Observe(online(180, false))
 	c.add(StableFor)
 	g.Step()
-	g.Observe(online(120, true))
+	g.Observe(online(50, true))
 	if err := g.SetAzOverride(45, "maintenance"); err != nil {
 		t.Fatal(err)
 	}
@@ -364,7 +365,7 @@ func TestNudgeWaitsForParkWrite(t *testing.T) {
 	go func() { g.Step(); close(stepped) }()
 	<-entered
 	nudged := make(chan error)
-	go func() { nudged <- g.SetAzOverride(45, "maintenance") }()
+	go func() { nudged <- g.SetAzOverride(175, "maintenance") }()
 	select {
 	case err := <-nudged:
 		t.Fatalf("nudge did not wait for the park write in flight: %v", err)
@@ -377,7 +378,7 @@ func TestNudgeWaitsForParkWrite(t *testing.T) {
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if len(d.sets) != 2 || d.sets[1] != 45 {
+	if len(d.sets) != 2 || d.sets[1] != 175 {
 		t.Fatalf("sets %v, want the park then the nudge", d.sets)
 	}
 }
@@ -424,10 +425,14 @@ func TestRestartKeepsFinishedPark(t *testing.T) {
 func TestRestartKeepsCancelledAndNudgedPark(t *testing.T) {
 	for _, tc := range []struct {
 		name, lock string
-		end        func(g *Gate)
+		end        func(t *testing.T, g *Gate)
 	}{
-		{"stop", storm, func(g *Gate) { _ = g.Stop() }},
-		{"nudge", maint, func(g *Gate) { _ = g.SetAzOverride(45, "maintenance") }},
+		{"stop", storm, func(_ *testing.T, g *Gate) { _ = g.Stop() }},
+		{"nudge", maint, func(t *testing.T, g *Gate) {
+			if err := g.SetAzOverride(95, "maintenance"); err != nil {
+				t.Fatal(err)
+			}
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "park.json")
@@ -436,7 +441,7 @@ func TestRestartKeepsCancelledAndNudgedPark(t *testing.T) {
 			g.Observe(online(100, false))
 			c.add(StableFor)
 			g.Step()
-			tc.end(g)
+			tc.end(t, g)
 
 			g2, d2, c2 := newPersistGate(t, path)
 			g2.Apply([]byte(tc.lock))
@@ -617,5 +622,93 @@ func TestParkRecordOldFormat(t *testing.T) {
 	g.Step()
 	if len(d.sets) != 0 {
 		t.Fatalf("old-format record not honoured: %v", d.sets)
+	}
+}
+
+// The maintenance nudge is bounded: a tagged set_az more than the nudge
+// maximum (default 10°) from the readback is refused, so a client with the
+// tag (or an old console that sent tap-to-aim) cannot slew the brakeless
+// G-450 a full sweep. The distance is linear in rotor coordinates (the
+// 0..450° travel with the overlap), never wrapped mod 360. Without a readback
+// (WRC offline, never seen) the nudge cannot be bounded and is refused.
+func TestNudgeBounded(t *testing.T) {
+	g, d, c := newGate(0)
+	var buf bytes.Buffer
+	g.log = slog.New(slog.NewTextHandler(&buf, nil))
+	g.Apply([]byte(maint))
+
+	if err := g.SetAzOverride(100, "maintenance"); !errors.Is(err, rotor.ErrLocked) {
+		t.Fatalf("nudge with no readback: %v, want ErrLocked", err)
+	}
+	g.Observe(online(100, false))
+	for _, az := range []float64{111, 89, 280} {
+		if err := g.SetAzOverride(az, "maintenance"); !errors.Is(err, rotor.ErrLocked) {
+			t.Fatalf("nudge to %v from readback 100: %v, want ErrLocked", az, err)
+		}
+	}
+	if n := strings.Count(buf.String(), "level=WARN"); n != 1 {
+		t.Fatalf("refusal streak logged %d Warns, want 1:\n%s", n, buf.String())
+	}
+	if len(d.sets) != 0 {
+		t.Fatalf("refused nudge reached the WRC: %v", d.sets)
+	}
+	// A refused nudge does not end the park.
+	c.add(StableFor)
+	g.Step()
+	if len(d.sets) != 1 || d.sets[0] != 0 {
+		t.Fatalf("park after a refused nudge: %v, want [0]", d.sets)
+	}
+	// Within the bound (inclusive) both ways.
+	for _, az := range []float64{110, 90, 105} {
+		if err := g.SetAzOverride(az, "maintenance"); err != nil {
+			t.Fatalf("nudge to %v from readback 100: %v", az, err)
+		}
+	}
+	// The overlap: 358 + 5 is 363, not 3° the long way round.
+	g.Observe(online(358, false))
+	if err := g.SetAzOverride(363, "maintenance"); err != nil {
+		t.Fatalf("nudge into the overlap: %v", err)
+	}
+	if err := g.SetAzOverride(3, "maintenance"); !errors.Is(err, rotor.ErrLocked) {
+		t.Fatalf("nudge to 3 from 358 (a 355° sweep): %v, want ErrLocked", err)
+	}
+	// WRC lost: the last readback is stale, the nudge is refused.
+	g.Observe(rotor.State{})
+	if err := g.SetAzOverride(360, "maintenance"); !errors.Is(err, rotor.ErrLocked) {
+		t.Fatalf("nudge with the WRC offline: %v, want ErrLocked", err)
+	}
+	// Configurable bound.
+	g.Observe(online(100, false))
+	g.SetNudgeMax(20)
+	if err := g.SetAzOverride(120, "maintenance"); err != nil {
+		t.Fatalf("nudge within nudge_max_deg 20: %v", err)
+	}
+	if want := []float64{0, 110, 90, 105, 363, 120}; len(d.sets) != len(want) {
+		t.Fatalf("sets %v, want %v", d.sets, want)
+	}
+}
+
+// A maintenance nudge must stay inside the rotor's 0..450° travel: a target
+// just past an end stop is within nudge_max_deg of the readback but could be
+// read by the WRC as a ~350° sweep.
+func TestNudgeStaysInTravel(t *testing.T) {
+	g, d, _ := newGate(0)
+	g.Apply([]byte(maint))
+	for _, tc := range []struct{ readback, az float64 }{{2, -6}, {448, 455}, {0, -0.5}} {
+		g.Observe(online(tc.readback, false))
+		if err := g.SetAzOverride(tc.az, "maintenance"); !errors.Is(err, rotor.ErrLocked) {
+			t.Fatalf("nudge %v from %v: %v, want ErrLocked", tc.az, tc.readback, err)
+		}
+	}
+	g.Observe(online(2, false))
+	if err := g.SetAzOverride(0, "maintenance"); err != nil {
+		t.Fatalf("nudge to the 0° end stop: %v", err)
+	}
+	g.Observe(online(448, false))
+	if err := g.SetAzOverride(450, "maintenance"); err != nil {
+		t.Fatalf("nudge to the 450° end stop: %v", err)
+	}
+	if len(d.sets) != 2 {
+		t.Fatalf("sets %v", d.sets)
 	}
 }

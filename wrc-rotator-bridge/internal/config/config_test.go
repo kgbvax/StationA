@@ -215,3 +215,33 @@ func TestStateDir(t *testing.T) {
 		t.Errorf("state_dir = %q, want empty (no park record)", cfg.StateDir)
 	}
 }
+
+func TestNudgeMaxDeg(t *testing.T) {
+	if got := Defaults().MQTT.NudgeMaxDeg; got != 10 {
+		t.Errorf("default nudge_max_deg = %v, want 10", got)
+	}
+	load := func(body string) Config {
+		t.Helper()
+		path := filepath.Join(t.TempDir(), "config.toml")
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		fs := flag.NewFlagSet("test", flag.ContinueOnError)
+		flags := RegisterFlags(fs)
+		_ = fs.Parse([]string{"-config", path})
+		cfg, err := Load(flags)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return cfg
+	}
+	if cfg := load("[mqtt]\nnudge_max_deg = 15\n"); cfg.MQTT.NudgeMaxDeg != 15 || cfg.Validate() != nil {
+		t.Errorf("nudge_max_deg = %v (validate %v), want 15", cfg.MQTT.NudgeMaxDeg, cfg.Validate())
+	}
+	// No nudge bound is not a configuration: refuse to start.
+	for _, body := range []string{"[mqtt]\nnudge_max_deg = 0\n", "[mqtt]\nnudge_max_deg = -5\n"} {
+		if err := load(body).Validate(); err == nil {
+			t.Errorf("%q validated, want an error", body)
+		}
+	}
+}

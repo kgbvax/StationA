@@ -84,6 +84,12 @@ type MQTTConfig struct {
 	// disables the lock. With no retained ant-mode state the rotator is
 	// unlocked, so the default is safe before antmode is deployed.
 	AntModeSlot string `toml:"ant_mode_slot"`
+	// NudgeMaxDeg bounds the maintenance nudge (a /cmd set_az tagged
+	// "override":"maintenance" while the ant-mode lock carries `nudge`): a
+	// target farther than this from the current readback is refused. The
+	// console steps ±5° from the readback; the bound stops any other client
+	// with the tag from slewing the brakeless G-450 a full sweep. Must be > 0.
+	NudgeMaxDeg float64 `toml:"nudge_max_deg"`
 }
 
 // LogConfig controls logging verbosity.
@@ -125,6 +131,7 @@ func Defaults() Config {
 			Slot:            "rotator",
 			Location:        "bauwagen",
 			AntModeSlot:     "ant-mode",
+			NudgeMaxDeg:     10,
 		},
 		Log:    LogConfig{Level: "info"},
 		Device: DeviceConfig{Model: "Yaesu G-450DC", Link: "ethernet"},
@@ -207,6 +214,9 @@ func (c Config) Validate() error {
 	}
 	if c.PSTRotator.Enabled && c.PSTRotator.Port == 0 {
 		return fmt.Errorf("pstrotator port must be configured when pstrotator is enabled")
+	}
+	if !(c.MQTT.NudgeMaxDeg > 0) {
+		return fmt.Errorf("mqtt nudge_max_deg must be > 0 (got %v)", c.MQTT.NudgeMaxDeg)
 	}
 	return nil
 }

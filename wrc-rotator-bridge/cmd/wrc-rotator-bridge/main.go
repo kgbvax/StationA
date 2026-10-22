@@ -84,6 +84,7 @@ func run(ctx context.Context, cfg config.Config, debug bool, log *slog.Logger) e
 		hold = 3 * time.Second
 	}
 	gate := lock.New(dev, log, nil, hold)
+	gate.SetNudgeMax(cfg.MQTT.NudgeMaxDeg)
 	if cfg.StateDir != "" {
 		// A finished park survives a restart: the same lock seq is not parked
 		// again (park once, no re-aim).

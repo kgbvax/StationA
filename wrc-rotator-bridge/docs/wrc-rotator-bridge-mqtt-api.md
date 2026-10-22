@@ -176,7 +176,8 @@ Not retained, QoS 1. Published by external systems (reconciler, HA via
 ```
 
 **set_az with the maintenance override** — an operator nudge during a
-maintenance lock (§9). Without a lock it is a plain `set_az`:
+maintenance lock (§9), accepted only within `nudge_max_deg` (default 10°) of
+the current readback. Without a lock it is a plain `set_az`:
 ```json
 {"action": "set_az", "az": 180, "override": "maintenance"}
 ```
@@ -278,8 +279,17 @@ three inbound paths:
 A refusal streak logs one Warn, then Info with a `repeat` count; a new lock
 label warns again. In maintenance with `lock.nudge:true`, a `/cmd` `set_az`
 carrying `"override":"maintenance"` is accepted (intent tagging for the
-console, not security). The override is never accepted in storm, and never on
-GS-232 or PstRotator.
+console, not security) when its `az` is within `nudge_max_deg` (config
+`[mqtt]`, default 10, must be > 0) of the current readback. The distance is
+linear in rotor coordinates (the G-450's 0..450° travel with the overlap),
+never wrapped mod 360: from 358°, 363 is a nudge and 3 is a 355° sweep. A
+target farther away, a target outside the 0..450° travel (past an end stop;
+the WRC's handling of such a target is undocumented), or any nudge while the
+WRC is offline (no readback to bound it by), is refused like any locked motion (one Warn per streak, not
+acknowledged on the bus) and does not end the park. The console sends the
+readback ± 5°; the bound keeps any other client with the tag (or an old
+console with tap-to-aim) from slewing the brakeless G-450 a full sweep. The
+override is never accepted in storm, and never on GS-232 or PstRotator.
 
 **Park.** The bridge executes `lock.park_az` itself — antmode never commands
 the rotator:
@@ -305,9 +315,12 @@ the rotator:
   maintenance entry, while antmode still grounds and retracts): the operator
   has taken the azimuth over, so neither the later `park_az` nor a WRC
   reconnect turns the boom back to the preset. A park write in flight lands
-  before the nudge. antmode does not see the nudge: unless the boom is within
-  tolerance of `park_az` it reaches `failed` at `rotate_timeout_s`, as after a
-  stop.
+  before the nudge. antmode sees the nudge as a `target_az` that is neither
+  `park_az` nor the target at lock start, and reports `parked` once the
+  rotator is at rest there (`drift_deg` = the offset from `park_az`). An
+  operator `stop` is different: it leaves no new target, so unless the boom is
+  within tolerance of `park_az` antmode reaches `failed` at
+  `rotate_timeout_s`.
 - A finished park (arrived, cancelled by stop, ended by a nudge) is recorded in
   `<state_dir>/park.json` (default `/var/lib/wrc-rotator-bridge`, the systemd
   `StateDirectory`). After a bridge restart a retained lock with the same mode,

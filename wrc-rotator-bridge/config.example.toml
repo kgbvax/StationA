@@ -70,6 +70,12 @@ password         = ""
 # No retained state = unlocked, so this is safe before antmode is deployed.
 # "" disables the lock (and the 3 s startup hold).
 ant_mode_slot    = "ant-mode"
+# Maintenance nudge bound, degrees: a /cmd set_az tagged
+# "override":"maintenance" is refused when its target is farther than this
+# from the current readback (linear in rotor coordinates, 0..450° with the
+# overlap — never wrapped mod 360), or when the WRC is offline (no readback).
+# The console steps ±5° from the readback. Must be > 0.
+nudge_max_deg    = 10
 
 [log]
 # debug | info | warn | error

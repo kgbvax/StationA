@@ -8,7 +8,11 @@
 //   - set_az and fwd/rev are refused with rotor.ErrLocked;
 //   - stop is always passed through (an e-stop is never refused);
 //   - a set_az tagged with the maintenance override is allowed when the lock
-//     carries `nudge` (console-only intent tagging, not security);
+//     carries `nudge` (console-only intent tagging, not security) and its
+//     target is within the nudge maximum (SetNudgeMax, default
+//     DefaultNudgeMaxDeg) of the current readback — linear in rotor
+//     coordinates, never wrapped mod 360; with the WRC offline (no readback)
+//     the nudge is refused;
 //   - the park itself (lock.park_az) is executed here, through the inner
 //     device, once per lock seq: after the device is online and the azimuth
 //     readback has been stable for StableFor. It is re-sent only when it never
@@ -54,8 +58,15 @@ const (
 	StableFor = 3 * time.Second
 	// stableBand is the readback wobble tolerated as "still".
 	stableBand = 1.0
+	// MinAz/MaxAz bound a maintenance nudge to the G-450's travel (the
+	// range the bridge advertises in /meta).
+	MinAz, MaxAz = 0.0, 450.0
 	// ArriveTol is how close to park_az counts as parked.
 	ArriveTol = 3.0
+	// DefaultNudgeMaxDeg bounds a maintenance nudge: the farthest a tagged
+	// set_az may be from the readback. The console steps ±5° from the
+	// readback (rounded to whole degrees); anything farther is not a nudge.
+	DefaultNudgeMaxDeg = 10.0
 )
 
 // Device is what the gate wraps: the commander plus the position readback.
@@ -72,9 +83,11 @@ type Gate struct {
 
 	moveMu sync.Mutex // see Concurrency above
 
-	mu      sync.Mutex
-	st      antmode.State
-	refused logging.Streak
+	mu       sync.Mutex
+	st       antmode.State
+	refused  logging.Streak
+	tooFar   logging.Streak // nudge refusals (out of bound / no readback)
+	nudgeMax float64
 
 	// Startup hold: until the first ant-mode state arrives, motion is refused
 	// so a command cannot slip in ahead of the retained lock. The window is
@@ -142,7 +155,20 @@ func New(dev Device, log *slog.Logger, now func() time.Time, hold time.Duration)
 	if now == nil {
 		now = time.Now
 	}
-	return &Gate{inner: dev, log: log, now: now, st: antmode.NormalState, holdFor: hold}
+	return &Gate{inner: dev, log: log, now: now, st: antmode.NormalState, holdFor: hold,
+		nudgeMax: DefaultNudgeMaxDeg}
+}
+
+// SetNudgeMax sets the maintenance nudge bound in degrees (config
+// nudge_max_deg). A value <= 0 keeps the current bound. Call it before the
+// gate is in use.
+func (g *Gate) SetNudgeMax(deg float64) {
+	if deg <= 0 {
+		return
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.nudgeMax = deg
 }
 
 // StartHold starts the startup-hold window. Call it when the MQTT connection
@@ -195,6 +221,7 @@ func (g *Gate) Apply(payload []byte) (labelChanged bool) {
 		// A new refusal reason (startup hold ended, lock entered or changed)
 		// warns afresh.
 		g.refused.Reset()
+		g.tooFar.Reset()
 	}
 	g.st = st
 	g.seen = true
@@ -328,7 +355,10 @@ func (g *Gate) SetAz(az float64) error {
 }
 
 // SetAzOverride is a set_az carrying an explicit override tag. Allowed while
-// locked only for the maintenance nudge; otherwise identical to SetAz. An
+// locked only for the maintenance nudge; otherwise identical to SetAz. The
+// nudge is bounded: a target more than the nudge maximum from the current
+// readback (or any target while the WRC is offline, as there is no readback
+// to bound it by) is refused with rotor.ErrLocked and ends nothing. An
 // accepted nudge ends the park for the current seq, sent or not, and also
 // before park_az is published (lock.nudge is set from maintenance entry, while
 // antmode still grounds and retracts): the operator has taken the azimuth
@@ -338,7 +368,33 @@ func (g *Gate) SetAzOverride(az float64, override string) error {
 	g.moveMu.Lock()
 	g.mu.Lock()
 	nudge := g.st.Mode == antmode.Maintenance && g.st.L().Nudge && override == antmode.NudgeOverride
-	ended, seq, parkAzKnown := false, g.park.seq, g.park.az != nil
+	if nudge {
+		// Linear distance in rotor coordinates (0..450° with the overlap):
+		// 358 → 3 is a 355° sweep, not 5°.
+		switch {
+		case !g.online:
+			g.tooFar.Fail(g.log, "maintenance nudge refused: no rotator readback (WRC offline)", "az", az)
+			g.mu.Unlock()
+			g.moveMu.Unlock()
+			return rotor.ErrLocked
+		case math.IsNaN(az) || az < MinAz || az > MaxAz:
+			// Inside the bound but past an end stop: the WRC's handling of an
+			// out-of-travel target is undocumented (-6 might become 354).
+			g.tooFar.Fail(g.log, "maintenance nudge refused: outside the rotor travel",
+				"az", az, "min_az", MinAz, "max_az", MaxAz)
+			g.mu.Unlock()
+			g.moveMu.Unlock()
+			return rotor.ErrLocked
+		case math.Abs(az-g.az) > g.nudgeMax:
+			g.tooFar.Fail(g.log, "maintenance nudge refused: too far from the readback",
+				"az", az, "readback", g.az, "nudge_max_deg", g.nudgeMax)
+			g.mu.Unlock()
+			g.moveMu.Unlock()
+			return rotor.ErrLocked
+		}
+		g.tooFar.Reset()
+	}
+	ended, seq, parkAzKnown, readback := false, g.park.seq, g.park.az != nil, g.az
 	if nudge && !g.park.done {
 		g.park.sent = true
 		g.finishLocked(outcomeNudged)
@@ -354,7 +410,7 @@ func (g *Gate) SetAzOverride(az float64, override string) error {
 		g.save()
 		g.log.Info("antenna mode park ended by maintenance nudge", "seq", seq, "park_az_known", parkAzKnown)
 	}
-	g.log.Info("maintenance nudge accepted", "az", az)
+	g.log.Info("maintenance nudge accepted", "az", az, "readback", readback)
 	return g.inner.SetAz(az)
 }
 
