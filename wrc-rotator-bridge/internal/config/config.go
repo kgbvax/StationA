@@ -28,6 +28,10 @@ type Config struct {
 	// Host is the compute node the adapter runs on (model §3, §8.1 item 5),
 	// published in /meta. Defaults to "shari".
 	Host string `toml:"host"`
+	// StateDir holds the bridge's small runtime state (the finished
+	// antenna-mode park record, so a restart does not park the same lock seq
+	// again). Defaults to the systemd StateDirectory; "" disables it.
+	StateDir string `toml:"state_dir"`
 }
 
 // RotorConfig holds the WRC WebSocket endpoint.
@@ -96,7 +100,8 @@ type DeviceConfig struct {
 // Defaults returns a Config with sensible default values.
 func Defaults() Config {
 	return Config{
-		Host: "shari",
+		Host:     "shari",
+		StateDir: "/var/lib/wrc-rotator-bridge",
 		Rotor: RotorConfig{
 			URL: "ws://192.168.1.108/wsrotor",
 		},

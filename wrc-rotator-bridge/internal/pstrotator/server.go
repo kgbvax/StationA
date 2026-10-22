@@ -63,7 +63,13 @@ func (s *Server) Run(ctx context.Context) error {
 		return fmt.Errorf("pstrotator listen %s: %w", addr, err)
 	}
 	s.log.Info("PSTRotator UDP listener", "addr", addr)
+	return s.Serve(ctx, pc)
+}
 
+// Serve reads datagrams from an already-bound socket until ctx is cancelled,
+// then closes it. Run binds and calls it; tests bind first so no datagram is
+// sent before the socket exists (a UDP "dial" cannot tell).
+func (s *Server) Serve(ctx context.Context, pc net.PacketConn) error {
 	// Close the socket when ctx is cancelled so ReadFrom unblocks.
 	go func() {
 		<-ctx.Done()

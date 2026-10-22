@@ -14,18 +14,29 @@
 //     readback has been stable for StableFor. It is re-sent only when it never
 //     arrived and the device came back online (reconnect, power cycle) — never
 //     because of drift (the operator decided: park once, no re-aim). An
-//     operator stop during the park cancels it until a new seq (repark).
+//     operator stop during the park cancels it until a new seq (repark); so
+//     does an accepted maintenance nudge (the operator has taken the azimuth
+//     over).
+//   - a finished park (arrived, cancelled, nudged) is recorded in a small
+//     state file (PersistTo), so a bridge restart does not park the same seq
+//     again. A park that was underway at the restart is sent again.
 //
 // Concurrency: Gate methods are called from the /cmd worker, GS-232 and
 // PstRotator goroutines, the WRC read loop (Observe) and the lock loop (Step).
 // g.mu guards Gate state only; it is never held across an inner device call
-// (a WRC write may take up to 3 s).
+// (a WRC write may take up to 3 s). g.moveMu orders the gate's own park write
+// against the moves it passes through (a nudge, or a set_az right after
+// unlock), so a park write in flight can never land after them; stop never
+// takes it (an e-stop never waits).
 package lock
 
 import (
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"math"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -58,24 +69,35 @@ type Gate struct {
 	log   *slog.Logger
 	now   func() time.Time
 
+	moveMu sync.Mutex // see Concurrency above
+
 	mu      sync.Mutex
 	st      antmode.State
 	refused logging.Streak
 
-	// Startup hold: until the first ant-mode state arrives (or holdUntil
-	// passes), motion is refused so a command cannot slip in ahead of the
-	// retained lock right after (re)start.
+	// Startup hold: until the first ant-mode state arrives, motion is refused
+	// so a command cannot slip in ahead of the retained lock. The window is
+	// open-ended until StartHold (MQTT connected, ant-mode subscribed next),
+	// then lasts holdFor; with no retained ant-mode state at all it ends there.
 	seen      bool
-	holdUntil time.Time
+	holdFor   time.Duration
+	holdUntil time.Time // zero until StartHold
 
 	// Device observation.
 	online      bool
 	moving      bool
 	az          float64
 	stableSince time.Time // zero while offline or moving
+	stableAz    float64   // readback when stableSince was (re)started
 
 	// Park bookkeeping for the current lock seq.
 	park park
+
+	// Finished-park record (survives a restart; see PersistTo).
+	statePath string
+	saveMu    sync.Mutex // orders file writes; taken before g.mu
+	finished  parkRecord // last finished park (zero = none)
+	dirty     bool       // finished changed since the last write
 }
 
 type park struct {
@@ -84,16 +106,65 @@ type park struct {
 	sent      bool
 	arrived   bool
 	cancelled bool // operator stop while the park was underway
+	// done: nothing more to send for this seq (arrived, already there,
+	// cancelled, nudged, or finished before a restart).
+	done bool
+}
+
+// parkRecord is the persisted finished park. Mode, seq and park_az must all
+// match the retained lock for it to count (antmode persists seq, so a seq is
+// not reused unless antmode loses its own state file).
+type parkRecord struct {
+	Mode    antmode.Mode `json:"ant_mode"`
+	Seq     uint64       `json:"seq"`
+	ParkAz  int          `json:"park_az"`
+	Outcome string       `json:"outcome"` // arrived | cancelled | nudged
 }
 
 // New wraps dev. now may be nil (time.Now). hold is the startup window in
 // which motion is refused until the first ant-mode state arrives (0 = none,
-// e.g. when the lock is disabled by config).
+// e.g. when the lock is disabled by config); it runs from StartHold, and
+// motion is refused before StartHold too.
 func New(dev Device, log *slog.Logger, now func() time.Time, hold time.Duration) *Gate {
 	if now == nil {
 		now = time.Now
 	}
-	return &Gate{inner: dev, log: log, now: now, st: antmode.NormalState, holdUntil: now().Add(hold)}
+	return &Gate{inner: dev, log: log, now: now, st: antmode.NormalState, holdFor: hold}
+}
+
+// StartHold starts the startup-hold window. Call it when the MQTT connection
+// is up, before subscribing to the ant-mode state (paho OnConnect), so a slow
+// broker cannot use the window up before the retained lock can arrive. A
+// no-op once an ant-mode state has been seen.
+func (g *Gate) StartHold() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if !g.seen && g.holdFor > 0 {
+		g.holdUntil = g.now().Add(g.holdFor)
+	}
+}
+
+// PersistTo loads the finished-park record from path and keeps it updated
+// there. Call it once, before the first Apply. A missing file is a fresh
+// start; an unreadable one is logged and ignored (the park then runs again,
+// as before a restart).
+func (g *Gate) PersistTo(path string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.statePath = path
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return
+	}
+	var rec parkRecord
+	if err == nil {
+		err = json.Unmarshal(data, &rec)
+	}
+	if err != nil {
+		g.log.Warn("antenna mode park record unreadable, ignoring", "path", path, "err", err)
+		return
+	}
+	g.finished = rec
 }
 
 // Apply ingests a hf/ant-mode/state payload. It reports whether the published
@@ -107,16 +178,27 @@ func (g *Gate) Apply(payload []byte) (labelChanged bool) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	before := g.st.Label()
+	if !g.seen || st.Label() != before {
+		// A new refusal reason (startup hold ended, lock entered or changed)
+		// warns afresh.
+		g.refused.Reset()
+	}
 	g.st = st
 	g.seen = true
 	if !st.Locked() {
 		g.park = park{}
-		g.refused.Reset()
 	} else {
 		l := st.L()
 		if l.Seq != g.park.seq || !sameAz(l.ParkAz, g.park.az) {
 			g.park = park{seq: l.Seq, az: l.ParkAz}
-			if l.ParkAz != nil {
+			switch f := g.finished; {
+			case l.ParkAz == nil:
+			case f.Seq == l.Seq && f.Mode == st.Mode && f.ParkAz == *l.ParkAz:
+				// Finished before a bridge restart: park once means once.
+				g.park.sent, g.park.done = true, true
+				g.log.Info("antenna mode park already finished, not re-sent",
+					"mode", st.Mode, "seq", l.Seq, "park_az", *l.ParkAz, "outcome", f.Outcome)
+			default:
 				g.log.Info("antenna mode park requested", "mode", st.Mode, "seq", l.Seq, "park_az", *l.ParkAz)
 			}
 		}
@@ -137,38 +219,53 @@ func (g *Gate) Label() string {
 
 // Observe ingests a device telemetry/online change.
 func (g *Gate) Observe(st rotor.State) {
+	if g.observe(st) {
+		g.save()
+	}
+}
+
+// observe does Observe under g.mu and reports whether the park finished.
+func (g *Gate) observe(st rotor.State) (finished bool) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	now := g.now()
 	if !st.DeviceOnline {
-		if g.online && g.park.sent && !g.park.arrived {
+		if g.online && g.park.sent && !g.park.done {
 			// Lost the device mid-park: send again once it is back and still.
 			g.park.sent = false
 		}
 		g.online = false
 		g.stableSince = time.Time{}
-		return
+		return false
 	}
 	switch {
 	case st.Moving:
 		g.stableSince = time.Time{}
-	case !g.online || g.stableSince.IsZero() || math.Abs(st.Az-g.az) > stableBand:
-		g.stableSince = now
+	case !g.online || g.stableSince.IsZero() || math.Abs(st.Az-g.stableAz) > stableBand:
+		// Measured against the azimuth the window started at, not the last
+		// frame: a brakeless G-450 creeping in the wind with moving=false must
+		// not count as still just because each step is small.
+		g.stableSince, g.stableAz = now, st.Az
 	}
 	g.online, g.moving, g.az = true, st.Moving, st.Az
-	if g.park.sent && !g.park.arrived && g.park.az != nil && !st.Moving &&
+	if g.park.sent && !g.park.done && g.park.az != nil && !st.Moving &&
 		math.Abs(st.Az-float64(*g.park.az)) <= ArriveTol {
 		g.park.arrived = true
+		g.finishLocked("arrived")
 		g.log.Info("antenna mode park arrived", "seq", g.park.seq, "az", st.Az)
+		return true
 	}
+	return false
 }
 
 // Step sends a pending park when its preconditions hold. Call it from a
 // single loop goroutine (ticker + kicks); it may block on the device write.
 func (g *Gate) Step() {
+	g.moveMu.Lock()
+	defer g.moveMu.Unlock()
 	g.mu.Lock()
 	p := g.park
-	ready := g.st.Locked() && p.az != nil && !p.sent && !p.arrived && !p.cancelled &&
+	ready := g.st.Locked() && p.az != nil && !p.sent && !p.done &&
 		g.online && !g.stableSince.IsZero() && g.now().Sub(g.stableSince) >= StableFor
 	if !ready {
 		g.mu.Unlock()
@@ -176,7 +273,9 @@ func (g *Gate) Step() {
 	}
 	if math.Abs(g.az-float64(*p.az)) <= ArriveTol {
 		g.park.sent, g.park.arrived = true, true
+		g.finishLocked("arrived")
 		g.mu.Unlock()
+		g.save()
 		g.log.Info("antenna mode park: already at park azimuth", "seq", p.seq, "az", *p.az)
 		return
 	}
@@ -191,6 +290,17 @@ func (g *Gate) Step() {
 			g.park.sent = false
 		}
 		g.mu.Unlock()
+		return
+	}
+	// An operator stop that raced the park write (it may have reached the
+	// WRC first) must still win: stop again. A redundant stop is harmless.
+	g.mu.Lock()
+	restop := g.park.seq == p.seq && g.park.cancelled
+	g.mu.Unlock()
+	if restop {
+		if err := g.inner.Stop(); err != nil {
+			g.log.Warn("antenna mode park: re-stop after cancel failed", "err", err)
+		}
 	}
 }
 
@@ -199,20 +309,38 @@ func (g *Gate) SetAz(az float64) error {
 	if err := g.refuse("set_az", "az", az); err != nil {
 		return err
 	}
+	g.moveMu.Lock()
+	defer g.moveMu.Unlock()
 	return g.inner.SetAz(az)
 }
 
 // SetAzOverride is a set_az carrying an explicit override tag. Allowed while
-// locked only for the maintenance nudge; otherwise identical to SetAz.
+// locked only for the maintenance nudge; otherwise identical to SetAz. An
+// accepted nudge ends the park for the current seq, sent or not: the
+// operator has taken the azimuth over, and neither a reconnect nor a restart
+// may turn the boom back to the preset.
 func (g *Gate) SetAzOverride(az float64, override string) error {
+	g.moveMu.Lock()
 	g.mu.Lock()
 	nudge := g.st.Mode == antmode.Maintenance && g.st.L().Nudge && override == antmode.NudgeOverride
-	g.mu.Unlock()
-	if nudge {
-		g.log.Info("maintenance nudge accepted", "az", az)
-		return g.inner.SetAz(az)
+	ended, seq := false, g.park.seq
+	if nudge && g.park.az != nil && !g.park.done {
+		g.park.sent = true
+		g.finishLocked("nudged")
+		ended = true
 	}
-	return g.SetAz(az)
+	g.mu.Unlock()
+	if !nudge {
+		g.moveMu.Unlock()
+		return g.SetAz(az)
+	}
+	defer g.moveMu.Unlock()
+	if ended {
+		g.save()
+		g.log.Info("antenna mode park ended by maintenance nudge", "seq", seq)
+	}
+	g.log.Info("maintenance nudge accepted", "az", az)
+	return g.inner.SetAz(az)
 }
 
 // Jog implements rotor.Commander: refused while locked (open-ended motion).
@@ -220,19 +348,79 @@ func (g *Gate) Jog(dir string) error {
 	if err := g.refuse("jog", "dir", dir); err != nil {
 		return err
 	}
+	g.moveMu.Lock()
+	defer g.moveMu.Unlock()
 	return g.inner.Jog(dir)
 }
 
-// Stop implements rotor.Commander: never refused. A stop during an underway
-// park cancels it until the next seq.
+// Stop implements rotor.Commander: never refused, never waits for a park
+// write. A stop during an underway park cancels it until the next seq.
 func (g *Gate) Stop() error {
 	g.mu.Lock()
-	if g.st.Locked() && g.park.sent && !g.park.arrived && !g.park.cancelled {
+	cancelled := false
+	if g.st.Locked() && g.park.sent && !g.park.done {
 		g.park.cancelled = true
+		g.finishLocked("cancelled")
+		cancelled = true
 		g.log.Warn("antenna mode park cancelled by stop", "seq", g.park.seq)
 	}
 	g.mu.Unlock()
-	return g.inner.Stop()
+	err := g.inner.Stop()
+	if cancelled {
+		g.save()
+	}
+	return err
+}
+
+// finishLocked marks the current park done and records it for PersistTo.
+// Caller holds g.mu and calls save after unlocking.
+func (g *Gate) finishLocked(outcome string) {
+	g.park.done = true
+	if g.park.az == nil {
+		return
+	}
+	g.finished = parkRecord{Mode: g.st.Mode, Seq: g.park.seq, ParkAz: *g.park.az, Outcome: outcome}
+	g.dirty = true
+}
+
+// save writes the latest finished-park record when it changed (no-op without
+// PersistTo). The write is atomic (temp file + rename); a failure is logged
+// and the park would then run once more after a restart.
+func (g *Gate) save() {
+	g.saveMu.Lock()
+	defer g.saveMu.Unlock()
+	g.mu.Lock()
+	rec, path, dirty := g.finished, g.statePath, g.dirty
+	g.dirty = false
+	g.mu.Unlock()
+	if !dirty || path == "" {
+		return
+	}
+	data, err := json.Marshal(rec)
+	if err == nil {
+		err = writeFileAtomic(path, data)
+	}
+	if err != nil {
+		g.log.Warn("antenna mode park record not saved", "path", path, "err", err)
+	}
+}
+
+func writeFileAtomic(path string, data []byte) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp*")
+	if err != nil {
+		return err
+	}
+	_, err = tmp.Write(append(data, '\n'))
+	if cerr := tmp.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil {
+		err = os.Rename(tmp.Name(), path)
+	}
+	if err != nil {
+		_ = os.Remove(tmp.Name())
+	}
+	return err
 }
 
 // CurrentAz passes the readback through (GS-232 / PstRotator queries).
@@ -243,8 +431,9 @@ func (g *Gate) CurrentAz() float64 { return g.inner.CurrentAz() }
 func (g *Gate) refuse(what string, args ...any) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if !g.seen && g.now().Before(g.holdUntil) {
-		g.log.Warn("rotator motion refused: waiting for antenna mode state", "cmd", what)
+	if !g.seen && g.holdFor > 0 && (g.holdUntil.IsZero() || g.now().Before(g.holdUntil)) {
+		g.refused.Fail(g.log, "rotator motion refused: waiting for antenna mode state",
+			append([]any{"cmd", what}, args...)...)
 		return rotor.ErrLocked
 	}
 	if !g.st.Locked() {

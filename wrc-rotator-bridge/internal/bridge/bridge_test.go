@@ -2,7 +2,11 @@ package bridge
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
+	"sync"
 	"testing"
+	"time"
 
 	"wrc-rotator-bridge/internal/rotor"
 )
@@ -237,5 +241,197 @@ func TestStateTopics(t *testing.T) {
 	}
 	if got := b.CmdTopic(); got != "muehle/hf/rotator/cmd" {
 		t.Errorf("CmdTopic = %q", got)
+	}
+}
+
+// overrideCommander is a fakeCommander that also accepts the override tag
+// (the shape of the antenna-mode lock gate).
+type overrideCommander struct {
+	fakeCommander
+	overrides []string
+}
+
+func (o *overrideCommander) SetAzOverride(az float64, override string) error {
+	o.sets = append(o.sets, az)
+	o.overrides = append(o.overrides, override)
+	return o.err
+}
+
+// recLogger counts Warn lines.
+type recLogger struct {
+	testLogger
+	warns []string
+}
+
+func (l *recLogger) Warnf(format string, args ...any) {
+	l.warns = append(l.warns, fmt.Sprintf(format, args...))
+}
+
+func lastState(t *testing.T, pub *MemoPublisher) map[string]any {
+	t.Helper()
+	msgs := pub.Messages()
+	if len(msgs) == 0 {
+		t.Fatal("no /state published")
+	}
+	m := msgs[len(msgs)-1]
+	if m.Topic != "muehle/hf/rotator/state" || !m.Retained {
+		t.Fatalf("last publish %q retained=%v, want retained /state", m.Topic, m.Retained)
+	}
+	var snap map[string]any
+	if err := json.Unmarshal(m.Payload, &snap); err != nil {
+		t.Fatalf("unmarshal state: %v", err)
+	}
+	return snap
+}
+
+func TestStateLockFieldPresentOnlyWhenLocked(t *testing.T) {
+	b, pub, _ := newTestBridge(t)
+	b.HandleTelemetry(rotor.State{Az: 90, DeviceOnline: true})
+	if _, ok := lastState(t, pub)["lock"]; ok {
+		t.Error("unlocked /state carries lock; want it omitted")
+	}
+	b.SetLock("storm")
+	if got := lastState(t, pub)["lock"]; got != "storm" {
+		t.Errorf("state.lock = %v, want storm", got)
+	}
+	if got := lastState(t, pub)["az"]; got != 90.0 {
+		t.Errorf("lock snapshot az = %v, want the current 90", got)
+	}
+	b.SetLock("")
+	if _, ok := lastState(t, pub)["lock"]; ok {
+		t.Error("lock not omitted after unlock")
+	}
+}
+
+func TestSetLockPublishesOnlyOnChange(t *testing.T) {
+	b, pub, _ := newTestBridge(t)
+	b.HandleTelemetry(rotor.State{Az: 90, DeviceOnline: true})
+	pub.Reset()
+
+	b.SetLock("") // unchanged (still unlocked)
+	if n := len(pub.Messages()); n != 0 {
+		t.Fatalf("SetLock(\"\") while unlocked: %d publishes, want 0", n)
+	}
+	b.SetLock("maintenance")
+	b.SetLock("maintenance") // the lock loop calls this every second
+	if n := len(pub.Messages()); n != 1 {
+		t.Fatalf("repeated SetLock: %d publishes, want 1", n)
+	}
+	b.SetLock("storm")
+	if n := len(pub.Messages()); n != 2 {
+		t.Fatalf("lock change: %d publishes, want 2", n)
+	}
+}
+
+func TestHandleTelemetryDedupIncludesLock(t *testing.T) {
+	b, pub, _ := newTestBridge(t)
+	st := rotor.State{Az: 90, DeviceOnline: true}
+	b.HandleTelemetry(st)
+	b.SetLock("storm")
+	pub.Reset()
+
+	// Same telemetry, same lock: deduped.
+	b.HandleTelemetry(st)
+	if n := len(pub.Messages()); n != 0 {
+		t.Fatalf("unchanged telemetry under lock: %d publishes, want 0", n)
+	}
+	// Changed telemetry keeps carrying the lock.
+	b.HandleTelemetry(rotor.State{Az: 91, Moving: true, DeviceOnline: true})
+	if got := lastState(t, pub)["lock"]; got != "storm" {
+		t.Errorf("telemetry snapshot lock = %v, want storm", got)
+	}
+	// The device-online path carries it too.
+	b.SetDeviceOnline(false, "wrc: gone")
+	if got := lastState(t, pub)["lock"]; got != "storm" {
+		t.Errorf("offline snapshot lock = %v, want storm", got)
+	}
+}
+
+func TestSetAzOverrideRouting(t *testing.T) {
+	newBridge := func(c Commander) *Bridge {
+		return New(Config{Site: "muehle", Station: "hf", Slot: "rotator", Commander: c},
+			NewMemoPublisher(), &testLogger{t})
+	}
+
+	oc := &overrideCommander{}
+	b := newBridge(oc)
+	b.HandleCommand([]byte(`{"action":"set_az","az":120,"override":"maintenance"}`))
+	if len(oc.overrides) != 1 || oc.overrides[0] != "maintenance" || oc.sets[0] != 120 {
+		t.Fatalf("tagged set_az: overrides=%v sets=%v, want SetAzOverride(120, maintenance)", oc.overrides, oc.sets)
+	}
+	b.HandleCommand([]byte(`{"action":"set_az","az":130}`))
+	if len(oc.overrides) != 1 || len(oc.sets) != 2 || oc.sets[1] != 130 {
+		t.Fatalf("untagged set_az: overrides=%v sets=%v, want plain SetAz(130)", oc.overrides, oc.sets)
+	}
+
+	// A plain commander ignores the tag: plain SetAz.
+	fc := &fakeCommander{}
+	newBridge(fc).HandleCommand([]byte(`{"action":"set_az","az":140,"override":"maintenance"}`))
+	if len(fc.sets) != 1 || fc.sets[0] != 140 {
+		t.Fatalf("plain commander: sets=%v, want [140]", fc.sets)
+	}
+}
+
+func TestLockRefusalNotLoggedAtWarn(t *testing.T) {
+	log := &recLogger{testLogger: testLogger{t}}
+	cmd := &fakeCommander{err: fmt.Errorf("gate: %w", rotor.ErrLocked)}
+	b := New(Config{Site: "muehle", Station: "hf", Slot: "rotator", Commander: cmd},
+		NewMemoPublisher(), log)
+	for _, p := range []string{
+		`{"action":"set_az","az":10}`, `{"action":"fwd"}`, `{"action":"rev"}`,
+	} {
+		b.HandleCommand([]byte(p))
+	}
+	if len(log.warns) != 0 {
+		t.Errorf("lock refusals logged at Warn by the bridge: %v", log.warns)
+	}
+
+	// Any other failure still warns.
+	cmd.err = errors.New("wrc: websocket not connected")
+	b.HandleCommand([]byte(`{"action":"stop"}`))
+	if len(log.warns) != 1 {
+		t.Errorf("device failure: %d warns, want 1", len(log.warns))
+	}
+}
+
+// blockingPublisher holds the first Publish until release is closed.
+type blockingPublisher struct {
+	*MemoPublisher
+	once             sync.Once
+	entered, release chan struct{}
+}
+
+func (p *blockingPublisher) Publish(topic string, retained bool, payload []byte) error {
+	block := false
+	p.once.Do(func() { block = true })
+	if block {
+		close(p.entered)
+		<-p.release
+	}
+	return p.MemoPublisher.Publish(topic, retained, payload)
+}
+
+// The lock loop (SetLock) and the WRC read loop (HandleTelemetry) publish on
+// different goroutines; the newer snapshot must be the one left retained.
+func TestConcurrentPublishesStayOrdered(t *testing.T) {
+	pub := &blockingPublisher{MemoPublisher: NewMemoPublisher(),
+		entered: make(chan struct{}), release: make(chan struct{})}
+	b := New(Config{Site: "muehle", Station: "hf", Slot: "rotator"}, pub, &testLogger{t})
+
+	telDone := make(chan struct{})
+	go func() { b.HandleTelemetry(rotor.State{Az: 91, DeviceOnline: true}); close(telDone) }()
+	<-pub.entered // the lock-less snapshot is on its way to the broker
+	lockDone := make(chan struct{})
+	go func() { b.SetLock("storm"); close(lockDone) }()
+	select {
+	case <-lockDone:
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(pub.release)
+	<-telDone
+	<-lockDone
+
+	if got := lastState(t, pub.MemoPublisher)["lock"]; got != "storm" {
+		t.Fatalf("retained /state lock = %v, want storm (stale snapshot published last)", got)
 	}
 }

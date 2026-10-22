@@ -174,3 +174,44 @@ func TestFlagLogLevelOverrides(t *testing.T) {
 		t.Errorf("log level = %q, want debug (flag)", cfg.Log.Level)
 	}
 }
+
+func TestAntModeSlot(t *testing.T) {
+	if got := Defaults().MQTT.AntModeSlot; got != "ant-mode" {
+		t.Errorf("default ant_mode_slot = %q, want ant-mode", got)
+	}
+	// An explicit empty value disables the lock (Load must not re-default it).
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte("[mqtt]\nant_mode_slot = \"\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	flags := RegisterFlags(fs)
+	_ = fs.Parse([]string{"-config", path})
+	cfg, err := Load(flags)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.MQTT.AntModeSlot != "" {
+		t.Errorf("ant_mode_slot = %q, want empty (lock disabled)", cfg.MQTT.AntModeSlot)
+	}
+}
+
+func TestStateDir(t *testing.T) {
+	if got := Defaults().StateDir; got != "/var/lib/wrc-rotator-bridge" {
+		t.Errorf("default state_dir = %q, want the systemd StateDirectory", got)
+	}
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte("state_dir = \"\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	flags := RegisterFlags(fs)
+	_ = fs.Parse([]string{"-config", path})
+	cfg, err := Load(flags)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.StateDir != "" {
+		t.Errorf("state_dir = %q, want empty (no park record)", cfg.StateDir)
+	}
+}

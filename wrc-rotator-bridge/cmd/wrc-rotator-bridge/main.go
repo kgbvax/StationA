@@ -15,6 +15,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -83,6 +84,11 @@ func run(ctx context.Context, cfg config.Config, debug bool, log *slog.Logger) e
 		hold = 3 * time.Second
 	}
 	gate := lock.New(dev, log, nil, hold)
+	if cfg.StateDir != "" {
+		// A finished park survives a restart: the same lock seq is not parked
+		// again (park once, no re-aim).
+		gate.PersistTo(filepath.Join(cfg.StateDir, "park.json"))
+	}
 	kick := make(chan struct{}, 1)
 	kickLock := func() {
 		select {
@@ -139,6 +145,9 @@ func run(ctx context.Context, cfg config.Config, debug bool, log *slog.Logger) e
 		gate.Apply(payload)
 		kickLock()
 	}
+	// The startup hold runs from the MQTT connect, not from process start: a
+	// slow broker must not use it up before the retained lock can arrive.
+	antModeConnected = gate.StartHold
 	go func() {
 		t := time.NewTicker(time.Second)
 		defer t.Stop()
@@ -214,6 +223,10 @@ var metaPublisher = func(c pahomqtt.Client) {}
 // pattern as cmdHandler).
 var antModeHandler = func(payload []byte) {}
 
+// antModeConnected is set by run() to start the lock gate's startup hold; the
+// OnConnect callback calls it before subscribing to the ant-mode state.
+var antModeConnected = func() {}
+
 // connectMQTT establishes the MQTT connection with a Last Will that marks the
 // bridge offline, and subscribes to the /cmd topic on (re)connect. The initial
 // Connect is ctx-aware: paho's Connect()/Wait() blocks ignoring our context, so
@@ -251,6 +264,7 @@ func connectMQTT(ctx context.Context, cfg config.Config, log *slog.Logger) (paho
 		// The antenna-mode lock first, so its retained state lands before
 		// any /cmd can (the gate also holds motion for a few seconds).
 		if am := antModeTopic(cfg); am != "" {
+			antModeConnected()
 			if tok := c.Subscribe(am, 1, func(_ pahomqtt.Client, m pahomqtt.Message) {
 				antModeHandler(m.Payload())
 			}); tok.Wait() && tok.Error() != nil {
@@ -259,8 +273,8 @@ func connectMQTT(ctx context.Context, cfg config.Config, log *slog.Logger) (paho
 		}
 		// /cmd is not retained; resubscribe on every reconnect.
 		if tok := c.Subscribe(cmd, 1, func(_ pahomqtt.Client, m pahomqtt.Message) {
-			// Runs in paho's goroutine; the bridge only touches the WRC via the
-			// Commander (rotor.Device), which guards all writes under its mutex.
+			// Runs in paho's goroutine; cmdHandler only enqueues for the /cmd
+			// worker, which reaches the WRC through the lock gate.
 			cmdHandler(m.Payload())
 		}); tok.Wait() && tok.Error() != nil {
 			log.Warn("subscribe cmd failed", "err", tok.Error())

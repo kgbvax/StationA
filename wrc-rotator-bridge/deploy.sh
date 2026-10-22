@@ -164,6 +164,9 @@ trap 'rm -f "$SEED_CONFIG" "$SEED_ENV" "${UNIT_FILE:-}"' EXIT
   echo "user             = \"$(toml_escape "$MQTT_USER")\""
   echo "# password is loaded from WRC_ROTATOR_BRIDGE_MQTT_PASSWORD in wrc-rotator-bridge.env, not here."
   echo "password         = \"\""
+  echo "# Antenna-mode slot whose retained /state locks motion (storm/maintenance)"
+  echo "# and carries the park azimuth. No retained state = unlocked; \"\" disables."
+  echo "ant_mode_slot    = \"ant-mode\""
   echo ""
   echo "[log]"
   echo "level = \"$(toml_escape "$LOG_LEVEL")\""
@@ -211,7 +214,8 @@ StateDirectory=${SERVICE_NAME}
 
 # Hardening. wrc-rotator-bridge is network-only: it dials the WRC over a WebSocket,
 # talks to the MQTT broker, and listens on the GS-232 port. No serial devices,
-# no disk writes, no elevated capabilities. PrivateDevices is therefore safe
+# no elevated capabilities; the only disk write is the antenna-mode park record
+# in the StateDirectory (/var/lib/${SERVICE_NAME}/park.json). PrivateDevices is therefore safe
 # (unlike the serial bridges), and RestrictAddressFamilies covers both the
 # outbound connections and the inbound GS-232 listen socket.
 NoNewPrivileges=true

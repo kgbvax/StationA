@@ -58,6 +58,13 @@ type Bridge struct {
 	pub Publisher
 	log Logger
 
+	// pubMu serializes "snapshot + publish" for /state. HandleTelemetry (WRC
+	// read loop), SetDeviceOnline (wsLoop) and SetLock (lock loop) run on
+	// different goroutines; without it a stale snapshot could be published
+	// after a newer one and stay retained while dedup suppresses the fix.
+	// Taken before mu; PahoPublisher.Publish does not wait on the token.
+	pubMu sync.Mutex
+
 	mu       sync.RWMutex
 	state    rotor.State
 	last     rotor.State // last published snapshot (for change dedup)
@@ -224,6 +231,8 @@ func (b *Bridge) publishMetaWith(pub Publisher) {
 // The WRC streams status frequently; dedup keeps the bus quiet while the
 // rotator sits still (model §8 — state is the live snapshot, not a firehose).
 func (b *Bridge) HandleTelemetry(st rotor.State) {
+	b.pubMu.Lock()
+	defer b.pubMu.Unlock()
 	b.mu.Lock()
 	b.state = st
 	changed := stateChanged(b.last, st) || b.lock != b.lastLock
@@ -240,6 +249,8 @@ func (b *Bridge) HandleTelemetry(st rotor.State) {
 // SetLock records the antenna-mode lock label ("" = unlocked) and publishes a
 // snapshot when it changed.
 func (b *Bridge) SetLock(label string) {
+	b.pubMu.Lock()
+	defer b.pubMu.Unlock()
 	b.mu.Lock()
 	b.lock = label
 	changed := b.lock != b.lastLock
@@ -257,6 +268,8 @@ func (b *Bridge) SetLock(label string) {
 // snapshot. Called when the WebSocket is lost or regained; /status itself (the
 // bridge LWT) is unaffected — the bridge is still up.
 func (b *Bridge) SetDeviceOnline(online bool, errMsg string) {
+	b.pubMu.Lock()
+	defer b.pubMu.Unlock()
 	b.mu.Lock()
 	b.state.DeviceOnline = online
 	b.state.Error = errMsg
