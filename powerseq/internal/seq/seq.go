@@ -29,12 +29,15 @@
 // since the last activity runs the idle_shutdown list (full power-down) →
 // phase=idle with stop_reason=idle_shutdown; only a `start` revives it.
 //
-// The antenna-mode slot (hf/ant-mode) can borrow the antenna power to park the
-// HF beam while the station is in standby. While its /state.power_hold is true
-// the idle logic stands still: a watch change only re-baselines (the borrowed
-// power moves the rotator readbacks) and no standby, wake or idle shutdown is
-// started. When the hold ends a fresh settle window starts, so the readback
-// step from switching the power back off is not activity either.
+// The antenna-mode slot (hf/ant-mode) can hold the idle logic through its
+// /state.power_hold: while it borrows the antenna power to park the HF beam
+// with the station in standby, for the whole maintenance mode (borrowed or
+// not), and in storm until the park is parked or failed. While the hold is
+// true, in any phase, the idle logic stands still: a watch change only
+// re-baselines (borrowed power or work at the mast moves the rotator
+// readbacks) and no standby, wake or idle shutdown is started; operator
+// start/stop still work. When the hold ends a fresh settle window starts, so
+// the readback step from switching the power back off is not activity either.
 //
 // The runner is a single goroutine that executes one sequence at a time;
 // observations arrive from the mqtt layer and update a mutex-guarded input map.
@@ -182,8 +185,9 @@ type Config struct {
 	// operator's. 0 = no settle window.
 	WatchSettle time.Duration
 	// AntModeSlot is the antenna-mode logic slot (same site/station, e.g.
-	// "ant-mode") whose /state power_hold suspends the idle logic while the
-	// antenna power is borrowed. "" = not read. Used only with idle standby.
+	// "ant-mode") whose /state power_hold suspends the idle logic (during a
+	// borrow, a maintenance, a storm park). "" = not read. Used only with
+	// idle standby.
 	AntModeSlot string
 	// AntModeHold is how long after a broker (re)connect the idle logic waits
 	// for the ant-mode /state to be re-delivered (0 → 3 s). No state within
@@ -259,7 +263,7 @@ type Sequencer struct {
 	lastWatch    time.Time // last counted watch change
 	lastWatchWhy string    // which watch moved last ("slot.field a→b"), for the wake log
 	settleUntil  time.Time // watch changes before this re-baseline (see WatchSettle)
-	powerHold    bool      // ant-mode borrows the antenna power: idle logic suspended
+	powerHold    bool      // ant-mode power_hold (borrow, maintenance, storm park): idle logic suspended
 	holdEndedAt  time.Time // last end of a power hold: restarts the idle-shutdown clock
 	// After a broker (re)connect the idle logic waits until the ant-mode
 	// /state is re-delivered (antModeSeen) or antModeWaitUntil passes: a
@@ -505,12 +509,14 @@ func (s *Sequencer) AntModeStateTopic() string {
 // SetAntMode records a hf/ant-mode/state snapshot (called from the mqtt layer;
 // parse + a mutex update only, never blocks). Reading rules of the slot
 // contract: an empty payload (no retained state) is normal = no hold; a
-// malformed payload keeps the last known hold (logged as Error). When the hold
-// ends a fresh WatchSettle window starts: antmode switches the borrowed power
-// back off, and the readback step that follows is the borrow's doing, not an
-// operator's. The end of a hold also restarts the idle-shutdown clock: watch
-// changes during the hold are not counted, and a maintenance hold can last
-// hours with the operator on site.
+// malformed payload keeps the last known hold (logged as Error). power_hold is
+// not only a borrow flag: antmode also holds for a whole maintenance and in
+// storm until the park is parked or failed. When the hold ends a fresh
+// WatchSettle window starts: antmode may switch borrowed power back off, and
+// the readback step that follows is the borrow's doing, not an operator's.
+// The end of a hold also restarts the idle-shutdown clock: watch changes
+// during the hold are not counted, and a maintenance hold can last hours with
+// the operator on site.
 func (s *Sequencer) SetAntMode(payload []byte) {
 	st, err := antmode.Parse(payload)
 	if err != nil {
@@ -582,8 +588,9 @@ func (s *Sequencer) SetState(slot string, payload []byte) {
 // stays up (the UHF rotator controllers report a stepped position with
 // device_online=true when the antenna supply goes off — 2026-10-19, every
 // standby woke ~2 s later). Such a change re-baselines the watch instead.
-// The same holds while the antenna-mode slot borrows the antenna power
-// (power_hold) and within WatchSettle after the hold ends.
+// The same holds while the antenna-mode slot holds the idle logic
+// (power_hold: a borrow, a maintenance, a storm park) and within WatchSettle
+// after the hold ends.
 func (s *Sequencer) noteWatchesLocked(slot string, m map[string]any) {
 	fit := s.status[slot] == "online" && coerceToString(m["device_online"]) != "false"
 	now := time.Now()
@@ -767,9 +774,9 @@ func (s *Sequencer) RequestRepublish() {
 //   - idle_shutdown (from standby, when configured and no wake is due): the
 //     last activity (see lastActivityLocked) is ShutdownTimeout ago.
 //
-// Nothing is decided while the antenna-mode slot holds the antenna power
-// (power_hold): the borrow must not be cut by a standby or idle shutdown, and
-// is not a reason to wake. Nor right after a broker (re)connect until the
+// Nothing is decided while the antenna-mode slot holds the idle logic
+// (power_hold): a borrow, a maintenance or a storm park must not be cut by a
+// standby or idle shutdown, and is not a reason to wake. Nor right after a broker (re)connect until the
 // ant-mode /state is re-delivered (or AntModeHold passes): a borrow may have
 // started while powerseq was disconnected.
 func (s *Sequencer) idleDecision(now time.Time) string {

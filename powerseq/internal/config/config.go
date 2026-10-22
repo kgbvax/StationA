@@ -67,8 +67,10 @@ type MQTTConfig struct {
 	DiscoveryPrefix string `toml:"discovery_prefix"` // hadiscovery (model §9)
 
 	// AntModeSlot is the antenna-mode logic slot (same site/station) whose
-	// retained /state power_hold suspends the idle logic while antmode borrows
-	// the antenna power to park the HF beam. Empty disables it. With no
+	// retained /state power_hold suspends the idle logic (operator start/stop
+	// still work). antmode holds while it borrows the antenna power to park
+	// the HF beam, for the whole maintenance mode, and in storm until the park
+	// is parked or failed. Empty disables it. With no
 	// retained ant-mode state there is no hold, so the default is safe before
 	// antmode is deployed. Read only with idle standby configured.
 	AntModeSlot string `toml:"ant_mode_slot"`

@@ -273,10 +273,16 @@ Configured with an `[idle]` block; omit all three to disable.
   fault in either list → `phase=idle` + `fault`, like startup.
 - **Antenna-mode power hold** (`[mqtt] ant_mode_slot`, default `ant-mode` →
   `muehle/hf/ant-mode/state`, contract `../../antmode/docs/ant-mode-mqtt-api.md`):
-  antmode can borrow `power/antennas` to park the HF beam in storm or
-  maintenance while the station is in standby. While its `/state.power_hold`
-  is `true`, a watch change only re-baselines the watch (the borrowed power
-  moves the UHF rotator readbacks), and no standby, wake or idle shutdown
+  `/state.power_hold` tells powerseq to hold its idle logic. antmode sets it
+  in three cases: while it borrows `power/antennas` to park the HF beam with
+  the station in standby (a borrow); for the whole maintenance mode, borrowed
+  or not (no power cut and no wake power-up with someone at the mast); and in
+  storm mode until the park is `parked` or `failed` (a standby must not cut
+  the gear mid-park). The hold is independent of the powerseq phase. A
+  display reads antmode's `power_borrow`, not `power_hold`, for "antenna power
+  borrowed". While `power_hold` is `true`, a watch change only re-baselines
+  the watch (the borrowed power or the work at the mast moves the UHF rotator
+  readbacks) and is never activity, and no standby, wake or idle shutdown
   starts (a `start`/`stop` from the operator still works). When the hold ends
   a fresh `settle_s` window starts, so the readback step when antmode switches
   the power back off is not activity either. The end of a hold also restarts
