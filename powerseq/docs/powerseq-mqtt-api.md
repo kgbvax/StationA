@@ -59,7 +59,7 @@ muehle/hf/power-seq/cmd
 | Suffix | Retained | Direction | Purpose |
 |--------|----------|-----------|---------|
 | `/meta` | yes | sequencer → bus | birth certificate: capabilities + `expose` |
-| `/state` | yes | sequencer → bus | `{ phase, step, fault?, ts }` |
+| `/state` | yes | sequencer → bus | `{ phase, step, fault?, stop_reason?, ts }` |
 | `/status` | yes | broker LWT | liveness of **the service**: `online` / `offline` |
 | `/cmd` | **no** | bus → sequencer | operator one-button: `start` \| `stop` |
 
@@ -137,9 +137,26 @@ Retained. Published on every phase/step/fault change.
 
 `step` is always present (only `fault` is omitempty), per model §7.1 — a
 consumer reading `state.step` gets `""` (not a missing key) at idle/running.
-`phase=idle` with no `fault` is the resting state. `fault` is set only when a
-step times out; the slots driven so far remain in whatever state the retained
-`/cmd` last set them (self-healing from the steady-state intent).
+`phase=idle` with no `fault` is the resting state. `fault` is set when a
+sequence aborts (a step timed out or failed, the service was stopped
+mid-sequence: `"<step>: interrupted"`, or it was killed mid-sequence, see
+below); the slots driven so far remain in whatever state the retained `/cmd`
+last set them (self-healing from the steady-state intent).
+
+**Across a restart** (deploy, crash, power cut of the Pi) the phase is kept: the
+sequencer writes it to its state file (`state_file`, default
+`/var/lib/powerseq/state.json`) and the first `/state` after the restart is the
+restored phase, not `idle`. No `/cmd` is sent because of a restart.
+
+| Phase at the restart | First `/state` after it |
+|---|---|
+| `idle`, `running`, `standby` | the same phase, with its `fault` and `stop_reason`; the standby timeout and the idle-shutdown clock keep counting from the real events (§6.1, §6.2) |
+| `starting`, `stopping`, `entering_standby`, `waking` (killed mid-sequence) | `phase=idle`, `fault="<step>: interrupted by a powerseq restart (<phase>)"`, `stop_reason` kept. The sequence is **not** re-run; `start` or `stop` recovers |
+| `standby`, but `[[standby]]` no longer configured | `phase=idle` with a fault |
+| none (missing or corrupt state file) | `phase=idle` (logged as Error) |
+
+So a consumer that sees `idle` after a powerseq restart can take it at face
+value: an `idle` caused by the restart itself always carries a `fault`.
 
 On (re)connect the runner re-publishes the retained `/state` (in addition to
 `/meta` and `/status=online`), so a broker wipe that drops retained messages
@@ -160,8 +177,9 @@ restores an idle sequencer's `/state` instead of leaving it absent.
   `phase=standby` (runs the **wake** sequence — the station is already energized).
 - `stop` is honored when `phase=running`, `phase=standby` or `phase=idle`; runs the shutdown
   sequence. An idle stop is the teardown path for slots a faulted sequence
-  left energized: the in-memory fault latch does not survive a restart, and
-  the shutdown re-states "off" — it never energizes.
+  left energized: it does not depend on the fault latch (lost with a missing
+  or corrupt state file), and the shutdown re-states "off" — it never
+  energizes.
 - A command that arrives mid-sequence (e.g. `start` while `starting`) is
   dropped and logged; aborting an in-progress sequence is deferred.
 
@@ -271,6 +289,10 @@ Configured with an `[idle]` block; omit all three to disable.
   `uhf/el-rotator.el` with a 2° deadband against the el readback dither).
 - Idle is evaluated only in `running` and only with the broker connected. A
   fault in either list → `phase=idle` + `fault`, like startup.
+- A powerseq restart keeps `running`/`standby` and the time of the last entry
+  into them (§4), so a station restored in `running` stands by as usual. After
+  the restart every watch takes its first value as a new baseline, and changes
+  within `settle_s` are not activity.
 - **Antenna-mode power hold** (`[mqtt] ant_mode_slot`, default `ant-mode` →
   `muehle/hf/ant-mode/state`, contract `../../antmode/docs/ant-mode-mqtt-api.md`):
   `/state.power_hold` tells powerseq to hold its idle logic. antmode sets it
@@ -313,7 +335,11 @@ indefinitely.
   activity is `shutdown_minutes` ago. The last activity is the latest of the
   activity slot's `last_activity`, the last counted watch change, and the last
   entry into `running` (a start or a wake). An antennaselect restart publishes
-  no `last_activity`, so it does not reset the clock.
+  no `last_activity`, so it does not reset the clock. A powerseq restart does
+  not reset it either: the clock's inputs are kept in the state file (§4). The
+  idle shutdown waits until the activity slot's `/state` has been received
+  (after a restart, until its retained `/state` is re-delivered), because its
+  `last_activity` can be the latest activity.
 - → `stopping` → `[[idle_shutdown]]` → `idle` with `stop_reason =
   "idle_shutdown"`. Only `start` revives the station (a full cold start).
 - The default list is the `[[shutdown]]` list plus `pc-sleep` (`power/shack-pc`

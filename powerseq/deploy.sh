@@ -112,6 +112,8 @@ trap 'rm -f "$SEED_CONFIG" "$SEED_ENV" "${UNIT_FILE:-}"' EXIT
   echo ""
   echo "host = \"$(toml_escape "$HOST_NAME")\""
   echo "location = \"$(toml_escape "$LOCATION")\""
+  echo "# The sequencer phase survives restarts in this file (StateDirectory of the unit)."
+  echo "# state_file = \"/var/lib/powerseq/state.json\"   # default; \"\" = off (restart = idle)"
   echo ""
   echo "[mqtt]"
   echo "broker           = \"$(toml_escape "$MQTT_BROKER")\""
@@ -174,12 +176,14 @@ RestartSec=5
 User=${SERVICE_USER}
 Group=${SERVICE_USER}
 ConfigurationDirectory=${SERVICE_NAME}
+# /var/lib/${SERVICE_NAME} (owned by ${SERVICE_USER}): state.json keeps the
+# sequencer phase across restarts (config key state_file).
 StateDirectory=${SERVICE_NAME}
 
 # Hardening. powerseq is network-only: it talks to the MQTT broker. No serial
-# devices, no disk writes, no elevated capabilities. PrivateDevices is therefore
-# safe (unlike the serial bridges), and RestrictAddressFamilies covers the
-# outbound MQTT connection.
+# devices, no elevated capabilities, and the only disk write is the state file
+# in the StateDirectory. PrivateDevices is therefore safe (unlike the serial
+# bridges), and RestrictAddressFamilies covers the outbound MQTT connection.
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true

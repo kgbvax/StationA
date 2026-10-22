@@ -133,6 +133,30 @@ magic packet (UDP broadcast; `RestrictAddressFamilies=AF_INET` covers it). A
 step that times out → `fault` + `phase=idle`; the slots driven so far remain in
 whatever state the retained `/cmd` last set them (self-healing, no rollback).
 
+**Phase persistence** (`internal/seq/persist.go`, top-level `state_file`,
+default `/var/lib/powerseq/state.json` in the unit's `StateDirectory=powerseq`;
+`""` = off): the phase survives a deploy, crash or power cut. Saved: phase,
+step, fault, stop_reason and the idle clocks (`runningSince`, `standbySince`,
+`lastWatch`, `holdEndedAt`). Written atomically (temp file in the same dir,
+fsync, rename, dir fsync) on the runner goroutine only: every phase/step
+change at once (`begin()` writes the transitional phase **before** the first
+step runs), clock-only changes (set on the paho goroutine) from the idle tick
+at most every 10 s, and a final flush when `Run` exits (main waits up to 5 s
+for the runner after SIGTERM). Restore in `New`: `idle`/`running`/`standby`
+come back as they were, clocks included — so a station that was `running`
+before a deploy still enters standby, and the idle-shutdown deadline stays
+where it was. A transitional phase (`starting`/`stopping`/`entering_standby`/
+`waking` — only after a kill, a SIGTERM aborts the sequence itself) becomes
+`idle` + `fault "<step>: interrupted by a powerseq restart (<phase>)"`: **not**
+re-run (half-done is unknown-done), nothing switched, the same end state as an
+in-process abort; the operator recovers with `start` or `stop`. `standby`
+without a `[[standby]]` config → `idle` + fault. Missing/corrupt file → `idle`
++ Error log. A restart never emits a `/cmd`. After a restore watches
+re-baseline (`settleUntil` = now + `settle_s`), and the idle shutdown waits for
+the activity slot's retained `/state` (`idleDecision` needs it: its
+`last_activity` is part of the clock). The ant-mode `power_hold` is not saved —
+its retained `/state` is re-read on connect (3 s wait).
+
 **Concurrency:** the paho message handlers run on paho's dispatch goroutine and
 only do a quick mutex update + (for `/cmd`) a non-blocking send to the
 sequencer's `cmdCh` — they **never publish**, so they never block (the stationa
@@ -143,8 +167,8 @@ status/state maps, the broker-online flag, and phase/step/fault.
 
 **Busy guard:** `start` is honored when `phase=idle` (startup) or
 `phase=standby` (= wake); `stop` when `phase=running`, `phase=standby` or `phase=idle` — the shutdown is an idempotent teardown that
-can only de-energize, and it must not depend on the in-memory `fault` latch:
-a process restart wipes the latch, and stop is then the only teardown path for
+can only de-energize, and it must not depend on the `fault` latch: a missing
+or corrupt state file loses it, and stop is then the only teardown path for
 the still-energized slots a faulted sequence left behind (no rollback by
 design). The guard is checked twice: once in `request()`
 (a fast-path drop so an obviously-busy command never enqueues) and again
@@ -187,8 +211,9 @@ watched topics it subscribes.
 ## Configuration and secrets
 
 Config is TOML (`/etc/powerseq/config.toml` by default, or `-config <path>`):
-the sequencer's own address (site/station/slot) and `[timing]` (network delay,
-step timeout, shutdown stagger). The MQTT password is **not** in the TOML — it
+the sequencer's own address (site/station/slot), `[timing]` (network delay,
+step timeout, shutdown stagger) and the phase `state_file` (default
+`/var/lib/powerseq/state.json`, no migration needed). The MQTT password is **not** in the TOML — it
 is loaded from an `EnvironmentFile`:
 
 ```bash
@@ -225,6 +250,10 @@ Add future migrations to that script as their own idempotent block.
 The unit is hardened like atr1k-tuner-bridge (network-only):
 `ProtectSystem=strict`, `PrivateDevices=true` (no serial devices),
 `RestrictAddressFamilies=AF_INET AF_INET6`, `MemoryMax=256M`, `TasksMax=64`.
+Its only writable path is `StateDirectory=powerseq` (`/var/lib/powerseq`,
+owned by the service user) for the phase state file. The first start after a
+deploy that adds persistence logs one Error (state file missing) and starts
+`idle`, like before; from then on restarts keep the phase.
 See `../docs/conventions/deployment.md`.
 
 ---

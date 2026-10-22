@@ -39,6 +39,10 @@
 // start/stop still work. When the hold ends a fresh settle window starts, so
 // the readback step from switching the power back off is not activity either.
 //
+// The phase survives a process restart (Config.StateFile, see persist.go): a
+// restart restores idle/running/standby with their idle clocks, and turns a
+// sequence that was in flight into idle + fault without re-running it.
+//
 // The runner is a single goroutine that executes one sequence at a time;
 // observations arrive from the mqtt layer and update a mutex-guarded input map.
 // Waits poll that map with a deadline (step timeout → fault, no rollback).
@@ -194,6 +198,13 @@ type Config struct {
 	// the window = no hold (no retained state means normal).
 	AntModeHold time.Duration
 
+	// StateFile is where the phase is persisted across restarts ("" = not
+	// persisted: every start is idle). See persist.go.
+	StateFile string
+	// PersistEvery throttles state-file writes for clock-only changes
+	// (0 → DefaultPersistEvery). Phase changes are written at once.
+	PersistEvery time.Duration
+
 	// WOL sends wol steps; nil → SendMagicPacket.
 	WOL WOLSender
 
@@ -272,6 +283,11 @@ type Sequencer struct {
 	antModeSeen      bool
 	antModeWaitUntil time.Time
 
+	// State file bookkeeping (runner goroutine only, after New).
+	saved        *savedState // last snapshot written (or loaded); nil = none
+	savedAt      time.Time   // when saved was written (clock-only throttle)
+	persistEvery time.Duration
+
 	cmdCh       chan string   // "start" | "stop" → runner
 	republishCh chan struct{} // mqtt layer → runner: re-publish retained /state
 }
@@ -349,6 +365,13 @@ func New(cfg Config, pub Publisher, log Logger) (*Sequencer, error) {
 		if s.cfg.AntModeHold <= 0 {
 			s.cfg.AntModeHold = 3 * time.Second
 		}
+	}
+	s.persistEvery = cfg.PersistEvery
+	if s.persistEvery <= 0 {
+		s.persistEvery = DefaultPersistEvery
+	}
+	if cfg.StateFile != "" {
+		s.restore(time.Now())
 	}
 	return s, nil
 }
@@ -654,8 +677,9 @@ func (s *Sequencer) Start() { s.request("start") }
 
 // Stop requests a shutdown sequence. Non-blocking; honored when phase=running,
 // phase=standby or phase=idle — the teardown is idempotent and can only de-energize, and the
-// fault latch is in-memory (a process restart wipes it), so stop-from-idle
-// must not depend on remembering why it is idle. Dropped (logged) mid-sequence.
+// fault latch is lost with a missing or corrupt state file (or without one),
+// so stop-from-idle must not depend on remembering why it is idle. Dropped
+// (logged) mid-sequence.
 func (s *Sequencer) Stop() { s.request("stop") }
 
 func (s *Sequencer) request(cmd string) {
@@ -666,10 +690,10 @@ func (s *Sequencer) request(cmd string) {
 	case "start":
 		allow = phase == PhaseIdle || phase == PhaseStandby
 	case "stop":
-		// Idle is honored regardless of fault: the in-memory fault latch dies
-		// with the process, so after a restart a stop is the ONLY teardown
-		// path for the slots a faulted sequence left energized — and a
-		// shutdown re-states "off", it never energizes.
+		// Idle is honored regardless of fault: the fault latch dies with a
+		// missing or corrupt state file, so after such a restart a stop is the
+		// ONLY teardown path for the slots a faulted sequence left energized —
+		// and a shutdown re-states "off", it never energizes.
 		allow = phase == PhaseRunning || phase == PhaseIdle || phase == PhaseStandby
 	}
 	s.mu.Unlock()
@@ -692,10 +716,14 @@ func (s *Sequencer) Phase() (phase, step, fault string) {
 }
 
 // Run is the runner goroutine. It executes one sequence at a time and exits on
-// ctx cancel. Publishes the initial idle state on entry — overwriting any stale
-// retained /state from a prior crash so the bus sees phase=idle on boot (own
-// /state is an output; the sequencer never reads it back).
+// ctx cancel. Publishes the initial state on entry — the phase restored from
+// the state file (idle without one) — overwriting any stale retained /state
+// from before the restart (own /state is an output; the sequencer never reads
+// it back from the bus). On exit it flushes pending clock-only changes to the
+// state file.
 func (s *Sequencer) Run(ctx context.Context) {
+	defer func() { s.persist(time.Now(), false) }()
+	s.persist(time.Now(), false) // a resolved restore (or a first start) is written now
 	s.publishState()
 	var tick <-chan time.Time
 	if s.standbyEnabled() {
@@ -712,6 +740,9 @@ func (s *Sequencer) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-tick:
+			// Clock-only changes (a watch moved, a power hold ended) arrive on
+			// the paho goroutine; the runner writes them (throttled).
+			s.persist(time.Now(), true)
 			// Idle standby / wake run on the runner goroutine like start/stop,
 			// so they serialize with operator commands through begin().
 			cmd := s.idleDecision(time.Now())
@@ -772,7 +803,10 @@ func (s *Sequencer) RequestRepublish() {
 //     antennaselect restart publishes no last_activity, so it never wakes), or
 //     a watch moved after the standby entry.
 //   - idle_shutdown (from standby, when configured and no wake is due): the
-//     last activity (see lastActivityLocked) is ShutdownTimeout ago.
+//     last activity (see lastActivityLocked) is ShutdownTimeout ago. Not
+//     before the activity slot's /state has been seen: its last_activity is
+//     part of that clock, and after a restart into standby the retained
+//     /state can arrive after the first idle check.
 //
 // Nothing is decided while the antenna-mode slot holds the idle logic
 // (power_hold): a borrow, a maintenance or a storm park must not be cut by a
@@ -813,7 +847,7 @@ func (s *Sequencer) idleDecision(now time.Time) string {
 				return "wake"
 			}
 		}
-		if len(s.idleShut) > 0 && now.Sub(s.lastActivityLocked(m)) >= s.cfg.ShutdownTimeout {
+		if len(s.idleShut) > 0 && m != nil && now.Sub(s.lastActivityLocked(m)) >= s.cfg.ShutdownTimeout {
 			return "idle_shutdown"
 		}
 	}
@@ -900,6 +934,9 @@ func (s *Sequencer) begin(cmd string) (steps []resolvedStep, endPhase string, ok
 	}
 	s.mu.Unlock()
 	if ok {
+		// On disk before the first step runs: a crash mid-sequence must
+		// restore as an interrupted sequence, not as the phase before it.
+		s.persist(time.Now(), false)
 		s.publishState()
 	}
 	return steps, endPhase, ok
@@ -1165,6 +1202,7 @@ func (s *Sequencer) setPhase(phase, step, fault string) {
 	if prev != phase {
 		s.log.Infof("phase %s -> %s", prev, phase)
 	}
+	s.persist(time.Now(), false)
 	s.publishState()
 }
 
@@ -1173,6 +1211,7 @@ func (s *Sequencer) setStep(step string) {
 	s.step = step
 	s.fault = ""
 	s.mu.Unlock()
+	s.persist(time.Now(), false)
 	s.publishState()
 }
 

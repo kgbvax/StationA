@@ -95,11 +95,38 @@ func (e *errPublisher) Publish(topic string, retained bool, payload []byte) erro
 
 // ----- test harness ----------------------------------------------------------
 
-type testLogger struct{ t *testing.T }
+// testLogger forwards to t.Logf until the test's cleanup ran. Many tests stop
+// their runner with a bare cancel(), so the runner can still log ("phase x ->
+// y") after the test returned — a t.Logf then races with the testing package
+// (seen under -race -count=10). The cleanup takes mu, so it waits for a
+// Logf in progress and every later one is dropped.
+type testLogger struct {
+	t    *testing.T
+	mu   sync.Mutex
+	done bool
+}
 
-func (l *testLogger) Infof(f string, a ...any)  { l.t.Logf("INFO: "+f, a...) }
-func (l *testLogger) Warnf(f string, a ...any)  { l.t.Logf("WARN: "+f, a...) }
-func (l *testLogger) Errorf(f string, a ...any) { l.t.Logf("ERROR: "+f, a...) }
+func newTestLogger(t *testing.T) *testLogger {
+	l := &testLogger{t: t}
+	t.Cleanup(func() {
+		l.mu.Lock()
+		l.done = true
+		l.mu.Unlock()
+	})
+	return l
+}
+
+func (l *testLogger) logf(f string, a ...any) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if !l.done {
+		l.t.Logf(f, a...)
+	}
+}
+
+func (l *testLogger) Infof(f string, a ...any)  { l.logf("INFO: "+f, a...) }
+func (l *testLogger) Warnf(f string, a ...any)  { l.logf("WARN: "+f, a...) }
+func (l *testLogger) Errorf(f string, a ...any) { l.logf("ERROR: "+f, a...) }
 func (l *testLogger) Debugf(string, ...any)     {}
 
 const (
@@ -158,7 +185,7 @@ func newTestSeq(t *testing.T) (*Sequencer, *recPublisher) {
 func newTestSeqWith(t *testing.T, startup, shutdown []Step) (*Sequencer, *recPublisher) {
 	t.Helper()
 	pub := &recPublisher{}
-	s, err := New(baseConfig(startup, shutdown), pub, &testLogger{t})
+	s, err := New(baseConfig(startup, shutdown), pub, newTestLogger(t))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -769,14 +796,14 @@ func TestRetainDefaultAndOverride(t *testing.T) {
 
 func TestSelfWaitConfigError(t *testing.T) {
 	up := []Step{{Name: "self-wait", Kind: KindWaitState, Slot: "hf/power-seq", Field: "phase", Value: "running"}}
-	if _, err := New(baseConfig(up, exampleShutdown()), &recPublisher{}, &testLogger{t}); err == nil {
+	if _, err := New(baseConfig(up, exampleShutdown()), &recPublisher{}, newTestLogger(t)); err == nil {
 		t.Error("wait_state on the sequencer's own slot should fail New")
 	}
 }
 
 func TestUnknownSymbolicDuration(t *testing.T) {
 	up := []Step{{Name: "bad", Kind: KindDelay, Duration: "bogus"}}
-	if _, err := New(baseConfig(up, exampleShutdown()), &recPublisher{}, &testLogger{t}); err == nil {
+	if _, err := New(baseConfig(up, exampleShutdown()), &recPublisher{}, newTestLogger(t)); err == nil {
 		t.Error("unknown symbolic duration should fail New")
 	}
 }
@@ -1005,7 +1032,7 @@ func TestStateAlwaysHasStepKey(t *testing.T) {
 
 func TestCmdPublishFailureFaults(t *testing.T) {
 	pub := &errPublisher{recPublisher: recPublisher{}}
-	s, err := New(baseConfig(exampleStartup(), exampleShutdown()), pub, &testLogger{t})
+	s, err := New(baseConfig(exampleStartup(), exampleShutdown()), pub, newTestLogger(t))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -1096,6 +1123,26 @@ func newStandbySeqWith(t *testing.T, mut func(*Config)) (*Sequencer, *recPublish
 	t.Helper()
 	pub := &recPublisher{}
 	wol := &wolRec{}
+	cfg := standbyTestConfig(wol)
+	if mut != nil {
+		mut(&cfg)
+	}
+	s, err := New(cfg, pub, newTestLogger(t))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	s.SetBrokerOnline(true)
+	s.markOnline("hf/antenna-select", "uhf/radio", "uhf/el-rotator")
+	ctx, cancel := context.WithCancel(context.Background())
+	startRun(t, s, ctx)
+	s.Start()
+	runUntil(t, s, func() bool { return phaseIs(s, PhaseRunning) }, time.Second)
+	return s, pub, wol, cancel
+}
+
+// standbyTestConfig is the idle-standby test config: startup = one cmd step,
+// standby/wake lists, antenna-select activity, two watches.
+func standbyTestConfig(wol *wolRec) Config {
 	cfg := baseConfig(
 		[]Step{{Name: "master-on", Kind: KindCmd, Slot: "power/master", Action: "set_power", Value: "on"}},
 		exampleShutdown())
@@ -1109,20 +1156,7 @@ func newStandbySeqWith(t *testing.T, mut func(*Config)) (*Sequencer, *recPublish
 		{Slot: "uhf/el-rotator", Field: "el", MinDelta: 2},
 	}
 	cfg.WOL = wol.send
-	if mut != nil {
-		mut(&cfg)
-	}
-	s, err := New(cfg, pub, &testLogger{t})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	s.SetBrokerOnline(true)
-	s.markOnline("hf/antenna-select", "uhf/radio", "uhf/el-rotator")
-	ctx, cancel := context.WithCancel(context.Background())
-	startRun(t, s, ctx)
-	s.Start()
-	runUntil(t, s, func() bool { return phaseIs(s, PhaseRunning) }, time.Second)
-	return s, pub, wol, cancel
+	return cfg
 }
 
 func (s *Sequencer) setActivity(activity string, last time.Time) {
@@ -1305,7 +1339,7 @@ func TestStandbyRequiresWake(t *testing.T) {
 	cfg.Standby = standbySteps()
 	cfg.ActivitySlot = "hf/antenna-select"
 	cfg.IdleTimeout = time.Minute
-	if _, err := New(cfg, &recPublisher{}, &testLogger{t}); err == nil {
+	if _, err := New(cfg, &recPublisher{}, newTestLogger(t)); err == nil {
 		t.Fatal("standby without wake accepted")
 	}
 }
@@ -1550,7 +1584,7 @@ func TestIdleShutdownConfigRejected(t *testing.T) {
 		cfg.ActivitySlot = "hf/antenna-select"
 		cfg.IdleTimeout = time.Minute
 		mut(&cfg)
-		if _, err := New(cfg, &recPublisher{}, &testLogger{t}); err == nil {
+		if _, err := New(cfg, &recPublisher{}, newTestLogger(t)); err == nil {
 			t.Errorf("%s: accepted", name)
 		}
 	}
@@ -1641,7 +1675,7 @@ func TestAntModeTopicAndMeta(t *testing.T) {
 	}
 	cfg := baseConfig(exampleStartup(), exampleShutdown())
 	cfg.AntModeSlot = "ant-mode"
-	s3, err := New(cfg, &recPublisher{}, &testLogger{t})
+	s3, err := New(cfg, &recPublisher{}, newTestLogger(t))
 	if err != nil {
 		t.Fatal(err)
 	}

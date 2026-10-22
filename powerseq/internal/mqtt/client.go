@@ -104,6 +104,7 @@ func New(ctx context.Context, cfg config.Config, log *slog.Logger) (*Client, *se
 		WatchSettle:     watchSettle(cfg.Idle.SettleSeconds),
 		Watches:         toSeqWatches(cfg.Idle.Watches),
 		AntModeSlot:     cfg.MQTT.AntModeSlot,
+		StateFile:       cfg.StateFile,
 		NetworkDelay:    time.Duration(cfg.Timing.NetworkDelayS) * time.Second,
 		StepTimeout:     time.Duration(cfg.Timing.StepTimeoutS) * time.Second,
 		ShutdownStagger: time.Duration(cfg.Timing.ShutdownStaggerS) * time.Second,

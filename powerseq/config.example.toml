@@ -26,6 +26,12 @@
 host = "shari"
 # location is a physical label published in /meta.
 location = "bauwagen"
+# state_file keeps the sequencer phase across a restart (deploy, crash, power
+# cut): idle/running/standby come back as they were, with the standby and
+# idle-shutdown clocks; a sequence in flight at a crash comes back as idle with
+# a fault (never re-run, nothing switched). Written atomically (tmp + rename)
+# into the unit's StateDirectory=powerseq. "" = off (every start is idle).
+state_file = "/var/lib/powerseq/state.json"
 
 [mqtt]
 broker = "tcp://127.0.0.1:1883"

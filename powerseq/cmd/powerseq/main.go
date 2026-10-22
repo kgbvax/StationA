@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"powerseq/internal/config"
 	"powerseq/internal/mqtt"
@@ -41,7 +42,8 @@ func main() {
 	logger.Info("powerseq starting",
 		"slot", cfg.MQTT.Site+"/"+cfg.MQTT.Station+"/"+cfg.MQTT.Slot,
 		"network_delay_s", cfg.Timing.NetworkDelayS,
-		"step_timeout_s", cfg.Timing.StepTimeoutS)
+		"step_timeout_s", cfg.Timing.StepTimeoutS,
+		"state_file", cfg.StateFile)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
@@ -55,9 +57,24 @@ func main() {
 
 	// Run the sequencer state machine on its own goroutine; it emits the
 	// ordered /cmd sequence and publishes its /state.
-	go seq.Run(ctx)
+	runDone := make(chan struct{})
+	go func() {
+		seq.Run(ctx)
+		close(runDone)
+	}()
 
 	logger.Info("powerseq running")
 	<-ctx.Done()
+	// Let the runner finish: a sequence interrupted by the signal records
+	// idle + fault, and pending clock changes go to the state file. Bounded:
+	// its last /state publish may wait on a dead broker.
+	select {
+	case <-runDone:
+	case <-time.After(runnerStopWait):
+		logger.Warn("runner did not stop in time", "wait", runnerStopWait)
+	}
 	logger.Info("powerseq stopped")
 }
+
+// runnerStopWait bounds the shutdown wait for the sequencer runner.
+const runnerStopWait = 5 * time.Second

@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/BurntSushi/toml"
@@ -29,6 +30,10 @@ type Config struct {
 	Host string `toml:"host"`
 	// Location is a physical label published in /meta.
 	Location string `toml:"location"`
+	// StateFile is where the sequencer phase is persisted across restarts
+	// (atomic tmp + rename; deploy.sh's unit has StateDirectory=powerseq).
+	// Default DefaultStateFile; "" disables it (every start is then idle).
+	StateFile string `toml:"state_file"`
 	// MQTT holds broker connection settings and the sequencer's own slot address.
 	MQTT MQTTConfig `toml:"mqtt"`
 	// Timing holds the startup/shutdown cadence (delays + timeouts).
@@ -196,14 +201,19 @@ const (
 	KindWOL        = "wol"
 )
 
+// DefaultStateFile is the state file path when state_file is not set (inside
+// the unit's StateDirectory=powerseq).
+const DefaultStateFile = "/var/lib/powerseq/state.json"
+
 // Defaults returns a Config with sensible default values. The sequence itself
 // has NO built-in default — it must be supplied in config (the
 // config.example.toml ships the model §7.1 sequence). Only the transport,
 // timing, and logging defaults are baked in.
 func Defaults() Config {
 	return Config{
-		Host:     "shari",
-		Location: "bauwagen",
+		Host:      "shari",
+		Location:  "bauwagen",
+		StateFile: DefaultStateFile,
 		MQTT: MQTTConfig{
 			Broker:          "tcp://127.0.0.1:1883",
 			ClientID:        "",
@@ -309,6 +319,9 @@ func (c Config) Validate() error {
 	}
 	if strings.ContainsAny(c.MQTT.AntModeSlot, "/+#") {
 		return fmt.Errorf("mqtt ant_mode_slot must be a slot name in the own station (got %q)", c.MQTT.AntModeSlot)
+	}
+	if c.StateFile != "" && !filepath.IsAbs(c.StateFile) {
+		return fmt.Errorf("state_file must be an absolute path or \"\" (got %q)", c.StateFile)
 	}
 	if err := validateSteps("startup", c.Startup); err != nil {
 		return err

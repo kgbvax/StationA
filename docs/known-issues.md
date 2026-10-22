@@ -710,6 +710,15 @@ Ultrabeam and the HF rotator. Decisions taken with the operator:
    offline/unknown) → automatic. Rollout: antmode ships with `[storm] auto_enter = false`
    (observe-only — unmanned is also just a suggestion) until its suggestions have been
    compared with WarnWetter for some days.
+   *Follow-up (powerseq phase persistence, 2026-10-22):* powerseq now keeps its phase
+   across a restart (`state_file`, see `powerseq/docs/powerseq-mqtt-api.md` §4):
+   `running`/`standby`/`idle` come back as they were, and a sequence killed mid-way
+   comes back as `idle` with a `fault` (`… interrupted by a powerseq restart (<phase>)`).
+   Once that is deployed, antmode's presence workaround (an `idle` right after a manned
+   phase stays manned while `hf/radio` transmitted within the last 30 min) can be
+   relaxed: a plain restart no longer shows `idle`, so the rule is only needed for an
+   `idle` with a `fault` after `starting`/`waking` (an aborted or killed sequence).
+   antmode is not changed yet.
 5. **Storm exit:** an auto-entered storm returns to normal 60 min after the last
    qualifying warning, counting only successful polls (a NINA outage never counts as
    "no warning"). A manual storm, and maintenance, exit only manually. A manual

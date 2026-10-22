@@ -1,6 +1,8 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -398,5 +400,39 @@ func TestAntModeSlotDefaultAndValidation(t *testing.T) {
 		if err := cfg.Validate(); err == nil {
 			t.Errorf("ant_mode_slot %q accepted", bad)
 		}
+	}
+}
+
+func TestStateFileDefaultOverrideAndValidation(t *testing.T) {
+	cfg := validConfig()
+	if cfg.StateFile != DefaultStateFile || DefaultStateFile != "/var/lib/powerseq/state.json" {
+		t.Errorf("state_file default = %q", cfg.StateFile)
+	}
+	cfg.StateFile = "" // persistence off
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("empty state_file rejected: %v", err)
+	}
+	cfg.StateFile = "state.json"
+	if err := cfg.Validate(); err == nil {
+		t.Error("relative state_file accepted")
+	}
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	if err := os.WriteFile(path, []byte("state_file = \"/run/powerseq/s.json\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load(&Flags{ConfigPath: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.StateFile != "/run/powerseq/s.json" {
+		t.Errorf("state_file from TOML = %q", got.StateFile)
+	}
+	if err := os.WriteFile(path, []byte("state_file = \"\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got, err = Load(&Flags{ConfigPath: path}); err != nil || got.StateFile != "" {
+		t.Errorf("explicit empty state_file = %q (err %v), want disabled", got.StateFile, err)
 	}
 }
