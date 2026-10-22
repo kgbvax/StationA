@@ -39,7 +39,7 @@ base_url  = "https://warnung.bund.de/api31"   # OpenAPI "Bundesamt für Bevölke
 # Amtlicher Regionalschlüssel, 12 digits (e.g. "091620000000" = München).
 # NINA serves districts only; the last 7 digits are zeroed before the query.
 # Look it up in the Destatis Regionalschlüssel list. Empty = no warning poll.
-ars       = ""
+ars       = ""   # the Mühle: "055660040040" (Stadt Lengerich NRW, Kreis Steinfurt; deploy.sh seeds it)
 poll_s    = 300
 timeout_s = 20
 # Qualifying DWD II codes: wind level 1 "WINDBÖEN" and up, plus every
@@ -80,7 +80,7 @@ base_url      = "https://app-prod-ws.warnwetter.de/v30"
 # DWD "Stationskennung" of the nearest MOSMIX station (e.g. "10637"
 # Frankfurt/Main, or a G-id). See https://www.dwd.de/DE/leistungen/klimadatendeutschland/stationsliste.html
 # Empty = no wind poll (storm parks at storm.fallback_az).
-dwd_station   = ""
+dwd_station   = ""   # the Mühle: "P0441" (MOSMIX LENGERICH, 0.7 km from JO32WE; deploy.sh seeds it)
 poll_s        = 1800
 timeout_s     = 20
 stale_minutes = 180    # older than this → stale → storm.fallback_az
@@ -88,7 +88,7 @@ stale_minutes = 180    # older than this → stale → storm.fallback_az
 # --- Storm --------------------------------------------------------------------
 [storm]
 # Park azimuth when the wind is stale or missing.
-fallback_az          = 0
+fallback_az          = 0     # the Mühle: 150 (broadside to SW–W storms; deploy.sh seeds it)
 # Highest rotator target. The G-450 has a 360..450 overlap, but it is not yet
 # verified that /state.az reads above 360 there — keep 360 until it is.
 max_az               = 360
@@ -101,7 +101,7 @@ exit_holdoff_minutes = 60
 
 # --- Maintenance --------------------------------------------------------------
 [maintenance]
-park_az = 0            # azimuth for lowering the mast
+park_az = 0            # azimuth for lowering the mast (the Mühle: 0)
 
 # --- Lock sequencing ----------------------------------------------------------
 [park]

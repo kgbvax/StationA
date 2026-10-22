@@ -208,8 +208,24 @@ func (h *harness) switchOff() {
 	h.e.AntSwitchState(js(map[string]any{"selected": "off", "settled": true}))
 }
 
+// retracted reports the current lock's retract finished, as ultrabridge
+// publishes it: lock label, retracted, not moving and retract_seq = lock.seq.
 func (h *harness) retracted() {
-	h.e.AntCtrlState(js(map[string]any{"retracted": true, "moving": false, "device_online": true}))
+	m := map[string]any{"retracted": true, "moving": false, "device_online": true}
+	if h.e.lock != nil {
+		m["lock"], m["retract_seq"] = string(h.e.pol.S.Mode), h.e.lock.Seq
+	}
+	h.e.AntCtrlState(js(m))
+}
+
+// rotTarget reports a live rotator /state with target_az (the WRC bridge
+// omits target_az when the WRC's tdeg is 0).
+func (h *harness) rotTarget(az, target float64, moving bool) {
+	m := map[string]any{"az": az, "moving": moving, "device_online": true}
+	if target != 0 {
+		m["target_az"] = target
+	}
+	h.e.RotatorState(js(m))
 }
 
 func (h *harness) rotator(az float64, moving bool) {
@@ -489,6 +505,12 @@ func TestReparkRecomputesWithNewSeq(t *testing.T) {
 	if l.Seq != seq+1 || !l.Ground || !l.Retract {
 		t.Fatalf("repark lock: %+v", l)
 	}
+	// ultrabridge re-retracts on the new seq; the old seq's retract_seq does
+	// not confirm it.
+	if h.phase() != Retracting || h.e.lock.ParkAz != nil {
+		t.Fatalf("repark skipped the new seq's retract: %s", h.phase())
+	}
+	h.retracted()
 	if *h.e.lock.ParkAz != 210 || h.phase() != Rotating { // 300±90 → 30/210, nearer 175
 		t.Fatalf("repark park_az %d phase %s", *h.e.lock.ParkAz, h.phase())
 	}
@@ -503,8 +525,12 @@ func TestStormToMaintenanceSwitch(t *testing.T) {
 	seq := h.e.lock.Seq
 	h.cmd(map[string]any{"action": "set_ant_mode", "value": "maintenance"})
 	l := h.parsed().L()
-	if l.Seq != seq+1 || !l.Nudge || !l.Ground || !l.Retract || *l.ParkAz != 135 {
-		t.Fatalf("switch lock: %+v", l)
+	if l.Seq != seq+1 || !l.Nudge || !l.Ground || !l.Retract || l.ParkAz != nil || h.phase() != Retracting {
+		t.Fatalf("switch lock: %+v %s (must wait for the new seq's retract)", l, h.phase())
+	}
+	h.retracted()
+	if l := h.parsed().L(); l.ParkAz == nil || *l.ParkAz != 135 {
+		t.Fatalf("switch park: %+v", l)
 	}
 }
 
@@ -1576,5 +1602,150 @@ func TestBorrowSeqPersistedBeforePowerOn(t *testing.T) {
 	first := h.sv.all[n] // the save that precedes set_power on
 	if first.Borrow == nil || first.BorrowSeq != h.e.lock.Seq {
 		t.Fatalf("borrow_seq not saved with the borrow: %+v", first)
+	}
+}
+
+// A retract latch left from an earlier lock (or one without this seq's
+// retract_seq) never ends `retracting`: only ultrabridge's retract_seq for
+// this seq does, or the retract timeout.
+func TestRetractingWaitsForThisSeqsRetract(t *testing.T) {
+	h := newH(t, nil, nil).start()
+	h.station("running", 170)
+	h.cmd(map[string]any{"action": "set_ant_mode", "value": "storm"})
+	h.switchOff()
+	seq := h.e.lock.Seq
+	// Stale latch: retracted, not moving, no retract_seq.
+	h.e.AntCtrlState(js(map[string]any{"retracted": true, "moving": false, "device_online": true}))
+	if h.phase() != Retracting {
+		t.Fatalf("stale latch ended retracting: %s", h.phase())
+	}
+	// A retract_seq from an earlier lock.
+	h.e.AntCtrlState(js(map[string]any{"retracted": true, "moving": false, "device_online": true, "retract_seq": seq - 1}))
+	if h.phase() != Retracting {
+		t.Fatalf("earlier seq's retract ended retracting: %s", h.phase())
+	}
+	// This seq's retract, motors still running: not yet.
+	h.e.AntCtrlState(js(map[string]any{"retracted": true, "moving": true, "device_online": true, "retract_seq": seq}))
+	if h.phase() != Retracting {
+		t.Fatalf("moving elements ended retracting: %s", h.phase())
+	}
+	h.retracted()
+	if h.phase() != Rotating {
+		t.Fatalf("this seq's retract did not end retracting: %s", h.phase())
+	}
+
+	// Fallback: no confirmation at all → the retract timeout still parks.
+	h2 := newH(t, nil, nil).start()
+	h2.station("running", 170)
+	h2.cmd(map[string]any{"action": "set_ant_mode", "value": "storm"})
+	h2.switchOff()
+	h2.e.AntCtrlState(js(map[string]any{"retracted": true, "moving": false, "device_online": true}))
+	h2.tick(time.Duration(h2.e.cfg.Park.RetractTimeoutS) * time.Second)
+	if h2.phase() != Rotating {
+		t.Fatalf("retract timeout did not park: %s", h2.phase())
+	}
+}
+
+// With no nudge base (the WRC omits target_az when tdeg is 0, or no rotator
+// /state yet) a rotator resting at an old target is not a nudge: the park is
+// only over once the bridge's park target has been seen.
+func TestMaintenanceNoNudgeBeforeBridgeParks(t *testing.T) {
+	h := newH(t, nil, nil).start()
+	h.station("running", 200) // no target_az: nudge base unknown
+	h.cmd(map[string]any{"action": "set_ant_mode", "value": "maintenance"})
+	h.switchOff()
+	h.retracted()
+	h.rotTarget(200, 200, false) // old/boot target, not park_az, rotator at rest
+	if h.phase() != Rotating {
+		t.Fatalf("parked before the bridge sent the park: %s", h.phase())
+	}
+	h.rotTarget(170, 135, true) // bridge park underway
+	h.rotTarget(135, 135, false)
+	if h.phase() != Parked {
+		t.Fatalf("park not detected: %s", h.phase())
+	}
+}
+
+// park_az 0 (the Mühle's maintenance azimuth): the WRC bridge omits
+// target_az = 0, so an absent target counts as the park target; a nudge
+// after it is still detected.
+func TestMaintenanceParkAzZeroNudge(t *testing.T) {
+	h := newH(t, func(c *config.Config) { c.Maintenance.ParkAz = 0 }, nil).start()
+	h.station("running", 40)
+	h.cmd(map[string]any{"action": "set_ant_mode", "value": "maintenance"})
+	h.switchOff()
+	h.retracted()
+	h.rotTarget(40, 40, false)
+	if h.phase() != Rotating {
+		t.Fatalf("parked at the old target: %s", h.phase())
+	}
+	h.rotTarget(20, 0, true) // bridge park to 0: target_az omitted
+	h.rotTarget(8, 5, true)  // operator nudge before arrival
+	h.rotTarget(5, 5, false)
+	if h.phase() != Parked {
+		t.Fatalf("nudge after a park to 0 not detected: %s", h.phase())
+	}
+}
+
+// A WRC that goes offline mid-park and comes back with a target that is
+// neither park_az nor the base (e.g. tdeg reset to the readback) is not a
+// nudge: the bridge re-sends its park after the reconnect.
+func TestNudgeEvidenceResetWhenRotatorOffline(t *testing.T) {
+	h := newH(t, nil, nil).start()
+	h.station("running", 10)
+	h.rotTarget(10, 10, false)
+	h.cmd(map[string]any{"action": "set_ant_mode", "value": "maintenance"})
+	h.switchOff()
+	h.retracted()
+	h.rotTarget(60, 135, true) // park seen
+	h.e.RotatorState(js(map[string]any{"az": 60, "moving": false, "device_online": false}))
+	h.rotTarget(60, 60, false) // back online, tdeg = readback
+	if h.phase() != Rotating {
+		t.Fatalf("reconnect read as a nudge: %s", h.phase())
+	}
+}
+
+// A storm park still slewing when rotate_timeout_s fires (a lull came late)
+// keeps its borrowed power until the rotator stops (bounded), then restores.
+func TestStormRestoreWaitsForSlewingRotator(t *testing.T) {
+	h := newH(t, borrowCfg, nil).start()
+	h.station("standby", 170)
+	h.powerOff()
+	h.cmd(map[string]any{"action": "set_ant_mode", "value": "storm"})
+	h.powerOn()
+	h.switchOff()
+	h.retracted()
+	park := float64(*h.e.lock.ParkAz)
+	h.tick(time.Duration(h.e.cfg.Park.RotateTimeoutS-1) * time.Second)
+	h.rotator(park-60, true) // the bridge finally sends the park
+	h.tick(2 * time.Second)
+	if h.phase() != Failed {
+		t.Fatalf("phase %s", h.phase())
+	}
+	if got := h.powerCmds(); len(got) != 1 {
+		t.Fatalf("power cut while the rotator slews: %v", got)
+	}
+	h.rotator(park, false)
+	if got := h.powerCmds(); h.phase() != Parked || len(got) != 2 || got[1] != "off" {
+		t.Fatalf("after arrival: %s %v", h.phase(), got)
+	}
+
+	// Bounded: a rotator that never stops gets one more rotate_timeout_s.
+	h2 := newH(t, borrowCfg, nil).start()
+	h2.station("standby", 170)
+	h2.powerOff()
+	h2.cmd(map[string]any{"action": "set_ant_mode", "value": "storm"})
+	h2.powerOn()
+	h2.switchOff()
+	h2.retracted()
+	h2.rotator(10, true)
+	h2.tick(time.Duration(h2.e.cfg.Park.RotateTimeoutS+1) * time.Second)
+	if got := h2.powerCmds(); len(got) != 1 {
+		t.Fatalf("cut at the first timeout: %v", got)
+	}
+	h2.rotator(12, true)
+	h2.tick(time.Duration(h2.e.cfg.Park.RotateTimeoutS) * time.Second)
+	if got := h2.powerCmds(); len(got) != 2 || got[1] != "off" {
+		t.Fatalf("restore not bounded: %v", got)
 	}
 }

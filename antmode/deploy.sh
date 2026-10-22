@@ -11,7 +11,7 @@
 #
 # Usage:
 #   ./deploy.sh                       # deploy to default host "scmino"
-#   NINA_ARS=<12 digits> DWD_STATION=<id> ./deploy.sh   # first deploy (seed)
+#   NINA_ARS=<12 digits> DWD_STATION=<id> ./deploy.sh   # first deploy elsewhere (seed)
 #
 # Configurable via environment variables (with defaults):
 #   SSH_HOST          SSH target            (default: 192.168.1.178, scmino)
@@ -31,10 +31,15 @@
 #                     from an existing hf service env, so a re-seed is self-sufficient)
 #   LOCATION          location        value (default: bauwagen)  [published in /meta]
 #   HOST_NAME         host            value (default: scmino)    [published in /meta]
-#   NINA_ARS          nina.ars              (default: empty = no warning poll)
-#   DWD_STATION       wind.dwd_station      (default: empty = storm parks at FALLBACK_AZ)
-#   FALLBACK_AZ       storm.fallback_az     (default: 0)
-#   MAINT_AZ          maintenance.park_az   (default: 0)
+#   Site values (defaults = the Mühle, locator JO32WE; "" disables a poll):
+#   NINA_ARS          nina.ars              (default: 055660040040 — Stadt Lengerich NRW,
+#                     AGS 05566040, Kreis Steinfurt; DWD warncell 805566040; NINA
+#                     queries the district 055660000000)
+#   DWD_STATION       wind.dwd_station      (default: P0441 — MOSMIX "LENGERICH", 0.7 km
+#                     from JO32WE)
+#   FALLBACK_AZ       storm.fallback_az     (default: 150 — boom broadside to the
+#                     prevailing SW–W storms; used when the wind is stale)
+#   MAINT_AZ          maintenance.park_az   (default: 0 — mast lowering)
 #   MAX_AZ            storm.max_az          (default: 360; 450 only once the
 #                     G-450 overlap readback is verified)
 #   AUTO_ENTER        storm.auto_enter      (default: false — observe only)
@@ -68,9 +73,9 @@ MQTT_USER="${MQTT_USER:-hf}"
 MQTT_PASSWORD="${MQTT_PASSWORD:-}"
 LOCATION="${LOCATION:-bauwagen}"
 HOST_NAME="${HOST_NAME:-scmino}"
-NINA_ARS="${NINA_ARS:-}"
-DWD_STATION="${DWD_STATION:-}"
-FALLBACK_AZ="${FALLBACK_AZ:-0}"
+NINA_ARS="${NINA_ARS-055660040040}"
+DWD_STATION="${DWD_STATION-P0441}"
+FALLBACK_AZ="${FALLBACK_AZ:-150}"
 MAINT_AZ="${MAINT_AZ:-0}"
 MAX_AZ="${MAX_AZ:-360}"
 AUTO_ENTER="${AUTO_ENTER:-false}"

@@ -152,7 +152,8 @@ type sibling struct {
 	target      float64
 	targetKnown bool
 	// ant-ctrl
-	retracted bool
+	retracted  bool
+	retractSeq *uint64 // lock seq whose retract ultrabridge confirmed (absent = none)
 	// ant-switch
 	selected string
 	// radio
@@ -182,6 +183,11 @@ type Engine struct {
 	borrow    *Borrow
 	borrowSeq uint64
 	nudgeBase *float64
+	// parkSeen: the rotator's target_az has been seen at park_az this seq
+	// (the bridge sent the park). Only then can a different resting target be
+	// a maintenance nudge. Reset on a lock (re)start and whenever the rotator
+	// goes offline (a reconnected WRC may report a reset target).
+	parkSeen bool
 
 	phaseSince  time.Time
 	borrowClock time.Time // in-memory start of the awaiting_* timeout
@@ -442,7 +448,11 @@ func (e *Engine) PowerSeqState(p []byte) {
 	e.inputChanged()
 }
 
-func (e *Engine) RotatorStatus(p []byte) { e.rot.status = online(p); e.inputChanged() }
+func (e *Engine) RotatorStatus(p []byte) {
+	e.rot.status = online(p)
+	e.noteParkTarget(false)
+	e.inputChanged()
+}
 
 func (e *Engine) RotatorState(p []byte) {
 	var s struct {
@@ -463,22 +473,46 @@ func (e *Engine) RotatorState(p []byte) {
 		e.rot.target = *s.TargetAz
 	}
 	e.rot.moving, e.rot.device, e.rot.seen = s.Moving, deviceOnline(s.DeviceOnline), true
+	e.noteParkTarget(true)
 	e.inputChanged()
+}
+
+// noteParkTarget maintains parkSeen from the rotator readback. The WRC bridge
+// omits target_az when the WRC's tdeg is 0, so for park_az 0 an absent target
+// counts as the park target only on a fresh rotator /state that shows the
+// rotator moving (heading for tdeg 0) — an absent target at rest may just be
+// unknown (a booted WRC).
+func (e *Engine) noteParkTarget(fresh bool) {
+	if !e.rot.live() {
+		e.parkSeen = false
+		return
+	}
+	if e.lock == nil || e.lock.ParkAz == nil || e.parkSeen {
+		return
+	}
+	park := float64(*e.lock.ParkAz)
+	if e.rot.targetKnown {
+		e.parkSeen = math.Abs(e.rot.target-park) <= float64(e.cfg.Park.ToleranceDeg)
+	} else {
+		e.parkSeen = *e.lock.ParkAz == 0 && fresh && e.rot.moving
+	}
 }
 
 func (e *Engine) AntCtrlStatus(p []byte) { e.ant.status = online(p); e.inputChanged() }
 
 func (e *Engine) AntCtrlState(p []byte) {
 	var s struct {
-		Retracted    bool  `json:"retracted"`
-		Moving       bool  `json:"moving"`
-		DeviceOnline *bool `json:"device_online"`
+		Retracted    bool    `json:"retracted"`
+		RetractSeq   *uint64 `json:"retract_seq"`
+		Moving       bool    `json:"moving"`
+		DeviceOnline *bool   `json:"device_online"`
 	}
 	if err := json.Unmarshal(p, &s); err != nil {
 		e.log.Warn("bad ant-ctrl state", "err", err)
 		return
 	}
 	e.ant.retracted, e.ant.moving, e.ant.device, e.ant.seen = s.Retracted, s.Moving, deviceOnline(s.DeviceOnline), true
+	e.ant.retractSeq = s.RetractSeq
 	e.inputChanged()
 }
 
@@ -773,7 +807,7 @@ func (e *Engine) modeChanged(from antmode.Mode) {
 
 // captureNudgeBase records the rotator target when a lock (re)starts.
 func (e *Engine) captureNudgeBase() {
-	e.nudgeBase = nil
+	e.nudgeBase, e.parkSeen = nil, false
 	if e.rot.targetKnown {
 		t := e.rot.target
 		e.nudgeBase = &t
@@ -964,16 +998,23 @@ func (e *Engine) stepLock(now time.Time) {
 		e.lock.Retract = true
 		e.setPhase(Retracting)
 	case Retracting:
-		if e.ant.live() && e.ant.retracted && !e.ant.moving {
+		// Only ultrabridge's retract_seq for THIS seq confirms the retract: its
+		// retracted latch may be left from an earlier lock, and the ACK-time
+		// snapshot reads retracted before the motors have run. Without a
+		// confirmation (an ultrabridge that predates retract_seq, an unpowered
+		// RCU-06) the retract timeout is the fallback.
+		if e.ant.live() && e.ant.retractSeq != nil && *e.ant.retractSeq == e.lock.Seq && e.ant.retracted && !e.ant.moving {
 			e.computePark()
 			return
 		}
 		if elapsed >= time.Duration(p.RetractTimeoutS)*time.Second {
-			e.log.Warn("ant-ctrl did not confirm retracted in time; parking anyway",
-				"ant_ctrl_live", e.ant.live(), "retracted", e.ant.retracted, "moving", e.ant.moving)
+			e.log.Warn("ant-ctrl did not confirm this seq's retract in time; parking anyway",
+				"ant_ctrl_live", e.ant.live(), "retracted", e.ant.retracted, "moving", e.ant.moving,
+				"retract_seq", e.ant.retractSeq, "seq", e.lock.Seq)
 			e.computePark()
 		}
 	case Rotating:
+		e.noteParkTarget(false)
 		switch {
 		case e.atPark():
 			e.parked()
@@ -1034,6 +1075,7 @@ func (e *Engine) computePark() {
 	}
 	e.lock.ParkAz = &az
 	e.setPhase(Rotating)
+	e.noteParkTarget(false)
 }
 
 func (e *Engine) atPark() bool {
@@ -1043,14 +1085,18 @@ func (e *Engine) atPark() bool {
 	return math.Abs(e.rot.az-float64(*e.lock.ParkAz)) <= float64(e.cfg.Park.ToleranceDeg)
 }
 
-// nudged: in maintenance, the rotator rests (live, not moving) at a target
-// that is neither park_az nor the target it had when the lock started. Only
-// a console nudge can set such a target while locked (wrc-rotator-bridge
+// nudged: in maintenance, after the bridge's park target has been seen
+// (parkSeen), the rotator rests (live, not moving) at a target that is
+// neither park_az nor the target it had when the lock started. Only a
+// console nudge can set such a target while locked (wrc-rotator-bridge
 // refuses every other motion, and an accepted nudge ends its park), so the
-// park is over by the operator's hand, not failed. An operator stop leaves
-// target_az at park_az and still fails (contract).
+// park is over by the operator's hand, not failed. Without parkSeen an old
+// or reset target (unknown base, a WRC reconnect) would read as "parked"
+// before the boom moved — with someone about to lower the mast. A nudge
+// before the bridge sent its park therefore ends in failed (safe), and an
+// operator stop leaves target_az at park_az and still fails (contract).
 func (e *Engine) nudged() bool {
-	if e.pol.S.Mode != antmode.Maintenance || e.lock == nil || e.lock.ParkAz == nil || !e.lock.Nudge {
+	if e.pol.S.Mode != antmode.Maintenance || e.lock == nil || e.lock.ParkAz == nil || !e.lock.Nudge || !e.parkSeen {
 		return false
 	}
 	if !e.rot.live() || !e.rot.azKnown || e.rot.moving || !e.rot.targetKnown {
@@ -1120,6 +1166,17 @@ func (e *Engine) stepBorrow() {
 			"borrow_phase", b.PowerSeqPhase, "powerseq_phase", e.seqPhase)
 	}
 	due := b.Restore || (e.pol.S.Mode == antmode.Storm && (e.phase == Parked || e.phase == Failed))
+	// A park still slewing when it failed (the bridge waited for a lull) keeps
+	// its power until the rotator stops, for at most one more rotate_timeout_s:
+	// cutting it mid-slew leaves the brakeless boom wherever it was.
+	if due && !b.Restore && e.phase == Failed && e.rot.live() && e.rot.moving &&
+		e.now().Sub(e.phaseSince) < time.Duration(e.cfg.Park.RotateTimeoutS)*time.Second {
+		if !e.restoreWait {
+			e.log.Warn("storm park failed while the rotator is still slewing; holding the borrowed power until it stops")
+			e.restoreWait = true
+		}
+		return
+	}
 	if !due {
 		e.restoreWait = false
 		return
