@@ -128,8 +128,9 @@ type statePayload struct {
 	Lock string `json:"lock,omitempty"`
 	// RetractSeq is the antenna-mode lock seq whose ensure-retract finished
 	// (retract accepted, then elements latched in with the motors stopped on a
-	// later poll); omitted otherwise. antmode leaves `retracting` on
-	// retract_seq == lock.seq, never on a latch left from an earlier lock.
+	// later poll); omitted otherwise. Unlike Retracted, a latch left from an
+	// earlier lock never confirms the current seq: antmode leaves `retracting`
+	// only on retract_seq == lock.seq (or its retract timeout).
 	RetractSeq *uint64 `json:"retract_seq,omitempty"`
 }
 

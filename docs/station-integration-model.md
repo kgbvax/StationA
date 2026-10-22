@@ -625,6 +625,11 @@ runs the shutdown list plus a bwpc sleep → `idle` with `stop_reason=idle_shutd
 The PSU, FLEX and PA are then off; only an operator `start` (full cold start) brings
 the station back.
 
+**Antenna-mode hold.** While `hf/ant-mode/state.power_hold` is true (below), powerseq
+runs no idle transition (standby, wake, idle shutdown) and treats watch changes as a
+re-baseline, not activity; operator `start`/`stop` still work. When the hold ends it
+starts a fresh settle window and restarts the idle-shutdown clock.
+
 This sequence is **config-driven** in `powerseq` (the `[[startup]]` / `[[shutdown]]` /
 `[[standby]]` / `[[wake]]` / `[[idle_shutdown]]` step lists in its TOML, each step `cmd` / `wait_status` /
 `wait_state` / `delay` / `wol`); the
@@ -655,7 +660,8 @@ subscribes: hf/power-seq/state (presence), hf/rotator, hf/ant-ctrl, hf/ant-switc
             stationOverviewExtended (day wind direction/gust)
 state:      ant_mode {normal|storm|maintenance}; source {manual|auto};
             lock {seq, ground, retract, park_az, nudge} (only when locked);
-            phase; power_hold; presence; wind; warnings; storm_suggested
+            phase; power_hold; power_borrow; presence; wind; warnings;
+            storm_suggested
 intent:     set_ant_mode <mode> | repark | dismiss_suggestion   # one-shot, cleared
 ```
 Storm and maintenance ground the antenna, retract the Ultrabeam and park the HF rotator
@@ -663,10 +669,23 @@ Storm and maintenance ground the antenna, retract the Ultrabeam and park the HF 
 azimuth for lowering the mast). **The lock is enforced in the bridges, not here**:
 `hf/rotator` and `hf/ant-ctrl` read `/state.lock` (via `shared/antmode`), refuse motion on
 every inbound path (MQTT, GS-232, PstRotator, HTTP) and execute the park themselves; a
-locked snapshot stays enforced while antmode is offline. A DWD wind warning (level 1
+locked snapshot stays enforced while antmode is offline. `hf/ant-ctrl/state.retract_seq`
+names the lock `seq` whose retract finished (the persisted `retracted` latch may be left
+from an earlier lock). antmode's `retracting` step leaves only on `hf/ant-ctrl` live,
+`retract_seq` = `lock.seq`, `retracted` and not `moving` — a stale latch never ends it —
+or on the retract timeout (the fallback for an unpowered RCU-06 or an older bridge). The
+park itself (wrc-rotator-bridge) and the retract latch (ultrabridge) are persisted
+under each bridge's `state_dir`, so a bridge restart neither repeats a finished park
+nor forgets the retract. A DWD wind warning (level 1
 "Windböen" and up) enters storm automatically only while the station is unmanned
-(powerseq not `starting`/`running`/`waking`) and `auto_enter` is on (off for the
-observe-only rollout); otherwise it is a suggestion.
+(powerseq not `starting`/`running`/`waking`, after a 60 s dwell; an `idle` that follows
+a manned phase without `stopping` (a powerseq restart) stays manned while `hf/radio` is
+live, until 30 min after the later of that `idle` and the last TX) and
+`auto_enter` is on (off for the observe-only rollout); otherwise it is a suggestion.
+`power_hold` tells `hf/power-seq` to hold its idle logic (no standby, wake or idle
+shutdown; watch changes re-baseline): while antenna power is borrowed for a park, for
+the whole maintenance, and in storm until the park is done or failed. Operator
+`start`/`stop` still work. `power_borrow` (not `power_hold`) says the power is borrowed.
 
 **`muehle/hf/discovery`** — HA discovery consumer (logic slot, `hadiscovery`; see §7.3, §9)
 ```

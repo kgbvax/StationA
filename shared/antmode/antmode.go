@@ -76,8 +76,12 @@ type State struct {
 	// Lock is present whenever Mode ≠ normal (a missing lock on a locked mode
 	// parses as a zero Lock: refuse motion, no actions yet).
 	Lock *Lock `json:"lock,omitempty"`
-	// PowerHold: antmode is borrowing antenna power to park; powerseq must
-	// treat watch changes as a re-baseline, not activity.
+	// PowerHold: powerseq must hold its idle logic — watch changes
+	// re-baseline (never activity) and no idle action runs (standby, wake,
+	// idle shutdown); operator start/stop still work. True while antmode
+	// borrows antenna power, for the whole maintenance (borrowed or not), and
+	// in storm until the park is parked or failed. Not "power is borrowed":
+	// a display reads power_borrow for that.
 	PowerHold bool `json:"power_hold,omitempty"`
 }
 
