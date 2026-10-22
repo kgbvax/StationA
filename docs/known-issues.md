@@ -705,8 +705,11 @@ Ultrabeam and the HF rotator. Decisions taken with the operator:
    a locked snapshot is enforced while antmode is offline; malformed → last known.
 3. **The lock outranks antennaselect's manual stand-down** (it grounds even in manual).
 4. **Storm entry:** operator, or a NINA/DWD wind warning from level 1 "Windböen" up that
-   is **active now** (no lead time). Manned (powerseq `starting`/`running`) → suggestion
-   only; unmanned (any other phase, or powerseq offline/unknown) → automatic.
+   is **active now** (no lead time). Manned (powerseq `starting`/`running`/`waking` — a
+   wake is operator activity) → suggestion only; unmanned (any other phase, or powerseq
+   offline/unknown) → automatic. Rollout: antmode ships with `[storm] auto_enter = false`
+   (observe-only — unmanned is also just a suggestion) until its suggestions have been
+   compared with WarnWetter for some days.
 5. **Storm exit:** an auto-entered storm returns to normal 60 min after the last
    qualifying warning, counting only successful polls (a NINA outage never counts as
    "no warning"). A manual storm, and maintenance, exit only manually. A manual

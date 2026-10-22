@@ -665,7 +665,8 @@ azimuth for lowering the mast). **The lock is enforced in the bridges, not here*
 every inbound path (MQTT, GS-232, PstRotator, HTTP) and execute the park themselves; a
 locked snapshot stays enforced while antmode is offline. A DWD wind warning (level 1
 "Windböen" and up) enters storm automatically only while the station is unmanned
-(powerseq not `starting`/`running`); manned, it is a suggestion.
+(powerseq not `starting`/`running`/`waking`) and `auto_enter` is on (off for the
+observe-only rollout); otherwise it is a suggestion.
 
 **`muehle/hf/discovery`** — HA discovery consumer (logic slot, `hadiscovery`; see §7.3, §9)
 ```
