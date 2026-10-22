@@ -52,6 +52,11 @@ resource = "ultrabeam"
 	if cfg.BandFollow.Slot != "ant-ctrl" {
 		t.Errorf("band_follow.slot default lost: %q", cfg.BandFollow.Slot)
 	}
+	// A config seeded before the antenna-mode lock existed has no key: the
+	// lock tier still reads the canonical ant-mode slot.
+	if cfg.MQTT.AntModeSlot != "ant-mode" {
+		t.Errorf("mqtt.ant_mode_slot default lost: %q", cfg.MQTT.AntModeSlot)
+	}
 	if cfg.BandFollow.Resource != "ultrabeam" {
 		t.Errorf("band_follow.resource = %q, want ultrabeam", cfg.BandFollow.Resource)
 	}

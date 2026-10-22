@@ -459,3 +459,137 @@ func TestNextTunerFollowDedupStable(t *testing.T) {
 		t.Errorf("SetInline flipped across identical resolves: %v -> %v", *first.SetInline, *second.SetInline)
 	}
 }
+
+// --- antenna-mode lock tier (hf/ant-mode storm/maintenance) -----------------
+
+// TestResolveLockTier: a grounding lock resolves off with source lock above
+// every other tier — the manual stand-down included (station decision: the
+// storm grounds even when the operator owns the switch) — and keeps the
+// derived mode (manual iff a hold is active).
+func TestResolveLockTier(t *testing.T) {
+	r := New(testConfig())
+	cases := []struct {
+		name     string
+		in       Inputs
+		wantMode string
+	}{
+		{"auto", Inputs{RadioOnline: true, RadioBand: "20m", StationActivity: "active"}, ModeAuto},
+		{"manual stand-down", Inputs{RadioOnline: true, RadioBand: "20m", StationActivity: "active", OperatorRequest: RequestManual}, ModeManual},
+		{"idle", Inputs{RadioOnline: true, RadioBand: "20m", StationActivity: "inactive"}, ModeAuto},
+		{"idle and manual", Inputs{RadioOnline: true, RadioBand: "20m", StationActivity: "inactive", OperatorRequest: RequestManual}, ModeManual},
+		{"port hold", Inputs{RadioOnline: true, RadioBand: "20m", StationActivity: "active", OperatorRequest: "port3"}, ModeManual},
+		{"radio offline", Inputs{RadioOnline: false, StationActivity: "active"}, ModeAuto},
+	}
+	for _, tc := range cases {
+		in := tc.in
+		in.Locked, in.LockGround = true, true
+		d := r.Resolve(in)
+		if d.Target != PortOff || d.Source != SourceLock || d.Mode != tc.wantMode {
+			t.Errorf("%s: got %+v, want target=off source=lock mode=%s", tc.name, d, tc.wantMode)
+		}
+	}
+}
+
+// TestResolveLockBeforeGroundHolds: antmode builds the lock up ground-first, so
+// a lock without ground yet (or a locked mode without a lock object) resolves
+// nothing — hold the last selection — yet still owns the source, so neither
+// the auto tier nor the idle tier moves the switch under it.
+func TestResolveLockBeforeGroundHolds(t *testing.T) {
+	r := New(testConfig())
+	for _, activity := range []string{"active", "inactive"} {
+		d := r.Resolve(Inputs{RadioOnline: true, RadioBand: "20m", StationActivity: activity, Locked: true})
+		if d.Target != "" || d.Source != SourceLock {
+			t.Errorf("activity %s: got %+v, want target=\"\" source=lock", activity, d)
+		}
+	}
+}
+
+// TestNextLockSuppressesFollow: under the lock the reconciler grounds the
+// switch and emits no ant-ctrl band-follow and no tuner follow; the PA
+// band-follow continues (band memory only, PA unarmed behind the grounded
+// switch). In manual the lock still grounds but nothing else fires.
+func TestNextLockSuppressesFollow(t *testing.T) {
+	r := New(manualCfg())
+	base := Inputs{
+		RadioOnline:     true,
+		RadioBand:       "20m", // ultrabeam: band-follow would fire
+		RadioFreqHz:     14261050,
+		RadioTX:         TXReceive,
+		StationActivity: "active",
+		SwitchSelected:  "port3",
+		Locked:          true,
+		LockGround:      true,
+	}
+	act := r.Next(base)
+	if act.SelectPort != PortOff || act.FollowFreqHz != 0 || act.SetInline != nil {
+		t.Errorf("locked: want select=off, no band-follow, no tuner follow; got %+v", act)
+	}
+	if act.SetBand != "20m" {
+		t.Errorf("locked: PA band-follow should continue, got SetBand=%q", act.SetBand)
+	}
+	if act.Decision.Source != SourceLock {
+		t.Errorf("locked: source=%q, want lock", act.Decision.Source)
+	}
+
+	// Locked on 80m (fan-dipole, an ATU band): unlocked the tuner would engage
+	// in-line — under the lock it must stay silent too.
+	in := base
+	in.RadioBand, in.RadioFreqHz, in.SwitchSelected = "80m", 3700000, "port6"
+	if act := r.Next(in); act.SetInline != nil || act.FollowFreqHz != 0 {
+		t.Errorf("locked on 80m: want no tuner/band follow, got %+v", act)
+	}
+
+	// Lock + manual stand-down: the lock grounds; manual still silences every
+	// follow binding, the PA included.
+	in = base
+	in.OperatorRequest = RequestManual
+	act = r.Next(in)
+	if act.SelectPort != PortOff || act.FollowFreqHz != 0 || act.SetBand != "" || act.SetInline != nil {
+		t.Errorf("locked + manual: want only select=off, got %+v", act)
+	}
+
+	// Already grounded: no select, still no follow.
+	in = base
+	in.SwitchSelected = PortOff
+	if act := r.Next(in); act.SelectPort != "" || act.FollowFreqHz != 0 {
+		t.Errorf("locked + grounded: want no select/follow, got %+v", act)
+	}
+
+	// Grounding under TX defers (cold-switch discipline holds for the lock too).
+	in = base
+	in.RadioTX = TXTransmit
+	if act := r.Next(in); act.SelectPort != "" || !act.DeferredForTX {
+		t.Errorf("locked during TX: want deferred select, got %+v", act)
+	}
+
+	// Lock not yet grounding: hold, no follow.
+	in = base
+	in.LockGround = false
+	if act := r.Next(in); act.SelectPort != "" || act.FollowFreqHz != 0 || act.SetInline != nil {
+		t.Errorf("locked without ground: want no select/follow, got %+v", act)
+	}
+}
+
+// TestNextUnlockResumesLadder: when the lock ends the normal ladder resumes —
+// auto selects and follows again; a manual stand-down is silent again.
+func TestNextUnlockResumesLadder(t *testing.T) {
+	r := New(manualCfg())
+	in := Inputs{
+		RadioOnline: true, RadioBand: "20m", RadioFreqHz: 14261050, RadioTX: TXReceive,
+		StationActivity: "active", SwitchSelected: PortOff,
+	}
+	act := r.Next(in)
+	if act.SelectPort != "port3" || act.FollowFreqHz != 14261050 || act.Decision.Source != SourceAuto || act.SetInline == nil {
+		t.Errorf("unlocked auto: want select=port3 follow + tuner emit source=auto, got %+v", act)
+	}
+	in.OperatorRequest = RequestManual
+	act = r.Next(in)
+	if act.SelectPort != "" || act.FollowFreqHz != 0 || act.Decision.Source != SourceOperator {
+		t.Errorf("unlocked manual: want stand-down, got %+v", act)
+	}
+	in.OperatorRequest = ""
+	in.StationActivity = "inactive"
+	if act := r.Next(in); act.Decision.Source != SourceIdle || act.FollowFreqHz != 0 {
+		t.Errorf("unlocked idle: want source=idle no follow, got %+v", act)
+	}
+}

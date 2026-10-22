@@ -1,5 +1,5 @@
 // Package mqtt wires the reconciler to the station bus: it subscribes to the radio,
-// station, ant-switch, and operator topics, feeds each update into the reconciler, and
+// station, ant-switch, antenna-mode, and operator topics, feeds each update into the reconciler, and
 // emits the resulting intents (ant-switch select, controller band-follow) plus its own
 // state. All decision logic lives in package reconcile; this layer is deliberately thin.
 package mqtt
@@ -14,6 +14,7 @@ import (
 
 	paho "github.com/eclipse/paho.mqtt.golang"
 
+	"codeberg.org/kgbvax/stationa/shared/antmode"
 	sharedmqtt "codeberg.org/kgbvax/stationa/shared/mqtt"
 	schema "codeberg.org/kgbvax/stationa/shared/schema"
 
@@ -51,6 +52,23 @@ type Client struct {
 	lastFollowFreq  int64
 	lastPaBand      string
 	lastTunerInline *bool
+
+	// antLock is the last known hf/ant-mode lock label ("" = unlocked), kept
+	// for the lock-change log line. A malformed ant-mode/state never reaches
+	// it (the handler drops it, so the last known lock stays in force).
+	antLock string
+	// reextendPending is set on unlock and cleared once the band-follow
+	// controller (<band_follow.slot>/state) reports the elements out
+	// (device_online && !retracted). While it is set, a device_online
+	// false→true edge with the elements still retracted resets the follow
+	// dedup: ultrabridge drops a frequency it cannot deliver (RCU-06 off, e.g.
+	// antenna power still off after a powerseq standby wake) and does not
+	// re-apply it when the controller returns, so the one re-extend after a
+	// lock would otherwise be lost until the VFO moves. followSeen /
+	// followDevOnline are the last reported device_online, for the edge.
+	reextendPending bool
+	followSeen      bool
+	followDevOnline bool
 
 	// lastActivity is the wall-clock time of the last radio activity (a VFO/frequency
 	// change or a transmit). It drives the idle timeout (config [idle].timeout_minutes): when
@@ -223,9 +241,24 @@ func (c *Client) checkIdle() {
 // --- subscriptions ----------------------------------------------------------
 
 func (c *Client) subscribeAll() {
+	// The antenna-mode lock first: its retained state is then delivered — and,
+	// over the single FIFO worker, applied — before the retained radio/state
+	// can resolve a select or a band-follow the lock would forbid. (subscribe
+	// waits for each SUBACK, and mosquitto sends a subscription's retained
+	// messages right after its SUBACK, so the retained ant-mode/state is queued
+	// ahead of the later subscriptions' replays.) No startup hold beyond that
+	// ordering: should a broker ever reorder, the worst case is one select and
+	// one band-follow before the lock lands, and ultrabridge refuses the
+	// frequency itself while locked.
+	if c.cfg.MQTT.AntModeSlot != "" {
+		c.subscribe(c.siblingTopic(c.cfg.MQTT.AntModeSlot, "state"), c.onAntModeState)
+	}
 	c.subscribe(c.siblingTopic(slotRadio, "state"), c.onRadioState)
 	c.subscribe(c.siblingTopic(slotRadio, "status"), c.onRadioStatus)
 	c.subscribe(c.siblingTopic(slotAntSwitch, "state"), c.onAntSwitchState)
+	if c.cfg.MQTT.AntModeSlot != "" && c.cfg.BandFollow.Slot != "" && c.cfg.BandFollow.Resource != "" {
+		c.subscribe(c.siblingTopic(c.cfg.BandFollow.Slot, "state"), c.onFollowState)
+	}
 	c.subscribe(c.selfTopic("cmd"), c.onOperatorCmd)
 }
 
@@ -324,6 +357,92 @@ func (c *Client) onOperatorCmd(_ paho.Client, msg paho.Message) {
 		return
 	}
 	sharedmqtt.Enqueue(c.jobs, func() { c.update(func(in *reconcile.Inputs) { c.applyOperatorHold(in, req) }) })
+}
+
+// onAntModeState reads the hf/ant-mode lock through shared/antmode (reading
+// rules: empty/cleared = normal; a valid locked snapshot is enforced even while
+// ant-mode/status is offline — /status is deliberately not consulted; malformed
+// = keep the last known lock; ts is not checked). Parsing happens here on the
+// paho goroutine (pure, no blocking); the reconcile + publish runs on the worker.
+func (c *Client) onAntModeState(_ paho.Client, msg paho.Message) {
+	st, err := antmode.Parse(msg.Payload())
+	if err != nil {
+		slog.Error("[mqtt] bad ant-mode/state; keeping last known lock", "err", err)
+		return
+	}
+	sharedmqtt.Enqueue(c.jobs, func() { c.update(func(in *reconcile.Inputs) { c.applyAntMode(in, st) }) })
+}
+
+// applyAntMode records the antenna-mode lock (caller holds c.mu via update).
+// It is deliberately not activity: entering or leaving storm/maintenance never
+// calls markActive, so powerseq's idle standby and last_activity are untouched.
+//
+// On unlock it resets the follow dedup. While locked no band-follow is emitted,
+// so lastFollowFreq still holds the pre-lock frequency; without the reset the
+// unchanged radio frequency would be deduplicated and never re-sent, and
+// ultrabridge (which skips its deadband while retracted) would never re-extend
+// the elements. lastSelect and lastTunerInline are reset for the same reason
+// (the switch was grounded and the tuner intent stood down meanwhile).
+// lastPaBand is kept: PA band-follow continues under the lock, so its dedup is
+// current.
+func (c *Client) applyAntMode(in *reconcile.Inputs, st antmode.State) {
+	wasLocked := in.Locked
+	in.Locked = st.Locked()
+	in.LockGround = st.L().Ground
+	if label := st.Label(); label != c.antLock {
+		slog.Info("[reconcile] antenna-mode lock changed", "lock", label, "was", c.antLock, "ground", in.LockGround)
+		c.antLock = label
+	}
+	if wasLocked && !in.Locked {
+		c.lastFollowFreq = 0
+		c.lastSelect = ""
+		c.lastTunerInline = nil
+		c.reextendPending = true
+	}
+}
+
+// onFollowState reads the band-follow controller's /state (ant-ctrl at Mühle)
+// for the unlock re-extend only: device_online and the retracted latch. Parsing
+// happens here on the paho goroutine; the bookkeeping runs on the worker.
+func (c *Client) onFollowState(_ paho.Client, msg paho.Message) {
+	var s struct {
+		DeviceOnline bool `json:"device_online"`
+		Retracted    bool `json:"retracted"`
+	}
+	if len(msg.Payload()) == 0 {
+		return // cleared retained topic: no information
+	}
+	if err := json.Unmarshal(msg.Payload(), &s); err != nil {
+		slog.Error("[mqtt] bad band-follow controller state; dropping message", "slot", c.cfg.BandFollow.Slot, "err", err)
+		return
+	}
+	sharedmqtt.Enqueue(c.jobs, func() {
+		c.update(func(in *reconcile.Inputs) { c.applyFollowState(in, s.DeviceOnline, s.Retracted) })
+	})
+}
+
+// applyFollowState re-arms the unlock re-extend (caller holds c.mu via
+// update). Only while one is pending (reextendPending, set on unlock): the
+// elements reported out confirm it; a controller that comes back online with
+// the elements still retracted means the re-send was lost, so the follow
+// dedup is reset and this same update() re-sends the frequency if the
+// followed antenna is the target. Outside a pending re-extend (an operator
+// retract, a plain RCU-06 outage) a reconnect re-sends nothing.
+func (c *Client) applyFollowState(in *reconcile.Inputs, online, retracted bool) {
+	cameBack := c.followSeen && !c.followDevOnline && online
+	c.followSeen, c.followDevOnline = true, online
+	if !c.reextendPending || in.Locked {
+		return
+	}
+	if online && !retracted {
+		c.reextendPending = false
+		return
+	}
+	if cameBack && retracted && c.lastFollowFreq != 0 {
+		slog.Info("[reconcile] band-follow controller back online with the elements retracted; re-sending the frequency",
+			"slot", c.cfg.BandFollow.Slot, "freq_hz", c.lastFollowFreq)
+		c.lastFollowFreq = 0
+	}
 }
 
 // validRequest reports whether req is a well-formed operator request: a release
@@ -498,7 +617,7 @@ type statePayload struct {
 func (c *Client) publishMeta() {
 	capabilities := map[string]any{
 		"controls": slotAntSwitch,
-		"ladder":   []string{reconcile.SourceIdle, reconcile.SourceOperator, reconcile.SourceAuto},
+		"ladder":   []string{reconcile.SourceLock, reconcile.SourceIdle, reconcile.SourceOperator, reconcile.SourceAuto},
 	}
 	// `follows` advertises the radio-follow bindings this reconciler drives: a passive
 	// antenna resource -> its controller slot (band-follow), plus the PA slot -> itself
@@ -528,7 +647,8 @@ func (c *Client) publishMeta() {
 		// reconciler is a logic slot: it reacts to state and emits intent (model §1),
 		// so all of its /state fields are read-only sensors — no writable fields, no
 		// actions. `source` is an enum whose options resolve via options_ref into
-		// capabilities.ladder (the priority tiers). `target` and `mode` are strings
+		// capabilities.ladder (the priority tiers, `lock` = the hf/ant-mode
+		// storm/maintenance lock). `target` and `mode` are strings
 		// (the resolved port and the derived auto/manual mode); they have no fixed
 		// capability list to reference. hadiscovery renders HA discovery from this.
 		"expose": map[string]any{

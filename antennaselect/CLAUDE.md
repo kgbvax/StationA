@@ -2,14 +2,14 @@
 
 antennaselect is the **antenna-selection reconciler** for the HF station. It implements the
 `muehle/hf/antenna-select` logic slot (integration model §5, §7.1). It has **no device**:
-it subscribes to state (radio, station, switch, operator), applies a priority ladder over a
-wiring map and band policy, and emits one intent stream to the `ant-switch`.
+it subscribes to state (radio, station, switch, antenna mode, operator), applies a priority
+ladder over a wiring map and band policy, and emits one intent stream to the `ant-switch`.
 
 Runs on `scmino` (since 2026-10-12; was `shari`).
 
 > **Status: live on `scmino`** as the systemd unit `antenna-select` (deployed and
 > grounding observed live since 2026-08-28; manual stand-down 2026-09-23; `unknown`-band
-> hold 2026-10-10).
+> hold 2026-10-10). Antenna-mode lock tier (2026-10-22) built, not yet deployed.
 
 ---
 
@@ -31,7 +31,7 @@ go run ./cmd/antennaselect -broker tcp://192.168.1.139:1883   # broker via flag
 | Path | Purpose |
 |---|---|
 | `cmd/antennaselect/main.go` | entry point: config load + flag overrides, connect, run |
-| `internal/config` | TOML config (`[mqtt]`, `[wiring_map]`, `[band_policy]`, `[band_follow]`, `[pa_follow]`, `[tuner_follow]`) + `Validate()` |
+| `internal/config` | TOML config (`[mqtt]` incl. `ant_mode_slot`, `[wiring_map]`, `[band_policy]`, `[band_follow]`, `[pa_follow]`, `[tuner_follow]`) + `Validate()` |
 | `internal/reconcile` | **the heart** — priority ladder (§5), cold-switch sequencing (§6), band-follow + PA/tuner bindings (§7); pure logic, fully unit-tested |
 | `internal/mqtt` | thin bus layer: subscribes to inputs (§8), feeds the reconciler, emits its actions |
 | `docs/antenna-select-mqtt-api.md` | **authoritative** slot contract + decision logic |
@@ -64,11 +64,22 @@ The seed config bakes the Mühle wiring map and band policy (matching
 
 - **React to state, emit intent** (§1). Never assume a `select` took — confirm via
   `ant-switch/state`.
-- **Ladder order is fixed**: manual-standdown > idle > operator > auto (§5). `mode` is
+- **Ladder order is fixed**: lock > manual-standdown > idle > operator > auto (§5). `mode` is
   *derived* (`manual` iff a hold is active), never a separate switch. The `manual` /cmd
   request is the operator stand-down (tier 0): the reconciler resolves nothing and emits
   nothing — it must **never** move the antenna automatically while in manual (hard
   requirement; includes idle grounding and all follow bindings).
+- **The antenna-mode lock outranks manual** (`hf/ant-mode` storm/maintenance, read via
+  `shared/antmode`; contract `../antmode/docs/ant-mode-mqtt-api.md`): `lock.ground` →
+  target `off`, source `lock`, even in manual — the one automatic move manual does not
+  block. While locked: no `ant-ctrl` band-follow, no tuner follow; PA band-follow
+  continues (band memory only, PA unarmed behind the grounded switch; not in manual).
+  The lock is **not activity** (never touches the idle clock / `last_activity`). On
+  unlock the follow dedup is reset so the unchanged frequency is re-sent — the only path
+  that re-extends the Ultrabeam; until `ant-ctrl/state` shows the elements out, an RCU-06
+  `device_online` false→true edge (still `retracted`) re-sends it again (ultrabridge
+  drops a frequency it cannot deliver). No retained ant-mode state = normal; malformed = keep
+  last known + Error; `ant-mode/status` is not consulted (a dead owner never unlocks).
 - **Cold-switch sequencing** (§6): the ant-switch is `hot_switch: false`. Do not move the
   port under TX — wait for RX, emit `select`, confirm via `selected` (`settled`-gating is
   backlog, lands with antswitchbridge). Enforcement is hardware; the reconciler owns

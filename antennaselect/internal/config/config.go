@@ -24,6 +24,13 @@ type MQTT struct {
 	Slot     string `toml:"slot"`
 	User     string `toml:"user"`
 	Password string `toml:"password"`
+
+	// AntModeSlot is the antenna-mode logic slot (same site/station) whose
+	// retained /state carries the storm/maintenance lock: the lock tier
+	// grounds the antenna and stands the follow bindings down. Empty disables
+	// the lock tier. With no retained ant-mode state the station is unlocked,
+	// so the default is safe before antmode is deployed.
+	AntModeSlot string `toml:"ant_mode_slot"`
 }
 
 // BandPolicy maps antenna resources to the band names they serve (auto tier). Bands is
@@ -106,7 +113,8 @@ type Config struct {
 func Default() Config {
 	return Config{
 		MQTT: MQTT{
-			Slot: "antenna-select",
+			Slot:        "antenna-select",
+			AntModeSlot: "ant-mode",
 		},
 		BandFollow:  BandFollow{Slot: "ant-ctrl"},
 		PAFollow:    PAFollow{Slot: "pa"},

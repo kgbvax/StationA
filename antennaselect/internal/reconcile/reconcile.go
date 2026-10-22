@@ -18,6 +18,9 @@ const (
 
 // Ladder sources (integration model §5), published on antenna-select/state.source.
 const (
+	// SourceLock is the antenna-mode lock (hf/ant-mode storm/maintenance): the
+	// highest tier, above the manual stand-down.
+	SourceLock     = "lock"
 	SourceIdle     = "idle"
 	SourceOperator = "operator"
 	SourceAuto     = "auto"
@@ -57,13 +60,20 @@ type Inputs struct {
 	OperatorRequest string // "" | requestAuto | "off" | any switch port (e.g. "port1", "port3", "port6")
 	SwitchSelected  string // "off" | any switch port | "" (unknown)
 	SwitchSettled   bool
+
+	// Locked is the hf/ant-mode lock (storm/maintenance, shared/antmode
+	// State.Locked): the lock tier stands every automatic binding down except
+	// the PA band-follow. LockGround is lock.ground: hold the switch at off.
+	// The lock is not activity — it never touches StationActivity.
+	Locked     bool
+	LockGround bool
 }
 
 // Decision is the resolved intent: which port the reconciler wants and why.
 type Decision struct {
 	Mode   string // ModeAuto | ModeManual (derived: manual iff an operator hold is active)
 	Target string // "off" | any switch port; empty when unresolvable (hold last)
-	Source string // SourceIdle | SourceOperator | SourceAuto
+	Source string // SourceLock | SourceIdle | SourceOperator | SourceAuto
 }
 
 // Actions is what the reconciler wants the MQTT layer to emit after an input change.
@@ -141,6 +151,20 @@ func (r *Reconciler) Resolve(in Inputs) Decision {
 	mode := ModeAuto
 	if holdActive(in.OperatorRequest) {
 		mode = ModeManual
+	}
+
+	// Lock tier — the antenna-mode lock (hf/ant-mode storm/maintenance). It
+	// outranks the manual stand-down (station decision, docs/known-issues.md
+	// "HF antenna mode"): a storm grounds the antenna even when the operator
+	// owns the switch. antmode builds the lock up in safe order — ground first
+	// — so a lock without ground yet resolves nothing (hold the last
+	// selection) but still owns the source: no tier below it may move the
+	// switch or follow the radio until the lock grounds or ends.
+	if in.Locked {
+		if in.LockGround {
+			return Decision{Mode: mode, Target: PortOff, Source: SourceLock}
+		}
+		return Decision{Mode: mode, Target: "", Source: SourceLock}
 	}
 
 	// Tier 0 — operator manual stand-down. The operator owns the switch and the
@@ -230,15 +254,20 @@ func (r *Reconciler) Next(in Inputs) Actions {
 	// Manual stand-down: the operator owns the switch, so no follow binding fires
 	// either — band-follow, PA band-follow, and tuner in-line all stand down with
 	// the selection itself. The reconciler's only publication in manual is its own
-	// /state (mode=manual, target empty, source=operator).
+	// /state (mode=manual, target empty, source=operator) — plus, under the
+	// antenna-mode lock, the grounding select above (the lock outranks manual;
+	// in manual without a lock Target is empty, so act carries no select).
 	if in.OperatorRequest == RequestManual {
-		return Actions{Decision: d}
+		return act
 	}
 
 	// Band-follow (§4 controller map, §7.1): drive the followed antenna's controller to
 	// the radio frequency while that antenna is the selected one. Gate on the resolved
-	// target so we don't tune a beam that is not in circuit.
-	if r.followPort != "" && d.Target == r.followPort && in.RadioOnline && in.RadioFreqHz > 0 {
+	// target so we don't tune a beam that is not in circuit. Never under the
+	// antenna-mode lock: ultrabridge refuses frequency while locked and keeps the
+	// elements retracted; the mqtt layer resets the follow dedup on unlock so the
+	// unchanged frequency is re-sent and re-extends them.
+	if !in.Locked && r.followPort != "" && d.Target == r.followPort && in.RadioOnline && in.RadioFreqHz > 0 {
 		act.FollowFreqHz = in.RadioFreqHz
 	}
 
@@ -249,6 +278,10 @@ func (r *Reconciler) Next(in Inputs) Actions {
 	// band. No TX guard: hot-switch protection is hardware.
 	// "gen" is excluded too: the amp has no general-coverage band, so pushing it only
 	// draws a rejected cmd.
+	// It continues under the antenna-mode lock: set_band only selects the ACOM's band
+	// memory (no antenna, element or rotator motion, and nothing the lock protects),
+	// the grounded switch already keeps the PA unarmed (PLC grounded gate), and a
+	// band kept current means the 1st TX after unlock does not trip the amp.
 	if r.cfg.PAFollow.Enabled && in.RadioOnline && knownBand(in.RadioBand) && in.RadioBand != "gen" {
 		act.SetBand = in.RadioBand
 	}
@@ -259,7 +292,10 @@ func (r *Reconciler) Next(in Inputs) Actions {
 	// of line). Gated on radio online + a known band (§10). The ATU engages only while the
 	// tuner's resource is the resolved target — cold-switch sequencing above already
 	// withholds a port change during TX, so the ATU is not re-keyed mid-TX.
-	if r.cfg.TunerFollow.Enabled && r.tunerPort != "" && in.RadioOnline && knownBand(in.RadioBand) {
+	// Stands down under the antenna-mode lock: the ATU sits behind a grounded switch,
+	// so an in-line/bypass relay change is pointless motion; the mqtt layer resets its
+	// dedup on unlock so the current intent is re-sent.
+	if !in.Locked && r.cfg.TunerFollow.Enabled && r.tunerPort != "" && in.RadioOnline && knownBand(in.RadioBand) {
 		desired := d.Target == r.tunerPort && contains(r.cfg.TunerFollow.ATUBands, in.RadioBand)
 		act.SetInline = &desired
 	}

@@ -9,7 +9,7 @@ reconciler. It implements the `antenna-select` logic slot of the station integra
 > `internal/reconcile`.
 
 antenna-select is a **logic slot** — it has *no device*. It subscribes to state from the
-radio, the station, the switch, and the operator; applies a priority ladder over a wiring
+radio, the station, the switch, the antenna mode (`hf/ant-mode`), and the operator; applies a priority ladder over a wiring
 map and band policy; and emits one intent stream to the `ant-switch`. It is the miniature
 of the multi-multi contention mechanism (model §5): more inputs later, same ladder.
 
@@ -47,7 +47,7 @@ Configured via `[mqtt]` in `config.toml` (`slot = "antenna-select"`).
   "capabilities": {
     "controls": "ant-switch",
     "follows": { "ultrabeam": "ant-ctrl", "pa": "pa", "tuner": "tuner" },
-    "ladder": ["idle", "operator", "auto"]
+    "ladder": ["lock", "idle", "operator", "auto"]
   },
   "expose": {
     "device": { "name": "Antenna selector" },
@@ -100,7 +100,7 @@ activity flips, or `last_activity` first appears (not on every VFO step).
 | `ts` | string | RFC 3339 UTC |
 | `mode` | string | `auto` \| `manual`. **Derived**: `manual` whenever an operator hold is active, else `auto`. There is no separate auto/manual switch — the presence of a hold *is* manual. |
 | `target` | string | the port the reconciler currently wants: `off` \| `port1`..`port6`. **Empty under a `manual` stand-down** — the reconciler resolves nothing while the operator owns the switch (§4). |
-| `source` | string | *why* the target is what it is: `idle` \| `operator` \| `auto` (model §5). Published so the live config documents the reason, not just the value. |
+| `source` | string | *why* the target is what it is: `lock` \| `idle` \| `operator` \| `auto` (model §5). Published so the live config documents the reason, not just the value. `lock` = the `hf/ant-mode` storm/maintenance lock (§5.1). |
 | `activity` | string | `active` \| `inactive` — the station activity the idle tier uses (`inactive` after `[idle].timeout_minutes` with no VFO change, TX or operator hold). powerseq keys its idle standby (antenna power off, shack PC to sleep) on it. |
 | `last_activity` | string | RFC 3339 (nano) time of the last real activity seen by this process. **Absent until the first one**: the retained `radio/state` replay at start is the baseline, not activity, so a restart never reads as fresh activity (powerseq wakes from standby only on a `last_activity` newer than its standby entry). |
 
@@ -144,13 +144,15 @@ An operator who wants the station grounded while in manual requests `off` explic
 Highest asserting tier wins. Re-evaluated on every relevant input change:
 
 ```
+L  lock:      ant-mode locked (storm|maint.)  →  target = off (lock.ground) | empty (not yet), source = lock
 0  manual:    /cmd request == "manual"        →  target = empty (stand down), source = operator
 1  idle:      station.activity == inactive   →  target = off,  source = idle
 2  operator:  hold present (/cmd != auto)     →  target = request, source = operator
 3  auto:      band_policy(radio.band)          →  target = port,  source = auto
 ```
 
-- **Tier 0 (manual stand-down)** outranks everything, idle included. While it is active
+- **Lock tier** (§5.1) outranks everything, the manual stand-down included.
+- **Tier 0 (manual stand-down)** outranks everything below the lock, idle included. While it is active
   the reconciler is fully silent toward the bus: no `select`, no band-follow, no PA
   band-follow, no tuner in-line follow — only its own `/state` (`mode=manual`,
   `target=""`, `source=operator`). The console drives the switch directly in this mode
@@ -165,6 +167,48 @@ Highest asserting tier wins. Re-evaluated on every relevant input change:
   selection** rather than chattering to the fallback. Only a known-but-unmatched band
   reaches the fallback; the empty/transient case holds. Auto is skipped entirely (target
   empty → hold) when the radio is not online (see §6 / §10).
+
+### 5.1 Antenna-mode lock (`hf/ant-mode`, contract `../../antmode/docs/ant-mode-mqtt-api.md`)
+
+In `storm` and `maintenance` the `antmode` slot publishes a retained `/state` with a
+`lock`. The reconciler reads it with `shared/antmode` and stands down:
+
+- **Grounds:** with `lock.ground` the target is `off`, `source = lock` — **even under the
+  manual stand-down** (station decision, `../../docs/known-issues.md` "HF antenna mode").
+  Before `lock.ground` appears (antmode builds the lock ground-first) the target is empty
+  (hold the last selection) and `source = lock`: no lower tier may move the switch.
+  Cold-switch sequencing still applies — grounding waits for RX.
+- **No controller band-follow** (`ant-ctrl` `frequency`) and **no tuner in-line follow**
+  while locked. ultrabridge refuses `frequency` and keeps the elements retracted; the ATU
+  sits behind a grounded switch.
+- **PA band-follow continues** (unless the manual stand-down is also active): `set_band`
+  only selects the ACOM's band memory — no antenna, element or rotator motion, nothing
+  the lock protects — the grounded switch already keeps the PA unarmed (PLC grounded
+  gate), and a current band means the 1st TX after unlock does not trip the amp.
+- **Not activity:** entering or leaving a lock never marks the station active, never
+  sets `last_activity`, never resets the idle clock. The idle tier keeps counting under
+  the lock, and `/state.activity` still flips to `inactive` (powerseq standby).
+- **Unlock** resumes the normal ladder (a manual stand-down that was active is in force
+  again). The follow dedup (last band-follow frequency, last select, last tuner intent) is
+  reset, so the **unchanged** radio frequency is re-sent to `ant-ctrl` — this is what
+  re-extends the Ultrabeam (ultrabridge skips its 25 kHz deadband while retracted).
+  Nothing else re-extends the elements after a lock.
+- **Re-extend survives an RCU-06 outage.** ultrabridge drops a `frequency` it cannot
+  deliver (controller unreachable — e.g. antenna power still off when a VFO turn wakes the
+  station from powerseq standby) and does not re-apply it when the controller returns.
+  So from unlock until `<band_follow.slot>/state` reports the elements out
+  (`device_online && !retracted`), a `device_online` false→true edge with `retracted`
+  still true resets the follow dedup and the frequency is re-sent (if the followed
+  antenna is the target). Outside that window (an operator retract, a plain RCU-06
+  outage) a controller reconnect re-sends nothing.
+
+Reading rules (from the contract): empty / no retained ant-mode state → normal (the
+station runs before antmode exists); a valid locked snapshot is enforced even while
+`ant-mode/status` is offline (not consulted); a malformed payload keeps the last known
+lock and logs an `Error`; `ts` is not checked. The ant-mode subscription is made first on
+every (re)connect, so the retained lock is applied before the retained `radio/state` can
+resolve a select. Config: `[mqtt].ant_mode_slot` (default `ant-mode`; empty disables the
+lock tier).
 
 ---
 
@@ -202,7 +246,9 @@ controller slot, is site configuration (`[band_follow]` — at Mühle: resource 
 slot `ant-ctrl`), never code:
 
 - Emit `<band_follow.slot>/cmd {"action":"frequency","freq_hz": <radio.freq_hz>}` on
-  radio frequency change while `target == <band_follow.resource>'s port`.
+  radio frequency change while `target == <band_follow.resource>'s port` and no
+  antenna-mode lock is active (§5.1). Deduped against the last frequency pushed; the
+  dedup is reset on unlock so the unchanged frequency re-extends the retracted Ultrabeam.
 
 ### 7.1 PA band-follow — `pa.set_band ← radio.band` (model §7.1 soft binding)
 
@@ -267,14 +313,17 @@ defaults). The `set_inline` vocabulary matches atr1k-tuner-bridge's `/cmd` contr
 | `muehle/hf/radio/status` | bridge liveness (LWT) — one half of the radio-online gate |
 | `muehle/hf/antenna-select/cmd` | operator `request` — tier 2 |
 | `muehle/hf/ant-switch/state` | `selected` — confirm (`settled`: received, gating is backlog) |
+| `muehle/hf/<mqtt.ant_mode_slot>/state` | `ant_mode`, `lock.ground` via `shared/antmode` — lock tier (§5.1); `ant-mode` at Mühle |
+| `muehle/hf/<band_follow.slot>/state` | `device_online`, `retracted` — only to re-send a lost unlock re-extend (§5.1); `ant-ctrl` at Mühle; subscribed only when the lock tier and band-follow are both configured |
 
 **Emits:** `muehle/hf/ant-switch/cmd` (`select`); `muehle/hf/<band_follow.slot>/cmd`
-(`frequency`, while the followed antenna is selected — `ant-ctrl` at Mühle);
+(`frequency`, while the followed antenna is selected and no antenna-mode lock is active —
+`ant-ctrl` at Mühle; re-sent unchanged on unlock);
 `muehle/hf/<pa_follow.slot>/cmd` (`set_band`, not retained — `pa` at Mühle, while the
 radio is online and reporting a band; gated by `[pa_follow].enabled`);
 `muehle/hf/<tuner_follow.slot>/cmd` (`set_inline`, not retained — `tuner` at Mühle, while
-the tuner's resource is selected and the band is non-resonant; gated by
-`[tuner_follow].enabled`).
+the tuner's resource is selected and the band is non-resonant, never under an
+antenna-mode lock; gated by `[tuner_follow].enabled`).
 
 **Idle timeout (walk-away safety, §10):** the reconciler infers `activity` itself — a
 `freq_hz` change or `tx == "tx"` on a live radio link (`device_online=true`, `freq_hz>0`)
