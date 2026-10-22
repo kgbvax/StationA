@@ -60,6 +60,10 @@ muehle/hf/ant-ctrl/cmd
 | `/status` | yes | broker LWT | liveness: `online` / `offline` |
 | `/cmd` | yes | bus → ultrabridge | desired state / command |
 
+ultrabridge also **subscribes** (QoS 0) to the antenna-mode slot's retained
+`<site>/<station>/<ant_mode_slot>/state` (default `muehle/hf/ant-mode/state`), which
+locks element extends in storm/maintenance — see §6.1.
+
 ---
 
 ## 3. `/status` — liveness
@@ -110,8 +114,10 @@ Retained JSON, published once per connect cycle (after connecting to broker).
         "writable": true,
         "command": { "action": "direction", "value_key": "value", "value_type": "string" } },
       { "key": "moving", "name": "Moving", "type": "boolean" },
+      { "key": "retracted", "name": "Retracted", "type": "boolean" },
       { "key": "device_online", "name": "Device online", "type": "boolean" },
-      { "key": "error", "name": "Last error", "type": "string" }
+      { "key": "error", "name": "Last error", "type": "string" },
+      { "key": "lock", "name": "Antenna mode lock", "type": "string" }
     ],
     "actions": [
       { "key": "retract", "name": "Retract", "command": { "action": "retract" } }
@@ -139,7 +145,8 @@ descriptor is the structured form of the `/cmd` payloads in §6), `moving` is a 
 boolean, and `retract` is a one-shot `action`. `device_online` and `error` are read-only
 diagnostics: the bridge stays up (`/status` online) while the RCU-06 is down, so these
 surface device health that `/status` alone cannot — `hadiscovery` renders them as a
-`binary_sensor` and a `sensor`. The enum options resolve via `options_ref` into
+`binary_sensor` and a `sensor`. `lock` is read-only: the antenna mode is owned by the
+`hf/ant-mode` slot (§6.1), never written here. The enum options resolve via `options_ref` into
 `capabilities.bands` / `capabilities.directions` (single source of truth).
 
 ---
@@ -155,9 +162,13 @@ Retained JSON snapshot, QoS 1. Published only when a field value changes.
   "band":         "15m",
   "direction":    "forward",
   "moving":       false,
+  "retracted":    false,
   "device_online": true
 }
 ```
+
+While the antenna-mode lock is active (§6.1) the snapshot also carries `"lock": "storm"`
+(or `"maintenance"`).
 
 | Field | Type | Unit | Notes |
 |-------|------|------|-------|
@@ -166,8 +177,10 @@ Retained JSON snapshot, QoS 1. Published only when a field value changes.
 | `band` | string | — | Band label derived from `freq_hz`; see §7.2 |
 | `direction` | string | — | Beam direction: `forward` \| `reverse` \| `bidirectional` |
 | `moving` | bool | — | `true` while elements are physically moving (feeds the interlock mirror, model §6) |
+| `retracted` | bool | — | Latched `true` by a successful retract, cleared by the next accepted frequency/direction change. Bridge-side (the RCU-06 reports no retract flag); while an antenna-mode lock with `retract` is active the bridge re-establishes it after a restart or RCU-06 power cycle (§6.1); on the RCU-06 back-online edge under such a lock it reads `false` until the re-issued retract is accepted. The PA arm on PLC #1 blocks on it. |
 | `device_online` | bool | — | `true` while the RCU-06 is reachable over serial, `false` when it is not (and the bridge itself is still up). Always present so consumers can distinguish "online" from "no data". Bridge liveness is `/status`, never a state field (model §3). |
 | `error` | string | — | Last error message; omitted when empty |
+| `lock` | string | — | Antenna-mode lock: `storm` \| `maintenance` while `hf/ant-mode` locks the Ultrabeam (extends refused); omitted when unlocked. Part of the change dedup — a lock change alone publishes a snapshot. |
 
 ---
 
@@ -239,8 +252,40 @@ One-shot physical command (storm safety). After executing, ultrabridge clears th
 retained `/cmd` topic (publishes an empty payload).
 
 All commands — frequency, direction, band, retract, and any rejected or unparseable
-payload — are cleared from the retained topic after the worker has acted on them, so no
-command re-executes on the next restart or reconnect.
+payload (including one refused by the antenna-mode lock) — are cleared from the retained
+topic after the worker has acted on them, so no command re-executes on the next restart
+or reconnect.
+
+### 6.1 Antenna-mode lock (storm / maintenance)
+
+The station antenna mode is owned by the `hf/ant-mode` logic slot (component `antmode`,
+contract `../antmode/docs/ant-mode-mqtt-api.md`). ultrabridge reads its retained `/state`
+through `shared/antmode.Parse` and **enforces** the lock itself:
+
+| While `ant_mode` is `storm` or `maintenance` | |
+|---|---|
+| `frequency`, `band`, `direction` (and the `mode` alias) | **refused** — every one of them drives the elements out. The command never reaches the RCU-06; the retained `/cmd` is still cleared. One Warn per refusal streak (reset on unlock). |
+| `retract` | always allowed |
+| HTTP API | `/api/frequency` and `/api/mode` answer **423 Locked**; `/api/retract` works; the status page shows the lock |
+| `lock.retract: true` | the bridge **retracts by itself**: on a new `lock.seq` (or `retract` appearing on the current one), when the RCU-06 comes back online (a power cycle may re-extend; this re-issues a retract still waiting for its motors and clears `retracted` until the new one is accepted), and at bridge start once the lock is known — then re-checks on every 2 s poll until `retracted` and not `moving`. Failures retry on the next poll (one Warn per streak). This also restores the `retracted` latch lost on a bridge restart. |
+| `lock.retract: false` | extends refused, **no** retract — antmode grounds the antenna switch first and adds `retract` once the switch reports `off`. |
+
+Reading rules: no retained ant-mode state (or an empty payload) = **normal** (the bridge is
+usable before antmode exists); a valid locked snapshot is enforced even while
+`hf/ant-mode/status` is offline (a dead owner never unlocks); a malformed payload keeps the
+last known lock and logs an Error. `ts` is not checked.
+
+- **Subscription:** QoS 0 (the persistent session would otherwise queue a backlog of lock
+  transitions while the bridge is offline), subscribed on every (re)connect just before
+  `/cmd`; its message route is registered before the initial connect so a delivery on the
+  resumed session is never dropped.
+- **Startup hold:** for up to 3 s after start, extends are refused until the first
+  ant-mode state arrives, so a retained `/cmd` replayed on connect cannot slip in ahead of
+  a storm lock.
+- **Leaving the mode** does not re-extend: the elements come back out only through
+  antennaselect's band-follow (which re-sends the frequency on unlock; the deadband does
+  not swallow a same-band retune while retracted).
+- **Config:** `[mqtt] ant_mode_slot` (default `"ant-mode"`; `""` disables the lock).
 
 ---
 
@@ -351,6 +396,13 @@ Subscribe to `<slot>/#`. The broker immediately delivers retained `/meta`,
 **Change direction:**
 1. Publish retained to `<slot>/cmd`: `{"action":"direction","value":"bidirectional"}`
 2. Confirm via `/state` `direction == "bidirectional"`
+
+**Antenna-mode lock (storm):**
+1. antmode publishes `{"ant_mode":"storm","lock":{"seq":17,"ground":true,"retract":false,…}}`
+   → `/state.lock == "storm"`; a `band` `/cmd` is refused and cleared.
+2. Once the switch is grounded antmode adds `"retract":true` → ultrabridge retracts:
+   `moving:true, retracted:true` then `moving:false`.
+3. On `normal`, `lock` disappears from `/state`; band-follow re-extends.
 
 **Detect RCU fault:**
 - `/state` contains `"device_online":false` and `"error":"..."` while ultrabridge is still

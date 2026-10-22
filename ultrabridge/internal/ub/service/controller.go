@@ -27,6 +27,13 @@ type Controller struct {
 	// instead of at the next 2 s poll: the PA arm (PLC #1) must see a move or a
 	// retract before the operator can key into it.
 	onChange func(State)
+
+	// Antenna-mode lock (lock.go). lmu guards lk only and is never held across
+	// a device exchange; kick wakes the poll loop after an ant-mode update.
+	lmu  sync.Mutex
+	lk   lockState
+	now  func() time.Time
+	kick chan struct{}
 }
 
 // SetOnChange installs the post-command hook. Call once at startup.
@@ -46,17 +53,21 @@ func (c *Controller) notifyChange() {
 const freqDeadbandKHz = 25
 
 func NewController(dev transport.Client) *Controller {
-	return &Controller{dev: dev, log: slog.Default()}
+	return &Controller{dev: dev, log: slog.Default(), now: time.Now, kick: make(chan struct{}, 1)}
 }
 
 // SetLogger installs the component/slot-stamped logger. Call once at startup,
 // before any polling or command goroutine runs.
 func (c *Controller) SetLogger(l *slog.Logger) { c.log = l }
 
+// State returns the current snapshot, with Lock filled from the antenna-mode
+// lock (it is not part of the device state proper).
 func (c *Controller) State() State {
 	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.state
+	s := c.state
+	c.mu.RUnlock()
+	s.Lock = c.LockLabel()
+	return s
 }
 
 func (c *Controller) setState(state State) {
@@ -94,6 +105,7 @@ func (c *Controller) Refresh(ctx context.Context) error {
 		// Recovery from a device_offline=false stretch: edge-triggered so the
 		// journal gets one line per outage, not one per poll tick.
 		c.log.Info("device online")
+		c.deviceBackOnline()
 	}
 	return nil
 }
@@ -120,10 +132,12 @@ func (c *Controller) PollMotorStatus(ctx context.Context) error {
 	c.setState(state)
 	if wasOffline {
 		c.log.Info("device online")
+		c.deviceBackOnline()
 	}
 	return nil
 }
 
+// Retract drives the elements in. Never refused by the antenna-mode lock.
 func (c *Controller) Retract(ctx context.Context) error {
 	pkt, err := c.dev.Exchange(ctx, protocol.CmdRetract, nil, 5*time.Second)
 	if err != nil {
@@ -138,7 +152,12 @@ func (c *Controller) Retract(ctx context.Context) error {
 	return c.Refresh(ctx)
 }
 
+// SetFrequency tunes (and so extends) the elements. Refused with ErrLocked
+// while the antenna-mode lock is active.
 func (c *Controller) SetFrequency(ctx context.Context, frequencyKHz uint16, mode string) error {
+	if err := c.checkExtend("frequency", "khz", frequencyKHz); err != nil {
+		return err
+	}
 	modeByte, err := protocol.ParseMode(mode)
 	if err != nil {
 		return err
@@ -183,7 +202,12 @@ func (c *Controller) sendFrequency(ctx context.Context, frequencyKHz uint16, mod
 	return c.Refresh(ctx)
 }
 
+// SetMode changes the element direction at the current frequency (an extend).
+// Refused with ErrLocked while the antenna-mode lock is active.
 func (c *Controller) SetMode(ctx context.Context, mode string) error {
+	if err := c.checkExtend("direction", "direction", mode); err != nil {
+		return err
+	}
 	modeByte, err := protocol.ParseMode(mode)
 	if err != nil {
 		return err

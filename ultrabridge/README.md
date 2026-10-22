@@ -49,6 +49,8 @@ discovery_prefix = "homeassistant"
 user             = "ham"
 password         = "change-me"
 # client_id defaults to "<site>-<station>-<slot>"
+# Antenna-mode lock slot (storm/maintenance refuse extends + retract); "" disables.
+ant_mode_slot    = "ant-mode"
 ```
 
 > **Secret handling:** the file holds the MQTT password in plaintext, so on the

@@ -3,6 +3,7 @@ package mqtt
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -42,7 +43,10 @@ type Client struct {
 	// §9). Default false: a standalone consumer (hadiscovery) renders discovery from
 	// this bridge's consumer-neutral `expose` block in /meta instead.
 	publishHADiscovery bool
-	ctrl               *service.Controller
+	// antModeSlot is the antenna-mode logic slot (same site/station) whose
+	// retained /state locks element extends; "" disables the subscription.
+	antModeSlot string
+	ctrl        *service.Controller
 
 	// log carries component (via slog.Default), the slot address, and the
 	// subsys=mqtt marker that replaces the old "[mqtt]" message prefix
@@ -90,6 +94,7 @@ type publishedState struct {
 	Retracted bool
 	Offline   bool
 	LastError string
+	Lock      string
 }
 
 type statePayload struct {
@@ -102,7 +107,8 @@ type statePayload struct {
 	Direction string `json:"direction"`
 	Moving    bool   `json:"moving"`
 	// Retracted is true after a successful retract until the next accepted
-	// frequency/direction change (bridge-side latch, lost on restart). The PA arm
+	// frequency/direction change (bridge-side latch, lost on restart; re-established
+	// while an antenna-mode lock with retract is active). The PA arm
 	// on PLC #1 treats a retracted Ultrabeam as not tuned.
 	Retracted bool `json:"retracted"`
 	// DeviceOnline is the canonical device-reachability field (model §3): true while the
@@ -113,9 +119,14 @@ type statePayload struct {
 	// RCU-06 reachability.
 	DeviceOnline bool   `json:"device_online"`
 	Error        string `json:"error,omitempty"`
+	// Lock is the antenna-mode lock (storm|maintenance) while hf/ant-mode
+	// refuses element extends; omitted when unlocked.
+	Lock string `json:"lock,omitempty"`
 }
 
-func New(ctx context.Context, broker, clientID, site, station, slot, discoveryPrefix, location, host, user, password string, publishHADiscovery bool, ctrl *service.Controller) (*Client, error) {
+// New connects the bridge. antModeSlot names the antenna-mode slot whose
+// retained /state locks element extends ("" disables the lock subscription).
+func New(ctx context.Context, broker, clientID, site, station, slot, discoveryPrefix, location, host, user, password string, publishHADiscovery bool, antModeSlot string, ctrl *service.Controller) (*Client, error) {
 	if site == "" || station == "" {
 		return nil, fmt.Errorf("mqtt: site and station must be configured for station-model addressing")
 	}
@@ -139,6 +150,7 @@ func New(ctx context.Context, broker, clientID, site, station, slot, discoveryPr
 		location:           location,
 		host:               host,
 		publishHADiscovery: publishHADiscovery,
+		antModeSlot:        antModeSlot,
 		ctrl:               ctrl,
 		// slot=<site>/<station>/<slot> on every line; subsys=mqtt replaces the
 		// old "[mqtt]" prefix.
@@ -172,6 +184,13 @@ func New(ctx context.Context, broker, clientID, site, station, slot, discoveryPr
 	})
 
 	c.client = paho.NewClient(opts)
+	// Register the ant-mode route BEFORE connecting: with the persistent
+	// session the broker may deliver to the stored subscription as soon as the
+	// session resumes, ahead of the Subscribe in onConnect; without a route
+	// paho would hand that message to the (absent) default handler and drop it.
+	if t := c.antModeTopic(); t != "" {
+		c.client.AddRoute(t, c.onAntMode)
+	}
 	c.logger().Info("connecting", "broker", broker, "client_id", clientID)
 	// Context-aware connect: paho's Connect().Wait() blocks ignoring ctx, so a SIGTERM while
 	// the broker is unreachable can't interrupt it and systemd must SIGKILL after
@@ -201,12 +220,15 @@ func (c *Client) Close() {
 // connect AND auto-reconnect — synchronous publishes are safe here (this is
 // never paho's dispatch goroutine). Order matters: status → meta → state →
 // subscribe. The /cmd subscription arms last, so a replayed command is never
-// handled against a bus that hasn't already seen the fresh /state.
+// handled against a bus that hasn't already seen the fresh /state; the
+// ant-mode lock subscribes just before it, so its retained state lands ahead
+// of any retained /cmd (the controller's startup hold covers the rest).
 func (c *Client) onConnect(_ paho.Client) {
 	c.publishString(c.statusTopic(), "online", 1, true)
 	c.PublishMeta()
 	c.republishState()
 	// Re-subscribe on every connect in case the broker lost session state.
+	c.subscribeAntMode()
 	c.subscribeCmd()
 	c.subscribeHABirth()
 }
@@ -237,6 +259,7 @@ func (c *Client) PublishState(state service.State) {
 		Retracted:    snap.Retracted,
 		DeviceOnline: !snap.Offline,
 		Error:        snap.LastError,
+		Lock:         snap.Lock,
 	}
 	c.publishJSON(c.stateTopic(), payload, 1, true)
 }
@@ -303,6 +326,9 @@ func (c *Client) metaPayload() map[string]any {
 				// that /status alone cannot.
 				{"key": "device_online", "name": "Device online", "type": "boolean"},
 				{"key": "error", "name": "Last error", "type": "string"},
+				// Antenna-mode lock (storm|maintenance; absent when unlocked):
+				// read-only — the mode is owned by hf/ant-mode.
+				{"key": "lock", "name": "Antenna mode lock", "type": "string"},
 			},
 			"actions": []map[string]any{
 				{
@@ -330,6 +356,7 @@ func stateSnapshot(state service.State) publishedState {
 		Retracted: state.Retracted,
 		Offline:   state.Offline,
 		LastError: state.LastError,
+		Lock:      state.Lock,
 	}
 }
 
@@ -463,6 +490,7 @@ func (c *Client) PublishDiscovery() {
 }
 
 func (c *Client) BindCommands(ctx context.Context) {
+	c.subscribeAntMode()
 	c.subscribeCmd()
 	c.subscribeHABirth()
 	_ = ctx
@@ -479,6 +507,25 @@ func (c *Client) BindCommands(ctx context.Context) {
 // predates this defense and is amended by the queued-command-replay rule.
 func (c *Client) subscribeCmd() {
 	_ = c.subscribe(c.cmdTopic(), 0, c.onCmd)
+}
+
+// subscribeAntMode subscribes the antenna-mode slot's retained /state at QoS 0
+// for the same persistent-session reason as /cmd: a QoS-1 subscription would
+// queue every lock transition published while the bridge is offline and replay
+// the backlog. Only the latest retained snapshot matters (steady state), and
+// retained delivery works at any QoS.
+func (c *Client) subscribeAntMode() {
+	if t := c.antModeTopic(); t != "" {
+		_ = c.subscribe(t, 0, c.onAntMode)
+	}
+}
+
+// onAntMode is the hf/ant-mode/state handler. It runs on paho's dispatch
+// goroutine, so it only parses and records under the controller's lock mutex
+// (no I/O, no publish); the poll loop, woken via Controller.LockKick, runs
+// the ensure-retract and publishes the lock in /state.
+func (c *Client) onAntMode(_ paho.Client, msg paho.Message) {
+	c.ctrl.ApplyAntMode(msg.Payload())
 }
 
 // cmdMaxAge bounds how old a /cmd may be when its producer stamped it with a ts.
@@ -551,13 +598,18 @@ func (c *Client) onCmd(_ paho.Client, msg paho.Message) {
 		default:
 			c.logger().Warn("unknown cmd action", "action", cmd.Action)
 		}
-		if err != nil {
+		if errors.Is(err, service.ErrLocked) {
+			// Refused by the antenna-mode lock: the controller already logged
+			// one Warn for this refusal streak.
+			c.logger().Debug("cmd refused by antenna mode lock", "action", cmd.Action)
+		} else if err != nil {
 			// A refused or failed cmd (e.g. a direction change beamsteer sent)
 			// must reach the journal — it used to vanish into `_ =`.
 			c.logger().Warn("cmd failed", "action", cmd.Action, "value", cmd.Value, "freq_hz", cmd.FreqHz, "err", err)
 		}
-		// One-shot semantics: clear the retained cmd after every action (or rejection) so
-		// nothing re-executes on the next (re)connect — not just retract.
+		// One-shot semantics: clear the retained cmd after every action (or rejection,
+		// including a lock refusal) so nothing re-executes on the next (re)connect —
+		// not just retract.
 		c.clearCmdTopic()
 	})
 }
@@ -635,6 +687,14 @@ func (c *Client) stateTopic() string  { return schema.StateTopic(c.site, c.stati
 func (c *Client) metaTopic() string   { return schema.MetaTopic(c.site, c.station, c.slot) }
 func (c *Client) statusTopic() string { return schema.StatusTopic(c.site, c.station, c.slot) }
 func (c *Client) cmdTopic() string    { return schema.CmdTopic(c.site, c.station, c.slot) }
+
+// antModeTopic is the antenna-mode slot's /state, or "" when the lock is disabled.
+func (c *Client) antModeTopic() string {
+	if c.antModeSlot == "" {
+		return ""
+	}
+	return schema.StateTopic(c.site, c.station, c.antModeSlot)
+}
 
 func (c *Client) discoveryTopic(component, nodeID, objectID string) string {
 	return fmt.Sprintf("%s/%s/%s/%s/config", c.discoveryPrefix, component, nodeID, objectID)

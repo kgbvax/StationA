@@ -20,6 +20,9 @@ func TestDefault(t *testing.T) {
 			ClientID:        "",
 			Slot:            "ant-ctrl",
 			DiscoveryPrefix: "homeassistant",
+			// The antenna-mode lock is on by default; with no retained
+			// ant-mode state the Ultrabeam is unlocked (rollout-safe).
+			AntModeSlot: "ant-mode",
 		},
 	}
 	if got != want {
@@ -75,6 +78,7 @@ password         = "s3cr3t"
 			DiscoveryPrefix: "homeassistant",
 			User:            "ham",
 			Password:        "s3cr3t",
+			AntModeSlot:     "ant-mode", // key absent → default
 		},
 	}
 	if got != want {
@@ -126,5 +130,21 @@ func TestLoadMissingFile(t *testing.T) {
 	}
 	if !errors.Is(err, fs.ErrNotExist) {
 		t.Fatalf("missing file: want fs.ErrNotExist, got %v", err)
+	}
+}
+
+// TestLoadAntModeSlotDisable: an explicit empty ant_mode_slot disables the
+// antenna-mode lock (no subscription, no startup hold).
+func TestLoadAntModeSlotDisable(t *testing.T) {
+	path := writeTemp(t, `
+[mqtt]
+ant_mode_slot = ""
+`)
+	got, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if got.MQTT.AntModeSlot != "" {
+		t.Errorf("AntModeSlot = %q, want empty (disabled)", got.MQTT.AntModeSlot)
 	}
 }

@@ -237,6 +237,20 @@ Code-check verdict (2026-09-03): implemented —
 SetMode), tests in `controller_test.go`. Not documented in `ultrabeam-mqtt-api.md` —
 consider adding it there.
 
+## [requirement] Antenna-mode lock (behavior contract)
+
+While the station antenna mode (`hf/ant-mode/state`, parsed with `shared/antmode`) is
+storm or maintenance, the bridge refuses every change_frequency (frequency, band and
+direction changes — all extend the elements) before it reaches the device, from any
+caller (MQTT `/cmd`, HTTP → 423). `retract` is never refused. When the lock carries
+`retract`, the bridge issues `retract` itself on a new lock seq, on the device's
+offline→online edge and at start once the lock is known, re-checking each 2 s poll until
+the latch is set and the moving status reports 0. Contract:
+`../ultrabeam-mqtt-api.md` §6.1 and `../../antmode/docs/ant-mode-mqtt-api.md`.
+
+Code-check verdict (2026-10-22): implemented — `ultrabridge/internal/ub/service/lock.go`,
+tests in `lock_test.go`.
+
 ## [defect] SIGTERM is not trapped (graceful shutdown dead in production)
 
 The code traps only SIGINT and ignores SIGTERM (what systemd sends on `stop`/`restart`).

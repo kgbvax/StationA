@@ -32,6 +32,12 @@ type MQTT struct {
 	PublishHADiscovery bool   `toml:"publish_ha_discovery"`
 	User               string `toml:"user"`
 	Password           string `toml:"password"`
+	// AntModeSlot is the antenna-mode logic slot (same site/station) whose
+	// retained /state locks element extends in storm/maintenance and makes the
+	// bridge retract (antmode/docs/ant-mode-mqtt-api.md). Empty disables the
+	// lock. With no retained ant-mode state the Ultrabeam is unlocked, so the
+	// default is safe before antmode is deployed.
+	AntModeSlot string `toml:"ant_mode_slot"`
 }
 
 // Config is the full runtime configuration for ultrabridge.
@@ -61,6 +67,7 @@ func Default() Config {
 			ClientID:        "",
 			Slot:            "ant-ctrl",
 			DiscoveryPrefix: "homeassistant",
+			AntModeSlot:     "ant-mode",
 			User:            "",
 			Password:        "",
 		},
