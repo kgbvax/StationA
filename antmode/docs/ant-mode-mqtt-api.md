@@ -90,7 +90,7 @@ muehle/hf/ant-mode/cmd      retained? one-shot — applied, then cleared
 | `phase` | `idle` (normal) \| `grounding` \| `retracting` \| `awaiting_power` \| `awaiting_devices` \| `rotating` \| `parked` \| `failed`. |
 | `fault` | Why `failed` (omitempty). |
 | `power_hold` | antmode is borrowing `power/antennas`; powerseq treats watch changes as re-baseline, never as activity, and takes no idle action. |
-| `presence` | `manned` (powerseq `starting`/`running`) \| `unmanned` (any other phase, powerseq offline or unknown). |
+| `presence` | `manned` (powerseq `starting`/`running`/`waking` — a wake is triggered by operator activity) \| `unmanned` (any other phase, powerseq offline or unknown). |
 | `wind` | DWD MOSMIX day value for the configured station (`stationOverviewExtended` `days[].windDirection`/`windGust`, tenths). `stale` when older than the configured limit or missing. |
 | `warnings` | Currently **active** (onset passed, not expired) DWD warnings for the configured ARS whose event code is in the configured list (default: level 1 "Windböen" and up, plus thunderstorms with gusts). |
 | `storm_suggested` | A qualifying warning is active, the station is manned, and the mode is normal → the console/HA shows a banner. |
@@ -114,7 +114,7 @@ muehle/hf/ant-mode/cmd      retained? one-shot — applied, then cleared
 | wrc-rotator-bridge | Refuses `set_az`/`fwd`/`rev` on MQTT, GS-232 and PstRotator; `stop` always allowed. Executes `park_az` once per `seq` (device online, readback stable ~3 s; re-sent only if it never arrived). Accepts `set_az` with `"override":"maintenance"` when `lock.nudge`. `/state.lock` = mode name. |
 | ultrabridge | Refuses `frequency`/`band`/`direction` (MQTT, HTTP 423); `retract` always allowed. Ensures retracted: on a new `seq` with `lock.retract`, on device back online, at bridge start. `/state.lock`. |
 | antennaselect | Lock tier above the manual stand-down: target `off`, source `lock`; band-follow stops. On unlock, follow state is reset so the same frequency is re-sent (re-extends the elements). |
-| beamsteer | `Goto` ignored with a reason, pending direction flips dropped, logger STOP not forwarded. `/state.locked`. |
+| beamsteer | `Goto`/`aim` ignored with a reason, pending direction flips dropped, logger STOP not forwarded. `/state.lock` = mode name (omitted when unlocked). |
 | powerseq | While `power_hold`: watch changes re-baseline, no idle transition. Settle window after the hold ends. |
 | m5stamp-hf-ctrl (PA arm) | No change: the grounded switch and the retracted Ultrabeam already open the arm. |
 
