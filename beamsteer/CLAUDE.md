@@ -15,7 +15,7 @@ API: `docs/beam-steer-mqtt-api.md`.
 | Path | What |
 |---|---|
 | `internal/steer` | Pure decision (`Decide`, `EffectiveHeading`). No I/O; table tests are the spec. |
-| `internal/engine` | Runtime state, guards (liveness, TX / moving hold, 6m), command emission, `/state` `/meta`. Single-threaded on the jobs worker; only `Readback` is locked. |
+| `internal/engine` | Runtime state, guards (liveness, TX / moving hold, 6m, antenna-mode lock), command emission, `/state` `/meta`. Single-threaded on the jobs worker; only `Readback` and the recorded ant-mode state (`AntModeState`) are locked. |
 | `internal/mqtt` | Paho wiring + the PstRotator handler adapter. Every input is `Enqueue`d; no handler publishes. |
 | `internal/config` | TOML config (`config.example.toml`). |
 | `../shared/pstrotator` | Datagram grammar + UDP loop (shared). |
@@ -27,6 +27,7 @@ API: `docs/beam-steer-mqtt-api.md`.
 - **6m is forward only.**
 - **Travel is linear:** the G-450 cannot cross its stop. `max_az` stays 360 until the overlap readback is verified on the hardware.
 - **Own `/cmd` is subscribed at QoS 0:** the retained value carries the steady state.
+- **Antenna-mode lock (`hf/ant-mode`, `steer.ant_mode_slot`):** read only through `shared/antmode`. While storm/maintenance: `Goto`/`aim` ignored with a reason (toggle on or off), held flips dropped, nothing published to `hf/ant-ctrl` or `hf/rotator`, logger STOP **not** forwarded (must not cancel the park); `AZ?` readback keeps working; `/state.lock` = mode name. Unlock never replays. No retained state = normal; malformed = keep last known + Error; 3 s hold after **every** connect (OnConnect calls `AntModeConnecting` before subscribing, so only this connection's replay ends it; on lapse the last known lock stands); one Warn per refusal reason. The paho handler only records under `amu`; every motion path calls `syncAntMode` first, so a dropped job cannot hide a lock.
 
 ## Build / test / deploy
 

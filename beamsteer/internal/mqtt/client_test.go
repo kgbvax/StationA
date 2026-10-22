@@ -90,3 +90,47 @@ func TestOnCmd(t *testing.T) {
 		})
 	}
 }
+
+// fakeMsg is a minimal paho.Message.
+type fakeMsg struct {
+	payload  []byte
+	retained bool
+}
+
+func (m fakeMsg) Duplicate() bool   { return false }
+func (m fakeMsg) Qos() byte         { return 1 }
+func (m fakeMsg) Retained() bool    { return m.retained }
+func (m fakeMsg) Topic() string     { return "muehle/hf/ant-mode/state" }
+func (m fakeMsg) MessageID() uint16 { return 0 }
+func (m fakeMsg) Payload() []byte   { return m.payload }
+func (m fakeMsg) Ack()              {}
+
+// runOnWorker runs f on the jobs worker and waits for it (the engine is
+// worker-owned; calling it from the test goroutine would race the tick).
+func runOnWorker(t *testing.T, c *Client, f func()) {
+	t.Helper()
+	done := make(chan struct{})
+	c.jobs <- func() { f(); close(done) }
+	<-done
+}
+
+// The ant-mode handler records the lock on the paho goroutine and the worker
+// applies it: an aim from the console is then ignored with the lock reason.
+func TestAntModeLockReachesEngine(t *testing.T) {
+	c, buf := testClient(t)
+	runOnWorker(t, c, func() { c.eng.SetConnected(true) })
+	c.onAntMode(nil, fakeMsg{payload: []byte(`{"ant_mode":"storm","lock":{"seq":3}}`), retained: true})
+	runOnWorker(t, c, func() { c.onCmd([]byte(`{"action":"aim","value":265}`), false) })
+	if !strings.Contains(buf.String(), "antenna mode lock changed") ||
+		!strings.Contains(buf.String(), "rotate request ignored: antenna locked") {
+		t.Fatalf("log = %q", buf.String())
+	}
+
+	// Malformed: logged at Error, lock kept.
+	buf.Reset()
+	c.onAntMode(nil, fakeMsg{payload: []byte(`{"ant_mode":`)})
+	runOnWorker(t, c, func() { c.onCmd([]byte(`{"action":"aim","value":265}`), false) })
+	if !strings.Contains(buf.String(), "level=ERROR") || !strings.Contains(buf.String(), "lock=\"antenna mode storm\"") {
+		t.Fatalf("log = %q", buf.String())
+	}
+}

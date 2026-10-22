@@ -46,6 +46,11 @@ type Steer struct {
 	RotatorSlot string  `toml:"rotator_slot"`
 	AntCtrlSlot string  `toml:"ant_ctrl_slot"`
 	RadioSlot   string  `toml:"radio_slot"`
+	// AntModeSlot is the antenna-mode logic slot (hf/ant-mode). While its
+	// /state carries a storm or maintenance lock, rotate requests are ignored
+	// and nothing is sent to the rotator or the Ultrabeam. "" disables the lock
+	// (no subscription, no connect hold).
+	AntModeSlot string `toml:"ant_mode_slot"`
 }
 
 // Config is the full runtime configuration.
@@ -70,6 +75,7 @@ func Default() Config {
 			RotatorSlot:  "rotator",
 			AntCtrlSlot:  "ant-ctrl",
 			RadioSlot:    "radio",
+			AntModeSlot:  "ant-mode",
 		},
 	}
 }

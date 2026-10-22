@@ -172,6 +172,9 @@ func (c *Client) buildOptions() *paho.ClientOptions {
 		cl.Publish(statusTopic, 1, true, []byte("online")) // fire-and-forget: OnConnect must not block
 		pub.set(cl)
 		// Queued ahead of every retained replay the subscriptions bring in.
+		// The recorded ant-mode state is from before this connect: stale
+		// until the replay re-records it (SetConnected re-arms the hold).
+		eng.AntModeConnecting()
 		sharedmqtt.Enqueue(c.jobs, func() { eng.SetConnected(true) })
 		c.subscribeAll(cl)
 		sharedmqtt.Enqueue(c.jobs, eng.Republish)
@@ -216,12 +219,27 @@ func (c *Client) subscribeAll(cl paho.Client) {
 		sharedmqtt.Enqueue(c.jobs, func() { c.onCmd(p, retained) })
 	})
 
+	// The antenna-mode lock next, so its retained state is recorded before
+	// the sibling replays. The handler only parses and records (under the
+	// engine's lock mutex — a full jobs queue cannot lose a lock); the
+	// worker applies it.
+	if s.AntModeSlot != "" {
+		c.subscribe(cl, sib(s.AntModeSlot, "state"), 1, c.onAntMode)
+	}
+
 	c.subscribe(cl, sib(s.RotatorSlot, "status"), 1, c.on(c.eng.RotatorStatus))
 	c.subscribe(cl, sib(s.RotatorSlot, "state"), 1, c.on(c.eng.RotatorState))
 	c.subscribe(cl, sib(s.AntCtrlSlot, "status"), 1, c.on(c.eng.AntStatus))
 	c.subscribe(cl, sib(s.AntCtrlSlot, "state"), 1, c.on(c.eng.AntState))
 	c.subscribe(cl, sib(s.RadioSlot, "status"), 1, c.on(c.eng.RadioStatus))
 	c.subscribe(cl, sib(s.RadioSlot, "state"), 1, c.on(c.eng.RadioState))
+}
+
+// onAntMode is the hf/ant-mode/state handler: record on the paho goroutine
+// (parse only, never publishes or blocks), apply on the worker.
+func (c *Client) onAntMode(_ paho.Client, msg paho.Message) {
+	c.eng.AntModeState(msg.Payload())
+	sharedmqtt.Enqueue(c.jobs, c.eng.SyncAntMode)
 }
 
 // onCmd handles the own /cmd. retained is the broker's replay flag: the

@@ -12,7 +12,7 @@ func TestExampleConfigValid(t *testing.T) {
 	if err := cfg.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	if cfg.PstRotator.Port != 12050 || cfg.Steer.BidirLobeDeg != 45 {
+	if cfg.PstRotator.Port != 12050 || cfg.Steer.BidirLobeDeg != 45 || cfg.Steer.AntModeSlot != "ant-mode" || cfg.Host != "scmino" {
 		t.Errorf("cfg = %+v", cfg)
 	}
 }

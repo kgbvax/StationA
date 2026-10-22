@@ -7,7 +7,7 @@
 # --- Deployment identity ------------------------------------------------------
 # Published in /meta (integration model §3). Required.
 location = "bauwagen"
-host     = "shari"
+host     = "scmino"     # since 2026-10-12
 
 # --- MQTT -------------------------------------------------------------------
 [mqtt]
@@ -39,3 +39,8 @@ max_az         = 360
 rotator_slot   = "rotator"
 ant_ctrl_slot  = "ant-ctrl"
 radio_slot     = "radio"
+# Antenna-mode logic slot (antmode). While its retained /state carries a
+# storm or maintenance lock, rotate requests (logger, console aim) and the
+# logger's STOP are ignored and nothing goes to the rotator or the Ultrabeam.
+# No retained state = normal. "" disables the lock (and its 3 s hold after each connect).
+ant_mode_slot  = "ant-mode"

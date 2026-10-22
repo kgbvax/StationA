@@ -7,7 +7,10 @@
 // layer and the UDP handler Enqueue onto it), so the engine state needs no
 // lock and publishing never happens on a paho dispatch goroutine. Readback is
 // called straight from the UDP read loop, so the heading it reports is kept
-// under its own mutex.
+// under its own mutex. AntModeState is called from the paho handler: it only
+// parses and records the antenna-mode lock under its own mutex; the worker
+// applies it (syncAntMode) before acting on anything that could move the
+// mast, so a dropped jobs-queue entry cannot hide a lock.
 package engine
 
 import (
@@ -18,6 +21,8 @@ import (
 	"sync"
 	"time"
 
+	"codeberg.org/kgbvax/stationa/shared/antmode"
+	"codeberg.org/kgbvax/stationa/shared/logging"
 	schema "codeberg.org/kgbvax/stationa/shared/schema"
 
 	"beamsteer/internal/config"
@@ -41,6 +46,13 @@ const (
 	rotAckWindow    = 10 * time.Second  // set_az → rotator shows our target or starts moving
 	rotTravelWindow = 120 * time.Second // acknowledged set_az → arrival (G-450 full sweep ~60 s)
 	arriveTolerance = 3.0               // degrees: rotator "at" the commanded target
+
+	// antModeHold: after every broker (re)connect, rotate requests and the
+	// logger's STOP are ignored until the retained hf/ant-mode/state lands
+	// (or this lapses with none: the last known lock stands, normal if none
+	// was ever seen), so a request cannot slip in ahead of a storm lock that
+	// was set while beamsteer was cut off.
+	antModeHold = 3 * time.Second
 )
 
 // Last is the most recent logger request and what beamsteer did with it.
@@ -115,6 +127,18 @@ type Engine struct {
 	hmu       sync.Mutex
 	heading   float64
 	headingOK bool
+
+	// Antenna-mode lock (hf/ant-mode, shared/antmode). amBox is written by
+	// the paho handler; am is what the worker last applied.
+	amu     sync.Mutex
+	amBox   antmode.State
+	amSeen  bool // amBox holds a valid state
+	amFresh bool // amBox was recorded on the current broker connection
+
+	am          antmode.State
+	amKnown     bool      // am is authoritative (fresh state seen, hold lapsed, or lock disabled)
+	amHoldUntil time.Time // (re)connect hold; zero until the first connect
+	amIgnored   logging.Streak
 }
 
 // New builds an engine. now may be nil (time.Now).
@@ -131,6 +155,9 @@ func New(cfg config.Config, pub Publisher, log *slog.Logger, now func() time.Tim
 		self:   schema.SlotBase(m.Site, m.Station, m.Slot),
 		rotCmd: schema.CmdTopic(m.Site, m.Station, cfg.Steer.RotatorSlot),
 		antCmd: schema.CmdTopic(m.Site, m.Station, cfg.Steer.AntCtrlSlot),
+		am:     antmode.NormalState,
+		// No ant-mode slot configured: the lock is disabled, never held.
+		amKnown: cfg.Steer.AntModeSlot == "",
 	}
 }
 
@@ -142,8 +169,16 @@ func (e *Engine) SelfBase() string { return e.self }
 // ---------------------------------------------------------------------------
 
 // SetConnected tracks the broker link (OnConnect / OnConnectionLost).
-// Requests while it is down are dropped with a reason, not "sent".
-func (e *Engine) SetConnected(on bool) { e.connected = on }
+// Requests while it is down are dropped with a reason, not "sent". Every
+// connect starts the antenna-mode hold: the lock last applied is from before
+// the outage and stays unauthoritative until the retained replay lands.
+func (e *Engine) SetConnected(on bool) {
+	e.connected = on
+	if on && e.cfg.Steer.AntModeSlot != "" {
+		e.amKnown = false
+		e.amHoldUntil = e.now().Add(antModeHold)
+	}
+}
 
 // SetEnabled applies the operator toggle (own /cmd).
 func (e *Engine) SetEnabled(on bool) {
@@ -327,8 +362,9 @@ func (e *Engine) effectiveAz() float64 {
 // logger (PstRotator) and console (aim) inputs
 // ---------------------------------------------------------------------------
 
-// Goto handles a rotate request for bearing b.
+// Goto handles a rotate request for bearing b (logger or console aim).
 func (e *Engine) Goto(b float64) {
+	e.syncAntMode()
 	b = steer.Norm(b)
 	last := &Last{Bearing: b, TS: e.ts()}
 	e.last = last
@@ -339,6 +375,13 @@ func (e *Engine) Goto(b float64) {
 		last.Reason = "not connected to the broker: request ignored"
 		e.log.Warn("rotate request ignored: not connected to the broker", "bearing", b)
 		return // nothing can be published, /state included
+	case e.lockReason() != "":
+		// Storm/maintenance: the rotator and the Ultrabeam are parked. Nothing
+		// is sent — not even the plain rotation with smart rotation off.
+		last.Reason = e.lockReason() + ": ignored"
+		e.amIgnored.Fail(e.log, "rotate request ignored: antenna locked", "bearing", b, "lock", e.lockReason())
+		e.publishState()
+		return
 	case !e.enabled:
 		t := math.Round(b)
 		if e.sendRotate(t) {
@@ -395,8 +438,16 @@ func (e *Engine) decideAndApply(b float64, last *Last, note string) {
 	}
 }
 
-// Stop halts the rotator. Always passed through, toggle or not.
+// Stop halts the rotator. Passed through toggle or not — except while the
+// antenna is locked: the logger's STOP must not cancel the park (the console
+// and the M5 dial STOP go straight to the rotator bridge, which never refuses
+// a stop).
 func (e *Engine) Stop() {
+	e.syncAntMode()
+	if r := e.lockReason(); r != "" {
+		e.log.Info("logger STOP not forwarded: antenna locked", "lock", r)
+		return
+	}
 	e.cmdAz = nil // the commanded target will not be reached
 	if err := e.publish(e.rotCmd, 0, false, map[string]any{"action": "stop"}); err != nil {
 		e.log.Warn("stop not sent", "err", err)
@@ -406,6 +457,7 @@ func (e *Engine) Stop() {
 // Tick runs once a second on the jobs worker: lapsed in-flight windows stop
 // blocking, and a held flip is retried.
 func (e *Engine) Tick() {
+	e.syncAntMode()
 	if e.cmdDir != "" && !e.dirInFlight() {
 		e.log.Warn("ant-ctrl did not confirm direction in time; deciding from its /state again",
 			"commanded", e.cmdDir, "reported", e.direction)
@@ -426,6 +478,92 @@ func (e *Engine) Readback() (float64, bool) {
 }
 
 // ---------------------------------------------------------------------------
+// antenna-mode lock (hf/ant-mode)
+// ---------------------------------------------------------------------------
+
+// AntModeState records a hf/ant-mode/state payload. Safe from any goroutine
+// (the paho handler calls it directly): it parses and stores only — no
+// publish, no engine state. A malformed payload keeps the last known state.
+// The caller then enqueues SyncAntMode.
+func (e *Engine) AntModeState(p []byte) {
+	st, err := antmode.Parse(p)
+	if err != nil {
+		e.log.Error("ant-mode state rejected, keeping last known lock", "err", err)
+		return
+	}
+	e.amu.Lock()
+	e.amBox, e.amSeen, e.amFresh = st, true, true
+	e.amu.Unlock()
+}
+
+// AntModeConnecting marks the recorded ant-mode state as from a previous
+// connection. Safe from any goroutine; OnConnect calls it before subscribing,
+// so the retained replay of this connection is the first state that counts as
+// fresh again. The recorded state itself is kept (last known).
+func (e *Engine) AntModeConnecting() {
+	e.amu.Lock()
+	e.amFresh = false
+	e.amu.Unlock()
+}
+
+// SyncAntMode applies the recorded antenna-mode state (jobs worker).
+func (e *Engine) SyncAntMode() { e.syncAntMode() }
+
+// syncAntMode applies the latest recorded lock: on a lock, the held flip is
+// dropped; on unlock, nothing dropped is replayed. It also ends the
+// (re)connect hold — on a state recorded on this connection, or when the hold
+// lapses without one (the last known lock stands; normal if none was ever
+// seen: rollout-safe). A new refusal reason warns afresh. Republishes /state
+// when the lock label changes.
+func (e *Engine) syncAntMode() {
+	e.amu.Lock()
+	st, seen, fresh := e.amBox, e.amSeen, e.amFresh
+	e.amu.Unlock()
+	reason := e.lockReason()
+	defer func() {
+		if e.lockReason() != reason {
+			e.amIgnored.Reset()
+		}
+	}()
+	if !e.amKnown {
+		switch {
+		case fresh:
+			e.amKnown = true
+		case !e.amHoldUntil.IsZero() && !e.now().Before(e.amHoldUntil):
+			e.amKnown = true
+			e.log.Info("no antenna-mode state received since connect; keeping last known", "lock", e.am.Label())
+		}
+	}
+	if !seen {
+		return
+	}
+	before := e.am.Label()
+	e.am = st
+	after := st.Label()
+	if after == before {
+		return
+	}
+	e.log.Info("antenna mode lock changed", "lock", after, "was", before)
+	if st.Locked() && e.pending != nil {
+		e.log.Info("held direction change dropped: antenna locked", "direction", e.pending.dir)
+		e.pending = nil
+	}
+	e.publishState()
+}
+
+// lockReason is why motion is refused ("" = free): "antenna mode storm",
+// "antenna mode maintenance", or the (re)connect hold.
+func (e *Engine) lockReason() string {
+	switch {
+	case e.am.Locked():
+		return "antenna mode " + e.am.Label()
+	case !e.amKnown:
+		return "antenna mode not yet known"
+	}
+	return ""
+}
+
+// ---------------------------------------------------------------------------
 // outputs
 // ---------------------------------------------------------------------------
 
@@ -434,9 +572,15 @@ func (e *Engine) Readback() (float64, bool) {
 // operator may have set BI, an earlier flip may already cover it). It
 // reports whether anything changed, so bus-input callers can republish.
 func (e *Engine) flushPending() bool {
+	e.syncAntMode() // a lock that just landed drops the flip (and republishes)
 	p := e.pending
 	if p == nil {
 		return false
+	}
+	if e.lockReason() != "" {
+		e.log.Info("held direction change dropped: antenna locked", "direction", p.dir)
+		e.pending = nil
+		return true
 	}
 	if !e.antLive() {
 		e.log.Warn("held direction change dropped: ant-ctrl offline", "direction", p.dir)
@@ -545,6 +689,9 @@ func (e *Engine) Republish() {
 
 func (e *Engine) publishState() {
 	st := map[string]any{"ts": e.ts(), "enabled": e.enabled, "inputs": e.currentInputs()}
+	if l := e.am.Label(); l != "" {
+		st["lock"] = l
+	}
 	if e.pending != nil {
 		st["pending"] = e.pending.dir
 	}
@@ -577,6 +724,7 @@ func (e *Engine) publishMeta() {
 			"device": map[string]any{"name": "Beam steering"},
 			"fields": []map[string]any{
 				{"key": "enabled", "name": "Smart rotation", "type": "boolean"},
+				{"key": "lock", "name": "Antenna Mode Lock", "type": "string"},
 			},
 		},
 	}
