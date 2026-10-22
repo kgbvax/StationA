@@ -686,3 +686,44 @@ func TestStateCarriesLock(t *testing.T) {
 		t.Errorf("unlocked /state still carries lock: %v", got[2])
 	}
 }
+
+// TestStateCarriesRetractSeq: /state carries retract_seq while the controller
+// reports a finished lock retract, omits it otherwise, and the change dedup
+// sees retract_seq changing alone.
+func TestStateCarriesRetractSeq(t *testing.T) {
+	c, fake, _ := cmdTestClient(t)
+	states := func() []map[string]any {
+		var out []map[string]any
+		for _, p := range fake.recorded() {
+			if p.topic == "muehle/hf/ant-ctrl/state" {
+				var m map[string]any
+				if err := json.Unmarshal([]byte(p.payload), &m); err != nil {
+					t.Fatalf("bad /state json: %v", err)
+				}
+				out = append(out, m)
+			}
+		}
+		return out
+	}
+	s := service.State{FrequencyKHz: 14175, Retracted: true, Lock: "storm"}
+	c.PublishState(s)
+	if _, ok := states()[0]["retract_seq"]; ok {
+		t.Fatalf("/state carries retract_seq before the retract finished: %v", states()[0])
+	}
+	seq := uint64(1792345678901)
+	s.RetractSeq = &seq
+	c.PublishState(s) // only retract_seq changed
+	got := states()
+	if len(got) != 2 {
+		t.Fatalf("retract_seq change alone published %d snapshots, want 2", len(got))
+	}
+	if v, _ := got[1]["retract_seq"].(float64); uint64(v) != seq {
+		t.Errorf("/state retract_seq = %v, want %d", got[1]["retract_seq"], seq)
+	}
+	other := seq + 1
+	s.RetractSeq = &other
+	c.PublishState(s)
+	if n := len(states()); n != 3 {
+		t.Errorf("a different retract_seq published %d snapshots, want 3", n)
+	}
+}

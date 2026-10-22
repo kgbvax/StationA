@@ -14,9 +14,16 @@ package service
 //     RCU-06 comes back online (a power cycle may re-extend — also mid-retract;
 //     the latch is cleared until the re-issued retract is accepted), and at bridge
 //     start once the lock is known — then keeps retrying on the poll until the
-//     latch reads retracted and the motors have stopped. This also restores
-//     the retract latch the bridge loses on a restart. A lock with
-//     retract=false (antmode grounds the antenna first) only refuses extends.
+//     latch reads retracted and the motors have stopped (on a poll at least
+//     retractSettle after the retract was accepted). That finished retract is
+//     published as /state.retract_seq = lock.seq, so antmode never mistakes a
+//     latch left from an earlier lock (or the ACK-time snapshot) for this
+//     lock's retract. A lock with retract=false (antmode grounds the antenna
+//     first) only refuses extends.
+//
+// The retract latch itself is persisted (persist.go), so a bridge restart —
+// locked or not, RCU-06 powered or not — never publishes retracted:false for
+// elements a retract drove in and no frequency drove out since.
 //
 // Reading rules: no retained ant-mode state = normal (rollout-safe); a valid
 // locked snapshot is enforced even while hf/ant-mode/status is offline; a
@@ -36,6 +43,11 @@ import (
 	"codeberg.org/kgbvax/stationa/shared/antmode"
 	"codeberg.org/kgbvax/stationa/shared/logging"
 )
+
+// retractSettle is the minimum time between an accepted ensure-retract and
+// the poll that may confirm it: the status reply right after the ACK can read
+// the motors stopped before they have started.
+const retractSettle = 2 * time.Second
 
 // ErrLocked is returned by SetFrequency and SetMode while the antenna-mode
 // lock (or the startup hold) refuses element extends. Callers map it to their
@@ -59,9 +71,12 @@ type lockState struct {
 	retract bool
 
 	// Ensure-retract: pending means a retract must be (re)issued; sent means
-	// one was accepted since and the poll now waits for retracted && !moving.
+	// one was accepted (at sentAt) and the poll now waits for retracted &&
+	// !moving. done means the retract for seq finished (/state.retract_seq).
 	pending bool
 	sent    bool
+	sentAt  time.Time
+	done    bool
 
 	refused     logging.Streak // extend refusals; reset on unlock
 	retractFail logging.Streak // ensure-retract failures; reset on success
@@ -99,7 +114,7 @@ func (c *Controller) ApplyAntMode(payload []byte) (labelChanged bool) {
 	c.lk.seen = true
 	if !st.Locked() {
 		c.lk.haveSeq, c.lk.seq, c.lk.retract = false, 0, false
-		c.lk.pending, c.lk.sent = false, false
+		c.lk.pending, c.lk.sent, c.lk.done = false, false, false
 		c.lk.refused.Reset()
 		c.lk.retractFail.Reset()
 	} else {
@@ -107,8 +122,11 @@ func (c *Controller) ApplyAntMode(payload []byte) (labelChanged bool) {
 		newSeq := !c.lk.haveSeq || l.Seq != c.lk.seq
 		// A new seq, or retract appearing on the current one (antmode builds
 		// the lock up: ground first, retract once the switch reports off).
+		if newSeq || !l.Retract {
+			c.lk.done = false // retract_seq names the current seq only
+		}
 		if l.Retract && (newSeq || !c.lk.retract) {
-			c.lk.pending, c.lk.sent, retractNow = true, false, true
+			c.lk.pending, c.lk.sent, c.lk.done, retractNow = true, false, false, true
 			c.log.Info("antenna mode retract requested", "mode", st.Mode, "seq", l.Seq)
 		}
 		c.lk.haveSeq, c.lk.seq, c.lk.retract = true, l.Seq, l.Retract
@@ -136,6 +154,18 @@ func (c *Controller) LockLabel() string {
 	return c.lk.st.Label()
 }
 
+// lockView returns the /state `lock` label and `retract_seq` (nil unless the
+// ensure-retract for the current lock seq has finished).
+func (c *Controller) lockView() (label string, retractSeq *uint64) {
+	c.lmu.Lock()
+	defer c.lmu.Unlock()
+	if c.lk.done && c.lk.st.Locked() && c.lk.st.L().Retract {
+		seq := c.lk.seq
+		retractSeq = &seq
+	}
+	return c.lk.st.Label(), retractSeq
+}
+
 // checkExtend returns ErrLocked (logging) while the lock or the startup hold
 // refuses an element extend, nil otherwise.
 func (c *Controller) checkExtend(what string, args ...any) error {
@@ -158,17 +188,20 @@ func (c *Controller) checkExtend(what string, args ...any) error {
 // RCU-06 power cycle may have driven the elements back out. It re-arms even
 // while a retract is in flight (sent, waiting for the motors): that retract
 // may not have finished before the outage. The latch is cleared too, so /state
-// does not claim retracted until the re-issued retract is accepted.
+// does not claim retracted until the re-issued retract is accepted, and
+// retract_seq is withdrawn until it finishes. The deadband bypass (extendDue)
+// stays: the elements may still be in from the first retract.
 func (c *Controller) deviceBackOnline() {
 	c.lmu.Lock()
 	rearm := c.lk.st.Locked() && c.lk.st.L().Retract
 	if rearm {
-		c.lk.pending, c.lk.sent = true, false
+		c.lk.pending, c.lk.sent, c.lk.done = true, false, false
 		c.log.Info("antenna mode retract re-armed: device back online", "seq", c.lk.seq)
 	}
 	c.lmu.Unlock()
 	if rearm {
-		c.setRetracted(false) // c.mu after c.lmu is released: never nested
+		// c.mu after c.lmu is released: never nested.
+		c.updateLatch(func(retracted, _ *bool) { *retracted = false })
 	}
 }
 
@@ -186,23 +219,25 @@ func (c *Controller) EnsureRetract(ctx context.Context) {
 	// Belt and braces: an extend that passed the gate just before the lock
 	// landed can still clear the latch after our retract.
 	if !s.Retracted && !s.Offline && !c.lk.pending {
-		c.lk.pending = true
+		c.lk.pending, c.lk.done = true, false
 		c.log.Info("antenna mode retract re-armed: elements not retracted", "seq", c.lk.seq)
 	}
 	if c.lk.sent && !s.Retracted {
 		c.lk.sent = false
 	}
-	pending, sent, seq, label := c.lk.pending, c.lk.sent, c.lk.seq, c.lk.st.Label()
+	pending, sent, sentAt, seq, label := c.lk.pending, c.lk.sent, c.lk.sentAt, c.lk.seq, c.lk.st.Label()
 	c.lmu.Unlock()
 
 	if !pending || s.Offline {
 		return
 	}
 	if sent {
-		if s.Retracted && !s.MotorsMoving {
+		// The settle window keeps the ACK-time snapshot (motors not yet
+		// reported moving) from confirming a retract that is still running.
+		if s.Retracted && !s.MotorsMoving && c.now().Sub(sentAt) >= retractSettle {
 			c.lmu.Lock()
 			if c.lk.pending && c.lk.sent && c.lk.seq == seq {
-				c.lk.pending, c.lk.sent = false, false
+				c.lk.pending, c.lk.sent, c.lk.done = false, false, true
 				c.lk.retractFail.Reset()
 				c.log.Info("antenna mode: elements retracted", "lock", label, "seq", seq)
 			}
@@ -221,6 +256,6 @@ func (c *Controller) EnsureRetract(ctx context.Context) {
 		return
 	}
 	if c.lk.pending && c.lk.seq == seq {
-		c.lk.sent = true
+		c.lk.sent, c.lk.sentAt = true, c.now()
 	}
 }

@@ -14,6 +14,8 @@ func TestDefault(t *testing.T) {
 		HTTPAddr:   "127.0.0.1:8080",
 		SerialPort: "",
 		Baud:       19200,
+		// The retract latch is persisted in the systemd StateDirectory.
+		StateDir: "/var/lib/ultrabridge",
 		MQTT: MQTT{
 			// ClientID empty: derived from the slot address by the MQTT client
 			// (model §8). Slot is the canonical ant-ctrl role (model §4).
@@ -69,6 +71,7 @@ password         = "s3cr3t"
 		Baud:       38400,
 		Location:   "bauwagen",
 		Host:       "shari",
+		StateDir:   "/var/lib/ultrabridge", // key absent → default
 		MQTT: MQTT{
 			Broker:          "tcp://broker.local:1883",
 			ClientID:        "custom-id",
@@ -146,5 +149,18 @@ ant_mode_slot = ""
 	}
 	if got.MQTT.AntModeSlot != "" {
 		t.Errorf("AntModeSlot = %q, want empty (disabled)", got.MQTT.AntModeSlot)
+	}
+}
+
+// TestLoadStateDirDisable: state_dir is read from the file; "" keeps the
+// retract latch in memory only.
+func TestLoadStateDirDisable(t *testing.T) {
+	path := writeTemp(t, "state_dir = \"\"\n")
+	got, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if got.StateDir != "" {
+		t.Errorf("StateDir = %q, want empty (disabled)", got.StateDir)
 	}
 }

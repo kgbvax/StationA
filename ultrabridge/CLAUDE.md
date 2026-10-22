@@ -57,7 +57,9 @@ mutex. While storm/maintenance, `SetFrequency`/`SetMode` return `service.ErrLock
 one place for MQTT and HTTP (HTTP answers 423) — and `Retract` is never refused. With
 `lock.retract` the poll loop's `EnsureRetract` retracts on a new seq, on device back
 online (also mid-retract: re-issued, `retracted` cleared until accepted) and at start, retrying until `retracted && !moving` (`logging.Streak`). No
-retract while `retract=false` (antmode grounds first). Unlock does not re-extend
+retract while `retract=false` (antmode grounds first). A retract counts as finished only
+on a poll ≥ 2 s (`retractSettle`) after the ACK; it is then published as
+`/state.retract_seq`. Unlock does not re-extend
 (antennaselect band-follow does). No retained state = normal; malformed = keep last
 known + Error; a 3 s startup hold refuses extends until the first ant-mode state lands.
 
@@ -89,10 +91,16 @@ muehle/hf/ant-ctrl/cmd       retained  one-shot command — cleared after execut
 ```
 
 State fields: `ts`, `freq_hz` (Hz), `band`, `direction` (`forward`/`reverse`/`bidirectional`),
-`moving` (bool), `retracted` (bool — latched by a successful retract, cleared by the next accepted frequency/direction change; bridge-side, lost on restart — re-established by the ensure-retract while an antenna-mode lock with `retract` is active; the PA arm on PLC #1 blocks on it), `device_online` (bool, `true` while the RCU-06 is reachable, `false` when
+`moving` (bool), `retracted` (bool — latched by a successful retract ACK, cleared by the next accepted frequency/direction change; bridge-side, **persisted** in `<state_dir>/retract.json` so it survives a restart; also re-established by the ensure-retract while an antenna-mode lock with `retract` is active; the PA arm on PLC #1 blocks on it), `device_online` (bool, `true` while the RCU-06 is reachable, `false` when
 not — always present), `error` (string, omitempty), `lock` (`storm`/`maintenance` while the
 antenna-mode lock is active, omitted otherwise; included in the change dedup; exposed
-read-only in `/meta`).
+read-only in `/meta`), `retract_seq` (the lock seq whose ensure-retract finished —
+accepted, then a poll ≥ 2 s later read retracted and stopped; omitted otherwise; not in
+`expose`).
+
+The SetFrequency 25 kHz deadband is bypassed from an accepted retract until the next
+accepted frequency (`extendDue`, persisted with the latch): the RCU-06 keeps reporting
+the pre-retract frequency, so a same-band re-tune after an unlock must still reach it.
 
 `direction` is deliberately not called `mode` — on the station bus `mode` is the
 canonical radio-mode vocabulary (`cw`/`usb`/…, integration model §4).
@@ -133,6 +141,10 @@ password         = "..."
 # client_id defaults to "<site>-<station>-<slot>"
 ant_mode_slot    = "ant-mode"   # antenna-mode lock; "" disables (default "ant-mode")
 ```
+
+Top-level `state_dir` (default `/var/lib/ultrabridge`, the systemd `StateDirectory`
+deploy.sh adds; `""` keeps the latch in memory only) holds `retract.json`, the
+persisted retract latch. Deploy before relying on it: the unit needs `StateDirectory=`.
 
 Leave `serial_port` empty to run with the mock device (no hardware required).
 

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"time"
 
 	"ultrabridge/internal/config"
@@ -92,6 +93,13 @@ func main() {
 
 	ctrl := service.NewController(dev)
 	ctrl.SetLogger(slotLogger)
+	if cfg.StateDir != "" {
+		// The retract latch (the RCU-06 cannot report it) survives a restart:
+		// without it a restart after a storm unlock would publish
+		// retracted:false with the elements in and let the frequency deadband
+		// swallow the re-extend. Loaded before any poll or command runs.
+		ctrl.PersistTo(filepath.Join(cfg.StateDir, "retract.json"))
+	}
 	if cfg.MQTT.Broker != "" && cfg.MQTT.AntModeSlot != "" {
 		// Antenna-mode lock: refuse extends for up to 3 s after start until the
 		// retained hf/ant-mode/state lands, so a retained /cmd replayed on

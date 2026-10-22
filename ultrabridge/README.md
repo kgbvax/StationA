@@ -39,6 +39,7 @@ serial_port = "/dev/ttyUSB0"   # empty -> mock device
 baud        = 19200
 location    = "bauwagen"       # published in /meta
 host        = "scmino"         # published in /meta
+state_dir   = "/var/lib/ultrabridge"  # persisted retract latch (retract.json); "" = memory only
 
 [mqtt]
 broker           = "tcp://127.0.0.1:1883"  # empty -> MQTT disabled

@@ -168,7 +168,8 @@ Retained JSON snapshot, QoS 1. Published only when a field value changes.
 ```
 
 While the antenna-mode lock is active (§6.1) the snapshot also carries `"lock": "storm"`
-(or `"maintenance"`).
+(or `"maintenance"`), and — once the bridge's own retract for the current lock has
+finished — `"retract_seq": <lock.seq>`.
 
 | Field | Type | Unit | Notes |
 |-------|------|------|-------|
@@ -177,10 +178,11 @@ While the antenna-mode lock is active (§6.1) the snapshot also carries `"lock":
 | `band` | string | — | Band label derived from `freq_hz`; see §7.2 |
 | `direction` | string | — | Beam direction: `forward` \| `reverse` \| `bidirectional` |
 | `moving` | bool | — | `true` while elements are physically moving (feeds the interlock mirror, model §6) |
-| `retracted` | bool | — | Latched `true` by a successful retract, cleared by the next accepted frequency/direction change. Bridge-side (the RCU-06 reports no retract flag); while an antenna-mode lock with `retract` is active the bridge re-establishes it after a restart or RCU-06 power cycle (§6.1); on the RCU-06 back-online edge under such a lock it reads `false` until the re-issued retract is accepted. The PA arm on PLC #1 blocks on it. |
+| `retracted` | bool | — | Latched `true` by a successful retract, cleared by the next accepted frequency/direction change. Bridge-side (the RCU-06 reports no retract flag), so it is **persisted** in `<state_dir>/retract.json` and survives a bridge restart — locked or not, RCU-06 powered or not (a front-panel re-tune is not seen; the latch then stays `true` until the next accepted frequency/direction, the safe direction for the PA arm). While an antenna-mode lock with `retract` is active the bridge also re-establishes it after an RCU-06 power cycle (§6.1); on the RCU-06 back-online edge under such a lock it reads `false` until the re-issued retract is accepted. The latch is set on the retract **ACK**: it says "a retract was accepted", not "the elements have stopped" (see `retract_seq`). The PA arm on PLC #1 blocks on it. |
 | `device_online` | bool | — | `true` while the RCU-06 is reachable over serial, `false` when it is not (and the bridge itself is still up). Always present so consumers can distinguish "online" from "no data". Bridge liveness is `/status`, never a state field (model §3). |
 | `error` | string | — | Last error message; omitted when empty |
 | `lock` | string | — | Antenna-mode lock: `storm` \| `maintenance` while `hf/ant-mode` locks the Ultrabeam (extends refused); omitted when unlocked. Part of the change dedup — a lock change alone publishes a snapshot. |
+| `retract_seq` | integer | — | The antenna-mode `lock.seq` whose ensure-retract (§6.1) **finished**: the retract was accepted for that seq, then a poll at least 2 s later read `retracted` and the motors stopped. Omitted while unlocked, while the lock has `retract: false`, and from a new seq, `retract` appearing, or an RCU-06 back-online re-arm until that retract finishes. Unlike `retracted`, a latch left from an earlier lock or the ACK-time snapshot never confirms the current seq — antmode should compare it with its own `lock.seq`. Part of the change dedup. Not in `/meta` `expose` (sequencing data, not an operator field). |
 
 ---
 
@@ -267,7 +269,7 @@ through `shared/antmode.Parse` and **enforces** the lock itself:
 | `frequency`, `band`, `direction` (and the `mode` alias) | **refused** — every one of them drives the elements out. The command never reaches the RCU-06; the retained `/cmd` is still cleared. One Warn per refusal streak (reset on unlock). |
 | `retract` | always allowed |
 | HTTP API | `/api/frequency` and `/api/mode` answer **423 Locked**; `/api/retract` works; the status page shows the lock |
-| `lock.retract: true` | the bridge **retracts by itself**: on a new `lock.seq` (or `retract` appearing on the current one), when the RCU-06 comes back online (a power cycle may re-extend; this re-issues a retract still waiting for its motors and clears `retracted` until the new one is accepted), and at bridge start once the lock is known — then re-checks on every 2 s poll until `retracted` and not `moving`. Failures retry on the next poll (one Warn per streak). This also restores the `retracted` latch lost on a bridge restart. |
+| `lock.retract: true` | the bridge **retracts by itself**: on a new `lock.seq` (or `retract` appearing on the current one), when the RCU-06 comes back online (a power cycle may re-extend; this re-issues a retract still waiting for its motors and clears `retracted` until the new one is accepted), and at bridge start once the lock is known — then re-checks on every 2 s poll until `retracted` and not `moving` on a poll at least 2 s after the retract was accepted — that finished retract is published as `retract_seq`. Failures retry on the next poll (one Warn per streak). |
 | `lock.retract: false` | extends refused, **no** retract — antmode grounds the antenna switch first and adds `retract` once the switch reports `off`. |
 
 Reading rules: no retained ant-mode state (or an empty payload) = **normal** (the bridge is
@@ -284,8 +286,12 @@ last known lock and logs an Error. `ts` is not checked.
   a storm lock.
 - **Leaving the mode** does not re-extend: the elements come back out only through
   antennaselect's band-follow (which re-sends the frequency on unlock; the deadband does
-  not swallow a same-band retune while retracted).
-- **Config:** `[mqtt] ant_mode_slot` (default `"ant-mode"`; `""` disables the lock).
+  not swallow a same-band retune between an accepted retract and the next accepted
+  frequency — this bypass is persisted with the latch and survives both a bridge restart
+  and the back-online clear of `retracted`).
+- **Config:** `[mqtt] ant_mode_slot` (default `"ant-mode"`; `""` disables the lock);
+  top-level `state_dir` (default `"/var/lib/ultrabridge"`, the systemd StateDirectory;
+  `""` keeps the retract latch in memory only).
 
 ---
 
@@ -401,7 +407,7 @@ Subscribe to `<slot>/#`. The broker immediately delivers retained `/meta`,
 1. antmode publishes `{"ant_mode":"storm","lock":{"seq":17,"ground":true,"retract":false,…}}`
    → `/state.lock == "storm"`; a `band` `/cmd` is refused and cleared.
 2. Once the switch is grounded antmode adds `"retract":true` → ultrabridge retracts:
-   `moving:true, retracted:true` then `moving:false`.
+   `moving:true, retracted:true` then `moving:false`, then `retract_seq: 17`.
 3. On `normal`, `lock` disappears from `/state`; band-follow re-extends.
 
 **Detect RCU fault:**

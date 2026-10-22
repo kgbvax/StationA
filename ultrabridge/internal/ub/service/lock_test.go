@@ -21,7 +21,8 @@ type scriptDev struct {
 	freqKHz     uint16
 	moving      bool
 	offline     bool
-	failRetract int // number of upcoming retracts to fail
+	failRetract int  // number of upcoming retracts to fail
+	noMotion    bool // a retract is accepted but the motors never read moving
 	counts      map[byte]int
 }
 
@@ -57,7 +58,7 @@ func (d *scriptDev) Exchange(_ context.Context, com byte, data []byte, _ time.Du
 			d.failRetract--
 			return protocol.Packet{Com: protocol.ReplyInvalidCommand}, nil
 		}
-		d.moving = true
+		d.moving = !d.noMotion
 		return protocol.Packet{Com: protocol.ReplyOK}, nil
 	case protocol.CmdChangeFrequency:
 		d.freqKHz = uint16(data[0]) | uint16(data[1])<<8

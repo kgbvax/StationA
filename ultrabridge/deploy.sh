@@ -98,6 +98,8 @@ trap 'rm -f "$SEED_CONFIG" "${UNIT_FILE:-}"' EXIT
   echo "# Deployment identity, published in /meta (integration model §3)."
   echo "location    = \"$(toml_escape "$LOCATION")\""
   echo "host        = \"$(toml_escape "$HOST_NAME")\""
+  echo "# Retract latch (retract.json) survives restarts here (systemd StateDirectory)."
+  echo "state_dir   = \"/var/lib/ultrabridge\""
   echo ""
   echo "[mqtt]"
   echo "broker           = \"$(toml_escape "$MQTT_BROKER")\""
@@ -145,6 +147,10 @@ Group=${SERVICE_USER}
 SupplementaryGroups=${SERIAL_GROUP}
 # systemd manages /etc/ultrabridge (created 0755, owned by the service user).
 ConfigurationDirectory=${SERVICE_NAME}
+# /var/lib/ultrabridge holds the retract latch (retract.json): the RCU-06
+# cannot report a retract, and the latch must survive a bridge restart.
+StateDirectory=${SERVICE_NAME}
+StateDirectoryMode=0700
 # Hardening.
 NoNewPrivileges=true
 ProtectSystem=full

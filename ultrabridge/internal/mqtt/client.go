@@ -95,6 +95,10 @@ type publishedState struct {
 	Offline   bool
 	LastError string
 	Lock      string
+	// RetractSeq/HasRetractSeq flatten State.RetractSeq so the snapshot
+	// stays comparable for the change dedup.
+	RetractSeq    uint64
+	HasRetractSeq bool
 }
 
 type statePayload struct {
@@ -107,8 +111,8 @@ type statePayload struct {
 	Direction string `json:"direction"`
 	Moving    bool   `json:"moving"`
 	// Retracted is true after a successful retract until the next accepted
-	// frequency/direction change (bridge-side latch, lost on restart; re-established
-	// while an antenna-mode lock with retract is active). The PA arm
+	// frequency/direction change (bridge-side latch, persisted across restarts;
+	// re-established while an antenna-mode lock with retract is active). The PA arm
 	// on PLC #1 treats a retracted Ultrabeam as not tuned.
 	Retracted bool `json:"retracted"`
 	// DeviceOnline is the canonical device-reachability field (model §3): true while the
@@ -122,6 +126,11 @@ type statePayload struct {
 	// Lock is the antenna-mode lock (storm|maintenance) while hf/ant-mode
 	// refuses element extends; omitted when unlocked.
 	Lock string `json:"lock,omitempty"`
+	// RetractSeq is the antenna-mode lock seq whose ensure-retract finished
+	// (retract accepted, then elements latched in with the motors stopped on a
+	// later poll); omitted otherwise. antmode leaves `retracting` on
+	// retract_seq == lock.seq, never on a latch left from an earlier lock.
+	RetractSeq *uint64 `json:"retract_seq,omitempty"`
 }
 
 // New connects the bridge. antModeSlot names the antenna-mode slot whose
@@ -261,6 +270,10 @@ func (c *Client) PublishState(state service.State) {
 		Error:        snap.LastError,
 		Lock:         snap.Lock,
 	}
+	if snap.HasRetractSeq {
+		seq := snap.RetractSeq
+		payload.RetractSeq = &seq
+	}
 	c.publishJSON(c.stateTopic(), payload, 1, true)
 }
 
@@ -348,7 +361,7 @@ func (c *Client) metaPayload() map[string]any {
 }
 
 func stateSnapshot(state service.State) publishedState {
-	return publishedState{
+	snap := publishedState{
 		FreqHz:    int64(state.FrequencyKHz) * 1000,
 		Band:      state.BandName,
 		Mode:      state.ModeName,
@@ -358,6 +371,10 @@ func stateSnapshot(state service.State) publishedState {
 		LastError: state.LastError,
 		Lock:      state.Lock,
 	}
+	if state.RetractSeq != nil {
+		snap.RetractSeq, snap.HasRetractSeq = *state.RetractSeq, true
+	}
+	return snap
 }
 
 func (c *Client) shouldPublishState(snapshot publishedState) bool {

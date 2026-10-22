@@ -28,7 +28,8 @@ All endpoints are relative to the server root (e.g., `http://localhost:8080`).
     }
     ```
     While the antenna-mode lock is active the body also carries `"lock": "storm"` (or
-    `"maintenance"`).
+    `"maintenance"`), and `"retract_seq"` once the bridge's retract for that lock seq has
+    finished. `retracted` is persisted across bridge restarts.
 
 ### 2. Set Frequency
 - **URL:** `/api/frequency`
