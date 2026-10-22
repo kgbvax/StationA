@@ -11,6 +11,11 @@ rotator directly; resulting motion still surfaces in `/state`. It is
 **read-write**. The UHF sat rotators are separate slots (`muehle/uhf/az-rotator`,
 `muehle/uhf/el-rotator`, spid-ercm-rotator-bridge) — no collision.
 
+The bridge **enforces the station antenna mode** (`muehle/hf/ant-mode`, component
+`antmode`): in `storm`/`maintenance` it refuses motion on all three inbound
+paths, never refuses stop, and executes the park (`lock.park_az`) itself — see
+"Antenna-mode lock" below.
+
 ---
 
 ## Commands
@@ -32,6 +37,7 @@ Run a single test package:
 go test ./internal/bridge/... -run TestHandleCommand
 go test ./internal/gs232/...
 go test ./internal/pstrotator/...
+go test ./internal/lock/...
 ```
 
 CLI flags:
@@ -51,8 +57,10 @@ with `internal/gs232` and `internal/pstrotator` as parallel inbound control
 paths.
 
 1. `cmd/wrc-rotator-bridge/main.go` — flags, config load, signal ctx, MQTT
-   connect+LWT, `/cmd` subscription + bounded worker, WRC WebSocket restart
-   loop with exponential backoff, GS-232 server start.
+   connect+LWT, ant-mode subscription (before `/cmd`), `/cmd` subscription +
+   bounded worker, the lock loop (1 s ticker + kicks: park step + `/state.lock`),
+   WRC WebSocket restart loop with exponential backoff, GS-232 and PSTRotator
+   server start.
 2. `internal/rotor` — WRC WebSocket device: dial (ctx-aware `DialContext`),
    read loop parsing `RotorStatus` into canonical `State`, mutex-guarded
    command writes (`SetAz`/`Stop`/`Jog`) bounded by a 3 s per-write deadline
@@ -61,15 +69,23 @@ paths.
    for the GS-232 server.
 3. `internal/bridge` — canonical rotator state model + MQTT publishing:
    `/meta` (role `rotator`, `axes [az]`, `expose`), retained `/state` snapshot
-   with change-dedup, `/cmd` dispatch via a `Commander`.
+   with change-dedup (the `lock` label is part of it), `/cmd` dispatch via a
+   `Commander` (a `set_az` with `override` goes to `SetAzOverride` when the
+   commander implements `OverrideCommander`).
 4. `internal/gs232` — optional GS-232B TCP server: `C`/`C2` position query,
-   `Mxxx`/`Wxxx` move, `S` stop. Drives the same `rotor.Device` the bridge
+   `Mxxx`/`Wxxx` move, `S` stop. Drives the same lock gate the bridge
    does; the resulting motion surfaces in `/state`.
 5. `internal/pstrotator` — optional PSTRotator-compatible UDP listener on port
    12040 (configurable). Accepts XML datagrams (`AZIMUTH`, `STOP`, `PARK`,
-   `AZ?` query) and drives the same `rotor.Device`; the resulting motion
-   surfaces in `/state`.
-6. `internal/config` — TOML config, flags, `WRC_ROTATOR_BRIDGE_*` env overrides.
+   `AZ?` query) and drives the same lock gate; the resulting motion
+   surfaces in `/state`. `Serve` takes a pre-bound socket (tests bind first).
+6. `internal/lock` — the antenna-mode `Gate`: a `rotor.Commander` wrapping the
+   `rotor.Device`, handed to `/cmd`, GS-232 and PSTRotator in place of the
+   device. Parses `hf/ant-mode/state` with `shared/antmode`, refuses motion
+   with `rotor.ErrLocked`, passes stop, accepts the maintenance nudge, and
+   runs the park state machine (`Observe` from telemetry, `Step` from the
+   lock loop).
+7. `internal/config` — TOML config, flags, `WRC_ROTATOR_BRIDGE_*` env overrides.
 
 **Restart loop** (`wsLoop`): dials the WRC, publishes meta, runs the read loop
 until the WebSocket errors or ctx cancels, then marks the device offline and
@@ -82,10 +98,61 @@ systemd must SIGKILL after `TimeoutStopSec`.
 **Concurrency:** `rotor.Device.writeMu` guards the WebSocket and all writes
 (commands from `/cmd` and from GS-232 handlers serialize on it). `rotor.Device.
 stateMu` guards the last state snapshot. `bridge.Bridge.mu` guards the
-canonical state and the dedup snapshot. The paho `/cmd` handler runs in paho's
+canonical state and the dedup snapshot; `bridge.Bridge.pubMu` serializes
+"snapshot + publish" across the WRC read loop, wsLoop and the lock loop, so a
+stale `/state` is never left retained. The paho `/cmd` handler runs in paho's
 goroutine and only enqueues onto a bounded channel — it never blocks (a
 `set_az` writes to the WRC). GS-232 handlers run in their own accept goroutines
 and reach the device only through the mutex-guarded `Controller` interface.
+The paho ant-mode handler only parses under `lock.Gate.mu` and kicks the lock
+loop; the loop does the park write and the `/state.lock` publish. `Gate.mu` is
+never held across a device write (a WRC write can take up to 3 s).
+
+---
+
+## Antenna-mode lock
+
+Contract: `../antmode/docs/ant-mode-mqtt-api.md`; decision record:
+`../docs/known-issues.md` ("HF antenna mode"). Config `[mqtt] ant_mode_slot`
+(default `ant-mode`; `""` disables the lock and the startup hold) and
+`[mqtt] nudge_max_deg` (default 10, must be > 0; the maintenance nudge bound).
+
+- No retained ant-mode state = normal (rollout-safe). A valid locked snapshot
+  is enforced even while `hf/ant-mode/status` is offline. Malformed = keep the
+  last known lock + Error.
+- Startup hold: until the first ant-mode state arrives, motion is refused
+  while MQTT connects and for 3 s after it is up (`Gate.StartHold` from
+  OnConnect, before the ant-mode subscription), so a command cannot beat the
+  retained lock even behind a slow broker.
+- Locked: `set_az`/`fwd`/`rev` (MQTT), `M`/`W` (GS-232, still acked) and
+  `<AZIMUTH>` (PSTRotator) are refused with `rotor.ErrLocked` — one Warn per
+  refusal streak (`shared/logging.Streak`), callers log nothing extra. `stop`,
+  `S` and `<STOP>` always pass; `C`/`AZ?` always answer.
+- Maintenance with `lock.nudge`: a `/cmd` `set_az` tagged
+  `"override":"maintenance"` passes (console intent tagging, not security)
+  when its target is within `nudge_max_deg` of the current readback — linear
+  in rotor coordinates (0..450° with the overlap), never wrapped mod 360. A
+  target farther away, outside 0..450°, or any nudge while the WRC is offline (no readback to
+  bound it by), is refused with `rotor.ErrLocked` (its own Warn streak, reset
+  by an accepted nudge or a lock change) and ends nothing. The console sends
+  readback ± 5°; the bound stops any other client carrying the tag (or an old
+  APK with tap-to-aim) from slewing the brakeless G-450 a full sweep.
+- Park: once per `lock.seq`, after the WRC is online and the readback held
+  within 1° for 3 s with `moving:false`; arrival = within 3°. No re-aim for
+  drift. Re-sent only if it never arrived and the WRC reconnected (or the
+  write failed). An operator stop during the park cancels it until a new seq;
+  a stop racing the park write is re-sent after it. An accepted maintenance
+  nudge ends the park for its seq too, also a nudge before `park_az` was
+  published (`Gate.moveMu` makes a park write in flight land before the
+  nudge); antmode sees the nudge as a new `target_az` and reports `parked`
+  with the offset as `drift_deg`. Wind creep restarts the 3 s window (the park waits for a lull, by
+  design); antmode's `rotate_timeout_s` is the only deadline.
+- Restart: a finished park (arrived/cancelled/nudged) is recorded in
+  `<state_dir>/park.json` (config `state_dir`, default the systemd
+  StateDirectory `/var/lib/wrc-rotator-bridge`); the same mode+seq+park_az is
+  not parked again after a restart (a nudge record: mode+seq, any park_az).
+  A park underway at the restart is re-sent.
+- `/state.lock` = `storm` | `maintenance`, omitted when unlocked.
 
 ---
 
@@ -98,11 +165,13 @@ muehle/hf/rotator/meta     retained  birth certificate (capabilities + expose)
 muehle/hf/rotator/state    retained  live rotator state JSON snapshot
 muehle/hf/rotator/status   retained  online | offline (LWT — the bridge, not the WRC)
 muehle/hf/rotator/cmd      not retained  set_az | stop | fwd | rev intent (bus → bridge)
+muehle/hf/ant-mode/state   retained      antenna-mode lock (read; owned by antmode)
 ```
 
 `/state` is a single retained JSON document. Canonical fields: `az`
 (degrees), `target_az` (commanded target, omitempty), `moving` (bool),
-`rotor_state` (raw WRC state string, diagnostic), `device_online`/`error`. A
+`rotor_state` (raw WRC state string, diagnostic), `device_online`/`error`,
+`lock` (antenna-mode lock label, omitted when unlocked). A
 rotator carries **no** `freq_hz`/`band`/`mode` — those are radio concerns.
 `/cmd` is **not retained**: a rotator move is a one-shot command; re-applying a
 stale target on restart could spin the rotator unexpectedly. See

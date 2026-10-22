@@ -51,13 +51,21 @@ class AntennaPanel extends StatelessWidget {
 
     final isManual = mode == 'manual';
 
+    // Antenna-mode lock (storm / maintenance): antennaselect holds the
+    // switch at GND above every other tier, manual hold included. The port
+    // keys are off — a direct ant-switch publish in manual would bypass the
+    // reconciler, and the switch firmware does not know the lock. AUTO /
+    // MANUAL stay live: they only take effect once the lock is gone.
+    final antMode = store.antMode;
+    final locked = antMode.locked;
+
     // 'off' = all antenna ports grounded: nothing is connected to the TX
     // path, so operating is impossible — the label must shout that in red.
     // Only a confirmed state may claim it; unknown must not.
     final grounded = selectedRaw == 'off';
 
     void selectPort(String port) {
-      if (!switchOnline) return;
+      if (!switchOnline || locked) return;
       // In manual mode the operator drives the switch directly. In auto mode,
       // send a request to antenna-select if it is online; otherwise fall back
       // to driving the switch directly.
@@ -123,7 +131,7 @@ class AntennaPanel extends StatelessWidget {
                   return ElevatedButton(
                     // Exactly selectPort's guard: direct-drive moves the port
                     // only with RF inhibited and RX confirmed (fail closed).
-                    onPressed: switchOnline && (!direct || rfSafe) ? () => selectPort(port) : null,
+                    onPressed: switchOnline && !locked && (!direct || rfSafe) ? () => selectPort(port) : null,
                     // Grounded is the one selection that prevents operation,
                     // so even while active it renders in solid red, not accent.
                     style: AppTheme.actionButton(
@@ -150,6 +158,21 @@ class AntennaPanel extends StatelessWidget {
               ],
             ),
           ),
+          if (locked)
+            Positioned(
+              top: 8,
+              left: 12,
+              right: 150,
+              child: Text(
+                // Only a confirmed 'off' may claim grounded (see above):
+                // antennaselect may be down, or holding while RF is on.
+                '${antMode.label} LOCK · ${grounded ? 'grounded' : 'grounding…'}',
+                key: const ValueKey('antenna-lock-reason'),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: AppTheme.mono(11, color: AppTheme.amber, weight: FontWeight.w700),
+              ),
+            ),
           // The pill paints last so it sits on top of the card.
           Positioned(
             top: 6,

@@ -1,3 +1,4 @@
+import 'ant_mode.dart';
 import 'bus_store.dart';
 import 'station_hosts.dart';
 import 'wiring.dart' show optionalSlots;
@@ -173,6 +174,11 @@ class StationSchematicModel {
       case 'muehle/hf/antenna-select':
         // Manual hold: the reconciler stands down until released.
         return value<String>(address, 'mode') == 'manual' ? Severity.warn : Severity.none;
+      case antModeSlot:
+        // Storm / maintenance lock or a pending storm suggestion: a
+        // deliberate hold or a question to the operator, like manual hold.
+        final a = store.antMode;
+        return a.locked || a.stormSuggested ? Severity.warn : Severity.none;
     }
     return Severity.none;
   }

@@ -220,7 +220,11 @@ all of the following hold:
 
 - the current known frequency is nonzero,
 - `|requested − current| < 25 kHz` (a difference of exactly 25 kHz goes through),
-- the direction byte equals the current direction.
+- the direction byte equals the current direction,
+- the elements are **not** retracted (bridge-side `retracted` latch). While retracted every
+  change_frequency goes through: the RCU-06 keeps reporting the pre-retract frequency, so a
+  same-band re-tune after a storm/maintenance unlock (antenna mode) must still re-extend the
+  elements (2026-10-22; before that a retracted beam stayed in until the VFO moved ≥ 25 kHz).
 
 Rationale: re-driving the motors for a sub-25 kHz retune only wears them and churns the
 bus. 25 kHz matches the debug UI's nudge step, so one nudge still passes. A pure direction
@@ -232,6 +236,20 @@ Code-check verdict (2026-09-03): implemented —
 `ultrabridge/internal/ub/service/controller.go` (deadband in SetFrequency, bypass in
 SetMode), tests in `controller_test.go`. Not documented in `ultrabeam-mqtt-api.md` —
 consider adding it there.
+
+## [requirement] Antenna-mode lock (behavior contract)
+
+While the station antenna mode (`hf/ant-mode/state`, parsed with `shared/antmode`) is
+storm or maintenance, the bridge refuses every change_frequency (frequency, band and
+direction changes — all extend the elements) before it reaches the device, from any
+caller (MQTT `/cmd`, HTTP → 423). `retract` is never refused. When the lock carries
+`retract`, the bridge issues `retract` itself on a new lock seq, on the device's
+offline→online edge and at start once the lock is known, re-checking each 2 s poll until
+the latch is set and the moving status reports 0. Contract:
+`../ultrabeam-mqtt-api.md` §6.1 and `../../antmode/docs/ant-mode-mqtt-api.md`.
+
+Code-check verdict (2026-10-22): implemented — `ultrabridge/internal/ub/service/lock.go`,
+tests in `lock_test.go`.
 
 ## [defect] SIGTERM is not trapped (graceful shutdown dead in production)
 

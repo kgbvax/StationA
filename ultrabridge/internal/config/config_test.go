@@ -14,12 +14,17 @@ func TestDefault(t *testing.T) {
 		HTTPAddr:   "127.0.0.1:8080",
 		SerialPort: "",
 		Baud:       19200,
+		// The retract latch is persisted in the systemd StateDirectory.
+		StateDir: "/var/lib/ultrabridge",
 		MQTT: MQTT{
 			// ClientID empty: derived from the slot address by the MQTT client
 			// (model §8). Slot is the canonical ant-ctrl role (model §4).
 			ClientID:        "",
 			Slot:            "ant-ctrl",
 			DiscoveryPrefix: "homeassistant",
+			// The antenna-mode lock is on by default; with no retained
+			// ant-mode state the Ultrabeam is unlocked (rollout-safe).
+			AntModeSlot: "ant-mode",
 		},
 	}
 	if got != want {
@@ -66,6 +71,7 @@ password         = "s3cr3t"
 		Baud:       38400,
 		Location:   "bauwagen",
 		Host:       "shari",
+		StateDir:   "/var/lib/ultrabridge", // key absent → default
 		MQTT: MQTT{
 			Broker:          "tcp://broker.local:1883",
 			ClientID:        "custom-id",
@@ -75,6 +81,7 @@ password         = "s3cr3t"
 			DiscoveryPrefix: "homeassistant",
 			User:            "ham",
 			Password:        "s3cr3t",
+			AntModeSlot:     "ant-mode", // key absent → default
 		},
 	}
 	if got != want {
@@ -126,5 +133,34 @@ func TestLoadMissingFile(t *testing.T) {
 	}
 	if !errors.Is(err, fs.ErrNotExist) {
 		t.Fatalf("missing file: want fs.ErrNotExist, got %v", err)
+	}
+}
+
+// TestLoadAntModeSlotDisable: an explicit empty ant_mode_slot disables the
+// antenna-mode lock (no subscription, no startup hold).
+func TestLoadAntModeSlotDisable(t *testing.T) {
+	path := writeTemp(t, `
+[mqtt]
+ant_mode_slot = ""
+`)
+	got, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if got.MQTT.AntModeSlot != "" {
+		t.Errorf("AntModeSlot = %q, want empty (disabled)", got.MQTT.AntModeSlot)
+	}
+}
+
+// TestLoadStateDirDisable: state_dir is read from the file; "" keeps the
+// retract latch in memory only.
+func TestLoadStateDirDisable(t *testing.T) {
+	path := writeTemp(t, "state_dir = \"\"\n")
+	got, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if got.StateDir != "" {
+		t.Errorf("StateDir = %q, want empty (disabled)", got.StateDir)
 	}
 }

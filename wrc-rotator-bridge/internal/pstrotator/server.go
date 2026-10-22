@@ -16,6 +16,7 @@ package pstrotator
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -23,6 +24,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"wrc-rotator-bridge/internal/rotor"
 )
 
 // Controller is the rotator surface the UDP server drives. It is a subset of
@@ -60,7 +63,13 @@ func (s *Server) Run(ctx context.Context) error {
 		return fmt.Errorf("pstrotator listen %s: %w", addr, err)
 	}
 	s.log.Info("PSTRotator UDP listener", "addr", addr)
+	return s.Serve(ctx, pc)
+}
 
+// Serve reads datagrams from an already-bound socket until ctx is cancelled,
+// then closes it. Run binds and calls it; tests bind first so no datagram is
+// sent before the socket exists (a UDP "dial" cannot tell).
+func (s *Server) Serve(ctx context.Context, pc net.PacketConn) error {
 	// Close the socket when ctx is cancelled so ReadFrom unblocks.
 	go func() {
 		<-ctx.Done()
@@ -120,7 +129,7 @@ func (s *Server) handle(pc net.PacketConn, src net.Addr, msg string) {
 	if m := azimuthRe.FindStringSubmatch(msg); len(m) > 1 {
 		az, _ := strconv.ParseFloat(m[1], 64)
 		s.log.Info("PSTRotator cmd", "remote", remote, "cmd", "set_az", "az", az)
-		if err := s.ctrl.SetAz(az); err != nil {
+		if err := s.ctrl.SetAz(az); err != nil && !errors.Is(err, rotor.ErrLocked) {
 			s.log.Warn("PSTRotator set_az failed", "err", err)
 		}
 		return

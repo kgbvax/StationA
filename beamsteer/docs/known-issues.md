@@ -17,3 +17,11 @@ beamsteer supports both through `pstrotator.reply`. The default is `manual`. Whi
 ## [decision] Logger target moves from wrc :12040 to beamsteer :12050
 
 For smart rotation to work, the logger must send to beamsteer. The wrc-rotator-bridge listener on :12040 stays up and drives the rotator directly, without smart rotation. It remains a fallback, for example when beamsteer is down.
+
+## [decision] Antenna-mode lock: stand down, logger STOP not forwarded
+
+While `hf/ant-mode` is storm or maintenance, beamsteer ignores every rotate request (toggle on or off), drops a held flip and sends nothing to `hf/rotator` or `hf/ant-ctrl`. The bridges enforce the lock and run the park themselves; beamsteer only keeps out of the way.
+
+The logger's PstRotator `STOP` is not forwarded either. A contest logger sends STOP on its own (for example on a band change or a key macro), and a STOP reaching wrc-rotator-bridge during the park cancels the park until a repark. The operator's STOP still works: the console and the M5 dial send it straight to the rotator bridge.
+
+Nothing dropped while locked is replayed on unlock; the next logger request decides afresh.

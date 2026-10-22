@@ -82,5 +82,15 @@ void main() {
         }
       }
     }
+    // The HF page under a storm lock (the console opens on HF).
+    final storm = BusStore()..seedScenario(StationScenario.storm);
+    final key = GlobalKey();
+    await tester.pumpWidget(TestHarness(
+      store: storm,
+      mqtt: FakeMqttService(storm),
+      child: RepaintBoundary(key: key, child: const ConsoleScreen()),
+    ));
+    await tester.pump(const Duration(milliseconds: 100));
+    await _shoot(tester, key, '${dir.path}/page-hf-storm.png');
   });
 }

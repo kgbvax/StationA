@@ -383,3 +383,20 @@ func TestIdleShutdownConfigRejects(t *testing.T) {
 		}
 	}
 }
+
+func TestAntModeSlotDefaultAndValidation(t *testing.T) {
+	cfg := validConfig()
+	if cfg.MQTT.AntModeSlot != "ant-mode" {
+		t.Errorf("ant_mode_slot default = %q, want ant-mode", cfg.MQTT.AntModeSlot)
+	}
+	cfg.MQTT.AntModeSlot = "" // disabled
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("empty ant_mode_slot rejected: %v", err)
+	}
+	for _, bad := range []string{"hf/ant-mode", "ant-mode/#", "+"} {
+		cfg.MQTT.AntModeSlot = bad
+		if err := cfg.Validate(); err == nil {
+			t.Errorf("ant_mode_slot %q accepted", bad)
+		}
+	}
+}

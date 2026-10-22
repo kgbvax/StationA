@@ -23,9 +23,13 @@ All endpoints are relative to the server root (e.g., `http://localhost:8080`).
       "motors_moving": false,
       "mode_name": "forward",
       "offline": false,
+      "retracted": false,
       "updated_at": "2026-05-19T12:34:56Z"
     }
     ```
+    While the antenna-mode lock is active the body also carries `"lock": "storm"` (or
+    `"maintenance"`), and `"retract_seq"` once the bridge's retract for that lock seq has
+    finished. `retracted` is persisted across bridge restarts.
 
 ### 2. Set Frequency
 - **URL:** `/api/frequency`
@@ -39,6 +43,8 @@ All endpoints are relative to the server root (e.g., `http://localhost:8080`).
 - **Response:**
   - `200 OK` with `{ "status": "ok" }` on success
   - `400 Bad Request` on invalid input
+  - `423 Locked` while the antenna-mode lock (storm/maintenance) refuses element extends
+  - `502 Bad Gateway` when the RCU-06 fails the command
 
 ### 3. Set Mode
 - **URL:** `/api/mode`
@@ -51,6 +57,8 @@ All endpoints are relative to the server root (e.g., `http://localhost:8080`).
 - **Response:**
   - `200 OK` with `{ "status": "ok" }` on success
   - `400 Bad Request` on invalid input
+  - `423 Locked` while the antenna-mode lock refuses element extends
+  - `502 Bad Gateway` when the RCU-06 fails the command
 
 ### 4. Refresh State
 - **URL:** `/api/refresh`
@@ -62,7 +70,7 @@ All endpoints are relative to the server root (e.g., `http://localhost:8080`).
 ### 5. Retract
 - **URL:** `/api/retract`
 - **Method:** `POST`
-- **Description:** Retracts the antenna elements.
+- **Description:** Retracts the antenna elements. Never refused by the antenna-mode lock.
 - **Response:**
   - `200 OK` with `{ "status": "ok" }` on success
 
@@ -112,6 +120,9 @@ curl -X POST http://localhost:8080/api/retract
 - Frequency must be between 1 and 65535.
 - Modes: `forward`, `reverse`, `bidirectional`.
 - Live updates are available via SSE at `/api/events`.
+- Antenna-mode lock: while `hf/ant-mode` reports storm or maintenance, frequency and mode
+  changes answer `423 Locked` (the status page shows the lock and greys out those
+  controls); retract always works. See `ultrabeam-mqtt-api.md` §6.1.
 
 ---
 

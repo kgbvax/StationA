@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:clock/clock.dart';
 import 'package:flutter/foundation.dart';
 
+import 'ant_mode.dart';
 import 'wiring.dart' show expectedSlots, optionalSlots;
 
 /// Whether an HF carrier is up, as far as the bus can tell.
@@ -132,6 +133,13 @@ class BusStore extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// The station antenna mode (`muehle/hf/ant-mode`), read per the slot's
+  /// rules: no retained state → normal; a locked snapshot holds while the
+  /// owner's /status is offline (a dead owner never unlocks); a malformed
+  /// snapshot keeps the last known mode (and counts in [malformedPayloads]).
+  AntModeState _antMode = AntModeState.normal;
+  AntModeState get antMode => _antMode;
+
   UnmodifiableMapView<String, Slot> get slots => UnmodifiableMapView(_slots);
   UnmodifiableListView<FaultRecord> get faultHistory => UnmodifiableListView(_faultHistory);
 
@@ -158,6 +166,7 @@ class BusStore extends ChangeNotifier {
         case 'state':
           if (slot.state != null) slot.deviceChangedAt = clock.now();
           slot.state = null;
+          if (addr == antModeSlot) _antMode = AntModeState.normal;
         case 'status':
           if (slot.status != null) slot.statusChangedAt = clock.now();
           slot.status = null;
@@ -190,6 +199,14 @@ class BusStore extends ChangeNotifier {
             }
             _updateHotValues(addr, slot.state!);
             _updateFaultHistory(addr, slot.state);
+            if (addr == antModeSlot) {
+              final parsed = AntModeState.parse(value);
+              if (parsed != null) {
+                _antMode = parsed;
+              } else {
+                _malformedPayloads++;
+              }
+            }
           } else {
             _malformedPayloads++;
           }

@@ -272,7 +272,9 @@ class _MercatorMapPanelState extends State<MercatorMapPanel> {
             },
             // Tap aims the rotator at the great-circle bearing of the tapped
             // point — the Mercator twin of the compass disc's tap-to-aim.
-            onTapUp: (rotatorOnline && qth != null)
+            // Off under an antenna-mode lock (as on the disc): only the
+            // bounded maintenance nudge keys may move a locked rotator.
+            onTapUp: (rotatorOnline && qth != null && aimRoute(store, surface) == AimRoute.normal)
                 ? (d) {
                     final p = proj.unproject(d.localPosition.dx, d.localPosition.dy);
                     if (p == null) return;

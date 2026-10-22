@@ -28,6 +28,10 @@ type Config struct {
 	// Host is the compute node the adapter runs on (model §3, §8.1 item 5),
 	// published in /meta. Defaults to "shari".
 	Host string `toml:"host"`
+	// StateDir holds the bridge's small runtime state (the finished
+	// antenna-mode park record, so a restart does not park the same lock seq
+	// again). Defaults to the systemd StateDirectory; "" disables it.
+	StateDir string `toml:"state_dir"`
 }
 
 // RotorConfig holds the WRC WebSocket endpoint.
@@ -74,6 +78,18 @@ type MQTTConfig struct {
 	Station  string `toml:"station"`  // e.g. "hf"
 	Slot     string `toml:"slot"`     // e.g. "rotator"
 	Location string `toml:"location"` // physical location label, e.g. "bauwagen"
+
+	// AntModeSlot is the antenna-mode logic slot (same site/station) whose
+	// retained /state locks rotator motion in storm/maintenance. Empty
+	// disables the lock. With no retained ant-mode state the rotator is
+	// unlocked, so the default is safe before antmode is deployed.
+	AntModeSlot string `toml:"ant_mode_slot"`
+	// NudgeMaxDeg bounds the maintenance nudge (a /cmd set_az tagged
+	// "override":"maintenance" while the ant-mode lock carries `nudge`): a
+	// target farther than this from the current readback is refused. The
+	// console steps ±5° from the readback; the bound stops any other client
+	// with the tag from slewing the brakeless G-450 a full sweep. Must be > 0.
+	NudgeMaxDeg float64 `toml:"nudge_max_deg"`
 }
 
 // LogConfig controls logging verbosity.
@@ -90,7 +106,8 @@ type DeviceConfig struct {
 // Defaults returns a Config with sensible default values.
 func Defaults() Config {
 	return Config{
-		Host: "shari",
+		Host:     "shari",
+		StateDir: "/var/lib/wrc-rotator-bridge",
 		Rotor: RotorConfig{
 			URL: "ws://192.168.1.108/wsrotor",
 		},
@@ -113,6 +130,8 @@ func Defaults() Config {
 			Station:         "hf",
 			Slot:            "rotator",
 			Location:        "bauwagen",
+			AntModeSlot:     "ant-mode",
+			NudgeMaxDeg:     10,
 		},
 		Log:    LogConfig{Level: "info"},
 		Device: DeviceConfig{Model: "Yaesu G-450DC", Link: "ethernet"},
@@ -195,6 +214,9 @@ func (c Config) Validate() error {
 	}
 	if c.PSTRotator.Enabled && c.PSTRotator.Port == 0 {
 		return fmt.Errorf("pstrotator port must be configured when pstrotator is enabled")
+	}
+	if !(c.MQTT.NudgeMaxDeg > 0) {
+		return fmt.Errorf("mqtt nudge_max_deg must be > 0 (got %v)", c.MQTT.NudgeMaxDeg)
 	}
 	return nil
 }

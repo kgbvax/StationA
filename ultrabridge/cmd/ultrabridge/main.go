@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"time"
 
 	"ultrabridge/internal/config"
@@ -92,6 +93,19 @@ func main() {
 
 	ctrl := service.NewController(dev)
 	ctrl.SetLogger(slotLogger)
+	if cfg.StateDir != "" {
+		// The retract latch (the RCU-06 cannot report it) survives a restart:
+		// without it a restart after a storm unlock would publish
+		// retracted:false with the elements in and let the frequency deadband
+		// swallow the re-extend. Loaded before any poll or command runs.
+		ctrl.PersistTo(filepath.Join(cfg.StateDir, "retract.json"))
+	}
+	if cfg.MQTT.Broker != "" && cfg.MQTT.AntModeSlot != "" {
+		// Antenna-mode lock: refuse extends for up to 3 s after start until the
+		// retained hf/ant-mode/state lands, so a retained /cmd replayed on
+		// connect cannot extend the elements ahead of a storm lock.
+		ctrl.SetLockHold(3 * time.Second)
+	}
 	ui := web.NewWithHub(ctrl, debugHub)
 	var mqttClient *mqttbridge.Client
 	if cfg.MQTT.Broker != "" {
@@ -103,6 +117,7 @@ func main() {
 			cfg.Location, cfg.Host,
 			cfg.MQTT.User, cfg.MQTT.Password,
 			cfg.MQTT.PublishHADiscovery,
+			cfg.MQTT.AntModeSlot,
 			ctrl,
 		)
 		if err != nil {
@@ -127,6 +142,9 @@ func main() {
 
 	pollCtx, cancelPoll := context.WithCancel(ctx)
 	defer cancelPoll()
+	// The poll loop also runs the antenna-mode ensure-retract (after the
+	// refresh it reads) and is kicked by every ant-mode update, so a new lock
+	// retracts and shows in /state at once rather than at the next tick.
 	go func() {
 		ticker := time.NewTicker(2 * time.Second)
 		defer ticker.Stop()
@@ -135,12 +153,14 @@ func main() {
 			case <-pollCtx.Done():
 				return
 			case <-ticker.C:
-				_ = ctrl.Refresh(pollCtx)
-				_ = ctrl.PollMotorStatus(pollCtx)
-				ui.PublishStatus(ctrl.State())
-				if mqttClient != nil {
-					mqttClient.PublishState(ctrl.State())
-				}
+			case <-ctrl.LockKick():
+			}
+			_ = ctrl.Refresh(pollCtx)
+			_ = ctrl.PollMotorStatus(pollCtx)
+			ctrl.EnsureRetract(pollCtx)
+			ui.PublishStatus(ctrl.State())
+			if mqttClient != nil {
+				mqttClient.PublishState(ctrl.State())
 			}
 		}
 	}()

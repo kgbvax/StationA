@@ -335,3 +335,58 @@ func TestIndexRendersModeButtonsAndNoRefreshButton(t *testing.T) {
 		t.Fatalf("expected mode buttons with individual IDs")
 	}
 }
+
+// TestLockedExtendIs423: while the antenna-mode lock is active the extend
+// endpoints (frequency, mode) answer 423 Locked and leave the device alone;
+// retract still works and the status page shows the lock.
+func TestLockedExtendIs423(t *testing.T) {
+	ctrl := service.NewController(transport.NewMock())
+	if err := ctrl.Refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	before := ctrl.State()
+	ctrl.ApplyAntMode([]byte(`{"ant_mode":"storm","lock":{"seq":1,"ground":true,"retract":true}}`))
+	h := New(ctrl).Routes()
+
+	post := func(path, body string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		h.ServeHTTP(rec, req)
+		return rec
+	}
+	if rec := post("/api/frequency", "frequency=21225&mode=forward"); rec.Code != http.StatusLocked {
+		t.Fatalf("POST /api/frequency while locked: %d, want 423; body=%s", rec.Code, rec.Body.String())
+	}
+	if rec := post("/api/mode", "mode=reverse"); rec.Code != http.StatusLocked {
+		t.Fatalf("POST /api/mode while locked: %d, want 423; body=%s", rec.Code, rec.Body.String())
+	}
+	if s := ctrl.State(); s.FrequencyKHz != before.FrequencyKHz || s.ModeName != before.ModeName {
+		t.Fatalf("locked request reached the device: %+v", s)
+	}
+	if rec := post("/api/retract", ""); rec.Code != http.StatusOK {
+		t.Fatalf("POST /api/retract while locked: %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/status", nil))
+	if !strings.Contains(rec.Body.String(), `"lock": "storm"`) {
+		t.Errorf("/api/status missing the lock: %s", rec.Body.String())
+	}
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	body := rec.Body.String()
+	if !strings.Contains(body, `class="kv " id="lock-card"`) || !strings.Contains(body, `id="lock" style="color:#f59e0b">storm<`) {
+		t.Errorf("status page does not show the lock card")
+	}
+
+	ctrl.ApplyAntMode([]byte(`{"ant_mode":"normal"}`))
+	if rec := post("/api/frequency", "frequency=21225&mode=forward"); rec.Code != http.StatusOK {
+		t.Fatalf("POST /api/frequency after unlock: %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	if !strings.Contains(rec.Body.String(), `class="kv hidden" id="lock-card"`) {
+		t.Errorf("lock card visible while unlocked")
+	}
+}

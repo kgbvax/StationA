@@ -98,6 +98,8 @@ trap 'rm -f "$SEED_CONFIG" "${UNIT_FILE:-}"' EXIT
   echo "# Deployment identity, published in /meta (integration model §3)."
   echo "location    = \"$(toml_escape "$LOCATION")\""
   echo "host        = \"$(toml_escape "$HOST_NAME")\""
+  echo "# Retract latch (retract.json) survives restarts here (systemd StateDirectory)."
+  echo "state_dir   = \"/var/lib/ultrabridge\""
   echo ""
   echo "[mqtt]"
   echo "broker           = \"$(toml_escape "$MQTT_BROKER")\""
@@ -109,6 +111,9 @@ trap 'rm -f "$SEED_CONFIG" "${UNIT_FILE:-}"' EXIT
   echo "# Legacy embedded HA discovery is OFF by default; the standalone hadiscovery"
   echo "# consumer renders discovery from this bridge's expose block in /meta (model §9)."
   echo "publish_ha_discovery = false"
+  echo "# Antenna-mode lock: storm/maintenance on this slot refuse element extends and"
+  echo "# retract the Ultrabeam (no retained state = unlocked). \"\" disables."
+  echo "ant_mode_slot    = \"ant-mode\""
   echo "user             = \"$(toml_escape "$MQTT_USER")\""
   echo "password         = \"$(toml_escape "$MQTT_PASSWORD")\""
 } > "$SEED_CONFIG"
@@ -142,6 +147,10 @@ Group=${SERVICE_USER}
 SupplementaryGroups=${SERIAL_GROUP}
 # systemd manages /etc/ultrabridge (created 0755, owned by the service user).
 ConfigurationDirectory=${SERVICE_NAME}
+# /var/lib/ultrabridge holds the retract latch (retract.json): the RCU-06
+# cannot report a retract, and the latch must survive a bridge restart.
+StateDirectory=${SERVICE_NAME}
+StateDirectoryMode=0700
 # Hardening.
 NoNewPrivileges=true
 ProtectSystem=full

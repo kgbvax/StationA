@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'ant_mode.dart' show nudgeOverride;
+
 // Port→name map. Source of truth is antennaselect/config.example.toml [wiring_map].
 // port2 and port3 are not wired at Mühle, so they are omitted from the UI.
 const antennaMap = {
@@ -27,6 +29,12 @@ const cmdRetain = {
   // beamsteer smart-rotation toggle — retained steady state, so
   // enable/disable survives a beamsteer restart.
   'muehle/hf/beam-steer': true,
+  // Antenna mode (antmode) — retained but one-shot, like hf/ant-ctrl:
+  // antmode applies set_ant_mode / repark / dismiss_suggestion and then
+  // clears the retained topic, so a command sent during a short antmode
+  // restart is applied once it is back (within its 30 s `ts` window), and
+  // never replayed after that.
+  'muehle/hf/ant-mode': true,
   // one-shot
   'muehle/hf/pa': false,
   'muehle/hf/rotator': false,
@@ -73,6 +81,7 @@ const expectedSlots = [
   'muehle/hf/pa-arm',
   'muehle/hf/antenna-select',
   'muehle/hf/beam-steer',
+  'muehle/hf/ant-mode',
   'muehle/hf/pa',
   'muehle/hf/rotator',
   'muehle/hf/tuner',
@@ -147,6 +156,13 @@ String paArmPayload(bool enabled) =>
 
 String rotatorAzPayload(double az) =>
     jsonEncode({'action': 'set_az', 'az': az});
+
+/// A maintenance nudge: set_az tagged `override:"maintenance"`. The rotator
+/// bridge accepts it only while the antenna mode is maintenance with
+/// `lock.nudge`; it refuses an untagged set_az then. Only the console sends
+/// it (intent tagging that keeps automation out — never beamsteer).
+String rotatorAzOverridePayload(double az) =>
+    jsonEncode({'action': 'set_az', 'az': az, 'override': nudgeOverride});
 
 /// Which rotator a map dial reads, per page. The wrc HF rotator speaks
 /// `set_az` with a numeric `az`; the VHF sat az-rotator (spid-ercm-rotator-
@@ -299,6 +315,38 @@ String beamSteerEnablePayload(bool enabled) =>
 /// the topic's retained message is the AUTO on/off steady state.
 String beamSteerAimPayload(double deg) =>
     jsonEncode({'action': 'aim', 'value': deg.round()});
+
+// --- Antenna mode (hf/ant-mode, antmode) -------------------------------------
+//
+// All three are one-shot transition requests on a retained topic that
+// antmode clears after applying (cmdRetain['muehle/hf/ant-mode']! = true).
+// Each carries `ts` (UTC, RFC 3339): antmode drops a request older than 30 s
+// (or more than 5 s in the future). Without it a request that reaches the
+// broker while antmode is dead would sit retained and apply whenever antmode
+// comes back, hours later — a stale `normal` would unlock a storm and
+// acknowledge its warnings. The cost: a tablet clock more than 5 s ahead, or
+// a request held up longer than 30 s, is dropped (antmode logs a Warn and
+// the mode does not change on screen).
+
+/// [now] as antmode's `ts`: UTC, whole seconds, `Z`.
+String antModeTs([DateTime? now]) {
+  final t = (now ?? DateTime.now()).toUtc();
+  return '${t.toIso8601String().split('.').first.replaceAll('Z', '')}Z';
+}
+
+/// Enter [mode] (`normal` | `storm` | `maintenance`). Re-sending the current
+/// mode is a no-op on the antmode side — it does not re-park.
+String antModePayload(String mode, {DateTime? now}) =>
+    jsonEncode({'action': 'set_ant_mode', 'value': mode, 'ts': antModeTs(now)});
+
+/// Re-run the park for the current locked mode (new lock seq; storm
+/// recomputes the heading from the current wind). Ignored in normal.
+String antModeReparkPayload({DateTime? now}) => jsonEncode({'action': 'repark', 'ts': antModeTs(now)});
+
+/// Clear `storm_suggested` for the warnings active now (a new or escalated
+/// warning suggests again).
+String antModeDismissPayload({DateTime? now}) =>
+    jsonEncode({'action': 'dismiss_suggestion', 'ts': antModeTs(now)});
 
 // --- PA ----------------------------------------------------------------------
 

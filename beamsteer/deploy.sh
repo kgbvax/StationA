@@ -122,6 +122,7 @@ trap 'rm -f "$SEED_CONFIG" "${UNIT_FILE:-}"' EXIT
   echo "rotator_slot   = \"rotator\""
   echo "ant_ctrl_slot  = \"ant-ctrl\""
   echo "radio_slot     = \"radio\""
+  echo "ant_mode_slot  = \"ant-mode\"   # storm/maintenance lock; \"\" disables"
 } > "$SEED_CONFIG"
 
 # --- build for the Pi (Linux arm64) ----------------------------------------

@@ -1237,3 +1237,585 @@ func TestRadioDisconnectReconnectIsNotActivity(t *testing.T) {
 		t.Errorf("StationActivity=%q, want active after a live VFO change", c.in.StationActivity)
 	}
 }
+
+// --- antenna-mode lock (hf/ant-mode) tests -----------------------------------
+
+// lockClient builds a recording client with band-follow (ultrabeam → ant-ctrl)
+// and the tuner binding enabled, plus a per-topic view of what was published.
+func lockClient(t *testing.T) (c *Client, sent func(topic string) []recordedMsg, drain func(), cancel context.CancelFunc) {
+	t.Helper()
+	var (
+		mu     sync.Mutex
+		record []recordedMsg
+	)
+	cfg := config.Config{
+		Location: "bauwagen", Host: "shari",
+		MQTT: config.MQTT{Site: "muehle", Station: "hf", Slot: "antenna-select", AntModeSlot: "ant-mode"},
+		WiringMap: map[string]string{
+			"port1": "dummy-load", "port3": "ultrabeam", "port6": "fan-dipole", "off": "grounded",
+		},
+		BandPolicy: config.BandPolicy{
+			Bands:    map[string][]string{"ultrabeam": {"20m"}, "fan-dipole": {"40m", "80m"}},
+			Fallback: "fan-dipole",
+		},
+		BandFollow: config.BandFollow{Resource: "ultrabeam", Slot: "ant-ctrl"},
+		TunerFollow: config.TunerFollow{
+			Enabled: true, Slot: "tuner", Resource: "fan-dipole", ATUBands: []string{"80m"},
+		},
+		Idle: config.Idle{TimeoutMinutes: 60},
+	}
+	fake := fakePaho{pub: func(topic string, qos byte, retained bool, payload any) paho.Token {
+		b, _ := payload.([]byte)
+		mu.Lock()
+		record = append(record, recordedMsg{topic, qos, retained, b})
+		mu.Unlock()
+		return okToken{}
+	}}
+	ctx, cancel := context.WithCancel(context.Background())
+	c = &Client{
+		client: fake, cfg: cfg, rec: reconcile.New(cfg),
+		site: "muehle", station: "hf", slot: "antenna-select",
+		jobs: make(chan func(), 256), ctx: ctx, cancel: cancel,
+		lastActivity: time.Now(),
+	}
+	go sharedmqtt.RunJobs(ctx, c.jobs)
+	sent = func(topic string) []recordedMsg {
+		mu.Lock()
+		defer mu.Unlock()
+		var out []recordedMsg
+		for _, m := range record {
+			if m.topic == topic {
+				out = append(out, m)
+			}
+		}
+		return out
+	}
+	drain = func() {
+		done := make(chan struct{})
+		sharedmqtt.Enqueue(c.jobs, func() { close(done) })
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			t.Fatal("worker did not drain queued handler jobs in time")
+		}
+	}
+	return c, sent, drain, cancel
+}
+
+const (
+	topicAntSwitchCmd = "muehle/hf/ant-switch/cmd"
+	topicAntCtrlCmd   = "muehle/hf/ant-ctrl/cmd"
+	topicTunerCmd     = "muehle/hf/tuner/cmd"
+	topicSelfState    = "muehle/hf/antenna-select/state"
+)
+
+func antModeMsg(payload string) fakeMessage {
+	return fakeMessage{topic: "muehle/hf/ant-mode/state", payload: []byte(payload)}
+}
+
+const (
+	stormLocked = `{"ant_mode":"storm","source":"auto","lock":{"seq":3,"ground":true,"retract":true,"park_az":175,"nudge":false},"phase":"parked"}`
+	normalState = `{"ant_mode":"normal","source":"manual","phase":"idle"}`
+)
+
+func lastSelect(t *testing.T, msgs []recordedMsg) string {
+	t.Helper()
+	if len(msgs) == 0 {
+		return ""
+	}
+	var p struct {
+		Select string `json:"select"`
+	}
+	if err := json.Unmarshal(msgs[len(msgs)-1].payload, &p); err != nil {
+		t.Fatalf("unmarshal select: %v", err)
+	}
+	return p.Select
+}
+
+func lastSource(t *testing.T, msgs []recordedMsg) string {
+	t.Helper()
+	if len(msgs) == 0 {
+		return ""
+	}
+	var p struct {
+		Source string `json:"source"`
+	}
+	if err := json.Unmarshal(msgs[len(msgs)-1].payload, &p); err != nil {
+		t.Fatalf("unmarshal state: %v", err)
+	}
+	return p.Source
+}
+
+// TestAntModeLockGroundsAndUnlockRefollows: a storm lock grounds the switch and
+// stops band-follow; on unlock the reconciler re-sends the SAME radio frequency
+// to ant-ctrl (follow dedup reset) — that is what re-extends the Ultrabeam,
+// since nothing else does after a retract.
+func TestAntModeLockGroundsAndUnlockRefollows(t *testing.T) {
+	c, sent, drain, cancel := lockClient(t)
+	defer cancel()
+	c.onRadioStatus(nil, radioStatusMsg(true))
+	c.onRadioState(nil, radioStateMsgFreq(true, "20m", 14074000))
+	c.onAntSwitchState(nil, fakeMessage{topic: "muehle/hf/ant-switch/state", payload: []byte(`{"selected":"port3","settled":true}`)})
+	drain()
+	if got := sent(topicAntCtrlCmd); len(got) != 1 {
+		t.Fatalf("setup: expected 1 band-follow, got %d", len(got))
+	}
+
+	// Storm: ground, source lock, no band-follow.
+	c.onAntModeState(nil, antModeMsg(stormLocked))
+	drain()
+	if got := lastSelect(t, sent(topicAntSwitchCmd)); got != "off" {
+		t.Fatalf("locked: last select=%q, want off", got)
+	}
+	if got := lastSource(t, sent(topicSelfState)); got != reconcile.SourceLock {
+		t.Errorf("locked: /state.source=%q, want lock", got)
+	}
+	// The switch reports off; the radio keeps reporting (a VFO change, even) —
+	// still no band-follow and no tuner follow while locked.
+	tunerBefore := len(sent(topicTunerCmd))
+	c.onAntSwitchState(nil, fakeMessage{topic: "muehle/hf/ant-switch/state", payload: []byte(`{"selected":"off","settled":true}`)})
+	c.onRadioState(nil, radioStateMsgFreq(true, "20m", 14080000))
+	c.onRadioState(nil, radioStateMsgFreq(true, "20m", 14074000))
+	drain()
+	if got := sent(topicAntCtrlCmd); len(got) != 1 {
+		t.Fatalf("locked: band-follow emitted (%d ant-ctrl cmds, want 1)", len(got))
+	}
+	if got := len(sent(topicTunerCmd)); got != tunerBefore {
+		t.Errorf("locked: tuner follow emitted (%d → %d)", tunerBefore, got)
+	}
+
+	// Unlock on the unchanged frequency: select back to port3 AND re-send the
+	// same frequency (the dedup would otherwise swallow it).
+	c.onAntModeState(nil, antModeMsg(normalState))
+	drain()
+	if got := lastSelect(t, sent(topicAntSwitchCmd)); got != "port3" {
+		t.Errorf("unlocked: last select=%q, want port3", got)
+	}
+	got := sent(topicAntCtrlCmd)
+	if len(got) != 2 {
+		t.Fatalf("unlocked: expected the frequency re-sent (2 ant-ctrl cmds), got %d", len(got))
+	}
+	var f struct {
+		Action string `json:"action"`
+		FreqHz int64  `json:"freq_hz"`
+	}
+	if err := json.Unmarshal(got[1].payload, &f); err != nil {
+		t.Fatalf("unmarshal follow: %v", err)
+	}
+	if f.Action != "frequency" || f.FreqHz != 14074000 {
+		t.Errorf("unlock follow = %+v, want frequency 14074000", f)
+	}
+	if got := lastSource(t, sent(topicSelfState)); got != reconcile.SourceAuto {
+		t.Errorf("unlocked: /state.source=%q, want auto", got)
+	}
+}
+
+// TestAntModeLockBeatsManualAndUnlockRestoresIt: the lock grounds even in the
+// operator's manual stand-down; when it ends, manual is in force again (no
+// select, no follow).
+func TestAntModeLockBeatsManualAndUnlockRestoresIt(t *testing.T) {
+	c, sent, drain, cancel := lockClient(t)
+	defer cancel()
+	c.onRadioStatus(nil, radioStatusMsg(true))
+	c.onRadioState(nil, radioStateMsgFreq(true, "20m", 14074000))
+	c.onAntSwitchState(nil, fakeMessage{topic: "muehle/hf/ant-switch/state", payload: []byte(`{"selected":"port6","settled":true}`)})
+	c.onOperatorCmd(nil, operatorHoldMsg(reconcile.RequestManual))
+	drain()
+	selects, follows := len(sent(topicAntSwitchCmd)), len(sent(topicAntCtrlCmd))
+
+	c.onAntModeState(nil, antModeMsg(stormLocked))
+	drain()
+	if got := sent(topicAntSwitchCmd); len(got) != selects+1 || lastSelect(t, got) != "off" {
+		t.Fatalf("lock in manual: want one select off, got %d new (last %q)", len(got)-selects, lastSelect(t, got))
+	}
+	c.onAntSwitchState(nil, fakeMessage{topic: "muehle/hf/ant-switch/state", payload: []byte(`{"selected":"off","settled":true}`)})
+	c.onAntModeState(nil, antModeMsg(normalState))
+	drain()
+	if got := len(sent(topicAntSwitchCmd)); got != selects+1 {
+		t.Errorf("unlock in manual: the reconciler moved the switch (%d selects, want %d)", got, selects+1)
+	}
+	if got := len(sent(topicAntCtrlCmd)); got != follows {
+		t.Errorf("unlock in manual: band-follow emitted (%d → %d)", follows, got)
+	}
+	if got := lastSource(t, sent(topicSelfState)); got != reconcile.SourceOperator {
+		t.Errorf("unlock in manual: /state.source=%q, want operator", got)
+	}
+}
+
+// TestAntModeMalformedKeepsLastKnown: a malformed ant-mode/state never unlocks
+// (nor locks); an empty payload (retained topic cleared) reads as normal.
+func TestAntModeMalformedKeepsLastKnown(t *testing.T) {
+	c, sent, drain, cancel := lockClient(t)
+	defer cancel()
+	c.onRadioStatus(nil, radioStatusMsg(true))
+	c.onRadioState(nil, radioStateMsgFreq(true, "20m", 14074000))
+	c.onAntModeState(nil, antModeMsg(stormLocked))
+	drain()
+	selects := len(sent(topicAntSwitchCmd))
+
+	for _, bad := range []string{`{not json`, `{"ant_mode":"hurricane"}`, `{"ant_mode":"storm","lock":{"park_az":999}}`} {
+		c.onAntModeState(nil, antModeMsg(bad))
+		drain()
+		if !c.in.Locked || !c.in.LockGround {
+			t.Fatalf("malformed %q unlocked the station", bad)
+		}
+	}
+	if got := len(sent(topicAntSwitchCmd)); got != selects {
+		t.Errorf("malformed payloads moved the switch (%d → %d)", selects, got)
+	}
+
+	// Cleared retained topic = normal (rollout rule).
+	c.onAntModeState(nil, antModeMsg(""))
+	drain()
+	if c.in.Locked {
+		t.Error("empty ant-mode/state should read as normal")
+	}
+
+	// And malformed while unlocked does not lock.
+	c.onAntModeState(nil, antModeMsg(`[]`))
+	drain()
+	if c.in.Locked {
+		t.Error("malformed ant-mode/state locked an unlocked station")
+	}
+}
+
+// TestAntModeLockIsNotActivity: entering and leaving a lock leaves the idle
+// bookkeeping alone — no activity mark, no last_activity, idle clock untouched
+// — and the idle timeout still flips /state.activity under the lock (powerseq
+// keys standby on it).
+func TestAntModeLockIsNotActivity(t *testing.T) {
+	c, sent, drain, cancel := lockClient(t)
+	defer cancel()
+	c.onRadioStatus(nil, radioStatusMsg(true))
+	c.onRadioState(nil, radioStateMsgFreq(true, "20m", 14074000))
+	drain()
+	stale := time.Now().Add(-2 * time.Hour)
+	c.lastActivity = stale
+	c.checkIdle()
+	drain()
+	if c.in.StationActivity != "inactive" {
+		t.Fatalf("setup: expected inactive, got %q", c.in.StationActivity)
+	}
+
+	c.onAntModeState(nil, antModeMsg(stormLocked))
+	drain()
+	c.onAntModeState(nil, antModeMsg(normalState))
+	drain()
+	c.onAntModeState(nil, antModeMsg(stormLocked))
+	drain()
+	if c.in.StationActivity != "inactive" || c.activitySeen || !c.lastActivity.Equal(stale) {
+		t.Fatalf("lock counted as activity: activity=%q seen=%v lastActivity moved=%v",
+			c.in.StationActivity, c.activitySeen, !c.lastActivity.Equal(stale))
+	}
+	for _, m := range sent(topicSelfState) {
+		var st struct {
+			Activity     string `json:"activity"`
+			LastActivity string `json:"last_activity"`
+		}
+		if err := json.Unmarshal(m.payload, &st); err != nil {
+			t.Fatalf("unmarshal state: %v", err)
+		}
+		if st.LastActivity != "" {
+			t.Errorf("/state carried last_activity %q without real activity", st.LastActivity)
+		}
+	}
+	if got := lastSource(t, sent(topicSelfState)); got != reconcile.SourceLock {
+		t.Errorf("locked + idle: /state.source=%q, want lock (lock outranks idle)", got)
+	}
+}
+
+// TestAntModeHandlerDefersReconcile: the ant-mode handler only parses on the
+// paho goroutine; the reconcile/publish runs on the worker.
+func TestAntModeHandlerDefersReconcile(t *testing.T) {
+	var calls int32
+	fake := fakePaho{pub: func(string, byte, bool, any) paho.Token {
+		atomic.AddInt32(&calls, 1)
+		return okToken{}
+	}}
+	c := &Client{
+		client: fake, rec: reconcile.New(config.Config{}),
+		site: "s", station: "st", slot: "sl",
+		jobs: make(chan func(), 256),
+	}
+	c.onAntModeState(nil, antModeMsg(stormLocked))
+	if got := atomic.LoadInt32(&calls); got != 0 {
+		t.Fatalf("onAntModeState published inline (%d call(s))", got)
+	}
+	if len(c.jobs) != 1 {
+		t.Fatalf("expected 1 queued job, got %d", len(c.jobs))
+	}
+}
+
+func antCtrlStateMsg(deviceOnline, retracted bool) fakeMessage {
+	return fakeMessage{
+		topic:   "muehle/hf/ant-ctrl/state",
+		payload: []byte(`{"freq_hz":14074000,"band":"20m","device_online":` + boolStr(deviceOnline) + `,"retracted":` + boolStr(retracted) + `}`),
+	}
+}
+
+func followFreqs(t *testing.T, msgs []recordedMsg) []int64 {
+	t.Helper()
+	var out []int64
+	for _, m := range msgs {
+		var f struct {
+			FreqHz int64 `json:"freq_hz"`
+		}
+		if err := json.Unmarshal(m.payload, &f); err != nil {
+			t.Fatalf("unmarshal follow: %v", err)
+		}
+		out = append(out, f.FreqHz)
+	}
+	return out
+}
+
+// TestUnlockReextendSurvivesControllerOffline is the regression for the lost
+// re-extend: a storm ends while the station is idle (target off, nothing
+// sent), the operator wakes it with a VFO turn while powerseq still has the
+// antenna power — and so the RCU-06 — off. ultrabridge drops that frequency
+// (device offline) and never re-applies it, so the band-follow must be re-sent
+// when ant-ctrl reports the controller back with the elements still retracted.
+func TestUnlockReextendSurvivesControllerOffline(t *testing.T) {
+	c, sent, drain, cancel := lockClient(t)
+	defer cancel()
+	c.onRadioStatus(nil, radioStatusMsg(true))
+	c.onRadioState(nil, radioStateMsgFreq(true, "20m", 14074000))
+	c.onAntSwitchState(nil, fakeMessage{topic: "muehle/hf/ant-switch/state", payload: []byte(`{"selected":"port3","settled":true}`)})
+	c.onFollowState(nil, antCtrlStateMsg(true, false))
+	drain()
+
+	// Storm: the elements retract; the station goes idle meanwhile and
+	// powerseq standby switches the antenna power (RCU-06) off.
+	c.onAntModeState(nil, antModeMsg(stormLocked))
+	c.onAntSwitchState(nil, fakeMessage{topic: "muehle/hf/ant-switch/state", payload: []byte(`{"selected":"off","settled":true}`)})
+	c.onFollowState(nil, antCtrlStateMsg(true, true))
+	drain()
+	c.lastActivity = time.Now().Add(-2 * time.Hour)
+	c.checkIdle()
+	c.onFollowState(nil, antCtrlStateMsg(false, true))
+	drain()
+
+	// Unlock while idle: target stays off, nothing to follow yet.
+	c.onAntModeState(nil, antModeMsg(normalState))
+	drain()
+	before := len(sent(topicAntCtrlCmd))
+
+	// Wake: a VFO turn. The follow goes out while the RCU-06 is still off.
+	c.onRadioState(nil, radioStateMsgFreq(true, "20m", 14080000))
+	drain()
+	if got := followFreqs(t, sent(topicAntCtrlCmd)[before:]); len(got) != 1 || got[0] != 14080000 {
+		t.Fatalf("wake: follows=%v, want [14080000]", got)
+	}
+
+	// An unchanged offline report re-sends nothing (no edge).
+	c.onFollowState(nil, antCtrlStateMsg(false, true))
+	drain()
+	if got := len(sent(topicAntCtrlCmd)) - before; got != 1 {
+		t.Fatalf("offline repeat: %d follows, want 1", got)
+	}
+
+	// The RCU-06 comes back, still retracted: the frequency is re-sent.
+	c.onFollowState(nil, antCtrlStateMsg(true, true))
+	drain()
+	if got := followFreqs(t, sent(topicAntCtrlCmd)[before:]); len(got) != 2 || got[1] != 14080000 {
+		t.Fatalf("controller back retracted: follows=%v, want the frequency re-sent", got)
+	}
+
+	// Extended now: the re-extend is confirmed. A later controller outage (or
+	// an operator retract) must not make the reconciler re-send anything.
+	c.onFollowState(nil, antCtrlStateMsg(true, false))
+	c.onFollowState(nil, antCtrlStateMsg(true, true))
+	c.onFollowState(nil, antCtrlStateMsg(false, true))
+	c.onFollowState(nil, antCtrlStateMsg(true, true))
+	drain()
+	if got := len(sent(topicAntCtrlCmd)) - before; got != 2 {
+		t.Errorf("after re-extend confirmed: %d follows, want 2 (no re-send)", got)
+	}
+}
+
+// TestControllerBackOnlineWithoutUnlockSendsNothing: an RCU-06 reconnect with
+// no unlock re-extend pending (e.g. an operator retract) re-sends nothing.
+func TestControllerBackOnlineWithoutUnlockSendsNothing(t *testing.T) {
+	c, sent, drain, cancel := lockClient(t)
+	defer cancel()
+	c.onRadioStatus(nil, radioStatusMsg(true))
+	c.onRadioState(nil, radioStateMsgFreq(true, "20m", 14074000))
+	c.onAntSwitchState(nil, fakeMessage{topic: "muehle/hf/ant-switch/state", payload: []byte(`{"selected":"port3","settled":true}`)})
+	c.onFollowState(nil, antCtrlStateMsg(true, true))
+	c.onFollowState(nil, antCtrlStateMsg(false, true))
+	c.onFollowState(nil, antCtrlStateMsg(true, true))
+	drain()
+	if got := len(sent(topicAntCtrlCmd)); got != 1 {
+		t.Errorf("%d follows, want 1 (the initial one only)", got)
+	}
+}
+
+// TestFollowStateHandlerDefersReconcile: the band-follow controller state handler only
+// parses on the paho goroutine; the work runs on the worker.
+func TestFollowStateHandlerDefersReconcile(t *testing.T) {
+	var calls int32
+	fake := fakePaho{pub: func(string, byte, bool, any) paho.Token {
+		atomic.AddInt32(&calls, 1)
+		return okToken{}
+	}}
+	c := &Client{
+		client: fake, rec: reconcile.New(config.Config{}),
+		site: "s", station: "st", slot: "sl",
+		jobs: make(chan func(), 256),
+	}
+	c.onFollowState(nil, antCtrlStateMsg(true, true))
+	if got := atomic.LoadInt32(&calls); got != 0 {
+		t.Fatalf("onFollowState published inline (%d call(s))", got)
+	}
+	if len(c.jobs) != 1 {
+		t.Fatalf("expected 1 queued job, got %d", len(c.jobs))
+	}
+}
+
+func antCtrlLockedStateMsg(deviceOnline, retracted bool, lock string) fakeMessage {
+	return fakeMessage{
+		topic: "muehle/hf/ant-ctrl/state",
+		payload: []byte(`{"freq_hz":14074000,"band":"20m","device_online":` + boolStr(deviceOnline) +
+			`,"retracted":` + boolStr(retracted) + `,"lock":"` + lock + `"}`),
+	}
+}
+
+// stormRetractedOnline drives a client into a storm with the elements
+// retracted and the RCU-06 online (ultrabridge reporting lock "storm"), the
+// switch grounded, on 20 m (Ultrabeam, band-follow active).
+func stormRetractedOnline(t *testing.T) (c *Client, sent func(string) []recordedMsg, drain func(), cancel context.CancelFunc) {
+	t.Helper()
+	c, sent, drain, cancel = lockClient(t)
+	c.onRadioStatus(nil, radioStatusMsg(true))
+	c.onRadioState(nil, radioStateMsgFreq(true, "20m", 14074000))
+	c.onAntSwitchState(nil, fakeMessage{topic: "muehle/hf/ant-switch/state", payload: []byte(`{"selected":"port3","settled":true}`)})
+	c.onFollowState(nil, antCtrlLockedStateMsg(true, false, ""))
+	drain()
+	c.onAntModeState(nil, antModeMsg(stormLocked))
+	c.onAntSwitchState(nil, fakeMessage{topic: "muehle/hf/ant-switch/state", payload: []byte(`{"selected":"off","settled":true}`)})
+	c.onFollowState(nil, antCtrlLockedStateMsg(true, true, "storm"))
+	drain()
+	return c, sent, drain, cancel
+}
+
+// ageReextendStall moves the stall onset back past the grace period (the
+// periodic tick, checkIdle, is what fires the re-send).
+func ageReextendStall(t *testing.T, c *Client, drain func()) {
+	t.Helper()
+	drain()
+	sharedmqtt.Enqueue(c.jobs, func() {
+		c.mu.Lock()
+		if !c.reextendStallSince.IsZero() {
+			c.reextendStallSince = time.Now().Add(-2 * reextendStallGrace)
+		}
+		c.mu.Unlock()
+	})
+	drain()
+	c.checkIdle()
+	drain()
+}
+
+// TestUnlockReextendRefusedUnderStaleLockIsResent is the regression for the
+// mirror-ordering loss: the unlock frequency reaches ultrabridge while it still
+// holds the lock (bridge reconnect replays retained in tree order; a scmino
+// restart replays its persisted locked ant-mode/state), so it is refused and
+// cleared. ultrabridge then unlocks and reports device_online, retracted, lock
+// "" — no device_online edge. Once that has stood for the grace period, the
+// frequency is re-sent, once.
+func TestUnlockReextendRefusedUnderStaleLockIsResent(t *testing.T) {
+	c, sent, drain, cancel := stormRetractedOnline(t)
+	defer cancel()
+
+	c.onAntModeState(nil, antModeMsg(normalState))
+	c.onAntSwitchState(nil, fakeMessage{topic: "muehle/hf/ant-switch/state", payload: []byte(`{"selected":"port3","settled":true}`)})
+	drain()
+	before := len(sent(topicAntCtrlCmd))
+	if got := followFreqs(t, sent(topicAntCtrlCmd)); got[len(got)-1] != 14074000 || before != 2 {
+		t.Fatalf("unlock: follows=%v, want the frequency re-sent once", got)
+	}
+
+	// ultrabridge refused it (still locked), then unlocks: online, retracted, no lock.
+	c.onFollowState(nil, antCtrlLockedStateMsg(true, true, "storm"))
+	c.onFollowState(nil, antCtrlLockedStateMsg(true, true, ""))
+	drain()
+	if got := len(sent(topicAntCtrlCmd)); got != before {
+		t.Fatalf("re-sent before the grace period: %d follows, want %d", got, before)
+	}
+
+	ageReextendStall(t, c, drain)
+	got := followFreqs(t, sent(topicAntCtrlCmd)[before:])
+	if len(got) != 1 || got[0] != 14074000 {
+		t.Fatalf("stalled unlock re-extend: follows=%v, want [14074000]", got)
+	}
+
+	// One stall re-send per unlock: a still-retracted controller does not loop.
+	ageReextendStall(t, c, drain)
+	ageReextendStall(t, c, drain)
+	if got := len(sent(topicAntCtrlCmd)) - before; got != 1 {
+		t.Errorf("stall re-send repeated: %d re-sends, want 1", got)
+	}
+}
+
+// TestUnlockReextendAcceptedNoStallResend: the normal unlock — ultrabridge
+// reports the lock cleared while still retracted, then accepts the frequency
+// (retracted false). No extra re-send, however long the clock runs.
+func TestUnlockReextendAcceptedNoStallResend(t *testing.T) {
+	c, sent, drain, cancel := stormRetractedOnline(t)
+	defer cancel()
+
+	c.onAntModeState(nil, antModeMsg(normalState))
+	c.onAntSwitchState(nil, fakeMessage{topic: "muehle/hf/ant-switch/state", payload: []byte(`{"selected":"port3","settled":true}`)})
+	c.onFollowState(nil, antCtrlLockedStateMsg(true, true, ""))
+	c.onFollowState(nil, antCtrlLockedStateMsg(true, false, ""))
+	drain()
+	before := len(sent(topicAntCtrlCmd))
+	ageReextendStall(t, c, drain)
+	if got := len(sent(topicAntCtrlCmd)); got != before {
+		t.Errorf("accepted re-extend re-sent: %d follows, want %d", got, before)
+	}
+}
+
+// TestUnlockReextendNoResendWhileControllerLocked: while the controller still
+// reports its lock, a re-send would only be refused again — nothing is sent;
+// once it reports the lock cleared, the grace starts from there.
+func TestUnlockReextendNoResendWhileControllerLocked(t *testing.T) {
+	c, sent, drain, cancel := stormRetractedOnline(t)
+	defer cancel()
+
+	c.onAntModeState(nil, antModeMsg(normalState))
+	c.onAntSwitchState(nil, fakeMessage{topic: "muehle/hf/ant-switch/state", payload: []byte(`{"selected":"port3","settled":true}`)})
+	drain()
+	before := len(sent(topicAntCtrlCmd))
+	c.onFollowState(nil, antCtrlLockedStateMsg(true, true, "storm"))
+	ageReextendStall(t, c, drain)
+	ageReextendStall(t, c, drain)
+	if got := len(sent(topicAntCtrlCmd)); got != before {
+		t.Fatalf("re-sent while the controller reports its lock: %d follows, want %d", got, before)
+	}
+
+	c.onFollowState(nil, antCtrlLockedStateMsg(true, true, ""))
+	drain()
+	if got := len(sent(topicAntCtrlCmd)); got != before {
+		t.Fatalf("re-sent on the lock-clear report without grace: %d, want %d", got, before)
+	}
+	ageReextendStall(t, c, drain)
+	if got := len(sent(topicAntCtrlCmd)) - before; got != 1 {
+		t.Errorf("after the controller unlocked: %d re-sends, want 1", got)
+	}
+}
+
+// TestRetractedWithoutUnlockNoStallResend: an operator retract in normal mode
+// (no unlock re-extend pending) is never undone by the stall check.
+func TestRetractedWithoutUnlockNoStallResend(t *testing.T) {
+	c, sent, drain, cancel := lockClient(t)
+	defer cancel()
+	c.onRadioStatus(nil, radioStatusMsg(true))
+	c.onRadioState(nil, radioStateMsgFreq(true, "20m", 14074000))
+	c.onAntSwitchState(nil, fakeMessage{topic: "muehle/hf/ant-switch/state", payload: []byte(`{"selected":"port3","settled":true}`)})
+	c.onFollowState(nil, antCtrlLockedStateMsg(true, true, ""))
+	drain()
+	before := len(sent(topicAntCtrlCmd))
+	ageReextendStall(t, c, drain)
+	if got := len(sent(topicAntCtrlCmd)); got != before {
+		t.Errorf("operator retract undone: %d follows, want %d", got, before)
+	}
+}

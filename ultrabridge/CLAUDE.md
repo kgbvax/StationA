@@ -39,20 +39,37 @@ MQTT, and also subscribes to `/cmd` to move the antenna on request.
 | Layer | Package | Role |
 |-------|---------|------|
 | Serial transport | `internal/ub/transport` | Open serial port or mock; trace I/O for web UI |
-| Controller | `internal/ub/service` | Issue RCU-06 commands, maintain `State` |
+| Controller | `internal/ub/service` | Issue RCU-06 commands, maintain `State`; antenna-mode lock + ensure-retract (`lock.go`) |
 | MQTT client | `internal/mqtt` | Publish `meta`/`state`/`status`, subscribe `/cmd`, HA discovery |
 | Web UI | `internal/web` | HTTP status page + debug log |
 | Config | `internal/config` | TOML file, `Default()`, `Load()`, flag overrides |
 
-**Poll loop** (`main.go`): every 2 seconds calls `ctrl.Refresh()`,
-`ctrl.PollMotorStatus()`, then publishes to web and MQTT if state changed.
+**Poll loop** (`main.go`): every 2 seconds (and at once when an ant-mode update kicks it)
+calls `ctrl.Refresh()`, `ctrl.PollMotorStatus()`, `ctrl.EnsureRetract()`, then publishes
+to web and MQTT if state changed.
+
+**Antenna-mode lock** (`internal/ub/service/lock.go`, contract
+`ultrabeam-mqtt-api.md` §6.1 and `../antmode/docs/ant-mode-mqtt-api.md`): the MQTT client
+subscribes `<site>/<station>/<ant_mode_slot>/state` (default `hf/ant-mode`) at **QoS 0**
+(persistent session), route registered before connect, subscribed before `/cmd`. The paho
+handler only parses (`shared/antmode.Parse`) and records under the controller's lock
+mutex. While storm/maintenance, `SetFrequency`/`SetMode` return `service.ErrLocked` —
+one place for MQTT and HTTP (HTTP answers 423) — and `Retract` is never refused. With
+`lock.retract` the poll loop's `EnsureRetract` retracts on a new seq, on device back
+online (also mid-retract: re-issued, `retracted` cleared until accepted) and at start, retrying until `retracted && !moving` (`logging.Streak`). No
+retract while `retract=false` (antmode grounds first). A retract counts as finished only
+on a poll ≥ 2 s (`retractSettle`) after the ACK; it is then published as
+`/state.retract_seq`. Unlock does not re-extend
+(antennaselect band-follow does). No retained state = normal; malformed = keep last
+known + Error; a 3 s startup hold refuses extends until the first ant-mode state lands.
 
 **`/cmd` handling:** The MQTT client subscribes to `<slot>/cmd` **at QoS 0** (a
 persistent-session QoS-1 subscription lets the broker queue a backlog while the bridge
 is offline and replay it on reconnect — the 2026-09-03 incident; powerseq subscribes
 its own `/cmd` at QoS 0 for the same reason). On receipt it dispatches to the
 controller (`frequency`, `direction`, `band`, `retract`; `mode` is accepted as a
-deprecated alias for `direction`). **Every** command is one-shot: the retained `/cmd`
+deprecated alias for `direction`; extends are refused while the antenna-mode lock is
+active). **Every** command is one-shot — a lock refusal included: the retained `/cmd`
 topic is cleared after the worker has acted on it (executed or rejected), so a command
 normally cannot re-fire on the next (re)connect — best-effort: a connection drop in
 the clear window (execution → clear publish) leaves it retained and replays it once.
@@ -74,8 +91,16 @@ muehle/hf/ant-ctrl/cmd       retained  one-shot command — cleared after execut
 ```
 
 State fields: `ts`, `freq_hz` (Hz), `band`, `direction` (`forward`/`reverse`/`bidirectional`),
-`moving` (bool), `retracted` (bool — latched by a successful retract, cleared by the next accepted frequency/direction change; bridge-side, lost on restart; the PA arm on PLC #1 blocks on it), `device_online` (bool, `true` while the RCU-06 is reachable, `false` when
-not — always present), `error` (string, omitempty).
+`moving` (bool), `retracted` (bool — latched by a successful retract ACK, cleared by the next accepted frequency/direction change; bridge-side, **persisted** in `<state_dir>/retract.json` so it survives a restart; also re-established by the ensure-retract while an antenna-mode lock with `retract` is active; the PA arm on PLC #1 blocks on it), `device_online` (bool, `true` while the RCU-06 is reachable, `false` when
+not — always present), `error` (string, omitempty), `lock` (`storm`/`maintenance` while the
+antenna-mode lock is active, omitted otherwise; included in the change dedup; exposed
+read-only in `/meta`), `retract_seq` (the lock seq whose ensure-retract finished —
+accepted, then a poll ≥ 2 s later read retracted and stopped; omitted otherwise; not in
+`expose`).
+
+The SetFrequency 25 kHz deadband is bypassed from an accepted retract until the next
+accepted frequency (`extendDue`, persisted with the latch): the RCU-06 keeps reporting
+the pre-retract frequency, so a same-band re-tune after an unlock must still reach it.
 
 `direction` is deliberately not called `mode` — on the station bus `mode` is the
 canonical radio-mode vocabulary (`cw`/`usb`/…, integration model §4).
@@ -114,7 +139,12 @@ discovery_prefix = "homeassistant"
 user             = "hf"
 password         = "..."
 # client_id defaults to "<site>-<station>-<slot>"
+ant_mode_slot    = "ant-mode"   # antenna-mode lock; "" disables (default "ant-mode")
 ```
+
+Top-level `state_dir` (default `/var/lib/ultrabridge`, the systemd `StateDirectory`
+deploy.sh adds; `""` keeps the latch in memory only) holds `retract.json`, the
+persisted retract latch. Deploy before relying on it: the unit needs `StateDirectory=`.
 
 Leave `serial_port` empty to run with the mock device (no hardware required).
 

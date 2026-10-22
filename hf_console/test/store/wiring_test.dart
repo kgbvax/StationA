@@ -163,4 +163,38 @@ void main() {
       expect(cmdTopic('uhf/radio'), 'muehle/uhf/radio/cmd');
     });
   });
+
+  group('antenna mode (hf/ant-mode)', () {
+    test('retained one-shot like hf/ant-ctrl, and expected', () {
+      // antmode clears its /cmd after applying, so a retained request is
+      // applied once (even across an antmode restart) and never replayed.
+      expect(cmdRetain['muehle/hf/ant-mode'], isTrue);
+      expect(expectedSlots, contains('muehle/hf/ant-mode'));
+    });
+
+    test('payload builders follow the slot contract, with ts', () {
+      // ts bounds a request retained while antmode is dead to antmode's
+      // 30 s window — it must never apply hours later.
+      final t = DateTime.utc(2026, 10, 22, 18, 0, 0, 123, 456);
+      const ts = '2026-10-22T18:00:00Z';
+      expect(jsonDecode(antModePayload('storm', now: t)), {'action': 'set_ant_mode', 'value': 'storm', 'ts': ts});
+      expect(jsonDecode(antModePayload('normal', now: t)), {'action': 'set_ant_mode', 'value': 'normal', 'ts': ts});
+      expect(jsonDecode(antModeReparkPayload(now: t)), {'action': 'repark', 'ts': ts});
+      expect(jsonDecode(antModeDismissPayload(now: t)), {'action': 'dismiss_suggestion', 'ts': ts});
+    });
+
+    test('ts is UTC RFC 3339 from a local time, and defaults to now', () {
+      final local = DateTime(2026, 1, 2, 3, 4, 5);
+      expect(antModeTs(local), '${local.toUtc().toIso8601String().substring(0, 19)}Z');
+      final now = DateTime.parse(jsonDecode(antModeReparkPayload())['ts'] as String);
+      expect(now.isUtc, isTrue);
+      expect(DateTime.now().toUtc().difference(now).inSeconds.abs(), lessThan(5));
+    });
+
+    test('the maintenance nudge is a set_az tagged with the override', () {
+      expect(jsonDecode(rotatorAzOverridePayload(95)), {'action': 'set_az', 'az': 95.0, 'override': 'maintenance'});
+      // The plain aim carries no override.
+      expect(jsonDecode(rotatorAzPayload(95)), isNot(contains('override')));
+    });
+  });
 }

@@ -32,7 +32,7 @@ void main() {
     for (final t in [
       'FLEX-8400', '14.074.000', 'DATA', 'RX', 'ACOM', 'OPER', 'ATR-1000', 'INLINE', '13.8 V', 'AUTO',
       'Ultrabeam', '20 m Forward', '212°', '145.212.500', 'IDLE', '200°', 'AWAKE',
-      '13/13', '1/1', 'TRX ON', 'PA ON', 'ARMED', 'NO PASS',
+      '14/14', '1/1', 'TRX ON', 'PA ON', 'ARMED', 'NO PASS',
     ]) {
       expect(find.text(t), findsOneWidget, reason: t);
     }
@@ -80,7 +80,7 @@ void main() {
     expect(find.text('OFFLINE'), findsOneWidget); // RCU-06, bridge down
     expect(find.text('NO LINK'), findsOneWidget); // GS-500, device lost
     expect(find.text('no data'), findsOneWidget); // Ultrabeam sub-line
-    expect(find.text('12/13'), findsOneWidget);
+    expect(find.text('13/14'), findsOneWidget);
   });
 
   testWidgets('standby: antenna side unpowered, PC asleep', (tester) async {
@@ -90,6 +90,18 @@ void main() {
     expect(find.text('unpowered'), findsOneWidget);
     expect(find.text('ASLEEP'), findsOneWidget);
     expect(find.text('AUTO, IDLE'), findsOneWidget);
+  });
+
+  testWidgets('the antenna mode node reads the mode', (tester) async {
+    await _pump(tester, StationScenario.running);
+    expect(find.text('ANT MODE'), findsOneWidget);
+    expect(find.text('NORMAL'), findsOneWidget);
+  });
+
+  testWidgets('storm: the node names the lock, the switch sits on ground', (tester) async {
+    await _pump(tester, StationScenario.storm);
+    expect(find.text('STORM'), findsOneWidget);
+    expect(find.text('176°'), findsOneWidget);
   });
 
   testWidgets('PSU off: the 13.8 V side reads OFF, not as a fault', (tester) async {

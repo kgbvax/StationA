@@ -279,6 +279,13 @@ link      = "none"
 host      = "scmino"
 
 [[slot]]
+address   = "muehle/hf/ant-mode"
+component = "antmode"
+device    = "logic slot — antenna mode (normal/storm/maintenance)"
+link      = "none"
+host      = "scmino"
+
+[[slot]]
 address   = "muehle/hf/power-seq"
 component = "powerseq"
 device    = "logic slot — startup/shutdown sequencer"
@@ -457,6 +464,14 @@ host  = "scmino"
 unit  = "beamsteer"
 ports = "12050/udp"
 slots = ["muehle/hf/beam-steer"]
+
+[[software]]
+name  = "antmode"
+path  = "antmode/"
+kind  = "logic"
+host  = "scmino"
+unit  = "antmode"
+slots = ["muehle/hf/ant-mode"]
 
 [[software]]
 name  = "powerseq"

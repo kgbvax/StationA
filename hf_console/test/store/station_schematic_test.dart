@@ -197,8 +197,8 @@ void main() {
     test('counts bridges per host, one per component', () {
       final m = StationSchematicModel(_store(StationScenario.running));
       final sc = m.hostHealth('scmino');
-      expect(sc.total, 13);
-      expect(sc.up, 13);
+      expect(sc.total, 14);
+      expect(sc.up, 14);
       final sh = m.hostHealth('shari');
       expect((sh.up, sh.total), (1, 1));
     });
@@ -206,7 +206,7 @@ void main() {
     test('a down bridge lowers its host count', () {
       final m = StationSchematicModel(_store(StationScenario.faults));
       final sc = m.hostHealth('scmino');
-      expect(sc.up, 12);
+      expect(sc.up, 13);
       expect(sc.components['ultrabridge'], isFalse);
     });
 
@@ -220,6 +220,31 @@ void main() {
         });
         expect(StationSchematicModel(s).lastChange('muehle/hf/pa'), t0.add(const Duration(minutes: 5)));
       });
+    });
+  });
+
+  group('antenna mode', () {
+    const slot = 'muehle/hf/ant-mode';
+
+    test('normal is quiet', () {
+      final m = StationSchematicModel(_store(StationScenario.running));
+      expect(m.quality(slot), SlotQuality.ok);
+      expect(m.severity(slot), Severity.none);
+    });
+
+    test('a lock is a deliberate hold: warn, like manual hold', () {
+      final m = StationSchematicModel(_store(StationScenario.storm));
+      expect(m.severity(slot), Severity.warn);
+    });
+
+    test('a storm suggestion asks for attention', () {
+      final s = _store(StationScenario.running)..setAntMode('normal', stormSuggested: true);
+      expect(StationSchematicModel(s).severity(slot), Severity.warn);
+    });
+
+    test('a failed park is an alarm', () {
+      final s = _store(StationScenario.running)..setAntMode('storm', phase: 'failed', fault: 'park timeout');
+      expect(StationSchematicModel(s).severity(slot), Severity.alarm);
     });
   });
 }

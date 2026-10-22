@@ -13,6 +13,7 @@ import '../widgets/tuner_panel.dart';
 import '../widgets/ultrabeam_panel.dart';
 import '../widgets/dvk_panel.dart';
 import '../widgets/antenna_panel.dart';
+import '../widgets/ant_mode_panel.dart';
 import '../widgets/power_panel.dart';
 import '../widgets/rotator_presets_bar.dart';
 import '../widgets/sat_rotator_panel.dart';
@@ -206,6 +207,7 @@ class _HfPage extends StatelessWidget {
                   children: const [
                     UltrabeamPanel(),
                     AntennaPanel(),
+                    AntModePanel(),
                     RotatorPresetsBar(),
                     PaPanel(),
                     TunerPanel(),
@@ -224,7 +226,11 @@ class _HfPage extends StatelessWidget {
       page: 'hf',
       onSelect: onSelect,
       rotator: hfRotator,
-      leftUnderMap: const [UltrabeamPanel(), AntennaPanel()],
+      // The antenna mode closes the antenna stack under the map: it locks
+      // exactly the controls above it (beam, switch, compass). Compact in
+      // normal (mode keys + wind); it grows only with a lock or a storm
+      // suggestion — when the compass has nothing to aim anyway.
+      leftUnderMap: const [UltrabeamPanel(), AntennaPanel(), AntModePanel()],
       rightChildren: const [
         PaPanel(),
         TunerPanel(),
@@ -258,7 +264,8 @@ class _TabletShell extends StatelessWidget {
   /// Mercator only, UHF beam, tap-to-aim, STOP) instead of the HF map.
   final bool vhfMap;
 
-  /// Panels pinned under the map in the left pane (HF: ultrabeam + antenna).
+  /// Panels pinned under the map in the left pane (HF: ultrabeam, antenna,
+  /// antenna mode).
   final List<Widget> leftUnderMap;
 
   /// Optional content pinned ABOVE the map in the left pane (CAM: the video

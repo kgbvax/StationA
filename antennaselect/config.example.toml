@@ -18,6 +18,11 @@ station   = "hf"
 slot      = "antenna-select"
 user      = "hf"
 password  = ""            # set on the device; never on the command line
+# Antenna-mode slot (storm/maintenance lock, ../antmode/docs/ant-mode-mqtt-api.md).
+# While locked: ground (target off, source "lock" — even in manual), no ant-ctrl
+# band-follow, no tuner follow. No retained ant-mode state = unlocked, so this is
+# safe before antmode is deployed. Default "ant-mode"; "" disables the lock tier.
+ant_mode_slot = "ant-mode"
 
 # --- Wiring map -------------------------------------------------------------
 # The single editable place antenna arrangement lives (integration model §4).
@@ -46,11 +51,13 @@ fan-dipole = ["30m", "40m", "60m", "80m"]
 # --- Priority ladder --------------------------------------------------------
 # Fixed order (integration model §5); listed here for documentation only — the code
 # enforces it. `mode` is derived (manual iff an operator hold is active).
+#   L lock     hf/ant-mode storm|maintenance   -> off   (outranks everything, manual too)
+#   0 manual   operator /cmd "manual"           -> nothing (stand down)
 #   1 idle     station.activity == inactive  -> off   (safe default; overrides all)
 #   2 operator operator hold via /cmd         -> held selection
 #   3 auto     band_policy(radio.band)         -> resolved port
 [priority]
-order = ["idle", "operator", "auto"]
+order = ["lock", "idle", "operator", "auto"]
 
 # --- Soft band-follow (controller map) ---------------------------------------
 # When `resource` is the selected antenna, drive its controller slot to track the radio

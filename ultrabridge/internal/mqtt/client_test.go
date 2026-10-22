@@ -2,6 +2,7 @@ package mqtt
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sync"
 	"testing"
@@ -137,12 +138,23 @@ func TestMetaPayloadExpose(t *testing.T) {
 	// fields: every writable field must carry a command; every enum options_ref must
 	// resolve to a non-empty list in capabilities.
 	fields, _ := expose["fields"].([]map[string]any)
-	if len(fields) != 7 {
-		t.Fatalf("expose.fields len = %d, want 7", len(fields))
+	if len(fields) != 8 {
+		t.Fatalf("expose.fields len = %d, want 8", len(fields))
 	}
 	wantWritable := map[string]bool{
 		"freq_hz": true, "band": true, "direction": true,
 		"moving": false, "retracted": false, "device_online": false, "error": false,
+		"lock": false, // owned by hf/ant-mode, never writable here
+	}
+	seen := map[string]bool{}
+	for _, f := range fields {
+		key, _ := f["key"].(string)
+		seen[key] = true
+	}
+	for key := range wantWritable {
+		if !seen[key] {
+			t.Errorf("expose.fields missing %q", key)
+		}
 	}
 	for _, f := range fields {
 		key, _ := f["key"].(string)
@@ -333,6 +345,7 @@ func cmdTestClient(t *testing.T) (*Client, *recordingPaho, *service.Controller) 
 		ctrl:   ctrl,
 		site:   "muehle", station: "hf", slot: "ant-ctrl",
 		discoveryPrefix: "homeassistant",
+		antModeSlot:     "ant-mode",
 		jobs:            make(chan func(), 16),
 		ctx:             ctx,
 		cancel:          cancel,
@@ -540,4 +553,177 @@ func TestOnHAStatusDefersRepublish(t *testing.T) {
 	}
 	close(release) // let every queued publish complete
 	cancel()       // tell the worker to exit (cancels its ctx)
+}
+
+const antModeTopic = "muehle/hf/ant-mode/state"
+
+// cmdCleared reports whether the retained /cmd clear was published.
+func cmdCleared(fake *recordingPaho) bool {
+	for _, p := range fake.recorded() {
+		if p.topic == "muehle/hf/ant-ctrl/cmd" && p.retained && p.payload == "" {
+			return true
+		}
+	}
+	return false
+}
+
+// TestOnConnectSubscribesAntModeQoS0BeforeCmd: the ant-mode lock is
+// subscribed at QoS 0 (persistent session — no offline backlog) and ahead of
+// /cmd so its retained state lands before a retained command.
+func TestOnConnectSubscribesAntModeQoS0BeforeCmd(t *testing.T) {
+	c, fake, _ := cmdTestClient(t)
+	c.onConnect(nil)
+	var am, cmd recSub
+	for _, s := range fake.recordedSubs() {
+		switch s.topic {
+		case antModeTopic:
+			am = s
+		case "muehle/hf/ant-ctrl/cmd":
+			cmd = s
+		}
+	}
+	if am.topic == "" {
+		t.Fatal("ant-mode /state never subscribed by the connect ritual")
+	}
+	if am.qos != 0 {
+		t.Errorf("ant-mode subscribed at QoS %d, want 0", am.qos)
+	}
+	if cmd.topic == "" || am.seq > cmd.seq {
+		t.Errorf("ant-mode subscribe (seq %d) must precede /cmd (seq %d)", am.seq, cmd.seq)
+	}
+
+	c.antModeSlot = "" // disabled by config: no subscription
+	before := len(fake.recordedSubs())
+	c.subscribeAntMode()
+	if got := len(fake.recordedSubs()); got != before {
+		t.Errorf("ant_mode_slot empty still subscribed (%d new)", got-before)
+	}
+}
+
+// TestOnCmdRefusedByLockStillClears: a /cmd refused by the antenna-mode lock
+// never reaches the RCU-06, and the retained topic is still cleared (one-shot).
+func TestOnCmdRefusedByLockStillClears(t *testing.T) {
+	for _, payload := range []string{
+		`{"action":"frequency","freq_hz":21225000}`,
+		`{"action":"band","value":"15m"}`,
+		`{"action":"direction","value":"reverse"}`,
+	} {
+		t.Run(payload, func(t *testing.T) {
+			c, fake, ctrl := cmdTestClient(t)
+			c.onAntMode(nil, fakeMessage{topic: antModeTopic,
+				payload: []byte(`{"ant_mode":"storm","lock":{"seq":1,"ground":true,"retract":false}}`)})
+			c.onCmd(nil, fakeMessage{topic: "muehle/hf/ant-ctrl/cmd", payload: []byte(payload)})
+
+			waitFor(t, 2*time.Second, "refused cmd cleared", func() bool { return cmdCleared(fake) })
+			time.Sleep(50 * time.Millisecond)
+			if s := ctrl.State(); s.FrequencyKHz != 0 || s.ModeName != "" {
+				t.Errorf("locked cmd reached the device: freq=%d mode=%q", s.FrequencyKHz, s.ModeName)
+			}
+		})
+	}
+}
+
+// TestOnCmdRetractAllowedWhileLocked: retract is never refused.
+func TestOnCmdRetractAllowedWhileLocked(t *testing.T) {
+	c, fake, ctrl := cmdTestClient(t)
+	c.onAntMode(nil, fakeMessage{topic: antModeTopic,
+		payload: []byte(`{"ant_mode":"maintenance","lock":{"seq":2,"ground":true,"retract":false,"nudge":true}}`)})
+	c.onCmd(nil, fakeMessage{topic: "muehle/hf/ant-ctrl/cmd", payload: []byte(`{"action":"retract"}`)})
+	waitFor(t, 2*time.Second, "retract executed while locked", func() bool { return ctrl.State().Retracted })
+	waitFor(t, 2*time.Second, "retract cmd cleared", func() bool { return cmdCleared(fake) })
+}
+
+// TestStateCarriesLock: /state gains `lock` while locked, the change dedup
+// sees a lock change alone, and `lock` is omitted when unlocked.
+func TestStateCarriesLock(t *testing.T) {
+	c, fake, ctrl := cmdTestClient(t)
+	states := func() []map[string]any {
+		var out []map[string]any
+		for _, p := range fake.recorded() {
+			if p.topic == "muehle/hf/ant-ctrl/state" {
+				var m map[string]any
+				if err := json.Unmarshal([]byte(p.payload), &m); err != nil {
+					t.Fatalf("bad /state json: %v", err)
+				}
+				out = append(out, m)
+			}
+		}
+		return out
+	}
+
+	c.PublishState(ctrl.State())
+	if _, ok := states()[0]["lock"]; ok {
+		t.Fatalf("unlocked /state carries lock: %v", states()[0])
+	}
+
+	c.onAntMode(nil, fakeMessage{topic: antModeTopic, payload: []byte(`{"ant_mode":"storm","lock":{"seq":3}}`)})
+	c.PublishState(ctrl.State()) // only the lock changed
+	got := states()
+	if len(got) != 2 {
+		t.Fatalf("lock change alone published %d snapshots, want 2 (dedup must include lock)", len(got))
+	}
+	if got[1]["lock"] != "storm" {
+		t.Errorf("/state lock = %v, want storm", got[1]["lock"])
+	}
+
+	// Malformed: keep last known (still storm, nothing new to publish).
+	c.onAntMode(nil, fakeMessage{topic: antModeTopic, payload: []byte(`garbage`)})
+	c.PublishState(ctrl.State())
+	if n := len(states()); n != 2 {
+		t.Errorf("malformed ant-mode changed /state (%d snapshots)", n)
+	}
+	if l := ctrl.LockLabel(); l != "storm" {
+		t.Errorf("malformed ant-mode: lock = %q, want storm (last known)", l)
+	}
+
+	c.onAntMode(nil, fakeMessage{topic: antModeTopic, payload: []byte(`{"ant_mode":"normal"}`)})
+	c.PublishState(ctrl.State())
+	got = states()
+	if len(got) != 3 {
+		t.Fatalf("unlock published %d snapshots, want 3", len(got))
+	}
+	if _, ok := got[2]["lock"]; ok {
+		t.Errorf("unlocked /state still carries lock: %v", got[2])
+	}
+}
+
+// TestStateCarriesRetractSeq: /state carries retract_seq while the controller
+// reports a finished lock retract, omits it otherwise, and the change dedup
+// sees retract_seq changing alone.
+func TestStateCarriesRetractSeq(t *testing.T) {
+	c, fake, _ := cmdTestClient(t)
+	states := func() []map[string]any {
+		var out []map[string]any
+		for _, p := range fake.recorded() {
+			if p.topic == "muehle/hf/ant-ctrl/state" {
+				var m map[string]any
+				if err := json.Unmarshal([]byte(p.payload), &m); err != nil {
+					t.Fatalf("bad /state json: %v", err)
+				}
+				out = append(out, m)
+			}
+		}
+		return out
+	}
+	s := service.State{FrequencyKHz: 14175, Retracted: true, Lock: "storm"}
+	c.PublishState(s)
+	if _, ok := states()[0]["retract_seq"]; ok {
+		t.Fatalf("/state carries retract_seq before the retract finished: %v", states()[0])
+	}
+	seq := uint64(1792345678901)
+	s.RetractSeq = &seq
+	c.PublishState(s) // only retract_seq changed
+	got := states()
+	if len(got) != 2 {
+		t.Fatalf("retract_seq change alone published %d snapshots, want 2", len(got))
+	}
+	if v, _ := got[1]["retract_seq"].(float64); uint64(v) != seq {
+		t.Errorf("/state retract_seq = %v, want %d", got[1]["retract_seq"], seq)
+	}
+	other := seq + 1
+	s.RetractSeq = &other
+	c.PublishState(s)
+	if n := len(states()); n != 3 {
+		t.Errorf("a different retract_seq published %d snapshots, want 3", n)
+	}
 }

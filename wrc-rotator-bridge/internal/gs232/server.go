@@ -16,6 +16,7 @@ package gs232
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -23,6 +24,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"wrc-rotator-bridge/internal/rotor"
 )
 
 // Controller is the rotator surface the GS-232 server drives. It is a subset of
@@ -127,7 +130,7 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) {
 			if m := moveRegex.FindStringSubmatch(line); len(m) > 1 {
 				az, _ := strconv.ParseFloat(m[1], 64)
 				s.log.Info("GS-232 cmd", "remote", remote, "cmd", "move", "az", az)
-				if err := s.ctrl.SetAz(az); err != nil {
+				if err := s.ctrl.SetAz(az); err != nil && !errors.Is(err, rotor.ErrLocked) {
 					s.log.Warn("GS-232 move failed", "err", err)
 				}
 				fmt.Fprint(conn, "\r")
@@ -137,7 +140,7 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) {
 			if m := setRegex.FindStringSubmatch(line); len(m) > 1 {
 				az, _ := strconv.ParseFloat(m[1], 64)
 				s.log.Info("GS-232 cmd", "remote", remote, "cmd", "set", "az", az)
-				if err := s.ctrl.SetAz(az); err != nil {
+				if err := s.ctrl.SetAz(az); err != nil && !errors.Is(err, rotor.ErrLocked) {
 					s.log.Warn("GS-232 set failed", "err", err)
 				}
 				fmt.Fprint(conn, "\r")

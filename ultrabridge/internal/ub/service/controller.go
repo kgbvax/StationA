@@ -21,12 +21,29 @@ type Controller struct {
 	mu    sync.RWMutex
 	state State
 
+	// extendDue (guarded by mu) is set by every accepted retract and cleared
+	// only by an accepted change-frequency: the elements may still be in, so
+	// the SetFrequency deadband must not swallow the next re-tune. Unlike
+	// state.Retracted it survives the RCU-06 back-online clear under the lock.
+	extendDue bool
+	// latchPath (guarded by mu) is where the retract latch is persisted
+	// (PersistTo); "" keeps it in memory only. saveMu orders the writes.
+	latchPath string
+	saveMu    sync.Mutex
+
 	// onChange, when set, is called after every command the RCU-06 accepted
 	// (retract, change-frequency) with the refreshed state — whichever caller
 	// issued it (MQTT /cmd, web UI). It lets the bridge publish /state at once
 	// instead of at the next 2 s poll: the PA arm (PLC #1) must see a move or a
 	// retract before the operator can key into it.
 	onChange func(State)
+
+	// Antenna-mode lock (lock.go). lmu guards lk only and is never held across
+	// a device exchange; kick wakes the poll loop after an ant-mode update.
+	lmu  sync.Mutex
+	lk   lockState
+	now  func() time.Time
+	kick chan struct{}
 }
 
 // SetOnChange installs the post-command hook. Call once at startup.
@@ -46,21 +63,29 @@ func (c *Controller) notifyChange() {
 const freqDeadbandKHz = 25
 
 func NewController(dev transport.Client) *Controller {
-	return &Controller{dev: dev, log: slog.Default()}
+	return &Controller{dev: dev, log: slog.Default(), now: time.Now, kick: make(chan struct{}, 1)}
 }
 
 // SetLogger installs the component/slot-stamped logger. Call once at startup,
 // before any polling or command goroutine runs.
 func (c *Controller) SetLogger(l *slog.Logger) { c.log = l }
 
+// State returns the current snapshot, with Lock and RetractSeq filled from the
+// antenna-mode lock (they are not part of the device state proper).
 func (c *Controller) State() State {
 	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.state
+	s := c.state
+	c.mu.RUnlock()
+	s.Lock, s.RetractSeq = c.lockView()
+	return s
 }
 
+// setState replaces the device snapshot. The retract latch is never taken
+// from the argument: it is bridge-side knowledge owned by updateLatch, so a
+// refresh racing a retract or a frequency change cannot undo the latch.
 func (c *Controller) setState(state State) {
 	c.mu.Lock()
+	state.Retracted = c.state.Retracted
 	c.state = state
 	c.mu.Unlock()
 }
@@ -88,12 +113,13 @@ func (c *Controller) Refresh(ctx context.Context) error {
 		MotorsMoving: gs.MotorBits != 0,
 		MotorBits:    gs.MotorBits,
 		UpdatedAt:    time.Now(),
-		Retracted:    prev.Retracted, // not in the status reply — carry the latch
+		// Retracted is not in the status reply: setState keeps the latch.
 	})
 	if wasOffline {
 		// Recovery from a device_offline=false stretch: edge-triggered so the
 		// journal gets one line per outage, not one per poll tick.
 		c.log.Info("device online")
+		c.deviceBackOnline()
 	}
 	return nil
 }
@@ -120,10 +146,12 @@ func (c *Controller) PollMotorStatus(ctx context.Context) error {
 	c.setState(state)
 	if wasOffline {
 		c.log.Info("device online")
+		c.deviceBackOnline()
 	}
 	return nil
 }
 
+// Retract drives the elements in. Never refused by the antenna-mode lock.
 func (c *Controller) Retract(ctx context.Context) error {
 	pkt, err := c.dev.Exchange(ctx, protocol.CmdRetract, nil, 5*time.Second)
 	if err != nil {
@@ -133,12 +161,17 @@ func (c *Controller) Retract(ctx context.Context) error {
 	if pkt.Com != protocol.ReplyOK {
 		return fmt.Errorf("retract reply com=%d", pkt.Com)
 	}
-	c.setRetracted(true)
+	c.updateLatch(func(retracted, extendDue *bool) { *retracted, *extendDue = true, true })
 	defer c.notifyChange()
 	return c.Refresh(ctx)
 }
 
+// SetFrequency tunes (and so extends) the elements. Refused with ErrLocked
+// while the antenna-mode lock is active.
 func (c *Controller) SetFrequency(ctx context.Context, frequencyKHz uint16, mode string) error {
+	if err := c.checkExtend("frequency", "khz", frequencyKHz); err != nil {
+		return err
+	}
 	modeByte, err := protocol.ParseMode(mode)
 	if err != nil {
 		return err
@@ -150,9 +183,17 @@ func (c *Controller) SetFrequency(ctx context.Context, frequencyKHz uint16, mode
 	// caller that happens to pass a different direction here. When the current
 	// frequency is unknown (0 — before the first Refresh or while the device is
 	// offline) the deadband is skipped so the command always reaches the controller.
+	// It is also skipped while a retract has not been followed by an accepted
+	// change-frequency (extendDue, persisted with the latch): the RCU-06 still
+	// reports the pre-retract frequency, so a same-band re-tune after a
+	// storm/maintenance unlock would be swallowed and the elements would stay
+	// in forever.
 	cur := c.State()
+	c.mu.RLock()
+	extendDue := c.extendDue
+	c.mu.RUnlock()
 	curModeByte, _ := protocol.ParseMode(cur.ModeName)
-	if cur.FrequencyKHz != 0 && absDiffU16(frequencyKHz, cur.FrequencyKHz) < freqDeadbandKHz && modeByte == curModeByte {
+	if !cur.Retracted && !extendDue && cur.FrequencyKHz != 0 && absDiffU16(frequencyKHz, cur.FrequencyKHz) < freqDeadbandKHz && modeByte == curModeByte {
 		return nil
 	}
 	return c.sendFrequency(ctx, frequencyKHz, modeByte)
@@ -175,12 +216,18 @@ func (c *Controller) sendFrequency(ctx context.Context, frequencyKHz uint16, mod
 		}
 		return fmt.Errorf("frequency reply com=%d", pkt.Com)
 	}
-	c.setRetracted(false) // the elements are driven back out to the new setting
+	// The elements are driven back out to the new setting.
+	c.updateLatch(func(retracted, extendDue *bool) { *retracted, *extendDue = false, false })
 	defer c.notifyChange()
 	return c.Refresh(ctx)
 }
 
+// SetMode changes the element direction at the current frequency (an extend).
+// Refused with ErrLocked while the antenna-mode lock is active.
 func (c *Controller) SetMode(ctx context.Context, mode string) error {
+	if err := c.checkExtend("direction", "direction", mode); err != nil {
+		return err
+	}
 	modeByte, err := protocol.ParseMode(mode)
 	if err != nil {
 		return err
@@ -198,12 +245,6 @@ func (c *Controller) SetMode(ctx context.Context, mode string) error {
 	// Direction change at the current frequency: bypass the SetFrequency deadband so
 	// the direction byte always reaches the controller.
 	return c.sendFrequency(ctx, state.FrequencyKHz, modeByte)
-}
-
-func (c *Controller) setRetracted(v bool) {
-	c.mu.Lock()
-	c.state.Retracted = v
-	c.mu.Unlock()
 }
 
 func (c *Controller) setOffline(err error) {

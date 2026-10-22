@@ -689,3 +689,97 @@ rotor through the remapped path and the 1° deadband are fine at the bench
 (2026-09-17); travel range confirmed 0–180°, configured `max=180`. The az slot
 runs against a placeholder serial path (truthful
 `device_online:false`) until the SPID azimuth bench bring-up.
+
+## [decision] HF antenna mode (storm / maintenance) — lock authority and policy (2026-10-22)
+
+`hf/ant-mode` (`antmode`, contract `antmode/docs/ant-mode-mqtt-api.md`) locks the
+Ultrabeam and the HF rotator. Decisions taken with the operator:
+
+1. **Bridges enforce, bridges park.** wrc-rotator-bridge and ultrabridge refuse motion
+   on every inbound path (MQTT, GS-232 :7373, PstRotator :12040, HTTP) and execute the
+   park from `/state.lock`. No privileged `/cmd` token: the console account can publish
+   any `/cmd` anyway, and a bridge-owned park also repairs ultrabridge's retract latch
+   after a restart or power cycle. No power-off lockout (antenna power is only borrowed).
+   `stop` and `retract` are never refused.
+2. **A locked snapshot survives its owner.** No retained state → normal (rollout-safe);
+   a locked snapshot is enforced while antmode is offline; malformed → last known.
+3. **The lock outranks antennaselect's manual stand-down** (it grounds even in manual).
+4. **Storm entry:** operator, or a NINA/DWD wind warning from level 1 "Windböen" up that
+   is **active now** (no lead time). Manned (powerseq `starting`/`running`/`waking` — a
+   wake is operator activity) → suggestion only; unmanned (any other phase, or powerseq
+   offline/unknown) → automatic. Rollout: antmode ships with `[storm] auto_enter = false`
+   (observe-only — unmanned is also just a suggestion) until its suggestions have been
+   compared with WarnWetter for some days.
+5. **Storm exit:** an auto-entered storm returns to normal 60 min after the last
+   qualifying warning, counting only successful polls (a NINA outage never counts as
+   "no warning"). A manual storm, and maintenance, exit only manually. A manual
+   `normal` during an active warning acknowledges those warning ids.
+6. **Storm heading:** DWD day wind direction ± 90° (nearer the current azimuth,
+   `max_az` 360 until the 360–450 overlap readback is verified); stale wind → preset.
+   Parked **once**, no re-aim on veer (the G-450DC has no brake; rotating in gusts is the
+   worst case). Order: ground → retract → rotate (less wind load while turning).
+7. **Maintenance:** preset azimuth, console-only `set_az` nudges tagged
+   `override:"maintenance"` (intent tagging, not security; GS-232/PstRotator cannot carry
+   it). Antenna power, if borrowed, stays on until maintenance ends.
+8. **Unlock does not auto-extend.** The elements come back out through antennaselect
+   band-follow; to make that work at an unchanged frequency, ultrabridge skips its
+   25 kHz deadband while retracted and antennaselect resets its follow dedup on unlock.
+
+**Scenario-review outcomes (2026-10-22).** A scenario walk-through of the first build
+changed the following; the contract has the normative wording.
+
+9. **Presence survives a powerseq restart.** A manned → unmanned change counts only after
+   60 s (a powerseq restart or a `/status` blip never auto-enters storm on an operator).
+   powerseq does not persist its phase and comes back in `idle`, so an `idle` that follows
+   a manned phase without `stopping` stays manned while `hf/radio` is live, until the radio
+   has not transmitted for 30 min. This is a **workaround** in antmode: the root fix belongs
+   in powerseq (persist its phase across a restart); remove the rule when that lands.
+10. **`power_hold` holds powerseq's idle logic, not only during a borrow.** While it is
+    true powerseq re-baselines watch changes (never activity) and runs no idle action
+    (standby, wake, idle shutdown); operator `start`/`stop` still work. True while a borrow
+    is open, for the **whole maintenance** (borrowed or not: no power cut and no wake
+    power-up with someone at the mast), and in storm until `parked` or `failed`. Accepted
+    trade-off: a maintenance left on blocks standby and idle shutdown until someone ends it.
+    "Antenna power borrowed" is `power_borrow`, not `power_hold`.
+11. **Storm borrow is retried until the park is done.** A storm entry that found the power
+    still on or powerseq in a transition borrows later, once the power reads `off` and
+    powerseq is stable again (once per `seq`; a park that failed despite its borrow is not
+    borrowed for again). Maintenance never borrows later (power off on site may be
+    deliberate).
+12. **The restore is skipped only after an operator-driven powerseq phase.** A borrow is
+    left unrestored (takeover) only when powerseq was seen in `starting`, `waking`,
+    `running`, `stopping` or `entering_standby` during it. `idle`/`standby` alone are not a
+    takeover (their intent is power off, and powerseq restarts in `idle`). The restore is
+    sent even when the plug already reads `off` (shelly-power-bridge replays the retained
+    intent on reconnect).
+13. **ultrabridge persists the retract latch** (`<state_dir>/retract.json`, with the
+    deadband bypass) and publishes `/state.retract_seq` — the lock `seq` whose retract
+    finished (ACK, then a poll ≥ 2 s later read retracted and stopped). Unlike
+    `retracted`, a latch left from an earlier lock never confirms the current `seq`.
+    antmode's `retracting` gate leaves only on `retract_seq == lock.seq` (plus
+    `retracted`, not `moving`); the retract timeout is the only fallback (unpowered
+    RCU-06, an ultrabridge without `retract_seq` — 120 s late, never early). A repark or a
+    storm ↔ maintenance switch therefore waits for the new seq's re-retract.
+14. **wrc-rotator-bridge records a finished park** (arrived, cancelled by a stop, ended by
+    a nudge) in `<state_dir>/park.json` and does not repeat it after a restart; a park
+    still underway at the restart is re-sent.
+15. **Maintenance nudge = ±5° keys.** hf_console sends readback ± 5° (tap-to-aim is off in
+    maintenance); the bridge bounds an accepted nudge to `nudge_max_deg` (default 10°) from
+    the readback and to the 0–450° travel. A nudge, also one before `park_az` is
+    published, ends the park for that `seq` in the bridge. antmode reports a nudge as
+    `parked` only after it has seen the bridge's park target (`target_az` at `park_az`;
+    for `park_az` 0, whose `target_az` the bridge omits, a moving rotator with no target),
+    and forgets that evidence whenever the rotator goes offline — so an old or reset
+    target can never read as "parked" before the boom moved. A nudge before the bridge
+    sent its park ends in `failed` (safe; `repark`).
+18. **A storm park still slewing at `rotate_timeout_s`** (the bridge waited for a lull)
+    keeps its borrowed power until the rotator stops, for at most one more
+    `rotate_timeout_s`; the brakeless boom is never cut mid-slew.
+16. **antennaselect re-sends the unlock re-extend when it stalls:** once per unlock, when
+    `hf/ant-ctrl/state` reports `device_online`, `retracted` and no `lock` for 15 s (the
+    frequency was refused under a stale lock in mirror replay order), as well as on an
+    RCU-06 `device_online` false → true edge.
+17. **Site values (Mühle).** NINA ARS `055660040040`, DWD station `P0441` (day wind
+    direction), `storm.fallback_az` 150° (stale or no wind data), `maintenance.park_az` 0°.
+    They are seeded through `antmode/deploy.sh` (`NINA_ARS`, `DWD_STATION`,
+    `FALLBACK_AZ`, `MAINT_AZ`); the repo defaults stay empty / 0.

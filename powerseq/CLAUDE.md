@@ -103,6 +103,26 @@ power on → `running`. A watch change during a sequence or within `[idle]
 settle_s` (default 30) of a phase change only re-baselines the watch: the UHF
 rotator readbacks step when standby cuts the antenna power (link still up),
 which woke every standby ~2 s later until 2026-10-19. A wake logs its reason.
+**Antenna-mode power hold** (`[mqtt] ant_mode_slot`, default `ant-mode`;
+`""` disables; read only with idle standby): powerseq subscribes
+`hf/ant-mode/state` and parses it with `shared/antmode` (`State.PowerHold`).
+`power_hold=true` means "hold the idle logic", not only "antenna power
+borrowed": antmode sets it while it borrows `power/antennas` to park the HF
+beam, for the whole maintenance mode (borrowed or not: no power cut, no wake
+power-up with someone at the mast) and in storm until the park is `parked` or
+`failed` (see `../antmode/docs/ant-mode-mqtt-api.md`; `power_borrow` is the
+borrow flag, powerseq does not read it). The hold applies in any phase.
+While it is set, watch changes only re-baseline and `idleDecision` returns nothing (no
+standby, wake or idle shutdown; operator `start`/`stop` still work). When the
+hold ends, `settleUntil` restarts (`settle_s`) so the readback step from
+switching borrowed power back off does not wake the station, and the idle-shutdown
+clock restarts (`holdEndedAt` in `lastActivityLocked`: a maintenance hold can
+outlast `shutdown_minutes`). After a broker (re)connect `idleDecision` waits
+until the ant-mode `/state` is re-delivered or 3 s pass (`SetBrokerOnline`
+arms it; OnConnect sets the broker online before it subscribes). Empty/no retained
+state = no hold; malformed = keep the last known hold + Error; `/status`
+offline does not clear a valid hold. powerseq never locks other slots and
+antmode does not change powerseq phases.
 **Idle shutdown** (optional `[idle] shutdown_minutes`,
 default example 120, + `[[idle_shutdown]]`): still in `standby` that long after
 the last activity (antennaselect `last_activity`, a watch, the last start/wake)

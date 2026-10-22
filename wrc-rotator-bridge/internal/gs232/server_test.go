@@ -3,24 +3,59 @@ package gs232
 import (
 	"bufio"
 	"context"
+	"io"
+	"log/slog"
 	"net"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
+
+	"wrc-rotator-bridge/internal/lock"
 )
 
-// fakeController records commands and reports a fixed azimuth.
+// fakeController records commands and reports a fixed azimuth. It is
+// mutex-guarded: the server's connection goroutine writes while the test
+// goroutine reads, and the TCP ack is no happens-before edge for the race
+// detector.
 type fakeController struct {
+	mu    sync.Mutex
 	az    float64
 	sets  []float64
 	stops int
 }
 
-func (f *fakeController) SetAz(az float64) error { f.sets = append(f.sets, az); return nil }
-func (f *fakeController) Stop() error            { f.stops++; return nil }
-func (f *fakeController) CurrentAz() float64     { return f.az }
+func (f *fakeController) SetAz(az float64) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.sets = append(f.sets, az)
+	return nil
+}
+func (f *fakeController) Stop() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.stops++
+	return nil
+}
+func (f *fakeController) Jog(string) error { return nil }
+func (f *fakeController) CurrentAz() float64 {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.az
+}
 
-func startTestServer(t *testing.T, ctrl *fakeController) (addr string, cancel func()) {
+func (f *fakeController) Sets() []float64 {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]float64(nil), f.sets...)
+}
+func (f *fakeController) Stops() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.stops
+}
+
+func startTestServer(t *testing.T, ctrl Controller) (addr string, cancel func()) {
 	t.Helper()
 	// Bind to a random free port.
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -29,7 +64,7 @@ func startTestServer(t *testing.T, ctrl *fakeController) (addr string, cancel fu
 	}
 	srv := New("127.0.0.1", ln.Addr().(*net.TCPAddr).Port, ctrl, nil)
 	// Reuse our listener: replace srv.Run's own Listen by accepting on ln here.
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, stop := context.WithCancel(context.Background())
 	go func() {
 		// Accept loop mirroring Server.Run but on the provided listener.
 		for {
@@ -40,7 +75,7 @@ func startTestServer(t *testing.T, ctrl *fakeController) (addr string, cancel fu
 			go srv.handle(ctx, conn)
 		}
 	}()
-	return ln.Addr().String(), cancel
+	return ln.Addr().String(), func() { stop(); _ = ln.Close() }
 }
 
 func dial(t *testing.T, addr string) net.Conn {
@@ -113,8 +148,8 @@ func TestMoveM(t *testing.T) {
 	}
 	_ = readLine(t, r) // ack "\r"
 
-	if len(ctrl.sets) != 1 || ctrl.sets[0] != 90 {
-		t.Errorf("Move M090 -> sets = %v, want [90]", ctrl.sets)
+	if sets := ctrl.Sets(); len(sets) != 1 || sets[0] != 90 {
+		t.Errorf("Move M090 -> sets = %v, want [90]", sets)
 	}
 }
 
@@ -133,8 +168,8 @@ func TestSetW(t *testing.T) {
 	}
 	_ = readLine(t, r)
 
-	if len(ctrl.sets) != 1 || ctrl.sets[0] != 180 {
-		t.Errorf("Set W180 000 -> sets = %v, want [180]", ctrl.sets)
+	if sets := ctrl.Sets(); len(sets) != 1 || sets[0] != 180 {
+		t.Errorf("Set W180 000 -> sets = %v, want [180]", sets)
 	}
 }
 
@@ -152,8 +187,8 @@ func TestStopS(t *testing.T) {
 	}
 	_ = readLine(t, r)
 
-	if ctrl.stops != 1 {
-		t.Errorf("S -> stops = %d, want 1", ctrl.stops)
+	if n := ctrl.Stops(); n != 1 {
+		t.Errorf("S -> stops = %d, want 1", n)
 	}
 }
 
@@ -229,4 +264,49 @@ func waitForDial(addr string) error {
 		time.Sleep(10 * time.Millisecond)
 	}
 	return net.UnknownNetworkError("server not up: " + addr)
+}
+
+// TestLockedRefusesMovePassesStopAndQuery drives the server through the
+// antenna-mode lock gate (as main wires it): in storm, M and W never reach the
+// device (the client still gets its ack), while S and C still work.
+func TestLockedRefusesMovePassesStopAndQuery(t *testing.T) {
+	dev := &fakeController{az: 175}
+	gate := lock.New(dev, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, 0)
+	gate.Apply([]byte(`{"ant_mode":"storm","lock":{"seq":1,"ground":true,"retract":true}}`))
+	addr, cancel := startTestServer(t, gate)
+	defer cancel()
+
+	conn := dial(t, addr)
+	defer conn.Close()
+	r := bufio.NewReader(conn)
+	send := func(cmd string) string {
+		t.Helper()
+		if _, err := conn.Write([]byte(cmd + "\r")); err != nil {
+			t.Fatal(err)
+		}
+		return readLine(t, r)
+	}
+
+	for _, cmd := range []string{"M090", "W180 000"} {
+		if got := send(cmd); got != "\r" {
+			t.Errorf("%s ack = %q, want \\r", cmd, got)
+		}
+	}
+	if sets := dev.Sets(); len(sets) != 0 {
+		t.Errorf("locked M/W reached the device: %v", sets)
+	}
+	_ = send("S")
+	if n := dev.Stops(); n != 1 {
+		t.Errorf("S while locked -> stops = %d, want 1 (stop is never refused)", n)
+	}
+	if got := send("C"); got != "+0175+0000\r" {
+		t.Errorf("C while locked = %q, want +0175+0000\\r", got)
+	}
+
+	// Unlocked again: the same command drives the rotator.
+	gate.Apply([]byte(`{"ant_mode":"normal"}`))
+	_ = send("M090")
+	if sets := dev.Sets(); len(sets) != 1 || sets[0] != 90 {
+		t.Errorf("M090 after unlock -> sets = %v, want [90]", sets)
+	}
 }

@@ -103,6 +103,7 @@ func New(ctx context.Context, cfg config.Config, log *slog.Logger) (*Client, *se
 		ShutdownTimeout: time.Duration(cfg.Idle.ShutdownMinutes) * time.Minute,
 		WatchSettle:     watchSettle(cfg.Idle.SettleSeconds),
 		Watches:         toSeqWatches(cfg.Idle.Watches),
+		AntModeSlot:     cfg.MQTT.AntModeSlot,
 		NetworkDelay:    time.Duration(cfg.Timing.NetworkDelayS) * time.Second,
 		StepTimeout:     time.Duration(cfg.Timing.StepTimeoutS) * time.Second,
 		ShutdownStagger: time.Duration(cfg.Timing.ShutdownStaggerS) * time.Second,
@@ -143,6 +144,8 @@ func New(ctx context.Context, cfg config.Config, log *slog.Logger) (*Client, *se
 		log.Info("MQTT (re)connected", "broker", cfg.MQTT.Broker, "slot", s.SelfBase())
 		cl.Publish(s.SelfBase()+"/status", 1, true, []byte("online"))
 		publisher.setClient(cl)
+		// Online before subscribeAll: the sequencer holds its idle logic until
+		// the re-delivered ant-mode /state arrives (or its window passes).
 		s.SetBrokerOnline(true)
 		c.setConnected(true)
 		// Publish the birth certificate on every (re)connect (fire-and-forget,
@@ -197,6 +200,15 @@ func (c *Client) setConnected(v bool) {
 // ---------------------------------------------------------------------------
 
 func (c *Client) subscribeAll(cl pahomqtt.Client) {
+	// Antenna-mode power hold first, so the retained hold is known before the
+	// watch /state replays arrive. The handler only parses + updates under the
+	// sequencer mutex (never publishes).
+	if topic := c.seq.AntModeStateTopic(); topic != "" {
+		c.subscribe(cl, topic, func(_ pahomqtt.Client, m pahomqtt.Message) {
+			c.log.Debug("observed ant-mode state", "topic", m.Topic(), "bytes", len(m.Payload()), "retained", m.Retained())
+			c.seq.SetAntMode(m.Payload())
+		})
+	}
 	statusSlots, stateSlots := c.seq.Subscriptions()
 	// Liveness + control observability: /status of every slot the sequence
 	// references (model §7.1 — subscribe is for observability, not only waits).

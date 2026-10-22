@@ -4,7 +4,7 @@ import 'fixtures.dart';
 
 /// Whole-station bus scenarios for the station schematic: a healthy running
 /// station plus the states the diagram has to tell apart.
-enum StationScenario { running, tx, standby, faults, psuOff, linkDown }
+enum StationScenario { running, tx, standby, faults, psuOff, linkDown, storm }
 
 extension StationFixtures on BusStore {
   void _device(String address, Map<String, dynamic> state) {
@@ -39,6 +39,10 @@ extension StationFixtures on BusStore {
     _device('muehle/hf/rotator', {'az': 212, 'target_az': 212, 'moving': false});
     _logic('muehle/hf/antenna-select', {'mode': 'auto'});
     _logic('muehle/hf/beam-steer', {'enabled': true});
+    _logic('muehle/hf/ant-mode', {
+      'ant_mode': 'normal', 'source': 'manual', 'phase': 'idle', 'presence': 'manned',
+      'wind': {'dir_deg': 265, 'gust_kmh': 31, 'stale': false}, 'warnings': [], 'storm_suggested': false,
+    });
     _logic('muehle/hf/power-seq', {'phase': 'running', 'step': '', 'fault': ''});
     _logic('muehle/hf/discovery', {});
     _logic('muehle/hf/spots', {});
@@ -61,6 +65,23 @@ extension StationFixtures on BusStore {
       case StationScenario.running:
       case StationScenario.linkDown:
         break;
+      case StationScenario.storm:
+        // An auto-entered storm, parked broadside: switch grounded, elements
+        // in, antenna power borrowed and handed back (standby).
+        _logic('muehle/hf/ant-mode', {
+          'ant_mode': 'storm', 'source': 'auto', 'since': '2026-10-22T18:00:00Z',
+          'lock': {'seq': 17, 'ground': true, 'retract': true, 'park_az': 175, 'nudge': false},
+          'phase': 'parked', 'fault': '', 'power_hold': false, 'presence': 'unmanned',
+          'wind': {'dir_deg': 265, 'gust_kmh': 72, 'stale': false},
+          'warnings': [
+            {'id': 'dwd.1', 'event': 'STURMBÖEN', 'ii': '52', 'onset': '2026-10-22T17:00:00Z', 'expires': '2026-10-22T23:00:00Z'},
+          ],
+          'storm_suggested': false, 'reason': 'DWD STURMBÖEN active, station unmanned', 'drift_deg': 1,
+        });
+        _device('muehle/hf/ant-switch', {'selected': 'off', 'settled': true});
+        _device('muehle/hf/ant-ctrl', {'band': '20m', 'direction': 'forward', 'moving': false, 'retracted': true, 'lock': 'storm'});
+        _device('muehle/hf/rotator', {'az': 176, 'target_az': 175, 'moving': false, 'lock': 'storm'});
+        _logic('muehle/hf/beam-steer', {'enabled': true, 'lock': 'storm'});
       case StationScenario.tx:
         _device('muehle/hf/radio', {'freq_hz': 14074000, 'band': '20m', 'mode': 'data', 'tx': 'tx', 'tuning': false});
         _device('muehle/hf/pa', {

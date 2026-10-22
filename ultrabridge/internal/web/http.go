@@ -2,6 +2,7 @@ package web
 
 import (
 	"encoding/json"
+	"errors"
 	"html/template"
 	"net/http"
 	"strconv"
@@ -176,7 +177,7 @@ func (s *Server) handleFrequency(w http.ResponseWriter, r *http.Request) {
 		mode = s.ctrl.State().ModeName
 	}
 	if err := s.ctrl.SetFrequency(r.Context(), uint16(freq), mode); err != nil {
-		http.Error(w, err.Error(), http.StatusBadGateway)
+		controlError(w, err)
 		return
 	}
 	s.PublishStatus(s.ctrl.State())
@@ -198,7 +199,7 @@ func (s *Server) handleMode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.ctrl.SetMode(r.Context(), mode); err != nil {
-		http.Error(w, err.Error(), http.StatusBadGateway)
+		controlError(w, err)
 		return
 	}
 	s.PublishStatus(s.ctrl.State())
@@ -274,6 +275,16 @@ func writeJSON(w http.ResponseWriter, v any) {
 	_ = enc.Encode(v)
 }
 
+// controlError maps a controller error to the HTTP status: 423 Locked for an
+// antenna-mode lock refusal (retract still works), 502 for a device failure.
+func controlError(w http.ResponseWriter, err error) {
+	if errors.Is(err, service.ErrLocked) {
+		http.Error(w, err.Error(), http.StatusLocked)
+		return
+	}
+	http.Error(w, err.Error(), http.StatusBadGateway)
+}
+
 func methodNotAllowed(w http.ResponseWriter) {
 	http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 }
@@ -327,6 +338,7 @@ const indexHTML = `<!doctype html>
 		<div class="kv {{if not .MotorsMoving}}hidden{{end}}" id="moving-card"><div class="muted">Motors moving</div><div class="value" id="moving">{{.MotorsMoving}}</div></div>
 		<div class="kv"><div class="muted">Mode</div><div class="value" id="mode">{{.ModeName}}</div></div>
 		<div class="kv {{if not .Offline}}hidden{{end}}" id="offline-card"><div class="muted">Offline</div><div class="value" id="offline">{{.Offline}}</div></div>
+		<div class="kv {{if not .Lock}}hidden{{end}}" id="lock-card"><div class="muted">Antenna mode lock</div><div class="value" id="lock" style="color:#f59e0b">{{.Lock}}</div><div class="muted small">extends refused; retract only</div></div>
 	</div>
 
 	<div class="card actions">
@@ -371,29 +383,34 @@ const indexHTML = `<!doctype html>
 			set('moving', data.motors_moving ? 'true' : 'false');
 			set('mode', data.mode_name || 'unknown');
 			set('offline', data.offline ? 'true' : 'false');
+			set('lock', data.lock || '');
 			set('updated', data.updated_at ? new Date(data.updated_at).toLocaleString() : '');
 
 			const movingCard = document.getElementById('moving-card');
 			if (movingCard) movingCard.classList.toggle('hidden', !data.motors_moving);
 			const offlineCard = document.getElementById('offline-card');
 			if (offlineCard) offlineCard.classList.toggle('hidden', !data.offline);
+			const lockCard = document.getElementById('lock-card');
+			if (lockCard) lockCard.classList.toggle('hidden', !data.lock);
+			// Antenna-mode lock: every extend control is refused (423) — grey them out.
+			const noExtend = data.motors_moving || !!data.lock;
 
 			const freqInput = document.getElementById('frequency-input');
 			if (freqInput) {
-				freqInput.disabled = data.motors_moving;
+				freqInput.disabled = noExtend;
 				if (document.activeElement !== freqInput && typeof data.frequency_khz === 'number') {
 					freqInput.value = data.frequency_khz;
 				}
 			}
 			const freqBtn = document.getElementById('freq-btn');
-			if (freqBtn) freqBtn.disabled = data.motors_moving;
+			if (freqBtn) freqBtn.disabled = noExtend;
 			const modeButtons = document.querySelectorAll('button.mode');
 			modeButtons.forEach(btn => {
-				btn.disabled = data.motors_moving;
+				btn.disabled = noExtend;
 				btn.classList.toggle('active', btn.getAttribute('data-mode') === data.mode_name);
 			});
 			document.querySelectorAll('button.band, button.nudge').forEach(btn => {
-				btn.disabled = data.motors_moving;
+				btn.disabled = noExtend;
 			});
 
 			const live = document.getElementById('live-state');

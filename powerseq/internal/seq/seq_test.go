@@ -211,13 +211,56 @@ func phaseIs(s *Sequencer, want string) bool {
 	return ph == want
 }
 
+// startRun runs s.Run(ctx) on its own goroutine and ties its lifetime to the
+// test: a t.Cleanup cancels the run and waits for Run to return. Every test
+// starts the runner through here — a bare `go s.Run(ctx)` with only a deferred
+// cancel lets the runner log through t.Logf (testLogger) after the test ended.
+func startRun(t *testing.T, s *Sequencer, ctx context.Context) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		s.Run(ctx)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		<-done
+	})
+}
+
+// The runner must be gone when a test ends: a test that returns mid-sequence
+// (its deferred cancel interrupts a wait) otherwise has the runner log the
+// abort through t.Logf after the test completed — a data race on the test's
+// output under -race. startRun's cleanup cancels the run and waits for Run to
+// return, so the interrupted abort is complete before the (sub)test returns.
+func TestRunnerExitsBeforeTestEnds(t *testing.T) {
+	var s *Sequencer
+	t.Run("busy-at-end", func(t *testing.T) {
+		s, _ = newTestSeq(t) // nothing online: startup stalls at wait-controllers
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		startRun(t, s, ctx)
+		s.Start()
+		runUntil(t, s, func() bool {
+			ph, step, _ := s.Phase()
+			return ph == PhaseStarting && step == "wait-controllers"
+		}, time.Second)
+		// Return while the runner is busy in the wait.
+	})
+	ph, _, fault := s.Phase()
+	if ph != PhaseIdle || !strings.Contains(fault, "interrupted") {
+		t.Fatalf("after the subtest ended: phase=%q fault=%q, want idle + interrupted (runner still running)", ph, fault)
+	}
+}
+
 // ----- sequence tests --------------------------------------------------------
 
 func TestStartupOrder(t *testing.T) {
 	s, pub := newTestSeq(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go s.Run(ctx)
+	startRun(t, s, ctx)
 
 	s.Start()
 
@@ -270,7 +313,7 @@ func TestShutdownReverseOrder(t *testing.T) {
 	s.allObserved()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go s.Run(ctx)
+	startRun(t, s, ctx)
 
 	s.Start()
 	runUntil(t, s, func() bool { return phaseIs(s, PhaseRunning) }, time.Second)
@@ -307,7 +350,7 @@ func TestWaitTimeoutFaultNoRollback(t *testing.T) {
 	s.markOnline("power/master")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go s.Run(ctx)
+	startRun(t, s, ctx)
 
 	s.Start()
 	runUntil(t, s, func() bool {
@@ -345,7 +388,7 @@ func TestStaleStateIdempotentPass(t *testing.T) {
 	s.allObserved() // every wait already true → fast-path
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go s.Run(ctx)
+	startRun(t, s, ctx)
 
 	start := time.Now()
 	s.Start()
@@ -368,7 +411,7 @@ func TestRestartNoSpuriousSequence(t *testing.T) {
 	s.allObserved()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go s.Run(ctx)
+	startRun(t, s, ctx)
 
 	// On boot the runner publishes idle and emits NO /cmd until a start arrives.
 	runUntil(t, s, func() bool {
@@ -391,7 +434,7 @@ func TestBusyGuards(t *testing.T) {
 	s.allObserved()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go s.Run(ctx)
+	startRun(t, s, ctx)
 
 	// stop while idle (no fault) → honored: idempotent teardown (the fault
 	// latch is in-memory; a restart wipes it, so stop must not depend on it).
@@ -423,7 +466,7 @@ func TestRestartAfterFaultStopStillHonored(t *testing.T) {
 	s1.markOnline("power/master")
 	ctx1, cancel1 := context.WithCancel(context.Background())
 	defer cancel1()
-	go s1.Run(ctx1)
+	startRun(t, s1, ctx1)
 	s1.Start()
 	runUntil(t, s1, func() bool {
 		ph, _, fault := s1.Phase()
@@ -434,7 +477,7 @@ func TestRestartAfterFaultStopStillHonored(t *testing.T) {
 	s2, pub2 := newTestSeq(t)
 	ctx2, cancel2 := context.WithCancel(context.Background())
 	defer cancel2()
-	go s2.Run(ctx2)
+	startRun(t, s2, ctx2)
 	runUntil(t, s2, func() bool { return phaseIs(s2, PhaseIdle) }, time.Second)
 
 	s2.Stop()
@@ -455,7 +498,7 @@ func TestStopFromIdleOnFaultResumes(t *testing.T) {
 	s.markOnline("power/master")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go s.Run(ctx)
+	startRun(t, s, ctx)
 
 	s.Start()
 	runUntil(t, s, func() bool {
@@ -537,7 +580,7 @@ func TestWaitStateLivenessPrecondition(t *testing.T) {
 	s.setState("hf/pa", "power", "on")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go s.Run(ctx)
+	startRun(t, s, ctx)
 
 	s.Start()
 	// The sequence reaches wait-pa-power (pa-on cmd emitted), then the
@@ -568,7 +611,7 @@ func TestWaitStateDeviceOnlinePrecondition(t *testing.T) {
 	s.SetState(abs("hf/pa"), []byte(`{"power":"on","device_online":false}`))
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go s.Run(ctx)
+	startRun(t, s, ctx)
 
 	s.Start()
 	runUntil(t, s, func() bool {
@@ -592,7 +635,7 @@ func TestBrokerDisconnectGatesCmd(t *testing.T) {
 	s, pub := newTestSeq(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go s.Run(ctx)
+	startRun(t, s, ctx)
 
 	s.SetBrokerOnline(false) // broker drops before the first cmd
 	s.Start()
@@ -614,7 +657,7 @@ func TestBrokerDisconnectGatesWait(t *testing.T) {
 	s, _ := newTestSeq(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go s.Run(ctx)
+	startRun(t, s, ctx)
 
 	s.Start()
 	runUntil(t, s, func() bool {
@@ -643,7 +686,7 @@ func TestHoldMsDebounce(t *testing.T) {
 	s.SetBrokerOnline(true)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go s.Run(ctx)
+	startRun(t, s, ctx)
 
 	s.Start()
 	// Online then offline within the 60ms hold window → must NOT pass.
@@ -665,7 +708,7 @@ func TestCmdValueKeyConvention(t *testing.T) {
 	s.allObserved()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go s.Run(ctx)
+	startRun(t, s, ctx)
 
 	s.Start()
 	runUntil(t, s, func() bool { return phaseIs(s, PhaseRunning) }, time.Second)
@@ -707,7 +750,7 @@ func TestRetainDefaultAndOverride(t *testing.T) {
 	s.SetBrokerOnline(true)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go s.Run(ctx)
+	startRun(t, s, ctx)
 
 	s.Start()
 	runUntil(t, s, func() bool { return phaseIs(s, PhaseRunning) }, 2*time.Second)
@@ -745,7 +788,7 @@ func TestPerStepTimeoutOverride(t *testing.T) {
 	s.SetBrokerOnline(true)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go s.Run(ctx)
+	startRun(t, s, ctx)
 
 	start := time.Now()
 	s.Start()
@@ -765,7 +808,7 @@ func TestCtxCancelInterrupts(t *testing.T) {
 	s, pub := newTestSeq(t)
 	s.markOnline("power/master") // so wait-controllers is the blocking step
 	ctx, cancel := context.WithCancel(context.Background())
-	go s.Run(ctx)
+	startRun(t, s, ctx)
 
 	s.Start()
 	runUntil(t, s, func() bool {
@@ -823,7 +866,7 @@ func TestWaitStatusOffline(t *testing.T) {
 	s.SetBrokerOnline(true)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go s.Run(ctx)
+	startRun(t, s, ctx)
 
 	s.Start()
 	// Absence must not satisfy "offline": the wait should stay blocked.
@@ -847,7 +890,7 @@ func TestWaitStatusOnlineRequiresDeviceOnline(t *testing.T) {
 	s.SetBrokerOnline(true)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go s.Run(ctx)
+	startRun(t, s, ctx)
 
 	s.SetStatus(abs("hf/radio"), true)
 	s.SetState(abs("hf/radio"), []byte(`{"freq_hz":0,"device_online":false}`))
@@ -931,7 +974,7 @@ func TestBusyGuardDoubleStart(t *testing.T) {
 	// fast-path guard so both sit in cmdCh while phase is still idle.
 	s.cmdCh <- "start"
 	s.cmdCh <- "start"
-	go s.Run(ctx)
+	startRun(t, s, ctx)
 	runUntil(t, s, func() bool { return phaseIs(s, PhaseRunning) }, time.Second)
 
 	// Give the runner a moment to drain + drop the second command.
@@ -947,7 +990,7 @@ func TestStateAlwaysHasStepKey(t *testing.T) {
 	s, pub := newTestSeq(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go s.Run(ctx)
+	startRun(t, s, ctx)
 
 	// On entry the runner publishes an idle /state with an empty step.
 	runUntil(t, s, func() bool {
@@ -969,7 +1012,7 @@ func TestCmdPublishFailureFaults(t *testing.T) {
 	s.SetBrokerOnline(true)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go s.Run(ctx)
+	startRun(t, s, ctx)
 
 	s.Start()
 	runUntil(t, s, func() bool {
@@ -986,7 +1029,7 @@ func TestStatePublishesPhase(t *testing.T) {
 	s, pub := newTestSeq(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go s.Run(ctx)
+	startRun(t, s, ctx)
 
 	// Run() publishes an initial idle /state on entry.
 	runUntil(t, s, func() bool {
@@ -1076,7 +1119,7 @@ func newStandbySeqWith(t *testing.T, mut func(*Config)) (*Sequencer, *recPublish
 	s.SetBrokerOnline(true)
 	s.markOnline("hf/antenna-select", "uhf/radio", "uhf/el-rotator")
 	ctx, cancel := context.WithCancel(context.Background())
-	go s.Run(ctx)
+	startRun(t, s, ctx)
 	s.Start()
 	runUntil(t, s, func() bool { return phaseIs(s, PhaseRunning) }, time.Second)
 	return s, pub, wol, cancel
@@ -1328,7 +1371,7 @@ func TestWaitTimeoutReportsObserved(t *testing.T) {
 	s.SetBrokerOnline(true)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go s.Run(ctx)
+	startRun(t, s, ctx)
 
 	s.SetStatus(abs("hf/radio"), true)
 	s.SetState(abs("hf/radio"), []byte(`{"device_online":false}`))
@@ -1547,4 +1590,243 @@ func TestPowerStepInSettleWindowDoesNotWake(t *testing.T) {
 	s.SetState(abs("uhf/el-rotator"), []byte(`{"el":3,"device_online":true}`))
 	s.setActivity("inactive", time.Time{})
 	runUntil(t, s, func() bool { return phaseIs(s, PhaseStandby) }, time.Second)
+}
+
+// ----- antenna-mode power hold ----------------------------------------------
+
+// newHoldSeq is newStandbySeq with the ant-mode slot read.
+func newHoldSeq(t *testing.T, mut func(*Config)) (*Sequencer, *recPublisher, *wolRec, context.CancelFunc) {
+	t.Helper()
+	return newStandbySeqWith(t, func(c *Config) {
+		c.AntModeSlot = "ant-mode"
+		c.AntModeHold = time.Millisecond // no reconnect wait unless a test sets one
+		if mut != nil {
+			mut(c)
+		}
+	})
+}
+
+func (s *Sequencer) setHold(hold bool) {
+	s.SetAntMode([]byte(fmt.Sprintf(`{"ant_mode":"storm","lock":{"seq":1,"ground":true,"retract":true},"power_hold":%t}`, hold)))
+}
+
+func (s *Sequencer) holding() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.powerHold
+}
+
+func TestAntModeTopicAndMeta(t *testing.T) {
+	s, _, _, cancel := newHoldSeq(t, nil)
+	defer cancel()
+	want := testSite + "/" + testStation + "/ant-mode"
+	if got := s.AntModeStateTopic(); got != want+"/state" {
+		t.Errorf("AntModeStateTopic = %q, want %q", got, want+"/state")
+	}
+	var meta struct {
+		Capabilities struct{ Watches []string } `json:"capabilities"`
+	}
+	if err := json.Unmarshal(s.MetaPayload(), &meta); err != nil {
+		t.Fatal(err)
+	}
+	if !contains(meta.Capabilities.Watches, want) {
+		t.Errorf("meta watches miss %s: %v", want, meta.Capabilities.Watches)
+	}
+
+	// Not configured, or no idle standby: not read.
+	s2, _, _, cancel2 := newStandbySeq(t)
+	defer cancel2()
+	if got := s2.AntModeStateTopic(); got != "" {
+		t.Errorf("unconfigured AntModeStateTopic = %q", got)
+	}
+	cfg := baseConfig(exampleStartup(), exampleShutdown())
+	cfg.AntModeSlot = "ant-mode"
+	s3, err := New(cfg, &recPublisher{}, &testLogger{t})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := s3.AntModeStateTopic(); got != "" {
+		t.Errorf("AntModeStateTopic without standby = %q", got)
+	}
+}
+
+// The station is idle and in running: while antmode borrows the antenna
+// power, no standby is entered; once the hold ends, standby follows.
+func TestPowerHoldBlocksStandby(t *testing.T) {
+	s, _, _, cancel := newHoldSeq(t, nil)
+	defer cancel()
+	s.setHold(true)
+	s.setActivity("inactive", time.Time{})
+	time.Sleep(3 * testIdleTimeout)
+	if !phaseIs(s, PhaseRunning) {
+		t.Fatalf("standby during the power hold: phase=%s", mustPhase(s))
+	}
+	s.setHold(false)
+	runUntil(t, s, func() bool { return phaseIs(s, PhaseStandby) }, time.Second)
+}
+
+// Regression guard for the borrow (plan phase 5): station in standby, antmode
+// switches the antenna power on to park and off again. The rotator readbacks
+// step both times with the link up (and the UHF watches may move meanwhile);
+// none of it wakes the station. A real move after the settle window does.
+func TestPowerHoldWatchChangesDoNotWake(t *testing.T) {
+	const settle = 60 * time.Millisecond
+	s, _, wol, cancel := newHoldSeq(t, func(c *Config) { c.WatchSettle = settle })
+	defer cancel()
+	s.SetState(abs("uhf/el-rotator"), []byte(`{"el":3,"device_online":true}`))
+	s.setActivity("inactive", time.Time{})
+	runUntil(t, s, func() bool { return phaseIs(s, PhaseStandby) }, time.Second)
+	time.Sleep(settle + 20*time.Millisecond) // past the standby-entry window
+
+	s.setHold(true)
+	// Borrowed power on: readback steps, then moves while the HF park runs.
+	s.SetState(abs("uhf/el-rotator"), []byte(`{"el":0,"device_online":true}`))
+	time.Sleep(settle + 20*time.Millisecond) // well outside any phase window
+	s.SetState(abs("uhf/el-rotator"), []byte(`{"el":20,"device_online":true}`))
+	s.SetState(abs("uhf/radio"), []byte(`{"freq_hz":145800000,"device_online":true}`))
+	s.SetState(abs("uhf/radio"), []byte(`{"freq_hz":145900000,"device_online":true}`))
+	time.Sleep(20 * time.Millisecond)
+	if !phaseIs(s, PhaseStandby) || wol.n() != 0 {
+		t.Fatalf("woke during the power hold: phase=%s wol=%d", mustPhase(s), wol.n())
+	}
+
+	// Power restored to off, hold cleared: the readback step right after is
+	// inside the fresh settle window and only re-baselines.
+	s.setHold(false)
+	s.SetState(abs("uhf/el-rotator"), []byte(`{"el":3,"device_online":true}`))
+	time.Sleep(settle + 20*time.Millisecond)
+	s.SetState(abs("uhf/el-rotator"), []byte(`{"el":3,"device_online":true}`))
+	time.Sleep(20 * time.Millisecond)
+	if !phaseIs(s, PhaseStandby) || wol.n() != 0 {
+		t.Fatalf("woke on the power-restore step: phase=%s wol=%d", mustPhase(s), wol.n())
+	}
+
+	// After the window a real move wakes the station again.
+	s.SetState(abs("uhf/el-rotator"), []byte(`{"el":15,"device_online":true}`))
+	runUntil(t, s, func() bool { return phaseIs(s, PhaseRunning) }, time.Second)
+}
+
+// A last_activity newer than the standby entry would wake the station; during
+// the hold no wake is started (the borrow is not cut short by a wake).
+func TestPowerHoldDefersWake(t *testing.T) {
+	s, _, wol, cancel := newHoldSeq(t, nil)
+	defer cancel()
+	s.setActivity("inactive", time.Time{})
+	runUntil(t, s, func() bool { return phaseIs(s, PhaseStandby) }, time.Second)
+	s.setHold(true)
+	s.setActivity("active", time.Now())
+	time.Sleep(30 * time.Millisecond)
+	if !phaseIs(s, PhaseStandby) || wol.n() != 0 {
+		t.Fatalf("wake during the power hold: phase=%s wol=%d", mustPhase(s), wol.n())
+	}
+	s.setHold(false)
+	runUntil(t, s, func() bool { return phaseIs(s, PhaseRunning) }, time.Second)
+}
+
+func TestPowerHoldBlocksIdleShutdown(t *testing.T) {
+	s, _, _, cancel := newHoldSeq(t, func(c *Config) {
+		c.IdleShutdown = idleShutdownSteps()
+		c.ShutdownTimeout = testShutdownTimeout
+	})
+	defer cancel()
+	s.setActivity("inactive", time.Time{})
+	runUntil(t, s, func() bool { return phaseIs(s, PhaseStandby) }, time.Second)
+	s.setHold(true)
+	time.Sleep(testShutdownTimeout + 100*time.Millisecond)
+	if !phaseIs(s, PhaseStandby) {
+		t.Fatalf("idle shutdown during the power hold: phase=%s", mustPhase(s))
+	}
+	// The hold end restarts the clock: the shutdown follows ShutdownTimeout
+	// later (TestLongPowerHoldRestartsIdleShutdownClock).
+	s.setHold(false)
+	runUntil(t, s, func() bool { return phaseIs(s, PhaseIdle) }, time.Second)
+}
+
+func TestAntModeReadingRules(t *testing.T) {
+	s, _, _, cancel := newHoldSeq(t, nil)
+	defer cancel()
+	if s.holding() {
+		t.Fatal("hold before any ant-mode state")
+	}
+	s.setHold(true)
+	// Malformed payloads keep the last known hold.
+	for _, bad := range []string{`{`, `{"ant_mode":"hurricane","power_hold":false}`, `{"ant_mode":"storm","lock":{"park_az":999}}`} {
+		s.SetAntMode([]byte(bad))
+		if !s.holding() {
+			t.Fatalf("malformed %q dropped the hold", bad)
+		}
+	}
+	// Empty / cleared retained state = normal = no hold.
+	s.SetAntMode(nil)
+	if s.holding() {
+		t.Fatal("empty ant-mode state kept the hold")
+	}
+	s.setHold(true)
+	s.SetAntMode([]byte(`{"ant_mode":"normal"}`))
+	if s.holding() {
+		t.Fatal("normal state without power_hold kept the hold")
+	}
+	// A hold is honored in any mode it is published with.
+	s.SetAntMode([]byte(`{"ant_mode":"maintenance","power_hold":true}`))
+	if !s.holding() {
+		t.Fatal("maintenance power_hold not honored")
+	}
+	// Malformed while not holding keeps "no hold".
+	s.SetAntMode([]byte(`{"ant_mode":"normal"}`))
+	s.SetAntMode([]byte(`garbage`))
+	if s.holding() {
+		t.Fatal("malformed state set a hold")
+	}
+}
+
+// Reconnect order (OnConnect sets the broker online before the ant-mode
+// /state is re-delivered): a borrow that started while powerseq was
+// disconnected must not be cut by an overdue idle shutdown in that gap.
+func TestReconnectWaitsForAntModeState(t *testing.T) {
+	s, _, _, cancel := newHoldSeq(t, func(c *Config) {
+		c.IdleShutdown = idleShutdownSteps()
+		c.ShutdownTimeout = testShutdownTimeout
+		c.AntModeHold = 150 * time.Millisecond
+	})
+	defer cancel()
+	s.setHold(false)
+	s.setActivity("inactive", time.Time{})
+	runUntil(t, s, func() bool { return phaseIs(s, PhaseStandby) }, time.Second)
+	s.SetBrokerOnline(false)
+	time.Sleep(testShutdownTimeout + 50*time.Millisecond) // overdue while down
+	s.SetBrokerOnline(true)
+	time.Sleep(40 * time.Millisecond) // retained {power_hold:true} arrives late
+	s.setHold(true)
+	time.Sleep(200 * time.Millisecond)
+	if !phaseIs(s, PhaseStandby) {
+		t.Fatalf("idle shutdown before the ant-mode state was re-delivered: phase=%s", mustPhase(s))
+	}
+	// No retained ant-mode state after a reconnect = no hold, once the
+	// window has passed.
+	s.setHold(false)
+	s.SetBrokerOnline(false)
+	s.SetBrokerOnline(true)
+	runUntil(t, s, func() bool { return phaseIs(s, PhaseIdle) }, time.Second)
+}
+
+// A hold longer than the idle-shutdown timeout (maintenance) restarts the
+// idle-shutdown clock when it ends: the station is not powered down on the
+// next tick while the operator is still there.
+func TestLongPowerHoldRestartsIdleShutdownClock(t *testing.T) {
+	s, _, _, cancel := newHoldSeq(t, func(c *Config) {
+		c.IdleShutdown = idleShutdownSteps()
+		c.ShutdownTimeout = testShutdownTimeout
+	})
+	defer cancel()
+	s.setActivity("inactive", time.Time{})
+	runUntil(t, s, func() bool { return phaseIs(s, PhaseStandby) }, time.Second)
+	s.setHold(true)
+	time.Sleep(2 * testShutdownTimeout)
+	s.setHold(false)
+	ended := time.Now()
+	time.Sleep(time.Until(ended.Add(testShutdownTimeout - 70*time.Millisecond)))
+	if !phaseIs(s, PhaseStandby) {
+		t.Fatalf("idle shutdown right after the hold ended: phase=%s", mustPhase(s))
+	}
+	runUntil(t, s, func() bool { return phaseIs(s, PhaseIdle) }, time.Second)
 }

@@ -1,0 +1,149 @@
+{
+ "identifier": "dwd.2.49.0.0.276.0.DWD.PVW.1792572900000.e4e0bc6f-3fbe-49bd-ad0d-b3491e51ca2a.MUL",
+ "sender": "opendata@dwd.de",
+ "sent": "2026-10-21T10:54:12+02:00",
+ "status": "Actual",
+ "msgType": "Alert",
+ "source": "PVW",
+ "scope": "Public",
+ "code": [
+  "DVN:21",
+  "id:2.49.0.0.276.0.DWD.PVW.1792572900000.e4e0bc6f-3fbe-49bd-ad0d-b3491e51ca2a"
+ ],
+ "info": [
+  {
+   "language": "de-DE",
+   "category": [
+    "Met"
+   ],
+   "event": "STURMBÖEN",
+   "responseType": [
+    "Prepare"
+   ],
+   "urgency": "Immediate",
+   "severity": "Moderate",
+   "certainty": "Likely",
+   "eventCode": [
+    {
+     "valueName": "PROFILE_VERSION",
+     "value": "2.1.14"
+    },
+    {
+     "valueName": "LICENSE",
+     "value": "© GeoBasis-DE / BKG 2021 (Daten modifiziert)"
+    },
+    {
+     "valueName": "II",
+     "value": "52"
+    },
+    {
+     "valueName": "GROUP",
+     "value": "WIND"
+    },
+    {
+     "valueName": "AREA_COLOR",
+     "value": "251 140 0"
+    }
+   ],
+   "effective": "2026-10-21T10:55:00+02:00",
+   "onset": "2026-10-22T00:00:00+02:00",
+   "expires": "2026-10-22T15:00:00+02:00",
+   "senderName": "Deutscher Wetterdienst",
+   "headline": "Amtliche WARNUNG vor STURMBÖEN",
+   "description": "Es treten oberhalb 1000 m Sturmböen mit Geschwindigkeiten bis 70 km/h (20 m/s, 38 kn, Bft 8) aus südwestlicher Richtung auf.",
+   "instruction": "Gefahr durch: einzelne herabstürzende Äste; umherfliegende Gegenstände.<br/>Handlungsempfehlungen:<br/>frei stehende Objekte sichern (z.B. Leinwände und Möbel); z.B. Zelte und Abdeckungen befestigen; im Freien auf herabfallende Gegenstände (z.B. Äste) achten",
+   "web": "https://dwd.de/warnungen",
+   "contact": "Deutscher Wetterdienst",
+   "parameter": [
+    {
+     "valueName": "gusts",
+     "value": "<70 [km/h]"
+    },
+    {
+     "valueName": "wind direction",
+     "value": "south-west"
+    },
+    {
+     "valueName": "PHGEM",
+     "value": "9625"
+    },
+    {
+     "valueName": "ZGEM",
+     "value": "9625"
+    },
+    {
+     "valueName": "furtherInformation",
+     "value": "Bitte informieren Sie sich fortlaufend über Aktualisierungen zur aktuellen Wetter- bzw. Warnsituation."
+    }
+   ],
+   "area": [
+    {
+     "areaDesc": "Stadt Oberwiesenthal"
+    }
+   ]
+  },
+  {
+   "language": "en",
+   "category": [
+    "Met"
+   ],
+   "event": "gale-force gusts",
+   "responseType": [
+    "Prepare"
+   ],
+   "urgency": "Immediate",
+   "severity": "Moderate",
+   "certainty": "Likely",
+   "eventCode": [
+    {
+     "valueName": "PROFILE_VERSION",
+     "value": "2.1.14"
+    },
+    {
+     "valueName": "LICENSE",
+     "value": "© GeoBasis-DE / BKG 2021 (Daten modifiziert)"
+    },
+    {
+     "valueName": "II",
+     "value": "52"
+    },
+    {
+     "valueName": "GROUP",
+     "value": "WIND"
+    },
+    {
+     "valueName": "AREA_COLOR",
+     "value": "251 140 0"
+    }
+   ],
+   "effective": "2026-10-21T10:55:00+02:00",
+   "onset": "2026-10-22T00:00:00+02:00",
+   "expires": "2026-10-22T15:00:00+02:00",
+   "senderName": "Deutscher Wetterdienst",
+   "headline": "Official WARNING of GALE-FORCE GUSTS",
+   "description": "There is a risk of gale-force gusts (level 2 of 4).<br/>Height range: &gt; 1000 m; Max. gusts: &lt; 70 km/h; Wind direction: south-west",
+   "instruction": "Hazard(s) caused by: single branches falling; objects flying through the air.<br/>Recommendations for what to do:<br/>Secure free-standing objects (e.g. screens and furniture). For example, fasten tents and coverings. Watch out for falling objects outdoors (e.g. branches).",
+   "web": "https://dwd.de/warnungen",
+   "contact": "Deutscher Wetterdienst",
+   "parameter": [
+    {
+     "valueName": "gusts",
+     "value": "<70 [km/h]"
+    },
+    {
+     "valueName": "wind direction",
+     "value": "south-west"
+    },
+    {
+     "valueName": "furtherInformation",
+     "value": "Please check back regularly for updates on the current weather and warning situation."
+    }
+   ],
+   "area": [
+    {
+     "areaDesc": "Stadt Oberwiesenthal"
+    }
+   ]
+  }
+ ]
+}

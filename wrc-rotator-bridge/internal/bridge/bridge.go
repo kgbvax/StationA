@@ -6,6 +6,7 @@ package bridge
 
 import (
 	"encoding/json"
+	"errors"
 	"sync"
 	"time"
 
@@ -19,6 +20,13 @@ import (
 // Commander is the rotator control surface the bridge drives from /cmd. The
 // rotor device (internal/rotor.Device) implements it; tests use a fake.
 type Commander = rotor.Commander
+
+// OverrideCommander is implemented by a Commander that accepts a set_az
+// carrying an `override` tag (the antenna-mode lock gate: a console nudge in
+// maintenance). A plain device does not implement it; the tag is then ignored.
+type OverrideCommander interface {
+	SetAzOverride(az float64, override string) error
+}
 
 // Config is the subset of config the bridge needs.
 type Config struct {
@@ -50,9 +58,18 @@ type Bridge struct {
 	pub Publisher
 	log Logger
 
-	mu    sync.RWMutex
-	state rotor.State
-	last  rotor.State // last published snapshot (for change dedup)
+	// pubMu serializes "snapshot + publish" for /state. HandleTelemetry (WRC
+	// read loop), SetDeviceOnline (wsLoop) and SetLock (lock loop) run on
+	// different goroutines; without it a stale snapshot could be published
+	// after a newer one and stay retained while dedup suppresses the fix.
+	// Taken before mu; PahoPublisher.Publish does not wait on the token.
+	pubMu sync.Mutex
+
+	mu       sync.RWMutex
+	state    rotor.State
+	last     rotor.State // last published snapshot (for change dedup)
+	lock     string      // antenna-mode lock label ("" = unlocked)
+	lastLock string      // lock label in the last published snapshot
 }
 
 // metaPayload is the JSON shape published to <slot>/meta (retained birth cert).
@@ -127,6 +144,9 @@ type metaCommand struct {
 type cmdPayload struct {
 	Action string   `json:"action"`
 	Az     *float64 `json:"az,omitempty"`
+	// Override tags a set_az as an explicit operator nudge allowed during an
+	// antenna-mode maintenance lock ("maintenance"); see internal/lock.
+	Override string `json:"override,omitempty"`
 }
 
 // New constructs a Bridge.
@@ -189,6 +209,7 @@ func (b *Bridge) publishMetaWith(pub Publisher) {
 				{Key: "moving", Name: "Moving", Type: "boolean"},
 				{Key: "rotor_state", Name: "Rotor State", Type: "string"},
 				{Key: "device_online", Name: "Device Online", Type: "boolean"},
+				{Key: "lock", Name: "Antenna Mode Lock", Type: "string"},
 			},
 			Actions: []metaExposeAction{
 				{Key: "stop", Name: "Stop", Command: &metaCommand{Action: "stop"}},
@@ -210,15 +231,36 @@ func (b *Bridge) publishMetaWith(pub Publisher) {
 // The WRC streams status frequently; dedup keeps the bus quiet while the
 // rotator sits still (model §8 — state is the live snapshot, not a firehose).
 func (b *Bridge) HandleTelemetry(st rotor.State) {
+	b.pubMu.Lock()
+	defer b.pubMu.Unlock()
 	b.mu.Lock()
 	b.state = st
-	changed := stateChanged(b.last, st)
+	changed := stateChanged(b.last, st) || b.lock != b.lastLock
+	lock := b.lock
 	if changed {
-		b.last = st
+		b.last, b.lastLock = st, lock
 	}
 	b.mu.Unlock()
 	if changed {
-		b.publishState(st)
+		b.publishState(st, lock)
+	}
+}
+
+// SetLock records the antenna-mode lock label ("" = unlocked) and publishes a
+// snapshot when it changed.
+func (b *Bridge) SetLock(label string) {
+	b.pubMu.Lock()
+	defer b.pubMu.Unlock()
+	b.mu.Lock()
+	b.lock = label
+	changed := b.lock != b.lastLock
+	snap := b.state
+	if changed {
+		b.last, b.lastLock = snap, label
+	}
+	b.mu.Unlock()
+	if changed {
+		b.publishState(snap, label)
 	}
 }
 
@@ -226,17 +268,20 @@ func (b *Bridge) HandleTelemetry(st rotor.State) {
 // snapshot. Called when the WebSocket is lost or regained; /status itself (the
 // bridge LWT) is unaffected — the bridge is still up.
 func (b *Bridge) SetDeviceOnline(online bool, errMsg string) {
+	b.pubMu.Lock()
+	defer b.pubMu.Unlock()
 	b.mu.Lock()
 	b.state.DeviceOnline = online
 	b.state.Error = errMsg
 	snap := b.state
-	changed := stateChanged(b.last, snap)
+	lock := b.lock
+	changed := stateChanged(b.last, snap) || lock != b.lastLock
 	if changed {
-		b.last = snap
+		b.last, b.lastLock = snap, lock
 	}
 	b.mu.Unlock()
 	if changed {
-		b.publishState(snap)
+		b.publishState(snap, lock)
 	}
 }
 
@@ -271,32 +316,39 @@ func (b *Bridge) HandleCommand(payload []byte) {
 			b.log.Warnf("cmd set_az: missing az")
 			return
 		}
-		if err := b.cfg.Commander.SetAz(*c.Az); err != nil {
-			b.log.Warnf("cmd set_az: %v", err)
+		var err error
+		if oc, ok := b.cfg.Commander.(OverrideCommander); ok && c.Override != "" {
+			err = oc.SetAzOverride(*c.Az, c.Override)
+		} else {
+			err = b.cfg.Commander.SetAz(*c.Az)
 		}
+		b.cmdErr("set_az", err)
 	case "stop":
-		if err := b.cfg.Commander.Stop(); err != nil {
-			b.log.Warnf("cmd stop: %v", err)
-		}
+		b.cmdErr("stop", b.cfg.Commander.Stop())
 	case "fwd":
-		if err := b.cfg.Commander.Jog("fwd"); err != nil {
-			b.log.Warnf("cmd fwd: %v", err)
-		}
+		b.cmdErr("fwd", b.cfg.Commander.Jog("fwd"))
 	case "rev":
-		if err := b.cfg.Commander.Jog("rev"); err != nil {
-			b.log.Warnf("cmd rev: %v", err)
-		}
+		b.cmdErr("rev", b.cfg.Commander.Jog("rev"))
 	default:
 		b.log.Warnf("cmd: unknown action %q", c.Action)
 	}
 }
 
+// cmdErr logs a failed command. A lock refusal is not logged here: the lock
+// gate already logs one Warn per refusal streak.
+func (b *Bridge) cmdErr(action string, err error) {
+	if err != nil && !errors.Is(err, rotor.ErrLocked) {
+		b.log.Warnf("cmd %s: %v", action, err)
+	}
+}
+
 // publishState marshals the snapshot with an RFC3339 ts and publishes it
 // retained to /state.
-func (b *Bridge) publishState(st rotor.State) {
+func (b *Bridge) publishState(st rotor.State, lock string) {
 	p := stateEnvelope{
 		TS:    time.Now().UTC().Format(time.RFC3339),
 		State: st,
+		Lock:  lock,
 	}
 	data, err := json.Marshal(p)
 	if err != nil {
@@ -311,6 +363,8 @@ func (b *Bridge) publishState(st rotor.State) {
 type stateEnvelope struct {
 	TS string `json:"ts"`
 	rotor.State
+	// Lock is the antenna-mode lock (storm|maintenance), omitted when unlocked.
+	Lock string `json:"lock,omitempty"`
 }
 
 // ------------------------------------------------------------------

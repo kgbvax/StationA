@@ -1,0 +1,13 @@
+# build artifacts
+/dist/
+/antmode
+
+# editor swap files
+*.swp
+*.swo
+
+# macOS
+.DS_Store
+
+# Claude Code local session state
+.claude/

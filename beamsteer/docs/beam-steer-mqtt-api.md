@@ -1,6 +1,6 @@
 # beamsteer — MQTT and PstRotator API
 
-Logic slot `muehle/hf/beam-steer` (role `steering`, runs on shari). Input is the
+Logic slot `muehle/hf/beam-steer` (role `steering`, runs on scmino). Input is the
 contest logger's rotator output, received by emulating PstRotator's UDP
 interface. Outputs are commands to `hf/rotator` (wrc-rotator-bridge) and
 `hf/ant-ctrl` (ultrabridge).
@@ -43,16 +43,58 @@ For each logger rotate request with bearing `b`:
   yet → the request is ignored. The reason goes to `/state.last.reason`, and a
   Warn goes to the journal.
 
+### Antenna-mode lock (`hf/ant-mode`)
+
+beamsteer reads the retained `hf/ant-mode/state` (slot `steer.ant_mode_slot`,
+default `ant-mode`; contract `../../antmode/docs/ant-mode-mqtt-api.md`) through
+`shared/antmode`. While `ant_mode` is `storm` or `maintenance` the rotator and
+the Ultrabeam are parked by their own bridges, and beamsteer stands down:
+
+- Every rotate request (logger `Goto`, console `aim`) is ignored, toggle on
+  **or off** — no plain passthrough either. `/state.last.reason` reads
+  `antenna mode storm: ignored`; the journal gets one Warn per refusal reason
+  (then Info with a `repeat` count). A new reason — hold → storm, storm →
+  maintenance — warns again.
+- A held direction change is dropped when the lock lands.
+- Nothing is sent to `hf/ant-ctrl` (no `direction`) or `hf/rotator` (no
+  `set_az`).
+- The logger's `STOP` is **not** forwarded: a contest logger must not cancel
+  the park. The console and the M5 dial send STOP straight to the rotator
+  bridge, which never refuses a stop.
+- `AZ?` readback keeps working (it reports the parked heading).
+- `/state.lock` carries the mode name.
+
+On unlock beamsteer resumes with the next request. Nothing dropped while
+locked is replayed.
+
+Reading rules: no retained state (or an empty payload) = normal, so beamsteer
+works before antmode exists. A valid locked state is enforced even while
+`hf/ant-mode/status` is offline (beamsteer does not read it). A malformed
+payload keeps the last known state and logs an Error. `ts` is not checked.
+
+**Connect hold:** after every broker connect — the first and each reconnect —
+requests and the logger STOP are ignored (`antenna mode not yet known:
+ignored`) until the retained ant-mode state of this connection lands, or for
+at most 3 s when there is none. A request cannot slip in ahead of a storm lock,
+including one set while beamsteer was cut off from the broker. A lock known
+from before the outage stays enforced during the hold. When the hold lapses
+with no state, the last known lock stands (normal if none was ever seen).
+`steer.ant_mode_slot = ""` disables the lock and the hold.
+
+The paho handler only parses and records the state under a mutex; the jobs
+worker applies it. Every path that could move the mast applies the recorded
+state first, so a dropped jobs-queue entry cannot hide a lock.
+
 ## 2. PstRotator UDP (default port 12050)
 
-Configure the logger's PstRotator output as `shari:12050`. The
+Configure the logger's PstRotator output as `scmino:12050`. The
 wrc-rotator-bridge listener on :12040 still drives the rotator directly and
 bypasses smart rotation.
 
 | Datagram | Effect |
 |---|---|
 | `<PST><AZIMUTH>b</AZIMUTH></PST>` | rotate request (above). `ELEVATION` is ignored |
-| `<PST><STOP>1</STOP></PST>` | rotator `stop`, whether the toggle is on or off; beats other tags |
+| `<PST><STOP>1</STOP></PST>` | rotator `stop`, whether the toggle is on or off; beats other tags. **Not forwarded while the antenna is locked** (§1) |
 | `<PST><PARK>1</PARK></PST>` | ignored (logged) |
 | `<PST>AZ?</PST>` | reply to sender IP, port+1: the **effective beam heading** (boom az, +180 when reversed) |
 
@@ -68,7 +110,7 @@ With no valid rotator position there is no reply. The grammar lives in
 | Suffix | Retained | Purpose |
 |---|---|---|
 | `/meta` | yes | birth certificate |
-| `/state` | yes | toggle + last decision |
+| `/state` | yes | toggle + last decision + antenna-mode lock |
 | `/status` | yes | LWT `online`/`offline` |
 | `/cmd` | enable/disable yes, aim no | `{"action":"enable"}` / `{"action":"disable"}` / `{"action":"aim","value":265}` |
 
@@ -94,6 +136,7 @@ retained, so a clean session loses nothing.
   "ts": "2026-09-26T12:00:00Z",
   "enabled": true,
   "inputs": { "rotator": true, "ant_ctrl": true, "radio": true },
+  "lock": "storm",
   "pending": "reverse",
   "last": {
     "bearing": 265,
@@ -108,7 +151,10 @@ retained, so a clean session loses nothing.
 - `inputs` is the sibling liveness: `rotator` (live and a position known),
   `ant_ctrl`, `radio`. With `inputs.rotator` false, every request is ignored.
   The console shows that as an alert on the AUTO line.
-- `pending` is present only while a direction change is held.
+- `lock` is the antenna-mode lock (`storm` | `maintenance`), present only while
+  locked. Republished on every change.
+- `pending` is present only while a direction change is held (never while
+  locked).
 - `last.rotate_to` is present only when the rotator was commanded.
 - `last.direction` is present only when a direction change was decided.
 
@@ -117,14 +163,17 @@ retained, so a clean session loses nothing.
 ```json
 {
   "schema": "1.0", "role": "steering", "link": "none",
-  "location": "bauwagen", "host": "shari",
+  "location": "bauwagen", "host": "scmino",
   "capabilities": {
     "controls": ["rotator", "ant-ctrl"], "input": "pstrotator-udp",
     "pstrotator_port": 12050, "lobe_deg": 30, "bidir_lobe_deg": 45, "max_az": 360
   },
   "expose": {
     "device": { "name": "Beam steering" },
-    "fields": [ { "key": "enabled", "name": "Smart rotation", "type": "boolean" } ]
+    "fields": [
+      { "key": "enabled", "name": "Smart rotation", "type": "boolean" },
+      { "key": "lock", "name": "Antenna Mode Lock", "type": "string" }
+    ]
   }
 }
 ```
