@@ -36,6 +36,13 @@ const (
 // the configured [idle].timeout_minutes.
 const idleCheckInterval = 5 * time.Second
 
+// reextendStallGrace is how long the band-follow controller may report itself
+// online, retracted and unlocked after an unlock before the frequency is
+// re-sent once (checkReextendStall). ultrabridge clears the retracted latch
+// as soon as it accepts a frequency, so a normal unlock confirms within a
+// second; the grace only has to outlast that.
+const reextendStallGrace = 15 * time.Second
+
 type Client struct {
 	client  paho.Client
 	cfg     config.Config
@@ -69,6 +76,17 @@ type Client struct {
 	reextendPending bool
 	followSeen      bool
 	followDevOnline bool
+	// followRetracted / followLock are the controller's last reported
+	// retracted latch and antenna-mode lock label ("" = unlocked, or a
+	// controller that publishes none). reextendStallSince is when the
+	// controller was first seen online, retracted and unlocked with an unlock
+	// re-extend pending and a frequency sent (zero = not stalled);
+	// reextendStallRetried caps the stall re-send at one per unlock. See
+	// checkReextendStall.
+	followRetracted      bool
+	followLock           string
+	reextendStallSince   time.Time
+	reextendStallRetried bool
 
 	// lastActivity is the wall-clock time of the last radio activity (a VFO/frequency
 	// change or a transmit). It drives the idle timeout (config [idle].timeout_minutes): when
@@ -235,6 +253,7 @@ func (c *Client) checkIdle() {
 		if time.Since(c.lastActivity) >= time.Duration(c.cfg.Idle.TimeoutMinutes)*time.Minute {
 			in.StationActivity = "inactive"
 		}
+		c.checkReextendStall(in, true)
 	})
 }
 
@@ -398,16 +417,20 @@ func (c *Client) applyAntMode(in *reconcile.Inputs, st antmode.State) {
 		c.lastSelect = ""
 		c.lastTunerInline = nil
 		c.reextendPending = true
+		c.reextendStallRetried = false
 	}
+	c.checkReextendStall(in, false)
 }
 
 // onFollowState reads the band-follow controller's /state (ant-ctrl at Mühle)
-// for the unlock re-extend only: device_online and the retracted latch. Parsing
-// happens here on the paho goroutine; the bookkeeping runs on the worker.
+// for the unlock re-extend only: device_online, the retracted latch and the
+// controller's own antenna-mode lock label. Parsing happens here on the paho
+// goroutine; the bookkeeping runs on the worker.
 func (c *Client) onFollowState(_ paho.Client, msg paho.Message) {
 	var s struct {
-		DeviceOnline bool `json:"device_online"`
-		Retracted    bool `json:"retracted"`
+		DeviceOnline bool   `json:"device_online"`
+		Retracted    bool   `json:"retracted"`
+		Lock         string `json:"lock"`
 	}
 	if len(msg.Payload()) == 0 {
 		return // cleared retained topic: no information
@@ -417,7 +440,7 @@ func (c *Client) onFollowState(_ paho.Client, msg paho.Message) {
 		return
 	}
 	sharedmqtt.Enqueue(c.jobs, func() {
-		c.update(func(in *reconcile.Inputs) { c.applyFollowState(in, s.DeviceOnline, s.Retracted) })
+		c.update(func(in *reconcile.Inputs) { c.applyFollowState(in, s.DeviceOnline, s.Retracted, s.Lock) })
 	})
 }
 
@@ -427,10 +450,14 @@ func (c *Client) onFollowState(_ paho.Client, msg paho.Message) {
 // the elements still retracted means the re-send was lost, so the follow
 // dedup is reset and this same update() re-sends the frequency if the
 // followed antenna is the target. Outside a pending re-extend (an operator
-// retract, a plain RCU-06 outage) a reconnect re-sends nothing.
-func (c *Client) applyFollowState(in *reconcile.Inputs, online, retracted bool) {
+// retract, a plain RCU-06 outage) a reconnect re-sends nothing. The stall
+// check (checkReextendStall) covers the re-send lost with no device_online
+// edge.
+func (c *Client) applyFollowState(in *reconcile.Inputs, online, retracted bool, lock string) {
 	cameBack := c.followSeen && !c.followDevOnline && online
 	c.followSeen, c.followDevOnline = true, online
+	c.followRetracted, c.followLock = retracted, lock
+	defer c.checkReextendStall(in, false)
 	if !c.reextendPending || in.Locked {
 		return
 	}
@@ -443,6 +470,42 @@ func (c *Client) applyFollowState(in *reconcile.Inputs, online, retracted bool) 
 			"slot", c.cfg.BandFollow.Slot, "freq_hz", c.lastFollowFreq)
 		c.lastFollowFreq = 0
 	}
+}
+
+// checkReextendStall re-sends an unlock re-extend that was lost while the
+// controller stayed online (caller holds c.mu via update). The case: the
+// unlock frequency reached ultrabridge while it still held the lock — over the
+// broker mirror a reconnect replays retained topics in tree order, not publish
+// order, and a restarted mirror broker replays its persisted (stale, locked)
+// ant-mode/state — so it was refused and cleared. ultrabridge then unlocks and
+// reports device_online, retracted, lock "": no device_online edge, and
+// nothing re-sends until the VFO moves.
+//
+// Stalled = re-extend pending, station unlocked, a frequency sent, and the
+// controller online, retracted and reporting no lock (a re-send while it still
+// reports its lock would only be refused again). The onset is recorded on
+// every evaluation; fire (the periodic tick only) re-sends once the stall has
+// stood for reextendStallGrace — a normal unlock confirms (retracted false)
+// well inside it. One stall re-send per unlock, so a controller that keeps
+// failing the frequency for another reason is not retried in a loop.
+func (c *Client) checkReextendStall(in *reconcile.Inputs, fire bool) {
+	stalled := c.reextendPending && !in.Locked && c.lastFollowFreq != 0 &&
+		c.followSeen && c.followDevOnline && c.followRetracted && c.followLock == ""
+	if !stalled {
+		c.reextendStallSince = time.Time{}
+		return
+	}
+	if c.reextendStallSince.IsZero() {
+		c.reextendStallSince = time.Now()
+	}
+	if !fire || c.reextendStallRetried || time.Since(c.reextendStallSince) < reextendStallGrace {
+		return
+	}
+	slog.Warn("[reconcile] unlock re-extend not confirmed: band-follow controller online, unlocked and still retracted; re-sending the frequency once",
+		"slot", c.cfg.BandFollow.Slot, "freq_hz", c.lastFollowFreq, "stalled_for", time.Since(c.reextendStallSince).Round(time.Second))
+	c.reextendStallRetried = true
+	c.reextendStallSince = time.Time{}
+	c.lastFollowFreq = 0
 }
 
 // validRequest reports whether req is a well-formed operator request: a release

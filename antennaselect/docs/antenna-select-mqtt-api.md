@@ -201,6 +201,17 @@ In `storm` and `maintenance` the `antmode` slot publishes a retained `/state` wi
   still true resets the follow dedup and the frequency is re-sent (if the followed
   antenna is the target). Outside that window (an operator retract, a plain RCU-06
   outage) a controller reconnect re-sends nothing.
+- **Re-extend survives a stale lock at the controller.** ultrabridge refuses and clears
+  a `frequency` that arrives while it still holds the lock — possible when the unlock
+  coincides with a mirror reconnect (retained topics replay in topic-tree order, not
+  publish order) or a mirror-broker restart (its persisted, locked ant-mode/state replays
+  first). It then unlocks and reports `device_online`, `retracted`, `lock` "" — no
+  `device_online` edge. So in the same window, once the controller has reported itself
+  online, `retracted` and unlocked for 15 s (checked on the 5 s idle tick, so 15–20 s),
+  the follow dedup is reset and the frequency re-sent, **once per unlock** (Warn
+  `unlock re-extend not confirmed`). No re-send while the controller still reports its
+  `lock`; a normal unlock confirms (`retracted` false) well inside the grace, so it
+  sends nothing extra. A controller that publishes no `lock` field reads as unlocked.
 
 Reading rules (from the contract): empty / no retained ant-mode state → normal (the
 station runs before antmode exists); a valid locked snapshot is enforced even while
@@ -314,7 +325,7 @@ defaults). The `set_inline` vocabulary matches atr1k-tuner-bridge's `/cmd` contr
 | `muehle/hf/antenna-select/cmd` | operator `request` — tier 2 |
 | `muehle/hf/ant-switch/state` | `selected` — confirm (`settled`: received, gating is backlog) |
 | `muehle/hf/<mqtt.ant_mode_slot>/state` | `ant_mode`, `lock.ground` via `shared/antmode` — lock tier (§5.1); `ant-mode` at Mühle |
-| `muehle/hf/<band_follow.slot>/state` | `device_online`, `retracted` — only to re-send a lost unlock re-extend (§5.1); `ant-ctrl` at Mühle; subscribed only when the lock tier and band-follow are both configured |
+| `muehle/hf/<band_follow.slot>/state` | `device_online`, `retracted`, `lock` — only to re-send a lost unlock re-extend (§5.1); `ant-ctrl` at Mühle; subscribed only when the lock tier and band-follow are both configured |
 
 **Emits:** `muehle/hf/ant-switch/cmd` (`select`); `muehle/hf/<band_follow.slot>/cmd`
 (`frequency`, while the followed antenna is selected and no antenna-mode lock is active —

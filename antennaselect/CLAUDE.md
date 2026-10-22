@@ -78,7 +78,9 @@ The seed config bakes the Mühle wiring map and band policy (matching
   unlock the follow dedup is reset so the unchanged frequency is re-sent — the only path
   that re-extends the Ultrabeam; until `ant-ctrl/state` shows the elements out, an RCU-06
   `device_online` false→true edge (still `retracted`) re-sends it again (ultrabridge
-  drops a frequency it cannot deliver). No retained ant-mode state = normal; malformed = keep
+  drops a frequency it cannot deliver), and a controller that reports itself online,
+  `retracted` and unlocked (`lock` "") for 15 s re-gets it once (the frequency was
+  refused under a stale lock — mirror replay order). No retained ant-mode state = normal; malformed = keep
   last known + Error; `ant-mode/status` is not consulted (a dead owner never unlocks).
 - **Cold-switch sequencing** (§6): the ant-switch is `hot_switch: false`. Do not move the
   port under TX — wait for RX, emit `select`, confirm via `selected` (`settled`-gating is
