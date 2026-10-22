@@ -19,7 +19,7 @@ API (authoritative): `docs/ant-mode-mqtt-api.md`. Decision record: `../docs/know
 | `internal/heading` | Pure storm heading: wind ± 90°, +360 variants ≤ `max_az`, nearest the readback; stale → fallback. |
 | `internal/nina` | BBK NINA client: dashboard → `dwd.*` CAP messages → II code filter; `Active(now)`. A failed poll is an error, never "no warnings". |
 | `internal/dwd` | DWD `stationOverviewExtended` client: today's (Europe/Berlin) `days[]` wind. |
-| `internal/engine` | Runtime: lock sequencing, power borrow, persistence, `/state` `/meta`, `/cmd` (one-shot, ts gate, startup hold, own-state adoption). Single-threaded on the jobs worker. |
+| `internal/engine` | Runtime: lock sequencing, power borrow, presence refinements, persistence, `/state` `/meta`, `/cmd` (one-shot, ts gate, startup hold, own-state reconciliation). Single-threaded on the jobs worker. |
 | `internal/store` | Atomic JSON state file. |
 | `internal/poll` | Poll goroutine: timeout, interval, backoff, `logging.Streak`. |
 | `internal/mqtt` | Paho wiring. Every input is `Enqueue`d; no handler publishes. Clean session; own `/cmd` at QoS 0. |
@@ -28,10 +28,13 @@ API (authoritative): `docs/ant-mode-mqtt-api.md`. Decision record: `../docs/know
 ## Rules
 
 - **Two-layer liveness** for every sibling: `/status` online **and** `/state.device_online` not false.
-- **Presence:** manned only while powerseq is `starting`/`running`/`waking`. Offline or silent powerseq = unmanned.
+- **Presence:** manned only while powerseq is `starting`/`running`/`waking`. Offline or silent powerseq = unmanned, but a manned → unmanned change counts only after 60 s (powerseq restart/blip), and an `idle` straight after a manned phase (powerseq lost its phase on a restart) stays manned while `hf/radio` is live and transmitted within 30 min.
 - **`auto_enter` defaults to false** (observe only). Turn it on only after the suggestions have matched WarnWetter for some days (plan Phase 6).
 - **Never publish `/state` before the startup hold (3 s) ends.** Without a state file, antmode adopts a locked retained own `/state`; an early `normal` would unlock the bridges.
-- **The borrow persists `restore_to` before it publishes `set_power on`.** It restores only while powerseq's phase is unchanged, and then always publishes the retained `set_power off`, even when the plug already reads `off` (shelly-power-bridge replays its retained `/cmd` on reconnect).
+- **The borrow persists `restore_to` before it publishes `set_power on`.** In storm it is retried on every step until the park is done (once per `seq`), so a power cut by a powerseq transition in flight at the entry is borrowed back; never late in maintenance. The restore is skipped only after a powerseq takeover (an operator-driven phase seen during the borrow; `idle`/`standby` are not one — powerseq restarts in `idle`), waits while powerseq is offline, and then always publishes the retained `set_power off`, even when the plug already reads `off` (shelly-power-bridge replays its retained `/cmd` on reconnect). A new lock takes over a borrow whose restore is still pending.
+- **`power_hold` is not "borrowed".** It holds powerseq's idle logic: during a borrow, for the whole maintenance, and in storm until parked/failed. `/state.power_borrow` is the borrow itself.
+- **The retained own `/state` is the second copy of the state.** Always subscribed during the startup hold: its `seq` seeds the policy seq, and a locked snapshot newer than the state file (a failed write) wins over the file.
+- **Ground-timeout retract waits for `tx_quiet_s`** (30) without TX, not just "not transmitting now" (FT8 RX gaps).
 - **Park once.** A wind veer never re-aims (G-450 has no brake). Drift is reported only.
 - **`/cmd` is one-shot.** Clear every non-empty payload; ignore the empty echo.
 

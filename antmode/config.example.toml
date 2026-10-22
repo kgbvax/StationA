@@ -105,16 +105,18 @@ park_az = 0            # azimuth for lowering the mast
 
 # --- Lock sequencing ----------------------------------------------------------
 [park]
-ground_timeout_s  = 60    # no "off" from the switch → retract anyway (not while TX)
+ground_timeout_s  = 60    # no "off" from the switch → retract anyway (not within tx_quiet_s of a TX)
 retract_timeout_s = 120   # no "retracted" from ant-ctrl → park anyway
 rotate_timeout_s  = 300   # rotator not at park_az → phase failed (stays locked)
 tolerance_deg     = 3     # "at park_az"
 drift_warn_deg    = 10    # parked readback drift that logs a Warn (no re-aim)
+tx_quiet_s        = 30    # ground-timeout retract only after hf/radio was quiet this long (>= 20; FT8 RX gaps are ~2 s)
 
 # --- Antenna power borrow -----------------------------------------------------
 # When power/antennas is off at entry (stable powerseq phase idle/standby/
-# running only): switch it on, park, then restore — storm after the park,
-# maintenance when it ends — only if powerseq's phase is unchanged.
+# running only; storm also later, once per seq, until the park is done):
+# switch it on, park, then restore — storm after the park, maintenance when
+# it ends — unless powerseq ran an operator-driven phase meanwhile.
 [power]
 borrow            = false
 devices_timeout_s = 240   # power on → rotator + ant-ctrl online (>= 180)

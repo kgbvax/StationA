@@ -8,13 +8,16 @@
 //
 //	ground  → lock{ground}, phase grounding
 //	        → hf/ant-switch reports selected "off" (or the ground timeout passes
-//	          while hf/radio is not transmitting)
+//	          and hf/radio has not transmitted for tx_quiet_s)
 //	retract → lock.retract, phase retracting
 //	        → hf/ant-ctrl live, retracted and not moving (or the retract timeout)
 //	park    → lock.park_az (storm: wind ± 90° nearer the rotator; maintenance:
 //	          the preset), phase rotating
 //	        → hf/rotator live, within tolerance, not moving → parked
 //	          (rotate timeout → failed + fault; a late arrival still parks)
+//
+// Storm borrows antenna power late too (once per seq, until parked): an entry
+// during a powerseq transition finds the power on, then powerseq cuts it.
 //
 // antmode never commands the rotator or the Ultrabeam: the bridges read the
 // lock and act. The only command antmode sends is power/antennas set_power
@@ -88,6 +91,17 @@ const (
 	cmdMaxFuture = 5 * time.Second
 	// stateVersion is the persisted file format.
 	stateVersion = 1
+	// presenceDwell: a manned → unmanned change counts only after it has
+	// lasted this long, so a powerseq restart or /status blip (offline for a
+	// few seconds) never auto-enters storm on an operator. A real outage
+	// still reads unmanned after it.
+	presenceDwell = 60 * time.Second
+	// lostIdleHold: powerseq restarts in phase idle and never recovers
+	// running. An idle that follows a manned phase without a stop sequence
+	// (phase lost) with hf/radio still live keeps the station manned until
+	// the radio has not transmitted for this long (powerseq's own standby
+	// cannot run from idle).
+	lostIdleHold = 30 * time.Minute
 )
 
 // Borrow is an antenna-power borrow in progress (persisted).
@@ -102,6 +116,12 @@ type Borrow struct {
 	Sent bool `json:"sent"`
 	// Restore: the restore is due (mode left, maintenance ended).
 	Restore bool `json:"restore"`
+	// TakenOver: powerseq ran an operator-driven phase (starting, waking,
+	// running, stopping, entering_standby — anything but the start phase,
+	// idle or standby) during the borrow; the power is powerseq's now and is
+	// never restored. idle/standby alone are not a takeover: powerseq comes
+	// back from a restart in idle and owns nothing there.
+	TakenOver bool `json:"taken_over,omitempty"`
 }
 
 // Persisted is the state file content.
@@ -112,6 +132,12 @@ type Persisted struct {
 	Phase   Phase         `json:"phase"`
 	Fault   string        `json:"fault,omitempty"`
 	Borrow  *Borrow       `json:"borrow,omitempty"`
+	// BorrowSeq is the lock seq a borrow was last taken for: a storm park
+	// that failed despite its borrow is not borrowed for again (no loop).
+	BorrowSeq uint64 `json:"borrow_seq,omitempty"`
+	// NudgeBase is the rotator target_az when the lock (re)started: a target
+	// that moved away from it and from park_az is a maintenance nudge.
+	NudgeBase *float64 `json:"nudge_base,omitempty"`
 }
 
 // sibling is the two-layer liveness of one slot plus its parsed /state.
@@ -122,6 +148,9 @@ type sibling struct {
 	az      float64
 	azKnown bool
 	moving  bool
+	// rotator target_az (absent = unknown; the WRC bridge omits 0)
+	target      float64
+	targetKnown bool
 	// ant-ctrl
 	retracted bool
 	// ant-switch
@@ -146,22 +175,34 @@ type Engine struct {
 	cmdTopic string
 	powerCmd string
 
-	pol    *policy.Policy
-	lock   *antmode.Lock
-	phase  Phase
-	fault  string
-	borrow *Borrow
+	pol       *policy.Policy
+	lock      *antmode.Lock
+	phase     Phase
+	fault     string
+	borrow    *Borrow
+	borrowSeq uint64
+	nudgeBase *float64
 
 	phaseSince  time.Time
 	borrowClock time.Time // in-memory start of the awaiting_* timeout
 	groundTXLog bool      // "ground timeout held by TX" logged for this phase
 	drift       *int
 	driftWarned bool
+	lastTX      time.Time // last time hf/radio was seen transmitting
+	borrowNote  string    // last "not borrowing" reason logged (dedupe)
+	restoreWait bool      // "restore waits for powerseq" logged
+
+	// presence refinements (see presence())
+	wasManned     bool
+	unmannedSince time.Time
+	seqLost       bool // powerseq went to idle from a manned phase without a stop
+	seqLostAt     time.Time
 
 	connected    bool
 	firstConnect time.Time
 	ready        bool
-	adopt        bool // no state file: adopt the retained own /state
+	adopt        bool   // no state file: adopt a locked retained own /state
+	fileSeq      uint64 // seq of the loaded state file (adoption compares)
 	pendingCmds  [][]byte
 
 	seqStatus bool
@@ -184,8 +225,9 @@ type Engine struct {
 }
 
 // New builds the engine over a loaded state (nil when there is no state
-// file: the engine then adopts the retained own /state during the startup
-// hold, so a lost file never unlocks the station). now may be nil.
+// file). During the startup hold the retained own /state is reconciled with
+// it (OwnState), so neither a lost nor a stale file unlocks the station. now
+// may be nil.
 func New(cfg config.Config, pub Publisher, saver Saver, loaded *Persisted, log *slog.Logger, now func() time.Time) *Engine {
 	if now == nil {
 		now = time.Now
@@ -211,7 +253,9 @@ func New(cfg config.Config, pub Publisher, saver Saver, loaded *Persisted, log *
 		e.pol = policy.New(pcfg, policy.State{Seq: uint64(now().Unix())})
 	} else {
 		e.pol = policy.New(pcfg, loaded.Policy)
+		e.fileSeq = loaded.Policy.Seq
 		e.lock, e.phase, e.fault, e.borrow = loaded.Lock, loaded.Phase, loaded.Fault, loaded.Borrow
+		e.borrowSeq, e.nudgeBase = loaded.BorrowSeq, loaded.NudgeBase
 		e.normalizeLoaded()
 	}
 	return e
@@ -282,11 +326,16 @@ func (e *Engine) becomeReady() {
 	e.publishState(true)
 }
 
-// OwnState is the retained own /state replay. Read only while adopting (no
-// state file at start): a locked snapshot is taken over so that losing the
-// file never unlocks the station.
+// OwnState is the retained own /state replay, read during the startup hold
+// only. The retained snapshot is the second copy of the state:
+//   - its seq (top-level, also in normal) seeds the policy seq, so a seq
+//     the bus has seen is never reused (a stale state file would repeat
+//     one, and wrc-rotator-bridge skips a park it recorded as finished);
+//   - a locked snapshot is adopted when there is no state file, or when its
+//     seq is newer than the file's (the file write failed since: a stale
+//     file must not unlock the station). A file at least as new wins.
 func (e *Engine) OwnState(p []byte) {
-	if !e.adopt || e.ready {
+	if e.ready {
 		return
 	}
 	st, err := antmode.Parse(p)
@@ -294,17 +343,33 @@ func (e *Engine) OwnState(p []byte) {
 		e.log.Error("own retained /state is malformed; not adopted", "err", err)
 		return
 	}
+	var extra struct {
+		Seq         uint64 `json:"seq"`
+		Source      string `json:"source"`
+		Since       string `json:"since"`
+		Phase       Phase  `json:"phase"`
+		PowerBorrow *struct {
+			RestoreTo     string `json:"restore_to"`
+			PowerSeqPhase string `json:"powerseq_phase"`
+			Since         string `json:"since"`
+			TakenOver     bool   `json:"taken_over"`
+		} `json:"power_borrow"`
+	}
+	_ = json.Unmarshal(p, &extra)
+	if extra.Seq > e.pol.S.Seq {
+		e.pol.S.Seq = extra.Seq
+	}
 	if !st.Locked() {
 		return
 	}
-	var extra struct {
-		Source string `json:"source"`
-		Since  string `json:"since"`
-		Phase  Phase  `json:"phase"`
-	}
-	_ = json.Unmarshal(p, &extra)
 	l := st.L()
-	e.pol.S.Mode, e.pol.S.Seq = st.Mode, l.Seq
+	if !e.adopt && l.Seq <= e.fileSeq {
+		return // the state file knows this entry (or a later one)
+	}
+	e.pol.S.Mode = st.Mode
+	if l.Seq > e.pol.S.Seq {
+		e.pol.S.Seq = l.Seq
+	}
 	e.pol.S.Source = policy.Manual
 	if extra.Source == string(policy.Auto) {
 		e.pol.S.Source = policy.Auto
@@ -312,12 +377,29 @@ func (e *Engine) OwnState(p []byte) {
 	if t, err := time.Parse(time.RFC3339, extra.Since); err == nil {
 		e.pol.S.Since = t
 	}
-	e.pol.S.Reason = "adopted from the retained /state (no state file)"
+	e.pol.S.QuietFor = 0
 	e.lock = &l
 	e.phase = extra.Phase
+	e.fault = ""
+	e.borrow = nil
+	if b := extra.PowerBorrow; b != nil && b.RestoreTo != "" {
+		e.borrow = &Borrow{RestoreTo: b.RestoreTo, PowerSeqPhase: b.PowerSeqPhase, TakenOver: b.TakenOver,
+			Sent: extra.Phase != AwaitingPower}
+		if t, err := time.Parse(time.RFC3339, b.Since); err == nil {
+			e.borrow.Since = t
+		}
+		e.borrowSeq = l.Seq
+	}
+	if e.adopt {
+		e.pol.S.Reason = "adopted from the retained /state (no state file)"
+		e.log.Warn("no state file: adopted the retained lock from the broker",
+			"ant_mode", st.Mode, "seq", l.Seq, "phase", e.phase, "borrow", e.borrow != nil)
+	} else {
+		e.pol.S.Reason = "adopted from the retained /state (state file stale)"
+		e.log.Error("state file is older than the retained lock (a write failed?): adopted the retained lock",
+			"ant_mode", st.Mode, "seq", l.Seq, "file_seq", e.fileSeq, "phase", e.phase, "borrow", e.borrow != nil)
+	}
 	e.normalizeLoaded()
-	e.log.Warn("no state file: adopted the retained lock from the broker",
-		"ant_mode", st.Mode, "seq", l.Seq, "phase", e.phase)
 }
 
 // ---------------------------------------------------------------------------
@@ -342,6 +424,19 @@ func (e *Engine) PowerSeqState(p []byte) {
 		e.log.Warn("bad power-seq state", "err", err)
 		return
 	} else {
+		// powerseq starts in idle and never recovers its phase: an idle
+		// straight after a manned phase (no stopping in between) is a lost
+		// phase, not a station that was shut down.
+		switch {
+		case s.Phase == "idle" && policy.PresenceOf(true, e.seqPhase) == policy.Manned:
+			if !e.seqLost {
+				e.log.Info("powerseq went to idle from a manned phase without a stop (restart?)",
+					"was", e.seqPhase)
+			}
+			e.seqLost, e.seqLostAt = true, e.now()
+		case s.Phase != "idle":
+			e.seqLost = false
+		}
 		e.seqPhase = s.Phase
 	}
 	e.inputChanged()
@@ -352,6 +447,7 @@ func (e *Engine) RotatorStatus(p []byte) { e.rot.status = online(p); e.inputChan
 func (e *Engine) RotatorState(p []byte) {
 	var s struct {
 		Az           *float64 `json:"az"`
+		TargetAz     *float64 `json:"target_az"`
 		Moving       bool     `json:"moving"`
 		DeviceOnline *bool    `json:"device_online"`
 	}
@@ -361,6 +457,10 @@ func (e *Engine) RotatorState(p []byte) {
 	}
 	if s.Az != nil {
 		e.rot.az, e.rot.azKnown = *s.Az, true
+	}
+	e.rot.targetKnown = s.TargetAz != nil
+	if s.TargetAz != nil {
+		e.rot.target = *s.TargetAz
 	}
 	e.rot.moving, e.rot.device, e.rot.seen = s.Moving, deviceOnline(s.DeviceOnline), true
 	e.inputChanged()
@@ -408,7 +508,13 @@ func (e *Engine) RadioState(p []byte) {
 		e.log.Warn("bad radio state", "err", err)
 		return
 	}
+	if e.transmitting() {
+		e.lastTX = e.now() // the tx → rx edge: TX lasted until now
+	}
 	e.radio.tx, e.radio.device, e.radio.seen = s.TX == "tx", deviceOnline(s.DeviceOnline), true
+	if e.transmitting() {
+		e.lastTX = e.now()
+	}
 	e.inputChanged()
 }
 
@@ -582,7 +688,50 @@ func (e *Engine) applyCmd(p []byte) {
 // mode and lock sequencing
 // ---------------------------------------------------------------------------
 
-func (e *Engine) presence() policy.Presence { return policy.PresenceOf(e.seqStatus, e.seqPhase) }
+// basePresence is powerseq's presence, refined for a lost phase: powerseq
+// restarts in idle, so an idle that followed a manned phase without a stop
+// stays manned while hf/radio is live and has transmitted within
+// lostIdleHold (powerseq cannot standby from idle, so this is the only
+// "operator gone" signal left).
+func (e *Engine) basePresence(now time.Time) policy.Presence {
+	p := policy.PresenceOf(e.seqStatus, e.seqPhase)
+	if p == policy.Manned {
+		return p
+	}
+	if e.seqStatus && e.seqPhase == "idle" && e.seqLost && e.radio.live() {
+		last := e.seqLostAt
+		if e.lastTX.After(last) {
+			last = e.lastTX
+		}
+		if now.Sub(last) < lostIdleHold {
+			return policy.Manned
+		}
+	}
+	return p
+}
+
+// presence is the effective presence: basePresence, with a manned →
+// unmanned change counted only after presenceDwell (a powerseq restart or
+// /status blip). A station first seen unmanned is unmanned at once.
+func (e *Engine) presence() policy.Presence {
+	now := e.now()
+	if e.basePresence(now) == policy.Manned {
+		return policy.Manned
+	}
+	if !e.unmannedSince.IsZero() && now.Sub(e.unmannedSince) < presenceDwell {
+		return policy.Manned
+	}
+	return policy.Unmanned
+}
+
+// trackPresence records the manned → unmanned edge for the dwell.
+func (e *Engine) trackPresence(now time.Time) {
+	if e.basePresence(now) == policy.Manned {
+		e.wasManned, e.unmannedSince = true, time.Time{}
+	} else if e.wasManned {
+		e.wasManned, e.unmannedSince = false, now
+	}
+}
 
 func (e *Engine) transmitting() bool { return e.radio.live() && e.radio.tx }
 
@@ -603,10 +752,10 @@ func (e *Engine) fail(fault string) {
 // modeChanged applies a policy mode change to the lock.
 func (e *Engine) modeChanged(from antmode.Mode) {
 	to := e.pol.S.Mode
-	e.drift, e.driftWarned, e.fault = nil, false, ""
+	e.drift, e.driftWarned, e.fault, e.borrowNote = nil, false, "", ""
 	switch {
 	case to == antmode.Normal:
-		e.lock = nil
+		e.lock, e.nudgeBase = nil, nil
 		e.setPhase(Idle)
 		if e.borrow != nil {
 			e.borrow.Restore = true // abort (mid-borrow) or maintenance ended
@@ -614,10 +763,20 @@ func (e *Engine) modeChanged(from antmode.Mode) {
 	case from == antmode.Normal:
 		e.lock = &antmode.Lock{Seq: e.pol.S.Seq, Ground: true, Nudge: to == antmode.Maintenance}
 		e.setPhase(Grounding)
-		e.startBorrowIfNeeded()
+		e.captureNudgeBase()
+		e.attachBorrow()
 	default:
 		e.lock.Nudge = to == antmode.Maintenance
 		e.restartPark()
+	}
+}
+
+// captureNudgeBase records the rotator target when a lock (re)starts.
+func (e *Engine) captureNudgeBase() {
+	e.nudgeBase = nil
+	if e.rot.targetKnown {
+		t := e.rot.target
+		e.nudgeBase = &t
 	}
 }
 
@@ -627,31 +786,58 @@ func (e *Engine) modeChanged(from antmode.Mode) {
 func (e *Engine) restartPark() {
 	e.lock.Seq = e.pol.S.Seq
 	e.lock.ParkAz = nil
-	e.drift, e.driftWarned, e.fault = nil, false, ""
+	e.drift, e.driftWarned, e.fault, e.borrowNote = nil, false, "", ""
 	if e.lock.Retract {
 		e.setPhase(Retracting)
 	} else {
 		e.setPhase(Grounding)
 	}
 	e.phaseSince = e.now()
-	if e.borrow != nil {
-		e.borrow.Restore = false // the power is needed again
-		if !e.pwrOn() {
-			e.borrow.Sent = false // switched off meanwhile: send on again
-			e.setPhase(AwaitingPower)
-			e.borrowClock = e.now()
-		}
+	e.captureNudgeBase()
+	e.attachBorrow()
+}
+
+// attachBorrow gives a new lock (entry, repark, mode switch) its power: an
+// open borrow — even one whose restore is still pending, e.g. it could not
+// be published before the re-entry — is taken over by the new lock (the
+// power is needed again; on is re-sent if it went off meanwhile). A borrow
+// powerseq has taken over is dropped and the borrow decided afresh.
+func (e *Engine) attachBorrow() {
+	if e.borrow != nil && e.borrow.TakenOver {
+		e.log.Info("dropping an antenna power borrow powerseq has taken over")
+		e.borrow = nil
+	}
+	if e.borrow == nil {
+		e.startBorrowIfNeeded()
 		return
 	}
-	e.startBorrowIfNeeded()
+	e.borrow.Restore = false
+	e.borrowSeq = e.lock.Seq
+	if !e.pwrOn() {
+		e.borrow.Sent = false // switched off meanwhile: send on again
+		e.setPhase(AwaitingPower)
+		e.borrowClock = e.now()
+	}
 }
 
 func (e *Engine) pwrOn() bool { return e.pwr.live() && e.pwr.power == "on" }
 
-// startBorrowIfNeeded switches antenna power on when it is off at entry, in a
-// stable powerseq phase only. restore_to is persisted BEFORE the retained
+// noteBorrow logs why no borrow starts, once per reason.
+func (e *Engine) noteBorrow(msg string, args ...any) {
+	if msg == e.borrowNote {
+		return
+	}
+	e.borrowNote = msg
+	e.log.Info(msg, args...)
+}
+
+// startBorrowIfNeeded switches antenna power on when it is off, in a stable
+// powerseq phase only. restore_to is persisted BEFORE the retained
 // set_power on goes out, and /state carries power_hold before it, so powerseq
-// never reads the power-up as activity and a crash still restores.
+// never reads the power-up as activity and a crash still restores. Called at
+// entry/repark and, in storm, on every step until the park is done (a power
+// cut by a powerseq transition in flight at the entry is borrowed back once
+// powerseq is stable again).
 func (e *Engine) startBorrowIfNeeded() {
 	if !e.cfg.Power.Borrow || e.borrow != nil {
 		return
@@ -660,27 +846,30 @@ func (e *Engine) startBorrowIfNeeded() {
 		return // already on, or unknown: nothing to borrow
 	}
 	if !e.seqStatus {
-		e.log.Info("antenna power off, but powerseq is offline: not borrowing")
+		e.noteBorrow("antenna power off, but powerseq is offline: not borrowing")
 		return
 	}
 	switch e.seqPhase {
 	case "idle", "standby", "running":
 	default:
-		e.log.Info("antenna power off, but powerseq is in a transition: not borrowing", "powerseq_phase", e.seqPhase)
+		e.noteBorrow("antenna power off, but powerseq is in a transition: not borrowing (yet)", "powerseq_phase", e.seqPhase)
 		return
 	}
-	prev := e.phase
+	prev, prevFault, prevSeq := e.phase, e.fault, e.borrowSeq
 	e.borrow = &Borrow{RestoreTo: "off", PowerSeqPhase: e.seqPhase, Since: e.now()}
+	e.borrowSeq = e.lock.Seq
+	e.fault = ""
 	e.setPhase(AwaitingPower)
 	if err := e.saver.Save(e.snapshot()); err != nil {
 		e.log.Error("not borrowing antenna power: restore_to could not be persisted", "err", err)
-		e.borrow = nil
+		e.borrow, e.fault, e.borrowSeq = nil, prevFault, prevSeq
 		e.setPhase(prev)
 		return
 	}
+	e.borrowNote = ""
 	e.lastPersisted = ""
 	e.borrowClock = e.now()
-	e.log.Info("borrowing antenna power", "powerseq_phase", e.seqPhase)
+	e.log.Info("borrowing antenna power", "powerseq_phase", e.seqPhase, "from_phase", prev)
 	e.publishState(false)
 	e.sendPowerOn()
 }
@@ -698,10 +887,23 @@ func (e *Engine) sendPowerOn() {
 // automatic storm entry (presence or the clock may have changed).
 func (e *Engine) step() {
 	now := e.now()
+	if e.transmitting() {
+		e.lastTX = now
+	}
+	e.trackPresence(now)
 	if r := e.pol.Evaluate(now, nina.Active(e.warnings, now), e.presence(), false); r.ModeChanged {
 		e.log.Info("ant_mode changed", "from", r.From, "to", e.pol.S.Mode, "source", e.pol.S.Source,
 			"reason", e.pol.S.Reason)
 		e.modeChanged(r.From)
+	}
+	// Late borrow (storm only): the entry may have found the power still on
+	// or powerseq in a transition (an auto entry at entering_standby/stopping)
+	// and powerseq then switched the gear off. Once per seq: a park that
+	// failed despite its borrow is not borrowed for again. Never in
+	// maintenance: an operator on site may switch the power off on purpose.
+	if e.lock != nil && e.borrow == nil && e.pol.S.Mode == antmode.Storm && e.phase != Parked &&
+		e.borrowSeq != e.lock.Seq {
+		e.startBorrowIfNeeded()
 	}
 	if e.lock != nil {
 		e.stepLock(now)
@@ -747,9 +949,12 @@ func (e *Engine) stepLock(now time.Time) {
 		if elapsed < time.Duration(p.GroundTimeoutS)*time.Second {
 			return
 		}
-		if e.transmitting() {
+		// The Ultrabeam may still be in circuit: retract only once the radio
+		// has been quiet longer than a digital-mode T/R gap.
+		if e.transmitting() || now.Sub(e.lastTX) < time.Duration(p.TXQuietS)*time.Second {
 			if !e.groundTXLog {
-				e.log.Warn("ground not confirmed and the radio is transmitting: holding the retract")
+				e.log.Warn("ground not confirmed and the radio is transmitting: holding the retract",
+					"tx_quiet_s", p.TXQuietS)
 				e.groundTXLog = true
 			}
 			return
@@ -769,17 +974,22 @@ func (e *Engine) stepLock(now time.Time) {
 			e.computePark()
 		}
 	case Rotating:
-		if e.atPark() {
+		switch {
+		case e.atPark():
 			e.parked()
-		} else if elapsed >= time.Duration(p.RotateTimeoutS)*time.Second {
+		case e.nudged():
+			e.log.Info("maintenance: the operator nudged the boom during the park; parked where it rests",
+				"park_az", *e.lock.ParkAz, "az", e.rot.az, "target_az", e.rot.target)
+			e.parked()
+		case elapsed >= time.Duration(p.RotateTimeoutS)*time.Second:
 			e.fail(fmt.Sprintf("rotator did not reach park_az %d within %ds (%s)",
 				*e.lock.ParkAz, p.RotateTimeoutS, e.rotDesc()))
 		}
 	case Parked:
 		e.updateDrift()
 	case Failed:
-		if e.lock.ParkAz != nil && e.atPark() {
-			e.log.Info("rotator reached park_az after the timeout")
+		if e.lock.ParkAz != nil && (e.atPark() || e.nudged()) {
+			e.log.Info("rotator reached park_az (or a nudge) after the timeout")
 			e.parked()
 		}
 	}
@@ -797,8 +1007,15 @@ func (e *Engine) rotDesc() string {
 }
 
 // computePark sets lock.park_az: storm → the wind heading, maintenance →
-// the preset.
+// the preset. A park_az already set for this seq (a late borrow re-running
+// the sequence) is kept: the bridge parks once per seq, never re-aims.
 func (e *Engine) computePark() {
+	e.lock.Retract = true
+	if e.lock.ParkAz != nil {
+		e.log.Info("park_az kept for this seq", "park_az", *e.lock.ParkAz)
+		e.setPhase(Rotating)
+		return
+	}
 	var az int
 	if e.pol.S.Mode == antmode.Storm {
 		in := heading.Inputs{
@@ -815,7 +1032,6 @@ func (e *Engine) computePark() {
 		az = e.cfg.Maintenance.ParkAz
 		e.log.Info("maintenance park", "park_az", az)
 	}
-	e.lock.Retract = true
 	e.lock.ParkAz = &az
 	e.setPhase(Rotating)
 }
@@ -825,6 +1041,30 @@ func (e *Engine) atPark() bool {
 		return false
 	}
 	return math.Abs(e.rot.az-float64(*e.lock.ParkAz)) <= float64(e.cfg.Park.ToleranceDeg)
+}
+
+// nudged: in maintenance, the rotator rests (live, not moving) at a target
+// that is neither park_az nor the target it had when the lock started. Only
+// a console nudge can set such a target while locked (wrc-rotator-bridge
+// refuses every other motion, and an accepted nudge ends its park), so the
+// park is over by the operator's hand, not failed. An operator stop leaves
+// target_az at park_az and still fails (contract).
+func (e *Engine) nudged() bool {
+	if e.pol.S.Mode != antmode.Maintenance || e.lock == nil || e.lock.ParkAz == nil || !e.lock.Nudge {
+		return false
+	}
+	if !e.rot.live() || !e.rot.azKnown || e.rot.moving || !e.rot.targetKnown {
+		return false
+	}
+	tol := float64(e.cfg.Park.ToleranceDeg)
+	t := e.rot.target
+	if math.Abs(t-float64(*e.lock.ParkAz)) <= tol {
+		return false
+	}
+	if e.nudgeBase != nil && math.Abs(t-*e.nudgeBase) <= tol {
+		return false
+	}
+	return math.Abs(e.rot.az-t) <= tol
 }
 
 func (e *Engine) parked() {
@@ -857,25 +1097,48 @@ func abs(v int) int {
 	return v
 }
 
+// deEnergised: the powerseq phases whose intent is antenna power off. powerseq
+// also lands in idle after a restart (it does not persist its phase), so
+// reaching one of them is not a takeover.
+func deEnergised(phase string) bool { return phase == "idle" || phase == "standby" }
+
 // stepBorrow restores borrowed antenna power when it is due: storm once
 // parked or failed; maintenance and an aborted borrow once the mode is left.
-// Only while powerseq's phase is unchanged since the borrow started —
-// otherwise powerseq has taken over the power and it is left alone.
+//   - powerseq running an operator-driven phase during the borrow (anything
+//     but the start phase, idle or standby) is a takeover: the power is left
+//     as it is, for good;
+//   - while powerseq is offline (or has no phase) the restore waits;
+//   - otherwise (start phase, idle, standby) the restore is sent.
 func (e *Engine) stepBorrow() {
 	b := e.borrow
 	if b == nil {
 		return
 	}
+	if !b.TakenOver && e.seqStatus && e.seqPhase != "" && e.seqPhase != b.PowerSeqPhase && !deEnergised(e.seqPhase) {
+		b.TakenOver = true
+		e.log.Info("powerseq took over the antenna power during the borrow; it will not be restored",
+			"borrow_phase", b.PowerSeqPhase, "powerseq_phase", e.seqPhase)
+	}
 	due := b.Restore || (e.pol.S.Mode == antmode.Storm && (e.phase == Parked || e.phase == Failed))
 	if !due {
+		e.restoreWait = false
 		return
 	}
-	if !e.seqStatus || e.seqPhase != b.PowerSeqPhase {
-		e.log.Warn("powerseq phase changed during the antenna power borrow; leaving the power as it is",
-			"borrow_phase", b.PowerSeqPhase, "powerseq_phase", e.seqPhase, "powerseq_online", e.seqStatus)
+	if b.TakenOver {
+		e.log.Warn("powerseq changed phase during the antenna power borrow; leaving the power as it is",
+			"borrow_phase", b.PowerSeqPhase, "powerseq_phase", e.seqPhase)
 		e.borrow = nil
 		return
 	}
+	if !e.seqStatus || e.seqPhase == "" {
+		if !e.restoreWait {
+			e.log.Warn("antenna power restore due, but powerseq is offline: waiting for it",
+				"borrow_phase", b.PowerSeqPhase)
+			e.restoreWait = true
+		}
+		return
+	}
+	e.restoreWait = false
 	// Sent even when the readback already shows restore_to: shelly-power-bridge
 	// keeps the retained /cmd as its intent and replays it on every reconnect,
 	// so our retained set_power on must be overwritten (an on still in flight,
@@ -886,8 +1149,27 @@ func (e *Engine) stepBorrow() {
 		return
 	}
 	e.pubFail.Reset()
-	e.log.Info("antenna power borrow ended", "restored_to", b.RestoreTo, "ant_mode", e.pol.S.Mode)
+	e.log.Info("antenna power borrow ended", "restored_to", b.RestoreTo, "ant_mode", e.pol.S.Mode,
+		"powerseq_phase", e.seqPhase)
 	e.borrow = nil
+}
+
+// powerHold is /state.power_hold: powerseq takes no idle action (standby,
+// wake, idle shutdown) while it is true. Held during a borrow, for the whole
+// maintenance (no power cut and no wake power-up with someone at the mast,
+// borrowed or not), and in storm until the park is done or failed (a standby
+// must not cut the gear mid-park).
+func (e *Engine) powerHold() bool {
+	if e.borrow != nil {
+		return true
+	}
+	switch e.pol.S.Mode {
+	case antmode.Maintenance:
+		return true
+	case antmode.Storm:
+		return e.phase != Parked && e.phase != Failed
+	}
+	return false
 }
 
 // ---------------------------------------------------------------------------
@@ -895,7 +1177,8 @@ func (e *Engine) stepBorrow() {
 // ---------------------------------------------------------------------------
 
 func (e *Engine) snapshot() Persisted {
-	return Persisted{Version: stateVersion, Policy: e.pol.S, Lock: e.lock, Phase: e.phase, Fault: e.fault, Borrow: e.borrow}
+	return Persisted{Version: stateVersion, Policy: e.pol.S, Lock: e.lock, Phase: e.phase, Fault: e.fault, Borrow: e.borrow,
+		BorrowSeq: e.borrowSeq, NudgeBase: e.nudgeBase}
 }
 
 // persist saves the state file when it changed.
@@ -937,16 +1220,29 @@ type Warning struct {
 	Expires string `json:"expires,omitempty"`
 }
 
+// PowerBorrow is the /state power_borrow block: an open borrow, so that it
+// can be adopted from the retained /state when the state file is lost.
+type PowerBorrow struct {
+	RestoreTo     string `json:"restore_to"`
+	PowerSeqPhase string `json:"powerseq_phase"`
+	Since         string `json:"since,omitempty"`
+	TakenOver     bool   `json:"taken_over,omitempty"`
+}
+
 // State is the /state snapshot (the contract in docs/ant-mode-mqtt-api.md).
 type State struct {
-	TS             string        `json:"ts"`
-	AntMode        antmode.Mode  `json:"ant_mode"`
-	Source         string        `json:"source"`
-	Since          string        `json:"since,omitempty"`
+	TS      string       `json:"ts"`
+	AntMode antmode.Mode `json:"ant_mode"`
+	Source  string       `json:"source"`
+	Since   string       `json:"since,omitempty"`
+	// Seq is the last lock seq used (also in normal): seeds the seq after a
+	// restart so a stale state file never reuses one.
+	Seq            uint64        `json:"seq"`
 	Lock           *antmode.Lock `json:"lock,omitempty"`
 	Phase          Phase         `json:"phase"`
 	Fault          string        `json:"fault,omitempty"`
 	PowerHold      bool          `json:"power_hold"`
+	PowerBorrow    *PowerBorrow  `json:"power_borrow,omitempty"`
 	Presence       string        `json:"presence"`
 	Wind           Wind          `json:"wind"`
 	Warnings       []Warning     `json:"warnings"`
@@ -973,9 +1269,10 @@ func (e *Engine) CurrentState() State {
 		AntMode:    e.pol.S.Mode,
 		Source:     string(e.pol.S.Source),
 		Since:      rfc(e.pol.S.Since),
+		Seq:        e.pol.S.Seq,
 		Phase:      e.phase,
 		Fault:      e.fault,
-		PowerHold:  e.borrow != nil,
+		PowerHold:  e.powerHold(),
 		Presence:   string(pres),
 		Warnings:   []Warning{},
 		WarningsOK: e.warnOK,
@@ -986,6 +1283,9 @@ func (e *Engine) CurrentState() State {
 		l := *e.lock
 		st.Lock = &l
 		st.DriftDeg = e.drift
+	}
+	if b := e.borrow; b != nil {
+		st.PowerBorrow = &PowerBorrow{RestoreTo: b.RestoreTo, PowerSeqPhase: b.PowerSeqPhase, Since: rfc(b.Since), TakenOver: b.TakenOver}
 	}
 	st.Wind.Stale = !e.windFresh()
 	if e.wind != nil {

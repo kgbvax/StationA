@@ -46,7 +46,7 @@ func TestTopics(t *testing.T) {
 		topic string
 		qos   byte
 	}{
-		{"muehle/hf/ant-mode/state", 1}, // adopt: no state file
+		{"muehle/hf/ant-mode/state", 1}, // reconciled with the state file during the hold
 		{"muehle/hf/ant-mode/cmd", 0},
 		{"muehle/hf/power-seq/status", 1}, {"muehle/hf/power-seq/state", 1},
 		{"muehle/hf/rotator/status", 1}, {"muehle/hf/rotator/state", 1},
@@ -64,8 +64,9 @@ func TestTopics(t *testing.T) {
 			t.Errorf("sub %d = %s qos %d, want %s qos %d", i, got[i].Topic, got[i].QoS, w.topic, w.qos)
 		}
 	}
-	// With a state file the own /state is not read.
-	if subs := testClient(t, &engine.Persisted{}).Topics(); subs[0].Topic != "muehle/hf/ant-mode/cmd" {
+	// With a state file the own /state is read too (a stale file must not
+	// override a newer retained lock).
+	if subs := testClient(t, &engine.Persisted{}).Topics(); subs[0].Topic != "muehle/hf/ant-mode/state" {
 		t.Fatalf("first sub with a state file = %s", subs[0].Topic)
 	}
 }

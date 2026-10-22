@@ -51,6 +51,7 @@ func (p *fakePub) Publish(topic string, qos byte, retained bool, payload []byte)
 
 type fakeSaver struct {
 	j    *journal
+	all  []*Persisted
 	last *Persisted
 	n    int
 	fail bool
@@ -65,6 +66,7 @@ func (s *fakeSaver) Save(v any) error {
 	var c Persisted
 	_ = json.Unmarshal(b, &c)
 	s.last = &c
+	s.all = append(s.all, &c)
 	s.n++
 	s.j.ev = append(s.j.ev, "save")
 	return nil
@@ -386,6 +388,11 @@ func TestGroundTimeoutHeldWhileTransmitting(t *testing.T) {
 		t.Fatal("retracted while transmitting without a confirmed ground")
 	}
 	h.e.RadioState(js(map[string]any{"tx": "rx", "device_online": true}))
+	h.tick(29 * time.Second) // tx_quiet_s (30) not yet over
+	if h.phase() != Grounding || h.e.lock.Retract {
+		t.Fatal("retracted right after TX ended")
+	}
+	h.tick(2 * time.Second)
 	if h.phase() != Retracting || !h.e.lock.Retract {
 		t.Fatalf("not retracting after TX ended: %s", h.phase())
 	}
@@ -563,6 +570,10 @@ func TestMannedSuggestsOnly(t *testing.T) {
 	}
 	// Operator leaves: powerseq goes to standby → auto storm (dismissed ≠ acknowledged).
 	h.e.PowerSeqState(js(map[string]any{"phase": "entering_standby"}))
+	if h.e.pol.S.Mode != antmode.Normal {
+		t.Fatal("auto storm before the presence dwell")
+	}
+	h.tick(presenceDwell)
 	if h.e.pol.S.Mode != antmode.Storm || h.e.pol.S.Source != "auto" {
 		t.Fatal("no auto storm once unmanned")
 	}
@@ -572,7 +583,8 @@ func TestPowerSeqOfflineIsUnmanned(t *testing.T) {
 	h := newH(t, func(c *config.Config) { c.Storm.AutoEnter = true }, nil).start()
 	h.station("running", 100)
 	h.e.PowerSeqStatus([]byte("offline"))
-	h.e.NinaResult([]nina.Warning{warn("dwd.1", t0, time.Time{})}, nil)
+	h.tick(presenceDwell)
+	h.e.NinaResult([]nina.Warning{warn("dwd.1", t0.Add(presenceDwell), time.Time{})}, nil)
 	if h.e.pol.S.Mode != antmode.Storm || h.lastState()["presence"] != "unmanned" {
 		t.Fatal("powerseq offline not treated as unmanned")
 	}
@@ -1092,3 +1104,477 @@ func TestAutoExitAtStableBetweenPolls(t *testing.T) {
 }
 
 func rfcTest(t time.Time) string { return t.UTC().Format(time.RFC3339) }
+
+// ---------------------------------------------------------------------------
+// review fixes (2026-10-22)
+// ---------------------------------------------------------------------------
+
+func powerCount(cmds []string, v string) int {
+	n := 0
+	for _, c := range cmds {
+		if c == v {
+			n++
+		}
+	}
+	return n
+}
+
+// An auto storm entered as powerseq starts standby finds the power still on
+// (no borrow); powerseq then switches it off. Once powerseq is stable again
+// the borrow must start and the park complete.
+func TestLateBorrowAfterEntryInTransition(t *testing.T) {
+	h := newH(t, func(c *config.Config) { c.Storm.AutoEnter = true; c.Power.Borrow = true }, nil).start()
+	h.station("running", 100)
+	h.e.NinaResult([]nina.Warning{warn("dwd.1", t0.Add(-time.Hour), t0.Add(6*time.Hour))}, nil)
+	h.e.PowerSeqState(js(map[string]any{"phase": "entering_standby"}))
+	h.tick(presenceDwell)
+	if h.e.pol.S.Mode != antmode.Storm || h.e.borrow != nil {
+		t.Fatalf("entry: mode %s borrow %v", h.e.pol.S.Mode, h.e.borrow)
+	}
+	h.powerOff() // powerseq's [[standby]] antennas-off
+	if len(h.powerCmds()) != 0 {
+		t.Fatalf("borrowed during the transition: %v", h.powerCmds())
+	}
+	h.e.PowerSeqState(js(map[string]any{"phase": "standby"}))
+	if got := h.powerCmds(); len(got) != 1 || got[0] != "on" || h.phase() != AwaitingPower {
+		t.Fatalf("no late borrow once powerseq is stable: %v %s", got, h.phase())
+	}
+	if h.lastState()["power_hold"] != true {
+		t.Fatal("late borrow without power_hold")
+	}
+	h.powerOn()
+	h.switchOff()
+	h.retracted()
+	h.rotator(float64(*h.e.lock.ParkAz), false)
+	if h.phase() != Parked {
+		t.Fatalf("phase %s", h.phase())
+	}
+	if got := h.powerCmds(); len(got) != 2 || got[1] != "off" {
+		t.Fatalf("restore: %v", got)
+	}
+}
+
+// The same from a lock that already failed against the unpowered gear: the
+// late borrow re-runs the sequence and keeps the computed park_az.
+func TestLateBorrowFromFailed(t *testing.T) {
+	h := newH(t, borrowCfg, nil).start()
+	h.station("stopping", 100) // operator STOP in progress: no borrow at entry
+	h.powerOff()
+	h.cmd(map[string]any{"action": "set_ant_mode", "value": "storm"})
+	h.tick(61 * time.Second)
+	h.tick(121 * time.Second)
+	h.tick(301 * time.Second)
+	if h.phase() != Failed || len(h.powerCmds()) != 0 {
+		t.Fatalf("setup: %s %v", h.phase(), h.powerCmds())
+	}
+	az := *h.e.lock.ParkAz
+	h.e.PowerSeqState(js(map[string]any{"phase": "idle"}))
+	if got := h.powerCmds(); len(got) != 1 || got[0] != "on" || h.phase() != AwaitingPower {
+		t.Fatalf("no late borrow from failed: %v %s", got, h.phase())
+	}
+	h.powerOn()
+	h.switchOff()
+	h.retracted()
+	if h.phase() != Rotating || *h.e.lock.ParkAz != az {
+		t.Fatalf("re-run: %s park_az %d (was %d)", h.phase(), *h.e.lock.ParkAz, az)
+	}
+	h.rotator(float64(az), false)
+	if h.phase() != Parked || powerCount(h.powerCmds(), "off") != 1 {
+		t.Fatalf("parked: %s %v", h.phase(), h.powerCmds())
+	}
+}
+
+// A storm that fails WITH its borrow restores and must not borrow again for
+// the same seq (no on/off loop).
+func TestNoReborrowLoopAfterFailedBorrow(t *testing.T) {
+	h := newH(t, borrowCfg, nil).start()
+	h.station("standby", 100)
+	h.powerOff()
+	h.cmd(map[string]any{"action": "set_ant_mode", "value": "storm"})
+	h.tick(241 * time.Second) // power never came on
+	h.tick(61 * time.Second)
+	h.tick(121 * time.Second)
+	h.tick(301 * time.Second)
+	if h.phase() != Failed {
+		t.Fatalf("phase %s", h.phase())
+	}
+	for i := 0; i < 5; i++ {
+		h.tick(time.Minute)
+	}
+	if got := h.powerCmds(); len(got) != 2 || got[0] != "on" || got[1] != "off" {
+		t.Fatalf("borrow loop: %v", got)
+	}
+}
+
+// Maintenance never borrows late: an operator switching the antenna power
+// off on site must not see it come back on.
+func TestNoLateBorrowInMaintenance(t *testing.T) {
+	h := newH(t, borrowCfg, nil).start()
+	h.station("running", 100)
+	h.cmd(map[string]any{"action": "set_ant_mode", "value": "maintenance"})
+	h.powerOff()
+	h.tick(time.Second)
+	if len(h.powerCmds()) != 0 {
+		t.Fatalf("maintenance borrowed late: %v", h.powerCmds())
+	}
+}
+
+// A powerseq restart (offline, then phase idle) while the restore is due must
+// not cancel the restore: powerseq in idle owns nothing.
+func TestRestoreSurvivesPowerSeqRestart(t *testing.T) {
+	h := newH(t, borrowCfg, nil).start()
+	h.station("standby", 100)
+	h.powerOff()
+	h.cmd(map[string]any{"action": "set_ant_mode", "value": "storm"})
+	h.powerOn()
+	h.switchOff()
+	h.retracted()
+	h.e.PowerSeqStatus([]byte("offline"))
+	h.rotator(float64(*h.e.lock.ParkAz), false)
+	if h.phase() != Parked || len(h.powerCmds()) != 1 || h.e.borrow == nil {
+		t.Fatalf("restore while powerseq offline: %v borrow %v", h.powerCmds(), h.e.borrow)
+	}
+	if h.lastState()["power_hold"] != true {
+		t.Fatal("hold dropped while the restore waits")
+	}
+	h.e.PowerSeqState(js(map[string]any{"phase": "idle"}))
+	h.e.PowerSeqStatus([]byte("online"))
+	if got := h.powerCmds(); len(got) != 2 || got[1] != "off" || h.e.borrow != nil {
+		t.Fatalf("restore after the powerseq restart: %v", got)
+	}
+}
+
+// A /status blip at the due instant: the restore waits and then happens.
+func TestRestoreSurvivesPowerSeqStatusBlip(t *testing.T) {
+	h := newH(t, borrowCfg, nil).start()
+	h.station("standby", 100)
+	h.powerOff()
+	h.cmd(map[string]any{"action": "set_ant_mode", "value": "maintenance"})
+	h.powerOn()
+	h.e.PowerSeqStatus([]byte("offline"))
+	h.cmd(map[string]any{"action": "set_ant_mode", "value": "normal"})
+	if len(h.powerCmds()) != 1 || h.e.borrow == nil {
+		t.Fatalf("borrow dropped on a blip: %v", h.powerCmds())
+	}
+	h.e.PowerSeqStatus([]byte("online"))
+	if got := h.powerCmds(); len(got) != 2 || got[1] != "off" {
+		t.Fatalf("restore after the blip: %v", got)
+	}
+}
+
+// An operator wake during the borrow hands the power to powerseq for good,
+// even if powerseq later restarts into idle.
+func TestTakeoverIsSticky(t *testing.T) {
+	h := newH(t, borrowCfg, nil).start()
+	h.station("standby", 100)
+	h.powerOff()
+	h.cmd(map[string]any{"action": "set_ant_mode", "value": "maintenance"})
+	h.powerOn()
+	h.e.PowerSeqState(js(map[string]any{"phase": "waking"}))
+	h.e.PowerSeqState(js(map[string]any{"phase": "running"}))
+	h.e.PowerSeqStatus([]byte("offline"))
+	h.e.PowerSeqState(js(map[string]any{"phase": "idle"}))
+	h.e.PowerSeqStatus([]byte("online"))
+	h.cmd(map[string]any{"action": "set_ant_mode", "value": "normal"})
+	if got := h.powerCmds(); len(got) != 1 {
+		t.Fatalf("restored after an operator wake: %v", got)
+	}
+	if h.e.borrow != nil || h.lastState()["power_hold"] != false {
+		t.Fatal("borrow not ended")
+	}
+}
+
+// Maintenance entered with the antenna power on holds powerseq's idle logic
+// for the whole maintenance (no standby power cut, no wake power-up).
+func TestMaintenanceHoldsPowerSeqWithoutBorrow(t *testing.T) {
+	h := newH(t, borrowCfg, nil).start()
+	h.station("running", 100)
+	h.cmd(map[string]any{"action": "set_ant_mode", "value": "maintenance"})
+	h.switchOff()
+	h.retracted()
+	h.rotator(135, false)
+	s := h.lastState()
+	if h.phase() != Parked || s["power_hold"] != true || s["power_borrow"] != nil {
+		t.Fatalf("maintenance hold: %s %v", h.phase(), s)
+	}
+	h.cmd(map[string]any{"action": "set_ant_mode", "value": "normal"})
+	if h.lastState()["power_hold"] != false || len(h.powerCmds()) != 0 {
+		t.Fatal("hold not released / power commanded")
+	}
+}
+
+// A storm with the power already on holds powerseq until the park is done.
+func TestStormHoldsPowerSeqUntilParked(t *testing.T) {
+	h := newH(t, nil, nil).start()
+	h.station("running", 100)
+	h.cmd(map[string]any{"action": "set_ant_mode", "value": "storm"})
+	if h.lastState()["power_hold"] != true {
+		t.Fatal("storm park not held")
+	}
+	h.switchOff()
+	h.retracted()
+	h.rotator(float64(*h.e.lock.ParkAz), false)
+	if h.phase() != Parked || h.lastState()["power_hold"] != false {
+		t.Fatalf("storm hold after park: %s %v", h.phase(), h.lastState()["power_hold"])
+	}
+}
+
+// FT8: TX 13 s, RX 2 s. The ground-timeout retract must not start in an RX
+// gap while the Ultrabeam may still be in circuit.
+func TestGroundTimeoutNotInDigitalRXGap(t *testing.T) {
+	h := newH(t, nil, nil).start()
+	h.station("running", 100)
+	h.e.AntSwitchStatus([]byte("offline")) // the switch never confirms off
+	h.cmd(map[string]any{"action": "set_ant_mode", "value": "maintenance"})
+	for i := 0; i < 16; i++ { // 4 min of FT8
+		h.e.RadioState(js(map[string]any{"tx": "tx", "device_online": true}))
+		h.tick(13 * time.Second)
+		h.e.RadioState(js(map[string]any{"tx": "rx", "device_online": true}))
+		h.tick(2 * time.Second)
+		if h.phase() != Grounding || h.e.lock.Retract {
+			t.Fatalf("retracted in an RX gap after %d periods", i+1)
+		}
+	}
+	h.tick(27 * time.Second) // 29 s since the last TX
+	if h.phase() != Grounding {
+		t.Fatal("retracted before the TX-quiet window")
+	}
+	h.tick(2 * time.Second)
+	if h.phase() != Retracting {
+		t.Fatalf("not retracting after the quiet window: %s", h.phase())
+	}
+}
+
+// A state file that could not be written (stale, mode normal) must not
+// override a newer locked retained /state on restart.
+func TestStaleStateFileYieldsToNewerRetainedLock(t *testing.T) {
+	loaded := &Persisted{Version: stateVersion, Policy: policyState(antmode.Normal), Phase: Idle} // seq 9
+	h := newH(t, nil, loaded)
+	h.e.SetConnected(true)
+	h.e.OwnState([]byte(`{"ant_mode":"maintenance","source":"manual","seq":10,` +
+		`"lock":{"seq":10,"ground":true,"retract":true,"park_az":135,"nudge":true},"phase":"parked"}`))
+	h.station("running", 135)
+	h.tick(StartupHold)
+	st := h.parsed()
+	if !st.Locked() || st.Mode != antmode.Maintenance || st.L().Seq != 10 {
+		t.Fatalf("stale file unlocked the station: %+v", h.lastState())
+	}
+	// No seq reuse on the next entry.
+	h.cmd(map[string]any{"action": "repark"})
+	if h.e.lock.Seq != 11 {
+		t.Fatalf("seq = %d", h.e.lock.Seq)
+	}
+}
+
+// A file at least as new as the retained lock wins (an exit to normal that
+// was saved but whose /state never went out).
+func TestStateFileWinsOverOlderRetained(t *testing.T) {
+	loaded := &Persisted{Version: stateVersion, Policy: policyState(antmode.Normal), Phase: Idle} // seq 9
+	h := newH(t, nil, loaded)
+	h.e.SetConnected(true)
+	h.e.OwnState([]byte(`{"ant_mode":"storm","seq":9,"lock":{"seq":9,"ground":true},"phase":"grounding"}`))
+	h.station("running", 100)
+	h.tick(StartupHold)
+	if h.parsed().Locked() {
+		t.Fatal("older retained lock overrode the file")
+	}
+}
+
+// A retained normal carries the last seq: a stale file must not reuse it.
+func TestRetainedNormalSeedsSeq(t *testing.T) {
+	loaded := &Persisted{Version: stateVersion, Policy: policyState(antmode.Normal), Phase: Idle} // seq 9
+	h := newH(t, nil, loaded)
+	h.e.SetConnected(true)
+	h.e.OwnState([]byte(`{"ant_mode":"normal","seq":12}`))
+	h.station("running", 100)
+	h.tick(StartupHold)
+	if h.parsed().Locked() {
+		t.Fatal("normal adopted as a lock")
+	}
+	h.cmd(map[string]any{"action": "set_ant_mode", "value": "storm"})
+	if h.e.lock.Seq != 13 {
+		t.Fatalf("seq = %d, want 13", h.e.lock.Seq)
+	}
+	if h.lastState()["seq"] != 13.0 {
+		t.Fatalf("/state seq = %v", h.lastState()["seq"])
+	}
+}
+
+// Re-entering a locked mode while the restore of an earlier borrow is still
+// pending keeps the power (no off mid-park).
+func TestReentryWithPendingRestoreKeepsPower(t *testing.T) {
+	loaded := &Persisted{
+		Version: stateVersion,
+		Policy:  policyState(antmode.Normal),
+		Phase:   Idle,
+		Borrow:  &Borrow{RestoreTo: "off", PowerSeqPhase: "standby", Since: t0.Add(-time.Hour), Sent: true},
+	}
+	h := newH(t, borrowCfg, loaded)
+	h.e.SetConnected(true)
+	h.cmd(map[string]any{"action": "set_ant_mode", "value": "storm"}) // queued
+	h.station("standby", 100)                                         // power on (borrowed)
+	h.tick(StartupHold)
+	if got := h.powerCmds(); powerCount(got, "off") != 0 {
+		t.Fatalf("restore sent into the new lock: %v", got)
+	}
+	if h.e.borrow == nil || h.e.borrow.Restore || h.lastState()["power_hold"] != true {
+		t.Fatalf("borrow not taken over by the new lock: %+v", h.e.borrow)
+	}
+	h.switchOff()
+	h.retracted()
+	h.rotator(float64(*h.e.lock.ParkAz), false)
+	if got := h.powerCmds(); len(got) != 1 || got[0] != "off" {
+		t.Fatalf("restore after the park: %v", got)
+	}
+}
+
+// Same, with the power already off by then: on is sent again.
+func TestReentryWithPendingRestorePowerOff(t *testing.T) {
+	h := newH(t, borrowCfg, nil).start()
+	h.station("standby", 100)
+	h.powerOff()
+	h.cmd(map[string]any{"action": "set_ant_mode", "value": "storm"})
+	h.powerOn()
+	h.pub.fail = true
+	h.cmd(map[string]any{"action": "set_ant_mode", "value": "normal"}) // restore cannot be sent
+	h.powerOff()
+	h.cmd(map[string]any{"action": "set_ant_mode", "value": "storm"})
+	h.pub.fail = false
+	h.tick(time.Second)
+	if got := h.powerCmds(); len(got) != 2 || got[1] != "on" || h.phase() != AwaitingPower {
+		t.Fatalf("re-entry: %v %s", got, h.phase())
+	}
+}
+
+// Without a state file the retained snapshot's borrow is adopted, so the
+// restore still happens.
+func TestAdoptRebuildsBorrow(t *testing.T) {
+	h := newH(t, borrowCfg, nil)
+	h.e.SetConnected(true)
+	h.e.OwnState([]byte(`{"ant_mode":"storm","source":"auto","seq":41,` +
+		`"lock":{"seq":41,"ground":true,"retract":true,"park_az":175,"nudge":false},"phase":"rotating",` +
+		`"power_hold":true,"power_borrow":{"restore_to":"off","powerseq_phase":"standby"}}`))
+	h.station("standby", 100)
+	h.tick(StartupHold)
+	if h.e.borrow == nil || h.lastState()["power_hold"] != true {
+		t.Fatal("borrow not adopted")
+	}
+	h.rotator(175, false)
+	if got := h.powerCmds(); len(got) != 1 || got[0] != "off" {
+		t.Fatalf("adopted borrow not restored: %v", got)
+	}
+}
+
+// A powerseq restart on a running station: offline, then phase idle. The
+// station still reads manned (no auto storm on the operator).
+func TestPowerSeqRestartKeepsManned(t *testing.T) {
+	h := newH(t, func(c *config.Config) { c.Storm.AutoEnter = true }, nil).start()
+	h.station("running", 100)
+	h.e.NinaResult([]nina.Warning{warn("dwd.1", t0.Add(-time.Hour), t0.Add(6*time.Hour))}, nil)
+	h.cmd(map[string]any{"action": "dismiss_suggestion"})
+	h.e.PowerSeqStatus([]byte("offline"))
+	h.tick(5 * time.Second)
+	h.e.PowerSeqState(js(map[string]any{"phase": "idle"}))
+	h.e.PowerSeqStatus([]byte("online"))
+	h.tick(10 * time.Minute)
+	if h.e.pol.S.Mode != antmode.Normal || h.lastState()["presence"] != "manned" {
+		t.Fatalf("restart read as unmanned: %v", h.lastState())
+	}
+	// The operator transmits now and then; 30 min after the last TX the
+	// station counts as unmanned again (powerseq cannot standby from idle).
+	h.e.RadioState(js(map[string]any{"tx": "tx", "device_online": true}))
+	h.e.RadioState(js(map[string]any{"tx": "rx", "device_online": true}))
+	h.tick(29 * time.Minute)
+	if h.e.pol.S.Mode != antmode.Normal {
+		t.Fatal("auto storm while the operator was active")
+	}
+	h.tick(2 * time.Minute)
+	h.tick(presenceDwell)
+	if h.e.pol.S.Mode != antmode.Storm {
+		t.Fatal("no auto storm once the restarted station went quiet")
+	}
+}
+
+// A real stop (stopping → idle) or a radio that is off is unmanned at once.
+func TestRealStopIsUnmanned(t *testing.T) {
+	h := newH(t, func(c *config.Config) { c.Storm.AutoEnter = true }, nil).start()
+	h.station("running", 100)
+	h.e.PowerSeqState(js(map[string]any{"phase": "stopping"}))
+	h.e.PowerSeqState(js(map[string]any{"phase": "idle"}))
+	h.tick(presenceDwell)
+	if h.lastState()["presence"] != "unmanned" {
+		t.Fatal("stop → idle not unmanned")
+	}
+}
+
+// A powerseq /status blip shorter than the dwell does not auto-enter.
+func TestPowerSeqBlipDoesNotAutoEnter(t *testing.T) {
+	h := newH(t, func(c *config.Config) { c.Storm.AutoEnter = true }, nil).start()
+	h.station("running", 100)
+	h.e.NinaResult([]nina.Warning{warn("dwd.1", t0.Add(-time.Hour), t0.Add(6*time.Hour))}, nil)
+	h.e.PowerSeqStatus([]byte("offline"))
+	h.tick(10 * time.Second)
+	h.e.PowerSeqStatus([]byte("online"))
+	h.tick(time.Minute)
+	if h.e.pol.S.Mode != antmode.Normal {
+		t.Fatal("auto storm on a powerseq blip")
+	}
+	// A real outage still counts as unmanned (decision record).
+	h.e.PowerSeqStatus([]byte("offline"))
+	h.tick(presenceDwell)
+	if h.e.pol.S.Mode != antmode.Storm {
+		t.Fatal("powerseq outage not unmanned after the dwell")
+	}
+}
+
+// A maintenance nudge before the park arrives: the rotator rests at the
+// nudge target → parked with the offset as drift, not failed.
+func TestMaintenanceNudgeDuringParkIsParked(t *testing.T) {
+	h := newH(t, nil, nil).start()
+	h.station("running", 10)
+	h.e.RotatorState(js(map[string]any{"az": 10, "target_az": 10, "moving": false, "device_online": true}))
+	h.cmd(map[string]any{"action": "set_ant_mode", "value": "maintenance"})
+	h.switchOff()
+	h.retracted()
+	h.e.RotatorState(js(map[string]any{"az": 40, "target_az": 135, "moving": true, "device_online": true}))
+	h.e.RotatorState(js(map[string]any{"az": 60, "target_az": 120, "moving": true, "device_online": true}))
+	h.e.RotatorState(js(map[string]any{"az": 120, "target_az": 120, "moving": false, "device_online": true}))
+	if h.phase() != Parked || h.lastState()["fault"] != nil || h.lastState()["drift_deg"] != -15.0 {
+		t.Fatalf("nudge: %s %v", h.phase(), h.lastState())
+	}
+}
+
+// An operator stop during the maintenance park still fails (contract).
+func TestMaintenanceStopDuringParkFails(t *testing.T) {
+	h := newH(t, nil, nil).start()
+	h.station("running", 10)
+	h.e.RotatorState(js(map[string]any{"az": 10, "target_az": 10, "moving": false, "device_online": true}))
+	h.cmd(map[string]any{"action": "set_ant_mode", "value": "maintenance"})
+	h.switchOff()
+	h.retracted()
+	h.e.RotatorState(js(map[string]any{"az": 60, "target_az": 135, "moving": true, "device_online": true}))
+	h.e.RotatorState(js(map[string]any{"az": 62, "target_az": 135, "moving": false, "device_online": true}))
+	if h.phase() != Rotating {
+		t.Fatalf("stop read as a nudge: %s", h.phase())
+	}
+	h.tick(301 * time.Second)
+	if h.phase() != Failed {
+		t.Fatalf("phase %s", h.phase())
+	}
+}
+
+// The seq a borrow was taken for is in the file written before set_power on.
+func TestBorrowSeqPersistedBeforePowerOn(t *testing.T) {
+	h := newH(t, borrowCfg, nil).start()
+	h.station("standby", 100)
+	h.powerOff()
+	n := len(h.sv.all)
+	h.cmd(map[string]any{"action": "set_ant_mode", "value": "storm"})
+	if len(h.sv.all) <= n {
+		t.Fatal("nothing saved")
+	}
+	first := h.sv.all[n] // the save that precedes set_power on
+	if first.Borrow == nil || first.BorrowSeq != h.e.lock.Seq {
+		t.Fatalf("borrow_seq not saved with the borrow: %+v", first)
+	}
+}

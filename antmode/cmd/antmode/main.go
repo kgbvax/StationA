@@ -88,7 +88,9 @@ func main() {
 
 // loadState reads the state file. Missing → nil (the engine adopts a lock
 // still retained on the broker); unreadable or corrupt → nil too, logged as
-// an Error: the retained /state is the better source than a guess.
+// an Error: the retained /state is the better source than a guess. A file
+// that loads is still reconciled with the retained /state during the startup
+// hold (a newer retained lock wins over a stale file).
 func loadState(st store.File, log *slog.Logger) *engine.Persisted {
 	var p engine.Persisted
 	err := st.Load(&p)

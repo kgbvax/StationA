@@ -64,9 +64,6 @@ type Client struct {
 	cfg    config.Config
 	log    *slog.Logger
 	jobs   chan func()
-	// adopt: no state file was loaded — subscribe the own retained /state
-	// so the engine can take over a lock that is still on the broker.
-	adopt bool
 
 	tickQueued atomic.Bool
 }
@@ -77,7 +74,7 @@ func New(ctx context.Context, cfg config.Config, saver engine.Saver, loaded *eng
 	pub := &publisher{}
 	c := &Client{
 		pub: pub, eng: engine.New(cfg, pub, saver, loaded, log, nil), cfg: cfg, log: log,
-		jobs: make(chan func(), 64), adopt: loaded == nil,
+		jobs: make(chan func(), 64),
 	}
 	go sharedmqtt.RunJobs(ctx, c.jobs)
 	go func() {
@@ -200,34 +197,32 @@ func (c *Client) on(f func([]byte)) paho.MessageHandler {
 	}
 }
 
-// Topics lists every subscription in order (own /state first when adopting,
-// then own /cmd, then the siblings), so a test can pin it.
+// Topics lists every subscription in order (own /state first — the engine
+// reconciles its retained copy with the state file during the startup hold
+// and ignores it afterwards — then own /cmd, then the siblings), so a test
+// can pin it.
 func (c *Client) Topics() []Sub {
 	m, s, e := c.cfg.MQTT, c.cfg.Slots, c.eng
 	sib := func(rel, suffix string) string {
 		st, sl := config.SplitSlot(rel)
 		return schema.SiblingTopic(m.Site, st, sl, suffix)
 	}
-	var subs []Sub
-	if c.adopt {
-		subs = append(subs, Sub{schema.StateTopic(m.Site, m.Station, m.Slot), 1, e.OwnState})
+	return []Sub{
+		{schema.StateTopic(m.Site, m.Station, m.Slot), 1, e.OwnState},
+		{schema.CmdTopic(m.Site, m.Station, m.Slot), 0, e.Cmd},
+		{sib(s.PowerSeq, "status"), 1, e.PowerSeqStatus},
+		{sib(s.PowerSeq, "state"), 1, e.PowerSeqState},
+		{sib(s.Rotator, "status"), 1, e.RotatorStatus},
+		{sib(s.Rotator, "state"), 1, e.RotatorState},
+		{sib(s.AntCtrl, "status"), 1, e.AntCtrlStatus},
+		{sib(s.AntCtrl, "state"), 1, e.AntCtrlState},
+		{sib(s.AntSwitch, "status"), 1, e.AntSwitchStatus},
+		{sib(s.AntSwitch, "state"), 1, e.AntSwitchState},
+		{sib(s.Radio, "status"), 1, e.RadioStatus},
+		{sib(s.Radio, "state"), 1, e.RadioState},
+		{sib(s.AntennaPower, "status"), 1, e.PowerStatus},
+		{sib(s.AntennaPower, "state"), 1, e.PowerState},
 	}
-	subs = append(subs,
-		Sub{schema.CmdTopic(m.Site, m.Station, m.Slot), 0, e.Cmd},
-		Sub{sib(s.PowerSeq, "status"), 1, e.PowerSeqStatus},
-		Sub{sib(s.PowerSeq, "state"), 1, e.PowerSeqState},
-		Sub{sib(s.Rotator, "status"), 1, e.RotatorStatus},
-		Sub{sib(s.Rotator, "state"), 1, e.RotatorState},
-		Sub{sib(s.AntCtrl, "status"), 1, e.AntCtrlStatus},
-		Sub{sib(s.AntCtrl, "state"), 1, e.AntCtrlState},
-		Sub{sib(s.AntSwitch, "status"), 1, e.AntSwitchStatus},
-		Sub{sib(s.AntSwitch, "state"), 1, e.AntSwitchState},
-		Sub{sib(s.Radio, "status"), 1, e.RadioStatus},
-		Sub{sib(s.Radio, "state"), 1, e.RadioState},
-		Sub{sib(s.AntennaPower, "status"), 1, e.PowerStatus},
-		Sub{sib(s.AntennaPower, "state"), 1, e.PowerState},
-	)
-	return subs
 }
 
 // Sub is one subscription.

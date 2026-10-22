@@ -90,6 +90,10 @@ type Park struct {
 	RotateTimeoutS  int `toml:"rotate_timeout_s"`
 	ToleranceDeg    int `toml:"tolerance_deg"`
 	DriftWarnDeg    int `toml:"drift_warn_deg"`
+	// TXQuietS: the ground-timeout retract also waits until hf/radio has
+	// not transmitted for this long, so a digital-mode T/R gap (FT8: ~2 s
+	// RX every 15 s) never starts it with the Ultrabeam still in circuit.
+	TXQuietS int `toml:"tx_quiet_s"`
 }
 
 // Power is the antenna-power borrow.
@@ -182,6 +186,7 @@ func Default() Config {
 			RotateTimeoutS:  300,
 			ToleranceDeg:    3,
 			DriftWarnDeg:    10,
+			TXQuietS:        30,
 		},
 		Power: Power{Borrow: false, DevicesTimeoutS: 240},
 		State: State{Path: "/var/lib/antmode/state.json"},
@@ -274,6 +279,9 @@ func (c Config) Validate() error {
 	}
 	if c.Park.DriftWarnDeg <= 0 {
 		p = append(p, "park.drift_warn_deg must be > 0")
+	}
+	if c.Park.TXQuietS < 20 {
+		p = append(p, "park.tx_quiet_s must be >= 20 (longer than a digital-mode RX gap)")
 	}
 	if c.Power.DevicesTimeoutS < 180 {
 		p = append(p, "power.devices_timeout_s must be >= 180 (the RCU-06 and WRC need minutes after power-on)")

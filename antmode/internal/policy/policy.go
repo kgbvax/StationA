@@ -9,7 +9,8 @@
 //     except that an auto-entered storm may later auto-exit.
 //   - Presence: manned iff powerseq is starting, running or waking (a wake is
 //     triggered by operator activity); anything else — including powerseq
-//     offline or silent — is unmanned.
+//     offline or silent — is unmanned. (The engine refines this: a 60 s dwell
+//     on manned → unmanned, and powerseq's lost phase after a restart.)
 //   - A qualifying warning active while the mode is normal: manned, or
 //     auto_enter off → storm_suggested (unless dismissed for those ids);
 //     unmanned with auto_enter on → storm, source auto.
