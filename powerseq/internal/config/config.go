@@ -65,6 +65,13 @@ type MQTTConfig struct {
 	Station         string `toml:"station"`          // e.g. "hf"
 	Slot            string `toml:"slot"`             // e.g. "power-seq"
 	DiscoveryPrefix string `toml:"discovery_prefix"` // hadiscovery (model §9)
+
+	// AntModeSlot is the antenna-mode logic slot (same site/station) whose
+	// retained /state power_hold suspends the idle logic while antmode borrows
+	// the antenna power to park the HF beam. Empty disables it. With no
+	// retained ant-mode state there is no hold, so the default is safe before
+	// antmode is deployed. Read only with idle standby configured.
+	AntModeSlot string `toml:"ant_mode_slot"`
 }
 
 // TimingConfig holds the sequencer cadence. Times are in seconds for TOML
@@ -203,6 +210,7 @@ func Defaults() Config {
 			Station:         "hf",
 			Slot:            "power-seq",
 			DiscoveryPrefix: "homeassistant",
+			AntModeSlot:     "ant-mode",
 		},
 		Timing: TimingConfig{
 			NetworkDelayS:    30,
@@ -296,6 +304,9 @@ func (c Config) Validate() error {
 	}
 	if c.MQTT.Broker == "" {
 		return fmt.Errorf("mqtt broker must be configured")
+	}
+	if strings.ContainsAny(c.MQTT.AntModeSlot, "/+#") {
+		return fmt.Errorf("mqtt ant_mode_slot must be a slot name in the own station (got %q)", c.MQTT.AntModeSlot)
 	}
 	if err := validateSteps("startup", c.Startup); err != nil {
 		return err

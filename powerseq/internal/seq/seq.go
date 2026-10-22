@@ -29,6 +29,13 @@
 // since the last activity runs the idle_shutdown list (full power-down) →
 // phase=idle with stop_reason=idle_shutdown; only a `start` revives it.
 //
+// The antenna-mode slot (hf/ant-mode) can borrow the antenna power to park the
+// HF beam while the station is in standby. While its /state.power_hold is true
+// the idle logic stands still: a watch change only re-baselines (the borrowed
+// power moves the rotator readbacks) and no standby, wake or idle shutdown is
+// started. When the hold ends a fresh settle window starts, so the readback
+// step from switching the power back off is not activity either.
+//
 // The runner is a single goroutine that executes one sequence at a time;
 // observations arrive from the mqtt layer and update a mutex-guarded input map.
 // Waits poll that map with a deadline (step timeout → fault, no rollback).
@@ -51,6 +58,7 @@ import (
 	"sync"
 	"time"
 
+	"codeberg.org/kgbvax/stationa/shared/antmode"
 	schema "codeberg.org/kgbvax/stationa/shared/schema"
 )
 
@@ -173,6 +181,14 @@ type Config struct {
 	// supply goes off (device link still up) is the sequencer's doing, not an
 	// operator's. 0 = no settle window.
 	WatchSettle time.Duration
+	// AntModeSlot is the antenna-mode logic slot (same site/station, e.g.
+	// "ant-mode") whose /state power_hold suspends the idle logic while the
+	// antenna power is borrowed. "" = not read. Used only with idle standby.
+	AntModeSlot string
+	// AntModeHold is how long after a broker (re)connect the idle logic waits
+	// for the ant-mode /state to be re-delivered (0 → 3 s). No state within
+	// the window = no hold (no retained state means normal).
+	AntModeHold time.Duration
 
 	// WOL sends wol steps; nil → SendMagicPacket.
 	WOL WOLSender
@@ -224,6 +240,7 @@ type Sequencer struct {
 	idleShut []resolvedStep // optional; run from standby after ShutdownTimeout
 
 	activitySlot string // absolute; "" = idle standby disabled
+	antModeSlot  string // absolute; "" = power_hold not read
 	watches      []*resolvedWatch
 	wol          WOLSender
 
@@ -242,6 +259,14 @@ type Sequencer struct {
 	lastWatch    time.Time // last counted watch change
 	lastWatchWhy string    // which watch moved last ("slot.field a→b"), for the wake log
 	settleUntil  time.Time // watch changes before this re-baseline (see WatchSettle)
+	powerHold    bool      // ant-mode borrows the antenna power: idle logic suspended
+	holdEndedAt  time.Time // last end of a power hold: restarts the idle-shutdown clock
+	// After a broker (re)connect the idle logic waits until the ant-mode
+	// /state is re-delivered (antModeSeen) or antModeWaitUntil passes: a
+	// borrow that started while powerseq was disconnected must not be cut by
+	// a decision made on the pre-disconnect hold value.
+	antModeSeen      bool
+	antModeWaitUntil time.Time
 
 	cmdCh       chan string   // "start" | "stop" → runner
 	republishCh chan struct{} // mqtt layer → runner: re-publish retained /state
@@ -313,6 +338,12 @@ func New(cfg Config, pub Publisher, log Logger) (*Sequencer, error) {
 		s.activitySlot = cfg.Site + "/" + cfg.ActivitySlot
 		for _, w := range cfg.Watches {
 			s.watches = append(s.watches, &resolvedWatch{Slot: cfg.Site + "/" + w.Slot, Field: w.Field, MinDelta: w.MinDelta})
+		}
+		if cfg.AntModeSlot != "" {
+			s.antModeSlot = schema.SlotBase(cfg.Site, cfg.Station, cfg.AntModeSlot)
+		}
+		if s.cfg.AntModeHold <= 0 {
+			s.cfg.AntModeHold = 3 * time.Second
 		}
 	}
 	return s, nil
@@ -460,6 +491,53 @@ func sortedKeys(m map[string]struct{}) []string {
 	return out
 }
 
+// AntModeStateTopic returns the antenna-mode slot's /state topic, or "" when
+// it is not read (no ant-mode slot configured, or idle standby disabled — the
+// power hold only affects the idle logic). The mqtt layer subscribes it with
+// SetAntMode as the handler.
+func (s *Sequencer) AntModeStateTopic() string {
+	if s.antModeSlot == "" {
+		return ""
+	}
+	return s.antModeSlot + "/state"
+}
+
+// SetAntMode records a hf/ant-mode/state snapshot (called from the mqtt layer;
+// parse + a mutex update only, never blocks). Reading rules of the slot
+// contract: an empty payload (no retained state) is normal = no hold; a
+// malformed payload keeps the last known hold (logged as Error). When the hold
+// ends a fresh WatchSettle window starts: antmode switches the borrowed power
+// back off, and the readback step that follows is the borrow's doing, not an
+// operator's. The end of a hold also restarts the idle-shutdown clock: watch
+// changes during the hold are not counted, and a maintenance hold can last
+// hours with the operator on site.
+func (s *Sequencer) SetAntMode(payload []byte) {
+	st, err := antmode.Parse(payload)
+	if err != nil {
+		s.log.Errorf("ant-mode state rejected, keeping last known power_hold: %v", err)
+		return
+	}
+	s.mu.Lock()
+	s.antModeSeen = true
+	prev := s.powerHold
+	s.powerHold = st.PowerHold
+	if prev && !st.PowerHold {
+		now := time.Now()
+		if until := now.Add(s.cfg.WatchSettle); until.After(s.settleUntil) {
+			s.settleUntil = until
+		}
+		s.holdEndedAt = now
+	}
+	phase := s.phase
+	s.mu.Unlock()
+	switch {
+	case !prev && st.PowerHold:
+		s.log.Infof("ant-mode power hold: idle logic suspended (phase=%s, ant_mode=%s)", phase, st.Mode)
+	case prev && !st.PowerHold:
+		s.log.Infof("ant-mode power hold ended: watches settle for %s, idle-shutdown clock restarted (phase=%s)", s.cfg.WatchSettle, phase)
+	}
+}
+
 // SetStatus records a liveness observation from a slot's /status. Called from
 // the mqtt layer (a /status publish — retained or live).
 func (s *Sequencer) SetStatus(slot string, online bool) {
@@ -504,10 +582,12 @@ func (s *Sequencer) SetState(slot string, payload []byte) {
 // stays up (the UHF rotator controllers report a stepped position with
 // device_online=true when the antenna supply goes off — 2026-10-19, every
 // standby woke ~2 s later). Such a change re-baselines the watch instead.
+// The same holds while the antenna-mode slot borrows the antenna power
+// (power_hold) and within WatchSettle after the hold ends.
 func (s *Sequencer) noteWatchesLocked(slot string, m map[string]any) {
 	fit := s.status[slot] == "online" && coerceToString(m["device_online"]) != "false"
 	now := time.Now()
-	settled := (s.phase == PhaseRunning || s.phase == PhaseStandby) && !now.Before(s.settleUntil)
+	settled := (s.phase == PhaseRunning || s.phase == PhaseStandby) && !now.Before(s.settleUntil) && !s.powerHold
 	for _, w := range s.watches {
 		if w.Slot != slot {
 			continue
@@ -547,8 +627,15 @@ func watchMoved(anchor, cur string, minDelta float64) bool {
 
 // SetBrokerOnline records the broker connection state. A wait or cmd step
 // faults when the broker is down rather than stalling on stale/buffered data.
+// On a (re)connect the ant-mode hold is unknown until its retained /state is
+// re-delivered (or AntModeHold passes): the mqtt layer sets the broker online
+// before it subscribes.
 func (s *Sequencer) SetBrokerOnline(online bool) {
 	s.mu.Lock()
+	if online && !s.online && s.antModeSlot != "" {
+		s.antModeSeen = false
+		s.antModeWaitUntil = time.Now().Add(s.cfg.AntModeHold)
+	}
 	s.online = online
 	s.mu.Unlock()
 }
@@ -679,13 +766,22 @@ func (s *Sequencer) RequestRepublish() {
 //     a watch moved after the standby entry.
 //   - idle_shutdown (from standby, when configured and no wake is due): the
 //     last activity (see lastActivityLocked) is ShutdownTimeout ago.
+//
+// Nothing is decided while the antenna-mode slot holds the antenna power
+// (power_hold): the borrow must not be cut by a standby or idle shutdown, and
+// is not a reason to wake. Nor right after a broker (re)connect until the
+// ant-mode /state is re-delivered (or AntModeHold passes): a borrow may have
+// started while powerseq was disconnected.
 func (s *Sequencer) idleDecision(now time.Time) string {
 	if !s.standbyEnabled() {
 		return ""
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if !s.online {
+	if !s.online || s.powerHold {
+		return ""
+	}
+	if s.antModeSlot != "" && !s.antModeSeen && now.Before(s.antModeWaitUntil) {
 		return ""
 	}
 	m, _ := s.state[s.activitySlot].(map[string]any)
@@ -718,13 +814,18 @@ func (s *Sequencer) idleDecision(now time.Time) string {
 }
 
 // lastActivityLocked is the idle-shutdown clock: the latest of the activity
-// slot's last_activity, the last counted watch change and the last entry into
-// phase=running (a start or a wake is activity too). An antennaselect restart
-// publishes no last_activity, so it never resets the clock.
+// slot's last_activity, the last counted watch change, the last entry into
+// phase=running (a start or a wake is activity too) and the last end of an
+// ant-mode power hold (watch changes during a hold are not counted). An
+// antennaselect restart publishes no last_activity, so it never resets the
+// clock.
 func (s *Sequencer) lastActivityLocked(m map[string]any) time.Time {
 	last := s.runningSince
 	if s.lastWatch.After(last) {
 		last = s.lastWatch
+	}
+	if s.holdEndedAt.After(last) {
+		last = s.holdEndedAt
 	}
 	if m != nil {
 		if ts, err := time.Parse(time.RFC3339Nano, coerceToString(m["last_activity"])); err == nil && ts.After(last) {
@@ -1121,6 +1222,9 @@ func (s *Sequencer) MetaPayload() []byte {
 		watchSet[s.activitySlot] = struct{}{}
 		for _, w := range s.watches {
 			watchSet[w.Slot] = struct{}{}
+		}
+		if s.antModeSlot != "" {
+			watchSet[s.antModeSlot] = struct{}{}
 		}
 	}
 	for _, st := range s.allSteps() {

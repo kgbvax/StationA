@@ -39,6 +39,12 @@ slot = "power-seq"
 # from this slot's expose block in /meta (model §9) — no embedded discovery.
 discovery_prefix = "homeassistant"
 user = "hf"
+# Antenna-mode logic slot (same site/station: muehle/hf/ant-mode). While its
+# /state power_hold is true (antmode borrows power/antennas to park the HF
+# beam), the idle standby logic stands still: watch changes only re-baseline,
+# no standby/wake/idle shutdown; a fresh settle_s window follows the hold. No
+# retained ant-mode state = no hold. "" disables. Default "ant-mode".
+ant_mode_slot = "ant-mode"
 # password is loaded from POWERSEQ_MQTT_PASSWORD (EnvironmentFile), not here.
 password = ""
 
@@ -154,7 +160,9 @@ shutdown_minutes = 120
 # For this long after every phase change a watch change is not activity (it
 # re-baselines the watch): standby switches the antenna power off, and the UHF
 # rotator controllers then report a stepped position with device_online still
-# true — counted, that woke every standby ~2 s later. 0 or absent = 30.
+# true — counted, that woke every standby ~2 s later. 0 or absent = 30. The
+# same window starts when an antenna-mode power hold ends ([mqtt]
+# ant_mode_slot).
 settle_s = 30
 
 # UHF use counts as activity too: the antenna-power plug also feeds the UHF

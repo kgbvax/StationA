@@ -107,7 +107,9 @@ Retained. Published on every (re)connect.
 
 `controls` and `watches` are **derived from the configured sequence**:
 `controls` = the slots any `cmd` step targets (one writer); `watches` = every
-slot the sequence references (`cmd` + `wait_status` + `wait_state` targets). The
+slot the sequence references (`cmd` + `wait_status` + `wait_state` targets),
+plus, with idle standby, the activity slot, the watch slots and the ant-mode
+slot. The
 fields are read-only sensors (a logic slot reacts to state and emits intent,
 model §1) — the operator surface is the one-shot `/cmd`, which is not retained
 and so not an exposed writable field.
@@ -269,6 +271,26 @@ Configured with an `[idle]` block; omit all three to disable.
   `uhf/el-rotator.el` with a 2° deadband against the el readback dither).
 - Idle is evaluated only in `running` and only with the broker connected. A
   fault in either list → `phase=idle` + `fault`, like startup.
+- **Antenna-mode power hold** (`[mqtt] ant_mode_slot`, default `ant-mode` →
+  `muehle/hf/ant-mode/state`, contract `../../antmode/docs/ant-mode-mqtt-api.md`):
+  antmode can borrow `power/antennas` to park the HF beam in storm or
+  maintenance while the station is in standby. While its `/state.power_hold`
+  is `true`, a watch change only re-baselines the watch (the borrowed power
+  moves the UHF rotator readbacks), and no standby, wake or idle shutdown
+  starts (a `start`/`stop` from the operator still works). When the hold ends
+  a fresh `settle_s` window starts, so the readback step when antmode switches
+  the power back off is not activity either. The end of a hold also restarts
+  the idle-shutdown clock (watch changes during a hold are not counted, and a
+  maintenance hold can last hours with the operator on site), so the idle
+  shutdown comes `shutdown_minutes` after the hold ends at the earliest. A
+  standby or wake that became due during the hold runs after it. After a
+  broker (re)connect the idle logic waits up to 3 s for the retained ant-mode
+  `/state` (a borrow can start while powerseq is disconnected). Reading
+  rules: no retained ant-mode state (or an empty one) = no hold; a malformed
+  state keeps the last known hold (logged as Error); a valid hold is honored
+  even while `hf/ant-mode/status` is offline. powerseq never locks a slot for antmode and
+  antmode never changes powerseq's phases. Read only with idle standby
+  configured; `ant_mode_slot = ""` disables it.
 
 | List | Steps |
 |------|-------|
@@ -323,6 +345,7 @@ sequencer's own `/cmd`. For the default §7.1 sequence this yields:
 | `muehle/power/shack-pc/status` | observability (standby `pc-sleep` target) |
 | `muehle/hf/antenna-select/status` + `/state` | idle standby trigger (`activity`, `last_activity`) |
 | `muehle/uhf/radio/…`, `muehle/uhf/az-rotator/…`, `muehle/uhf/el-rotator/…` (`/status` + `/state`) | `[[idle.watch]]` activity sources |
+| `muehle/hf/ant-mode/state` | antenna-mode `power_hold` (§6.1; with idle standby and `ant_mode_slot` set) |
 | `muehle/hf/power-seq/cmd` | operator one-button `start` \| `stop` (not retained) |
 
 A `/status` of `online`/`offline` sets the slot's liveness (absent ≠ offline —

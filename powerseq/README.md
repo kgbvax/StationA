@@ -50,7 +50,8 @@ GOOS=linux GOARCH=arm64 CGO_ENABLED=0 \
 ## Configuration
 
 Config is a 0600 TOML file (`/etc/powerseq/config.toml`) holding the
-sequencer's own address (`[mqtt]`), `[timing]` (network delay, step timeout,
+sequencer's own address and the antenna-mode slot it reads for the
+power hold (`[mqtt]`, `ant_mode_slot`, default `ant-mode`), `[timing]` (network delay, step timeout,
 shutdown stagger, poll interval, default hold), `[log]`, and the config-driven
 `[[startup]]` / `[[shutdown]]` step lists. See `config.example.toml` for the
 full schema and the model §7.1 default sequence. The MQTT password is **not** in

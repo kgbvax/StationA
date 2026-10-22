@@ -1548,3 +1548,242 @@ func TestPowerStepInSettleWindowDoesNotWake(t *testing.T) {
 	s.setActivity("inactive", time.Time{})
 	runUntil(t, s, func() bool { return phaseIs(s, PhaseStandby) }, time.Second)
 }
+
+// ----- antenna-mode power hold ----------------------------------------------
+
+// newHoldSeq is newStandbySeq with the ant-mode slot read.
+func newHoldSeq(t *testing.T, mut func(*Config)) (*Sequencer, *recPublisher, *wolRec, context.CancelFunc) {
+	t.Helper()
+	return newStandbySeqWith(t, func(c *Config) {
+		c.AntModeSlot = "ant-mode"
+		c.AntModeHold = time.Millisecond // no reconnect wait unless a test sets one
+		if mut != nil {
+			mut(c)
+		}
+	})
+}
+
+func (s *Sequencer) setHold(hold bool) {
+	s.SetAntMode([]byte(fmt.Sprintf(`{"ant_mode":"storm","lock":{"seq":1,"ground":true,"retract":true},"power_hold":%t}`, hold)))
+}
+
+func (s *Sequencer) holding() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.powerHold
+}
+
+func TestAntModeTopicAndMeta(t *testing.T) {
+	s, _, _, cancel := newHoldSeq(t, nil)
+	defer cancel()
+	want := testSite + "/" + testStation + "/ant-mode"
+	if got := s.AntModeStateTopic(); got != want+"/state" {
+		t.Errorf("AntModeStateTopic = %q, want %q", got, want+"/state")
+	}
+	var meta struct {
+		Capabilities struct{ Watches []string } `json:"capabilities"`
+	}
+	if err := json.Unmarshal(s.MetaPayload(), &meta); err != nil {
+		t.Fatal(err)
+	}
+	if !contains(meta.Capabilities.Watches, want) {
+		t.Errorf("meta watches miss %s: %v", want, meta.Capabilities.Watches)
+	}
+
+	// Not configured, or no idle standby: not read.
+	s2, _, _, cancel2 := newStandbySeq(t)
+	defer cancel2()
+	if got := s2.AntModeStateTopic(); got != "" {
+		t.Errorf("unconfigured AntModeStateTopic = %q", got)
+	}
+	cfg := baseConfig(exampleStartup(), exampleShutdown())
+	cfg.AntModeSlot = "ant-mode"
+	s3, err := New(cfg, &recPublisher{}, &testLogger{t})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := s3.AntModeStateTopic(); got != "" {
+		t.Errorf("AntModeStateTopic without standby = %q", got)
+	}
+}
+
+// The station is idle and in running: while antmode borrows the antenna
+// power, no standby is entered; once the hold ends, standby follows.
+func TestPowerHoldBlocksStandby(t *testing.T) {
+	s, _, _, cancel := newHoldSeq(t, nil)
+	defer cancel()
+	s.setHold(true)
+	s.setActivity("inactive", time.Time{})
+	time.Sleep(3 * testIdleTimeout)
+	if !phaseIs(s, PhaseRunning) {
+		t.Fatalf("standby during the power hold: phase=%s", mustPhase(s))
+	}
+	s.setHold(false)
+	runUntil(t, s, func() bool { return phaseIs(s, PhaseStandby) }, time.Second)
+}
+
+// Regression guard for the borrow (plan phase 5): station in standby, antmode
+// switches the antenna power on to park and off again. The rotator readbacks
+// step both times with the link up (and the UHF watches may move meanwhile);
+// none of it wakes the station. A real move after the settle window does.
+func TestPowerHoldWatchChangesDoNotWake(t *testing.T) {
+	const settle = 60 * time.Millisecond
+	s, _, wol, cancel := newHoldSeq(t, func(c *Config) { c.WatchSettle = settle })
+	defer cancel()
+	s.SetState(abs("uhf/el-rotator"), []byte(`{"el":3,"device_online":true}`))
+	s.setActivity("inactive", time.Time{})
+	runUntil(t, s, func() bool { return phaseIs(s, PhaseStandby) }, time.Second)
+	time.Sleep(settle + 20*time.Millisecond) // past the standby-entry window
+
+	s.setHold(true)
+	// Borrowed power on: readback steps, then moves while the HF park runs.
+	s.SetState(abs("uhf/el-rotator"), []byte(`{"el":0,"device_online":true}`))
+	time.Sleep(settle + 20*time.Millisecond) // well outside any phase window
+	s.SetState(abs("uhf/el-rotator"), []byte(`{"el":20,"device_online":true}`))
+	s.SetState(abs("uhf/radio"), []byte(`{"freq_hz":145800000,"device_online":true}`))
+	s.SetState(abs("uhf/radio"), []byte(`{"freq_hz":145900000,"device_online":true}`))
+	time.Sleep(20 * time.Millisecond)
+	if !phaseIs(s, PhaseStandby) || wol.n() != 0 {
+		t.Fatalf("woke during the power hold: phase=%s wol=%d", mustPhase(s), wol.n())
+	}
+
+	// Power restored to off, hold cleared: the readback step right after is
+	// inside the fresh settle window and only re-baselines.
+	s.setHold(false)
+	s.SetState(abs("uhf/el-rotator"), []byte(`{"el":3,"device_online":true}`))
+	time.Sleep(settle + 20*time.Millisecond)
+	s.SetState(abs("uhf/el-rotator"), []byte(`{"el":3,"device_online":true}`))
+	time.Sleep(20 * time.Millisecond)
+	if !phaseIs(s, PhaseStandby) || wol.n() != 0 {
+		t.Fatalf("woke on the power-restore step: phase=%s wol=%d", mustPhase(s), wol.n())
+	}
+
+	// After the window a real move wakes the station again.
+	s.SetState(abs("uhf/el-rotator"), []byte(`{"el":15,"device_online":true}`))
+	runUntil(t, s, func() bool { return phaseIs(s, PhaseRunning) }, time.Second)
+}
+
+// A last_activity newer than the standby entry would wake the station; during
+// the hold no wake is started (the borrow is not cut short by a wake).
+func TestPowerHoldDefersWake(t *testing.T) {
+	s, _, wol, cancel := newHoldSeq(t, nil)
+	defer cancel()
+	s.setActivity("inactive", time.Time{})
+	runUntil(t, s, func() bool { return phaseIs(s, PhaseStandby) }, time.Second)
+	s.setHold(true)
+	s.setActivity("active", time.Now())
+	time.Sleep(30 * time.Millisecond)
+	if !phaseIs(s, PhaseStandby) || wol.n() != 0 {
+		t.Fatalf("wake during the power hold: phase=%s wol=%d", mustPhase(s), wol.n())
+	}
+	s.setHold(false)
+	runUntil(t, s, func() bool { return phaseIs(s, PhaseRunning) }, time.Second)
+}
+
+func TestPowerHoldBlocksIdleShutdown(t *testing.T) {
+	s, _, _, cancel := newHoldSeq(t, func(c *Config) {
+		c.IdleShutdown = idleShutdownSteps()
+		c.ShutdownTimeout = testShutdownTimeout
+	})
+	defer cancel()
+	s.setActivity("inactive", time.Time{})
+	runUntil(t, s, func() bool { return phaseIs(s, PhaseStandby) }, time.Second)
+	s.setHold(true)
+	time.Sleep(testShutdownTimeout + 100*time.Millisecond)
+	if !phaseIs(s, PhaseStandby) {
+		t.Fatalf("idle shutdown during the power hold: phase=%s", mustPhase(s))
+	}
+	// The hold end restarts the clock: the shutdown follows ShutdownTimeout
+	// later (TestLongPowerHoldRestartsIdleShutdownClock).
+	s.setHold(false)
+	runUntil(t, s, func() bool { return phaseIs(s, PhaseIdle) }, time.Second)
+}
+
+func TestAntModeReadingRules(t *testing.T) {
+	s, _, _, cancel := newHoldSeq(t, nil)
+	defer cancel()
+	if s.holding() {
+		t.Fatal("hold before any ant-mode state")
+	}
+	s.setHold(true)
+	// Malformed payloads keep the last known hold.
+	for _, bad := range []string{`{`, `{"ant_mode":"hurricane","power_hold":false}`, `{"ant_mode":"storm","lock":{"park_az":999}}`} {
+		s.SetAntMode([]byte(bad))
+		if !s.holding() {
+			t.Fatalf("malformed %q dropped the hold", bad)
+		}
+	}
+	// Empty / cleared retained state = normal = no hold.
+	s.SetAntMode(nil)
+	if s.holding() {
+		t.Fatal("empty ant-mode state kept the hold")
+	}
+	s.setHold(true)
+	s.SetAntMode([]byte(`{"ant_mode":"normal"}`))
+	if s.holding() {
+		t.Fatal("normal state without power_hold kept the hold")
+	}
+	// A hold is honored in any mode it is published with.
+	s.SetAntMode([]byte(`{"ant_mode":"maintenance","power_hold":true}`))
+	if !s.holding() {
+		t.Fatal("maintenance power_hold not honored")
+	}
+	// Malformed while not holding keeps "no hold".
+	s.SetAntMode([]byte(`{"ant_mode":"normal"}`))
+	s.SetAntMode([]byte(`garbage`))
+	if s.holding() {
+		t.Fatal("malformed state set a hold")
+	}
+}
+
+// Reconnect order (OnConnect sets the broker online before the ant-mode
+// /state is re-delivered): a borrow that started while powerseq was
+// disconnected must not be cut by an overdue idle shutdown in that gap.
+func TestReconnectWaitsForAntModeState(t *testing.T) {
+	s, _, _, cancel := newHoldSeq(t, func(c *Config) {
+		c.IdleShutdown = idleShutdownSteps()
+		c.ShutdownTimeout = testShutdownTimeout
+		c.AntModeHold = 150 * time.Millisecond
+	})
+	defer cancel()
+	s.setHold(false)
+	s.setActivity("inactive", time.Time{})
+	runUntil(t, s, func() bool { return phaseIs(s, PhaseStandby) }, time.Second)
+	s.SetBrokerOnline(false)
+	time.Sleep(testShutdownTimeout + 50*time.Millisecond) // overdue while down
+	s.SetBrokerOnline(true)
+	time.Sleep(40 * time.Millisecond) // retained {power_hold:true} arrives late
+	s.setHold(true)
+	time.Sleep(200 * time.Millisecond)
+	if !phaseIs(s, PhaseStandby) {
+		t.Fatalf("idle shutdown before the ant-mode state was re-delivered: phase=%s", mustPhase(s))
+	}
+	// No retained ant-mode state after a reconnect = no hold, once the
+	// window has passed.
+	s.setHold(false)
+	s.SetBrokerOnline(false)
+	s.SetBrokerOnline(true)
+	runUntil(t, s, func() bool { return phaseIs(s, PhaseIdle) }, time.Second)
+}
+
+// A hold longer than the idle-shutdown timeout (maintenance) restarts the
+// idle-shutdown clock when it ends: the station is not powered down on the
+// next tick while the operator is still there.
+func TestLongPowerHoldRestartsIdleShutdownClock(t *testing.T) {
+	s, _, _, cancel := newHoldSeq(t, func(c *Config) {
+		c.IdleShutdown = idleShutdownSteps()
+		c.ShutdownTimeout = testShutdownTimeout
+	})
+	defer cancel()
+	s.setActivity("inactive", time.Time{})
+	runUntil(t, s, func() bool { return phaseIs(s, PhaseStandby) }, time.Second)
+	s.setHold(true)
+	time.Sleep(2 * testShutdownTimeout)
+	s.setHold(false)
+	ended := time.Now()
+	time.Sleep(time.Until(ended.Add(testShutdownTimeout - 70*time.Millisecond)))
+	if !phaseIs(s, PhaseStandby) {
+		t.Fatalf("idle shutdown right after the hold ended: phase=%s", mustPhase(s))
+	}
+	runUntil(t, s, func() bool { return phaseIs(s, PhaseIdle) }, time.Second)
+}
