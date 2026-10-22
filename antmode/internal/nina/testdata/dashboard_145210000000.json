@@ -1,0 +1,37 @@
+[
+ {
+  "id": "dwd.2.49.0.0.276.0.DWD.PVW.1792572900000.e4e0bc6f-3fbe-49bd-ad0d-b3491e51ca2a.MUL",
+  "payload": {
+   "version": 21,
+   "type": "ALERT",
+   "id": "dwd.2.49.0.0.276.0.DWD.PVW.1792572900000.e4e0bc6f-3fbe-49bd-ad0d-b3491e51ca2a.MUL",
+   "hash": "e950aab2943d94cb2ac1110a39df80575c7876ed6f4b6ec23a48fcbddd8cf259",
+   "data": {
+    "headline": "Amtliche WARNUNG vor STURMBÖEN",
+    "provider": "DWD",
+    "severity": "Moderate",
+    "urgency": "Immediate",
+    "msgType": "Alert",
+    "area": {
+     "type": "ZGEM",
+     "data": "9625"
+    },
+    "valid": true
+   }
+  },
+  "i18nTitle": {
+   "de": "Amtliche WARNUNG vor STURMBÖEN",
+   "en": "Official WARNING of GALE-FORCE GUSTS",
+   "ar": "تحذير رسمي من هبوب عواصف",
+   "es": "AVISO oficial de TURBONADA",
+   "fr": "ALERTE officielle INTEMPÉRIES PRONONCÉES pour RAFALES DE FORCE FORT COUP DE VENT",
+   "pl": "Oficjalne OSTRZEŻENIE METEOROLOGICZNE (2. STOPNIA) przed WICHURAMI",
+   "ru": "Официальное предупреждение о значительных погодных явлениях: Шквалы штормового ветра",
+   "tr": "FIRTINA ESİNTİLERİNE karşı resmi UYARI"
+  },
+  "sent": "2026-10-21T10:54:12+02:00",
+  "onset": "2026-10-22T00:00:00+02:00",
+  "expires": "2026-10-22T15:00:00+02:00",
+  "effective": "2026-10-21T10:55:00+02:00"
+ }
+]

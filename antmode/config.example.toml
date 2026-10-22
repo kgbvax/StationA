@@ -1,0 +1,124 @@
+# antmode — example configuration
+#
+# On the target this lives at /etc/antmode/config.toml (0600, owned by the
+# service user); deploy.sh seeds it once. See
+# ../docs/conventions/config-and-secrets.md. Unknown keys are an error (a
+# misspelt safety setting must not fall back to its default silently).
+
+# --- Deployment identity ------------------------------------------------------
+# Published in /meta (integration model §3). Required.
+location = "bauwagen"
+host     = "scmino"
+
+# --- MQTT -------------------------------------------------------------------
+[mqtt]
+broker   = "tcp://192.168.1.50:1883"   # live station broker (HA); see docs/conventions/mqtt-topology.md
+# client_id defaults to "<site>-<station>-<slot>" (model §8); set only to override.
+site     = "muehle"
+station  = "hf"
+slot     = "ant-mode"
+user     = "hf"
+password = ""            # set on the device; never on the command line
+
+# --- Sibling slots (site-relative "<station>/<slot>") -----------------------
+[slots]
+power_seq     = "hf/power-seq"     # presence: manned while starting/running/waking
+rotator       = "hf/rotator"       # parks itself from lock.park_az
+ant_ctrl      = "hf/ant-ctrl"      # retracts itself on lock.retract
+ant_switch    = "hf/ant-switch"    # grounded by antenna-select on lock.ground
+radio         = "hf/radio"         # holds the retract while transmitting
+antenna_power = "power/antennas"   # borrowed when [power].borrow = true
+
+# --- DWD warnings via BBK NINA ------------------------------------------------
+# GET {base_url}/dashboard/{ARS}.json, then /warnings/{id}.json (CAP) for each
+# "dwd." message. A warning qualifies when its DWD II event code is listed
+# below AND it is active now (onset <= now < expires; no lead time). A failed
+# poll is "unknown", never "no warnings".
+[nina]
+base_url  = "https://warnung.bund.de/api31"   # OpenAPI "Bundesamt für Bevölkerungsschutz: NINA API" servers entry
+# Amtlicher Regionalschlüssel, 12 digits (e.g. "091620000000" = München).
+# NINA serves districts only; the last 7 digits are zeroed before the query.
+# Look it up in the Destatis Regionalschlüssel list. Empty = no warning poll.
+ars       = ""
+poll_s    = 300
+timeout_s = 20
+# Qualifying DWD II codes: wind level 1 "WINDBÖEN" and up, plus every
+# thunderstorm warning that carries gusts. Source: DWD "Warnungen (WW/WU)"
+# code table, Stand 01.02.2024 —
+# https://www.dwd.de/DE/leistungen/opendata/help/warnungen/warning_codes_pdf.pdf
+# (CAP profile: https://www.dwd.de/DE/leistungen/opendata/help/warnungen/cap_dwd_profile_en_pdf_2_1_14.pdf)
+#   31 GEWITTER (auch mit Windböen)                                 level 1
+#   33 STARKES GEWITTER (Sturmböen oder schwere Sturmböen)          level 2
+#   36 / 38 STARKES GEWITTER (… Sturmböen … und Starkregen)         level 2
+#   40 SCHWERES GEWITTER mit ORKANBÖEN                              level 3
+#   41 SCHWERES GEWITTER mit EXTREMEN ORKANBÖEN                     level 4
+#   42 SCHWERES GEWITTER mit HEFTIGEM STARKREGEN (schwere Sturmböen) level 3
+#   44 / 45 SCHWERES GEWITTER mit (EXTREMEN) ORKANBÖEN und HEFTIGEM STARKREGEN
+#   46 / 48 / 49 SCHWERES GEWITTER … und HAGEL (Sturm- bis extreme Orkanböen)
+#   51 WINDBÖEN                                                     level 1
+#   52 STURMBÖEN, 53 SCHWERE STURMBÖEN                              level 2
+#   54 ORKANARTIGE BÖEN, 55 ORKANBÖEN                               level 3
+#   56 EXTREME ORKANBÖEN                                            level 4
+#   95 SCHWERES GEWITTER mit EXTREM HEFTIGEM STARKREGEN und HAGEL (Sturmböen)
+#   96 EXTREMES GEWITTER mit ORKANBÖEN, EXTREM HEFTIGEM STARKREGEN und HAGEL
+# Not listed: 34 (thunderstorm with heavy rain only), 90–93 (standard product
+# only, not in the CAP feed), 57/58 (lake warnings), 11–16 (coast/high sea),
+# 98/99 (tests). DWD pre-information ("VORABINFORMATION …") reuses 40/55 and
+# is always skipped.
+ii_codes = [
+  "31", "33", "36", "38",
+  "40", "41", "42", "44", "45", "46", "48", "49",
+  "51", "52", "53", "54", "55", "56",
+  "95", "96",
+]
+
+# --- DWD wind (storm park heading) --------------------------------------------
+# GET {base_url}/stationOverviewExtended?stationIds=<dwd_station>; the days[]
+# entry for today (Europe/Berlin): windDirection/10 °, windGust/10 km/h.
+[wind]
+base_url      = "https://app-prod-ws.warnwetter.de/v30"
+# DWD "Stationskennung" of the nearest MOSMIX station (e.g. "10637"
+# Frankfurt/Main, or a G-id). See https://www.dwd.de/DE/leistungen/klimadatendeutschland/stationsliste.html
+# Empty = no wind poll (storm parks at storm.fallback_az).
+dwd_station   = ""
+poll_s        = 1800
+timeout_s     = 20
+stale_minutes = 180    # older than this → stale → storm.fallback_az
+
+# --- Storm --------------------------------------------------------------------
+[storm]
+# Park azimuth when the wind is stale or missing.
+fallback_az          = 0
+# Highest rotator target. The G-450 has a 360..450 overlap, but it is not yet
+# verified that /state.az reads above 360 there — keep 360 until it is.
+max_az               = 360
+# false = observe only: a qualifying warning only sets storm_suggested. Turn
+# on (plan Phase 6) after the suggestions have matched WarnWetter for days.
+auto_enter           = false
+# An auto-entered storm returns to normal after this much quiet time, counted
+# over successful polls only.
+exit_holdoff_minutes = 60
+
+# --- Maintenance --------------------------------------------------------------
+[maintenance]
+park_az = 0            # azimuth for lowering the mast
+
+# --- Lock sequencing ----------------------------------------------------------
+[park]
+ground_timeout_s  = 60    # no "off" from the switch → retract anyway (not while TX)
+retract_timeout_s = 120   # no "retracted" from ant-ctrl → park anyway
+rotate_timeout_s  = 300   # rotator not at park_az → phase failed (stays locked)
+tolerance_deg     = 3     # "at park_az"
+drift_warn_deg    = 10    # parked readback drift that logs a Warn (no re-aim)
+
+# --- Antenna power borrow -----------------------------------------------------
+# When power/antennas is off at entry (stable powerseq phase idle/standby/
+# running only): switch it on, park, then restore — storm after the park,
+# maintenance when it ends — only if powerseq's phase is unchanged.
+[power]
+borrow            = false
+devices_timeout_s = 240   # power on → rotator + ant-ctrl online (>= 180)
+
+# --- Persistence --------------------------------------------------------------
+[state]
+path = "/var/lib/antmode/state.json"   # systemd StateDirectory=antmode

@@ -3,6 +3,7 @@ go 1.26.5
 use (
 	./acom1200s-pa-bridge
 	./antennaselect
+	./antmode
 	./atr1k-tuner-bridge
 	./beamsteer
 	./flexbridge

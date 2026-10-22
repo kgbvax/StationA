@@ -1,0 +1,140 @@
+{
+ "10637": {
+  "forecast1": {
+   "stationId": "10637",
+   "start": 1792620000000,
+   "timeStep": 3600000,
+   "temperature": [
+    97,
+    94,
+    82
+   ],
+   "windSpeed": null,
+   "windDirection": null,
+   "windGust": null,
+   "precipitationTotal": [
+    0,
+    0,
+    0
+   ],
+   "sunshine": [
+    110,
+    70,
+    60
+   ],
+   "dewPoint2m": [
+    60,
+    64,
+    69
+   ],
+   "surfacePressure": [
+    10180,
+    10180,
+    10181
+   ],
+   "humidity": [
+    646,
+    681,
+    729
+   ],
+   "isDay": [
+    false,
+    false,
+    false
+   ],
+   "cloudCoverTotal": [],
+   "temperatureStd": [
+    0,
+    0,
+    0
+   ],
+   "icon": [
+    4,
+    3,
+    4
+   ],
+   "icon1h": [
+    4,
+    7,
+    7
+   ],
+   "precipitationProbablity": null,
+   "precipitationProbablityIndex": null
+  },
+  "days": [
+   {
+    "stationId": null,
+    "dayDate": "2026-10-22",
+    "temperatureMin": 62,
+    "temperatureMax": 125,
+    "precipitation": 5,
+    "windSpeed": 278,
+    "windGust": 482,
+    "windDirection": 2140,
+    "sunshine": 1600,
+    "sunrise": 1792648721000,
+    "sunset": 1792686053000,
+    "moonrise": 1792680295000,
+    "moonset": 1792631707000,
+    "moonriseOnThisDay": 1792680295000,
+    "moonsetOnThisDay": 1792631707000,
+    "sunriseOnThisDay": 1792648721000,
+    "sunsetOnThisDay": 1792686053000,
+    "moonPhase": 2,
+    "icon": 7,
+    "icon1": null,
+    "icon2": null
+   },
+   {
+    "stationId": null,
+    "dayDate": "2026-10-23",
+    "temperatureMin": 78,
+    "temperatureMax": 119,
+    "precipitation": 67,
+    "windSpeed": 222,
+    "windGust": 611,
+    "windDirection": 1820,
+    "sunshine": 0,
+    "sunrise": 1792735219000,
+    "sunset": 1792772338000,
+    "moonrise": 1792767505000,
+    "moonset": 1792722621000,
+    "moonriseOnThisDay": 1792767505000,
+    "moonsetOnThisDay": 1792722621000,
+    "sunriseOnThisDay": 1792735219000,
+    "sunsetOnThisDay": 1792772338000,
+    "moonPhase": 3,
+    "icon": 7,
+    "icon1": null,
+    "icon2": null
+   },
+   {
+    "stationId": null,
+    "dayDate": "2026-10-24",
+    "temperatureMin": 83,
+    "temperatureMax": 118,
+    "precipitation": 67,
+    "windSpeed": 315,
+    "windGust": 593,
+    "windDirection": 2280,
+    "sunshine": 0,
+    "sunrise": 1792821718000,
+    "sunset": 1792858623000,
+    "moonrise": 1792854775000,
+    "moonset": 1792813670000,
+    "moonriseOnThisDay": 1792854775000,
+    "moonsetOnThisDay": 1792813670000,
+    "sunriseOnThisDay": 1792821718000,
+    "sunsetOnThisDay": 1792858623000,
+    "moonPhase": 3,
+    "icon": 7,
+    "icon1": null,
+    "icon2": null
+   }
+  ],
+  "forecast2": null,
+  "forecastStart": null,
+  "warnings": [],
+  "threeHourSummaries": null
+ }
+}
