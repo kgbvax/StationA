@@ -16,6 +16,7 @@ package pstrotator
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -23,6 +24,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"wrc-rotator-bridge/internal/rotor"
 )
 
 // Controller is the rotator surface the UDP server drives. It is a subset of
@@ -120,7 +123,7 @@ func (s *Server) handle(pc net.PacketConn, src net.Addr, msg string) {
 	if m := azimuthRe.FindStringSubmatch(msg); len(m) > 1 {
 		az, _ := strconv.ParseFloat(m[1], 64)
 		s.log.Info("PSTRotator cmd", "remote", remote, "cmd", "set_az", "az", az)
-		if err := s.ctrl.SetAz(az); err != nil {
+		if err := s.ctrl.SetAz(az); err != nil && !errors.Is(err, rotor.ErrLocked) {
 			s.log.Warn("PSTRotator set_az failed", "err", err)
 		}
 		return

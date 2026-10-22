@@ -3,6 +3,7 @@ package rotor
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -11,6 +12,11 @@ import (
 
 	"github.com/gorilla/websocket"
 )
+
+// ErrLocked is returned by a Commander that refuses motion because the station
+// antenna mode (hf/ant-mode) is storm or maintenance. Callers log nothing extra
+// for it — the lock gate already logs one Warn per refusal streak.
+var ErrLocked = errors.New("rotator locked by antenna mode")
 
 // Commander is the rotator control surface the bridge drives from /cmd and the
 // GS-232 server drives from its inbound connections. *Device implements it.

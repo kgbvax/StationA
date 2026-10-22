@@ -74,6 +74,12 @@ type MQTTConfig struct {
 	Station  string `toml:"station"`  // e.g. "hf"
 	Slot     string `toml:"slot"`     // e.g. "rotator"
 	Location string `toml:"location"` // physical location label, e.g. "bauwagen"
+
+	// AntModeSlot is the antenna-mode logic slot (same site/station) whose
+	// retained /state locks rotator motion in storm/maintenance. Empty
+	// disables the lock. With no retained ant-mode state the rotator is
+	// unlocked, so the default is safe before antmode is deployed.
+	AntModeSlot string `toml:"ant_mode_slot"`
 }
 
 // LogConfig controls logging verbosity.
@@ -113,6 +119,7 @@ func Defaults() Config {
 			Station:         "hf",
 			Slot:            "rotator",
 			Location:        "bauwagen",
+			AntModeSlot:     "ant-mode",
 		},
 		Log:    LogConfig{Level: "info"},
 		Device: DeviceConfig{Model: "Yaesu G-450DC", Link: "ethernet"},

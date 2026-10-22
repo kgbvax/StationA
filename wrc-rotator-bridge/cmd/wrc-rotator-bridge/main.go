@@ -27,6 +27,7 @@ import (
 	"wrc-rotator-bridge/internal/bridge"
 	"wrc-rotator-bridge/internal/config"
 	"wrc-rotator-bridge/internal/gs232"
+	"wrc-rotator-bridge/internal/lock"
 	"wrc-rotator-bridge/internal/pstrotator"
 	"wrc-rotator-bridge/internal/rotor"
 )
@@ -75,6 +76,21 @@ func run(ctx context.Context, cfg config.Config, debug bool, log *slog.Logger) e
 
 	dev := rotor.New(cfg.Rotor.URL, debug, adapter)
 
+	// The antenna-mode lock gate stands in for the device on every inbound
+	// control path (MQTT /cmd, GS-232, PstRotator) and executes the park.
+	var hold time.Duration
+	if cfg.MQTT.AntModeSlot != "" {
+		hold = 3 * time.Second
+	}
+	gate := lock.New(dev, log, nil, hold)
+	kick := make(chan struct{}, 1)
+	kickLock := func() {
+		select {
+		case kick <- struct{}{}:
+		default:
+		}
+	}
+
 	b := bridge.New(bridge.Config{
 		Site:        cfg.MQTT.Site,
 		Station:     cfg.MQTT.Station,
@@ -83,7 +99,7 @@ func run(ctx context.Context, cfg config.Config, debug bool, log *slog.Logger) e
 		Host:        cfg.Host,
 		DeviceModel: cfg.Device.Model,
 		DeviceLink:  cfg.Device.Link,
-		Commander:   dev, // the rotator is the /cmd executor
+		Commander:   gate, // the rotator, behind the antenna-mode lock
 	}, pub, adapter)
 
 	// Wire the /cmd dispatch used by the OnConnect subscription callback.
@@ -116,6 +132,27 @@ func run(ctx context.Context, cfg config.Config, debug bool, log *slog.Logger) e
 	// fires during the initial Connect() before pub.Client is wired, so publish
 	// via the paho client the callback receives (PublishMetaVia), not via pub.
 	metaPublisher = b.PublishMetaVia
+	// ant-mode /state: parse + record under the gate mutex only (cheap, never
+	// blocks or publishes on the paho goroutine); the lock loop below
+	// publishes the label and runs the park.
+	antModeHandler = func(payload []byte) {
+		gate.Apply(payload)
+		kickLock()
+	}
+	go func() {
+		t := time.NewTicker(time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+			case <-kick:
+			}
+			gate.Step()
+			b.SetLock(gate.Label())
+		}
+	}()
 
 	// 1. Connect MQTT with LWT and a /cmd subscription.
 	mqttClient, err := connectMQTT(ctx, cfg, log)
@@ -130,7 +167,7 @@ func run(ctx context.Context, cfg config.Config, debug bool, log *slog.Logger) e
 	// drives the same device the bridge does; resulting motion surfaces in
 	// /state. Runs in its own goroutines; ctx closes the listener on shutdown.
 	if cfg.GS232.Enabled {
-		srv := gs232.New(cfg.GS232.Bind, cfg.GS232.Port, dev, log)
+		srv := gs232.New(cfg.GS232.Bind, cfg.GS232.Port, gate, log)
 		go func() {
 			if err := srv.Run(ctx); err != nil {
 				log.Error("GS-232 server ended", "err", err)
@@ -142,7 +179,7 @@ func run(ctx context.Context, cfg config.Config, debug bool, log *slog.Logger) e
 	// drives the same device the bridge does; resulting motion surfaces in
 	// /state. Runs in its own goroutine; ctx closes the socket on shutdown.
 	if cfg.PSTRotator.Enabled {
-		srv := pstrotator.New(cfg.PSTRotator.Bind, cfg.PSTRotator.Port, dev, log)
+		srv := pstrotator.New(cfg.PSTRotator.Bind, cfg.PSTRotator.Port, gate, log)
 		go func() {
 			if err := srv.Run(ctx); err != nil {
 				log.Error("PSTRotator UDP server ended", "err", err)
@@ -151,7 +188,13 @@ func run(ctx context.Context, cfg config.Config, debug bool, log *slog.Logger) e
 	}
 
 	// 4. Run the WRC WebSocket connection loop until ctx is cancelled.
-	return wsLoop(ctx, cfg, b, dev, log)
+	telemetry := func(st rotor.State) {
+		b.HandleTelemetry(st)
+		gate.Observe(st)
+		kickLock()
+	}
+	offline := func() { gate.Observe(rotor.State{}) }
+	return wsLoop(ctx, cfg, b, dev, telemetry, offline, log)
 }
 
 // cmdHandler is set by run() so the paho /cmd subscription callback (wired in
@@ -166,6 +209,10 @@ var cmdHandler = func(payload []byte) {}
 // cmdHandler, for the same reason: OnConnect is wired inside connectMQTT,
 // before the bridge reference is otherwise in scope there.
 var metaPublisher = func(c pahomqtt.Client) {}
+
+// antModeHandler is set by run() to feed the lock gate (same package-var
+// pattern as cmdHandler).
+var antModeHandler = func(payload []byte) {}
 
 // connectMQTT establishes the MQTT connection with a Last Will that marks the
 // bridge offline, and subscribes to the /cmd topic on (re)connect. The initial
@@ -201,6 +248,15 @@ func connectMQTT(ctx context.Context, cfg config.Config, log *slog.Logger) (paho
 		// Publish the retained /meta birth certificate on every (re)connect so
 		// hadiscovery (and any consumer) always sees a fresh certificate.
 		metaPublisher(c)
+		// The antenna-mode lock first, so its retained state lands before
+		// any /cmd can (the gate also holds motion for a few seconds).
+		if am := antModeTopic(cfg); am != "" {
+			if tok := c.Subscribe(am, 1, func(_ pahomqtt.Client, m pahomqtt.Message) {
+				antModeHandler(m.Payload())
+			}); tok.Wait() && tok.Error() != nil {
+				log.Warn("subscribe ant-mode failed", "err", tok.Error())
+			}
+		}
 		// /cmd is not retained; resubscribe on every reconnect.
 		if tok := c.Subscribe(cmd, 1, func(_ pahomqtt.Client, m pahomqtt.Message) {
 			// Runs in paho's goroutine; the bridge only touches the WRC via the
@@ -228,7 +284,8 @@ func connectMQTT(ctx context.Context, cfg config.Config, log *slog.Logger) (paho
 
 // wsLoop dials the WRC, runs the status read loop, and restarts on failure with
 // exponential backoff until ctx is cancelled.
-func wsLoop(ctx context.Context, cfg config.Config, b *bridge.Bridge, dev *rotor.Device, log *slog.Logger) error {
+func wsLoop(ctx context.Context, cfg config.Config, b *bridge.Bridge, dev *rotor.Device,
+	telemetry func(rotor.State), offline func(), log *slog.Logger) error {
 	const maxBackoff = 60 * time.Second
 	backoff := 2 * time.Second
 
@@ -237,12 +294,13 @@ func wsLoop(ctx context.Context, cfg config.Config, b *bridge.Bridge, dev *rotor
 			return ctx.Err()
 		}
 
-		runErr := dev.Run(ctx, b.HandleTelemetry)
+		runErr := dev.Run(ctx, telemetry)
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
 		log.Warn("WRC run ended", "err", runErr)
 		b.SetDeviceOnline(false, fmt.Sprintf("wrc: %v", runErr))
+		offline()
 		if !sleepCtx(ctx, backoff) {
 			return ctx.Err()
 		}
@@ -257,6 +315,15 @@ func availabilityTopic(cfg config.Config) string {
 		slot = "rotator"
 	}
 	return schema.StatusTopic(cfg.MQTT.Site, cfg.MQTT.Station, slot)
+}
+
+// antModeTopic returns the antenna-mode slot's /state topic, or "" when the
+// lock is disabled.
+func antModeTopic(cfg config.Config) string {
+	if cfg.MQTT.AntModeSlot == "" {
+		return ""
+	}
+	return schema.StateTopic(cfg.MQTT.Site, cfg.MQTT.Station, cfg.MQTT.AntModeSlot)
 }
 
 // cmdTopic returns the /cmd topic: <site>/<station>/<slot>/cmd.
