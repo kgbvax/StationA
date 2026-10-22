@@ -299,11 +299,12 @@ extension BusStoreFixtures on BusStore {
 
   /// Populate the Ultrabeam controller. `band` defaults to '' (unknown) so
   /// tests that don't care aren't tripped into the mismatch pill.
-  void setUltrabeam({String direction = 'forward', bool moving = false, String band = ''}) {
+  void setUltrabeam({String direction = 'forward', bool moving = false, String band = '', bool retracted = false}) {
     setOnline('muehle/hf/ant-ctrl');
     applyState('muehle/hf/ant-ctrl', {
       'direction': direction,
       'moving': moving,
+      'retracted': retracted,
       'band': band,
       'device_online': true,
       'ts': '2026-08-20T14:30:00.000000',
@@ -342,5 +343,43 @@ extension BusStoreFixtures on BusStore {
     applyState('muehle/hf/switch', {'pa': pa ? 'on' : 'off', 'trx': trx ? 'on' : 'off', 'device_online': true});
     setOnline('muehle/hf/power-seq');
     applyState('muehle/hf/power-seq', {'phase': 'running', 'fault': '', 'device_online': true});
+  }
+
+  /// Populate the antenna-mode slot (antmode logic slot, no device_online).
+  /// [mode] normal leaves no lock; storm / maintenance carry a built lock
+  /// parked at [parkAz] (null = not yet), with the nudge in maintenance.
+  void setAntMode(
+    String mode, {
+    int? parkAz = 175,
+    bool stormSuggested = false,
+    String phase = '',
+    String fault = '',
+    bool online = true,
+    List<Map<String, dynamic>> warnings = const [],
+    String reason = '',
+  }) {
+    applyStatus('muehle/hf/ant-mode', online ? 'online' : 'offline');
+    applyState('muehle/hf/ant-mode', {
+      'ts': '2026-10-22T18:00:05Z',
+      'ant_mode': mode,
+      'source': 'manual',
+      'since': '2026-10-22T18:00:00Z',
+      if (mode != 'normal')
+        'lock': {
+          'seq': 17,
+          'ground': true,
+          'retract': true,
+          if (parkAz != null) 'park_az': parkAz,
+          'nudge': mode == 'maintenance',
+        },
+      'phase': phase.isNotEmpty ? phase : (mode == 'normal' ? 'idle' : 'parked'),
+      'fault': fault,
+      'power_hold': false,
+      'presence': 'manned',
+      'wind': {'dir_deg': 265, 'gust_kmh': 72, 'ts': '2026-10-22T17:00:00Z', 'stale': false},
+      'warnings': warnings,
+      'storm_suggested': stormSuggested,
+      'reason': reason,
+    });
   }
 }

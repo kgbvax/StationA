@@ -74,4 +74,66 @@ void main() {
       expect(mqtt.publishes.single.topic, 'muehle/uhf/az-rotator/cmd');
     });
   });
+
+  group('publishAim under the antenna mode', () {
+    BusStore autoOn() {
+      final store = BusStore();
+      store.setOnline('muehle/hf/beam-steer');
+      store.applyState('muehle/hf/beam-steer', {
+        'enabled': true,
+        'inputs': {'rotator': true, 'ant_ctrl': true, 'radio': true},
+      });
+      store.markConnected(scheduleGraceNotify: false);
+      return store;
+    }
+
+    test('maintenance with the nudge: set_az with the override, straight to the rotator', () {
+      final store = autoOn()..setAntMode('maintenance');
+      final mqtt = FakeMqttService(store);
+      expect(aimRoute(store, hfRotator), AimRoute.nudge);
+      expect(publishAim(mqtt, store, hfRotator, 95), isTrue);
+      // Not through beamsteer even with AUTO live: it stands down and must
+      // never carry the override.
+      expect(mqtt.publishes.single.topic, 'muehle/hf/rotator/cmd');
+      expect(mqtt.publishes.single.payload, '{"action":"set_az","az":95.0,"override":"maintenance"}');
+      expect(mqtt.publishes.single.retain, isFalse);
+    });
+
+    test('storm: nothing is sent', () {
+      final store = autoOn()..setAntMode('storm');
+      final mqtt = FakeMqttService(store);
+      expect(aimRoute(store, hfRotator), AimRoute.refused);
+      expect(publishAim(mqtt, store, hfRotator, 95), isFalse);
+      expect(mqtt.publishes, isEmpty);
+    });
+
+    test('maintenance before the nudge is granted: nothing is sent', () {
+      final store = autoOn();
+      store.applyStatus('muehle/hf/ant-mode', 'online');
+      store.applyState('muehle/hf/ant-mode', {'ant_mode': 'maintenance', 'lock': {'seq': 1, 'ground': true}});
+      final mqtt = FakeMqttService(store);
+      expect(publishAim(mqtt, store, hfRotator, 95), isFalse);
+      expect(mqtt.publishes, isEmpty);
+    });
+
+    test('a locked snapshot still refuses with antmode offline', () {
+      final store = autoOn()..setAntMode('storm', online: false);
+      final mqtt = FakeMqttService(store);
+      expect(publishAim(mqtt, store, hfRotator, 95), isFalse);
+    });
+
+    test('normal: unchanged routing', () {
+      final store = autoOn()..setAntMode('normal');
+      final mqtt = FakeMqttService(store);
+      expect(publishAim(mqtt, store, hfRotator, 95), isTrue);
+      expect(mqtt.publishes.single.topic, 'muehle/hf/beam-steer/cmd');
+    });
+
+    test('the sat rotator is not locked by the antenna mode', () {
+      final store = autoOn()..setAntMode('storm');
+      final mqtt = FakeMqttService(store);
+      expect(publishAim(mqtt, store, vhfRotator, 120), isTrue);
+      expect(mqtt.publishes.single.topic, 'muehle/uhf/az-rotator/cmd');
+    });
+  });
 }

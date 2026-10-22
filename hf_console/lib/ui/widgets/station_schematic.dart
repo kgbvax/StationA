@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
+import '../../store/ant_mode.dart' show antModeSlot;
 import '../../store/bus_store.dart';
 import '../../store/sat_track.dart';
 import '../../store/station_hosts.dart';
@@ -278,11 +279,14 @@ class _Sheet extends StatelessWidget {
         Rect.fromCenter(center: const Offset(420, 512), width: 128, height: 40),
       ),
     );
+    // Beam steer and the antenna mode share the row right of antenna
+    // select: both are logic slots acting on the rotator + Ultrabeam pair
+    // above them.
     final steer = m.value<bool>('muehle/hf/beam-steer', 'enabled');
     kids.add(
       _pill(
-        const Offset(614, 530),
-        112,
+        const Offset(560, 530),
+        96,
         36,
         'Beam steer',
         steer == null
@@ -299,8 +303,22 @@ class _Sheet extends StatelessWidget {
       _Hit(
         'muehle/hf/beam-steer',
         'Beam steer',
-        Rect.fromCenter(center: const Offset(614, 530), width: 112, height: 36),
+        Rect.fromCenter(center: const Offset(560, 530), width: 96, height: 36),
       ),
+    );
+    kids.add(
+      _pill(
+        const Offset(680, 530),
+        128,
+        36,
+        'Ant mode',
+        _antModeWord(m),
+        q: m.quality(antModeSlot),
+        sev: m.severity(antModeSlot),
+      ),
+    );
+    hits.add(
+      _Hit(antModeSlot, 'Antenna mode', Rect.fromCenter(center: const Offset(680, 530), width: 128, height: 36)),
     );
 
     // ── UHF ──────────────────────────────────────────────────────────────
@@ -371,6 +389,15 @@ class _Sheet extends StatelessWidget {
 }
 
 const antSwitchSlot = 'muehle/hf/ant-switch';
+
+/// The antenna-mode pill's word: the mode (a locked snapshot holds even with
+/// antmode down), or the pending storm suggestion; '—' before any state.
+String _antModeWord(StationSchematicModel m) {
+  if (m.store.slots[antModeSlot]?.state == null) return '—';
+  final a = m.store.antMode;
+  if (a.locked) return a.label;
+  return a.stormSuggested ? 'SUGGEST STORM' : 'NORMAL';
+}
 
 /// Tap id of the PSU block (the plug chip above it carries [psuSlot]).
 const psuCardId = 'psu:13v8';
@@ -1546,6 +1573,7 @@ const _slotNames = {
   'muehle/hf/pa-arm': 'PLC #1 PA arm',
   'muehle/hf/antenna-select': 'Antenna select',
   'muehle/hf/beam-steer': 'Beam steer',
+  'muehle/hf/ant-mode': 'Antenna mode',
   'muehle/hf/power-seq': 'Sequencer',
   'muehle/uhf/radio': 'IC-9700',
   'muehle/uhf/sat-track': 'Sat track',

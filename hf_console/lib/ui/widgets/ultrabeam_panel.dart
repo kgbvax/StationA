@@ -49,7 +49,16 @@ class _UltrabeamPanelState extends State<UltrabeamPanel> {
     // direction cmd is a queued direction cmd either way — and re-fires
     // once travel ends because the flag resets while moving.
     final on6m = radioBand == '6m';
-    final needsForward = on6m && online && direction != 'forward' && !moving;
+    // Antenna-mode lock (storm / maintenance): ultrabridge refuses every
+    // frequency/band/direction cmd and keeps the elements retracted, so the
+    // direction keys and AUTO are off and the pill band says why. RETRACT
+    // stays live — it is never locked.
+    final antMode = store.antMode;
+    final locked = antMode.locked;
+    // "Held in" only on ultrabridge's own readback: the lock asks for the
+    // retract, and antmode parks anyway after its retract timeout.
+    final retracted = online && (store.stateValueAs<bool>('muehle/hf/ant-ctrl', 'retracted') ?? false) && !moving;
+    final needsForward = on6m && online && !locked && direction != 'forward' && !moving;
     if (needsForward && !_forwardForced) {
       _forwardForced = true;
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -65,6 +74,7 @@ class _UltrabeamPanelState extends State<UltrabeamPanel> {
       _forwardForced = false;
     }
 
+    final canSteer = online && !moving && !locked;
     void send(String cmd) {
       if (!online) return;
       mqtt.publish(cmdTopic('hf/ant-ctrl'), cmd, retain: cmdRetain['muehle/hf/ant-ctrl']!);
@@ -81,7 +91,7 @@ class _UltrabeamPanelState extends State<UltrabeamPanel> {
     // first, whether it can do anything: a beamsteer that has lost the
     // rotator ignores every request while the button still reads ON.
     final (smartLine, smartAlert) = _autoLine(
-      active: steerOnline && smartOn,
+      active: steerOnline && smartOn && !locked,
       inputs: store.stateValue('muehle/hf/beam-steer', 'inputs'),
       pending: store.stateValueAs<String>('muehle/hf/beam-steer', 'pending'),
       last: store.stateValue('muehle/hf/beam-steer', 'last'),
@@ -89,6 +99,8 @@ class _UltrabeamPanelState extends State<UltrabeamPanel> {
 
     final (suffix, suffixColor) = moving
         ? ('MOVING', AppTheme.red)
+        : locked
+        ? ('LOCKED', AppTheme.amber)
         : bandMismatch
         ? ('BAND MISMATCH', AppTheme.red)
         : ('', null);
@@ -144,7 +156,7 @@ class _UltrabeamPanelState extends State<UltrabeamPanel> {
                         // Elements moving: lock taps so rapid presses can't queue
                         // competing direction cmds against mid-travel motors —
                         // the same lockout ultrabridge's own web UI applies.
-                        onPressed: (online && !moving) ? () => send(antCtrlDirectionPayload('forward')) : null,
+                        onPressed: canSteer ? () => send(antCtrlDirectionPayload('forward')) : null,
                       ),
                       _DirectionButton(
                         width: 112,
@@ -154,13 +166,13 @@ class _UltrabeamPanelState extends State<UltrabeamPanel> {
                         // Ultrabeam — amber pulse while engaged, not the cyan
                         // "normal" highlight and not red error chrome.
                         irregular: true,
-                        onPressed: (online && !moving && !on6m) ? () => send(antCtrlDirectionPayload('reverse')) : null,
+                        onPressed: (canSteer && !on6m) ? () => send(antCtrlDirectionPayload('reverse')) : null,
                       ),
                       _DirectionButton(
                         width: 112,
                         label: 'BI-DIR',
                         active: direction == 'bidirectional',
-                        onPressed: (online && !moving && !on6m)
+                        onPressed: (canSteer && !on6m)
                             ? () => send(antCtrlDirectionPayload('bidirectional'))
                             : null,
                       ),
@@ -171,7 +183,9 @@ class _UltrabeamPanelState extends State<UltrabeamPanel> {
                         width: 112,
                         label: 'AUTO',
                         active: smartOn,
-                        onPressed: steerOnline
+                        // Off under the lock too: beamsteer stands down and
+                        // its flips would be refused anyway.
+                        onPressed: steerOnline && !locked
                             ? () => mqtt.publish(
                                 cmdTopic('hf/beam-steer'),
                                 beamSteerEnablePayload(!smartOn),
@@ -206,7 +220,16 @@ class _UltrabeamPanelState extends State<UltrabeamPanel> {
             child: Row(
               children: [
                 Expanded(
-                  child: smartLine == null
+                  child: locked
+                      ? Text(
+                          // The lock reason outranks the AUTO line.
+                          '${antMode.lockReason} · ${retracted ? 'elements held in' : 'elements not confirmed in'}',
+                          key: const ValueKey('ultrabeam-lock-reason'),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: AppTheme.mono(11, color: AppTheme.amber, weight: FontWeight.w700),
+                        )
+                      : smartLine == null
                       ? const SizedBox.shrink()
                       : Text(
                           'AUTO · $smartLine',

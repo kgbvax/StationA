@@ -33,6 +33,7 @@ const slotHosts = <String, SlotHost>{
   'muehle/hf/tuner': SlotHost('atr1k-tuner-bridge', 'scmino'),
   'muehle/hf/antenna-select': SlotHost('antennaselect', 'scmino'),
   'muehle/hf/beam-steer': SlotHost('beamsteer', 'scmino'),
+  'muehle/hf/ant-mode': SlotHost('antmode', 'scmino'),
   'muehle/hf/power-seq': SlotHost('powerseq', 'scmino'),
   'muehle/hf/discovery': SlotHost('hadiscovery', 'scmino'),
   'muehle/hf/spots': SlotHost('logger-spot-bridge', 'scmino'),

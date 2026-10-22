@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '../../store/ant_mode.dart';
 import '../../store/bus_store.dart';
 import '../../store/station_schematic.dart' show antPoweredSlots;
 import '../theme.dart';
@@ -122,6 +123,10 @@ class FaultsBar extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 6),
+          // Antenna mode: the lock and the storm suggestion are station
+          // state, not faults — amber banners above the list, not rows in it
+          // (a failed park still lands in the list via the slot's /state.fault).
+          ..._antModeBanners(store.antMode),
           if (visible.isEmpty)
             // No timestamp: "now" is not when anything happened.
             _FaultRow(fault: _Fault('', now, 'No faults', active: false))
@@ -137,6 +142,35 @@ class FaultsBar extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  static List<Widget> _antModeBanners(AntModeState m) {
+    final out = <Widget>[];
+    if (m.locked) {
+      final detail = [
+        if (m.source.isNotEmpty) m.source,
+        if (m.phase.isNotEmpty) m.phase,
+        if (m.reason.isNotEmpty) m.reason,
+      ].join(' · ');
+      out.add(_Banner(
+        key: const ValueKey('faults-lock-banner'),
+        title: '${m.lockReason} · ANTENNA MOTION REFUSED',
+        detail: detail,
+      ));
+    }
+    if (m.stormSuggested && !m.locked) {
+      final why = m.reason.isNotEmpty
+          ? m.reason
+          : m.warnings.isNotEmpty
+              ? 'DWD ${m.warnings.first.event} active'
+              : '';
+      out.add(_Banner(
+        key: const ValueKey('faults-storm-suggestion'),
+        title: 'STORM MODE SUGGESTED',
+        detail: why,
+      ));
+    }
+    return out;
   }
 
   String _twoDigits(int n) => n.toString().padLeft(2, '0');
@@ -190,6 +224,36 @@ class _FaultRow extends StatelessWidget {
                   weight: fault.active ? FontWeight.w700 : FontWeight.w500),
             ),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+/// An amber station-state strip at the top of the fault list. Square: it is
+/// part of the card, not a control.
+class _Banner extends StatelessWidget {
+  final String title;
+  final String detail;
+
+  const _Banner({super.key, required this.title, required this.detail});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+      decoration: BoxDecoration(
+        color: AppTheme.blend(AppTheme.amber, 0.12),
+        border: Border.all(color: AppTheme.amber),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(title, style: AppTheme.mono(13, color: AppTheme.amber, weight: FontWeight.w700)),
+          if (detail.isNotEmpty)
+            Text(detail, maxLines: 2, overflow: TextOverflow.ellipsis, style: AppTheme.mono(12, color: AppTheme.txt)),
         ],
       ),
     );

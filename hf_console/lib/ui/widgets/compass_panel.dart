@@ -171,7 +171,16 @@ class _CompassBody extends StatelessWidget {
     // Tap-to-aim on the chip is offered only when it can actually work:
     // rotor online and a bearing derived (a pin from coordinates has its
     // beam answer filled by the bridge; a logger azimuth counts too).
-    final selectedAimable = selectedLive && rotatorOnline && selected.azimuth != null;
+    // Antenna-mode lock (storm / maintenance): the rotator bridge refuses
+    // every aim except a maintenance nudge, so tap-to-aim is off unless a
+    // nudge is granted — and the chip says why (see publishAim).
+    final antMode = store.antMode;
+    final aimLocked = surface != null && aimRoute(store, surface) == AimRoute.refused;
+    // The lock reason rides on the HF dial only (the sat rotators are not
+    // parked by the antenna mode).
+    final hfLocked = surface?.stateSlot == hfRotator.stateSlot && antMode.locked;
+    final canAim = rotatorOnline && !aimLocked;
+    final selectedAimable = selectedLive && canAim && selected.azimuth != null;
     final (selCall, selInfo) = selected == null
         ? ('', '')
         : _selectedChipLines(selected, selectedAge, aimable: selectedAimable);
@@ -184,12 +193,16 @@ class _CompassBody extends StatelessWidget {
       if (rotatorOnline && targetVisible) '→ ${targetAz.round()}°',
       if (moving) 'MOVING',
       if (!rotatorOnline) 'OFFLINE',
+      if (hfLocked)
+        antMode.nudgeAllowed ? '${antMode.label} · NUDGE ONLY' : antMode.lockReason,
     ];
     final azimuthColor = moving
         ? AppTheme.red
         : !rotatorOnline
             ? AppTheme.red // offline is the system red (StatusPill convention), not muted
-            : AppTheme.accent;
+            : hfLocked
+                ? AppTheme.amber // a deliberate hold, not a fault
+                : AppTheme.accent;
 
     void sendAz(double value) {
       final surface = rotator;
@@ -244,7 +257,7 @@ class _CompassBody extends StatelessWidget {
           height: discHeight,
           child: GestureDetector(
             behavior: HitTestBehavior.opaque,
-            onTapUp: rotatorOnline
+            onTapUp: canAim
                 ? (details) {
                     final local = details.localPosition;
                     final cx = discWidth / 2;

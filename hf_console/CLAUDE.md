@@ -20,6 +20,9 @@ See `../sas/tablet_console_hybrid_preview.html` for the approved high-fidelity r
 - `lib/ui/widgets/*.dart` — compass, PA meter, tuner, antenna, power, tx indicator, confirm dialog
 - `lib/ui/widgets/station_schematic.dart` + `lib/store/station_schematic.dart` — the Station page's left pane (tablet
   only): a read-only process-control schematic of the whole station (see "Station schematic" below)
+- `lib/store/ant_mode.dart` — the antenna-mode snapshot (`muehle/hf/ant-mode`) parsed per the slot's reading rules;
+  `BusStore.antMode` holds the last valid one (see "Antenna mode" below)
+- `lib/ui/widgets/ant_mode_panel.dart` — the antenna-mode strip under the antenna switch (HF page)
 - `lib/store/station_hosts.dart` — slot → component/host map for the schematic's hosts row; mirrors the stationportal
   inventory `[[software]]` table (`test/store/station_hosts_test.dart` cross-checks it)
 - `lib/vhfcam/*.dart` — antenna-cam feed client: HLS player state + poller for
@@ -107,8 +110,40 @@ Eyeball real renders (bundled fonts, every scheme × scenario) with
 `SCHEMATIC_RENDER=1 flutter test test/tool/station_schematic_render_test.dart` → `/tmp/schematic/*.png`
 (`SCHEMATIC_TAP=muehle/hf/pa` also opens that block's popover in the running scenario). The whole tablet Station page
 (top bar, schematic, power card, faults) renders with `PAGE_RENDER=1 flutter test test/tool/station_page_render_test.dart`
-→ `/tmp/station-page/*.png`. The HTML idiom study that led
+→ `/tmp/station-page/*.png` (plus the other pages, and the HF page under a storm lock as `page-hf-storm.png`). The HTML idiom study that led
 to this design is `../sas/station_schematic_variants.html`.
+
+## Antenna mode (HF tab)
+
+The station antenna mode — `normal` | `storm` | `maintenance` — lives on the logic slot `muehle/hf/ant-mode`
+(component `antmode`, contract `../antmode/docs/ant-mode-mqtt-api.md`). In storm and maintenance the switch is
+grounded, the Ultrabeam elements are retracted and the HF rotator is parked; the **bridges** refuse motion and execute
+the park themselves. The console only mirrors the lock so a refused tap is never silent:
+
+- `BusStore.antMode` reads `/state` per the slot's rules (same as `shared/antmode.Parse`): no retained state →
+  normal; a locked snapshot holds while antmode's `/status` is offline (a dead owner never unlocks); a malformed one
+  keeps the last known mode (counted in `malformedPayloads`); `ts` is not checked.
+- `AntModePanel` — the strip under the antenna switch (phones: after it in the scroll column): NORMAL / STORM /
+  MAINT. keys, each change behind a confirmation dialog (`set_ant_mode`); REPARK (confirmed) while locked; phase,
+  park/drift, source, auto exit, wind, presence and the active DWD warnings as mono lines; the storm suggestion
+  (`storm_suggested`) as a banner with ENTER STORM (same confirmation) / DISMISS (`dismiss_suggestion`). With antmode
+  down the keys are off and a line names the mode that is still enforced.
+- Locked controls (greyed, with the reason in the card's pill band): Ultrabeam FORWARD / 180° / BI-DIR / AUTO and
+  the 6 m forward correction (RETRACT stays live); the antenna-switch port keys (AUTO/MANUAL stay live — they act
+  once the lock is gone); compass tap-to-aim and the selected-station chip (the chip reads `STORM LOCK · parked n°`).
+  The HF map rail has only STOP, which always stays live. The reason states only what is confirmed: `parked n°`
+  needs antmode phase `parked` (else `parking → n°` / `parking`, or `PARK FAILED`); the switch card's `grounded`
+  needs ant-switch `selected: off` (else `grounding…`); the Ultrabeam card's `elements held in` needs ultrabridge
+  `retracted` and not `moving` (else `elements not confirmed in`).
+- Every `/cmd` to `hf/ant-mode` carries `ts` (UTC, whole seconds): antmode drops a request older than 30 s or more
+  than 5 s ahead, so a request retained while antmode was dead never applies hours later. The panel re-checks
+  antmode's liveness when the confirmation dialog closes.
+- Aiming (`lib/store/aim.dart`, `aimRoute`): in maintenance with `lock.nudge` an HF aim is a nudge — `set_az` with
+  `"override":"maintenance"` straight to `hf/rotator`, never through beamsteer (even with AUTO on). In storm, or
+  maintenance before the nudge is granted, nothing is sent. The sat rotators are not locked by the antenna mode.
+- The faults bar carries an amber lock banner or the storm suggestion above the list (station state, not faults); a
+  failed park still lands in the list via the slot's `/state.fault`. The station schematic draws an `Ant mode` pill
+  beside Beam steer (warn while locked or suggesting, alarm on a fault).
 
 ## Antenna cam (CAM tab)
 
@@ -150,7 +185,7 @@ is the source of truth; this app's palette must be kept in sync with it.
 
 Retained cmd slots (self-healing steady state): `power/psu-13v8`, `power/antennas` (rotators + Ultrabeam controller plug, ANT PWR toggle), `power/shack-pc-mains` (bwpc mains plug, PC PWR toggle — off asks for confirmation), `hf/switch`, `hf/pa-arm`, `hf/ant-switch`, `hf/antenna-select`, `hf/beam-steer` (`enable`/`disable` — the smart-rotation toggle survives a beamsteer restart), `uhf/pol-ctrl` (`set_pol` — desired phase re-applies after a controller reboot or broker reconnect, KTD13's deliberate contrast with the one-shot sat rotators).
 
-Retained but one-shot (consumer clears the topic after every execution — a command does NOT re-apply if the bridge restarts): `hf/ant-ctrl`.
+Retained but one-shot (consumer clears the topic after every execution — a command does NOT re-apply if the bridge restarts): `hf/ant-ctrl`, `hf/ant-mode` (`set_ant_mode` / `repark` / `dismiss_suggestion`; antmode applies, then clears — a request sent during a short antmode restart is applied once it is back, within the 30 s window of the `ts` the console stamps on it).
 
 Non-retained (one-shot): `power/shack-pc` (`sleep` — retained, it would re-sleep the PC on every wake), `hf/pa`, `hf/rotator`, `hf/tuner`, `hf/power-seq`, `hf/radio` (DVK `play`/`stop`), `uhf/az-rotator`, `uhf/el-rotator` (sat `goto`/`stop` — a stale retained or queued motion must never replay against real antennas), `uhf/radio` (icom9700-radio-bridge, receive-only since 2026-09: the action set is exactly `audio_on`/`audio_off`/`power_on`/`monitor_on`/`monitor_off` — there is no PTT/arm/tuning path anymore).
 
