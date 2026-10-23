@@ -17,23 +17,26 @@ needed again it will be via serial CI-V, not LAN. What remains:
   unsolicited transceive broadcasts, meters are polled read-only
   (`serial.meter_interval`), everything broadcasts on MQTT on change. Gated by
   the sticky `monitor_on`/`monitor_off` cmds. `power_on` sends the wake frame
-  over serial. The deploy host must be the Pi holding the radio's USB CI-V
-  cable.
+  over serial. Both need `serial.device` (a CI-V port on the bridge's host);
+  it is unset on scmino, so both are disabled there (see Deployment).
 
 The defining design constraint (KTD-2, user-settled): **the radio's single LAN
 session stays freely available for manual wfview operating** — the bridge is a
 polite on-demand client. It connects only on demand (an audio demand), never
 auto-steals the session, and disconnects after the idle timeout. While
-disconnected, telemetry `/state` fields are omitted (not zeroed) and
-`device_online` reads `false` as a *healthy idle* state — `session_state`
-(`idle|connecting|live|error`, redefined 2026-09 as the CAPTURE-session state)
-is the idle-vs-fault discriminator. There is no arm gate, no PTT, no TX
-watchdog — the safety layer was removed with the control plane; the historical
-record (firmware PTT-off gap, exposure review) lives in `docs/known-issues.md`.
+disconnected, `device_online` reads `false` as a *healthy idle* state —
+`session_state` (`idle|connecting|live|error`, redefined 2026-09 as the
+CAPTURE-session state) is the idle-vs-fault discriminator. Telemetry `/state`
+fields are gated on the serial monitor, not on the LAN session: omitted (not
+zeroed) while the monitor is off or the radio does not answer. There is no arm
+gate, no PTT, no TX watchdog — the safety layer was removed with the control
+plane; the historical record lives in `docs/known-issues.md` (firmware PTT-off
+gap) and `../docs/known-issues.md` (exposure review).
 
 **Status: implementation complete** (U1–U8 + the 2026-09 receive-only pivot).
-Bench bring-up for the serial monitor (radio menu: CI-V USB Baud 115200, CI-V
-Transceive ON) is the remaining operational step. Protocol constants live in
+The serial monitor is not in use: it needs a second CI-V port on scmino (see
+Deployment), then a bench bring-up (radio menu: CI-V USB Baud 115200, CI-V
+Transceive ON). Protocol constants live in
 `docs/civ-research-brief.md` and `docs/civ-wire-spec.md`.
 
 ---
@@ -150,9 +153,12 @@ env prefix is `ICOM9700_` (plan-pinned, shorter than the dir-name-derived
 convention); the other overridable vars are listed in `config.example.toml`.
 
 Key defaults: `radio_host = "9700.kgbvax.net"`, `[mqtt] broker =
-"tcp://bwbroker:1883"` (**KTD-7**: bwbroker DNS indirection — must resolve to
-the muehle/#-authoritative broker, never the HA consumer broker; deploy.sh
-gates on this), site/station/slot `muehle`/`uhf`/`radio`, `[session]
+"tcp://bwbroker:1883"` (**KTD-7**: bwbroker DNS indirection; deploy.sh gates
+only on the name resolving on the target. KTD-7's "never the HA consumer
+broker" rule belongs to the split-direction shari design, which was never
+deployed; `../docs/conventions/mqtt-topology.md` records that live services
+resolve `bwbroker` to `.50`. This bridge's live config is not verified),
+site/station/slot `muehle`/`uhf`/`radio`, `[session]
 idle_timeout=120s max_attempts=3 attempt_spacing=30s`, `[serial] device=""
 baud=115200 meter_interval="500ms" power_on_frame="1a050201"` (device empty =
 monitor_*/power_on rejected), `[audio] publish_addr="" demand_ttl="60s"`
@@ -182,8 +188,9 @@ PrivateDevices + DeviceAllow for the serial device classes
 RestrictAddressFamilies=AF_INET AF_INET6, empty CapabilityBoundingSet,
 **MemoryMax=256M** (UDP retransmit buffers and all radio-silence-growable
 structures must stay bounded, R18). Seed-once 0600 TOML + 0600 env file.
-Radio-side prerequisites: CI-V USB Baud 115200, CI-V Transceive ON; exposure
-review and bwbroker resolution notes are recorded in `docs/known-issues.md`.
+Radio-side prerequisites: CI-V USB Baud 115200, CI-V Transceive ON; the
+exposure review and bwbroker resolution notes are recorded in the station
+register `../docs/known-issues.md`.
 
 See `../docs/conventions/deployment.md` for the general pattern.
 

@@ -1,6 +1,6 @@
 # hf_console — Mühle HF station tablet/phone console
 
-Flutter console for operating the HF portion of the Mühle station from an Android tablet or an iPhone. Connects directly to the **shack MQTT broker on shari** (`192.168.1.139:1883`; see `../mqtt-broker/README.md`) — raw TCP on Android/iOS, WebSocket via the Go bridge on web. The shack broker is bridged to the Home Assistant broker, so the console keeps working when the shack↔house link is down.
+Flutter console for operating the HF portion of the Mühle station from an Android tablet or an iPhone. Connects directly to the MQTT broker — raw TCP on Android/iOS, WebSocket via the Go bridge on web. The setup screen and the web bridge default to the HA broker `192.168.1.50:1883`, the live station broker for most clients (root `CLAUDE.md` live-state note). The station broker on scmino (`192.168.1.178:1883`, see `../mqtt-broker/README.md`) mirrors `muehle/#` both ways; a console pointed at it keeps working when the shack↔house link is down. shari runs no broker.
 
 ## Design
 
@@ -38,11 +38,11 @@ See `../sas/tablet_console_hybrid_preview.html` for the approved high-fidelity r
 
 ## MQTT
 
-Uses `mqtt_client` v10.x, MQTT 3.1.1, direct TCP to the shack broker on shari (`192.168.1.139:1883`). Credentials stored in `flutter_secure_storage`; entered on first launch (use the dedicated `console` account below).
+Uses `mqtt_client` v10.x, MQTT 3.1.1, direct TCP to the broker entered on first launch (setup screen default `192.168.1.50:1883`; see the intro). Credentials stored in `flutter_secure_storage`; entered on first launch (use the dedicated `console` account below).
 
-Create a dedicated broker user `console` with narrow ACL:
-- subscribe: `muehle/#`
-- publish: `muehle/+/cmd`
+Create a dedicated broker user `console` with narrow ACL (as in `../mqtt-broker/acl.conf.example`; not seeded on the scmino broker yet, whose only local account is `hf`):
+- subscribe: `muehle/+/+/state`, `muehle/+/+/meta`, `muehle/+/+/status`
+- publish: `muehle/+/+/cmd`
 
 Do NOT reuse the broad `hf` user; do not embed station-wide credentials in the APK.
 
@@ -204,7 +204,7 @@ Retained cmd slots (self-healing steady state): `power/psu-13v8`, `power/antenna
 
 Retained but one-shot (consumer clears the topic after every execution — a command does NOT re-apply if the bridge restarts): `hf/ant-ctrl`, `hf/ant-mode` (`set_ant_mode` / `repark` / `dismiss_suggestion`; antmode applies, then clears — a request sent during a short antmode restart is applied once it is back, within the 30 s window of the `ts` the console stamps on it).
 
-Non-retained (one-shot): `power/shack-pc` (`sleep` — retained, it would re-sleep the PC on every wake), `hf/pa`, `hf/rotator`, `hf/tuner`, `hf/power-seq`, `hf/radio` (DVK `play`/`stop`), `uhf/az-rotator`, `uhf/el-rotator` (sat `goto`/`stop` — a stale retained or queued motion must never replay against real antennas), `uhf/radio` (icom9700-radio-bridge, receive-only since 2026-09: the action set is exactly `audio_on`/`audio_off`/`power_on`/`monitor_on`/`monitor_off` — there is no PTT/arm/tuning path anymore).
+Non-retained (one-shot): `power/shack-pc` (`sleep` — retained, it would re-sleep the PC on every wake), `hf/pa`, `hf/rotator`, `hf/tuner`, `hf/power-seq`, `hf/radio` (DVK `play`/`stop`), `uhf/az-rotator`, `uhf/el-rotator` (sat `goto`/`stop` — a stale retained or queued motion must never replay against real antennas), `uhf/radio` (icom9700-radio-bridge, receive-only since 2026-09: the action set is exactly `audio_on`/`audio_off`/`power_on`/`monitor_on`/`monitor_off`/`park_radio` — `park_radio` retunes via the bridge's rigctld on scmino; there is no PTT/arm/tuning path anymore).
 
 The machine-readable source of truth is `cmdRetain` in `lib/store/wiring.dart`; keep this list in sync with it.
 

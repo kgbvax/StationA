@@ -148,12 +148,16 @@ muehle/hf/ant-mode/cmd      retained? one-shot — applied, then cleared
     restart or `/status` blip never auto-enters storm on an operator. A real outage still
     reads unmanned after the dwell. A station first seen unmanned (antmode start) is
     unmanned at once.
-  - **Lost phase:** powerseq does not persist its phase and starts in `idle`. An `idle`
-    that follows a manned phase without `stopping` in between (a powerseq restart, or a
-    start that aborted) stays `manned` while `hf/radio` is live, until the radio has not
-    transmitted for 30 min (powerseq cannot enter standby from `idle`, so this is the only
-    "operator gone" signal left). A listen-only operator therefore reads unmanned 30 min
-    after the restart.
+  - **Lost phase:** an `idle` that follows a manned phase without `stopping` in between
+    (a start that aborted, or a powerseq restart that lost the phase) stays `manned`
+    while `hf/radio` is live, until the radio has not transmitted for 30 min (powerseq
+    cannot enter standby from `idle`, so this is the only "operator gone" signal left).
+    A listen-only operator therefore reads unmanned 30 min after the restart. Since
+    1cabf4a (2026-10-22) powerseq keeps its phase across a restart (`state_file`): a
+    plain restart restores `running`/`standby`; only a sequence killed mid-way
+    (`starting`/`waking` → `idle` + `fault`) or a missing/corrupt state file still shows
+    `idle`. antmode is unchanged; the rule could be narrowed to an `idle` with a `fault`
+    (`../../docs/known-issues.md` "HF antenna mode").
 - **Automatic entry:** with `storm.auto_enter = true` (default **false** — observe only
   until plan Phase 6), mode normal, station unmanned, and a qualifying warning active
   that is not acknowledged → storm, `source: auto`. A dismissed suggestion does not block
@@ -219,7 +223,8 @@ muehle/hf/ant-mode/cmd      retained? one-shot — applied, then cleared
     `idle` or `standby` during the borrow (`starting`, `waking`, `running`, `stopping`,
     `entering_standby`: an operator-driven sequence), the power is powerseq's for good and
     is left as it is (Warn). `idle`/`standby` alone are not a takeover: their intent is
-    antenna power off, and powerseq comes back from a restart in `idle`.
+    antenna power off, and powerseq can come back from a restart in `idle` (a killed
+    sequence, or no usable state file).
   - While powerseq is offline (or has no phase) the due restore **waits** (Warn once);
     `power_hold` stays true.
   - A new lock (re-entry, repark, mode switch) takes over an open borrow, also one whose

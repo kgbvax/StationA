@@ -17,6 +17,8 @@ There is **no cancel command**. A `stop` issued during `starting`, or a `start` 
 
 Code-check verdict (2026-09-03): **still open** — `powerseq/internal/seq/seq.go` `begin()` only honors `start` from `phase=idle` and `stop` from `running`/`idle+fault`; no cancel path exists.
 
+Update 2026-10-23: still open (no cancel). `begin()` now honors `start` from `idle`/`standby` and `stop` from `running`/`standby`/`idle`.
+
 ## [decision] Cancel support
 
 Keep the drop-on-busy contract, or add an explicit cancel command that safely runs the shutdown list from wherever startup stands? Any change is deliberate, not a fix.
@@ -26,6 +28,8 @@ Keep the drop-on-busy contract, or add an explicit cancel command that safely ru
 Even when the station is fully hot. That can happen when an operator started it by hand, or when a previous process lifetime did. There is no way to shut it down through the sequencer.
 
 Code-check verdict (2026-09-03): **still open** — same `begin()` guard in `powerseq/internal/seq/seq.go`: `stop` is honored only from `running` or `idle` **with a fault**.
+
+Update 2026-10-23: **fixed** 2026-09-18 (e860506) — `stop` is honored from `idle` with or without a fault (idempotent teardown, de-energize only).
 
 ## [decision] Unconditional `stop`
 
@@ -61,10 +65,12 @@ Cross-component hard requirement. The PA arm relay de-energizes when the radio b
 
 Code-check verdict (2026-09-03): **fix exists in source, live deployment unverified** — `flexbridge/internal/bridge/bridge.go` defines `DefaultStateHeartbeat = 5 * time.Second` and a `StateHeartbeat` goroutine that republishes `/state` while the radio link is live; whether the shari-hosted flexbridge is running this build is not verified from here.
 
+Update 2026-10-23: flexbridge runs on scmino since 2026-10-12, deployed from a tree that contains the heartbeat (0f79130, 2026-08-29); the live heartbeat was not checked.
+
 ## Notes on items dropped as fixed or duplicated (not salvage-worthy)
 
 - `wait_state` trusting an arbitrarily old `/state` snapshot — **fixed**: `powerseq/internal/seq/seq.go` now requires the target's `/state.device_online` to not be `"false"` (absent field does not block), with a regression test in `seq_test.go`.
-- Doc lag (`stop` honored only from `running`) — live docs (`powerseq/CLAUDE.md`, `docs/powerseq-mqtt-api.md`) now match the code's `idle+fault` behavior.
-- Broker migration to shari (`192.168.1.50` → `192.168.1.139`) — resolved; the shari-local broker is merged and is the documented production topology (`CLAUDE.md`, `docs/conventions/mqtt-topology.md`).
+- Doc lag (`stop` honored only from `running`) — live docs (`powerseq/CLAUDE.md`, `docs/powerseq-mqtt-api.md`) now match the code's `idle+fault` behavior (since e860506, 2026-09-18: `idle` with or without a fault).
+- Broker migration to shari (`192.168.1.50` → `192.168.1.139`) — resolved; the shari-local broker is merged and is the documented production topology (`CLAUDE.md`, `docs/conventions/mqtt-topology.md`). Update 2026-10-23: the shari broker was never deployed (shari runs no mosquitto). powerseq runs on scmino; `deploy.sh` seeds `tcp://127.0.0.1:1883` (the scmino `muehle/#` mirror); the live config was not checked (root `CLAUDE.md` live-state note: all clients except PLC #1 and shelly-power-bridge use the HA broker `192.168.1.50:1883`).
 - QoS-0 own-`/cmd` + non-retained rationale, busy-guard truth table, step-kind schema, timing defaults, topic tables, deployment knobs — all covered by `powerseq/CLAUDE.md`, `powerseq/docs/powerseq-mqtt-api.md`, and the station-wide convention docs.
 - Station-wide question on `device_online` explicitness — resolved in practice: flexbridge states `device_online` is always present (true/false).

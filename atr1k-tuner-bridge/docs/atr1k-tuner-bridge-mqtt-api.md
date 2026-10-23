@@ -5,7 +5,8 @@ This document describes the MQTT interface exposed by **atr1k-tuner-bridge**
 station integration model (`../../docs/station-integration-model.md`).
 
 It bridges the ATR-1000 ATU (BTR-1000 / N7DDC family) — reached over its binary
-WebSocket at `ws://192.168.1.20:60001` — to the bus. It is the authoritative
+WebSocket (live at `ws://192.168.1.111:60001`; built-in default
+`ws://192.168.1.20:60001`) — to the bus. It is the authoritative
 on-the-wire contract — derived from `internal/bridge/bridge.go` and
 `internal/tuner/protocol.go`.
 
@@ -15,7 +16,7 @@ on-the-wire contract — derived from `internal/bridge/bridge.go` and
 
 | Property | Value |
 |----------|-------|
-| Protocol | MQTT 3.1.1 (plain TCP, `tcp://192.168.1.139:1883`) |
+| Protocol | MQTT 3.1.1 (plain TCP; `deploy.sh` seeds `tcp://192.168.1.50:1883`) |
 | Authentication | Username/password (`hf` user) |
 | Clean session | auto (paho default); `/cmd` is re-subscribed on every reconnect |
 | Auto-reconnect | yes (`SetAutoReconnect`, `SetConnectRetry`) |
@@ -89,7 +90,7 @@ Retained JSON, republished on every (re)connect.
   "device": { "model": "ATR-1000" },
   "link": "wifi",
   "location": "bauwagen",
-  "host": "shari",
+  "host": "scmino",
   "capabilities": {
     "inline": true,
     "tune_modes": ["mem", "full"]
@@ -108,7 +109,7 @@ Retained JSON, republished on every (re)connect.
       { "key": "device_online", "name": "Device Online", "type": "boolean" }
     ],
     "actions": [
-      { "key": "tune", "name": "Tune",
+      { "key": "tune", "name": "Tune", "options_ref": "tune_modes",
         "command": { "action": "tune", "value_key": "value", "value_type": "enum" } }
     ]
   }
@@ -192,7 +193,8 @@ acombridge's `set_band`).
 This is the soft-binding target the `antennaselect` reconciler drives for
 non-resonant bands (`tuner.set_inline ← band_policy`, integration model §7.1,
 §10 residual): with `antennaselect` `[tuner_follow]` enabled, the reconciler
-publishes `set_inline=true` when the fan-dipole is selected on 30/60/160 m and
+publishes `set_inline=true` when the fan-dipole is selected on a band in
+`[tuner_follow].atu_bands` (seeded `30m`, `60m`, `80m`, `160m`) and
 `set_inline=false` otherwise.
 
 ### tune

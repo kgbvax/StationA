@@ -36,7 +36,7 @@ Its `/meta` (role `discovery`, link `none`, **no** `device` block):
   "role": "discovery",
   "link": "none",
   "location": "bauwagen",
-  "host": "shari",
+  "host": "scmino",
   "capabilities": {
     "renders": ["sensor", "binary_sensor", "number", "select", "button"],
     "filter": "muehle/+/+/meta"
@@ -73,8 +73,9 @@ deterministic mapper (~5 type branches) from neutral primitives to HA components
 
 **Normalization:** a HA `number`/`select` both reads state from `state_topic` **and**
 commands via `command_topic`, so a slot does **not** need separate read/write entities.
-This is why ultrabridge's 8 embedded entities collapse to 5 under hadiscovery
-(see `../ultrabridge/docs/ultrabeam-mqtt-api.md`).
+This is why ultrabridge's 8 embedded entities (separate read and write entities) collapsed
+to 5 under hadiscovery; today each of its writable setpoints (`freq_hz`, `band`,
+`direction`) is one entity (see `../ultrabridge/ultrabeam-mqtt-api.md`).
 
 ### 2.2 Shared envelope (injected on every entity)
 
@@ -143,8 +144,8 @@ hadiscovery owns the only structured→template step:
 
 Examples:
 
-- radio mode (enum writable): `{"action":"mode","value":"{{ value }}"}`
-- radio/ctrl freq (number writable, int): `{"action":"frequency","freq_hz":{{ value | int }}}`
+- radio band (enum writable): `{"action":"set_band","value":"{{ value }}"}`
+- ant-ctrl freq (number writable, int): `{"action":"frequency","freq_hz":{{ value | int }}}`
 - ant-switch select (enum writable, no action): `{"select":"{{ value }}"}`
 - ultrabeam retract (button): `{"action":"retract"}`
 
@@ -184,7 +185,7 @@ Example:
 
 ```
 homeassistant/sensor/muehle-hf-radio/freq_hz/config
-homeassistant/select/muehle-hf-radio/mode/config
+homeassistant/select/muehle-hf-radio/band/config
 homeassistant/binary_sensor/muehle-hf-radio/tx/config
 homeassistant/button/muehle-hf-ant-ctrl/retract/config
 ```
@@ -232,17 +233,20 @@ replaced by the real entities (the diagnostic topic is cleared).
 ## 7. Live smoke test (pure MQTT, no hardware)
 
 ```bash
-# from hadiscovery/
-go run ./cmd/hadiscovery -config ./config.example.toml   # broker tcp://192.168.1.139:1883
+# from hadiscovery/ — copy the example, set the hf password, and change `slot` (or stop
+# the scmino service first): the same site/station/slot shares the deployed instance's
+# client id and topics. The example's broker is 127.0.0.1; -broker points at the station bus.
+cp config.example.toml /tmp/hadiscovery.toml   # edit password + slot
+go run ./cmd/hadiscovery -config /tmp/hadiscovery.toml -broker tcp://192.168.1.50:1883
 
 # watch the discovery tree:
-mosquitto_sub -h 192.168.1.139 -u hf -P "$MQTT_PASSWORD" -t 'homeassistant/#' -v
+mosquitto_sub -h 192.168.1.50 -u hf -P "$MQTT_PASSWORD" -t 'homeassistant/#' -v
 
 # confirm a specific slot:
-mosquitto_sub -h 192.168.1.139 -u hf -P "$MQTT_PASSWORD" -t 'homeassistant/sensor/muehle-hf-radio/freq_hz/config' -v
+mosquitto_sub -h 192.168.1.50 -u hf -P "$MQTT_PASSWORD" -t 'homeassistant/sensor/muehle-hf-radio/freq_hz/config' -v
 
 # trigger HA rebirth, confirm republish in hadiscovery logs:
-mosquitto_pub -h 192.168.1.139 -u hf -P "$MQTT_PASSWORD" -t 'homeassistant/status' -m 'online' -r
+mosquitto_pub -h 192.168.1.50 -u hf -P "$MQTT_PASSWORD" -t 'homeassistant/status' -m 'online'   # not -r: leave no retained birth on the HA broker
 ```
 
 ---

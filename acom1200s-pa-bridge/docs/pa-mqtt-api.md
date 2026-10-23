@@ -243,8 +243,11 @@ there is no `set_keyed` command.
 The ACOM band-change command is **relative** (next/prev only), so the bridge
 walks from the current band to the target in 150 ms-spaced steps. The target
 must be one of `capabilities.bands`. If the current band is unknown (no
-telemetry yet), the command is rejected. Band follows the radio via CAT in
-normal operation; this command is for manual override.
+telemetry yet), the command is rejected. There is no CAT band-data cable: the amp
+auto-bands by sensing the RF drive (`band_source: rf_sense`), which trips on the first
+TX of a new band. In normal operation `antenna-select` pre-positions the amp with this
+command (`[pa_follow]`: it sends `set_band` when the online radio reports a new band;
+not while antenna-select is in manual). Other senders are manual override.
 
 **No `set_power`.** This slot is a pure observer of the amplifier: it neither
 drives the amp's power state nor touches the host's RTS line. Powering the PA

@@ -19,10 +19,11 @@ ref into `[timing]`). The subscribed topics and the `/meta` `controls`/`watches`
 are derived from the configured sequence.
 
 The default sequence (model §7.1, shipped in `config.example.toml`):
-**Startup:** `power/shack-pc-mains` on → `power/psu-13v8` on → wait
-`hf/switch` + `hf/pa-arm` + `hf/ant-switch` online → `hf/switch` trx on → wait
-`hf/radio` online → `hf/switch` pa on → wait `hf/pa` power on → `hf/pa-arm`
-enabled. **Shutdown** is the reverse with short staggers for inrush.
+**Startup:** `power/shack-pc-mains` on → `power/psu-13v8` on → 5 s → WOL bwpc →
+wait `hf/switch` online → `hf/switch` trx on → 1 s → `hf/switch` pa on →
+`power/antennas` on → wait `hf/radio` online → wait `hf/pa` power on →
+`hf/pa-arm` enabled. **Shutdown** is the reverse with short staggers for inrush
+(`power/shack-pc-mains` stays on).
 
 See `CLAUDE.md` for architecture and `docs/powerseq-mqtt-api.md` for the
 on-the-wire contract. Shared conventions live in `../docs/`.
@@ -37,7 +38,7 @@ go test ./...
 ./deploy.sh
 ```
 
-Cross-compile for the Pi (shari, `192.168.1.139`):
+Cross-compile for the Pi (scmino, `192.168.1.178`):
 
 ```bash
 GOOS=linux GOARCH=arm64 CGO_ENABLED=0 \

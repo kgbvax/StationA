@@ -10,7 +10,8 @@ reverse-engineered it by observing the device. This frame format is the
 authoritative description.
 
 Transport: the bridge connects **outbound** to the tuner over a plain (no TLS)
-WebSocket at `ws://<tuner-host>:60001` (default `ws://192.168.1.20:60001`). The
+WebSocket at `ws://<tuner-host>:60001` (default `ws://192.168.1.20:60001`; the live
+ATU is at `ws://192.168.1.111:60001`, see the endpoint decision below). The
 tuner is the server; the bridge always dials out. There is no handshake beyond
 the HTTP WebSocket upgrade: no authentication, no hello message. Messages are
 WebSocket **binary** messages; each message is exactly one frame.
@@ -201,6 +202,13 @@ README typo. Code-check verdict: the disagreement is **still present**
 (`atr1k-tuner-bridge/README.md:37` vs `config.example.toml:21`). Even so, the
 live device's actual IP must be confirmed on the site LAN on-site before any
 redeploy that repoints it.
+
+Update 2026-10-23: the `.111` reading was right, the "code is truth" verdict was
+wrong. The live config at the 2026-09-18 and 2026-10-12 deploys had
+`ws://192.168.1.111:60001`, and the stationportal inventory uses `.111` too. The `.20`
+default in `internal/config/config.go`, `config.example.toml` and `deploy.sh` is
+stale (config issue, open). The README now gives `.111` as the live address and
+`.20` as the default.
 
 ## [decision] Meter-frame push cadence and idle behavior
 The code imposes no read timeout. No document gives the tuner's push rate, or

@@ -1,7 +1,8 @@
 # shelly-power-bridge
 
-Shelly Gen2+ smart-plug → MQTT bridge for the Mühle station automation
-ecosystem. Fronts Shelly Plus / Mini / Pro plugs that speak MQTT natively and
+Shelly smart-plug → MQTT bridge for the Mühle station automation
+ecosystem. Fronts Shelly Gen2+ plugs (Plus / Mini / Pro / Gen3) and Gen1 plugs
+(per slot, `generation = "gen1"`) that speak MQTT natively and
 translates them into site-level station integration-model **`power`** slots
 (`muehle/power/<slot>/{meta,state,status,cmd}`).
 
@@ -31,7 +32,7 @@ go test ./...
 ./deploy.sh
 ```
 
-Cross-compile for the Pi (shari, `192.168.1.139`):
+Cross-compile for the Pi (scmino, `192.168.1.178`):
 
 ```bash
 GOOS=linux GOARCH=arm64 CGO_ENABLED=0 \

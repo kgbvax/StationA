@@ -33,6 +33,12 @@ Code-check verdict (2026-09-03): **still open.** The repo still carries both var
 `/etc/antennaselect/config.toml` on shari (authoritative) remains unread; an ssh attempt
 to read it during salvage failed on an infrastructure error, not on the device.
 
+Update 2026-10-23: antenna-select runs on scmino (`192.168.1.178`) since 2026-10-12, so
+the authoritative config is `/etc/antenna-select/config.toml` on scmino (the unit and its
+config dir are `antenna-select`), not shari. The seeded map
+is Ultrabeam = port 4 (`antennaselect/config.example.toml:32`, `antennaselect/deploy.sh`);
+on-site confirmation is still open.
+
 ## [decision] What the "off" position physically is — OPEN DECISION (grounding)
 
 Two readings of the `off` position exist in the sources:
@@ -175,3 +181,8 @@ For embedded devices the broker address is compile-time configuration
 (`mqtt_broker` substitution variable, default `192.168.1.50`). A broker migration to
 shari therefore needs a re-flash/reconfigure of this device — unlike the hosted bridges,
 which only change a config file.
+
+Update 2026-10-23: `esphome/station-at1.yaml` now sets `mqtt_broker: "192.168.1.139"`
+(shari, cd58466, 2026-08-26), but shari runs no broker. Which broker the flashed device
+uses is not recorded in the repo. Before a re-flash, set `mqtt_broker` to a live broker
+(`192.168.1.50`, or the scmino station broker `192.168.1.178`).

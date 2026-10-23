@@ -51,7 +51,7 @@ Code-check 2026-09-03: still open — `handleAntSwitchState()` at
 `m5stamp-hf-ctrl/src/main.cpp:162-170` records no timestamp and
 `currentPaArmError()` checks only the boolean.
 
-## [defect] D6 / O11 — No MQTT reconnect backoff (FIXED IN CODE 2026-09-18, NOT YET FLASHED)
+## [defect] D6 / O11 — No MQTT reconnect backoff (FIXED IN CODE 2026-09-18, FLASHED 2026-10-03)
 
 The reference tries reconnect every loop pass (~every 50 ms, no backoff —
 ~20 tries/s per client) indefinitely. A re-implementation must use bounded
@@ -73,6 +73,10 @@ case) to ~1.15 s; the observed ~16 s arm drop vs the ~10 s R3.1 bound becomes
 granularity), so the strict ≤200 ms loop-period reading of R3.1 would need an
 async MQTT client — deliberate non-goal here. **Not yet flashed**: the field
 PLC runs pre-OTA firmware; first flash of this build must be physical USB.
+
+Update 2026-10-23: flashed — PLC #1 was USB-flashed 2026-10-03 with current
+firmware (bounded reconnect, OTA, 4 KB buffer 0d13e0b) and has taken OTA builds
+since (447ebf4, 2026-10-12, see 5a7f4a8).
 
 ## [defect] D8 / O5 — Retained replay reverts outage-time button toggles (STILL OPEN)
 
@@ -142,7 +146,7 @@ disarms. A re-implementation MUST get the wiring from the site. It MUST also
 treat fail-safe-open as a hard requirement checked on the bench: pull power
 with the arm energized and confirm that the PA goes unable to transmit.
 
-## [decision] O8 — Deployed PLC's broker is unverified; field unit is pre-OTA
+## [decision] O8 — Deployed PLC's broker is unverified; field unit is pre-OTA (RESOLVED 2026-10-03)
 
 The repo's checked-in `secrets.h` / `secrets.example.h` now point at
 `192.168.1.139` (the shack-local broker migration, committed 2026-08-29), but
@@ -152,6 +156,12 @@ runs **pre-OTA firmware** (no mDNS, no network-update listener), so it cannot
 be repointed or updated over the network at all — the first firmware update
 must be a physical USB flash. Verify what the live PLC connects to before
 trusting it on the new broker topology.
+
+Update 2026-10-23: resolved — PLC #1 was USB-flashed 2026-10-03 and is
+OTA-capable since (`deploy.sh ota`, host `m5stamp-plc-1.local`). It moved to
+the scmino station broker `192.168.1.178` (2b1fe5e; `src/secrets.example.h`),
+the first client there (root CLAUDE.md live-state note). shari (`.139`) runs no
+broker.
 
 ## [decision] O9 / O10 — Two documented deviations from station convention
 
@@ -165,7 +175,7 @@ trusting it on the new broker topology.
   station convention is QoS 1. Retention, not the QoS level, is what makes
   self-heal work (the LWT is QoS 1 retained). Pick one and conform.
 
-## [decision] O12 — PLC #2 / `muehle/uhf/pol-ctrl` is attributed but nonexistent (GAP)
+## [decision] O12 — PLC #2 / `muehle/uhf/pol-ctrl` is attributed but nonexistent (CLOSED 2026-09-13)
 
 The station slot table attributes the slot `muehle/uhf/pol-ctrl` (X-Quad UHF
 antenna polarization relay control, "PLC #2") to this component's project.
@@ -179,6 +189,10 @@ raise it as its own scope decision.
 
 Code-check 2026-09-03: still a gap — no `pol-ctrl`/`uhf` source in the repo.
 
+Update 2026-10-23: closed — PLC #2 firmware is its own component,
+`m5stamp-pol-ctrl/` (ESPHome, since 5fe6432, 2026-09-13), and the root slot
+table attributes `muehle/uhf/pol-ctrl` to it. This project covers PLC #1 only.
+
 ## [decision] O14 — Ultrabeam switch-port conflict (inherited, station-wide)
 
 Station docs say the Ultrabeam is on antenna-switch **port 3**;
@@ -190,6 +204,9 @@ wiring-dependent reconstruction.
 Code-check 2026-09-03: still conflicting — root `CLAUDE.md` says
 `ant/ultrabeam` (port 3) while
 `antennaselect/config.example.toml:27` says `port4 = "ultrabeam"`.
+
+Update 2026-10-23: unchanged — port 4 as seeded (`antennaselect/config.example.toml:32`,
+`antennaselect/deploy.sh`); on-site confirmation open.
 
 ## [requirement] Behavioral contract points stated nowhere else
 
@@ -277,7 +294,9 @@ behavioral contract is conformant; this records the reasoning):
   the two-connection pattern (one MQTT connection per slot, so a crash fires
   both slots' `/status` LWTs simultaneously with no stale-online gap); its
   256-byte default buffer is the reason for the 1024-byte buffer (the retained
-  `/meta` with its `expose` block exceeds smaller defaults).
+  `/meta` with its `expose` block exceeds smaller defaults). Now 4096 bytes
+  (pa-arm 8192, `src/config.h`): PubSubClient silently drops larger inbound
+  messages, and `hf/radio/state` outgrew 1024 bytes (0d13e0b, 2026-10-03).
 - `ArduinoJson ^7.0`: its `doc["value"] | ""` string-extraction default is the
   mechanism behind the JSON-boolean silent-disarm defect (D5 above).
 - `M5StamPLC ^1.0` is the relay hardware seam (thin HAL in `relay.h`);

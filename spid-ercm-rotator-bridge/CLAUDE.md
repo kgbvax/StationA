@@ -32,15 +32,16 @@ compound `spid-ercm` devtag covers both fronted device families.
 **Status (implemented):** the full stack is landed and unit-tested — SPID
 Rot1Prog driver (U2), ERC-M GS-232B driver (U3), mount dispatch façade (U4),
 two-slot MQTT surface (U5), rotctld TCP server (U6), PstRotator UDP listener
-(U7) — see `../docs/plans/2026-09-12-001-feat-sat-ops-rotators-plan.md`. An
+(U7), GS-232B TCP server (6fb816f) — see
+`../docs/plans/2026-09-12-001-feat-sat-ops-rotators-plan.md`. An
 **empty configured serial port selects the in-process mock device per axis**
-(KTD7), so the whole stack — slots, both listeners, dispatch, self-heal — runs
-bench- and CI-side without hardware; the shipped `config.example.toml` defaults
-to mock until the bench bring-up pins the real by-id adapter identities. The
-pre-deploy exposure review (KTD4, U9) is recorded in
+(KTD7), so the whole stack — slots, listeners, dispatch, self-heal — runs
+bench- and CI-side without hardware; the shipped `config.example.toml` still
+defaults to mock. The pre-deploy exposure review (KTD4, U9) is recorded in
 `../docs/known-issues.md` ("Sat-ops rotators: pre-deploy exposure review") —
-that was the deploy gate; what remains before the first live shari deploy is
-the bench bring-up of the two serial adapters.
+that was the deploy gate. **Live on shari** with both real adapters: el
+commissioned 2026-09-17 (e31c6dc), az in live use since 2026-09-20 (93654d3);
+the seed-once on-device config carries the real by-id ports.
 
 ---
 
@@ -81,9 +82,9 @@ command line, and a `password` key in the TOML is a hard parse error.
 `internal/ercm` (drivers; empty port ⇒ in-process mock) → `internal/mount`
 (dispatch façade — the only cross-axis-semantics owner) → `internal/mqttslot`
 (two-slot MQTT surface); the protocol listeners `internal/rotctld`
-(TCP :4534) and `internal/pstrotator` (UDP :12041) also consume only the
-façade, so protocol-driven motion surfaces in `/state` exactly like bus-driven
-motion (R4).
+(TCP :4534), `internal/pstrotator` (UDP :12041) and `internal/gs232`
+(TCP :4533) also consume only the façade, so protocol-driven motion surfaces
+in `/state` exactly like bus-driven motion (R4).
 
 1. `cmd/spid-ercm-rotator-bridge/main.go` — flags, config load, signal ctx,
    root slog logger with the constant `component` attr, one child logger per
@@ -198,11 +199,17 @@ See `../docs/conventions/config-and-secrets.md` for the full convention and
 
 ## Deployment
 
-Target: Raspberry Pi (`shari`, `192.168.1.139`, user `io`).
+Target: Raspberry Pi (`shari`, `192.168.1.139`, user `io`) — live there.
+deploy.sh seeds `broker = "tcp://127.0.0.1:1883"`, but shari runs no broker
+(its mosquitto is inactive): the live on-device config must point elsewhere,
+and which broker it uses is not recorded in the repo (root CLAUDE.md live-state
+note: every client except PLC #1 and shelly-power-bridge uses `.50`;
+per-service configs not verified). A re-seed from the deploy.sh defaults would
+also lose the live el `max=180` (`EL_MAX` defaults to 90; `../docs/known-issues.md`).
 
 ```bash
 ./deploy.sh              # cross-compile, ship, install as a hardened systemd service
-# Before first deploy, set the real serial identities at the bench bring-up:
+# A first deploy (or a re-seed) needs the real serial identities:
 AZ_PORT=/dev/serial/by-id/usb-... EL_PORT=/dev/serial/by-id/usb-... ./deploy.sh
 # Two USB-serial adapters may be two vendors — list every vendor for the udev rules:
 SERIAL_USB_VENDORS="0403 067b" ./deploy.sh
@@ -220,12 +227,12 @@ second adapter family).
 **Deploy gate:** the shari deploy was gated on the Tier-1 exposure review being
 recorded (U9) — it now is (`../docs/known-issues.md`, "Sat-ops rotators:
 pre-deploy exposure review"; five rotator vectors + the phase-controller
-sixth). What still precedes the first live deploy is the bench bring-up:
-pinning the real `/dev/serial/by-id/` adapter identities (mock-mode ports must
-not reach a live deploy) and confirming the shack SPID controller is a
-Rot1Prog (not an MD-0x in ROT1 mode, plan KTD5). See
-`../docs/conventions/deployment.md` (serial addendum) for the underlying
-hardening requirements.
+sixth). The bench bring-up that followed pinned the real `/dev/serial/by-id/`
+adapter identities (mock-mode ports must not reach a live deploy), and the
+SPID runs live on Rot1Prog framing (the controller variant check of plan KTD5
+is not recorded). See `../docs/conventions/deployment.md`
+("systemd unit hardening", "udev rule for USB-serial devices") for the
+underlying hardening requirements.
 
 ---
 
@@ -238,7 +245,7 @@ Shared documentation lives in the `../docs/` (this component is a subdirectory o
 | Station integration model (three-plane MQTT contract) | `../docs/station-integration-model.md` |
 | Feature plan (KTDs, requirements, units) | `../docs/plans/2026-09-12-001-feat-sat-ops-rotators-plan.md` |
 | Config and secrets convention | `../docs/conventions/config-and-secrets.md` |
-| Deployment convention (serial addendum) | `../docs/conventions/deployment.md` |
+| Deployment convention (unit hardening, USB-serial udev rule) | `../docs/conventions/deployment.md` |
 | Logging convention (slog, component/slot attrs) | `../docs/conventions/logging.md` |
 | Bridge-naming convention | `../docs/conventions/naming.md` |
 

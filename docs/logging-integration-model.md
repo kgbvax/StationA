@@ -1,7 +1,7 @@
 # Logging & Operating Layer — Integration Model Extension
 
-**Status: draft companion to `station-integration-model.md` (v0.8).** This document
-proposes the additions that would become v0.9 but is kept as a **separate file** so the
+**Status: draft companion to `station-integration-model.md` (v0.10).** This document
+proposes additions for a later model version but is kept as a **separate file** so the
 core model stays clean while this layer is reviewed. Section references (§2, §7, §8,
 Appendix A/C) point into `station-integration-model.md`. Nothing here changes an existing
 document; the `submode` sub-field and the `<slot>/event` sub-topic are described here in
@@ -49,10 +49,14 @@ exact shape the station bus already handles.
   Mosquitto bus. High-rate streams (IQ, audio, spectrum/waterfall, S-meter) stay
   out-of-band and out of scope, consistent with the VITA-49 deferral (core §12).
 - **Observe-only.** Logging/score/spots and radio state flow *onto* the bus and *to*
-  loggers. The logger→radio/rotator **write** path (QSY command, rotator bearing) is
-  deferred; its `/cmd` topics already exist, so it is a clean later add (§11).
-- **First adapters:** WSJT-X/JTDX ingest and Wavelog/Log4OM outbound. The neutral schema is
-  kept general enough for contest loggers (N1MM/DXLog), which come next.
+  loggers. The logger→radio **write** path (QSY command) and a logger→UHF-rotator path over the bus
+  are deferred; their `/cmd` topics already exist, so they are a clean later add (§11). Loggers reach
+  the UHF mount today directly through `spid-ercm-rotator-bridge`'s own listeners (§7). The
+  HF rotator bearing path is already realized outside the log slot by `beamsteer` (§7).
+- **First adapter built:** `logger-spot-bridge` (DXLog/Log4OM UDP → `muehle/hf/spots`
+  `/state.selected`, §3). **Next (proposed):** WSJT-X/JTDX ingest and Wavelog/Log4OM
+  outbound. The neutral schema is kept general enough for contest-logger QSO logs
+  (N1MM/DXLog), which come next.
 
 ---
 
@@ -72,16 +76,28 @@ Multi/Multi maps to per-station logs (`muehle/hf/log`, `muehle/uhf/log`); multip
 single-ops map to per-position logs. Both reduce to **one log slot per operator seat**.
 This is the sanctioned "`position` reappears when operators share a station" case from §2.
 
-**The `host` of a log slot is that position's PC** (e.g. `shack-pc`), not `shari` — because
-the ingest adapter runs next to the app it fronts (§8). That per-PC placement is *why* the
-slot is position-scoped.
+**The `host` of a log slot is that position's PC** (e.g. `bwpc`, the shack PC), not
+`scmino` — because the ingest adapter runs next to the app it fronts (§8). That per-PC
+placement is *why* the slot is position-scoped.
+
+Exception in practice: `logger-spot-bridge` (`muehle/hf/spots`) runs on `scmino` and
+receives the loggers' UDP over the LAN (DXLog's subnet broadcast; Log4OM's CALLSIGN datagrams,
+whose outbound target must be the bridge host's port 2249, `scmino:2249` per `logger-spot-bridge/deploy.sh`) instead of a localhost port on
+the operator PC. The per-PC rule still applies to adapters that listen on a localhost port
+(e.g. the proposed WSJT-X bridge, §8).
 
 Slots per operator seat:
 
 | Slot | Role | Plane shape |
 |---|---|---|
 | `…/log` | `qso-log` | QSO event source + retained rollup (incl. running score) |
-| `…/spots` | `bandmap` | DX-spot event source (lower priority) |
+| `…/spots` | `bandmap` | operator-keyed station (retained `/state.selected`, realized) + DX-spot event source `…/spots/event` (proposed, lower priority) |
+
+**Realized so far:** `muehle/hf/spots` (role `bandmap`, `logger-spot-bridge`; live since
+2026-09-15, on `scmino` since 2026-10-18) publishes the standard retained `/meta` and
+`/status` plus a retained `/state` `{ts, device_online, selected?}` (the station keyed in
+DXLog/Log4OM, resolved to position and beam bearing); no `/event` stream and no `/cmd`.
+Contract: `../logger-spot-bridge/docs/logger-spot-bridge-mqtt-api.md`.
 
 Consumers of all logs use a wildcard (`muehle/+/log/event` collapsed, or
 `muehle/+/+/log/event` with explicit positions). Recommend per-deployment consistency in
@@ -127,7 +143,9 @@ N1MM's per-QSO GUID with ContactReplace / ContactDelete).
 Proposed additions to core §4:
 
 - **Roles:** `qso-log` (a running log application's QSO event + rollup source),
-  `bandmap` (a DX-spot event source). Future: `scoreboard` (a derived aggregator that
+  `bandmap` (the operator-keyed station as retained `/state.selected`, realized by
+  `logger-spot-bridge` and already listed in core §4; a DX-spot event source
+  `…/spots/event`, proposed). Future: `scoreboard` (a derived aggregator that
   merges multiple positions' score — §11).
 - **Capability keys:** `actions` (the QSO actions a source emits: `add`, `replace`,
   `delete`), `source` (the fronted app: `wsjtx`, `n1mm`, `log4om`, …), `submodes` (the
@@ -136,9 +154,10 @@ Proposed additions to core §4:
 ### 5.1 The `submode` sub-field (proposed addition to `band-mode-reference.md`)
 
 Canonical `mode` stays exactly the six values (`cw`, `usb`, `lsb`, `am`, `fm`, `data`) —
-all digital modes collapse to `data`. `band-mode-reference.md` already says: *"if a
-component needs to distinguish specific digital modes, introduce a sub-field — do not
-extend the canonical mode list."* This formalizes that sub-field for the logging layer:
+all digital modes collapse to `data`. `band-mode-reference.md` already says: *"If a
+component needs to distinguish between specific digital modes (e.g. for band plans or
+sequencing), introduce a sub-field — do not extend the canonical mode list without updating
+all adapters."* This formalizes that sub-field for the logging layer:
 
 - **`submode`** refines `data` with the **ADIF `SUBMODE` token, uppercase**: `FT8`, `FT4`,
   `RTTY`, `PSK31`, `JS8`, `WSPR`, `MFSK`, `OLIVIA`, … Present only when `mode == data`;
@@ -250,13 +269,13 @@ Consumers build their own bandmap from the event stream. `source` ∈ `rbn|clust
 | Log / update / delete contact | `…/log/event` + `…/log/state` rollup | ingest → bus → outbound logbook |
 | QSY / radio state | **existing** `muehle/hf/radio/state` (freq_hz/band/mode/tx) | bus → logger (read) |
 | Command radio (QSY) | **existing** `muehle/hf/radio/cmd` | deferred (observe-only, §11) |
-| Control rotator | **existing** `muehle/hf/rotator/cmd`, `muehle/uhf/az-rotator/cmd` + `muehle/uhf/el-rotator/cmd` | deferred (observe-only, §11) |
+| Control rotator | **existing** `muehle/hf/rotator/cmd` (+ `muehle/hf/ant-ctrl/cmd`), `muehle/uhf/az-rotator/cmd` + `muehle/uhf/el-rotator/cmd` | HF: realized outside the log slot by `beamsteer` (logger PstRotator UDP :12050 → `hf/rotator` `set_az` / `hf/ant-ctrl` direction); UHF: no bus path — loggers/trackers talk to `spid-ercm-rotator-bridge` directly (rotctld TCP :4534 / PstRotator UDP :12041 / GS-232B TCP :4533, the PstRotator/N1MM path) |
 | Publish score | `…/log/state.score` (retained) | ingest → bus → scoreboard |
 | Spots / bandmap | `…/spots/event` (not retained) | cluster ↔ bus ↔ loggers |
 | Callsign lookup (pre-QSO) | request/reply — awkward on MQTT | deferred (§11) |
 
 QSY and rotator need **no new topics** — they reuse existing station slots. This pass only
-*reads* `radio/state`; the write path is deferred.
+*reads* `radio/state`; the QSY write path is deferred.
 
 ---
 
@@ -264,7 +283,8 @@ QSY and rotator need **no new topics** — they reuse existing station slots. Th
 
 Adapters are edge translators, exactly analogous to device bridges (core §3, "adapters live
 at the edge"), except the "device" is a software app on a socket and the adapter **runs on
-the operator's PC next to the app it fronts**:
+the operator's PC next to the app it fronts** (the realized `logger-spot-bridge` is the
+exception, §3):
 
 - **Ingest adapters** own the position's `qso-log` slot and translate an app's native
   protocol → the neutral event/state. First: **`wsjtx-log-bridge`** — runs on the position
@@ -272,7 +292,7 @@ the operator's PC next to the app it fronts**:
   `QSO Logged` / `Logged ADIF` → `…/log/event` + `…/log/state`. `n1mm-log-bridge` (XML)
   follows the same shape.
 - **Outbound consumers** are optional modules (core §9 pattern, like `hadiscovery`) and may
-  run anywhere (e.g. `shari`): subscribe the log-event wildcard, push to a master logbook
+  run anywhere (e.g. `scmino`): subscribe the log-event wildcard, push to a master logbook
   over HTTP. First: **`wavelog-consumer`** (Wavelog / Cloudlog API) and **`log4om-consumer`**
   (Log4OM UDP-inbound ADIF / HTTP).
 
@@ -282,14 +302,14 @@ bus. This turns the O(N²) point-to-point UDP mesh into O(N) hub-and-spoke, kill
 IP/port inventory (the bus address is fixed and self-describing), and adds
 reliability / late-join / fan-out — **with no change to the apps**.
 
-**Host/adapter placement** (proposed replacement for the core §7.3 `Logging | subscriber,
-no slot | shari` row):
+**Host/adapter placement** (proposed additions to the core §7.3 hosts-and-adapters table, which already lists `logger-spot-bridge`; the earlier placeholder row `Logging | subscriber, no slot | shari` was removed from §7.3 on 2026-10-23):
 
 | Adapter / service | Fronts | Host |
 |---|---|---|
-| WSJT-X log bridge (`wsjtx-log-bridge`) | `muehle/<station>/log` (`qso-log`) | operator PC (e.g. `shack-pc`) |
-| Wavelog consumer (`wavelog-consumer`) | consumer of `…/log/event`, no slot | `shari` |
-| Log4OM consumer (`log4om-consumer`) | consumer of `…/log/event`, no slot | `shari` |
+| WSJT-X log bridge (`wsjtx-log-bridge`) | `muehle/<station>/log` (`qso-log`) | operator PC (e.g. `bwpc`) |
+| Wavelog consumer (`wavelog-consumer`) | consumer of `…/log/event`, no slot | `scmino` |
+| Log4OM consumer (`log4om-consumer`) | consumer of `…/log/event`, no slot | `scmino` |
+| Logger spot bridge (`logger-spot-bridge`, realized) | `muehle/<station>/spots` (`bandmap`) | `scmino` |
 
 ---
 
@@ -331,8 +351,9 @@ carries no consumer vocabulary.
 
 ## 11. Deferred
 
-- **Logger→radio/rotator write path** — map WSJT-X / N1MM QSY and rotor control onto the
-  existing `radio/cmd` and `rotator/cmd` topics.
+- **Logger→radio write path** (and logger→UHF-rotator over the bus) — map WSJT-X / N1MM QSY
+  onto the existing `radio/cmd` topic and UHF rotor control onto the `az-rotator` /
+  `el-rotator` `/cmd` topics. The HF rotator path is already realized by `beamsteer` (§7).
 - **`scoreboard` aggregator** — a site/station-level derived slot merging multiple
   positions' `log/state.score` into one total (the one genuinely shared-level concern).
 - **High-rate stream lane** (IQ / audio / spectrum) — dedicated transport, TCI as the domain
@@ -352,7 +373,7 @@ Concrete payloads for a collapsed single-position station, `muehle/hf/log`. `met
   "schema": "1.0",
   "role": "qso-log",
   "location": "bauwagen",
-  "host": "shack-pc",
+  "host": "bwpc",
   "capabilities": {
     "source": "wsjtx",
     "actions": ["add", "replace", "delete"],

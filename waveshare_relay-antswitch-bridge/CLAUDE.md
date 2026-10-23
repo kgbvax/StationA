@@ -46,8 +46,8 @@ unrelated to the switch slot and are left as-is.
 ### Configuring / deploying the firmware
 
 Use the standard ESPHome flow (dashboard or CLI); this project does **not** use the
-meta-repo's systemd/deploy conventions (those are for the Go services on shari). Secrets
-(`wifi_ssid`, `wifi_password`, `mqtt_password`) live in the ESPHome `secrets.yaml` next to
+meta-repo's systemd/deploy conventions (those are for the Go services on the station
+Pis). Secrets (`wifi_ssid`, `wifi_password`, `mqtt_password`) live in the ESPHome `secrets.yaml` next to
 the config, which is gitignored — never commit them. Validate locally with
 `esphome config esphome/station-at1.yaml` (a throwaway `secrets.yaml` is required for the
 check).

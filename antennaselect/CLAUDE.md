@@ -9,7 +9,8 @@ Runs on `scmino` (since 2026-10-12; was `shari`).
 
 > **Status: live on `scmino`** as the systemd unit `antenna-select` (deployed and
 > grounding observed live since 2026-08-28; manual stand-down 2026-09-23; `unknown`-band
-> hold 2026-10-10). Antenna-mode lock tier (2026-10-22) built, not yet deployed.
+> hold 2026-10-10). Antenna-mode lock tier deployed 2026-10-22 per the PR #24 rollout
+> (antmode unit live on scmino 2026-10-23; antenna-select binary version not checked).
 
 ---
 
@@ -23,7 +24,7 @@ go vet ./... && gofmt -l .     # vet + format check
 
 # Run locally against a broker (no hardware needed — it is pure logic over MQTT)
 go run ./cmd/antennaselect -config ./config.example.toml
-go run ./cmd/antennaselect -broker tcp://192.168.1.139:1883   # broker via flag
+go run ./cmd/antennaselect -broker tcp://192.168.1.50:1883    # broker via flag
 ```
 
 ## Layout

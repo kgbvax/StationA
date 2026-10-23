@@ -34,8 +34,9 @@ convention `<devtag>-<function>-bridge`.
 ## Requirements
 
 - ATR-1000 ATU (BTR-1000 / N7DDC family) reachable on the LAN over its binary
-  WebSocket (default `ws://192.168.1.111:60001`)
-- MQTT broker (e.g. Mosquitto at `192.168.1.139:1883`)
+  WebSocket (live ATU: `ws://192.168.1.111:60001`; the built-in/seeded default
+  `ws://192.168.1.20:60001` is stale)
+- MQTT broker (e.g. the HA broker at `192.168.1.50:1883`, which `deploy.sh` seeds)
 - (Optional) Home Assistant — discovery is rendered by the standalone
   `hadiscovery` consumer from this bridge's `expose` block in `/meta` (model §9)
 
@@ -83,14 +84,14 @@ sudo cp config.example.toml /etc/atr1k-tuner-bridge/config.toml
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `tuner.url` | `ws://192.168.1.20:60001` | ATR-1000 binary WebSocket endpoint |
-| `mqtt.broker` | `tcp://192.168.1.139:1883` | MQTT broker URL |
+| `tuner.url` | `ws://192.168.1.20:60001` | ATR-1000 binary WebSocket endpoint (live ATU is at `.111`) |
+| `mqtt.broker` | `tcp://127.0.0.1:1883` | MQTT broker URL (`deploy.sh` seeds `tcp://192.168.1.50:1883`) |
 | `mqtt.site` / `station` / `slot` | `muehle` / `hf` / `tuner` | Station-model slot addressing — see below |
 | `mqtt.location` | `bauwagen` | Physical location label (in `/meta`) |
 | `mqtt.user` | `hf` | MQTT username |
 | `mqtt.password` | _(empty — use EnvironmentFile)_ | MQTT password |
 | `device.model` / `link` | `ATR-1000` / `wifi` | Identity published in `/meta` |
-| `host` | `shari` | Compute node (in `/meta`) |
+| `host` | `shari` | Compute node (in `/meta`; `deploy.sh` seeds `scmino`) |
 | `log.level` | `info` | Log level |
 
 ### Slot addressing — configurable per site and station
@@ -156,7 +157,7 @@ Assistant vocabulary and publishes no embedded discovery.
 
 ## Deployment
 
-Target: Raspberry Pi (`shari`, `192.168.1.139`, user `io`).
+Target: Raspberry Pi `scmino` (`192.168.1.178`, user `io`) since 2026-10-12; was `shari`.
 
 ```sh
 ./deploy.sh              # cross-compile, ship, install as a hardened systemd service

@@ -5,10 +5,11 @@ This document describes the MQTT interface exposed by **shelly-power-bridge**
 site-level `power` slots of the station integration model
 (`../../docs/station-integration-model.md`, §4 `power` role, §7.0).
 
-It fronts Shelly Gen2+ plugs (Plus / Mini / Pro …) that are themselves MQTT
-clients on the same broker. The bridge subscribes to their **native** topics
-and translates to/from the canonical station topics. It is the authoritative
-on-the-wire contract — derived from `internal/bridge/bridge.go` and
+It fronts Shelly Gen2+ plugs (Plus / Mini / Pro / Gen3; at Mühle two Shelly Plug
+S Gen3) and, per slot with `generation = "gen1"`, Gen1 plugs (at Mühle the TRX PSU
+Plug S, §7) that are themselves MQTT clients on the same broker. The bridge
+subscribes to their **native** topics and translates to/from the canonical
+station topics. It is the authoritative on-the-wire contract — derived from `internal/bridge/bridge.go` and
 `internal/shelly/shelly.go`.
 
 ---
@@ -17,11 +18,11 @@ on-the-wire contract — derived from `internal/bridge/bridge.go` and
 
 | Property | Value |
 |----------|-------|
-| Protocol | MQTT 3.1.1 (plain TCP, `tcp://192.168.1.139:1883`) |
+| Protocol | MQTT 3.1.1 (plain TCP; `deploy.sh` seeds `tcp://192.168.1.178:1883`, the scmino broker the Shelly plugs publish to) |
 | Authentication | Username/password (`hf` user) |
 | Clean session | false (`CleanSession=false`); retained `/cmd` is replayed on every reconnect (self-heal) |
 | Auto-reconnect | yes (`SetAutoReconnect`) |
-| Client ID | one per `[[slot]]`, `<site>-<station>-<slot>` (e.g. `muehle-power-master`) |
+| Client ID | one per `[[slot]]`, `<site>-<station>-<slot>` (e.g. `muehle-power-psu-13v8`) |
 
 The bridge is **compound**: one process fronts N Shelies, each `[[slot]]`
 running its own paho client with its own LWT. MQTT 3.1.1 allows only one Will
@@ -82,16 +83,16 @@ Retained. Published on every (re)connect.
 {
   "schema": "1.0",
   "role": "power",
-  "device": { "model": "Shelly Plus 1PM", "serial": "shellyplus1pm-aabbccddeeff" },
+  "device": { "model": "Shelly Plug S", "serial": "shellyplug-s-A71704" },
   "link": "wifi",
   "location": "bauwagen",
-  "host": "shari",
+  "host": "scmino",
   "capabilities": {
-    "fail_safe": "off",
-    "feeds": ["hf/radio", "uhf/radio", "hf/tuner", "hf/ant-ctrl", "hf/ant-switch", "hf/rotator", "hf/switch", "hf/pa-arm"]
+    "fail_safe": "on",
+    "feeds": ["hf/radio", "uhf/radio", "hf/tuner", "hf/ant-switch", "hf/switch", "hf/pa-arm"]
   },
   "expose": {
-    "device": { "name": "Shelly Plus 1PM", "model": "Shelly Plus 1PM", "manufacturer": "Shelly" },
+    "device": { "name": "Shelly Plug S", "model": "Shelly Plug S", "manufacturer": "Shelly" },
     "fields": [
       {
         "key": "power", "name": "Power", "type": "enum", "options": ["on", "off"],
@@ -105,10 +106,13 @@ Retained. Published on every (re)connect.
 
 - `role` is `power` (model §4).
 - `capabilities.fail_safe` is the Shelly power-on default (`off` ⇒ a mains blip
-  drops the station; the plug restores OFF).
+  drops the station; the plug restores OFF). Config default `off`; all three
+  plugs are configured `on` (they come back as they were / on).
 - `capabilities.feeds` lists the downstream slot addresses this supply powers.
-  Empty for the station master mains (top of the tree); populated for the
-  13.8 V PSU. Omitted from `/meta` entirely when empty.
+  Set for all three slots (`psu-13v8`: the DC loads above; `antennas`:
+  `hf/ant-ctrl`, `hf/rotator`, `uhf/az-rotator`, `uhf/el-rotator`;
+  `shack-pc-mains`: `power/shack-pc`, `uhf/sat-track`). Omitted from `/meta`
+  entirely when empty.
 - `expose` is the consumer-neutral field surface (model §3.1, Appendix C);
   `hadiscovery` renders HA discovery from it (model §9). `power` is the single
   writable field; its `command` rides the argument under the conventional

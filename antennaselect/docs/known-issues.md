@@ -25,6 +25,11 @@ may hard-code it, and **every** wiring-map port number (not only the ultrabeam p
 must be confirmed against `/etc/antenna-select/config.toml` on shari before any
 acceptance test asserts a port.
 
+Update 2026-10-23: antenna-select runs on scmino since 2026-10-12, so the authoritative
+live file is `/etc/antenna-select/config.toml` on scmino. Ultrabeam: port 4 as seeded
+(`config.example.toml`, `deploy.sh`); on-site confirmation open. The reconcile unit
+tests still use `port3`.
+
 ## [decision] `device_online` field form (PRD §18.2)
 
 The integration model says the `device_online` state field is "omitted when true"; the
@@ -55,6 +60,10 @@ checked from the repo — needs the human at the device.
 - Broker-topology decision (PRD §18.3, production = `192.168.1.50:1883` at PRD time) is
   RESOLVED: the shack-local broker on shari was merged to main 2026-08-29 and
   `deploy.sh` now defaults to `tcp://127.0.0.1:1883`. Dropped.
+  Update 2026-10-23: the shari broker was never deployed (shari runs no mosquitto).
+  `deploy.sh` now seeds `tcp://192.168.1.50:1883` (HA broker); the scmino broker
+  `192.168.1.178:1883` is a bridged `muehle/#` mirror (root `CLAUDE.md` live-state
+  note, 2026-10-18; the live config on scmino was not checked).
 
 ## [defect] First key-up after grounding transmits into the grounded switch (PRD §16.1)
 
@@ -107,6 +116,11 @@ Verdict 2026-09-03: **still open** — `holdActive` accepts any non-empty non-`a
 string and `Resolve()` returns `in.OperatorRequest` as the target unchanged; no
 wiring-map validation exists.
 
+Update 2026-10-23: **fixed** 2026-09-23 (6850372). `validRequest`
+(`internal/mqtt/client.go`) accepts only `""`, `auto`, `manual`, `off` and
+`port1`..`port6`; anything else is rejected with a `Warn` (API doc §4). A valid
+port that the wiring map does not name is still accepted.
+
 ## [defect] Restart always re-arms the station and resets the walk-away clock (PRD §16.5, §6.3)
 
 PRD evidence: at process start the idle clock is initialized to "now" and the last-seen
@@ -117,6 +131,11 @@ and resets the 30-minute walk-away clock for a full period.
 Verdict 2026-09-03: **still open** — `antennaselect/internal/mqtt/client.go`
 initializes `lastActivity = time.Now()` and `RadioFreqHz = 0`; idle state is not
 persisted or derived from the last `radio/state` timestamp.
+
+Update 2026-10-23: partly changed by a8a508b (2026-10-10): the first `radio/state` after
+start is now the baseline, not activity, and `last_activity` stays absent until real
+activity. `lastActivity` still starts at `time.Now()`, so a restart still resets the
+walk-away clock and un-grounds an idle-grounded station. **Still open.**
 
 ## [defect] `settled` received but unused; `radio/state.tuning` not an input (PRD §16.7)
 

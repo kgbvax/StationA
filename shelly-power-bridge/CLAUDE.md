@@ -155,13 +155,16 @@ See `../docs/conventions/config-and-secrets.md` for the full convention.
 
 ## Deployment
 
-Target: Raspberry Pi (`shari`, `192.168.1.139`, user `io`).
+Target: Raspberry Pi CM5 (`scmino`, `192.168.1.178`, user `io`) since
+2026-10-18 (was `shari`). `deploy.sh` seeds the scmino broker
+`tcp://192.168.1.178:1883`; the Shelly plugs must publish to the same broker.
 
 ```bash
 ./deploy.sh              # cross-compile, ship, install as a hardened systemd service
-# Set the real Shelly device ids before first deploy:
+# The Shelly ids default to the real plugs (PSU Gen1 shellyplug-s-A71704,
+# antennas + PC Plug S Gen3 shellyplugsg3-<mac>); override for other plugs:
 PSU_SHELLY_ID=<gen1-or-gen2-id> \
-  ANTENNAS_SHELLY_ID=shellyplus1pm-<mac> PC_SHELLY_ID=shellyplus1pm-<mac> ./deploy.sh   # placeholder ids are refused at seed time
+  ANTENNAS_SHELLY_ID=<gen2-id> PC_SHELLY_ID=<gen2-id> ./deploy.sh   # placeholder ids are refused at seed time
 ```
 
 The unit is hardened like atr1k-tuner-bridge (network-only):

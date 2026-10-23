@@ -10,6 +10,9 @@ Component register (station-wide cross-cutting items live in `../docs/known-issu
 > entry stays as the historical record of the bench finding that drove the pivot.
 > The firmware behavior still matters for ANY future serial-CIV TX control: it must
 > be re-proven on serial before a TX path is ever re-introduced.
+>
+> **Update 2026-10-23:** a sixth action, `park_radio` (2026-10-08), goes through
+> rigctld and sends only satmode-off, split-off, mode and frequency — still no PTT.
 
 Commissioning bench, 2026-09-20/21 (firmware as shipped; radio `uhf.kgbvax.net`):
 
