@@ -5,18 +5,19 @@ shared documentation **and** all component projects as subdirectories. The Go
 components are a [Go workspace](https://go.dev/ref/mod#workspaces) tied together by a
 root `go.work`; each component keeps its own `go.mod` (per-module, independently
 `go build`/`go test`-able). A shared module, `codeberg.org/kgbvax/stationa/shared`,
-holds cross-cutting plumbing (`shared/mqtt`, `shared/schema`, `shared/pstrotator`, later `shared/config`);
+holds cross-cutting plumbing (`shared/mqtt`, `shared/schema`, `shared/logging`, `shared/pstrotator`, `shared/antmode`, later `shared/config`);
 every Go component imports it via a `replace … => ../shared` so each stays self-building
 without the workspace. Bridges import `shared/` but never another bridge's `internal/`
 — enforced by Go's `internal/` visibility rule across separate modules, not just
 convention. Non-Go components (`waveshare_relay-antswitch-bridge` and
 `m5stamp-pol-ctrl` = ESPHome YAML, `m5stamp-hf-ctrl`, `m5dial-hf-rotctrl` and `m5dualkey-hf-antctrl` =
-PlatformIO firmware) live alongside as plain subdirectories and are not in
+PlatformIO firmware, `hf_console` = Flutter app with its own stand-alone Go `webbridge/` module,
+`mqtt-broker` = Mosquitto config + deploy script) live alongside as plain subdirectories and are not in
 `go.work`.
 
-The projects below were previously standalone git repos nested here and gitignored;
-they have been folded into this repo with history (`git subtree`). There are no longer
-separate per-component remotes to push to.
+The original components were standalone git repos nested here and gitignored;
+they were folded into this repo with history (`git subtree`). Later components were
+created in-repo. There are no separate per-component remotes to push to.
 
 ---
 
@@ -36,23 +37,33 @@ separate per-component remotes to push to.
 | powerseq | `powerseq/` | Startup/shutdown sequencer → `hf/power-seq` (ordered, delay + liveness confirmations); idle standby: antenna power off + bwpc sleep when antenna-select reports inactive, WOL + antenna power on at wake; idle shutdown: full power-down 2 h after the last activity |
 | winpc-power-bridge | `winpc-power-bridge/` | Windows agent on bwpc → `power/shack-pc` (`sleep` cmd from powerseq standby, refused while the operator uses the PC; runs at logon via Task Scheduler) |
 | antennaselect | `antennaselect/` | Antenna-selection reconciler (live on scmino since 2026-10-12, unit `antenna-select`) |
+| antmode | `antmode/` | Antenna-mode logic slot → `hf/ant-mode` (`normal`/`storm`/`maintenance`). In storm/maintenance it publishes a retained lock (ground → retract → park_az): antennaselect grounds the switch, ultrabridge retracts, wrc-rotator-bridge parks; beamsteer stands down; powerseq holds its idle logic (`power_hold`). Storm suggestion from DWD warnings via NINA, storm heading from DWD wind; `auto_enter` off by default (observe only). Runs on scmino, unit `antmode` (since 2026-10-22) |
 | beamsteer | `beamsteer/` | Smart rotation → `hf/beam-steer`: PstRotator UDP emulator (:12050) for the contest logger; station behind → Ultrabeam 180° flip, outside both lobes → rotate to the cheaper lobe (±30°, bi-dir ±45° no flips); toggle = hf_console Ultrabeam `AUTO` |
 | hadiscovery | `hadiscovery/` | Home Assistant discovery consumer (reads `/meta` `expose`, renders HA discovery) |
-| spid-ercm-rotator-bridge | `spid-ercm-rotator-bridge/` | Sat-ops az/el rotator bridge → `uhf/az-rotator` (SPID) + `uhf/el-rotator` (GS-500 via ERC-M); rotctld :4534 + PstRotator UDP :12041 listeners (free motion, no arming gate) |
-| icom9700-radio-bridge | `icom9700-radio-bridge/` | IC-9700 UHF radio bridge → `muehle/uhf/radio` (RS-BA1 LAN session for RX audio capture only + read-only serial CI-V telemetry; no remote TX) |
+| spid-ercm-rotator-bridge | `spid-ercm-rotator-bridge/` | Sat-ops az/el rotator bridge → `uhf/az-rotator` (SPID) + `uhf/el-rotator` (GS-500 via ERC-M); rotctld :4534 + PstRotator UDP :12041 + GS-232B TCP :4533 listeners (free motion, no arming gate) |
+| icom9700-radio-bridge | `icom9700-radio-bridge/` | IC-9700 UHF radio bridge → `muehle/uhf/radio` (RS-BA1 LAN session for demand-driven RX audio capture; `park_radio` retune via the `rigctld-ic9700` unit on scmino; read-only serial CI-V telemetry supported but disabled on scmino (`serial.device` unset by design: the only CI-V adapter on scmino belongs to `rigctld-ic9700`); no remote TX) |
 | m5dial-hf-rotctrl | `m5dial-hf-rotctrl/` | M5Stack Dial firmware — HF rotator control head (analog meter face + knob; not a slot; consumer + /cmd stimulator) |
 | m5dualkey-hf-antctrl | `m5dualkey-hf-antctrl/` | M5Stack Chain DualKey firmware — Ultrabeam direction keys (A forward / B reverse / A+B bidirectional, LED shows `hf/ant-ctrl` direction; chained M5 Chain Key toggles DVK memory 2 on `hf/radio`; not a slot; consumer + /cmd stimulator) |
 | logger-spot-bridge | `logger-spot-bridge/` | Shack-logger bridge (DXLog/Log4OM) → `hf/spots` — the operator-keyed station (call, position, beam bearing) |
 | oscarwatch-sattrack-bridge | `oscarwatch-sattrack-bridge/` | OscarWatch Satellite-link WebSocket bridge → `uhf/sat-track` — the satellite being tracked (name, NORAD, transponder, az/el, range, range rate, sunlit, derived sub-satellite point, radio-corrected up/downlink); read-only, runs on scmino |
 | testui | `testui/` | MQTT relay + schema-aware browser UI for the bus (not a slot; passive consumer + /cmd stimulator) |
+| hf_console | `hf_console/` | Flutter station console: Android APK on the shack tablet, iPhone IPA, and web channel `hf-console-web` on scmino :8091 (Go `webbridge/` WebSocket→MQTT TCP relay). Not a slot; consumer + /cmd stimulator |
 | vhfcam-restream | `vhfcam-restream/` | VHF cam (UniFi Protect RTSPS) multi-sink restreamer — YouTube Live + LAN web preview (:8083) with operational-data overlay (AZ/EL/freq/TX drawtext from the bus) and IC-9700 RX audio (demand-driven via icom9700-radio-bridge); web radio controls; Go supervisor around ffmpeg; MQTT consumer + minimal `/status`/`/state` planes (`muehle/hf/vhfcam`). **Runs on scmino** (`192.168.1.178`), not shari |
 | stationportal | `stationportal/` | Station landing page on scmino :80 (`http://scmino/`) — links to every key service (probed), live slot/hardware inventory from `/meta` + two-layer liveness, software/host/resource inventory (not a slot; passive consumer) |
-| mqtt-broker | `mqtt-broker/` | Station Mosquitto broker on **scmino** (`192.168.1.178:1883`), bridged to the HA broker `.50` as a transitional `muehle/#` mirror — **first client: the M5 Stamp PLC #1 (2026-10-03); everything else is still on `.50`, the live broker** (infra — not a slot, not Go) |
+| hf-mqtt-capture | `hf-mqtt-capture/` | Passive MQTT recorder: `muehle/hf/#` to hourly log files in `/var/log/hf-mqtt-capture/` (72 h retention); runs on shari (not a slot) |
+| mqtt-broker | `mqtt-broker/` | Station Mosquitto broker on **scmino** (`192.168.1.178:1883`), bridged to the HA broker `.50` as a transitional `muehle/#` mirror — **clients: the M5 Stamp PLC #1 (2026-10-03) and shelly-power-bridge + its Shelly plugs (2026-10-18); everything else still connects to `.50` per the 2026-10-18 live-state note (per-service configs not verified live)** (infra — not a slot, not Go) |
 
-Each project has its own `CLAUDE.md` and is independently buildable (`go build`/`go test`
-from its own directory works without the workspace, via the `replace … => ../shared`).
-Open a project by navigating into its directory. From the repo root, `go build ./...`
-and `go work sync` operate over the whole workspace at once.
+Non-component directories: `sas/` (hf_console design artefacts and the mobile-console design
+handoff), `requirements/` (file-based requirements queue for the /loop workflow, see
+`requirements/README.md`), `docs/` (shared docs), `shared/` (shared Go module).
+
+Most projects have their own `CLAUDE.md` (`m5dualkey-hf-antctrl` and `hf-mqtt-capture` have a
+README.md instead). Each Go module is independently buildable (`go build`/`go test` from its own
+directory works without the workspace, via the `replace … => ../shared`).
+Open a project by navigating into its directory. From the repo root,
+`go build $(go list -m -f '{{.Dir}}/...')` builds every workspace module (a plain
+`go build ./...` fails there because the root is not a module); `go work sync` syncs the
+workspace.
 
 ---
 
@@ -76,36 +87,47 @@ and `go work sync` operate over the whole workspace at once.
 | `muehle/hf/spots` | logger-spot-bridge | DXLog/Log4OM broadcasts (LAN-wide UDP) → operator-keyed station feed (role `bandmap`; systemd service on scmino since 2026-10-18) |
 | `muehle/hf/beam-steer` | beamsteer | logic slot — no device (runs on scmino); logger PstRotator UDP :12050 (logger must target scmino) → `hf/rotator` + `hf/ant-ctrl` direction |
 | `muehle/hf/power-seq` | powerseq | logic slot — no device (runs on scmino since 2026-10-18); startup/shutdown sequencer |
-| `muehle/uhf/pol-ctrl` | m5stamp-pol-ctrl | M5 Stamp PLC #2 — X-Quad polarization (ESPHome), wifi |
-| `muehle/uhf/radio` | icom9700-radio-bridge | Icom IC-9700 — RS-BA1 LAN session carries RX audio capture (demand-driven) + read-only serial CI-V telemetry; no remote TX (2026-09 pivot) |
+| `muehle/hf/ant-mode` | antmode | logic slot — no device (runs on scmino since 2026-10-22); antenna mode normal/storm/maintenance, retained lock enforced by antennaselect (ground), ultrabridge (retract) and wrc-rotator-bridge (park_az) |
+| `muehle/hf/vhfcam` | vhfcam-restream | camera restreamer bookkeeping — minimal `/status` + `/state`, no device, an accessory, not in hf_console `expectedSlots` (runs on scmino) |
+| `muehle/uhf/pol-ctrl` | m5stamp-pol-ctrl | M5 Stamp PLC #2 — X-Quad polarization (ESPHome), wifi; not yet flashed (USB flash pending, `docs/known-issues.md`) |
+| `muehle/uhf/radio` | icom9700-radio-bridge | Icom IC-9700 — RS-BA1 LAN session carries RX audio capture (demand-driven); park retune via rigctld-ic9700 (scmino, loopback :4532); serial CI-V monitor off on scmino (its CI-V adapter belongs to rigctld-ic9700); no remote TX (2026-09 pivot) |
 | `muehle/uhf/sat-track` | oscarwatch-sattrack-bridge | software source — OscarWatch on BWPC (`ws://192.168.1.197:7373/`); bridge on scmino (192.168.1.178), read-only |
-| `muehle/uhf/az-rotator` | spid-ercm-rotator-bridge | SPID azimuth rotator, serial (Rot1Prog) — runs on shari with rotctld :4534 + PstRotator :12041; free motion, no arming gate |
+| `muehle/uhf/az-rotator` | spid-ercm-rotator-bridge | SPID azimuth rotator, serial (Rot1Prog) — runs on shari with rotctld :4534 + PstRotator UDP :12041 + GS-232B TCP :4533; free motion, no arming gate |
 | `muehle/uhf/el-rotator` | spid-ercm-rotator-bridge | GS-500 elevation via ERC-M controller, serial (GS-232B) — same compound bridge as az-rotator (one process, two slots, per-axis device_online) |
 | `muehle/hf/discovery` | hadiscovery | logic slot — no device (runs on scmino); passive consumer of `/meta` |
 
 **Antennas are not slots.** `ant-ctrl` is the *controller* that tunes the Ultrabeam
 (canonical role `ant-ctrl`; the device name Ultrabeam RCU-06 lives in `/meta.device`,
 never in the address), not "the antenna." The physical antennas are **passive
-resources** — `ant/ultrabeam` (port 3), `ant/fan-dipole` 80/40 (port 6),
-`ant/dummy-load` (port 1) — with no MQTT presence; they exist only in the
-`antennaselect` wiring map. Routing among them is `ant-switch` (actuator) driven by
+resources** — `ant/ultrabeam` (port 4 as seeded: antennaselect `config.example.toml`/`deploy.sh`,
+PLC #1 `ULTRABEAM_PORT`, hf_console `antennaMap`; on-site confirmation open, see
+`docs/known-issues.md` "Ultrabeam antenna-switch port: 3 or 4"; the live
+`/etc/antenna-select/config.toml` on scmino is authoritative; the antennaselect reconcile
+test fixtures and the portal `[[resource]]` Ultrabeam note still say port 3), `ant/fan-dipole`
+80/40 (port 6), `ant/dummy-load` (port 1) — with no MQTT presence; they are defined in the
+`antennaselect` wiring map (also hard-coded in hf_console `antennaMap`). Routing among them is `ant-switch` (actuator) driven by
 `antenna-select` (policy). See the integration model §2–§4, §7.1.
 
 ---
 
-## shari — the deployment target
+## Hosts — scmino and shari
 
-All services run on shari, a Raspberry Pi at `192.168.1.139` — except
-flexbridge, acom1200s-pa-bridge, wrc-rotator-bridge, antenna-select, beamsteer, atr1k-tuner-bridge and hadiscovery (since 2026-10-12), icom9700-radio-bridge, powerseq, shelly-power-bridge and logger-spot-bridge (since 2026-10-18), vhfcam-restream (since 2026-09-30), the station Mosquitto mirror, the
-hf_console web channel `hf-console-web` (:8091), testui (:8090) and the landing
-page stationportal (:80) (all since 2026-10-02) and ultrabridge (:8080, RCU-06
-FTDI cable on scmino's USB; since 2026-10-09), which run on **scmino** (`192.168.1.178`, Raspberry Pi CM5, same `ssh io@` access).
+Most services run on **scmino** (`192.168.1.178`, Raspberry Pi CM5, `ssh io@`): flexbridge,
+ultrabridge (:8080, RCU-06 FTDI cable on scmino's USB), acom1200s-pa-bridge,
+wrc-rotator-bridge, atr1k-tuner-bridge, antenna-select, beamsteer, antmode, hadiscovery,
+powerseq, shelly-power-bridge, logger-spot-bridge, icom9700-radio-bridge + rigctld-ic9700,
+oscarwatch-sattrack-bridge, vhfcam-restream (:8083), the hf_console web channel
+`hf-console-web` (:8091), testui (:8090), the landing page stationportal (:80) and the
+station Mosquitto mirror. **shari** (`192.168.1.139`, Raspberry Pi 4) runs only
+spid-ercm-rotator-bridge and hf-mqtt-capture (plus HamClock and SvxLink, which are not repo
+components). winpc-power-bridge runs on the Windows shack PC bwpc (`192.168.1.197`).
 
 ```bash
 # SSH in
-ssh io@192.168.1.139
+ssh io@192.168.1.178   # scmino: flexbridge, ultrabridge, acom1200s-pa-bridge, …
+ssh io@192.168.1.139   # shari: spid-ercm-rotator-bridge, hf-mqtt-capture
 
-# Check service status (flexbridge, ultrabridge, acom1200s-pa-bridge run on scmino now: ssh io@192.168.1.178)
+# Check service status
 sudo systemctl status flexbridge ultrabridge
 
 # Follow logs
@@ -122,9 +144,11 @@ sudo systemctl restart flexbridge
 sudo systemctl restart ultrabridge
 ```
 
-The MQTT broker is the **shack-local Mosquitto on shari** (`127.0.0.1:1883`
-for shari-local services, `192.168.1.139:1883` from the LAN), bridged to the
-Home Assistant broker at `192.168.1.50:1883`. See `mqtt-broker/` and
+The station broker is Mosquitto on scmino (`192.168.1.178:1883`, `mqtt-broker/`), bridged
+both ways to the Home Assistant broker `192.168.1.50:1883` as a `muehle/#` mirror. PLC #1
+and shelly-power-bridge (+ its Shelly plugs) use the scmino broker; per the 2026-10-18
+live-state note below, the other services still connect to `.50` (per-service configs not
+verified live). shari runs no broker. See `mqtt-broker/` and
 `docs/conventions/mqtt-topology.md`.
 
 ---
@@ -145,6 +169,9 @@ All shared docs are in `docs/` in this repo:
 | Station-wide known issues / decisions register | `docs/known-issues.md` |
 | Runtime-library constraints (shared/ contracts) | `docs/conventions/runtime-library.md` |
 | Logging convention (slog, stderr, component/slot attrs) | `docs/conventions/logging.md` |
+| Logging/operating-layer integration model (draft companion to the integration model; `bandmap`/spots layer) | `docs/logging-integration-model.md` |
+| Station architecture diagram | `docs/architecture.svg` (source `docs/architecture.d2`) |
+| Feature plans | `docs/plans/` |
 
 All components live as subdirectories of this one repo, so the shared docs path
 relative to any component is `../docs/` (e.g. `../docs/station-integration-model.md`
@@ -161,35 +188,37 @@ from `flexbridge/`). Cross-cutting Go code, not docs, lives in the `shared/` mod
 > (`power/*`) still uses the HA broker `192.168.1.50:1883`.
 > shari runs no mosquitto. A new station broker runs on **scmino**
 > (`192.168.1.178:1883`) as a bridged `muehle/#` mirror of `.50`; the PLC
-> moved there first — see `mqtt-broker/CLAUDE.md`. The shari-centric
-> text below is the original target design.
+> moved there first — see `mqtt-broker/CLAUDE.md`. The broker was
+> originally planned for shari; it now runs on scmino.
 
-The station runs a **shack-local Mosquitto broker on shari** (`mqtt-broker/`),
-authoritative for the `muehle/#` namespace. A mosquitto `bridge` connection
-replicates it to the Home Assistant broker at `192.168.1.50:1883` (HA's own
-Mosquitto add-on), which stays untouched — it still serves HA's other MQTT
-devices. On-shari Go services talk to `127.0.0.1:1883`; remote clients (Shelly
-plugs, M5 PLC, ant-switch ESP, the console tablet, workstations) use
-`192.168.1.139:1883`. See `docs/conventions/mqtt-topology.md` for the full
-topology, topic-direction table, and ACLs.
+Target design: the station Mosquitto on scmino (`mqtt-broker/`) becomes authoritative for
+`muehle/#` and bridges to the HA broker `192.168.1.50:1883` (HA's Mosquitto add-on,
+untouched; it keeps serving HA's other MQTT devices). Clients move to
+`192.168.1.178:1883` one at a time; once all have moved, the bridge narrows to the split
+mapping in `mqtt-broker/mosquitto.conf.example`. See `docs/conventions/mqtt-topology.md`
+for the full topology, topic-direction table, and ACLs.
 
-Credentials: the `hf` (station services), `bridge` (HA bridge connection), and
-`console` (tablet) accounts are seeded once on shari in `/etc/mosquitto/passwd`
-(0600, owned by the mosquitto user). Do not pass credentials on the command
+Credentials: the scmino station broker has one local account, `hf` (in
+`/etc/mosquitto/passwd` on scmino, 0600, owned by the mosquitto user); per
+`mqtt-broker/CLAUDE.md` its bridge logs in to `.50` as `hf` (the 2026-10-01 deploy ran with
+`HA_REMOTE_USER=hf`, per `mqtt-broker/CLAUDE.md` and the README current-state note); the
+`stationa-bridge` account named in `mosquitto.conf.example`, the `deploy.sh` default and the
+README HA-side setup is the target design. The `bridge`/`console`/`dial` accounts in `mqtt-broker/acl.conf.example` belong to
+the target split topology and are not in use yet. Do not pass credentials on the command
 line or in shell history.
 
-To inspect the bus from a workstation (the shack broker):
+To inspect the bus from a workstation (either broker shows all of `muehle/#`):
 
 ```bash
-# Subscribe to all topics under muehle/ (shack broker on shari)
-mosquitto_sub -h 192.168.1.139 -u hf -P "$MQTT_PASSWORD" -t 'muehle/#' -v
+# Subscribe to all topics under muehle/ (HA broker .50; station broker: -h 192.168.1.178)
+mosquitto_sub -h 192.168.1.50 -u hf -P "$MQTT_PASSWORD" -t 'muehle/#' -v
 
 # Watch a single slot
-mosquitto_sub -h 192.168.1.139 -u hf -P "$MQTT_PASSWORD" -t 'muehle/hf/radio/#' -v
+mosquitto_sub -h 192.168.1.50 -u hf -P "$MQTT_PASSWORD" -t 'muehle/hf/radio/#' -v
 ```
 
-The HA broker at `192.168.1.50:1883` receives the same `muehle/#` traffic via
-the bridge; HA's MQTT integration reads it there.
+Most services still connect to `.50` (live-state note, 2026-10-18); the scmino station
+broker mirrors `muehle/#` to and from it, and HA's MQTT integration reads it on `.50`.
 
 ---
 
@@ -203,6 +232,8 @@ All components follow these shared conventions:
 3. **Config in 0600 TOML file** — never in ExecStart or command line
    (see `docs/conventions/config-and-secrets.md`)
 4. **Seed-once deploy** — `deploy.sh` seeds the config once; device owns settings
+   (exception: powerseq's deploy runs `migrate-config.sh` to add new sections in place, with
+   backup + validation by the new binary)
 5. **Hardened systemd unit** — NoNewPrivileges, ProtectSystem, PrivateTmp
    (see `docs/conventions/deployment.md`)
 6. **freq_hz in Hz as integer** — never kHz or MHz on the bus
@@ -213,11 +244,14 @@ All components follow these shared conventions:
    (see `docs/conventions/naming.md`)
 9. **Shared module for cross-cutting plumbing** — the paho connect / background
    job-queue (`shared/mqtt`) and topic helpers + `/cmd` `value`-key convention
-   (`shared/schema`) live in `codeberg.org/kgbvax/stationa/shared`, not duplicated
+   (`shared/schema`), the slog root handler + `Streak` (`shared/logging`), the PstRotator
+   grammar (`shared/pstrotator`) and the ant-mode lock parser (`shared/antmode`) live in
+   `codeberg.org/kgbvax/stationa/shared`, not duplicated
    per bridge. A bridge imports `shared/` but never another bridge's `internal/`
    (Go's `internal/` rule enforces this). Each module's `go.mod` carries both the
    `require` and a `replace … => ../shared` so it builds without the workspace;
-   the root `go.work` ties the modules together for whole-repo `go build ./...`.
+   the root `go.work` ties the modules together for a whole-repo build
+   (`go build $(go list -m -f '{{.Dir}}/...')` at the root; a plain `./...` does not work there).
 10. **Logging** — `log/slog` text handler to stderr with a constant `component` attr
     and per-slot child loggers; real `Warn`/`Error` levels so `journalctl -p warning`
     filters errors; no per-service log files (journald is the consolidator)

@@ -18,9 +18,11 @@ or severity. On shari, `journalctl -p warning` returned nothing while ~19 % of l
 contained error text — severity filtering was broken because no module logged at
 `Error`/`Warn` level.
 
-journald is the station's consolidated log (`Storage=persistent`, cap 500 M since
-2026-09-03). Services write to stderr; the journal collects them. Nothing writes its
-own log file — `hf-mqtt-capture` already provides the bus-side record.
+journald on each service host (shari, scmino) holds the station's service logs (shari:
+`Storage=persistent`, cap 500 M since 2026-09-03; scmino: to be recorded). Services
+write to stderr; the journal collects them. Nothing writes its own log file, except
+winpc-power-bridge on bwpc, which has no journald (§4) — `hf-mqtt-capture` already
+provides the `hf` bus-side record.
 
 ## Convention
 
@@ -41,8 +43,8 @@ slog.SetDefault(logger)
 Error, `<4>` Warn, `<6>` Info, `<7>` Debug); journald strips the prefix and files the
 line at that priority. A bare `slog.NewTextHandler` lands every line at priority info,
 so `journalctl -p warning` never sees it — that was the state from the 2026-09-04
-migration until 2026-10-10. Outside the journal (terminal, tests, the pelcobridge2
-TUI) the handler is the plain text handler.
+migration until 2026-10-10. Outside the journal (terminal, tests) the handler is the
+plain text handler.
 
 - Text format, not JSON: humans read it via `journalctl`; journald already adds
   timestamps, unit, and PID per line, so the app must not re-emit timestamps.
@@ -51,15 +53,16 @@ TUI) the handler is the plain text handler.
 
 ### 2. `component` and `slot` attributes — never format-string-embedded identity
 
-- Each service stamps one constant `component` attr (the service name, equal to the
-  systemd unit / slot's bridge name).
+- Each service stamps one constant `component` attr (the service name, normally equal
+  to the systemd unit / slot's bridge name; exception: antennaselect logs
+  `component=antennaselect` under unit `antenna-select`).
 - Anything slot- or device-specific goes through a child logger:
-  `logger.With("slot", "muehle/hf/psu-13v8")`. Multi-slot services (shelly-power-bridge
+  `logger.With("slot", "muehle/power/psu-13v8")`. Multi-slot services (shelly-power-bridge
   fronts three plugs) MUST create one child logger per slot — a shared logger that
   cannot tell its slots apart in the log is a bug.
 - New code passes real attrs (`slog.Warn("cmd rejected", "action", a, "err", err)`);
   pre-formatted `Printf`-style is tolerated only inside the legacy
-  `Logger{Infof,Warnf,Debugf}` bridges (see §5).
+  `Logger{Infof,Warnf,Errorf,Debugf}` bridges (see §5).
 
 ### 3. Levels mean something — errors must be filterable
 
@@ -87,14 +90,24 @@ Fatal startup paths log via slog, then exit: `os.Exit(2)` for config errors,
 ### 4. No log files, no rotation, no syslog in the app
 
 The app writes to stderr and nothing else. Rotation, retention, and persistence are
-journald's job on shari (`Storage=persistent`, `SystemMaxUse=500M`). The MQTT
-traffic record including every published `/state.error` value lives separately in
-`hf-mqtt-capture` (`/var/log/hf-mqtt-capture/…`). Never open a log file in a service.
+journald's job on each service host (shari and scmino). shari: `Storage=persistent`,
+`SystemMaxUse=500M` (drop-in, since 2026-09-03). scmino: not yet recorded — verify and
+apply the same drop-in. The MQTT traffic record of the `hf` station (`muehle/hf/#`,
+including every `/state.error` value published there; 72 h retention by default) lives
+separately in `hf-mqtt-capture` on shari (`/var/log/hf-mqtt-capture/…`). `uhf` and
+`power` slots are not captured. Never open a log file in a service.
 
-### 5. The `Logger{Infof,Warnf,Debugf}` bridge interface
+Recorded exception: `winpc-power-bridge` (Windows, bwpc) runs hidden (`-H=windowsgui`)
+with no journald, so it writes `[log] file` (seeded from config.example.toml as
+`winpc-power-bridge.log`, resolved next to the config; built-in default `""` = stderr;
+moved to `<file>.1` at start above 5 MB); see
+`winpc-power-bridge/CLAUDE.md`.
 
-`flexbridge` (mirrored by atr1k, acom, wrc, shelly) passes a
-minimal interface into bridge/device code. Keep it, with two constraints:
+### 5. The `Logger{Infof,Warnf,Errorf,Debugf}` bridge interface
+
+`flexbridge` (mirrored by atr1k, acom, wrc, shelly, powerseq) passes a minimal
+interface into bridge/device code (shelly's and atr1k's tuner-package variants have no
+`Errorf`). Keep it, with two constraints:
 
 - Its adapter wraps the service's slog logger (so `component`/`slot` attrs are already
   attached), and its `Warnf`/`Errorf` implementations MUST call `slog.Warn`/`slog.Error`
@@ -102,30 +115,48 @@ minimal interface into bridge/device code. Keep it, with two constraints:
 - New code should prefer calling slog directly; the interface exists so device-protocol
   packages stay free of a logging dependency.
 
-### 6. Query recipes (shari)
+### 6. Query recipes
+
+Linux station services run on two hosts: scmino (`192.168.1.178`) runs all of them
+except `spid-ercm-rotator-bridge` and `hf-mqtt-capture`, which run on shari
+(`192.168.1.139`). `winpc-power-bridge` on bwpc logs to a file (§4 exception); the
+ESPHome/PlatformIO firmware components (ant-switch, M5 Stamp PLCs, M5 control heads) log
+on the device, not to journald.
 
 ```bash
-# All station services, errors and warnings only, last hour
-journalctl -u flexbridge -u ultrabridge -u acom1200s-pa-bridge \
+# scmino: errors and warnings only, last hour
+ssh io@192.168.1.178 journalctl -u flexbridge -u ultrabridge -u acom1200s-pa-bridge \
   -u atr1k-tuner-bridge -u wrc-rotator-bridge -u shelly-power-bridge \
-  -u antennaselect -u hadiscovery -u powerseq -u hf-mqtt-capture \
-  -p warning -S -1h
+  -u antenna-select -u antmode -u beamsteer -u hadiscovery -u powerseq \
+  -u icom9700-radio-bridge -u rigctld-ic9700 -u logger-spot-bridge \
+  -u oscarwatch-sattrack-bridge -u vhfcam-restream -u stationportal \
+  -u testui -u hf-console-web -p warning -S -1h
 
-# One slot's error narrative including context
-journalctl -u ultrabridge -S -24h | grep -E 'slot=muehle/hf/ant-ctrl|error'
+# shari: errors and warnings only, last hour
+ssh io@192.168.1.139 journalctl -u spid-ercm-rotator-bridge -u hf-mqtt-capture -p warning -S -1h
 
-# What error detail the bus carried (capture recorder)
-sudo grep 'error' /var/log/hf-mqtt-capture/$(date +%Y-%m-%d)/$(date +%H).log
+# One slot's error narrative including context (ultrabridge runs on scmino)
+ssh io@192.168.1.178 "journalctl -u ultrabridge -S -24h | grep -E 'slot=muehle/hf/ant-ctrl|error'"
+
+# What error detail the bus carried (capture recorder, on shari; files are named in UTC)
+ssh io@192.168.1.139 "sudo grep 'error' /var/log/hf-mqtt-capture/\$(date -u +%Y-%m-%d)/\$(date -u +%H).log"
 ```
 
 ## Migration notes
 
-- **ultrabridge, antennaselect, hadiscovery, testui** — replace std `log` with slog per
-  §1; keep the existing `[mqtt]`/`[reconcile]` style as a short message prefix or a
-  `subsys` attr, whichever reads better; re-level their error paths per §3.
-- **shelly-power-bridge** — one child logger per slot with `slot` attr (§2).
-- **flexbridge** — publishes `device_online` but no `/state.error`; see
+- **Done 2026-09-04 (28f0670):** ultrabridge, antennaselect, hadiscovery, testui and
+  hf-mqtt-capture moved from std `log` to slog; shelly-power-bridge has one child logger
+  per slot with `slot` attr (§2). **Done 2026-10-10:** journald priority prefix via
+  `shared/logging.NewHandler` (62e9e48, every Linux Go service except hf-console-web,
+  whose webbridge still uses std `log`) and `logging.Streak` one-Warn-per-outage
+  (625f46d, in the flexbridge/atr1k/acom reconnect loops; the antenna-mode refusal paths
+  in wrc-rotator-bridge, ultrabridge, antmode and beamsteer adopted it 2026-10-22).
+- **Open: flexbridge** — publishes `device_online` but no `/state.error`; see
   `docs/station-integration-model.md` §3 for the error-field contract it must adopt.
+- **Open: component attr** — wrc-rotator-bridge and powerseq stamp no `component` attr
+  (their `newLogger` / `mqtt.NewLogger` return `slog.New(h)` without
+  `.With("component", …)`); hf-console-web (hf_console/webbridge) still logs through std
+  `log` (no component, every line at priority info).
 
 ## When to apply
 
@@ -135,8 +166,9 @@ sudo grep 'error' /var/log/hf-mqtt-capture/$(date +%Y-%m-%d)/$(date +%H).log
 
 ## Acceptance
 
-1. `journalctl -p warning` on shari returns every degraded/failure event of the last
-   hour — no error text at `Info` level.
+1. `journalctl -p warning` on each service host (scmino and shari) returns every
+   degraded/failure event of the last hour — no error text at `Info` level.
 2. Every journal line from a service identifies `component` and, where a slot is
    involved, `slot`.
-3. No service writes its own log file.
+3. No service writes its own log file, except the recorded winpc-power-bridge
+   exception (§4).

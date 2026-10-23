@@ -3,9 +3,14 @@
 This is the single authoritative table for HF/VHF band frequency ranges and canonical
 mode names used across all stationa components. Components implement against this
 reference; when it changes, each affected component needs a corresponding code update.
+There is no shared band package: the files that carry a copy are listed under
+[Implementations](#implementations) at the end.
 
-Edges are DL / IARU Region 1 allocations. Both edges are inclusive (the high edge is
-the round kHz value, e.g. 20m runs 14,000,000–14,350,000 Hz).
+Edges are DL / IARU Region 1 allocations, except for four bands where the table uses
+the wider ITU Region 2 edges: for 160 m, 80 m, 40 m and 6 m the DL / IARU Region 1
+allocations are 1,810,000–2,000,000, 3,500,000–3,800,000, 7,000,000–7,200,000 and
+50,000,000–52,000,000 Hz. Both edges are inclusive (the high edge is the round kHz
+value, e.g. 20m runs 14,000,000–14,350,000 Hz).
 
 ---
 
@@ -45,10 +50,18 @@ label, not a synthesized one:
 | `70cm` | 430,000,000 | 440,000,000 |
 | `23cm` | 1,240,000,000 | 1,300,000,000 |
 
-23 cm **is** automated: the IC-9700 bridge (`icom9700-radio-bridge`, slot
-`muehle/uhf/radio`) publishes and sets all three VHF/UHF bands above. 23 cm exists
-on the radio's MAIN VFO only — SUB has no 23 cm — so the bridge rejects a `set_freq`
-that would land 23 cm on SUB (see `icom9700-radio-bridge/docs/mqtt-api.md`).
+Note: `icom9700-radio-bridge` labels bands with wider windows that also cover
+satellite and transverter offsets (2m 140,000,000–150,000,000, 70cm
+420,000,000–460,000,000, 23cm 1,240,000,000–1,320,000,000 Hz, upper edge exclusive;
+`internal/civ/codec.go`).
+
+The IC-9700 bridge (`icom9700-radio-bridge`, slot `muehle/uhf/radio`) is receive-only
+since the 2026-09 pivot. It publishes `band` (`2m`/`70cm`/`23cm`) read-only from serial
+CI-V telemetry when its monitor is on, and has no `set_freq`; the only tuning path is
+`park_radio` (a fixed park frequency and mode via rigctld). 23 cm exists on the radio's
+MAIN VFO only — SUB has no 23 cm. See `icom9700-radio-bridge/docs/mqtt-api.md`. (As of
+2026-10-23 `serial.device` is unset on scmino by design, so no `freq_hz` or `band` is
+published there.)
 
 ---
 
@@ -118,12 +131,12 @@ Used by the antenna controller (ultrabridge) when jumping to a band by name.
 
 | Canonical name | Description | Firmware variants (normalise → canonical) |
 |----------------|-------------|------------------------------------------|
-| `cw` | CW | `CW`, `CW-U`, `CW-L`, `CW_U`, `CW_L` |
+| `cw` | CW | `CW`, `CW-U`, `CW-L`, `CW-R`/`CWR` |
 | `usb` | Upper sideband (voice) | `USB` |
 | `lsb` | Lower sideband (voice) | `LSB` |
 | `am` | AM | `AM`, `SAM` |
-| `fm` | FM | `FM`, `DFM` |
-| `data` | Digital data | `DIGU`, `DIGL`, `USB-D`, `LSB-D`, `FDV`, `RTTY`, `RTTY-U`, `RTTY-L`, `FT8`, `FT4`, `PSK31`, `WSPR`, `JS8` |
+| `fm` | FM | `FM`, `NFM`, `FMN`/`FM-N`, `WFM`/`FMW`, `DFM` |
+| `data` | Digital data | `DIGU`, `DIGL`, `DATA-U`, `DATA-L`, `USB-D`, `LSB-D`, `FM-D`, `DATA-USB`/`DATA-LSB`/`DATA-FM`, `DATA`/`DIGI`/`DIG`, `PKT`/`PACKET`/`PKTUSB`/`PKTLSB`, `AFSK`/`FSK`/`GFSK`/`GMSK`/`MSK`/`BPSK`/`QPSK`, `FDV`/`FDVU`/`FDVL`, `DSTR`, `RTTY`, `RTTY-U`, `RTTY-L`, `FT8`, `FT4`, `PSK31`, `WSPR`, `JS8` |
 
 Digital-over-sideband firmware modes (`DIGU`, `DIGL`, `USB-D`, `LSB-D`) and digital
 voice (`FDV`/FreeDV) normalize to `data` regardless of which sideband carries them:
@@ -131,6 +144,11 @@ canonical `mode` describes the content, not the RF carrier. This matters downstr
 e.g. a PA consumer derates for the continuous duty cycle of digital modes. (FT8/FT4/
 PSK31 etc. are transmitted *in* DIGU/DIGL on most SDRs, so mapping DIGU to `usb` would
 make digital operation indistinguishable from voice.)
+
+A bare `SSB` carries no sideband: an adapter either splits it by frequency (LSB below
+10 MHz, USB at or above; logger-spot-bridge) or omits the mode (oscarwatch-sattrack-bridge).
+hf_console uses the same 10 MHz split when its band re-tap switches the radio from CW to
+SSB (`set_mode`).
 
 **Normalization is the adapter's responsibility.** Consumers see only the canonical
 names above. Adapters must publish a canonical mode or omit the field; they must never
@@ -149,13 +167,57 @@ adapters.
 MQTT bus. Never publish kHz, MHz, or floating-point frequency values.
 
 Components that use kHz internally (e.g. the RCU-06 controller in ultrabridge) multiply
-by 1000 before publishing. Components that use Hz natively (e.g. SmartSDR in
-flexbridge) publish directly.
+by 1000 before publishing. SmartSDR reports `RF_frequency` as a MHz float; flexbridge
+rounds MHz × 1,000,000 to an integer Hz (`math.Round`, not truncation) before publishing.
 
-`band` is always a derived label from the canonical table above, never a primary value
-on `/state`. The canonical tuning intent is `set_freq_hz` — commanders set a frequency
-and band falls out — which removes the class of bug where band and frequency disagree.
+On the `radio` and `ant-ctrl` slots, `band` is always a label derived from
+the canonical table above, never a primary value on `/state`. The canonical tuning
+intent is `set_freq_hz` — commanders set a frequency and band falls out — which
+removes the class of bug where band and frequency disagree.
 A radio *may* additionally accept a `set_band` `/cmd` input for native band-stacking: the
 radio restores its own persisted per-band frequency, the bridge republishes that
 `freq_hz`, and `band` is still derived from it (no band setpoint is stored). See the
 radio slot in `station-integration-model.md`.
+
+The PA (`hf/pa`) has no frequency on the bus: its `band` is the amplifier's own band
+selection (canonical label, source declared by the `band_source` capability,
+`station-integration-model.md` §4) and is a `set_band` setpoint.
+
+---
+
+## Implementations
+
+There is no shared band package. These files carry a copy of the tables above:
+
+- Band edges: flexbridge `internal/flexradio/band.go`; logger-spot-bridge
+  `internal/canon/canon.go`; m5stamp-hf-ctrl `src/config.h` (PA arm band safety, with the
+  same exit hysteresis as flexbridge); testui `internal/web/static/app.js`;
+  ultrabridge `internal/ub/service/controller.go` (`bandName`); icom9700-radio-bridge
+  `internal/civ/codec.go`.
+- Band centres: ultrabridge `internal/mqtt/client.go` (`bandCenterKHz`) and
+  `internal/web/http.go` (band buttons); m5stamp-hf-ctrl `src/arm.h`
+  (`UB_BAND_CENTRES`, mirrors ultrabridge for the arm deadband check).
+- Band colours: hf_console `lib/ui/theme.dart`.
+- Mode normalization: flexbridge `internal/flexradio/status.go` (`NormalizeMode`);
+  oscarwatch-sattrack-bridge `internal/bridge/bridge.go` (`CanonicalMode`);
+  logger-spot-bridge `internal/canon/canon.go` (`CanonicalMode`);
+  icom9700-radio-bridge `internal/civ/codec.go` (`ModeFromByte`, CI-V mode bytes).
+
+Known divergences from this reference. They are open code items, not accepted
+deviations:
+
+- ultrabridge and testui use an exclusive upper edge (testui: high edge minus 1 Hz on its
+  HF bands except 60m, whose 5,366,500 Hz edge stays inclusive) and synthesize a `band-N`
+  label instead of `gen`/`unknown`.
+- testui has no `gen` and no `23cm`.
+- icom9700-radio-bridge uses wider VHF/UHF windows (see the note under the VHF/UHF table)
+  and omits `band` outside them instead of publishing `unknown`. It reads only the CI-V
+  mode byte, not the data-mode flag, so USB-D/LSB-D/FM-D publish `usb`/`lsb`/`fm`; RTTY
+  (`04`/`08`) and DV/DD (`17`/`22`) are omitted instead of mapped to `data`.
+- logger-spot-bridge omits `band` instead of publishing `unknown`.
+- logger-spot-bridge (`hf/spots`, which also carries `freq_hz`) publishes a canonical-looking
+  logger band label (e.g. N1MM `20m`) as is, and derives `band` from `freq_hz` only
+  otherwise (`internal/bridge/bridge.go` `bandFor`).
+- logger-spot-bridge `CanonicalMode` maps `USB-D`/`LSB-D`/`FM-D` (and the `_D` forms) to
+  `usb`/`lsb`/`fm`, and any other non-empty unrecognized mode string to `data` instead
+  of omitting it.

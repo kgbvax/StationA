@@ -1,14 +1,17 @@
 # Runtime-library constraints (salvaged from the PRD)
 > Salvaged from PRD/03-components/common-runtime-library.md + PRD/01-architecture.md (2026-09-03) before PRD deletion. Prose is verbatim PRD text unless marked.
+> *Update 2026-10-23:* stale facts in the PRD prose were corrected in place to match the code: scope rules (`shared/logging`), reference queue capacities, the re-seed exception, the clean-session split, the device_online form, REQ-RT-7 backoff reference, the REQ-RT-9 ant-mode exception, the `CmdPayload` adoption note and the reference-shape line count. The verbatim PRD text is in `git log -p -- docs/conventions/runtime-library.md` (e18bc74).
 
 ## [requirement] Shared-library scope rules (what the library must and must not be)
 
 **MUST** — The common runtime library provides exactly these behaviors, and nothing else:
 abortable connect; inbound-message handler isolation through a bounded FIFO job queue with
 one serialized worker; topic builders for the slot topic grammar; the structural
-command-payload envelope; and the connection-lifecycle pattern components assemble from it
+command-payload envelope; the connection-lifecycle pattern components assemble from it
 (client ID, LWT, on-connect birth sequence, clean-session/retained-replay recovery,
-reconnect-backoff ownership).
+reconnect-backoff ownership); and the station root log handler (`shared/logging`: slog
+text to stderr, with the syslog priority prefix when systemd sets `JOURNAL_STREAM`, plus
+the `Streak` one-Warn-per-outage helper; see logging.md).
 
 **MUST NOT** — The library is *not* a shared MQTT client. It holds no broker address, no
 credentials, no subscriptions, and publishes nothing itself. Every component constructs and
@@ -25,18 +28,23 @@ cross-component code is the common library.
 **MUST** — The library defines no configuration keys and no defaults. It receives everything
 as arguments: the already-configured client, the caller-created job queue and its capacity,
 and explicit `site`/`station`/`slot` strings. Buffer sizes, timeouts, and cadences live in
-components.
+components. The one exception is `shared/logging`, which reads `JOURNAL_STREAM` to detect a
+journald stderr.
 
-## [decision] Shared wire-contract parsers beside the runtime library (2026-10-22)
+## [decision] Shared wire-contract code beside the runtime library (2026-10-22)
 
 The scope rules above govern the *runtime* plumbing (`shared/mqtt`, `shared/schema`,
-`shared/logging`). The `shared` module also holds **pure wire-contract parsers** for a
-contract that several components read: `shared/pstrotator` (PstRotator UDP grammar) and
-`shared/antmode` (the `hf/ant-mode` lock read by wrc-rotator-bridge, ultrabridge,
-antennaselect, beamsteer and powerseq). They follow the same MUST NOTs — no client, no
-broker, no subscriptions, no config keys, no publishing, no secrets — and hold no
-policy: what a consumer does with a parsed lock stays in the consumer. They exist so N
-consumers cannot drift apart on how one contract is read.
+`shared/logging`). The `shared` module also holds **wire-contract code** for contracts
+that more than one component speaks: `shared/pstrotator` (PstRotator UDP grammar plus a
+reusable UDP listener that answers position queries; today only beamsteer uses it, while
+spid-ercm-rotator-bridge and wrc-rotator-bridge still carry their own `internal/pstrotator`
+copies, so moving them onto it is open work) and `shared/antmode` (a pure parser of the
+`hf/ant-mode` lock read by wrc-rotator-bridge, ultrabridge, antennaselect, beamsteer and
+powerseq). They follow the same MUST NOTs — no client, no broker, no subscriptions, no
+config keys, no MQTT publishing, no secrets — and hold no policy: what a consumer does
+with a parsed lock stays in the consumer. `shared/pstrotator` does do UDP I/O, on a bind
+address and port the caller passes in. They exist so N consumers cannot drift apart on how
+one contract is read.
 
 ## [requirement] Abortable connect: the ≤ 1 s bound
 
@@ -89,9 +97,11 @@ acknowledgment, no retry, no error reporting. Keep queued work items small and
 side-effect-ordered; a panicking work item typically kills the worker and the process.
 
 Reference queue capacities (per-component defaults, any non-zero bound conformant): 256 for
-the reconciler, the antenna-controller bridge, and the discovery renderer; 64 for the
-power-plug bridge; 32 for the radio bridge and the UHF rotator console; the antenna-tuner
-bridge runs its own private bounded queue of 8 items with one worker.
+the reconciler, the antenna-controller bridge, the discovery renderer, the UHF radio
+bridge and the UHF az/el rotator bridge; 64 for the power-plug bridge, the shack-PC agent,
+antmode and beamsteer; 32 for the HF radio bridge, the logger-spot bridge and the vhfcam
+overlay; 1024 for testui; 4096 for stationportal. The antenna-tuner, PA and HF-rotator
+bridges run their own private bounded command queue of 8 items with one worker.
 
 ## [requirement] Drop-on-full recovery argument and its limit (change-only publishers)
 
@@ -117,7 +127,9 @@ The recovery argument, which any implementation MUST keep valid:
 Code-check verdict: flexbridge now carries a 5 s `/state` heartbeat
 (`Bridge.StateHeartbeat`, `DefaultStateHeartbeat = 5 * time.Second` in
 flexbridge/internal/bridge/bridge.go, explicitly sized inside the 10 s pa-arm window) —
-fixed in code at flexbridge/cmd/flexbridge/main.go; deployment status should be confirmed.
+fixed in code at flexbridge/cmd/flexbridge/main.go:112 (0f79130, 2026-08-29) and deployed
+(flexbridge has run on scmino since 2026-10-12). The PLC #1 PA-arm logic keys its 10 s
+radio freshness window on it (m5stamp-hf-ctrl/src/arm.h).
 
 ## [requirement] Re-seed input state from retained replay on every reconnect
 
@@ -133,10 +145,12 @@ retained replay of its inputs.
   never resolve. With a clean session, every (re)connect re-delivers the retained
   `state`/`status`/`meta` of every subscribed slot; messages published during a brief
   offline window are missed — acceptable for a stateless consumer.
-- One deployed exception: the power sequencer is a stateless logic consumer on a persistent
-  session; it resubscribes unconditionally on every connect, and each subscribe packet makes
-  the broker send retained messages for that filter again. Its own `/cmd` stays QoS 0 so the
-  broker cannot queue a one-shot start command while it is offline.
+- One deployed exception: the discovery renderer (hadiscovery) is a stateless logic
+  consumer on a persistent session; it resubscribes unconditionally on every connect, and
+  each subscribe packet makes the broker send retained messages for that filter again
+  (testui, a non-slot passive consumer, does the same). The power sequencer used this
+  pattern until 2026-10-18 (76b4cb6) and now uses a clean session. Its own `/cmd` stays
+  QoS 0 so the broker cannot queue a one-shot start command while it is offline.
 - **Device bridges** may use either session mode; their on-connect handler MUST (re)subscribe
   and their birth sequence MUST make them self-describing to fresh subscribers.
 
@@ -201,7 +215,8 @@ worker-exits-on-close path.
 Code-check verdict: still open — shared/mqtt/mqtt_test.go contains only
 TestEnqueueNonBlocking and TestRunJobsRunsClosures (ctx-cancel exit); no test for the
 closed-channel exit (acceptance test 3) and none for cancel-during-connect (acceptance
-test 4).
+test 4). Separately, shared/schema/schema_test.go has only TestTopics (acceptance test 5);
+no test round-trips `CmdPayload` (acceptance test 6).
 
 ## [unique] Incident-derived rationale for the three contracts
 
@@ -220,6 +235,17 @@ them away reproduces the incidents:
    argument from a JSON key named after the action
    (`{"action":"set_inline","set_inline":"true"}`) instead of the station-wide `value` key —
    a live interoperability failure that motivated centralizing the envelope in the library.
+   Adoption is partial: `shared/schema.CmdPayload` (string value) is decoded by
+   acom1200s-pa-bridge, flexbridge, shelly-power-bridge and winpc-power-bridge.
+   atr1k-tuner-bridge, beamsteer and antmode decode `value` as raw JSON
+   (typed per action: atr1k `set_inline` a bool and `tune` a string, beamsteer `aim` a
+   number or numeric string, antmode `set_ant_mode` a string; antmode also reads `ts`).
+   ultrabridge (value + freq_hz + ts), spid-ercm-rotator-bridge (value + ts) and powerseq
+   keep local structs, and icom9700-radio-bridge takes action-only payloads. Some slots
+   carry their argument under another key: wrc-rotator-bridge `set_az` uses `az`
+   (declared in its `/meta` as `value_key`), and antennaselect's operator `/cmd` is
+   `{"request": …}` with no `action` key (its `/meta` declares no actions). Neither one
+   shared Go type nor the `value` key is universal on the bus.
 
 (Short versions of all three live in shared/mqtt/mqtt.go and shared/schema/schema.go
 package comments; the fuller rationale above is the design lineage.)
@@ -227,53 +253,74 @@ package comments; the fuller rationale above is the design lineage.)
 ## [decision] Clean session: contradictory sources, still unresolved
 
 The station integration document named the transport default "Clean session: No —
-persistent session". The deployed code disagrees with itself: the reconciler sets clean
-session = **true** (a persistent session does not replay retained messages for existing
-subscriptions; a stateless reconciler would wake with empty inputs and never resolve), while
-the antenna-controller bridge, the discovery renderer, the power sequencer, and the
-power-plug bridge explicitly set it **false**, and the radio/PA/tuner/rotator bridges leave
-the library default (false) relying on on-connect resubscribe.
+persistent session". The deployed code disagrees with itself: the reconciler (and, since
+76b4cb6 on 2026-10-18, the power sequencer) sets clean session = **true** (a persistent
+session does not replay retained messages for existing subscriptions; a stateless
+reconciler would wake with empty inputs and never resolve), while the antenna-controller
+bridge, the discovery renderer and the power-plug bridge explicitly set it **false**, and
+the HF radio/PA/tuner/rotator bridges (flexbridge, acom1200s-pa-bridge, atr1k-tuner-bridge,
+wrc-rotator-bridge) leave the paho default, which is clean session = true (paho v1.5.1
+`NewClientOptions`); the UHF az/el rotator bridge (spid-ercm-rotator-bridge) sets it false
+explicitly.
 
 What must hold is the §re-seed requirement above; how each component achieves it (clean
 session, explicit unsubscribe-then-resubscribe, or persistent session with unconditional
-resubscribe) is the open decision. Unresolved fact: a power-sequencer comment claimed the
-persistent session itself replays retained values on reconnect — in MQTT the replay comes
-from the unconditional resubscribe (each subscribe packet triggers retained delivery), not
-from the session flag; relying on resubscribe-driven replay under a persistent session can
-be semantically fragile.
+resubscribe) is the open decision. Resolved 2026-10-18 (76b4cb6): a power-sequencer comment
+had claimed the persistent session itself replays retained values on reconnect. In MQTT the
+replay comes from the unconditional resubscribe (each subscribe packet triggers retained
+delivery), not from the session flag, and powerseq's comment now says so. It moved to a
+clean session after a live failure: the HA broker stopped delivering QoS-1 messages to its
+resumed persistent session. Relying on resubscribe-driven replay under a persistent session
+can be semantically fragile, and still is for the components that do it (hadiscovery,
+testui).
 
-Code-check verdict: still open — the split persists in code
-(antennaselect/internal/mqtt/client.go:137 `SetCleanSession(true)`; ultrabridge,
-hadiscovery, powerseq, shelly-power-bridge, testui all `SetCleanSession(false)`). The
-station-integration-model §8 now documents the persistent-session/QoS-0-`/cmd` rules that
-came out of the 2026-09-03 offline-replay incident, but the per-component session-flag
-choice is still not settled.
+Code-check verdict: still open — the split persists in code (clean session = true:
+antennaselect/internal/mqtt/client.go:194, powerseq (since 76b4cb6, 2026-10-18), antmode,
+beamsteer, winpc-power-bridge, hf-mqtt-capture, vhfcam-restream, stationportal, plus
+flexbridge/acom1200s-pa-bridge/atr1k-tuner-bridge/wrc-rotator-bridge through the paho
+default; `SetCleanSession(false)`: ultrabridge, hadiscovery, shelly-power-bridge, testui,
+spid-ercm-rotator-bridge, icom9700-radio-bridge, oscarwatch-sattrack-bridge,
+logger-spot-bridge). The station-integration-model §8 now documents the
+persistent-session/QoS-0-`/cmd` rules that came out of the 2026-09-03 offline-replay
+incident, but the per-component session-flag choice is still not settled.
 
 ## [decision] device_online form: omitted-when-true vs explicit true
 
-The integration model says the field is "omitted when true". Deployed bridges (radio,
-antenna-controller, PA, tuner) publish `device_online: true` explicitly. Consumers must
+The integration model said (until 2026-10-23) the field is "omitted when true". Every
+deployed Go device bridge publishes `device_online: true` explicitly. Consumers must
 treat both forms as the same (absence = true), or the contract must mandate explicit true.
 It is a bus-contract decision; the common library is affected only in that the two-layer
 liveness model must be readable in both forms.
 
-Code-check verdict: still open — the model's `/state` template still says "omitted when
-true" (docs/station-integration-model.md), while flexbridge now asserts "device_online is
-always present (true/false)" (flexbridge/internal/bridge/bridge.go:92). Consumers must
-handle both forms until the contract mandates one.
+Code-check verdict (updated 2026-10-23): still open — the model's §3 template no longer
+says "omitted when true"; it marks `device_online` optional with the form open and records
+that every deployed Go device bridge publishes it explicitly (the ESPHome ant-switch omits
+it). flexbridge asserts "device_online is always present (true/false)"
+(flexbridge/internal/bridge/bridge.go:93). Consumers must treat a missing field as true
+until the contract mandates one form.
 
 ## [decision] Ultrabeam antenna-switch port: 3 or 4 (station-wide)
 
 Repo docs and tests say the Ultrabeam beam antenna is on antenna-switch port 3; the
 antennaselect seed config and the console's antenna map say port 4. The live config on
-shari is authoritative and was not read before this was recorded. Every document touching
+shari (on scmino at `/etc/antenna-select/config.toml` since 2026-10-12) is authoritative
+and was not read before this was recorded. Every document touching
 the wiring must present port 3 or port 4 as an open decision pending on-device
 confirmation.
 
-Code-check verdict: still open — the contradiction persists in the repo
-(docs/station-integration-model.md and root CLAUDE.md say `port3: ultrabeam`;
-antennaselect/config.example.toml says `port4 = "ultrabeam"`). Resolution needs the live
-shari config or on-device confirmation.
+Code-check verdict: still open on site. As seeded, the Ultrabeam is on port 4:
+antennaselect/config.example.toml and antennaselect/deploy.sh seed `port4 = "ultrabeam"`,
+hf_console/lib/store/wiring.dart maps port4, and the PLC #1 firmware hard-codes
+`ULTRABEAM_PORT "port4"` (m5stamp-hf-ctrl/src/config.h). Fan dipole port 6 and dummy load
+port 1 as seeded. Port 3 remains only in the
+antennaselect/internal/reconcile/reconcile_test.go fixtures and the Ultrabeam note in
+stationportal/internal/inventory/inventory.toml. Resolution needs the live scmino config
+(`/etc/antenna-select/config.toml`) or on-device confirmation; see docs/known-issues.md.
+
+*Update 2026-10-23:* docs/station-integration-model.md and root CLAUDE.md now follow the
+seed config (port 4 as seeded; on-site confirmation open), and the model's
+passive-resources line says fan dipole port 6. The port-3 doc claim recorded
+above is history (the fan-dipole port-2 claim is recorded in docs/known-issues.md).
 
 ## [decision] When to promote drop telemetry from recommendation to requirement
 
@@ -346,20 +393,34 @@ must satisfy them. The rationale quotes the live incidents.
    input messages on every reconnect. A stateless consumer can then re-seed its
    inputs. Recovery after any outage is always "replay retained state and
    re-resolve", never "resume a persisted internal model".
+   *Code-check note (2026-10-23):* inputs from other slots still re-seed from retained
+   replay. Several components now persist their own state across a process restart,
+   where no retained input can rebuild it: powerseq its sequencer phase and idle clocks
+   (1cabf4a, `state_file`; a sequence in flight at the restart comes back as idle plus a
+   fault, is never re-run and never emits a `/cmd`), antmode its mode state
+   (`/var/lib/antmode/state.json`), ultrabridge the retract latch (471af95,
+   `retract.json`) and wrc-rotator-bridge its finished-park record (12e173a,
+   `park.json`). None of these restores re-runs a sequence or emits a `/cmd`. Whether
+   REQ-RT-5 should be relaxed to allow such own-state persistence is an open decision for
+   the owner.
 6. **REQ-RT-6 (bounded publishes).** A publish must stay bounded in time (the
    sequencer uses a 10-second wait timeout), so a dead broker surfaces as an error
    and does not stall the component forever.
 7. **REQ-RT-7 (auto-reconnect).** After a successful connect, connection loss must
-   trigger automatic reconnection with backoff (reference defaults: 1 s at the
-   start, and 10 s max. The curve itself is an implementation detail. The rule is
-   recovery without a person present).
+   trigger automatic reconnection with backoff (reference: paho v1.5.1 starts at 1 s
+   and doubles up to MaxReconnectInterval, which is 10 min by paho default; only
+   winpc-power-bridge and stationportal set it, to 30 s. The curve itself is an
+   implementation detail. The rule is recovery without a person present).
 8. **REQ-RT-8 (no credentials in shared plumbing).** Any shared runtime library must
    stay credential-free. Broker addresses, users, and passwords flow only through
    per-component configuration.
 9. **REQ-RT-9 (malformed input never crashes).** The component must log and drop
    malformed JSON on any input, and keep the previous inputs. A consumer that sees a
    malformed `/state` must delete that slot's cached snapshot (a good→bad
-   transition must not leave a stale value poisoning decisions).
+   transition must not leave a stale value poisoning decisions). *Exception:* the
+   `hf/ant-mode` lock (shared/antmode, antmode/docs/ant-mode-mqtt-api.md). A malformed
+   ant-mode `/state` keeps the last known lock and logs an Error, so a garbled payload
+   can never unlock the antenna.
 10. **REQ-RT-10 (worker robustness).** The worker must exit cleanly on
     cancellation or queue close, at any point in the component's lifecycle
     (including non-cancellation early returns), and must never invoke work after
@@ -368,10 +429,15 @@ must satisfy them. The rationale quotes the live incidents.
 Session-flag nuance behind REQ-RT-5 (from the PRD's open-decisions section): the
 ecosystem convention is persistent sessions ("clean session: no"), so subscriptions
 and queued messages survive client restarts. But stateless consumers (the
-reconciler, the discovery consumer) deliberately use **clean sessions**, so
-retained messages replay on every reconnect — without the replay they can wake
-with empty inputs and never resolve. The stack-agnostic rule is REQ-RT-5; which
-session flag achieves it per component is the decision.
+reconciler, the discovery consumer) deliberately use **clean sessions**, so retained
+messages replay on every reconnect — without the replay they can wake with empty inputs
+and never resolve. The stack-agnostic rule is REQ-RT-5; which session flag achieves it per
+component is the decision.
+
+Code-check note (2026-10-23): the PRD was wrong about the discovery consumer. hadiscovery
+has always used a persistent session (hadiscovery/internal/mqtt/client.go:76,
+`SetCleanSession(false)`) and gets the replay from an unconditional resubscribe in
+`OnConnect`. Since 2026-10-18 (76b4cb6) the power sequencer also uses a clean session.
 
 ## [requirement] Acceptance tests for the messaging layer (normative)
 
@@ -403,13 +469,17 @@ still open against the "must not do worse" bar.
 
 ## [unique] Reference-implementation shape (non-normative, for design lineage)
 
-The deployed system centralizes these in a ~130-line shared library module
-(`shared/mqtt`) that every bridge imports. It contains a context-aware connect
+The deployed system centralizes these in a ~90-line shared package (`shared/mqtt`; the
+PRD's ~130 lines counted it together with `shared/schema`) that every bridge imports. It
+contains a context-aware connect
 wrapper (it races the library's connect token against process cancellation, and
 disconnects the half-open client on either path) and a bounded jobs-queue with a
 single worker goroutine (buffer sizes 32/64/256 depending on bridge). The
 topic-string builders and the `{action, value}` payload type live in a sibling
-schema package (`shared/schema`). Each bridge still constructs and owns its own
+schema package (`shared/schema`). Since then the shared module has also gained
+`shared/logging` (root slog handler, 2026-10-10) and the wire-contract packages
+`shared/pstrotator` (2026-09-26) and `shared/antmode` (2026-10-22); see the 2026-10-22
+decision above. Each bridge still constructs and owns its own
 MQTT client, options, and subscriptions. The shared layer is deliberately a thin
 set of behavior workarounds, not a client wrapper. Visibility rules forbid
 cross-bridge imports of device logic: shared plumbing can be common, per-device

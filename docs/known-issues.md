@@ -13,6 +13,8 @@
 
 > **Moot (2026-10-10):** `pelcobridge2` and the `muehle/uhf/rotator` slot were retired
 > (not in use) and the component was removed from the repo. Kept as a record only.
+> The defect was never fixed before retirement: at `53ee93c^` `onReadErr` still
+> returned after one failed `reopen()`; `reopenCooldown` only throttles the retry.
 
 Symptom: UHF rotator link dead after adapter re-enumeration. No auto-recovery.
 Cause: Auto-heal retries once after a 2 s cooldown, then gives up permanently on a failed reopen.
@@ -27,6 +29,8 @@ Cause: The code swallows the initial-connect failure with no retry loop. It sile
 Remedy: restart the app after the broker is reachable. A reconstruction must add an app-level connect retry and surface dropped commands.
 
 Code-check verdict (2026-09-03): **still open** — `hf_console/lib/main.dart` lines 86–95: `await _connect(...)` is wrapped in `catch (_) { // offline start is allowed ... }` with no retry; `hf_console/lib/mqtt/mqtt_service.dart` line 81: `publish` returns silently when `connectionStatus.state != connected`. (`autoReconnect = true` only covers a connection lost *after* it was established.)
+
+Code-check verdict (2026-10-23): **retry fixed 2026-09-10** (4640ab0). `MqttService._connectFresh` never throws. A failed connect, initial or later, schedules a fresh-client retry with 5 to 60 s backoff (`_scheduleRetry`). A pong watchdog and app-lifecycle resume handling were also added. Still partly open: `publish()` returns false while the link is down, but no caller checks the result. Controls are disabled only while `store.linkUp` is false, and the faults bar then shows the generic row "mqtt: link down — all data stale, commands not delivered". A command that races a link drop is still lost without per-command notice.
 
 ## [defect] hf-mqtt-capture rotation null-writer panic on disk-full / permission loss (PRD §5.3 row 11, §4.2)
 
@@ -46,6 +50,8 @@ Remedy: Recorded live gap. After any grounded→selected transition, the operato
 
 Code-check verdict (2026-09-03): **still open** — `antennaselect/internal/mqtt/client.go` line 261 copies the switch's `settled` field into the reconcile input (`SwitchSettled`), but `antennaselect/internal/reconcile/reconcile.go` never reads it: re-activation is not gated on the switch having settled.
 
+Update (2026-10-23): since aaceb17 (2026-10-06) the PA side of this race is mitigated by the PLC #1 arm interlock (`m5stamp-hf-ctrl/src/arm.h`; details in the idle-grounding entry below). The reconciler gap above is unchanged.
+
 ## [defect] Hard-coded browser WebSocket endpoint (PRD §3.1, recorded deviation)
 
 The browser client ignores the configured broker host. It connects to a hard-coded `ws://192.168.1.139:8091/mqtt`. This deviates from the no-hard-coded-host-addresses rule. A reconstruction must make the endpoint configurable, or must record the deviation in the same explicit way.
@@ -58,7 +64,7 @@ Code-check verdict (2026-10-02): **fixed** — `client_factory_web.dart` derives
 
 Retention: on rotation, delete whole date-directories older than `retention_hours` (default 72). **Documented consequence (actual behavior, not the idealized claim)**: cleanup granularity is whole days. With the default, the tool keeps between **72 and 96 hours** of logs. A reconstruction can fix the granularity, but tooling must not assume hour-precision deletion.
 
-Decision needed: keep the day-directory scheme so ops tooling matches, or fix it to true hourly. Do not promise hour-precision deletion either way. Also decide whether to widen the default capture filter to include the UHF subtree (the tool records none of it now — default subscription is `muehle/hf/#` only).
+Decision needed: keep the day-directory scheme so ops tooling matches, or fix it to true hourly. Do not promise hour-precision deletion either way. Also decide whether to widen the default capture filter to include the UHF subtree (the tool records none of it now — default subscription is `muehle/hf/#` only). (Note 2026-10-23: the default `muehle/hf/#` also excludes the site-level `muehle/power/#` subtree: `power/psu-13v8`, `power/antennas` and `power/shack-pc-mains` (Shelly plugs) and `power/shack-pc` (winpc-power-bridge). A widened filter would need to cover both the `uhf` and `power` subtrees. The capture config takes one `station` (filter `<site>/<station>/#`), so capturing exactly `hf`, `uhf` and `power` needs a code change; `station = "+"` (filter `muehle/+/#`) would capture every subtree without one, untested.)
 
 Code-check verdict (2026-09-03): **still open** — `hf-mqtt-capture/cmd/hf-mqtt-capture/main.go` `cleanupOldLogs` (lines 178–196) deletes whole date directories only, matching the day-granular behavior; default filter remains `muehle/hf/#`.
 
@@ -66,7 +72,9 @@ Code-check verdict (2026-09-03): **still open** — `hf-mqtt-capture/cmd/hf-mqtt
 
 Repo-root documentation and the integration model say the Ultrabeam beam is on antenna-switch port 3 (fan dipole port 6, dummy load port 1). The deployed reconciler seed config *and* the console's antenna map say port 4. A third conflicting claim exists inside the integration model itself: its passive-resource list says the fan dipole is on port 2. The authoritative artifact — the live config on the Raspberry Pi — stayed unreadable while the PRD was written. Port numbers are per-site configuration. Never hard-code them. The deployed on-device config plus physical inspection is the only resolution path.
 
-Code-check verdict (2026-09-03): **still unresolved** — the conflict persists in-tree: repo docs/CLAUDE.md say port 3; `antennaselect/config.example.toml` (`port4 = "ultrabeam"`) and `hf_console/lib/store/wiring.dart` (`'port4': 'Ultrabeam'`) say port 4. Only reading the live config on shari + physical inspection settles it. The hf_console station schematic (`hf_console/lib/ui/widgets/station_schematic.dart`, `schematicPorts`) draws the Ultrabeam on port 4 too; a test ties it to `antennaMap`, so fixing `wiring.dart` moves the drawing with it.
+Code-check verdict (2026-09-03): **still unresolved** — the conflict persists in-tree: repo docs/CLAUDE.md say port 3; `antennaselect/config.example.toml` (`port4 = "ultrabeam"`) and `hf_console/lib/store/wiring.dart` (`'port4': 'Ultrabeam'`) say port 4. Only reading the live config on shari + physical inspection settles it. The hf_console station schematic (`hf_console/lib/ui/widgets/station_schematic.dart`, `schematicPorts`) draws the Ultrabeam on port 4 too; a test ties it to `antennaMap`, so fixing `wiring.dart` moves the drawing with it. Correction 2026-10-23: `schematicPorts` is a separate hard-coded list. Its test checks only that its port keys equal `antennaMap`'s keys, so a fix to `wiring.dart` fails that test until `schematicPorts` is edited; the labels are not cross-checked.
+
+Update 2026-10-23: the docs now follow the seed config. Root `CLAUDE.md`, `README.md` and `docs/station-integration-model.md` §7.1 (`wiring_map` and **Passive resources**) say Ultrabeam port 4 as seeded, fan dipole port 6 and dummy load port 1, and on-site confirmation is still open. The port-3 and fan-dipole-port-2 claims above are history. Port 3 is still in the antennaselect reconcile test fixtures and the stationportal inventory note only. antenna-select moved from shari to scmino on 2026-10-12, so the on-device config to read is now `/etc/antenna-select/config.toml` on scmino.
 
 ## [decision] `device_online` publication form: explicit vs omitted-when-true (PRD §6.3)
 
@@ -80,6 +88,8 @@ Code-check verdict (2026-09-03): **half-resolved in code, model doc still open**
 
 Code-check verdict (2026-09-03): **still open** — repo-wide search for `muehle/host` hits only documentation files (docs, PRD, sas mockups), no code.
 
+Update 2026-10-23: the model (§7.3) now names the shack-PC node `muehle/host/bwpc` (was `muehle/host/shack-pc`) and also reserves `muehle/host/scmino` (state `online`). Nothing publishes any `muehle/host/*` node yet.
+
 ## [decision] PLC #2 firmware (`muehle/uhf/pol-ctrl`) does not exist (PRD §6.9)
 
 The X-Quad polarization slot is attributed to the m5stamp project, but no PLC #2 firmware exists in the repo. Treat the slot as unimplemented, not as a component to deploy. Decide: add it or formally descope it.
@@ -92,7 +102,7 @@ Update (2026-09-13, sat-ops plan U10/U11): **still open — no longer a descope 
 
 antennaselect is a coordination single point of failure: when it dies, all soft bindings stop together (band-follow, tuner-follow, PA-follow, antenna selection) and retained state goes stale. The supervisor restarts it automatically, but no component shows "reconciler offline" to the operator meanwhile. Decide: add an explicit operator indication, or accept the stale-retained-state window.
 
-Code-check verdict (2026-09-03): **partially mitigated in the console only** — `hf_console/lib/ui/widgets/antenna_panel.dart` falls back to a manual-operation header when the `antenna-select` slot is offline (`managed = selectOnline && mode != null`); there is still no bus-level or bridge-level "reconciler offline" indication.
+Code-check verdict (2026-09-03, updated 2026-10-23): **partially mitigated in the console only** — `hf_console/lib/ui/widgets/antenna_panel.dart` falls back to a manual-operation header when the `antenna-select` slot is offline (`managed = selectOnline && mode != null`). The faults bar lists the slot as "bridge down" (it is in `expectedSlots`). Since 2026-10-19 the station schematic also shows the slot's liveness. There is still no bus-level or bridge-level "reconciler offline" indication.
 
 # 06-safety.md
 > Extracted from PRD (2026-09-03) before PRD deletion. Prose is verbatim PRD text unless marked.
@@ -101,19 +111,19 @@ Code-check verdict (2026-09-03): **partially mitigated in the console only** —
 
 From PRD §2.3 (and repeated in §7.2): "the main loop now early-returns before re-evaluating `armed` when WiFi is down. The relay *freezes* in its last position for the outage duration — a contract violation of \"any failure drops the relay\". The arm evaluation must run regardless of link state. The safe direction drops the arm. Never hold the arm."
 
-Code-check verdict: FIXED 2026-10-06 (branch claude/pa-arm-gates, `src/arm.h`) — the arm is recomputed every loop pass with or without a link, and WiFi loss / pa-arm disconnect resets every input to closed, so the relay opens on that pass. Previously: `m5stamp-hf-ctrl/src/main.cpp` loop step 3 early-returned while `WiFi.status() != WL_CONNECTED`, so `recomputeArm` never runs during an outage (relay holds last position). Also tracked by the m5stamp PRD extractor; treat as duplicate there, keep one copy.
+Code-check verdict: FIXED 2026-10-06 (aaceb17 on main, flashed to PLC #1 by 2026-10-12; `src/arm.h`) — the arm is recomputed every loop pass with or without a link, and WiFi loss / pa-arm disconnect resets every input to closed, so the relay opens on that pass. Previously: `m5stamp-hf-ctrl/src/main.cpp` loop step 3 early-returned while `WiFi.status() != WL_CONNECTED`, so `recomputeArm` never runs during an outage (relay holds last position). Also tracked by the m5stamp PRD extractor; treat as duplicate there, keep one copy.
 
 ## [defect] Silent disarm on a JSON-boolean /cmd value
 
 From PRD §2.3: "the parser extracts `/cmd` values as JSON strings. A sender publishing `\"value\": true` — a JSON boolean — yields the empty string. For `set_enabled` that **silently disarms**. The command parser must either accept JSON booleans or reject the command loudly. Silent disarm on a well-formed-looking payload is a defect."
 
-Code-check verdict: FIXED 2026-10-06 (branch claude/pa-arm-gates, `src/arm.h`) — `parseBoolish` accepts a JSON bool or "true"/"false" (case-insensitive); anything else leaves the permit unchanged and sets `/state.cmd_error`. Previously: `parseCmd` did `value = doc["value"] | \"\"` with no type check, and `handlePaArmCmd` does `enabled = (value == \"true\")`; a JSON boolean `true` yields a non-`"true"` string, i.e. disarm.
+Code-check verdict: FIXED 2026-10-06 (aaceb17 on main, flashed to PLC #1 by 2026-10-12; `src/main.cpp` `parseBoolish`) — `parseBoolish` accepts a JSON bool or "true"/"false" (case-insensitive); anything else leaves the permit unchanged and sets `/state.cmd_error`. Previously: `parseCmd` did `value = doc["value"] | \"\"` with no type check, and `handlePaArmCmd` does `enabled = (value == \"true\")`; a JSON boolean `true` yields a non-`"true"` string, i.e. disarm.
 
 ## [defect] antenna_ready input has no staleness bound
 
 From PRD §2.3: "the antenna-switch input has no freshness window, so a stale \"ready\" stays ready forever. The ant-switch slot's LWT is not used here either. The arm can therefore close on data from a dead slot whose retained state shows a selected antenna. The antenna-ready input must carry a freshness bound and/or the `/status` liveness layer."
 
-Code-check verdict: FIXED 2026-10-06 (branch claude/pa-arm-gates, `src/arm.h`) — the ant-switch `/status` LWT is subscribed and ANDed in (two-layer liveness; the producer is change-only, so no age window), `settled` is honoured, and inputs reset on every reconnect. Previously: `main.cpp` read `antennaReady = (sel != "" && sel != "off")` from the ant-switch snapshot with no freshness timestamp and no `/status` subscription on the ant-switch slot; only the radio input is freshness-gated.
+Code-check verdict: FIXED 2026-10-06 (aaceb17 on main, flashed to PLC #1 by 2026-10-12; `src/arm.h`) — the ant-switch `/status` LWT is subscribed and ANDed in (two-layer liveness; the producer is change-only, so no age window), `settled` is honoured, and inputs reset on every reconnect. Previously: `main.cpp` read `antennaReady = (sel != "" && sel != "off")` from the ant-switch snapshot with no freshness timestamp and no `/status` subscription on the ant-switch slot; only the radio input is freshness-gated.
 
 ## [defect] Missing `tuning` field defaults fail-open
 
@@ -121,13 +131,17 @@ From PRD §2.2/REQ-S13: "One input defaults the other way: a missing `tuning` fi
 
 From PRD §8 item 16: "Either default the missing field to `true` (fail closed — a deliberate contract change against the deployed firmware) or keep the deployed default and document the fail-open risk."
 
-Code-check verdict: FIXED 2026-10-06 (branch claude/pa-arm-gates, `src/arm.h`) — missing `tuning` now defaults to true (fail closed). Previously: `radioTuning = doc["tuning"] | false;` (absent key → false → permissive).
+Code-check verdict: FIXED 2026-10-06 (aaceb17 on main, flashed to PLC #1 by 2026-10-12; `src/arm.h`) — missing `tuning` now defaults to true (fail closed). Previously: `radioTuning = doc["tuning"] | false;` (absent key → false → permissive).
 
 ## [decision] Ultrabeam and fan-dipole switch ports: the repo contradicts itself
 
 From PRD §7.3/§8 item 1: "The repo disagrees with itself on which physical switch port carries the Ultrabeam beam. The integration model, root docs, and the arbitrator's tests say **port 3**. The arbitrator's example config and deploy seed — and the console's antenna map — say **port 4**. The live on-device config on the deployment host is authoritative, but it stayed **unreadable** while the authors wrote this PRD. Port 1 (dummy load) is consistent everywhere. The fan dipole's port is itself contested (6 or 2 — the integration model's passive-resource list says port 2). Safety consequence: the wiring map is pure configuration and must never appear in code. The port truth must get on-device confirmation before commissioning. A wrong map sends RF to the wrong antenna. The hardware exclusivity (REQ-S17) and arm chain still hold. But the band policy and band-follow can then tune the wrong antenna."
 
-Code-check verdict: STILL OPEN — `docs/station-integration-model.md` says `ant/ultrabeam` (port 3), `ant/fan-dipole` (port 2); root `CLAUDE.md` says port 3 and fan-dipole **port 6**; `antennaselect/config.example.toml` and `antennaselect/deploy.sh` seed say `port4 = "ultrabeam"`; `hf_console/lib/store/wiring.dart` maps `'port4': 'Ultrabeam'`. On-device confirmation on shari (`/etc/antenna-select/config.toml`) is still the missing truth.
+Code-check verdict: STILL OPEN (on site). As of 130dc0f, `docs/station-integration-model.md` said `ant/ultrabeam` (port 3), `ant/fan-dipole` (port 2); root `CLAUDE.md` said port 3 and fan-dipole **port 6**; `antennaselect/config.example.toml` and `antennaselect/deploy.sh` seed say `port4 = "ultrabeam"`; `hf_console/lib/store/wiring.dart` maps `'port4': 'Ultrabeam'`. On-device confirmation on scmino (`/etc/antenna-select/config.toml`) is still the missing truth. antenna-select moved from shari on 2026-10-12. The repo does not record whether the live file was copied from shari or re-seeded with the deploy.sh `port4` seed.
+
+Update 2026-10-23: the PLC #1 firmware also hard-codes `ULTRABEAM_PORT "port4"` (`m5stamp-hf-ctrl/src/config.h:109`, aaceb17, 2026-10-06). The arm's Ultrabeam gates (retracted, commanded, moving, not tuned, settling, offline) apply only while the switch reports port4, so a port-3 truth would silently disable them, and changing it needs a reflash. Its comment says the live antennaselect wiring map targets port4 on 17m, which is bus evidence for the live config but not proof of the physical wiring. In hf_console, `antenna_panel.dart` (`_ports`) and the station schematic (`schematicPorts`) also hard-code port4. `stationportal/internal/inventory/inventory.toml` says port 3.
+
+Update 2026-10-23: the docs now follow the seed config. Root `CLAUDE.md`, `README.md` and `docs/station-integration-model.md` §7.1 (`wiring_map` and **Passive resources**) say Ultrabeam port 4 as seeded, fan dipole port 6 and dummy load port 1, and on-site confirmation is still open. The port-3 and fan-dipole-port-2 claims above are history. Port 3 is still in the antennaselect reconcile test fixtures and the stationportal inventory note only.
 
 ## [decision] `60m` in the arm band allow-list
 
@@ -137,7 +151,7 @@ Code-check verdict: DECIDED 2026-10-06 — `60m` removed from `SAFE_BANDS` (15 W
 
 ## [decision] Arm evaluation during a link outage — deliberate contract change needed
 
-From PRD §8 item 4: "current code freezes the relay (§7.2). The recommendation is compute the arm condition always — drop is the safe direction. This is a deliberate contract change. A reimplementation must make it explicitly." **DECIDED 2026-10-06: compute always; drop on link loss** (`src/arm.h`). Related §8 item 3: the error reason for heartbeat staleness ("radio feed stale" is now the shipped string; the related sub-questions — whether a stale `antenna_ready` must produce an error, and whether the arm must use the ant-switch `/status` LWT — remain undecided).
+From PRD §8 item 4: "current code freezes the relay (§7.2). The recommendation is compute the arm condition always — drop is the safe direction. This is a deliberate contract change. A reimplementation must make it explicitly." **DECIDED 2026-10-06: compute always; drop on link loss** (`src/arm.h`). Related §8 item 3: the error reason for heartbeat staleness ("radio feed stale" is the shipped string. Both related sub-questions were decided 2026-10-06 (aaceb17, `src/arm.h`). The arm ANDs the ant-switch `/status` LWT with its state; the producer is change-only, so there is no age window. An offline or never-seen ant-switch is a readiness gate that reports the fault "antenna switch offline" in `/state.error` (see `m5stamp-hf-ctrl/docs/m5stamp-hf-ctrl-mqtt-api.md` §4)).
 
 ## [requirement] REQ-S6 — handler isolation (messaging-plane robustness)
 
@@ -161,7 +175,7 @@ Code-check verdict: implemented in current firmware — `ArduinoOTA.onStart` in 
 
 ---
 
-Items from PRD §2.3/§7.2 checked and **dropped as fixed** (not salvaged): "silent arm drop on heartbeat timeout" — the firmware now publishes `"radio feed stale"` in `currentPaArmError`, and flexbridge now republishes `/state` on a heartbeat cadence while the radio link is live (`flexbridge/internal/bridge/bridge.go` + tests). Note: the fielded PLC #1 runs pre-OTA firmware, so the firmware-side fix is built but not yet flashed (first flash must be physical USB).
+Items from PRD §2.3/§7.2 checked and **dropped as fixed** (not salvaged): "silent arm drop on heartbeat timeout" — the firmware now publishes `"radio feed stale"` in `currentPaArmError`, and flexbridge now republishes `/state` on a heartbeat cadence while the radio link is live (`flexbridge/internal/bridge/bridge.go` + tests). Note (updated 2026-10-23): PLC #1 is no longer on pre-OTA firmware. It was reflashed by 2026-10-03 (scmino broker in `MQTT_HOST`, 4 KB buffer) and has been updated over the air since then (`deploy.sh ota`). The 447ebf4 build was flashed 2026-10-12 (5a7f4a8). Check the running build in `/meta` `device.firmware`. The stale-feed error is now the arm.h hazard "radio feed stale", published in `muehle/hf/pa-arm/state.error`. `currentPaArmError` was removed in aaceb17.
 
 # 00-system-overview.md + 02-interface-spec.md + 07-priorities-milestones.md
 > Extracted from PRD (2026-09-03) before PRD deletion. Prose is verbatim PRD text unless marked.
@@ -200,6 +214,13 @@ unchanged: powerseq (`internal/mqtt/client.go` Close publishes offline),
 antennaselect (`internal/mqtt/client.go` Close), hadiscovery (`internal/mqtt/client.go`
 Close), ultrabridge (`internal/mqtt/client.go` Close).
 
+Update 2026-10-23: still open for flexbridge, acom1200s-pa-bridge, atr1k-tuner-bridge,
+shelly-power-bridge and wrc-rotator-bridge, and also for logger-spot-bridge (`hf/spots`),
+which sets only the will and then disconnects cleanly. These components now publish a
+retained `offline` on a clean exit: spid-ercm-rotator-bridge, icom9700-radio-bridge,
+oscarwatch-sattrack-bridge, beamsteer, antmode and winpc-power-bridge, in addition to
+powerseq, antennaselect, hadiscovery and ultrabridge.
+
 ## [defect] Idle-grounding recovery gaps (first key-up after ground)
 
 From PRD 00 §6:
@@ -237,6 +258,19 @@ which is part of (c). Still open: the TX deferral has **no timeout**
 (`DeferredForTX` in `reconcile.go`, re-resolved only on the next input change), and
 the idle clock is still in-process, so a reconciler restart re-arms the 30-minute
 timer on the retained-state replay. First key-up after ground remains a live race.
+
+Update 2026-10-23: since a8a508b (2026-10-10) the retained-state replay no longer counts
+as activity. Since 41b44b6 and 55f8146 (2026-10-19), neither does a radio link drop and
+reconnect or a SmartSDR client connect. The idle clock is still not persisted: a restart starts the station active
+with a fresh 30-minute window from process start. The TX deferral still has no timeout.
+
+Update 2026-10-23: since aaceb17 (2026-10-06) the PA half of the first key-up race is mitigated by the
+PLC #1 arm interlock (`m5stamp-hf-ctrl/src/arm.h`). `antenna grounded` and `antenna
+switching` are hazard gates that open the arm relay at once, and `antenna not converged`
+is a readiness gate. The ACOM therefore cannot be armed into a grounded or moving
+switch. Still open: reconciler re-activation is not gated on `settled` (`SwitchSettled`
+is never read), and a barefoot key-up from the FLEX can still go into the grounded
+switch.
 
 ## [decision] Antenna-switch wiring: two contested ports (requires on-device confirmation)
 
@@ -278,12 +312,19 @@ From PRD 02 §7.1 (the richer variant; 00 §7.1 agrees):
 > bus contract — the `selected`/`select` values are port keys either way.
 
 Status 2026-09-03: **still unresolved.** The contradiction persists in the live
-docs — `docs/station-integration-model.md` line 564 (wiring map: `port3: ultrabeam,
-port6: fan-dipole`) vs line 579 (passive resources: fan-dipole port 2). The repo
+docs — `docs/station-integration-model.md`: the §7.1 `muehle/hf/antenna-select` block's
+`wiring_map` (`port3: ultrabeam, port6: fan-dipole`; line 646 at 130dc0f) vs the §7.1
+**Passive resources** line (fan-dipole port 2; line 697). The repo
 sources still split the same way: `antennaselect/config.example.toml` and the
 `deploy.sh` seed say `port4 = "ultrabeam"` with `# port2, port3, port5 unused for
 now`; the reconciler unit tests assert `port3`; the console wiring
 (`hf_console/lib/store/wiring.dart`) uses the port-4 variant.
+
+Update 2026-10-23: antenna-select moved from shari to scmino on 2026-10-12, so the
+on-device config is now `/etc/antenna-select/config.toml` on scmino (see the "Ultrabeam
+and fan-dipole switch ports" entry above).
+
+Update 2026-10-23: the docs now follow the seed config. Root `CLAUDE.md`, `README.md` and `docs/station-integration-model.md` §7.1 (`wiring_map` and **Passive resources**) say Ultrabeam port 4 as seeded, fan dipole port 6 and dummy load port 1, and on-site confirmation is still open. The port-3 and fan-dipole-port-2 claims above are history. Port 3 is still in the antennaselect reconcile test fixtures and the stationportal inventory note only.
 
 ## [decision] `/cmd` value-key exception policy (reproduce or migrate)
 
@@ -300,6 +341,12 @@ From PRD 00 §7 item 4:
 
 Status 2026-09-03: unresolved. Deployed code still parses the deviating shapes; the
 live docs state the `value` convention but no doc resolves the exception policy.
+
+Update 2026-10-23: still unresolved. One extension since: `hf/rotator` `set_az` keeps its
+`az` key and can also carry `"override":"maintenance"` for the antenna-mode maintenance
+nudge (PR #24, wrc-rotator-bridge `cmdPayload.Override`), a second argument outside
+`value`. The `ts` key on `hf/ant-mode` commands is not a deviation: it is the one-shot
+`/cmd` timestamp that model §8 rule 3 recommends.
 
 ## [decision] Pelco-P addressing assumption (bench check before any P-mode use)
 
@@ -327,8 +374,11 @@ From PRD 02 §0.1. Candidate home: appendix of `docs/conventions/band-mode-refer
   the "Mühle" station. Its parts are a transceiver, a power amplifier, an antenna
   tuner, antennas, and the machinery to route and point them.
 - **HF / UHF**: high frequency (roughly 3–30 MHz, long-distance "shortwave" bands) and
-  ultra-high frequency (roughly 300 MHz–3 GHz). The station has one HF chain and one UHF
-  rotator.
+  ultra-high frequency (roughly 300 MHz–3 GHz). The station has one HF chain and one
+  VHF/UHF satellite station (`uhf/`): the IC-9700 radio (receive-only bridge), SPID azimuth
+  and GS-500 elevation rotators, X-Quad polarization switching, and the OscarWatch
+  satellite tracker. (Updated 2026-10-23; the PRD's single UHF rotator, pelcobridge2, was
+  retired 2026-10-10.)
 - **Transceiver (TRX, "the radio")**: a combined radio transmitter and receiver — here a
   FLEX-8400. "TX" = transmitting, "RX" = receiving.
 - **PA (power amplifier)**: a device that boosts the transceiver's output to high power —
@@ -369,7 +419,8 @@ From PRD 02 §0.1. Candidate home: appendix of `docs/conventions/band-mode-refer
 - **Mode**: the emission mode of a transceiver (CW = Morse on/off keying, USB/LSB =
   upper/lower sideband voice, AM, FM, and `data` for all digital modes).
 - **Slice**: one receive channel inside the radio. The radio can run several at the
-  same time. The bridge reports the lowest-index active one.
+  same time. The bridge reports the transmit slice (the lowest index among TX slices),
+  else the lowest-index active slice.
 - **Key-up / keying line**: the transceiver's transmit-request signal path — the wire
   that switches the amplifier into transmit. The PA amplifies only while this line is
   active, so a relay in this line works as the PA arm interlock.
@@ -379,9 +430,16 @@ From PRD 02 §0.1. Candidate home: appendix of `docs/conventions/band-mode-refer
   some frequency.
 - **Maidenhead locator / grid square**: a ham-radio geographic encoding. 4 characters
   denote a 2°×1° "square", 6 characters a ~5′×2.5′ "subsquare".
-- **Shari**: the Raspberry Pi (192.168.1.139) that hosts the station's services.
-- **shack-pc**: the Windows PC in the radio shack that hosts the interactive UHF
-  rotator console.
+- **Shari**: a Raspberry Pi 4 (192.168.1.139). It was the original service host and now
+  runs only spid-ercm-rotator-bridge, hf-mqtt-capture, SvxLink and HamClock (updated
+  2026-10-23).
+- **scmino**: a Raspberry Pi CM5 (192.168.1.178). It hosts most station bridges and logic
+  slots, the station Mosquitto mirror, hf_console web, testui, vhfcam-restream and the
+  station portal.
+- **shack-pc** (bwpc, 192.168.1.197): the Windows PC in the radio shack. It runs the
+  DXLog/Log4OM logger, PstRotator, OscarWatch and winpc-power-bridge (`power/shack-pc`,
+  sleep/wake). The UHF pan/tilt console it used to host (pelcobridge2) was retired
+  2026-10-10. (Updated 2026-10-23.)
 
 ## [unique] Resolved since the PRD (do not re-open)
 
@@ -401,14 +459,25 @@ PRD 00 §7 items later resolved in code, recorded so nobody re-opens them:
   re-sends the self-check disable (preset set 105) after every successful link
   reopen, not once per process start (`pelcobridge2/internal/control/engine.go`,
   `resendSelfCheckDisable`).
-- **UHF rotator auto-heal gives up (PRD 00 §6).** FIXED: the engine now auto-heals
-  by reopening with a `reopenCooldown` (2 s throttle) instead of giving up
-  permanently after one failure (`pelcobridge2/internal/control/engine.go`).
+- **UHF rotator auto-heal gives up (PRD 00 §6).** NOT fixed before retirement:
+  `onReadErr` reopened once per read error (2 s `reopenCooldown` throttle) and gave up
+  after a failed reopen until a manual ctrl+r. Moot since 2026-10-10 (component
+  removed); see the defect entry at the top of this file.
 - **Broker topology (PRD 00 §7.2).** Resolved in the docs and merged to main: the
   shack-local Mosquitto on shari (192.168.1.139:1883) is authoritative for
   `muehle/#`, bridged to the HA broker at 192.168.1.50 (see
   `docs/conventions/mqtt-topology.md`). Deployment to shari was still pending as of
   2026-09-03 per project memory.
+  Update (2026-10-23): this was never deployed on shari, which runs no Mosquitto. The
+  station broker runs on scmino (192.168.1.178:1883). It is bridged to the HA broker
+  192.168.1.50 as a transitional `muehle/#` mirror in both directions. Per
+  `mqtt-broker/CLAUDE.md` (as of 2026-10-18), every client except M5 Stamp PLC #1 and
+  shelly-power-bridge with its Shelly plugs still connects to `.50`. The
+  split-direction design in `docs/conventions/mqtt-topology.md` is the target, with
+  scmino in place of shari, not the live state. The repo is ambiguous for powerseq and
+  ultrabridge: their `deploy.sh` defaults are `tcp://127.0.0.1:1883`, which on scmino is
+  the scmino broker. Root `CLAUDE.md` puts them on `.50` with the other services, but their
+  live configs are not verified.
 - **Legacy bridge naming (PRD 00 §7.12).** Tracked in
   `docs/conventions/naming.md` (legacy → target: `flexbridge` → `flex-radio-bridge`,
   `ultrabridge` → `ultrabeam-ant-ctrl-bridge`); rename deferred because it touches
@@ -441,9 +510,11 @@ Each vector states the surface, the exposure, and the decision:
    path before any serial write** (plan R10 — the no-auth posture governs *who*
    reaches the ports, not what magnitudes pass through); axis-liveness refusal
    (motion toward a dead port is refused to the client, never queued, R9); the
-   ~1° deadband no-op skip keeps a misbehaving client from hammering the hardware
-   (R12); and the port is deliberately **distinct from the hamlib default
-   `:4533`** (once the retired pelcobridge2's rotctld on shack-pc) so a client
+   per-axis deadband no-op skip (default az 4°, el 1°; 10e915e) keeps a misbehaving
+   client from hammering the hardware (R12); and the port is deliberately **distinct
+   from the hamlib default `:4533`** (once the retired pelcobridge2's rotctld on
+   shack-pc; since 2026-09-17, `:4533` on shari is this bridge's own GS-232B listener,
+   see the addendum below) so a client
    pointed at "the rotator" cannot silently reach the wrong antenna system. Revisit only if the shack LAN stops being a trusted segment.
 2. **PstRotator UDP `:12041` on shari, unauthenticated + source-spoofable.** UDP
    has no connection state; the reply goes to the datagram's source IP at
@@ -486,6 +557,15 @@ Each vector states the surface, the exposure, and the decision:
    next update; the durable halt is the client or the breaker, never the STOP
    button alone.
 
+**Addendum (2026-10-23) — GS-232B TCP `:4533` on shari (listener since 2026-09-17, 6fb816f), unauthenticated (bind
+`0.0.0.0`, enabled by default).** This is the PstRotator/N1MM integration path. `C`/`C2`
+return readback to any TCP client, `W`/`M` give full goto authority, and `S`/`SA`/`SE`
+stop both axes. There is no handshake and no credentials. It feeds the same mount façade
+as vectors 1 and 2, so the same boundings apply: travel limits (R10), liveness refusal
+(R9) and deadband (R12). Refusals are only logged, because GS-232 has no error reply.
+*Decision pending: the operator has not yet recorded accept or mitigate.* The heading
+above and the verdict below count five vectors and do not yet cover this one.
+
 **Register verdict:** all five vectors accepted, each with its boundings stated
 above. No vector is mitigated by adding protocol-level auth (the protocols cannot
 carry it); the mitigations that exist are magnitude (limits), liveness (refusal
@@ -493,7 +573,7 @@ not queueing), wear (deadband), misdirection (distinct ports), and consequence
 (physical fallback). A future revision of this register is required if any
 listener moves off the shack LAN, if the shack LAN's trust model changes, or if
 the rotators gain a protocol with real auth. The rotator `/cmd` grammar
-(`goto`/`stop`) is likewise intentionally docs-only — the read-only `expose`
+(`goto`/`stop`/`park`) is likewise intentionally docs-only — the read-only `expose`
 carries no command metadata (station-integration-model §7.2 +
 `spid-ercm-rotator-bridge/CLAUDE.md`) — so a future bus-native automation that
 needs self-describing motion metadata is a revision trigger of the same register.
@@ -523,8 +603,11 @@ actuates real hardware:
 - **Native API (ESPHome)** — *mitigated*: encrypted with an `api_key`; adoption
   requires deliberate pairing. Manual bring-up surface only; nothing in the
   station depends on it.
-- **MQTT `/cmd` via the shack broker (and the HA bridge's inbound
-  `muehle/+/+/cmd` forwarding)** — *accepted as-is* (same posture as the rotator
+- **MQTT `/cmd` via the station broker** (since 3c2941d, 2026-09-14, the firmware
+  config targets the HA broker 192.168.1.50 directly, `xphasectrl.yaml` `mqtt_broker`;
+  this takes effect at the PLC #2 USB flash. Any `.50` client with write rights reaches
+  `/cmd` directly, with no HA-bridge forwarding hop, and the scmino broker's both-ways
+  `muehle/#` mirror also forwards a `/cmd` published there) — *accepted as-is* (same posture as the rotator
   vectors 3/4 above): any broker account with `hf`-class write rights can set
   polarization. Accepted because polarization switching is low-consequence
   (relay phase, no mechanical motion) and operator-driven by design; the
@@ -542,9 +625,15 @@ actuates real hardware:
 
 > **RESOLVED (2026-09-23, receive-only pivot):** remote TX control was REMOVED
 > from the bridge and the console — the `uhf/radio` `/cmd` set is now exactly
-> `audio_on`/`audio_off`/`power_on`/`monitor_on`/`monitor_off`, and there is no
-> LAN CI-V command path at all. Control-exposure vectors (1, 2, 3, 4, 5, 8, 9)
-> are MOOT. The credential vectors (6, 7) stand for the audio-session login.
+> `audio_on`/`audio_off`/`power_on`/`park_radio`/`monitor_on`/`monitor_off`
+> (`park_radio`, added 2026-10-08 in 438dab8, retunes through the loopback rigctld on
+> scmino and is not a TX path; `power_on` and `monitor_*` need `serial.device`, which is
+> unset on the scmino deploy by design), and there is no LAN CI-V command path at all.
+> Control-exposure vectors (1, 2, 3, 4, 5, 8, 9) are MOOT. The credential vectors
+> (6, 7) stand for the audio-session login. Vector 10's read-only expose posture still
+> holds (the PTT/arm buttons it guarded against no longer exist), and vector 11 (the
+> `bwbroker` indirection) still applies: the bridge still addresses
+> `tcp://bwbroker:1883`, and `deploy.sh` still gates on its resolution.
 > Any future TX path (serial CI-V per the operator decision) must re-run this
 > review. The block below is kept as the audit record.
 
@@ -619,6 +708,14 @@ Each vector states the surface, the exposure, and the decision:
    plaintext MQTT). Boundings: broker-account scoping and a future `tls://` path;
    the deviation from the topology doc's loopback rule is annotated in the
    addressing table (see `docs/conventions/mqtt-topology.md`, vector 11's gate).
+   Update (2026-10-23): the bridge has run on scmino since 2026-10-18, and shari runs
+   no broker, so the "every other shari service uses `127.0.0.1`" contrast no longer
+   holds. Many station services default to the HA broker `.50` over plaintext LAN
+   `tcp://` in their `deploy.sh` (for example antmode, beamsteer, flexbridge, testui and
+   stationportal; repo defaults, not live-verified), so this hop is common practice, not
+   an exception. Since the receive-only pivot the bridge has no `arm`/`ptt` actions, but
+   the `hf` account still reaches every slot's `/cmd`. The exposure and its acceptance
+   under the house-LAN trust posture are unchanged.
 8. **The standing-armed-permit exposure.** Surface: the `armed` flag. Exposure:
    armed is the only session-hold primitive — while armed, the bridge holds the
    radio's single LAN session open and blocks idle-disconnect, so a forgotten arm
@@ -650,6 +747,13 @@ Each vector states the surface, the exposure, and the decision:
     business). Bound: deploy gate 2 verifies resolution (`getent hosts bwbroker`)
     before config is seeded; the exception to the topology addressing rule is
     annotated in `docs/conventions/mqtt-topology.md`.
+    Update (2026-10-23): the split-direction shack broker never went live. The repo does
+    not record what `bwbroker` resolves to on scmino, where the bridge has run since
+    2026-10-18 (mqtt-topology.md: the 2026-09-26 incident note says `.50`, and
+    logger-spot-bridge/CLAUDE.md records NXDOMAIN on the UniFi DNS; verify with
+    `getent hosts bwbroker`). While the scmino broker mirrors `muehle/#` both ways, either
+    `.50` or `.178` is correct today. The stranding risk returns only once clients have
+    moved to scmino and its bridge is narrowed to the split mapping.
 
 **Register verdict:** all eleven vectors accepted under the house-LAN trust posture,
 each with its boundings stated above — and vectors 2, 4, and 9 are conditional on the
@@ -687,8 +791,10 @@ command — the driver's boot path issues nothing before the first `C2` poll;
 do not reintroduce a firmware probe. Elevation calibration of the physical
 rotor through the remapped path and the 1° deadband are fine at the bench
 (2026-09-17); travel range confirmed 0–180°, configured `max=180`. The az slot
-runs against a placeholder serial path (truthful
-`device_online:false`) until the SPID azimuth bench bring-up.
+ran against a placeholder serial path (truthful
+`device_online:false`) until the SPID azimuth bring-up. The SPID has been on its real
+adapter on shari (FTDI FT231X) since commissioning began on 2026-09-17 (b723bdb), with
+live slews recorded from 2026-09-20 (93654d3, 5a6fc8e).
 
 ## [decision] HF antenna mode (storm / maintenance) — lock authority and policy (2026-10-22)
 
@@ -743,6 +849,9 @@ changed the following; the contract has the normative wording.
    a manned phase without `stopping` stays manned while `hf/radio` is live, until the radio
    has not transmitted for 30 min. This is a **workaround** in antmode: the root fix belongs
    in powerseq (persist its phase across a restart); remove the rule when that lands.
+   *Note (2026-10-23):* the root fix landed in 1cabf4a. Per the follow-up under item 4,
+   once it is deployed the rule can be relaxed to an `idle` with a `fault` after
+   `starting`/`waking`. antmode is not changed yet.
 10. **`power_hold` holds powerseq's idle logic, not only during a borrow.** While it is
     true powerseq re-baselines watch changes (never activity) and runs no idle action
     (standby, wake, idle shutdown); operator `start`/`stop` still work. True while a borrow
@@ -758,7 +867,9 @@ changed the following; the contract has the normative wording.
 12. **The restore is skipped only after an operator-driven powerseq phase.** A borrow is
     left unrestored (takeover) only when powerseq was seen in `starting`, `waking`,
     `running`, `stopping` or `entering_standby` during it. `idle`/`standby` alone are not a
-    takeover (their intent is power off, and powerseq restarts in `idle`). The restore is
+    takeover (their intent is power off; before 1cabf4a a powerseq restart always came back
+    in `idle`; with 1cabf4a deployed it comes back in its saved phase, or in `idle` after a
+    killed sequence (with a `fault`) or a missing state file). The restore is
     sent even when the plug already reads `off` (shelly-power-bridge replays the retained
     intent on reconnect).
 13. **ultrabridge persists the retract latch** (`<state_dir>/retract.json`, with the
@@ -781,9 +892,6 @@ changed the following; the contract has the normative wording.
     and forgets that evidence whenever the rotator goes offline — so an old or reset
     target can never read as "parked" before the boom moved. A nudge before the bridge
     sent its park ends in `failed` (safe; `repark`).
-18. **A storm park still slewing at `rotate_timeout_s`** (the bridge waited for a lull)
-    keeps its borrowed power until the rotator stops, for at most one more
-    `rotate_timeout_s`; the brakeless boom is never cut mid-slew.
 16. **antennaselect re-sends the unlock re-extend when it stalls:** once per unlock, when
     `hf/ant-ctrl/state` reports `device_online`, `retracted` and no `lock` for 15 s (the
     frequency was refused under a stale lock in mirror replay order), as well as on an
@@ -792,3 +900,6 @@ changed the following; the contract has the normative wording.
     direction), `storm.fallback_az` 150° (stale or no wind data), `maintenance.park_az` 0°.
     They are seeded through `antmode/deploy.sh` (`NINA_ARS`, `DWD_STATION`,
     `FALLBACK_AZ`, `MAINT_AZ`); the repo defaults stay empty / 0.
+18. **A storm park still slewing at `rotate_timeout_s`** (the bridge waited for a lull)
+    keeps its borrowed power until the rotator stops, for at most one more
+    `rotate_timeout_s`; the brakeless boom is never cut mid-slew.
