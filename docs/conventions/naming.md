@@ -48,8 +48,11 @@ A bridge that fronts one specific piece of hardware is named
 | M5Stamp PLC family (embedded relay/DI controller, custom firmware) | `m5stamp` | `m5stamp-hf-ctrl` (firmware) |
 | M5Stack Dial family (round-face ESP32-S3 control knob, custom firmware) | `m5dial` | `m5dial-hf-rotctrl` (firmware) |
 | M5Stack Chain DualKey (two-key ESP32-S3 with RGB LEDs, custom firmware) | `m5dualkey` | `m5dualkey-hf-antctrl` (firmware) |
-| Icom CI-V / RS-BA1 LAN-controlled rigs (IC-9700 today; the same protocol family covers other RS-BA1 Icoms) | `icom9700` | `icom9700-radio-bridge` |
+| Icom CI-V / RS-BA1 rigs (IC-9700 today, receive-only: RS-BA1 LAN session for RX audio only + read-only serial CI-V telemetry; the same protocol family covers other RS-BA1 Icoms) | `icom9700` | `icom9700-radio-bridge` |
 | OscarWatch satellite tracker (software source — its Satellite-link WebSocket) | `oscarwatch` | `oscarwatch-sattrack-bridge` |
+| SPID Rot1Prog az + ERC-M (GS-232B) el, one compound sat-ops mount | `spid-ercm` (compound devtag covering both fronted device families) | `spid-ercm-rotator-bridge` |
+| Shack logger UDP broadcasts (DXLog / Log4OM; N1MM-family `lookupinfo`) — software source | `logger` | `logger-spot-bridge` (slot `hf/spots`, /meta role `bandmap`) |
+| Windows shack PC (sleep/wake agent) | `winpc` | `winpc-power-bridge` (slot `power/shack-pc`, /meta role `pc-power`) |
 
 > **Software sources.** A bridge that fronts an application rather than hardware takes
 > the application as its `<devtag>` (the thing whose protocol it speaks) and the
@@ -60,21 +63,26 @@ A bridge that fronts one specific piece of hardware is named
 > **Deviation — `icom9700` env prefix:** the env-overload prefix is `ICOM9700_`
 > rather than the dir-derived `ICOM9700_RADIO_BRIDGE_`. The longer form is
 > unwieldy on a single-purpose module and the model digit is the identity that
-> matters (a future IC-9100 or IC-905 bridge would be its own module with its
-> own prefix, per this table's family rule). Plan-pinned (KTD record); every
-> other overload prefix in the repo follows the derived form.
+> matters (a future IC-9100 or IC-905 bridge would be its own module with its own prefix).
+> The env prefix is plan-pinned (KTD record); every other overload prefix in the
+> repo follows the derived form, except vhfcam-restream (`VHFCAM_*`, not
+> `VHFCAM_RESTREAM_*`). ultrabridge, antennaselect, antmode, beamsteer, hadiscovery
+> and hf-mqtt-capture have no env overrides; their MQTT password is in the 0600 TOML.
 
 > **Embedded firmware is not a Go bridge.** The M5Stamp PLC row names the *firmware*
 > project, not a `-bridge` binary — like the ant-switch, the M5 Stamp's custom firmware
 > speaks the canonical schema directly over MQTT (device, adapter, and host collapsed
 > into one embedded node). The firmware repo name follows `<devtag>-<role-or-site>-…`;
 > `m5stamp-hf-ctrl` fronts the HF station's `pa-arm` + `switch` slots (a compound device,
-> integration-model §3). The same family fronts `uhf/pol-ctrl` on a second M5 Stamp.
+> integration-model §3). The same family fronts `uhf/pol-ctrl` on a second M5 Stamp
+> (`m5stamp-pol-ctrl`, an ESPHome config rather than custom firmware).
 > The `m5dial` row is the same pattern applied to a *consumer*: `m5dial-hf-rotctrl`
 > fronts no slot at all — it is a physical control head for the HF `rotator` slot
-> 
-(consumer + `/cmd` stimulator), so the `-bridge` suffix and the slot-derived
+> (consumer + `/cmd` stimulator), so the `-bridge` suffix and the slot-derived
 > naming rules do not apply to it either.
+> The `m5dualkey` row (`m5dualkey-hf-antctrl`) follows the same consumer pattern: it
+> fronts no slot and publishes `/cmd` to `hf/ant-ctrl` (direction keys) and `hf/radio`
+> (DVK memory 2).
 
 > **Deviation — `waveshare_relay`:** the `<devtag>` for this row uses an underscore
 > rather than a hyphen (`waveshare_relay` vs. `waveshare-relay`). This is a deliberate
@@ -82,8 +90,9 @@ A bridge that fronts one specific piece of hardware is named
 > family name is shared with other WaveShare boards that are not relay controllers.
 > Underscoring the *function* suffix (`relay`) within the devtag keeps a future
 > `waveshare-display-…` or `waveshare-io-…` family free to land under `waveshare-…`
-> without colliding. The dir name, env overload prefix, systemd unit, and binary all
-> follow from the devtag as usual.
+> without colliding. Only the dir name follows from the devtag: the component is an
+> ESPHome config (`esphome/station-at1.yaml`) running on the board, so there is no
+> binary, systemd unit or env-overload prefix.
 
 ### Derived names (must follow)
 
@@ -100,16 +109,33 @@ A bridge that fronts one specific piece of hardware is named
 
 ## Exceptions (keep descriptive, no device prefix)
 
-- **Logic slots** with no device — `antennaselect` (the reconciler), `hadiscovery` (the HA
-  discovery consumer). They are not device bridges.
+- **Logic slots** with no device — `antennaselect` (the reconciler, `hf/antenna-select`),
+  `hadiscovery` (the HA discovery consumer, `hf/discovery`), `powerseq` (the
+  `hf/power-seq` sequencer), `beamsteer` (the `hf/beam-steer` smart-rotation slot) and
+  `antmode` (the `hf/ant-mode` storm/maintenance lock). They are not device bridges.
+- **Tools and services that are not slots** keep descriptive names: `testui`,
+  `stationportal`, `hf-mqtt-capture`, `vhfcam-restream` (minimal `/status`/`/state` on
+  `muehle/hf/vhfcam`) and the hf_console web channel (`hf-console-web`). Where they run
+  as stationa systemd services, unit = install dir = service user = dir name, except
+  `hf-console-web` (see the deviations below). Infra is out of scope for the derived
+  names: `mqtt-broker` configures the distro `mosquitto` unit, and `rigctld-ic9700`
+  (`icom9700-radio-bridge/rigctld-scmino/`) is a stock hamlib rigctld unit with
+  `DynamicUser` and no `/opt` dir.
+- **Recorded derived-name deviations:** `antennaselect` installs as unit, service user
+  and install dir `antenna-select` (`/opt/antenna-select`, config `/etc/antenna-select`);
+  its binary and Go module stay `antennaselect`. The hf_console web channel is unit
+  `hf-console-web`, user `hfconsoleweb`, install dir `/opt/hf-console-web`.
+  `winpc-power-bridge` runs on the Windows shack PC as a hidden Task Scheduler task with
+  a logon trigger (no systemd unit, service user or `/opt` dir).
 
 ---
 
 ## Legacy names (rename TODO, deferred)
 
-The existing bridges predate this convention. They are **not force-renamed** in place —
-renaming touches live systemd units, install dirs, deploy paths, and every doc reference,
-so it is a deliberate, separate migration. New bridges adopt the convention starting with
+`flexbridge` and `ultrabridge` predate this convention and are **not force-renamed** in
+place — renaming touches live systemd units, install dirs, deploy paths, and every doc
+reference, so it is a deliberate, separate migration. `acombridge`, `wrcrotorbridge` and
+`antswitchbridge` were renamed in 2026-07. New bridges adopt the convention starting with
 `atr1k-tuner-bridge`. When the legacy rename happens, use the **family tag** (not the model
 number) per the rule above.
 
@@ -117,14 +143,22 @@ number) per the rule above.
 |---|---|---|
 | `flexbridge` | `flex-radio-bridge` | device (legacy; SmartSDR family) |
 | `ultrabridge` | `ultrabeam-ant-ctrl-bridge` | device (legacy; Ultrabeam family) |
-| `acombridge` | `acom1200s-pa-bridge` | device (legacy; ACOM serial family; **renamed model-specific by choice, deviating from the family-tag rule above**) |
-| `wrcrotorbridge` | `wrc-rotator-bridge` | device (legacy; fronts the WRC controller; **renamed**) |
+| _(renamed 2026-07-13)_ `acombridge` | `acom1200s-pa-bridge` | device (ACOM serial family; **model-specific by choice, deviating from the family-tag rule above**) |
+| _(renamed 2026-07-14)_ `wrcrotorbridge` | `wrc-rotator-bridge` | device (fronts the WRC controller) |
 | `antennaselect` | — | logic slot (exception) |
 | `hadiscovery` | — | logic slot (exception) |
 | _(new)_ `atr1k-tuner-bridge` | `atr1k-tuner-bridge` | device (convention; ATR-1000 / N7DDC family) |
-| _(renamed)_ `antswitchbridge` | `waveshare_relay-antswitch-bridge` | device (formerly contract-first exception; **renamed 2026-07** to follow the family-tag pattern; `_` in `waveshare_relay` is a recorded deviation, see §1) |
+| _(renamed)_ `antswitchbridge` | `waveshare_relay-antswitch-bridge` | device (formerly contract-first exception; **renamed 2026-07** to follow the family-tag pattern; `_` in `waveshare_relay` is a recorded deviation, see the deviation notes under "Device bridges" above) |
 | _(new)_ `shelly-power-bridge` | `shelly-power-bridge` | device (convention; Shelly family; fronts `power/psu-13v8` + `power/antennas` + `power/shack-pc-mains`) |
 | _(new)_ `m5stamp-hf-ctrl` | `m5stamp-hf-ctrl` | embedded firmware (M5Stamp family; fronts `hf/pa-arm` + `hf/switch`) |
+| _(new)_ `m5stamp-pol-ctrl` | `m5stamp-pol-ctrl` | embedded ESPHome config (M5Stamp family; fronts `uhf/pol-ctrl`) |
+| _(new)_ `m5dial-hf-rotctrl` | `m5dial-hf-rotctrl` | embedded firmware (M5Stack Dial; consumer + `/cmd` stimulator of `hf/rotator`, not a slot) |
+| _(new)_ `m5dualkey-hf-antctrl` | `m5dualkey-hf-antctrl` | embedded firmware (M5Stack Chain DualKey; consumer + `/cmd` stimulator of `hf/ant-ctrl` and `hf/radio`, not a slot) |
 | _(new)_ `powerseq` | — | logic slot (exception; the `hf/power-seq` sequencer) |
-| _(new)_ `icom9700-radio-bridge` | `icom9700-radio-bridge` | device (convention; Icom CI-V/RS-BA1 family; fronts `muehle/uhf/radio`; `ICOM9700_` env prefix is a recorded deviation, see §1) |
+| _(new)_ `beamsteer` | — | logic slot (exception; the `hf/beam-steer` smart-rotation slot) |
+| _(new)_ `antmode` | — | logic slot (exception; the `hf/ant-mode` storm/maintenance lock) |
+| _(new)_ `icom9700-radio-bridge` | `icom9700-radio-bridge` | device (convention; Icom CI-V/RS-BA1 family; fronts `muehle/uhf/radio`; `ICOM9700_` env prefix is a recorded deviation, see the deviation notes under "Device bridges" above) |
 | _(new)_ `oscarwatch-sattrack-bridge` | `oscarwatch-sattrack-bridge` | software source (convention; OscarWatch Satellite link; fronts `muehle/uhf/sat-track`) |
+| _(new)_ `spid-ercm-rotator-bridge` | `spid-ercm-rotator-bridge` | device (fronts `uhf/az-rotator` + `uhf/el-rotator`) |
+| _(new)_ `logger-spot-bridge` | `logger-spot-bridge` | software source (fronts `hf/spots`) |
+| _(new)_ `winpc-power-bridge` | `winpc-power-bridge` | device agent on bwpc (fronts `power/shack-pc`; Task Scheduler, no systemd) |

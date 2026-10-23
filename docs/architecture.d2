@@ -50,19 +50,19 @@ bus: {
   style.stroke: dimgray
   style.font-size: 16
 
-  shari-broker: {
-    label: "Mosquitto (shack broker)\nshari 192.168.1.139:1883\nauthoritative for muehle/#"
+  scmino-broker: {
+    label: "Mosquitto (station broker)\nscmino 192.168.1.178:1883\nbridged both ways to .50 (muehle/# mirror)"
     class: infra
   }
 
   ha-broker: {
-    label: "HA Mosquitto\n192.168.1.50:1883"
+    label: "HA Mosquitto\n192.168.1.50:1883\nmost services still connect here (2026-10-18)"
     class: infra
   }
 }
 
-bus.shari-broker -> bus.ha-broker: "bridge connection\nmuehle/# replicated\n(bridge acct)"
-bus.ha-broker <- shari.hadiscovery: "reads /meta expose\n(renders HA discovery)"
+bus.scmino-broker <-> bus.ha-broker: "bridge connection\nmuehle/# mirrored both ways\n(remote login hf; repo default stationa-bridge)"
+bus.ha-broker <- scmino.hadiscovery: "reads /meta expose\n(renders HA discovery)"
 bus.ha-broker <-> ha: "HA MQTT integration\n(device entities)"
 
 ha: {
@@ -70,25 +70,31 @@ ha: {
   class: ui
 }
 
-# ---------------- shari — logic slots & passive consumers ----------------
+# ---------------- scmino — logic slots & passive consumers ----------------
 
-shari: {
-  label: "shari (Raspberry Pi, 192.168.1.139)\nsystemd services, journald consolidated"
+scmino: {
+  label: "scmino (Raspberry Pi CM5, 192.168.1.178)\nsystemd services, journald consolidated"
+  label.near: outside-top-center
   style.fill: snow
   style.stroke: dimgray
 
-  broker: {
-    label: "mosquitto\n127.0.0.1:1883 local\nbridged to HA broker"
-    class: infra
-  }
-
   antennaselect: {
-    label: "antennaselect\n(policy — wiring map:\nant/ultrabeam p3, ant/fan-dipole p6, ant/dummy-load p1)"
+    label: "antennaselect\n(policy — wiring map as seeded:\nant/ultrabeam p4 (on-site confirmation open),\nant/fan-dipole p6, ant/dummy-load p1)"
     class: logic
   }
 
   powerseq: {
     label: "powerseq\n(ordered startup/shutdown,\ndelay + liveness confirmations)"
+    class: logic
+  }
+
+  beamsteer: {
+    label: "beamsteer\n(smart rotation — hf/beam-steer;\nPstRotator UDP :12050)"
+    class: logic
+  }
+
+  antmode: {
+    label: "antmode\n(storm/maintenance lock — hf/ant-mode;\nborrows power/antennas)"
     class: logic
   }
 
@@ -101,24 +107,88 @@ shari: {
     label: "testui\n(MQTT relay + schema-aware\nbrowser UI; /cmd stimulator)"
     class: ui
   }
+
+  hfweb: {
+    label: "hf_console web, :8091\nWebSocket→MQTT bridge"
+    class: ui
+  }
+
+  portal: {
+    label: "stationportal, :80\npassive muehle/# consumer"
+    class: ui
+  }
+
+  vhfcam: {
+    label: "vhfcam-restream, :8083\noverlay consumer; muehle/hf/vhfcam"
+    class: ui
+  }
+
+  rigctld: {
+    label: "rigctld-ic9700\nhamlib, loopback :4532\n(IC-9700 park retune)"
+    class: passive
+  }
 }
 
-bus.shari-broker - shari.broker: "same process, two views\n(LAN :1883 ↔ localhost)"
+shari: {
+  label: "shari (Raspberry Pi 4, 192.168.1.139)\nsystemd services, journald consolidated"
+  label.near: outside-top-center
+  style.fill: snow
+  style.stroke: dimgray
 
-shari.antennaselect <- bus: "consume:\nhf/radio, hf/ant-ctrl,\nhf/ant-switch state\n(ANDs /status + /state.device_online)"
-shari.antennaselect -> bus: "cmd → hf/ant-switch"
-shari.powerseq <-> bus: "orchestrates\npower/master, power/psu-13v8,\nhf/pa-arm, hf/switch\n→ hf/power-seq"
-shari.testui <-> bus: "subscribe muehle/#\npublish /cmd"
+  spid: {
+    label: "spid-ercm-rotator-bridge\nSPID az + GS-500 el via ERC-M (serial)\nuhf/az-rotator + uhf/el-rotator;\nrotctld :4534, PstRotator UDP :12041, GS-232B TCP :4533"
+    class: bridge
+  }
+
+  capture: {
+    label: "hf-mqtt-capture\n(passive muehle/hf/# recorder)"
+    class: ui
+  }
+}
+
+bwpc: {
+  label: "bwpc (Windows shack PC, 192.168.1.197)"
+  label.near: outside-top-center
+  style.fill: snow
+  style.stroke: dimgray
+
+  winpc: {
+    label: "winpc-power-bridge\nWindows agent (Task Scheduler at logon)\nsleep cmd; offline = asleep"
+    class: bridge
+  }
+
+  oscarwatch: {
+    label: "OscarWatch\n(Satellite link ws://192.168.1.197:7373/)"
+    class: device
+  }
+
+  loggers: {
+    label: "DXLog / Log4OM\n(UDP broadcasts; PstRotator out)"
+    class: device
+  }
+}
+
+scmino.antennaselect <- bus: "consume:\nhf/radio, hf/ant-ctrl,\nhf/ant-switch, hf/ant-mode state\n(ANDs /status + /state.device_online)"
+scmino.antennaselect -> bus: "cmd → hf/ant-switch;\nfollow → hf/ant-ctrl, hf/pa, hf/tuner"
+scmino.powerseq <-> bus: "orchestrates\npower/shack-pc-mains, power/psu-13v8,\nhf/switch, power/antennas, hf/pa-arm\n(+ WOL / power/shack-pc sleep)\n→ hf/power-seq"
+scmino.beamsteer <-> bus: "hf/beam-steer;\ncmd → hf/rotator, hf/ant-ctrl"
+scmino.antmode <-> bus: "hf/ant-mode (lock read by bridges,\nantennaselect, beamsteer, powerseq);\nborrows power/antennas"
+scmino.testui <-> bus: "subscribe muehle/#\npublish /cmd"
+scmino.hfweb <-> bus: "WebSocket → MQTT\n(browser clients)"
+scmino.portal <- bus: "subscribe muehle/#\n(passive)"
+scmino.vhfcam <-> bus: "muehle/hf/vhfcam\n(overlay data in, status out)"
+shari.capture <- bus: "records muehle/hf/#"
+bwpc.loggers -> scmino.beamsteer: "PstRotator UDP :12050"
 
 # ---------------- bridges ----------------
 
 bridges: {
-  label: "Device bridges (Go, paho + shared/mqtt, shared/schema)"
+  label: "Device bridges (Go, paho + shared/mqtt, shared/schema, shared/logging)\nrun on scmino"
   style.fill: honeydew
   style.stroke: seagreen
 
   flexbridge: {
-    label: "flexbridge\nFLEX-8400 (SmartSDR TCP)\ntune/band/mode, pan, mic profile"
+    label: "flexbridge\nFLEX-8400 (SmartSDR TCP)\nset_band/set_mode, DVK, mic profile;\ntuning state read-only"
     class: bridge
   }
   ultrabridge: {
@@ -138,7 +208,19 @@ bridges: {
     class: bridge
   }
   shelly: {
-    label: "shelly-power-bridge\nShelly plugs (wifi HTTP)\npower/master + power/psu-13v8"
+    label: "shelly-power-bridge\nShelly plugs (native MQTT)\npower/psu-13v8 + power/antennas\n+ power/shack-pc-mains"
+    class: bridge
+  }
+  icom9700: {
+    label: "icom9700-radio-bridge\nIC-9700 (RS-BA1 LAN, RX audio only)\npark_radio via rigctld; no remote TX"
+    class: bridge
+  }
+  satbridge: {
+    label: "oscarwatch-sattrack-bridge\nOscarWatch Satellite link (websocket)\nread-only"
+    class: bridge
+  }
+  spots: {
+    label: "logger-spot-bridge\nDXLog/Log4OM (UDP broadcasts)\noperator-keyed station feed"
     class: bridge
   }
 }
@@ -159,11 +241,15 @@ firmware: {
     class: bridge
   }
   plc2: {
-    label: "m5stamp-hf-ctrl — PLC #2\nX-Quad polarization"
+    label: "m5stamp-pol-ctrl — PLC #2\nESPHome, X-Quad polarization"
     class: bridge
   }
   m5dial: {
     label: "m5dial-hf-rotctrl\nM5Stack Dial control head\nanalog meter face + knob;\nown quadrature ISR (knob.h)"
+    class: ui
+  }
+  m5dualkey: {
+    label: "m5dualkey-hf-antctrl\nM5Stack Chain DualKey\nUltrabeam direction keys + DVK 2"
     class: ui
   }
 }
@@ -181,10 +267,14 @@ devices: {
   wrcdev: { label: "AF6SA WRC\n(websocket)"; class: device }
   atr: { label: "ATR-1000\n(binary websocket)"; class: device }
   switchhw: { label: "WaveShare 1:6\nrelay board"; class: device }
-  shellyhw: { label: "Shelly plugs ×2\n(master mains, 13.8 V PSU)"; class: device }
+  shellyhw: { label: "Shelly plugs ×3\n(13.8 V TRX PSU, antenna power,\nshack PC mains)"; class: device }
   plc1hw: { label: "M5 Stamp PLC #1"; class: device }
   plc2hw: { label: "M5 Stamp PLC #2"; class: device }
   uhfrot: { label: "X-Quad\npolarization"; class: device }
+  ic9700: { label: "Icom IC-9700\n(RS-BA1 LAN audio;\nCI-V serial via rigctld)"; class: device }
+  spidaz: { label: "SPID az rotator\n(serial, Rot1Prog)"; class: device }
+  gs500: { label: "GS-500 el rotator\nvia ERC-M (serial, GS-232B)"; class: device }
+  bwpchw: { label: "bwpc shack PC\n(sleep S3 / Wake-on-LAN)"; class: device }
 }
 
 antennas: {
@@ -193,7 +283,7 @@ antennas: {
   style.stroke: gray
   style.fill-pattern: dots
 
-  ant1: { label: "ant/ultrabeam\n(port 3)" }
+  ant1: { label: "ant/ultrabeam\n(port 4 as seeded;\non-site confirmation open)" }
   ant2: { label: "ant/fan-dipole 80/40\n(port 6)" }
   ant3: { label: "ant/dummy-load\n(port 1)" }
 }
@@ -201,11 +291,11 @@ antennas: {
 # ---------------- consumers on the LAN ----------------
 
 consumers: {
-  label: "LAN clients (192.168.1.139:1883)"
+  label: "LAN clients (tablet setup default: HA broker 192.168.1.50:1883)"
   style.fill: cornsilk
   style.stroke: darkgoldenrod
 
-  tablet: { label: "hf_console tablet\n(Flutter, console acct)" ; class: ui }
+  tablet: { label: "hf_console tablet\n(Flutter; broker .50 by setup default)" ; class: ui }
 }
 
 # ---------------- wiring: bridge ↔ bus ----------------
@@ -215,13 +305,19 @@ bridges.ultrabridge -> bus: "muehle/hf/ant-ctrl"
 bridges.acom1200s -> bus: "muehle/hf/pa"
 bridges.wrc -> bus: "muehle/hf/rotator"
 bridges.atr1k -> bus: "muehle/hf/tuner"
-bridges.shelly -> bus: "muehle/power/master\nmuehle/power/psu-13v8"
+bridges.shelly -> bus: "muehle/power/psu-13v8\nmuehle/power/antennas\nmuehle/power/shack-pc-mains"
+bridges.icom9700 -> bus: "muehle/uhf/radio"
+bridges.satbridge -> bus: "muehle/uhf/sat-track"
+bridges.spots -> bus: "muehle/hf/spots"
+shari.spid -> bus: "muehle/uhf/az-rotator\nmuehle/uhf/el-rotator"
+bwpc.winpc -> bus: "muehle/power/shack-pc"
 firmware.antswitch -> bus: "muehle/hf/ant-switch"
 firmware.plc1 -> bus: "muehle/hf/pa-arm\nmuehle/hf/switch"
 firmware.plc2 -> bus: "muehle/uhf/pol-ctrl"
 
 firmware.m5dial <-> bus: "muehle/hf/rotator\n(/cmd stimulator)"
-consumers.tablet <-> bus: "console acct"
+firmware.m5dualkey <-> bus: "muehle/hf/ant-ctrl, muehle/hf/radio\n(/cmd stimulator)"
+consumers.tablet <-> bus: "consumer + /cmd stimulator"
 
 # ---------------- wiring: bridge ↔ device ----------------
 
@@ -231,10 +327,19 @@ bridges.acom1200s -> devices.acom: "serial"
 bridges.wrc -> devices.wrcdev: "websocket"
 bridges.atr1k -> devices.atr: "binary websocket"
 firmware.antswitch -> devices.switchhw: "relay GPIO"
-bridges.shelly -> devices.shellyhw: "wifi HTTP"
+bridges.shelly -> devices.shellyhw: "native MQTT (same broker)\nGen2+: <id>/status/switch:0 + <id>/rpc\nGen1: shellies/<id>/relay/0 (+ /command)"
 firmware.plc1 -> devices.plc1hw: "same firmware, two slots"
-firmware.plc2 -> devices.plc2hw: "same firmware, two slots"
+firmware.plc2 -> devices.plc2hw: "ESPHome, one slot (uhf/pol-ctrl)"
 devices.plc2hw -> devices.uhfrot: "drives"
+bridges.icom9700 -> devices.ic9700: "RS-BA1 LAN (RX audio only)"
+scmino.rigctld -> devices.ic9700: "CI-V serial (park retune)"
+bridges.icom9700 -> scmino.rigctld: "park_radio"
+shari.spid -> devices.spidaz: "serial (Rot1Prog)"
+shari.spid -> devices.gs500: "serial (GS-232B)"
+bridges.satbridge -> bwpc.oscarwatch: "ws://192.168.1.197:7373/"
+bridges.spots -> bwpc.loggers: "UDP broadcasts (listen)"
+bwpc.winpc -> devices.bwpchw: "sleep (S3)"
+scmino.powerseq -> devices.bwpchw: "Wake-on-LAN"
 
 # ---------------- RF chain ----------------
 
@@ -257,7 +362,7 @@ layering: {
   label: "Control layering"
   style.fill: snow
   style.stroke: dimgray
-  l1: "policy: antennaselect, powerseq (logic slots, no device)" {
+  l1: "policy: antennaselect, powerseq, antmode, beamsteer (logic slots, no device)" {
     class: logic
   }
   l2: "actuator: bridges + firmware (own the devices)" {
@@ -271,7 +376,7 @@ layering: {
 
 legend: {
   label: "Legend"
-  go: "Go bridge" { class: bridge }
+  go: "Bridge (Go service or device firmware)" { class: bridge }
   logic: "Logic slot (no device)" { class: logic }
   dev: "Physical device" { class: device }
   ui: "UI / consumer" { class: ui }
