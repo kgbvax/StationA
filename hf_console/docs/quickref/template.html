@@ -90,28 +90,33 @@ function route(c, side, all, used, W) {
   return { y: cy, pts: [[near, cy]] };
 }
 
-// 1-D label placement: each crowded run of labels is centred on the mean of
-// its targets' heights, merging runs until none overlap, then clamped.
-function spread(want, gap, lo, hi) {
-  const runs = want.map((y, i) => ({ i: [i], top: y }));
+// 1-D label placement: label k (height h[k]) wants its centre at want[k].
+// Each crowded run of labels is centred on the mean of its targets' heights,
+// merging runs until none overlap (gap between neighbours), then clamped.
+function spread(want, h, gap, lo, hi) {
+  const n = want.length;
+  const off = [0];                       // centre offset of label k from its run's first centre
+  for (let k = 1; k < n; k++) off[k] = off[k - 1] + (h[k - 1] + h[k]) / 2 + gap;
+  let runs = want.map((y, i) => ({ a: i, b: i, top: y }));
+  const span = r => off[r.b] - off[r.a];
   for (let changed = true; changed;) {
     changed = false;
     for (let k = 0; k + 1 < runs.length; k++) {
-      const a = runs[k], b = runs[k + 1];
-      if (a.top + a.i.length * gap > b.top) {
-        const i = [...a.i, ...b.i];
-        const mean = i.reduce((m, j) => m + want[j], 0) / i.length;
-        runs.splice(k, 2, { i, top: mean - (i.length - 1) * gap / 2 });
+      const x = runs[k], y = runs[k + 1];
+      if (x.top + span(x) + (h[x.b] + h[y.a]) / 2 + gap > y.top) {
+        let mean = 0;
+        for (let j = x.a; j <= y.b; j++) mean += want[j] - (off[j] - off[x.a]);
+        runs.splice(k, 2, { a: x.a, b: y.b, top: mean / (y.b - x.a + 1) });
         changed = true;
         break;
       }
     }
   }
   const ys = [];
-  for (const r of runs) r.i.forEach((j, n) => ys[j] = r.top + n * gap);
-  const over = ys[ys.length - 1] - hi;
-  if (over > 0) for (let k = 0; k < ys.length; k++) ys[k] -= over;
-  for (let k = 0; k < ys.length; k++) ys[k] = Math.max(ys[k], lo + k * gap, k ? ys[k - 1] + gap : lo);
+  for (const r of runs) for (let j = r.a; j <= r.b; j++) ys[j] = r.top + off[j] - off[r.a];
+  const over = ys[n - 1] + h[n - 1] / 2 - hi;
+  if (over > 0) for (let k = 0; k < n; k++) ys[k] -= over;
+  for (let k = 0; k < n; k++) ys[k] = Math.max(ys[k], k ? ys[k - 1] + (h[k - 1] + h[k]) / 2 + gap : lo + h[0] / 2);
   return ys;
 }
 
@@ -139,12 +144,18 @@ function renderSheet(sheet, n, total) {
       .map(c => ({ c, rt: route(c, side, sheet.callouts, used, W) }))
       .sort((a, b) => a.rt.y - b.rt.y);
     if (!list.length) continue;
-    const ys = spread(list.map(o => oy + o.rt.y * s), 11 * MM, 4 * MM, r.height - 4 * MM);
+    // Place the labels first to measure them, then space them by height.
+    const lx = side === "l" ? 0 : r.width - colW;
+    const els = list.map(o => {
+      main.insertAdjacentHTML("beforeend",
+        `<div class="lbl ${side}" style="left:${lx}px;top:0;width:${colW}px"><b>${esc(o.c.title)}</b><span>${esc(o.c.text)}</span></div>`);
+      return main.lastElementChild;
+    });
+    const hs = els.map(e => e.getBoundingClientRect().height);
+    const ys = spread(list.map(o => oy + o.rt.y * s), hs, 2.2 * MM, 2 * MM, r.height - 2 * MM);
     list.forEach((o, k) => {
       const ly = ys[k];
-      const lx = side === "l" ? 0 : r.width - colW;
-      main.insertAdjacentHTML("beforeend",
-        `<div class="lbl ${side}" style="left:${lx}px;top:${ly}px;width:${colW}px;transform:translateY(-50%)"><b>${esc(o.c.title)}</b><span>${esc(o.c.text)}</span></div>`);
+      els[k].style.top = `${ly - hs[k] / 2}px`;
       const x0 = side === "l" ? colW + 1.5 * MM : r.width - colW - 1.5 * MM;
       const shotEdge = side === "l" ? ox : ox + sw;
       const knee = side === "l" ? ox - 2.5 * MM : ox + sw + 2.5 * MM;

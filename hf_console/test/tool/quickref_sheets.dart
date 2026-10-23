@@ -23,11 +23,8 @@ import 'package:hf_console/ui/widgets/dvk_panel.dart';
 import 'package:hf_console/ui/widgets/faults_bar.dart';
 import 'package:hf_console/ui/widgets/mercator_map_panel.dart';
 import 'package:hf_console/ui/widgets/mic_profile_row.dart';
-import 'package:hf_console/ui/widgets/pa_arm_row.dart';
-import 'package:hf_console/ui/widgets/pa_panel.dart';
 import 'package:hf_console/ui/widgets/pol_ctrl_panel.dart';
 import 'package:hf_console/ui/widgets/power_panel.dart';
-import 'package:hf_console/ui/widgets/sat_rotator_panel.dart';
 import 'package:hf_console/ui/widgets/station_schematic.dart';
 import 'package:hf_console/ui/widgets/status_pill.dart';
 import 'package:hf_console/ui/widgets/tuner_panel.dart';
@@ -250,7 +247,16 @@ DxSpotService _spots(String page) {
   return dx;
 }
 
-Seeded _running(String page) => Seeded(BusStore()..seedScenario(StationScenario.running), _spots(page), VhfcamService());
+/// The IC-9700 as it is at this station: the bridge has no serial CI-V port,
+/// so the monitor is off and no frequency is published.
+void _realUhfRadio(BusStore store) =>
+    store.applyState('muehle/uhf/radio', {'device_online': false, 'session_state': 'idle', 'monitor': false});
+
+Seeded _running(String page) {
+  final s = Seeded(BusStore()..seedScenario(StationScenario.running), _spots(page), VhfcamService());
+  _realUhfRadio(s.store);
+  return s;
+}
 
 Seeded _hf() {
   final s = _running('HF');
@@ -288,7 +294,8 @@ Seeded _cam() {
     online: true,
     status: const RadioStatus(
       bridgeOnline: true, sessionHeld: true, radioReady: true, audioStream: true, hint: '',
-      leds: {'bridge': 'on', 'session': 'on', 'radio': 'on', 'audio': 'on'},
+      // RADIO stays amber here: radio_responding needs the serial monitor.
+      leds: {'bridge': 'on', 'session': 'on', 'radio': 'unk', 'audio': 'on'},
       rec: RecStatus(enabled: true, state: 'recording', elapsedS: 754, remainingS: 1046, maxS: 1800, freeBytes: 41200000000),
     ),
   );
@@ -296,7 +303,10 @@ Seeded _cam() {
 }
 
 // ---------------------------------------------------------------------------
-// The sheets, in reading order.
+// The sheets, in reading order. A call-out earns its place only by telling a
+// guest operator something the label does not: an unlabeled control, a hidden
+// gesture, a side effect or interlock, what an automatic mode does here.
+// Facts were checked against the code (2026-10-24); keep them true.
 
 final quickrefSheets = <Sheet>[
   Sheet(
@@ -304,7 +314,11 @@ final quickrefSheets = <Sheet>[
     title: 'Overview',
     purpose: 'Find your way: pages, settings, link and fault status.',
     page: 'Station',
-    seed: () => Seeded(BusStore()..seedScenario(StationScenario.faults), _spots('Station'), VhfcamService()),
+    seed: () {
+      final s = Seeded(BusStore()..seedScenario(StationScenario.faults), _spots('Station'), VhfcamService());
+      _realUhfRadio(s.store);
+      return s;
+    },
     after: (tester, s) async {
       // Both halves of a dead link: the store's data gate and the banner's flag.
       s.store.markDisconnected();
@@ -313,17 +327,12 @@ final quickrefSheets = <Sheet>[
       await tester.tap(find.byTooltip('Settings'));
     },
     callouts: [
-      Callout('Page tabs', 'Switch page; underline marks current page',
-          UnionAnchor([ButtonAnchor('Station', inside: ConsoleScreen), ButtonAnchor('CAM', inside: ConsoleScreen)])),
-      Callout('Settings (gear)', 'Colours, locator, DX feed, camera URL', tooltipAnchor('Settings')),
-      Callout('LINK DOWN banner', 'Broker lost: data stale, commands not sent', typeAnchor(LinkStatusBanner)),
-      Callout('Status pill', 'Green OK · amber attention · red fault/offline', typeAnchor(StatusPill, inside: PowerPanel)),
-      Callout('FAULTS', 'Active faults red, cleared ones grey', typeAnchor(FaultsBar)),
-      Callout('Dark / Paper / Aether', 'Colour scheme, applied at once',
+      Callout('Settings (sliders icon)', 'Colours, locator, DX spots, camera URL', tooltipAnchor('Settings')),
+      Callout('LINK DOWN banner', 'This console lost the broker; bus commands dropped, not queued', typeAnchor(LinkStatusBanner)),
+      Callout('Status pill', 'Any one device down or unpowered turns the pill OFFLINE', typeAnchor(StatusPill, inside: PowerPanel)),
+      Callout('FAULTS', 'Grey: cleared, or antenna gear unpowered on purpose', typeAnchor(FaultsBar)),
+      Callout('Dark / Paper / Aether', 'Applies instantly; not saved, Dark again after restart',
           UnionAnchor([ButtonAnchor('Dark', inside: AlertDialog), ButtonAnchor('Aether', inside: AlertDialog)])),
-      Callout('DX spot callsign', "Map shows only this call's reports",
-          FinderAnchor(() => find.ancestor(of: find.text('DX spot callsign'), matching: find.byType(TextField)), 'DX spot callsign field')),
-      Callout('SAVE', 'Apply; restarts DX feed and camera', ButtonAnchor('SAVE', inside: AlertDialog)),
     ],
   ),
   Sheet(
@@ -333,33 +342,25 @@ final quickrefSheets = <Sheet>[
     page: 'HF',
     seed: _hf,
     callouts: [
-      Callout('Compass', 'Beam map; tap to turn the rotator', PointAnchor(typeAnchor(CompassPanel), 0.63, 0.59)),
-      Callout('Azimuthal / Mercator', 'Change map projection', UnionAnchor([tooltipAnchor('Azimuthal'), tooltipAnchor('Mercator')])),
-      Callout('Selected station', 'From the logger; tap to aim', ButtonAnchor('JA1XYZ ·', contains: true)),
-      Callout('FORWARD / 180° / BI-DIR', 'Flip beam electrically, no rotation',
-          UnionAnchor([ButtonAnchor('FORWARD', inside: UltrabeamPanel), ButtonAnchor('BI-DIR', inside: UltrabeamPanel)])),
-      Callout('AUTO (Ultrabeam)', 'Logger steers: flip or rotate as needed', ButtonAnchor('AUTO', inside: UltrabeamPanel)),
-      Callout('RETRACT', 'Pull elements in; always available', ButtonAnchor('RETRACT', inside: UltrabeamPanel)),
-      Callout('Antenna ports', 'Pick antenna; locked while transmitting',
+      Callout('Compass', 'Tap to aim; arrow = boom, cone = radiation lobe', PointAnchor(typeAnchor(CompassPanel), 0.63, 0.59)),
+      Callout('Spot filter (SSB ≥ 0dB)', 'Spot SNR gate follows radio mode: SSB 0 dB, CW −15 dB',
+          TextAnchor('SSB ≥', contains: true, inflate: 6)),
+      Callout('Azimuthal / Mercator', 'Map projection; beam and tap-to-aim on azimuthal only',
+          UnionAnchor([tooltipAnchor('Azimuthal'), tooltipAnchor('Mercator')])),
+      Callout('Selected station', 'Call keyed in DXLog/Log4OM; tap to aim at it', ButtonAnchor('JA1XYZ ·', contains: true)),
+      Callout('AUTO (beam steering)', 'Logger/map aims flip 180° if behind, turn only outside ±30°',
+          ButtonAnchor('AUTO', inside: UltrabeamPanel)),
+      Callout('Antenna ports', 'Change in RX only; 30-min idle grounds unless MANUAL tapped',
           UnionAnchor([ButtonAnchor('GND', inside: AntennaPanel), ButtonAnchor('FAN DIPOLE', inside: AntennaPanel)])),
-      Callout('AUTO / MANUAL', 'AUTO follows band; MANUAL holds your pick',
+      Callout('AUTO / MANUAL', 'Tapped MANUAL: no auto switching, no Ultrabeam/ATU band-follow',
           UnionAnchor([ButtonAnchor('AUTO', inside: AntennaPanel), ButtonAnchor('MANUAL', inside: AntennaPanel)])),
-      Callout('NORMAL / STORM / MAINT.', 'Lock antennas for storm or work',
+      Callout('NORMAL / STORM / MAINT.', 'STORM/MAINT.: ground, retract, park, lock until NORMAL; MAINT. ±5° nudge',
           UnionAnchor([ButtonAnchor('NORMAL', inside: AntModePanel), ButtonAnchor('MAINT.', inside: AntModePanel)])),
-      Callout('W FWD', 'Forward power, peak marker',
-          UnionAnchor([TextAnchor('W FWD', contains: true, inside: PaPanel), TextAnchor('1200', inside: PaPanel)])),
-      Callout('SWR', 'Reflected match, 1.0–4.0',
-          UnionAnchor([TextAnchor('SWR', contains: true, inside: PaPanel), TextAnchor('4.0', inside: PaPanel)])),
-      Callout('OPERATE / STANDBY', 'Put PA in line or bypass it',
-          UnionAnchor([ButtonAnchor('OPERATE', inside: PaPanel), ButtonAnchor('STANDBY', inside: PaPanel)])),
-      Callout('ARM PERMIT', 'Allow PA arming; tag says why not', typeAnchor(PaArmRow)),
-      Callout('BYPASS / TUNE MEM / FULL', 'Bypass ATU, recall or full tune',
+      Callout('BYPASS / TUNE MEM / FULL', 'PA disarmed while tuning; in AUTO, in-line follows band',
           UnionAnchor([ButtonAnchor('BYPASS', inside: TunerPanel), ButtonAnchor('TUNE FULL', inside: TunerPanel)])),
-      Callout('Band row', 'Change band; tap active band = SSB↔CW',
+      Callout('Band row', 'Re-tap active band: SSB↔CW; stripe = spot colour on map',
           UnionAnchor([ButtonAnchor('80m', inside: DvkPanel), ButtonAnchor('10m', inside: DvkPanel)])),
-      Callout('MIC profiles', 'Tap loads profile; hold to assign', typeAnchor(MicProfileRow)),
-      Callout('DVK1 / DVK2 / STOP', 'Play recorded message; STOP aborts',
-          UnionAnchor([ButtonAnchor('DVK1', inside: DvkPanel), ButtonAnchor('STOP', inside: DvkPanel)])),
+      Callout('MIC profiles', 'Hold to rebind; MIC line shows only console-loaded profiles', typeAnchor(MicProfileRow)),
     ],
   ),
   Sheet(
@@ -369,21 +370,21 @@ final quickrefSheets = <Sheet>[
     page: 'Station',
     seed: () => _running('Station'),
     callouts: [
-      Callout('START / STOP', 'Power the station up or down in order',
+      Callout('START / STOP', 'START also wakes STANDBY; STOP leaves PC mains on',
           UnionAnchor([ButtonAnchor('START', inside: PowerPanel), ButtonAnchor('STOP', inside: PowerPanel)])),
-      Callout('PSU 13.8V', 'Radio power supply relay', ButtonAnchor('PSU 13.8V', inside: PowerPanel)),
-      Callout('ANT PWR', 'Rotators and Ultrabeam controller power', ButtonAnchor('ANT PWR', inside: PowerPanel)),
-      Callout('TRX / PA', 'Remote-on for FLEX and ACOM',
+      Callout('Phase (ON / STANDBY)', 'Unused station drops to STANDBY; a FLEX VFO change wakes it',
+          TextAnchor('ON', inside: PowerPanel, inflate: 4)),
+      Callout('PSU 13.8V', 'Feeds FLEX, ATR-1000, antenna switch, PLC #1, IC-9700', ButtonAnchor('PSU 13.8V', inside: PowerPanel)),
+      Callout('ANT PWR', 'HF and UHF rotators, Ultrabeam controller; off in standby', ButtonAnchor('ANT PWR', inside: PowerPanel)),
+      Callout('TRX / PA', 'FLEX/ACOM remote-on via PLC #1; needs PSU 13.8V on',
           UnionAnchor([ButtonAnchor('TRX', inside: PowerPanel), ButtonAnchor('PA', inside: PowerPanel)])),
-      Callout('PC PWR', 'Shack PC mains; asks before switching off', ButtonAnchor('PC PWR', inside: PowerPanel)),
-      Callout('SHACK PC', 'AWAKE / ASLEEP / NO POWER / OFFLINE',
+      Callout('SHACK PC', 'Status only; standby asks it to sleep; wake sends WOL',
           UnionAnchor([TextAnchor('SHACK PC', inside: PowerPanel), TextAnchor('AWAKE', inside: PowerPanel)],
               grow: const EdgeInsets.all(8))),
-      Callout('Hosts (Bridges n/m)', 'Computers and how many bridges run',
+      Callout('Bridges n/m', 'Up / expected bridges on that host; tap lists each',
           UnionAnchor([TextAnchor('HOSTS & NETWORK', inside: StationSchematic), TextAnchor('SHARI', inside: StationSchematic)],
               grow: const EdgeInsets.fromLTRB(20, 6, 75, 52))),
-      Callout('RF path', 'Cyan = selected path, red = carrier', PointAnchor(typeAnchor(StationSchematic), 0.625, 0.489)),
-      Callout('Schematic block (tap)', 'Details: state, problem, host, all values',
+      Callout('Schematic block (tap)', 'Tap any block for bridge, host, all values; no controls',
           UnionAnchor([TextAnchor('ACOM', inside: StationSchematic), TextAnchor('Temp', inside: StationSchematic)],
               grow: const EdgeInsets.fromLTRB(10, 9, 90, 9))),
     ],
@@ -395,22 +396,25 @@ final quickrefSheets = <Sheet>[
     page: 'UHF',
     seed: () => _uhf('UHF'),
     callouts: [
-      Callout('VHF map', 'Tap to aim the UHF rotator', PointAnchor(typeAnchor(MercatorMapPanel), 0.30, 0.30)),
-      Callout('Heading chip', 'Azimuth now → target', TextAnchor('AZ ', contains: true, inside: MercatorMapPanel, inflate: 6)),
-      Callout('PARK / STOP (map)', 'Park or stop both axes',
-          UnionAnchor([ButtonAnchor('PARK', inside: MercatorMapPanel), ButtonAnchor('STOP', inside: MercatorMapPanel)])),
-      Callout('Satellite', 'Tracked satellite and coverage', PointAnchor(typeAnchor(MercatorMapPanel), 0.129, 0.552)),
-      Callout('RADIO AUDIO', 'IC-9700 receive audio to the stream', ButtonAnchor('RADIO AUDIO:', contains: true, inside: UhfRadioPanel)),
-      Callout('MONITOR', 'IC-9700 serial telemetry on/off', ButtonAnchor('MONITOR:', contains: true, inside: UhfRadioPanel)),
-      Callout('Radio readout', 'Receive-only telemetry',
-          UnionAnchor([TextAnchor('MHz', contains: true, inside: UhfRadioPanel), TextAnchor('FM', inside: UhfRadioPanel)],
-              grow: const EdgeInsets.all(4))),
-      Callout('AZIMUTH / ELEVATION', 'Position → target, MOVING/ERR',
-          UnionAnchor([TextAnchor('AZIMUTH', inside: SatRotatorPanel), TextAnchor('ELEVATION', inside: SatRotatorPanel)],
-              grow: const EdgeInsets.fromLTRB(4, 4, 90, 40))),
-      Callout('PARK 200° / 0°', 'Park; also sets radio and polarisation', keyAnchor('sat-park')),
-      Callout('STOP (rotators)', 'Stop both axes now', ButtonAnchor('STOP', inside: SatRotatorPanel)),
-      Callout('H / V / LHCP / RHCP', 'Switch both X-Quads',
+      Callout('Map tap', 'Sets azimuth only (great-circle bearing); elevation unchanged',
+          PointAnchor(typeAnchor(MercatorMapPanel), 0.30, 0.30)),
+      Callout('Beam wedge', 'Rotator beam ±20°, amber while a satellite is tracked',
+          PointAnchor(typeAnchor(MercatorMapPanel), 0.40, 0.42)),
+      Callout('Satellite (green diamond)', 'OscarWatch sub-satellite point; dimmed while below horizon',
+          PointAnchor(typeAnchor(MercatorMapPanel), 0.129, 0.552)),
+      Callout('Re-centre (crosshair)', 'Recentres on station; while tracking, frames station and satellite',
+          UnionAnchor([
+            FinderAnchor(() => find.descendant(of: find.byType(MercatorMapPanel), matching: find.byIcon(Icons.my_location)),
+                'crosshair icon in MercatorMapPanel'),
+          ], grow: const EdgeInsets.all(6))),
+      Callout('RADIO AUDIO', 'Feeds CAM stream; auto-off after 60 s; wfview blocks it',
+          ButtonAnchor('RADIO AUDIO:', contains: true, inside: UhfRadioPanel)),
+      Callout('MONITOR', 'Read-only CI-V readout; unavailable here, press shows ERR',
+          ButtonAnchor('MONITOR:', contains: true, inside: UhfRadioPanel)),
+      Callout('− / + / GOTO', '− / + change the typed angle 1°; only GOTO moves',
+          UnionAnchor([keyAnchor('sat-az-step-down'), keyAnchor('sat-el-goto')])),
+      Callout('PARK 200° / 0°', 'Also retunes IC-9700 (sat mode off), X-Quads to V', keyAnchor('sat-park')),
+      Callout('H / V / LHCP / RHCP', 'Manual only (PARK sets V); survives controller reboots',
           UnionAnchor([ButtonAnchor('H', inside: PolCtrlPanel), ButtonAnchor('RHCP', inside: PolCtrlPanel)])),
     ],
   ),
@@ -421,20 +425,14 @@ final quickrefSheets = <Sheet>[
     page: 'CAM',
     seed: _cam,
     callouts: [
-      Callout('Video / RETRY', 'Antenna camera; retry when offline', typeAnchor(AspectRatio, inside: CamFeedPanel)),
-      Callout('AZ / EL / FREQ', 'Live rotator and radio values',
-          UnionAnchor([TextAnchor('AZ ', contains: true, inside: CamFeedPanel), TextAnchor('FREQ', contains: true, inside: CamFeedPanel)],
-              grow: const EdgeInsets.all(6))),
-      Callout('START / STOP RECORDING', 'Record the preview stream', keyAnchor('rec-toggle')),
-      Callout('Progress line', 'Length, time left, disk free', keyAnchor('rec-line')),
-      Callout('Download link', 'Fetch the recording', TextAnchor('Download:', contains: true)),
-      Callout('● SERVER', 'Camera server reachable', TextAnchor('SERVER', contains: true, inside: CamRadioControls, inflate: 4)),
-      Callout('BRIDGE / SESSION / RADIO / AUDIO', 'Audio chain health, left to right',
+      Callout('Video', 'Runs about 10 s behind live', typeAnchor(AspectRatio, inside: CamFeedPanel)),
+      Callout('START / STOP RECORDING', 'Also holds radio audio on; auto-stops at limit or low disk', keyAnchor('rec-toggle')),
+      Callout('BRIDGE / SESSION / RADIO / AUDIO', 'RADIO always amber, not a fault; grey SESSION/AUDIO: audio off',
           UnionAnchor([TextAnchor('BRIDGE', inside: CamRadioControls), TextAnchor('AUDIO', inside: CamRadioControls)],
               grow: const EdgeInsets.fromLTRB(18, 4, 4, 4))),
-      Callout('RADIO AUDIO ON / OFF', 'Feed IC-9700 audio into stream',
+      Callout('RADIO AUDIO ON / OFF', 'Lit only while audio arrives; OFF cannot cut a recording',
           UnionAnchor([ButtonAnchor('RADIO AUDIO ON', inside: CamRadioControls), ButtonAnchor('RADIO AUDIO OFF', inside: CamRadioControls)])),
-      Callout('RADIO POWER ON', 'Switch the IC-9700 on', ButtonAnchor('RADIO POWER ON', inside: CamRadioControls)),
+      Callout('RADIO POWER ON', 'No effect here: the bridge has no serial CI-V port', ButtonAnchor('RADIO POWER ON', inside: CamRadioControls)),
     ],
   ),
 ];
