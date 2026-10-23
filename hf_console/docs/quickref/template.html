@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=1200">
+<title>hf_console quick reference</title>
+<!--
+  Template for hf-console-quickref.html. Do not edit the generated file:
+  edit this template or the call-outs in test/tool/quickref_sheets.dart, then
+  run docs/quickref/build.sh. The render test replaces the data slot below
+  with {sheets:[{id,title,purpose,width,height,image,callouts:[{title,text,rect:[x,y,w,h]}]}]};
+  rects are in screenshot pixels, a zero-size rect is a point (drawn as a dot).
+-->
+<style>
+  @page { size: A4 landscape; margin: 0; }
+  :root {
+    --paper: #F4F3EF; --ink: #1A1A1A; --mute: #5E5A53; --faint: #8C887E; --rule: #D4D1CA;
+    --co: #D6247F;            /* call-out colour: one the console itself does not use */
+    --cyan: #5FB2C9; --green: #5CCB8A; --amber: #D7B04A; --red: #D9685C;
+    --sans: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
+    --mono: "IBM Plex Mono", Menlo, monospace;
+    --cond: "Saira Condensed", "IBM Plex Sans Condensed", "Arial Narrow", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: #8a8a8a; }
+  body { font-family: var(--sans); color: var(--ink); padding: 12mm 0 0; }
+  .sheet {
+    width: 297mm; height: 210mm; margin: 0 auto 12mm; background: var(--paper);
+    padding: 9mm 10mm 8mm; display: flex; flex-direction: column; position: relative; overflow: hidden;
+    break-after: page; box-shadow: 0 2px 12px rgba(0,0,0,.35);
+  }
+  .sheet:last-child { break-after: auto; }
+  @media print {
+    html, body { background: var(--paper); padding: 0; }
+    .sheet { margin: 0; box-shadow: none; }
+  }
+  header { display: flex; align-items: baseline; gap: 6mm; border-bottom: 0.6mm solid var(--ink); padding-bottom: 2mm; }
+  header h1 { font: 600 22pt/1 var(--cond); letter-spacing: .04em; margin: 0; text-transform: uppercase; }
+  header .purpose { font-size: 10pt; color: var(--mute); flex: 1; }
+  header .tag { font: 8pt var(--mono); color: var(--faint); text-align: right; }
+  main { flex: 1; position: relative; min-height: 0; }
+  footer { display: flex; gap: 5mm; align-items: center; border-top: 0.3mm solid var(--rule); padding-top: 2mm;
+           font: 7.5pt var(--mono); color: var(--mute); }
+  footer .key { display: flex; gap: 4mm; flex: 1; }
+  footer .sw { display: inline-block; width: 3mm; height: 3mm; margin-right: 1.2mm; vertical-align: -0.4mm; border-radius: .5mm; }
+  .shot { position: absolute; }
+  .shot img { display: block; width: 100%; height: 100%; border: 0.3mm solid #000; }
+  svg.over { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
+  .lbl { position: absolute; font-size: 7.6pt; line-height: 1.22; }
+  .lbl b { font: 600 7.6pt var(--mono); letter-spacing: .02em; display: block; color: var(--ink); }
+  .lbl span { color: var(--mute); }
+  .lbl.l { text-align: right; }
+  .missing { font: 12pt var(--mono); padding: 20mm; }
+</style>
+</head>
+<body>
+<script>
+const DATA = /*QUICKREF_DATA*/null;
+const MM = 96 / 25.4;        // CSS px per mm
+const SPLIT = 748;           // screenshot x: the console's left pane ends here
+const KEY = `<div class="key">
+  <span><i class="sw" style="background:var(--cyan)"></i>cyan = active / selected</span>
+  <span><i class="sw" style="background:var(--green)"></i>green = healthy</span>
+  <span><i class="sw" style="background:var(--amber)"></i>amber = attention / hold</span>
+  <span><i class="sw" style="background:var(--red)"></i>red = danger · TX · offline</span></div>`;
+
+// Leader routing in screenshot pixels. A leader enters the shot at the edge
+// facing its label and runs level into its box. Blocked by another target, it
+// runs along the gutter just above (else below) the box and drops in.
+function hits(x0, x1, y, rect, pad = 2) {
+  const [x, by, w, h] = rect;
+  return w > 0 && y > by - pad && y < by + h + pad && Math.max(x0, x1) > x && Math.min(x0, x1) < x + w;
+}
+function route(c, side, all, used, W) {
+  const [x, y, w, h] = c.rect;
+  const edge = side === "l" ? 0 : W;
+  const others = all.filter(o => o !== c).map(o => o.rect);
+  if (w === 0) return { y, pts: [[x, y]] };
+  const near = side === "l" ? x : x + w, cy = y + h / 2;
+  if (!others.some(r => hits(edge, near, cy, r))) return { y: cy, pts: [[near, cy]] };
+  const cx = x + w / 2;
+  for (const gy of [y - 4, y + h + 4]) {
+    const free = !others.some(r => hits(edge, cx, gy, r, 1)) &&
+      !used.some(u => Math.abs(u.y - gy) < 4 && Math.max(u.x0, u.x1) > Math.min(edge, cx) && Math.min(u.x0, u.x1) < Math.max(edge, cx));
+    if (free) {
+      used.push({ y: gy, x0: edge, x1: cx });
+      return { y: gy, pts: [[cx, gy], [cx, gy < y ? y - 1.5 : y + h + 1.5]] };
+    }
+  }
+  return { y: cy, pts: [[near, cy]] };
+}
+
+// 1-D label placement: each crowded run of labels is centred on the mean of
+// its targets' heights, merging runs until none overlap, then clamped.
+function spread(want, gap, lo, hi) {
+  const runs = want.map((y, i) => ({ i: [i], top: y }));
+  for (let changed = true; changed;) {
+    changed = false;
+    for (let k = 0; k + 1 < runs.length; k++) {
+      const a = runs[k], b = runs[k + 1];
+      if (a.top + a.i.length * gap > b.top) {
+        const i = [...a.i, ...b.i];
+        const mean = i.reduce((m, j) => m + want[j], 0) / i.length;
+        runs.splice(k, 2, { i, top: mean - (i.length - 1) * gap / 2 });
+        changed = true;
+        break;
+      }
+    }
+  }
+  const ys = [];
+  for (const r of runs) r.i.forEach((j, n) => ys[j] = r.top + n * gap);
+  const over = ys[ys.length - 1] - hi;
+  if (over > 0) for (let k = 0; k < ys.length; k++) ys[k] -= over;
+  for (let k = 0; k < ys.length; k++) ys[k] = Math.max(ys[k], lo + k * gap, k ? ys[k - 1] + gap : lo);
+  return ys;
+}
+
+function esc(s) { return s.replace(/[&<>"]/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[ch]); }
+
+function renderSheet(sheet, n, total) {
+  document.body.insertAdjacentHTML("beforeend", `<section class="sheet" id="${sheet.id}">
+    <header><h1>${esc(sheet.title)}</h1><div class="purpose">${esc(sheet.purpose)}</div>
+      <div class="tag">hf_console quick reference<br>${n} / ${total}</div></header>
+    <main></main>
+    <footer>${KEY}<span>Mühle station · tablet layout · scmino:8091</span></footer></section>`);
+  const main = document.getElementById(sheet.id).querySelector("main");
+  const r = main.getBoundingClientRect();
+  const W = sheet.width, H = sheet.height;
+  const colW = 45 * MM, gap = 7 * MM;
+  const sw = r.width - 2 * (colW + gap), s = sw / W, sh = H * s;
+  const ox = colW + gap, oy = Math.max(0, (r.height - sh) / 2);
+  main.insertAdjacentHTML("beforeend",
+    `<div class="shot" style="left:${ox}px;top:${oy}px;width:${sw}px;height:${sh}px"><img src="${sheet.image}" alt="${esc(sheet.title)} screenshot"></div><svg class="over"></svg>`);
+  const svg = main.querySelector("svg");
+  const P = ([x, y]) => [ox + x * s, oy + y * s];
+  const used = [];
+  for (const side of ["l", "r"]) {
+    const list = sheet.callouts.filter(c => (c.rect[0] + c.rect[2] / 2 < SPLIT) === (side === "l"))
+      .map(c => ({ c, rt: route(c, side, sheet.callouts, used, W) }))
+      .sort((a, b) => a.rt.y - b.rt.y);
+    if (!list.length) continue;
+    const ys = spread(list.map(o => oy + o.rt.y * s), 11 * MM, 4 * MM, r.height - 4 * MM);
+    list.forEach((o, k) => {
+      const ly = ys[k];
+      const lx = side === "l" ? 0 : r.width - colW;
+      main.insertAdjacentHTML("beforeend",
+        `<div class="lbl ${side}" style="left:${lx}px;top:${ly}px;width:${colW}px;transform:translateY(-50%)"><b>${esc(o.c.title)}</b><span>${esc(o.c.text)}</span></div>`);
+      const x0 = side === "l" ? colW + 1.5 * MM : r.width - colW - 1.5 * MM;
+      const shotEdge = side === "l" ? ox : ox + sw;
+      const knee = side === "l" ? ox - 2.5 * MM : ox + sw + 2.5 * MM;
+      const pts = [[x0, ly], [knee, ly], [shotEdge, oy + o.rt.y * s], ...o.rt.pts.map(P)].map(p => p.join(",")).join(" ");
+      svg.insertAdjacentHTML("beforeend",
+        `<polyline points="${pts}" fill="none" stroke="#fff" stroke-opacity=".55" stroke-width="2.6" stroke-linejoin="round"/>` +
+        `<polyline points="${pts}" fill="none" stroke="var(--co)" stroke-width="1.1" stroke-linejoin="round"/>`);
+      const [x, y, w, h] = o.c.rect;
+      const [bx, by] = P([x, y]);
+      svg.insertAdjacentHTML("beforeend", w === 0
+        ? `<circle cx="${bx}" cy="${by}" r="3.2" fill="var(--co)" stroke="#fff" stroke-width="1"/>`
+        : `<rect x="${bx - 1.5}" y="${by - 1.5}" width="${w * s + 3}" height="${h * s + 3}" rx="2" fill="none" stroke="var(--co)" stroke-width="1.4"/>`);
+    });
+  }
+}
+
+if (!DATA) {
+  document.body.innerHTML = '<p class="missing">Template only: run docs/quickref/build.sh to render the sheets.</p>';
+} else {
+  DATA.sheets.forEach((sh, i) => renderSheet(sh, i + 1, DATA.sheets.length));
+}
+</script>
+</body>
+</html>
