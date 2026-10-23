@@ -56,11 +56,12 @@ void setTabletView(WidgetTester tester) {
   addTearDown(tester.view.reset);
 }
 
-/// Writes the boundary under [key] to [path] at one image pixel per logical pixel.
-Future<void> shootPng(WidgetTester tester, GlobalKey key, String path) async {
+/// Writes the boundary under [key] to [path] at [pixelRatio] image pixels
+/// per logical pixel (1 = the logical size; print renders want 2).
+Future<void> shootPng(WidgetTester tester, GlobalKey key, String path, {double pixelRatio = 1}) async {
   final boundary = key.currentContext!.findRenderObject()! as RenderRepaintBoundary;
   await tester.runAsync(() async {
-    final ui.Image img = await boundary.toImage(pixelRatio: 1);
+    final ui.Image img = await boundary.toImage(pixelRatio: pixelRatio);
     final png = await img.toByteData(format: ui.ImageByteFormat.png);
     File(path).writeAsBytesSync(png!.buffer.asUint8List());
   });

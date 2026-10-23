@@ -8,9 +8,9 @@
 #      plus PNGs + call-out JSON in $QUICKREF_OUT (default /tmp/quickref).
 # 2. Headless Chrome prints it → docs/quickref/hf-console-quickref.pdf
 #    (A4 landscape, one sheet per page). Set CHROME to override the binary.
-# 3. Copies the HTML into the station portal (stationportal/internal/web/
-#    assets/quickref.html, served at http://scmino/quickref); redeploy the
-#    portal (cd stationportal && ./deploy.sh) to publish it.
+# 3. Copies both into the station portal (stationportal/internal/web/assets/
+#    quickref.{html,pdf}, served at http://scmino/quickref and /quickref.pdf);
+#    redeploy the portal (cd stationportal && ./deploy.sh) to publish them.
 #
 # Call-outs live in test/tool/quickref_sheets.dart, layout in template.html.
 set -euo pipefail
@@ -38,4 +38,5 @@ fi
 "$chrome" --headless=new --disable-gpu --no-pdf-header-footer \
   --print-to-pdf="$here/hf-console-quickref.pdf" \
   "file://$here/hf-console-quickref.html" 2>/dev/null
+cp "$here/hf-console-quickref.pdf" "$app/../stationportal/internal/web/assets/quickref.pdf"
 echo "wrote $here/hf-console-quickref.html and hf-console-quickref.pdf"

@@ -28,7 +28,8 @@ void main() {
       final key = GlobalKey();
       await pumpSheet(tester, sheet, key);
       final png = '${out.path}/${sheet.id}.png';
-      await shootPng(tester, key, png);
+      // 2x: the sheets print the screenshot ~23 cm wide (≈ 290 dpi).
+      await shootPng(tester, key, png, pixelRatio: 2);
       sheets.add({
         'id': sheet.id,
         'title': sheet.title,
@@ -41,6 +42,7 @@ void main() {
             {
               'title': c.title,
               'text': c.text,
+              if (c.marker != null) 'marker': c.marker,
               'rect': switch (c.anchor.resolve(tester)) {
                 final r => [r.left, r.top, r.width, r.height].map((v) => double.parse(v.toStringAsFixed(1))).toList(),
               },

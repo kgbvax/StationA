@@ -177,15 +177,16 @@ Two deliberate platform notes:
 ## Quick reference (docs/quickref/)
 
 `docs/quickref/hf-console-quickref.html` (+ `.pdf`, A4 landscape, one sheet per page) is the operator quick
-reference: a seeded tablet render of each page (Overview with the settings dialog, HF, Station, UHF, CAM) with
-leader-line call-outs on the key controls. Generated — do not edit it. Call-outs (title, text, which control) live in
+reference: a seeded tablet render (2x) of each page (Overview, HF, Station, UHF, CAM) with numbered markers and a
+legend underneath. A call-out earns its place only by saying what the label does not (an unlabeled control, a hidden
+gesture, a side effect or interlock); the rest is covered by the sheet's note that unlabeled things do what you think. Generated — do not edit it. Call-outs (title, text, which control) live in
 `test/tool/quickref_sheets.dart`, layout in `docs/quickref/template.html`; rebuild with `docs/quickref/build.sh`
 (render test + headless Chrome). A call-out names its control by label/tooltip/type/key and the render resolves it to
-the control's rect, so leaders follow the layout. `test/tool/quickref_callouts_test.dart` runs in the normal
+the control's rect, so markers follow the layout (`marker:` picks the side when the default covers a neighbour). `test/tool/quickref_callouts_test.dart` runs in the normal
 `flutter test` and fails when a call-out no longer finds its control — fix the call-out and rebuild the sheets.
 Painted content (compass disc, satellite marker, schematic RF path) uses fractional points and is not checked.
-`build.sh` also copies the HTML into the station portal, which serves it at `http://scmino/quickref` (redeploy
-stationportal to publish; its `go test` fails while the copy is stale).
+`build.sh` also copies the HTML and PDF into the station portal, which serves them at `http://scmino/quickref` and
+`/quickref.pdf` (redeploy stationportal to publish; its `go test` fails while a copy is stale).
 
 ## Band colors (horstreporter convention)
 

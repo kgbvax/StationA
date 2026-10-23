@@ -168,6 +168,18 @@ func TestRoutes(t *testing.T) {
 	}
 
 	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/quickref.pdf", nil))
+	if rec.Code != http.StatusOK || rec.Header().Get("Content-Type") != "application/pdf" {
+		t.Fatalf("quickref.pdf status %d, type %q", rec.Code, rec.Header().Get("Content-Type"))
+	}
+	if !bytes.HasPrefix(rec.Body.Bytes(), []byte("%PDF-")) {
+		t.Errorf("quickref.pdf is not a PDF")
+	}
+	if d := rec.Header().Get("Content-Disposition"); !strings.Contains(d, "hf-console-quickref.pdf") {
+		t.Errorf("quickref.pdf disposition %q", d)
+	}
+
+	rec = httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/nope", nil))
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("unknown path status %d", rec.Code)
@@ -175,18 +187,23 @@ func TestRoutes(t *testing.T) {
 }
 
 // The embedded quick reference must match the one hf_console generates
-// (../hf_console/docs/quickref/build.sh copies it here).
+// (../hf_console/docs/quickref/build.sh copies both files here).
 func TestQuickrefMatchesHFConsole(t *testing.T) {
-	src, err := os.ReadFile("../../../hf_console/docs/quickref/hf-console-quickref.html")
-	if err != nil {
-		t.Skipf("hf_console quick reference not found: %v", err)
-	}
-	own, err := assets.ReadFile("assets/quickref.html")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(src, own) {
-		t.Error("internal/web/assets/quickref.html is stale: run ../hf_console/docs/quickref/build.sh (it copies the sheets here)")
+	for own, src := range map[string]string{
+		"assets/quickref.html": "../../../hf_console/docs/quickref/hf-console-quickref.html",
+		"assets/quickref.pdf":  "../../../hf_console/docs/quickref/hf-console-quickref.pdf",
+	} {
+		want, err := os.ReadFile(src)
+		if err != nil {
+			t.Skipf("hf_console quick reference not found: %v", err)
+		}
+		got, err := assets.ReadFile(own)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(want, got) {
+			t.Errorf("internal/web/%s is stale: run ../hf_console/docs/quickref/build.sh (it copies the sheets here)", own)
+		}
 	}
 }
 
