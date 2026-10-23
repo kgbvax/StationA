@@ -184,6 +184,8 @@ leader-line call-outs on the key controls. Generated — do not edit it. Call-ou
 the control's rect, so leaders follow the layout. `test/tool/quickref_callouts_test.dart` runs in the normal
 `flutter test` and fails when a call-out no longer finds its control — fix the call-out and rebuild the sheets.
 Painted content (compass disc, satellite marker, schematic RF path) uses fractional points and is not checked.
+`build.sh` also copies the HTML into the station portal, which serves it at `http://scmino/quickref` (redeploy
+stationportal to publish; its `go test` fails while the copy is stale).
 
 ## Band colors (horstreporter convention)
 

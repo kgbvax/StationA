@@ -1,12 +1,14 @@
 package web
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -156,9 +158,35 @@ func TestRoutes(t *testing.T) {
 	}
 
 	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/quickref", nil))
+	if rec.Code != http.StatusOK || !strings.HasPrefix(rec.Header().Get("Content-Type"), "text/html") {
+		t.Fatalf("quickref status %d, type %q", rec.Code, rec.Header().Get("Content-Type"))
+	}
+	// Rendered, not the bare template (its data slot is still null).
+	if q := rec.Body.String(); !strings.Contains(q, "hf_console quick reference") || !strings.Contains(q, `{"sheets":`) {
+		t.Errorf("quickref is not the rendered quick reference")
+	}
+
+	rec = httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/nope", nil))
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("unknown path status %d", rec.Code)
+	}
+}
+
+// The embedded quick reference must match the one hf_console generates
+// (../hf_console/docs/quickref/build.sh copies it here).
+func TestQuickrefMatchesHFConsole(t *testing.T) {
+	src, err := os.ReadFile("../../../hf_console/docs/quickref/hf-console-quickref.html")
+	if err != nil {
+		t.Skipf("hf_console quick reference not found: %v", err)
+	}
+	own, err := assets.ReadFile("assets/quickref.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(src, own) {
+		t.Error("internal/web/assets/quickref.html is stale: run ../hf_console/docs/quickref/build.sh (it copies the sheets here)")
 	}
 }
 

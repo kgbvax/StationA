@@ -1,5 +1,7 @@
-// Package web serves the landing page (server-rendered HTML, no JavaScript)
-// and the same data as JSON at /api/inventory.
+// Package web serves the landing page (server-rendered HTML, no JavaScript),
+// the same data as JSON at /api/inventory, and the hf_console operator quick
+// reference at /quickref (a copy of ../hf_console/docs/quickref/
+// hf-console-quickref.html that its build.sh refreshes).
 package web
 
 import (
@@ -17,7 +19,7 @@ import (
 	"stationportal/internal/probe"
 )
 
-//go:embed assets/page.html
+//go:embed assets/page.html assets/quickref.html
 var assets embed.FS
 
 // Server renders the landing page.
@@ -44,6 +46,7 @@ func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", s.handlePage)
 	mux.HandleFunc("GET /api/inventory", s.handleJSON)
+	mux.HandleFunc("GET /quickref", handleQuickref)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("ok\n"))
 	})
@@ -86,6 +89,19 @@ func (s *Server) handleJSON(w http.ResponseWriter, _ *http.Request) {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	_ = enc.Encode(s.page())
+}
+
+// handleQuickref serves the embedded quick reference. no-cache: a redeploy
+// with rebuilt sheets must not hide behind a stale browser copy.
+func handleQuickref(w http.ResponseWriter, _ *http.Request) {
+	b, err := assets.ReadFile("assets/quickref.html")
+	if err != nil {
+		http.Error(w, "quick reference missing", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache")
+	_, _ = w.Write(b)
 }
 
 // shortRev abbreviates a revision to 7 hex digits, keeping a "+dirty" mark.
