@@ -104,11 +104,13 @@ make build vet test test-race
 ```
 
 The unit binds HTTP to `0.0.0.0:8090` (config `http_addr`), so the browser reaches
-`http://scmino:8090` directly. The broker is the live one, `tcp://192.168.1.50:1883` —
-not `127.0.0.1`, which on scmino is the not-yet-used mirror broker. On a fresh host the
+`http://scmino:8090` directly. `deploy.sh` seeds the HA broker `tcp://192.168.1.50:1883`,
+the live station broker for most clients (root `CLAUDE.md` live-state note) — not
+`127.0.0.1`, which on scmino is the station mirror broker (clients so far: PLC #1 and
+shelly-power-bridge). On a fresh host the
 `hf` MQTT password is pulled on-device from an existing station service env (never leaves
-the Pi); scmino has none, so the 2026-10-02 move copied `/etc/testui/{config.toml,testui.env}`
-from shari instead. `/api/publish` + `/api/clear` are
+the Pi); scmino had none at the time, so the 2026-10-02 move copied
+`/etc/testui/{config.toml,testui.env}` from shari instead. `/api/publish` + `/api/clear` are
 unauthenticated — this is intentional for the trusted home LAN; do not deploy this default
 onto an untrusted network without an auth layer / reverse proxy. Config + env are seed-once,
 like the bridges.

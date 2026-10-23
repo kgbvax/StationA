@@ -20,7 +20,7 @@ a disk cache so QRZ is hit at most once per call per month.
 
 ```
 DXLog ──UDP lookupinfo──┐
-Log4OM ──UDP callsign───┤  logger-spot-bridge (shack PC)
+Log4OM ──UDP callsign───┤  logger-spot-bridge (scmino)
                         │   └─ QRZ lookup for bare calls (optional)
                         └──► muehle/hf/spots/state (retained, MQTT)
                                    │
@@ -29,8 +29,9 @@ Log4OM ──UDP callsign───┤  logger-spot-bridge (shack PC)
                         (pin + callsign + bearing/distance chip)
 ```
 
-Run `./deploy.sh` — deploys to **shari** (192.168.1.139) as a hardened systemd
-service, the standard stationa pattern. The bridge only LISTENS on UDP, and
+Run `./deploy.sh` — deploys to **scmino** (192.168.1.178; on shari 2026-09-16 to
+2026-10-18) as a hardened systemd service, the standard stationa pattern. The
+bridge only LISTENS on UDP, and
 logger broadcasts travel the whole LAN, so it does not need to run on the
 logging PC. Config and secrets are host state and survive every update:
 
@@ -41,7 +42,7 @@ logging PC. Config and secrets are host state and survive every update:
 - Every deploy ends with `logger-spot-bridge -check` on the Pi — the effective
   config is printed redacted and broker DNS + password presence are verified
   *before* the service restarts. `-check` also runs standalone.
-- Log4OM's outbound CALLSIGN service must point at shari:2249; DXLog's
+- Log4OM's outbound CALLSIGN service must point at scmino:2249; DXLog's
   broadcast (subnet broadcast, port 12060) needs no target.
 - History: the bridge ran on the Windows shack PC as a schtasks logon task
   until 2026-09-16 (a recorded mis-fit: no auto-restart, secrets in a wrapper

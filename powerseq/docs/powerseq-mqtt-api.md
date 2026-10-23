@@ -23,9 +23,9 @@ change the order, targets, waits, or delays. The subscribed topics (§7) and the
 
 | Property | Value |
 |----------|-------|
-| Protocol | MQTT 3.1.1 (plain TCP, `tcp://192.168.1.139:1883`) |
+| Protocol | MQTT 3.1.1 (plain TCP; `deploy.sh` seeds `tcp://127.0.0.1:1883`, on scmino the bridged `muehle/#` mirror; the live config was not verified, see the root `CLAUDE.md` live-state note) |
 | Authentication | Username/password (`hf` user) |
-| Clean session | false; own `/cmd` is re-subscribed on every reconnect |
+| Clean session | true (since 2026-10-18); own `/cmd` is re-subscribed on every reconnect |
 | Auto-reconnect | yes |
 | Client ID | `muehle-hf-power-seq` (configurable via `mqtt.client_id`) |
 
@@ -79,16 +79,20 @@ Retained. Published on every (re)connect.
   "role": "sequencer",
   "link": "none",
   "location": "bauwagen",
-  "host": "shari",
+  "host": "scmino",
   "capabilities": {
     "controls": [
-      "muehle/power/psu-13v8",
-      "muehle/hf/switch", "muehle/hf/pa-arm"
+      "muehle/hf/pa-arm", "muehle/hf/switch",
+      "muehle/power/antennas", "muehle/power/psu-13v8",
+      "muehle/power/shack-pc", "muehle/power/shack-pc-mains"
     ],
     "watches": [
-      "muehle/power/psu-13v8",
-      "muehle/hf/switch", "muehle/hf/pa-arm",
-      "muehle/hf/ant-switch", "muehle/hf/radio", "muehle/hf/pa"
+      "muehle/hf/ant-ctrl", "muehle/hf/ant-mode", "muehle/hf/antenna-select",
+      "muehle/hf/pa", "muehle/hf/pa-arm", "muehle/hf/radio",
+      "muehle/hf/rotator", "muehle/hf/switch",
+      "muehle/power/antennas", "muehle/power/psu-13v8",
+      "muehle/power/shack-pc", "muehle/power/shack-pc-mains",
+      "muehle/uhf/az-rotator", "muehle/uhf/el-rotator", "muehle/uhf/radio"
     ]
   },
   "expose": {
@@ -187,7 +191,7 @@ restores an idle sequencer's `/state` instead of leaving it absent.
 `muehle/hf/power-seq/cmd`. Example:
 
 ```bash
-mosquitto_pub -h 192.168.1.139 -t 'muehle/hf/power-seq/cmd' \
+mosquitto_pub -h 192.168.1.50 -u hf -P "$MQTT_PASSWORD" -t 'muehle/hf/power-seq/cmd' \
   -m '{"action":"start"}'
 ```
 
@@ -201,7 +205,7 @@ is one of five kinds:
 | Kind | Action | Fields |
 |------|--------|--------|
 | `cmd` | emit a retained `/cmd` to a slot | `slot`, `action`, `value` (string), `retain?` (default true) |
-| `wait_status` | wait until every listed slot's `/status` == `state` | `slots` (AND), `state?` (`online`\|`offline`, default `online`), `hold_ms?`, `timeout_s?` |
+| `wait_status` | wait until every listed slot's `/status` == `state` (`online` is two-layer since 2026-10-18: `/state.device_online` must not be `false` either) | `slots` (AND), `state?` (`online`\|`offline`, default `online`), `hold_ms?`, `timeout_s?` |
 | `wait_state` | wait until a slot's `/state` field == `value` | `slot`, `field`, `value`, `hold_ms?`, `timeout_s?` |
 | `delay` | sleep a fixed duration | `duration_s` (literal) **or** `duration` (`network`\|`stagger`, refs `[timing]`) |
 | `wol` | send a Wake-on-LAN magic packet (UDP) | `mac`, `broadcast?` (`host:port`, default `255.255.255.255:9`) |
@@ -360,16 +364,17 @@ command.
 
 Subscriptions are **derived from the configured sequence** (not hard-coded): the
 `/status` of every slot any step references (a `cmd`, `wait_status`, or
-`wait_state` target), plus the `/state` of every `wait_state` target, plus the
+`wait_state` target), plus the `/state` of every `wait_state` target and every
+`wait_status` `online` target (for its `device_online`), plus the
 sequencer's own `/cmd`. For the default §7.1 sequence this yields:
 
 | Topic | Used for |
 |-------|----------|
 | `muehle/power/psu-13v8/status` | observability (controlled slot) |
-| `muehle/hf/switch/status` | `wait-controllers-online` liveness gate |
-| `muehle/hf/pa-arm/status` | `wait-controllers-online` liveness gate |
-| `muehle/hf/ant-switch/status` | `wait-controllers-online` liveness gate |
-| `muehle/hf/radio/status` | `wait-radio-online` gate (radio online) |
+| `muehle/hf/switch/status` + `/state` | `wait-plc-online` liveness gate |
+| `muehle/hf/pa-arm/status` | observability (controlled slot) |
+| `muehle/hf/radio/status` + `/state` | `wait-radio-online` gate (radio online) |
+| `muehle/hf/ant-ctrl/…`, `muehle/hf/rotator/…` (`/status` + `/state`) | wake `wait-antenna-gear-online` gate |
 | `muehle/hf/pa/status` | `wait-pa-power-on` liveness precondition |
 | `muehle/hf/pa/state` | `wait-pa-power-on` (`.power` = `on`) |
 | `muehle/power/antennas/status` | observability (controlled slot) |

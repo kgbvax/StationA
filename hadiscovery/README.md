@@ -11,12 +11,13 @@ hadiscovery is the single HA renderer of that neutral surface — the same `expo
 reusable by InfluxDB, Node-RED, dashboards, or Prometheus. `meta` is the single source of
 truth; adding a component or field needs no consumer edit.
 
-Implements the `muehle/hf/discovery` logic slot. Runs on `shari`.
+Implements the `muehle/hf/discovery` logic slot. Runs on `scmino` (since 2026-10-12; was
+`shari`).
 
 ## Status
 
-Scaffolded and tested (`go test ./... -race`), pending on-device deploy and the bridge
-migrations (publish `expose`, gate embedded discovery off). See `CLAUDE.md`.
+Deployed and running as the `hadiscovery` systemd service on scmino (live since
+2026-07-10; on shari until 2026-10-12). Tested with `go test ./... -race`. See `CLAUDE.md`.
 
 ## Build & run
 
@@ -29,8 +30,8 @@ go run ./cmd/hadiscovery -config ./config.example.toml
 ## Deploy
 
 ```bash
-./deploy.sh                      # cross-compile for linux/arm64, install on shari
-ssh io@192.168.1.139 'journalctl -u hadiscovery -f'
+./deploy.sh                      # cross-compile for linux/arm64, install on scmino
+ssh io@192.168.1.178 'journalctl -u hadiscovery -f'
 ```
 
 ## Docs

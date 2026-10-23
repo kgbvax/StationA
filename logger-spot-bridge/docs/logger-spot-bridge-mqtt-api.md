@@ -1,7 +1,7 @@
 # logger-spot-bridge — on-the-wire contract
 
 The slot is `muehle/hf/spots` (site `muehle`, station `hf`, slot `spots`),
-following the logging-integration draft `../logging-integration-model.md` §3
+following the logging-integration draft `../../docs/logging-integration-model.md` §3
 (role `bandmap`). One operator seat, collapsed addressing (§3 "collapsed").
 
 ## Planes
@@ -51,7 +51,10 @@ Field notes:
   logger label ("20m") is trusted; DXLog's MHz form ("14.0") is re-derived
   from the frequency.
 - `mode` is canonical (`cw|usb|lsb|am|fm|data`); `data` collapses the digital
-  family. Omitted when the logger sent nothing recognizable.
+  family (every unlisted mode string). Exception in `internal/canon`:
+  `USB-D`/`LSB-D`/`FM-D` map to `usb`/`lsb`/`fm`, although the band/mode
+  reference lists `USB-D`/`LSB-D` under `data`. Omitted when the logger sent
+  no mode.
 - Position: `lat`/`lng` come from a logger-provided locator (N1MM `gridsquare`,
   Log4OM locator) or — DXLog path — the great-circle direct problem from the
   bridge's `station_locator` using the logger's `azimuth`+`distance` (DXLog

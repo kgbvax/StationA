@@ -26,8 +26,10 @@ requirements/
    implemented, tested and (where applicable) deployed in one sitting, split it.
 3. Set `deploy:`:
    - `none` — tests green + branch is the deliverable, no deployment
-   - `shari` — deploy to shari per `docs/conventions/deployment.md` after
-     green tests
+   - `host` — after green tests, deploy with the component's `deploy.sh` to its
+     default host (scmino for most services, shari for the few still there;
+     see root `CLAUDE.md`) per `docs/conventions/deployment.md`. A legacy
+     `deploy: shari` means the same.
    - `manual-device` — loop builds the artifact and prints the sideload /
      flash command; a human does the physical step (tablet adb install,
      M5Stamp USB flash, …)
@@ -54,8 +56,8 @@ per iteration.
 - Omit the interval (`/loop <prompt>`) to let the model self-pace between
   iterations; a fixed interval keeps the cadence predictable.
 - Recurring loops auto-expire after 7 days — re-run `/loop` to restart.
-- Deployments to shari are outward-facing actions. If you want a human gate
-  before anything touches the station, add to the prompt: "For deploy: shari,
+- Deployments to a station host are outward-facing actions. If you want a human
+  gate before anything touches the station, add to the prompt: "For deploy: host,
   stop after a green build and ask before deploying."
 
 ## Outcome section

@@ -48,7 +48,7 @@ Plain string, retained, QoS 1. Written by the MQTT client, not the bridge.
 | Value | When |
 |---|---|
 | `online` | published on every (re)connect |
-| `offline` | broker Last Will on unclean disconnect; bridge publishes on clean shutdown |
+| `offline` | broker Last Will on unclean disconnect. A clean shutdown publishes nothing (the MQTT `DISCONNECT` discards the will), so the retained `online` stays until the next connect |
 
 ---
 
@@ -88,8 +88,10 @@ subscriber or a late-joiner gets this immediately without polling.
       "area": "bauwagen"
     },
     "fields": [
+      { "key": "device_online", "name": "Device online", "type": "boolean" },
       { "key": "freq_hz", "name": "Frequency", "type": "number", "unit": "Hz", "class": "frequency", "state_class": "measurement" },
-      { "key": "band",    "name": "Band",      "type": "enum", "options_ref": "bands" },
+      { "key": "band",    "name": "Band",      "type": "enum", "options_ref": "bands", "writable": true,
+        "command": { "action": "set_band", "value_key": "value", "value_type": "string" } },
       { "key": "mode",    "name": "Mode",      "type": "enum", "options_ref": "modes" },
       { "key": "drive",   "name": "Drive",     "type": "number", "unit": "%" },
       { "key": "tx",      "name": "Transmitting", "type": "boolean", "on": "tx", "off": "rx" },
@@ -117,7 +119,7 @@ this slot's observable field surface. It carries **no consumer vocabulary** — 
 `hadiscovery` service for Home Assistant, and any future historian/dashboard/Prometheus
 consumer) render their own representation from these neutral primitives.
 
-flexbridge is **read-only for radio tuning state except `band` and `mic_profile`**, both
+In `expose`, flexbridge is **read-only for radio tuning state except `band` and `mic_profile`**, both
 writable setpoints: `expose.fields[].band` carries `writable: true` with a `command` of
 `{action:"set_band", value_key:"value", value_type:"string"}`, and `expose.fields[].mic_profile`
 carries `writable: true` with a `command` of
@@ -133,6 +135,8 @@ input, not as a stored setpoint). `mic_profile` is a writable string setpoint: p
 **available** mic-profile list is dynamic, so it lives on `/state.mic_profiles` only — the
 expose `fields` schema has no array type, so it is not declared in `expose.fields` (a
 consumer reads it from `/state`; hadiscovery rendering of the dynamic list is future work).
+`/cmd` also accepts `set_mode` (`cw`/`usb`/`lsb`, see below), but `mode` is not declared
+writable in `expose`, so consumers render it read-only.
 The other read-write surface is one-shot `actions` (buttons), not writable setpoint
 fields: the **Digital Voice Keyer (DVK)** (each play action publishes `{"action":"dvk_play_N"}`
 with no value, so a consumer (hadiscovery → HA button) needs no value injection).
@@ -169,7 +173,8 @@ availability, device block) lives in `hadiscovery`, not in this bridge.
 
 ## `/state` — live radio state
 
-Retained JSON snapshot, QoS 1. Published on every state change. The document
+Retained JSON snapshot, QoS 1. Published on every state change, and republished every 5 s
+while `device_online` is true (see "Publish trigger summary"). The document
 is always complete — no partial updates — so a subscriber always holds a
 consistent view.
 
@@ -232,37 +237,41 @@ always see the canonical form.
 | `fm` | `FM`, `NFM`, `DFM` |
 | `data` | `DIGU`, `DIGL`, `DATA-U`, `DATA-L`, `FDV`, `FDVU`, `FDVL`, `RTTY-U`, `RTTY-L`, `PKTUSB`, `PKTLSB`, `DSTR` |
 
-Unknown firmware modes are lower-cased and passed through.
+A firmware mode with no mapping here (e.g. plain `RTTY`) normalizes to nothing: `mode` is
+omitted from `/state`. Raw firmware strings are never published (`NormalizeMode` in
+`internal/flexradio/status.go`).
 
 ### Band values
 
-Derived from `freq_hz` at publish time (IARU Region 1 / DL allocations).
+Derived from `freq_hz` at publish time. The table is the canonical one in
+`../docs/conventions/band-mode-reference.md`, mirrored in `internal/flexradio/band.go`
+(edges inclusive).
 
 | Band | Low (Hz) | High (Hz) |
 |---|---|---|
 | `160m` | 1,800,000 | 2,000,000 |
 | `80m` | 3,500,000 | 4,000,000 |
-| `60m` | 5,060,000 | 5,450,000 |
+| `60m` | 5,351,500 | 5,366,500 |
 | `40m` | 7,000,000 | 7,300,000 |
-| `30m` | 10,000,000 | 10,200,000 |
-| `20m` | 14,000,000 | 14,400,000 |
-| `17m` | 18,000,000 | 18,200,000 |
-| `15m` | 21,000,000 | 21,500,000 |
-| `12m` | 24,890,000 | 25,000,000 |
-| `10m` | 28,000,000 | 30,000,000 |
+| `30m` | 10,100,000 | 10,150,000 |
+| `20m` | 14,000,000 | 14,350,000 |
+| `17m` | 18,068,000 | 18,168,000 |
+| `15m` | 21,000,000 | 21,450,000 |
+| `12m` | 24,890,000 | 24,990,000 |
+| `10m` | 28,000,000 | 29,700,000 |
 | `6m` | 50,000,000 | 54,000,000 |
-| `4m` | 69,000,000 | 71,000,000 |
-| `2m` | 144,000,000 | 148,000,000 |
-| `1.25m` | 222,000,000 | 225,000,000 |
+| `2m` | 144,000,000 | 146,000,000 |
 | `70cm` | 430,000,000 | 440,000,000 |
-| `33cm` | 902,000,000 | 928,000,000 |
 | `23cm` | 1,240,000,000 | 1,300,000,000 |
 | `gen` | 1,800,000 | 30,000,000 (general HF, outside ham allocations) |
 | `unknown` | — | anything else, or frequency zero |
 
+An exit from a ham band into `gen` is held for up to 2 kHz past the band edge
+(`BandEdgeHysteresisHz`), so VFO dither at an edge does not make `band` chatter.
+
 ---
 
-## `/cmd` — band-change, DVK & mic-profile intent
+## `/cmd` — band-change, slice-mode, DVK & mic-profile intent
 
 `/cmd` is **not retained** (QoS 1): all intents are one-shot triggers, and a stale
 command must not re-fire on a bridge or broker restart (same rationale as the tuner
@@ -308,8 +317,8 @@ fire-and-observe plane discipline: send intent, watch state.
   single-pan fallback.
 - The wire command (`display pan s <handle> band=<wavelength>`) and the
   wavelength-in-meters band-number form are from the SmartSDR TCPIP display-pan wiki
-  and the FlexRadio community, confirmed live on shari the same way the DVK commands
-  were.
+  and the FlexRadio community, confirmed live in 2026-08 (flexbridge then ran on shari)
+  the same way the DVK commands were.
 
 ### DVK prerequisites and caveats
 
@@ -321,7 +330,8 @@ fire-and-observe plane discipline: send intent, watch state.
   UI on `/state.mode` if they want to prevent the attempt.
 - **12 memories**, ids 1–12. Out-of-range ids are rejected by the bridge (logged, dropped).
 - The `dvk` wire strings were originally third-party-confirmed (AetherSDR impl vs
-  FLEX-8600 fw 4.2.18) and are now confirmed against the live FLEX-8400 on shari. The
+  FLEX-8600 fw 4.2.18) and were confirmed against the live FLEX-8400 in 2026-08 (flexbridge
+  then ran on shari). The
   official SmartSDR API wiki does not document the `dvk` command family.
 
 ### Mic-profile prerequisites and caveats
@@ -405,9 +415,10 @@ block in `/meta`. The `hadiscovery` service subscribes to `muehle/+/+/meta`, rea
 homeassistant/<component>/muehle-hf-radio/<object_id>/config
 ```
 
-The entity set is the fields above (frequency sensor, band sensor, mode sensor, drive
-sensor, transmitting binary_sensor, tuning binary_sensor, plus the DVK status/memory
-sensors) **and the one-shot action buttons** — 12 `dvk_play_N` buttons + a `dvk_stop`
+The entity set is the `expose.fields` above (device-online, transmitting and tuning
+binary_sensors; frequency, mode, drive, DVK status/memory and mic-profile sensors — a
+writable `string` renders read-only; `band` as a `select` that publishes `set_band`)
+**and the one-shot action buttons** — 12 `dvk_play_N` buttons + a `dvk_stop`
 button, rendered by `hadiscovery` from the neutral `expose.actions`.
 flexbridge itself contains no HA knowledge. See `../hadiscovery/docs/discovery-mqtt-api.md`
 for the mapping.
@@ -450,7 +461,11 @@ only `/state`. If multiple slices are configured in SmartSDR, the TX slice
 | `/cmd` DVK play/stop received | radio command sent; confirm on `/state` (`dvk_status`, `dvk_id`) |
 | `/cmd` `set_mode` received | radio `slice set <idx> mode=` sent → confirm on `/state.mode` |
 | `/cmd` `set_mic_profile` received | radio `profile mic load` sent; bridge tracks `/state.mic_profile` client-side (radio reports no active mic profile) |
+| Every 5 s while `device_online` is true | `/state` (unchanged snapshot; `StateHeartbeat`) |
+| Radio link lost | `/state` once with `device_online: false`; the heartbeat pauses until the next handshake |
 | Disconnect / crash | `/status` → `offline` (broker LWT) |
 
-State is published only when a field actually changes value; unchanged state
-does not produce a publish.
+Event-driven `/state` publishes are change-gated: an event that changes no field produces
+no publish. The 5 s heartbeat is the exception: it republishes the current snapshot while
+the radio link is up, so consumers that key liveness on message recency (the m5stamp
+pa-arm's 10 s window) do not starve on a quiet band.

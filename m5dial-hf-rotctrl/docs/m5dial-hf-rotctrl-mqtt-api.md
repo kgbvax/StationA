@@ -16,7 +16,7 @@ rotator slot. Deleting it changes nothing for any other component.
 
 | Property | Value |
 |----------|-------|
-| Broker | `192.168.1.139:1883` (shack broker on shari, LAN address — never `127.0.0.1`, the Dial is a remote device) |
+| Broker | `192.168.1.178:1883` (station broker on scmino, LAN address — never `127.0.0.1`, the Dial is a remote device). The `dial` account is not seeded there yet (local accounts: `hf` only, `../../mqtt-broker/CLAUDE.md`); `src/secrets.example.h.x` still names shari `192.168.1.139`, which runs no broker |
 | User | `dial` (narrow account: read rotator `state`/`status`, write rotator `cmd` — see `mqtt-broker/acl.conf.example`) |
 | Client ID | `dial-hf-rotctrl-1` (documented non-slot exception; must not collide with slot-derived bridge IDs) |
 | MQTT | 3.1.1, clean session, keepalive 30 s, buffer 1024 |
@@ -132,7 +132,7 @@ wrc-rotator-bridge, not a Dial defect.
    one knob-flat = 4 counts, raw counts run inverted (CW reads negative, the
    invert constant compensates). Closed record in `../docs/design-notes.md`.
 4. **Bounded blocking reconnect** — PubSubClient's `connect()` is synchronous
-   and, against a *silent* broker host (shari powered off, SYN unanswered —
+   and, against a *silent* broker host (host powered off, SYN unanswered —
    a refused connection returns fast), blocks in `select()`. The firmware
    caps the block at ~1 s via `WiFiClient::setTimeout(1)` (the arduino-esp32
    `WiFiClient::setTimeout` takes **seconds**, not ms — core quirk). Worst
@@ -148,13 +148,13 @@ With the Dial on the bench and the shack broker reachable
 
 ```bash
 # Terminal 1 — watch everything the Dial does
-mosquitto_sub -h 192.168.1.139 -u dial -P "$MQTT_PASSWORD" -t 'muehle/hf/rotator/#' -v
+mosquitto_sub -h 192.168.1.178 -u dial -P "$MQTT_PASSWORD" -t 'muehle/hf/rotator/#' -v
 
 # Terminal 2 — simulate the bridge (the real bridge may be stopped, or these
 # publishes are simply newer; both are retained)
-mosquitto_pub -h 192.168.1.139 -u dial -P "$MQTT_PASSWORD" -t muehle/hf/rotator/status \
+mosquitto_pub -h 192.168.1.178 -u dial -P "$MQTT_PASSWORD" -t muehle/hf/rotator/status \
   -m online -r
-mosquitto_pub -h 192.168.1.139 -u dial -P "$MQTT_PASSWORD" -t muehle/hf/rotator/state \
+mosquitto_pub -h 192.168.1.178 -u dial -P "$MQTT_PASSWORD" -t muehle/hf/rotator/state \
   -m '{"az":180,"target_az":180,"moving":false,"device_online":true}' -r
 ```
 

@@ -99,11 +99,11 @@ Flags:
 7. **QSO frames are ignored in v1** (`qsoLogged/Updated/Deleted`, logged at Debug). A
    future event topic would be the place for them.
 8. **Port 7373 is used on two different hosts.** OscarWatch's default Satellite-link port
-   on BWPC is 7373. wrc-rotator-bridge's GS-232 server also listens on `:7373`, on shari.
-   They don't conflict, because this bridge is a client and the two are different hosts.
-   Keep the two apart in docs and configs.
+   on BWPC is 7373. wrc-rotator-bridge's GS-232 server also listens on `:7373`, on
+   scmino (since 2026-10-12; on shari before). They don't conflict, because this bridge
+   is a client and the two are different hosts. Keep the two apart in docs and configs.
 9. **DEPLOYED 2026-10-03 on scmino** (192.168.1.178, Debian 12, aarch64 — same arm64
-   build as shari), which is replacing shari. The broker is the live hassio at
+   build as shari), which is replacing shari. deploy.sh seeds the hassio broker
    `tcp://192.168.1.50:1883` (user `hf`; not scmino's local mirror broker).
    - The env file's password was copied host-to-host from shari's
      `logger-spot-bridge.env` (same `hf` account), never through a terminal.

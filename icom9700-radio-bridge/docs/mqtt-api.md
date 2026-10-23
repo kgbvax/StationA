@@ -29,7 +29,7 @@ never stale.
 | `radio_responding` | bool | monitor on | the radio answers serial CI-V — false while the monitor is on means the radio is deaf (standby) or the serial port is down. Clears after 2 consecutive unanswered poll cycles |
 | `freq_hz` | int | monitor on ∧ responding | radio frequency (Hz) — transceive broadcast or read |
 | `band` | enum | monitor on ∧ responding | `2m` \| `70cm` \| `23cm` |
-| `mode` | enum | monitor on ∧ responding | `cw` \| `usb` \| `lsb` \| `am` \| `fm` \| `data` |
+| `mode` | enum | monitor on ∧ responding | `cw` \| `usb` \| `lsb` \| `am` \| `fm` (`data` is in `capabilities.modes` but not emitted: the data-mode flag is not read, so USB-D reads `usb`; RTTY/DV/DD are omitted) |
 | `satellite` | bool | monitor on ∧ responding | radio satellite mode (read-only `16 5A`) |
 | `s_meter` | int 0-255 | monitor on ∧ responding | S9 = 120 |
 | `swr`, `alc` | int 0-255 | monitor on ∧ responding | meter values (polled, dedup'd — published only on change) |
@@ -46,7 +46,7 @@ state exists anymore.
 - `civserial: …` — serial port open/read failures surfaced verbatim
 - `cmd payload too large` — FIXED string: the 4 KB size gate never echoes attacker bytes
 - `stale cmd (age …, bound 30s)` — the ts gate
-- `unknown cmd action "…"` — the action set is the five below; everything else rejects
+- `unknown cmd action "…"` — the action set is the six below; everything else rejects
 
 ## /cmd
 

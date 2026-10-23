@@ -24,8 +24,10 @@ acom1200s-pa-bridge's *implementation* of `SetBand` changes.
 
 This is the path the docs already anticipate: `band_source: "cat"` is a defined
 model value (`../docs/station-integration-model.md:231-234`), and
-`docs/pa-mqtt-api.md:238` says *"Band follows the radio via CAT in normal operation;
+`docs/pa-mqtt-api.md:238` said *"Band follows the radio via CAT in normal operation;
 this command is for manual override."* The code never implemented it; this would.
+(Update 2026-10-23: that set_band text now describes the real path, rf_sense plus
+antennaselect `[pa_follow]` pre-positioning.)
 
 **Why this shape:** keeping the bus contract unchanged (no new `set_freq` PA intent,
 no `freq_hz` on the PA bus, no antennaselect change, no model soft-binding edit) is a
@@ -42,11 +44,11 @@ is no need to carry the radio's real `freq_hz` onto the PA slot.
 ## Hardware instructions
 
 ### What you need
-1. **A 2nd USB-serial adapter** for shari, matching the level you set the amp to:
+1. **A 2nd USB-serial adapter** for scmino (the bridge host since 2026-10-12), matching the level you set the amp to:
    - RS232 → a standard USB-RS232 cable (Prolific `067b:2303` or FTDI `0403:6001`). The existing Prolific is already in use for telemetry, so use a **different vendor/serial** (e.g. an FTDI USB-RS232) to get a distinct `/dev/serial/by-id`.
    - TTL → an FTDI TTL-232R-3V3 (or 5V) cable. **Do not** wire a full RS232 (±12V) adapter into a jack set to TTL — it can damage the amp. Set the amp's CAT type to match the adapter you use.
 2. **A cable from the adapter to the amp's CAT jack.** Pinout comes from the **ACOM 1200S user manual** (rear-panel CAT connector drawing) — this repo only has the serial-protocol PDF, which does not document the CAT jack pins. Confirm TX/RX/GND (and CTS/RTS if the chosen mode needs them) before wiring. Kenwood CAT is 3-wire (TX/RX/GND), no hardware handshake — a simple TX/RX/GND crossover is enough once levels match.
-3. **shari-side:** plug the 2nd adapter into the Pi, identify its stable symlink:
+3. **scmino-side:** plug the 2nd adapter into the Pi, identify its stable symlink:
    ```bash
    ls -l /dev/serial/by-id/        # note the new adapter's by-id (must differ from the Prolific)
    ```
@@ -59,7 +61,7 @@ Set the amp's CAT interface (per the ACOM 1200S menu — or via proprietary `0x0
 - **Baud:** 9600 (default; Kenwood supports 9600/4800 — set both sides equal)
 - **Radio address / controller address:** N/A for Kenwood (ASCII, no addressing)
 
-### udev / permissions on shari
+### udev / permissions on scmino
 The systemd unit's `DeviceAllow=char-ttyUSB rw / char-ttyACM rw / char-tty rw`
 (`deploy.sh:226-228`) and `SupplementaryGroups=dialout` already cover **any** tty, so
 the 2nd adapter is auto-allowed under the sandbox — no unit change. The udev rule
@@ -192,7 +194,7 @@ avoids a fragile runtime write. Mark optional; not on the critical path.
 
 ## Verification (end-to-end, when implemented)
 1. `go test ./...` and `go test ./... -race` green; `go vet`/`gofmt -s` clean.
-2. Cross-compile (`GOOS=linux GOARCH=arm64 …`) and `./deploy.sh` to shari.
+2. Cross-compile (`GOOS=linux GOARCH=arm64 …`) and `./deploy.sh` to scmino.
 3. **With `[cat]` disabled:** behavior identical to today (walk fallback) — confirm
    no regression by changing the radio band and watching the 0x09 walk on `pa/state`.
 4. **With `[cat] enabled` (after the spike):** change the FLEX band → antennaselect

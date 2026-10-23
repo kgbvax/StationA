@@ -16,9 +16,10 @@ recordings off shari's SD card. Same arch (arm64), so `deploy.sh` is
 unchanged apart from its default `SSH_HOST`. Two things point at this host
 and move with it:
 
-- **icom9700-radio-bridge** (still on shari) sends the radio PCM to
-  `[audio] publish_addr = "192.168.1.178:45031"` in
-  `/etc/icom9700-radio-bridge/config.toml` on shari.
+- **icom9700-radio-bridge** (on scmino too since 2026-10-18; on shari before)
+  sends the radio PCM to `[audio] publish_addr` in
+  `/etc/icom9700-radio-bridge/config.toml` (`"192.168.1.178:45031"` while it
+  ran on shari; the value in the scmino config is not recorded in the repo).
 - **hf_console** CAM tab: `defaultVhfcamBaseUrl` =
   `http://192.168.1.178:8083`; a tablet that saved the gear sheet keeps its
   own stored URL — edit it there.
@@ -117,9 +118,10 @@ load ~+0.8; keep the HD profile clean — 1080p software x264 is not budgeted).
   leave a gap.
 - **Planes**: publishes `muehle/hf/vhfcam/status` (retained LWT online/offline)
   and `/state` (`mqtt_connected`, per-field stale flags). No `/meta` or
-  `/cmd` yet. Broker is the **hassio** one (`tcp://192.168.1.50:1883`) — the
-  shari-local mosquitto of the repo docs is not what is deployed (see
-  memory `station-broker-hassio`).
+  `/cmd` yet. Broker is the **hassio** one (`tcp://192.168.1.50:1883`, the `deploy.sh`
+  seed) — the shari-local mosquitto of older repo docs was never deployed,
+  and the scmino station broker is a bridged mirror of `.50` (see
+  `../mqtt-broker/CLAUDE.md`).
 - paho conventions apply: handlers Enqueue (never publish inline),
   ctx-aware connect via `shared/mqtt`.
 - Later phases (planned, not built): phase 2 = Go-rendered overlay PNG piped

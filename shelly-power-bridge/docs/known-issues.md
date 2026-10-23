@@ -74,6 +74,10 @@ Code-check verdict (2026-09-03): **still open.** `shelly-power-bridge/deploy.sh`
 contains the refusal claim in comments but no check; the placeholder defaults at
 lines 76–77 seed unverified.
 
+Update 2026-10-23: **fixed** in a8a508b (2026-10-10): `deploy.sh` sets
+`PLACEHOLDER_IDS` and refuses to seed a new config with a placeholder id. The
+defaults are now the real plug ids (see "Real Shelly device ids" below).
+
 ## [defect] Staleness threshold coupled to invisible device config
 
 The 75 s heartbeat timeout assumes the plug's device-side heartbeat period. The
@@ -141,6 +145,9 @@ and `hf/pa` (the HF power amplifier). Possibly the PA takes mains power directly
 list. Unresolved — the operator must confirm what the rail physically feeds.
 Code-check verdict: still open; the seeded eight-entry list in
 `config.example.toml` and `deploy.sh` is unchanged.
+Update 2026-10-23: the `psu-13v8` list is now six entries (`hf/radio`,
+`uhf/radio`, `hf/tuner`, `hf/ant-switch`, `hf/switch`, `hf/pa-arm`); `uhf/pol-ctrl`
+and `hf/pa` are still absent. `power/master` was retired 2026-10-18 (852cd81).
 
 ## [decision] Metering in `/state`
 
@@ -177,6 +184,13 @@ The example/seed configs carry placeholder ids (`shellyplus1pm-aabbccddeeff`,
 only in the seeded config on shari (`/etc/shelly-power-bridge/config.toml`); they
 could not be read from the workstation when the PRD was written. Get them from the
 operator or the live host. Do not copy the placeholders.
+
+Update 2026-10-23: the real ids are now in `config.example.toml` and the
+`deploy.sh` defaults (2026-10-18): `psu-13v8` = Gen1 Shelly Plug S
+`shellyplug-s-A71704`; `antennas` = Shelly Plug S Gen3
+`shellyplugsg3-e4b063d86c98`; `shack-pc-mains` = Shelly Plug S Gen3
+`shellyplugsg3-e4b063e3cba8`. The bridge runs on scmino since 2026-10-18, so the
+live config is `/etc/shelly-power-bridge/config.toml` on scmino (not checked).
 
 ## [decision] Slot-error exit semantics: wait-all vs fail-fast
 
@@ -236,3 +250,7 @@ of those devices then also lose their bridges' device links (the `device_online`
 fields in their `/state` go false), a cascading pattern consumers must expect.
 Because `master` is the upstream of `psu-13v8` itself, switching `master` off
 takes the PSU (and all its feeds) dark too.
+
+Update 2026-10-23: `power/master` was retired 2026-10-18 (852cd81) — the site
+master mains is an HA-owned plug, out of scope. The bridge now fronts three slots
+(`psu-13v8`, `antennas`, `shack-pc-mains`).

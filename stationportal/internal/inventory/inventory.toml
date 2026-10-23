@@ -1,5 +1,5 @@
 # stationportal built-in inventory — the static half of the landing page.
-# Versioned with the repo; a redeploy updates it. Facts as of 2026-10-08.
+# Versioned with the repo; a redeploy updates it. Facts as of 2026-10-23.
 # The live half (device model/serial/firmware from /meta, liveness from /status
 # and /state.device_online) comes from the bus and needs no entry here.
 
@@ -89,14 +89,14 @@ group = "Infrastructure"
 name  = "MQTT broker (live)"
 url   = "mqtt://192.168.1.50:1883"
 host  = "hassio"
-note  = "HA Mosquitto add-on — every station client connects here"
+note  = "HA Mosquitto add-on — live broker for every station client except PLC #1 and the Shelly bridge + plugs"
 
 [[link]]
 group = "Infrastructure"
 name  = "MQTT broker mirror"
 url   = "mqtt://192.168.1.178:1883"
 host  = "scmino"
-note  = "Station Mosquitto, bridged to .50 (muehle/# both ways) — no clients yet"
+note  = "Station Mosquitto, bridged to .50 (muehle/# both ways) — clients: PLC #1, shelly-power-bridge + Shelly plugs"
 
 [[link]]
 group = "Infrastructure"
@@ -130,7 +130,7 @@ addr     = "192.168.1.139 (eth) · .140 (wifi)"
 hardware = "Raspberry Pi 4 Model B, 2 GB"
 os       = "Debian 12 (bookworm)"
 storage  = "29 GB SD card"
-role     = "Device bridges + logic slots, HamClock, SvxLink"
+role     = "spid-ercm-rotator-bridge, hf-mqtt-capture, HamClock, SvxLink"
 
 [[host]]
 name     = "scmino"
@@ -138,14 +138,14 @@ addr     = "192.168.1.178 (eth) · .182 (wifi)"
 hardware = "Raspberry Pi Compute Module 5, 4 GB"
 os       = "Debian 12 (bookworm)"
 storage  = "117 GB NVMe"
-role     = "vhfcam-restream, oscarwatch-sattrack-bridge, hf_console web, testui, stationportal, Mosquitto mirror"
+role     = "Most device bridges + all logic slots, rigctld-ic9700, vhfcam-restream, hf_console web, testui, stationportal, Mosquitto mirror"
 
 [[host]]
 name     = "hassio"
 addr     = "192.168.1.50"
 hardware = "Home Assistant host"
 os       = "Home Assistant OS"
-role     = "Home Assistant + Mosquitto add-on (the live station broker)"
+role     = "Home Assistant + Mosquitto add-on (the live station broker for most clients)"
 
 [[host]]
 name     = "unifi"
@@ -317,7 +317,7 @@ host      = "embedded"
 address   = "muehle/uhf/radio"
 component = "icom9700-radio-bridge"
 device    = "Icom IC-9700"
-link      = "LAN RS-BA1 (RX audio) + serial CI-V (read-only)"
+link      = "LAN RS-BA1 (RX audio) + CI-V via rigctld-ic9700 (park retune); serial monitor off on scmino"
 host      = "scmino"
 
 [[slot]]
@@ -418,7 +418,7 @@ path  = "icom9700-radio-bridge/rigctld-scmino/"
 kind  = "infra"
 host  = "scmino"
 unit  = "rigctld-ic9700"
-ports = "4532/tcp (shari only)"
+ports = "4532/tcp (loopback only)"
 note  = "hamlib rigctld on the IC-9700 CI-V port; park_radio retune only"
 
 [[software]]
@@ -543,7 +543,7 @@ kind  = "infra"
 host  = "scmino"
 unit  = "mosquitto"
 ports = "1883/tcp"
-note  = "Bridged mirror of .50 — no clients yet"
+note  = "Bridged mirror of .50 — clients: PLC #1, shelly-power-bridge + Shelly plugs"
 
 [[software]]
 name  = "hf_console (APK)"
@@ -642,7 +642,7 @@ host  = "bwpc"
 [[resource]]
 name = "Ultrabeam"
 kind = "antenna"
-note = "HF yagi on antenna-switch port 3; tuned by ant-ctrl"
+note = "HF yagi on antenna-switch port 4 as seeded (on-site confirmation open); tuned by ant-ctrl"
 
 [[resource]]
 name = "Fan dipole 80/40"

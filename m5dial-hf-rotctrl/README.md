@@ -50,7 +50,7 @@ hostname = `DEVICE_SERIAL`).
 - `docs/m5dial-hf-rotctrl-mqtt-api.md` — the full on-the-wire contract and a
   bench verification recipe with verbatim mosquitto commands
 - `../docs/station-integration-model.md` — the station model this conforms to
-- `../docs/design-notes.md` — design + open-decision notes
+- `docs/design-notes.md` — design + open-decision notes
 
 ## License
 

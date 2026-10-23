@@ -31,8 +31,8 @@ GOOS=windows go vet ./...                         # vets the //go:build windows 
 ./deploy.sh                                       # build, ship, register + start the logon task
 ```
 
-Until the module is in the root `go.work`, prefix the commands with
-`GOWORK=off`.
+The module is in the root `go.work` (since 2026-10-10). `GOWORK=off` also
+works: `go.mod` carries the `replace … => ../shared`.
 
 CLI flags: `-config <path>` (default: `config.toml` next to the exe; an
 explicitly named missing file is an error), `-log.level debug|info|warn|error`.
@@ -90,7 +90,8 @@ seed-once from `config.example.toml`. Keys: `host`, `location`, `[mqtt]`,
 `[device]`, `[sleep] min_user_idle_minutes`, `[state] interval_s`,
 `[log] level`, `[log] file`.
 
-**MQTT password** — same rule as pelcobridge2 (the earlier shack-PC component):
+**MQTT password** — same rule as pelcobridge2 (the earlier shack-PC component,
+decommissioned 2026-10-10):
 the env var `WINPC_POWER_BRIDGE_MQTT_PASSWORD` wins; the TOML `[mqtt] password`
 is the fallback. There is no systemd `EnvironmentFile` on Windows. Preferred:
 set it as a **user** environment variable on bwpc in the GUI
@@ -101,8 +102,9 @@ user profile, which only the user, SYSTEM and Administrators can read. No
 password flag exists. Other env overrides: `WINPC_POWER_BRIDGE_MQTT_BROKER`,
 `_CLIENT_ID`, `_USER`, `_SITE`.
 
-Default broker: `tcp://192.168.1.50:1883` (the live station broker, see the
-root CLAUDE.md "MQTT broker access").
+Default broker: `tcp://192.168.1.50:1883` (the HA broker; the live broker for
+every client except PLC #1 and shelly-power-bridge per the root CLAUDE.md
+live-state note; the live bwpc config was not checked).
 
 ---
 

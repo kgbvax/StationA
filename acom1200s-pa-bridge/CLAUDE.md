@@ -163,8 +163,10 @@ See `../docs/conventions/config-and-secrets.md` for the full convention.
 Target: Raspberry Pi **scmino** (`192.168.1.178`, user `io`) since 2026-10-12 — the ACOM's Prolific
 USB-serial adapter is plugged into scmino's USB (it was on shari, `192.168.1.139`). The shari
 copy is disabled, not removed (rollback). Never run two instances: they share the MQTT
-client_id `muehle-hf-pa` and kick each other off the broker. Live broker is the HA broker
-`192.168.1.50` (`127.0.0.1` on scmino is the unused mirror).
+client_id `muehle-hf-pa` and kick each other off the broker. `deploy.sh` seeds the HA broker
+`tcp://192.168.1.50:1883`; `127.0.0.1` on scmino is the station broker, a bridged `muehle/#`
+mirror of `.50` (live split per the root `CLAUDE.md` 2026-10-18 note; this service's live
+config is not verified).
 
 ```bash
 ./deploy.sh              # cross-compile, ship, install as a hardened systemd service
@@ -183,7 +185,8 @@ The unit is hardened like flexbridge **minus `PrivateDevices`** (the bridge
 must open `/dev/ttyUSB*`). It keeps `SupplementaryGroups=dialout`, the three
 `DeviceAllow=char-tty{USB,ACM} rw`, and the Prolific (`067b`) udev rule that
 pins the adapter's tty to the dialout group. See `../docs/conventions/deployment.md`
-(serial addendum) for the serial-specific hardening requirements.
+("systemd unit hardening" and "udev rule for USB-serial devices") for the serial-specific
+hardening requirements.
 
 ---
 
@@ -202,7 +205,7 @@ Shared documentation lives in `../docs/` (this component is a subdirectory of th
 |---|---|
 | Station integration model (three-plane MQTT contract, §7.1 PA slot) | `../docs/station-integration-model.md` |
 | Config and secrets convention | `../docs/conventions/config-and-secrets.md` |
-| Deployment convention (serial addendum) | `../docs/conventions/deployment.md` |
+| Deployment convention (serial: "udev rule for USB-serial devices") | `../docs/conventions/deployment.md` |
 | Canonical band/mode vocabulary | `../docs/conventions/band-mode-reference.md` |
 
 This project implements the `muehle/hf/pa` slot and must conform to those

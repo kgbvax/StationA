@@ -19,7 +19,7 @@ It is **read-only** (no `/cmd`).
 
 | Property | Value |
 |----------|-------|
-| Protocol | MQTT 3.1.1 (plain TCP, `tcp://192.168.1.50:1883` — the live hassio broker) |
+| Protocol | MQTT 3.1.1 (plain TCP, `tcp://192.168.1.50:1883` — the hassio broker, deploy.sh seed default) |
 | Authentication | username/password (`hf` account; password from `OSCARWATCH_SATTRACK_BRIDGE_MQTT_PASSWORD`) |
 | Clean session | No |
 | Auto-reconnect | yes; a failed *initial* connect exits non-zero and systemd restarts the unit |

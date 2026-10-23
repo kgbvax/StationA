@@ -15,12 +15,14 @@ Runs on `scmino` (since 2026-10-12; was `shari`).
 > **Status: deployed and running on scmino.** The Go service — config, neutral `expose`
 > parsing, the deterministic neutral→HA render, the discovery lifecycle engine, the MQTT
 > client, golden unit tests, `deploy.sh` + hardened systemd unit — is in place, passes
-> `go test ./... -race`, and is live on scmino as the `hadiscovery` systemd service. Smoke
-> against the live broker confirmed 22 rendered entities across 5 slots (`ant-ctrl`, `pa`,
-> `antenna-select`, `radio`, `discovery`) in the `homeassistant/#` tree. Remaining work is
-> in the **bridge repos**, not here: `radio` (flexbridge) still publishes `/meta` without an
-> `expose` block (hadiscovery renders a liveness diagnostic for it), and any bridge still
-> embedding its own HA discovery should gate that off now that hadiscovery owns rendering.
+> `go test ./... -race`, and is live on scmino as the `hadiscovery` systemd service. The
+> first smoke against the live broker (2026-07-10, then on shari) confirmed 22 rendered
+> entities across 5 slots (`ant-ctrl`, `pa`, `antenna-select`, `radio`, `discovery`) in the
+> `homeassistant/#` tree. `radio` (flexbridge) now publishes a full `expose` block (fields
+> incl. writable `band`/`mic_profile` + 13 DVK buttons), so it renders real entities, not
+> the liveness diagnostic. Remaining work is in the **bridge repos**, not here: any bridge
+> still embedding its own HA discovery should gate that off now that hadiscovery owns
+> rendering.
 
 ---
 
@@ -34,9 +36,16 @@ go test -race ./...            # race detector
 go vet ./... && gofmt -l .     # vet + format check
 
 # Run locally against a broker (no hardware — passive MQTT consumer)
-go run ./cmd/hadiscovery -config ./config.example.toml
-go run ./cmd/hadiscovery -broker tcp://192.168.1.139:1883   # broker via flag
+go run ./cmd/hadiscovery -config ./config.example.toml                                  # broker 127.0.0.1 (example)
+go run ./cmd/hadiscovery -config ./config.example.toml -broker tcp://192.168.1.50:1883  # station bus via flag
 ```
+
+Without `-config` it loads `/etc/hadiscovery/config.toml` or bare defaults, and bare
+defaults fail `Validate()` (no site/station/location/host). On the station bus a local run
+with the example's `site`/`station`/`slot` shares the deployed instance's client id (on
+the same broker it kicks the scmino service off) and its `muehle/hf/discovery` topics (it
+overwrites the retained `/meta`): stop the service, or run a local copy of the config with
+another `slot` and the `hf` password.
 
 ## Layout
 
@@ -59,7 +68,7 @@ config to `scmino`, and installs the `hadiscovery` service (seed-once; see
 — so the unit carries no `DeviceAllow`/`SupplementaryGroups`.
 
 ```bash
-./deploy.sh                                      # defaults: scmino, broker tcp://192.168.1.50:1883 (live broker)
+./deploy.sh                                      # defaults: scmino, broker tcp://192.168.1.50:1883 (HA broker)
 MQTT_PASSWORD=... ./deploy.sh                    # seed the password on first deploy
 ssh io@192.168.1.178 'journalctl -u hadiscovery -f'
 ```

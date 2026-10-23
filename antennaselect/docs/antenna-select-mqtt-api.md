@@ -4,7 +4,7 @@ This document describes the MQTT interface of **antennaselect** — the antenna-
 reconciler. It implements the `antenna-select` logic slot of the station integration model
 (`../../docs/station-integration-model.md` §5, §7.1).
 
-> **Status: implemented** (pending on-device deploy). This documents the slot's wire
+> **Status: implemented, live** on scmino (unit `antenna-select`). This documents the slot's wire
 > surface and decision logic as built — derived from `internal/mqtt` and
 > `internal/reconcile`.
 
@@ -43,7 +43,7 @@ Configured via `[mqtt]` in `config.toml` (`slot = "antenna-select"`).
   "role": "reconciler",
   "link": "none",
   "location": "bauwagen",
-  "host": "shari",
+  "host": "scmino",
   "capabilities": {
     "controls": "ant-switch",
     "follows": { "ultrabeam": "ant-ctrl", "pa": "pa", "tuner": "tuner" },
@@ -272,11 +272,11 @@ This binding is **not** the controller map: the PA is always in the RF path, so 
 gated on antenna selection** — it fires whenever the radio is online and reporting a band.
 No TX guard is applied; PA hot-switch protection is handled in hardware (the same series
 interlock the antenna cold-switch relies on, model §6). Gated by `[pa_follow].enabled`
-(default `true` on shari; `false` in the built-in defaults).
+(default `true` in the deploy seed; `false` in the built-in defaults).
 
 - Emit `<pa_follow.slot>/cmd {"action":"set_band","value": <radio.band>}` on radio band
   change while `radio.status == online`. **Not retained** (QoS 1) — the PA `/cmd` contract
-  is not retained (see `../acombridge/docs/pa-mqtt-api.md`); self-heal comes from this
+  is not retained (see `../../acom1200s-pa-bridge/docs/pa-mqtt-api.md`); self-heal comes from this
   reconciler re-resolving on the retained `radio/state` replay at its own reconnect, not
   from a retained `pa/cmd`. Deduped against the last band pushed.
 
@@ -311,7 +311,7 @@ sequencing already withholds a port change during TX, so the ATU is not re-keyed
   reconnect, not from a retained `tuner/cmd`. Deduped against the last inline value pushed.
   `true` = ATU in line, `false` = bypass.
 
-Gated by `[tuner_follow].enabled` (default `true` on shari; `false` in the built-in
+Gated by `[tuner_follow].enabled` (default `true` in the deploy seed; `false` in the built-in
 defaults). The `set_inline` vocabulary matches atr1k-tuner-bridge's `/cmd` contract.
 
 ---

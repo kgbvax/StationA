@@ -11,7 +11,7 @@ It is part of the Mühle station automation ecosystem; see `../docs/` for the sh
 ## Requirements
 
 - ACOM 600S or 1200S amplifier connected via a USB-serial adapter (Prolific, vendor `067b`)
-- MQTT broker (e.g. Mosquitto at `192.168.1.139:1883`)
+- MQTT broker (e.g. the HA broker at `192.168.1.50:1883`, which `deploy.sh` seeds)
 - (Optional) Home Assistant — discovery is now rendered by the standalone
   `hadiscovery` consumer from this bridge's `expose` block; the legacy embedded
   discovery is gated off by default (model §9)
@@ -60,7 +60,7 @@ sudo cp config.example.toml /etc/acom1200s-pa-bridge/config.toml
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `mqtt.broker` | `tcp://192.168.1.139:1883` | MQTT broker URL |
+| `mqtt.broker` | `tcp://127.0.0.1:1883` | MQTT broker URL (`deploy.sh` seeds `tcp://192.168.1.50:1883`) |
 | `mqtt.site` / `station` / `slot` | `muehle` / `hf` / `pa` | Station-model slot addressing |
 | `mqtt.location` | `bauwagen` | Physical location label (in `/meta`) |
 | `mqtt.user` | `hf` | MQTT username |
@@ -70,7 +70,7 @@ sudo cp config.example.toml /etc/acom1200s-pa-bridge/config.toml
 | `serial.port` | `/dev/serial/by-id/…Prolific…` | Serial port device path |
 | `serial.avg_time_ms` | `1` | Forward-power moving-average window in ms (`1` = no averaging) |
 | `device.model` / `serial` / `link` | `ACOM 1200S` / `""` / `serial` | Identity published in `/meta` |
-| `host` | `scmino` | Compute node (in `/meta`) |
+| `host` | `shari` | Compute node (in `/meta`; `deploy.sh` seeds `scmino`) |
 | `log.level` | `info` | Log level |
 
 ## MQTT
@@ -151,7 +151,7 @@ for frame layout and byte offsets used in `internal/acom/parser.go`.
 |---|---|
 | Station integration model (§7.1 PA slot) | `../docs/station-integration-model.md` |
 | Config and secrets convention | `../docs/conventions/config-and-secrets.md` |
-| Deployment convention (serial addendum) | `../docs/conventions/deployment.md` |
+| Deployment convention (serial: "udev rule for USB-serial devices") | `../docs/conventions/deployment.md` |
 | Canonical band/mode vocabulary | `../docs/conventions/band-mode-reference.md` |
 | PA slot MQTT schema | `docs/pa-mqtt-api.md` |
 

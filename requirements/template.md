@@ -3,7 +3,7 @@ id: REQ-NNN
 project: <component directory name, e.g. hf_console>
 title: <one line>
 created: YYYY-MM-DD
-deploy: none | shari | manual-device
+deploy: none | host | manual-device
 ---
 
 ## Requirement
