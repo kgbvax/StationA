@@ -90,7 +90,7 @@ Retained JSON, published once per connect cycle (after connecting to broker).
   },
   "link": "serial",
   "location": "bauwagen",
-  "host": "shari",
+  "host": "scmino",
   "capabilities": {
     "bands": ["20m", "17m", "15m", "12m", "10m", "6m"],
     "directions": ["forward", "reverse", "bidirectional"]

@@ -1,13 +1,13 @@
-# mqtt-broker — shack-local Mosquitto, bridged to the Home Assistant broker
+# mqtt-broker — station Mosquitto on scmino, bridged to the Home Assistant broker
 
-This is the **shack-local MQTT broker**: a Mosquitto instance on
-[shari](../CLAUDE.md) (`192.168.1.139`) that all station components talk to
-locally, with a mosquitto `bridge` connection replicating the `muehle/#`
-namespace to the Home Assistant broker at `192.168.1.50:1883` (HA's own
-Mosquitto add-on).
+This is the **station MQTT broker**: a Mosquitto instance on
+[scmino](../CLAUDE.md) (`192.168.1.178`; originally planned for shari) that the
+station components move to one at a time, with a mosquitto `bridge` connection
+replicating the `muehle/#` namespace to the Home Assistant broker at
+`192.168.1.50:1883` (HA's own Mosquitto add-on).
 
 **Why.** The HA broker is in the house, not the shack. Every station component
-on shari reached it over the house LAN, so if the shack↔house link drops the
+reaches it over the house LAN, so if the shack↔house link drops the
 station loses its entire bus — `antennaselect`, `powerseq`, and the `hf_console`
 tablet can no longer coordinate even though all the radios/PAs/rotators are
 physically fine and locally reachable. A shack-local broker gives the station a
@@ -19,22 +19,25 @@ config + a deploy script, like the ESPHome/PlatformIO projects. **No station
 component code changes were needed**: every component already configures a
 single broker address, so each is simply repointed at the shack broker.
 
-> **Current state (2026-10-01).** The broker runs on **scmino**
-> (`192.168.1.178:1883`), not shari, and is bridged to `.50` as a
+> **Current state (2026-10-23).** The broker runs on **scmino**
+> (`192.168.1.178:1883`; since 2026-10-01) and is bridged to `.50` as a
 > **transitional mirror**: `muehle/#` in both directions, `homeassistant/status`
 > in, `homeassistant/+/+/+/config` out (see `mqtt-broker/mosquitto.conf.example`).
-> **No client uses it yet — `.50` is still the live station broker.** Clients
-> move one at a time by changing their broker address to `192.168.1.178:1883`;
-> once every client has moved, narrow the bridge to the split mapping below.
-> The bridge logs in to `.50` as `hf`; the only local account is `hf`.
+> **Clients so far:** the M5 Stamp PLC #1 (2026-10-03) and shelly-power-bridge
+> with its Shelly plugs (2026-10-18). Per the root `CLAUDE.md` live-state note
+> (2026-10-18), every other client still uses `.50`, the live station broker
+> (per-service configs not verified live). Clients move one at a time by
+> changing their broker address to `192.168.1.178:1883`; once every client has
+> moved, narrow the bridge to the split mapping below. The bridge logs in to
+> `.50` as `hf`; the only local account is `hf`. shari runs no broker.
 > Never put a `bwbroker` alias in any `/etc/hosts` — live services resolve
-> that name to `.50` (2026-09-26 incident). Where this document says shari /
-> `127.0.0.1` for the broker, read scmino / `192.168.1.178`.
+> that name to `.50` (2026-09-26 incident). The topology, ACL and repointing
+> sections below describe the target design.
 
 ## Topology
 
 ```
-   shari (192.168.1.139)                         HA box (192.168.1.50)
+   scmino (192.168.1.178)                        HA box (192.168.1.50)
    ┌─────────────────────────────┐               ┌──────────────────┐
    │ Mosquitto (shack, primary)  │── bridge ───▶ │ Mosquitto (HA)   │
    │ 127.0.0.1:1883              │   connection  │ :1883  (untouched)│
@@ -46,13 +49,13 @@ single broker address, so each is simply repointed at the shack broker.
    │ all station Go services (flexbridge, ultra,  │  HA UI reads state & sends cmd
    │ antennaselect, powerseq, hadiscovery, …)     │  via its MQTT integration on .50
    └─────────────────────────────────────────────┘
-   Remote MQTT clients (Shelly plugs, M5 PLC, ant-switch ESP, console tablet, Dial)
-   connect to shari:1883 over the shack LAN.
+   Remote MQTT clients (Shelly plugs, M5 PLC, ant-switch ESP, console tablet, Dial,
+   the shari services) connect to scmino:1883 over the shack LAN.
 ```
 
 **Authority:** `muehle/#` is primary on the shack broker; HA is a consumer via
 the bridge. `homeassistant/status` (HA birth) originates on `.50` and is
-forwarded in. `hadiscovery` stays on shari and renders discovery **out** to HA —
+forwarded in. `hadiscovery` runs on scmino and renders discovery **out** to HA —
 consistent with the integration-model invariant "HA is the reference consumer,
 not a privileged one."
 
@@ -90,7 +93,7 @@ Shack broker (`acl.conf.example`):
 
 - **`hf`** is the shared account all station Go services (via `127.0.0.1`) and
   the **Shelly smart plugs** connect as. The Shelly plugs publish on their own
-  Gen2+ prefix (`shellyplus1pm-<id>/...`), not under `muehle/#`; because that
+  Gen2+ prefix (e.g. `shellyplugsg3-<id>/...`), not under `muehle/#`; because that
   prefix is per-device and varies by model, `hf` gets full `readwrite #` rather
   than a narrow pattern. Narrow it to `muehle/#` + concrete Shelly prefixes if
   your model list is fixed. `hadiscovery` also runs as `hf` (needs to read
@@ -105,7 +108,7 @@ Shack broker (`acl.conf.example`):
   touches exactly one slot (`muehle/hf/rotator`, read its state/status, write
   its cmd). Configure the Dial's `src/secrets.h` with this account, not `hf`.
   The broker deploy is seed-once, so on an already-deployed broker add this
-  account by hand on shari (`acl.conf` + `mosquitto_passwd`, then restart
+  account by hand on scmino (`acl.conf` + `mosquitto_passwd`, then restart
   mosquitto).
 
 HA broker (`.50`, configured in the HA Mosquitto add-on — **outside this
@@ -116,7 +119,7 @@ repo**): a `stationa-bridge` account with read `homeassistant/status` +
 ## Deploy
 
 ```bash
-# From this directory — seeds config, ACL, and password db once on shari.
+# From this directory — seeds config, ACL, and password db once on scmino.
 HF_MQTT_PASSWORD=... BRIDGE_MQTT_PASSWORD=... CONSOLE_MQTT_PASSWORD=... DIAL_MQTT_PASSWORD=... ./deploy.sh
 ```
 
@@ -159,34 +162,41 @@ only broker addresses in config / defaults / docs. Defaults were updated across
 the repo; on the devices, the seeded config files own the values, so edit them
 in place where they diverge.
 
-**Go services on shari** → `tcp://127.0.0.1:1883` (broker is co-located):
+**Go services on scmino** → `tcp://127.0.0.1:1883` (broker is co-located):
 `flexbridge`, `ultrabridge`, `acom1200s-pa-bridge`, `wrc-rotator-bridge`,
-`atr1k-tuner-bridge`, `shelly-power-bridge`, `powerseq`, `antennaselect`,
-`hadiscovery`. Edit `/etc/<service>/config.toml` `mqtt.broker` (or the matching
+`atr1k-tuner-bridge`, `powerseq`, `antennaselect`, `antmode`, `beamsteer`,
+`hadiscovery`, `logger-spot-bridge`, `icom9700-radio-bridge`, … (the root
+`CLAUDE.md` host list). `shelly-power-bridge` already uses the broker
+(`tcp://192.168.1.178:1883`, since 2026-10-18). Edit `/etc/<service>/config.toml` `mqtt.broker` (or the matching
 `*_MQTT_BROKER` env override) and the `*_MQTT_PASSWORD` to the shack broker's
 `hf` password, then `sudo systemctl restart <service>`.
 
-**Remote MQTT clients** → `192.168.1.139:1883` (the shari LAN address):
-- **Shelly plugs** — reconfigure each device's MQTT settings to the shari
+**Go services on shari** (`spid-ercm-rotator-bridge`, `hf-mqtt-capture`) →
+`tcp://192.168.1.178:1883` (same edit as above).
+
+**Remote MQTT clients** → `192.168.1.178:1883` (the scmino LAN address):
+- **Shelly plugs** — reconfigure each device's MQTT settings to the scmino
   broker, `hf` user. (Device-side, via the Shelly web UI; not in this repo.)
+  Done 2026-10-18 with shelly-power-bridge.
 - **M5 PLC** (`m5stamp-hf-ctrl`) — set `MQTT_HOST` in `secrets.h` and reflash.
+  Done 2026-10-03 (PLC #1).
 - **ant-switch ESP** (`waveshare_relay-antswitch-bridge`) — set `mqtt_broker` in
   the ESPHome YAML / `secrets.yaml` and reflash.
-- **`hf_console` tablet** — set the broker to `192.168.1.139:1883` on first
+- **`hf_console` tablet** — set the broker to `192.168.1.178:1883` on first
   launch or via the console top-bar gear. Use the `console` account.
 - **M5Stack Dial rotator head** (`m5dial-hf-rotctrl`) — set `MQTT_HOST` in
-  `src/secrets.h` (default already `192.168.1.139`) and reflash. Use the
-  `dial` account.
+  `src/secrets.h` to `192.168.1.178` and reflash. Use the `dial` account.
 
 ## Operational behavior
 
-- **Shack↔house link down:** the station keeps its full local bus on shari (Go
-  services via `127.0.0.1`, remote devices via the shari IP); `antennaselect`,
+- **Shack↔house link down:** once every client has moved, the station keeps its
+  full local bus on scmino (Go services via `127.0.0.1`, remote devices via the
+  scmino IP); `antennaselect`,
   `powerseq`, and the console keep working. HA goes stale and **cannot command
   the station** until the link returns — this is the intended trade-off (shack
   autonomy). On link restore, retained `state`/`meta`/`status` re-sync to HA; an
   HA birth (if HA rebooted) re-triggers discovery.
-- **shari reboot:** `mosquitto` is a systemd service with persistence, so
+- **scmino reboot:** `mosquitto` is a systemd service with persistence, so
   retained `meta`/`state` survive and the bus re-seeds on boot before the
   bridges reconnect.
 - **HA reboot:** HA republishes `homeassistant/status=online` → the bridge
@@ -210,7 +220,7 @@ in place where they diverge.
    republishes discovery; confirm HA entities appear. Toggle a writable HA
    entity → confirm the `cmd` arrives at the shack broker
    (`mosquitto_sub -h 127.0.0.1 -t 'muehle/+/+/cmd'`).
-5. **Outage drill:** firewall-block `.50` from shari; confirm the station still
+5. **Outage drill:** firewall-block `.50` from scmino; confirm the station still
    responds to console commands and `antennaselect` still reconciles locally.
    Unblock → confirm re-sync.
 6. **Remote devices:** reconfigure each Shelly plug, the M5 PLC, the ant-switch

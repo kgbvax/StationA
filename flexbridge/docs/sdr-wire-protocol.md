@@ -52,8 +52,11 @@ All runtime commands are fire-and-forget on the wire; confirmation comes through
 | DVK stop memory N (unkeys TX) | `dvk playback_stop id=<N>` |
 | Band change through native band-stacking | `display pan s <panHandle> band=<bandNumber>` — bandNumber is the wavelength in meters (`20m`→`20`, `160m`→`160`, `6m`→`6`); panHandle is the verbatim hex handle string |
 | Mic-profile load | `profile mic load "<name>"` (name double-quoted, can include spaces) |
+| Slice mode (added 2026-10-23, 130dc0f) | `slice set <sliceIndex> mode=<CW\|USB\|LSB>` — TX slice, else the active one; from the SmartSDR slice wiki, not yet confirmed live on the FLEX-8400 |
 
 There is deliberately **no** set_freq, set_mode, or set_power command — the bridge never tunes the radio except by band (hard safety boundary).
+
+Update 2026-10-23: `set_mode` exists since 130dc0f (`cw`/`usb`/`lsb` only, for the hf_console SSB/CW toggle on a re-tap of the active band). There is still no set_freq or set_power command. The liveness probe (`version`, see the keepalive item) is the only runtime write not in this table.
 
 Native **band-stacking** is the radio's per-band memory of the last-used frequency and mode. A `display pan s ... band=` change recalls that memory, so the radio, not the bridge, picks the new frequency. This memory recall is why the band-transition hold (below) must suppress the band-change transient.
 
@@ -108,13 +111,19 @@ If the `info` reply carried no serial, the bridge skips identity publication ent
 
 A graceful MQTT disconnect fires no will, so the retained `online` stays on the broker while the service is down; the schema documentation's claim that the bridge publishes `offline` on clean shutdown was never put in place. Only the `device_online` layer reduces the risk. It is a trap for new consumers. Verdict: **still open** — `cmd/flexbridge/main.go` sets only the Will (`offline`) and publishes `online` on connect; nothing publishes `offline` before a clean disconnect.
 
+Update 2026-10-23: `docs/radio2mqtt-schema.md` no longer claims a clean-shutdown `offline` publish. The behavior is unchanged (still open).
+
 ## [defect] No radio-side keepalive
 
 A silently black-holed TCP path (no traffic, no read error) stays unnoticed — no ping, no read-timeout watchdog in the read loop; reconnect waits for the OS to notice. A re-implementation must add a watchdog; if it does, it must give the timing (see the [decision] item). Verdict: **still open** — `internal/flexradio/client.go` sets a read deadline only inside `sendAwaitReply` (handshake) and clears it afterwards; the steady-state read loop has no deadline or watchdog.
 
+Update 2026-10-23: **fixed** by 44a095d (2026-09-18). `Client.Run` sends an eliciting `version` probe after 10 s of inbound silence and drops the connection if nothing arrives within 5 s (`DefaultProbeInterval`/`DefaultProbeTimeout` in `internal/flexradio/client.go`). This also settles the keepalive [decision] item below.
+
 ## [defect] `/cmd` queue saturation drops commands silently
 
 Bounded queue (capacity 32 default), no drop logging. One burst of >32 commands before the worker drains loses intents without a trace. Do not reproduce: log drops. Verdict: **still open** — `shared/mqtt.Enqueue` drops on a full channel by design and its test asserts the silent drop.
+
+Update 2026-10-23: drops are now logged (`slog.Warn` "jobs queue full: dropping job" in `shared/mqtt.Enqueue`). The queue still drops by design and the bus still gets no error.
 
 ## [defect] `dvk_play` is not gated on voice mode
 
@@ -156,9 +165,13 @@ The radio returns a malformed reply; profile creation uses a file-transfer mecha
 
 The reference README documents a long-gone per-field topic scheme (`flexbridge/<serial>/state/...`), meter topics, `[rates]` and `radio_udp_port` config, per-slice entities, and "frequency in MHz" — stale. The code keeps and tests UDP/VITA-49 meter machinery (`meters.go`, `vita49.go`, meter-list parser) that is **dead code**: no UDP listener is wired, and the handshake sends no `client udpport`/`meter list`. Where the PRD and the README disagree, the code-derived behavior wins. Verdict: **still open** — `meters.go`/`vita49.go` still present; handshake sends no meter commands (verified in `internal/flexradio/client.go`).
 
+Update 2026-10-23: `flexbridge/README.md` now describes the current contract (no per-field or meter topics, no `[rates]`/`radio_udp_port`). The dead meter code is still present (still open).
+
 ## [defect] `flexbridge/docs/radio2mqtt-schema.md` band table has drifted from the code
 
 *(Found during this salvage's code check — not in the PRD.)* The live schema doc's band table carries wrong edges for 60m (5,060,000–5,450,000), 30m (10,000,000–10,200,000), 20m (14,000,000–14,400,000), 15m (21,000,000–21,450,000 ✓/10m 30,000,000 vs 29,700,000), plus extra rows (4m, 1.25m, 33cm) not in the code; the code table in `internal/flexradio/band.go` matches the authoritative `docs/conventions/band-mode-reference.md` (IARU Region 1/DL edges). The schema doc also says "Unknown firmware modes are lower-cased and passed through", while `NormalizeMode` returns `""` and the field is omitted. The PRD band table (above) is the correct one. Verdict: **still open** — fix `flexbridge/docs/radio2mqtt-schema.md` "Band values"/"Mode values" to match `internal/flexradio/band.go` and `status.go`.
+
+Update 2026-10-23: **fixed** — the schema doc's band table now matches `band.go`, and unmapped firmware modes are documented as omitted.
 
 ## [decision] Clean-shutdown `/status`
 
@@ -180,6 +193,8 @@ Keep advisory-only (reference) or reject non-voice modes with an error? The radi
 
 The README describes UDP VITA-49 meter streaming (SWR and power). SWR is the standing-wave ratio, a measure of how well the antenna matches the radio. That streaming is dead code. No station consumer needs radio meters today (the PA bridge measures power at the amplifier). Decide whether meters are scope; if yes, treat the README's meter table as the aspirational spec, not current behavior.
 
+Update 2026-10-23: the meter table is gone from the README (see git history before 2026-10-23 for it). The scope decision is still open.
+
 ## [decision] Mic-profile "active" tracking
 
 The radio reports no active mic profile (firmware v4.2.20 observed), so `/state.mic_profile` is a client-side guess. Options: keep the optimistic guess, or omit the field and let consumers track loads themselves. The bridge must keep the defensive `current=` frame handling either way (costless if firmware never emits it).
@@ -195,6 +210,8 @@ Radio reconnect backoff: first 2 s, ×1.5 per failed cycle, capped at 60 s (slee
 ## [unique] `/cmd` action-validation rules (mic-profile name guard)
 
 `set_mic_profile`: trim the value; validate non-empty, ≤64 chars, no `"`, no `\`, no control chars (the name is embedded in a double-quoted wire string — also an injection guard); else drop with warn. If the tracked profile list is non-empty and the name is not in it, drop as a likely typo (an empty list does NOT block — it only means `profile mic info` has not answered yet). `set_band`: label→number map `160m→160, 80m→80, 60m→60, 40m→40, 30m→30, 20m→20, 17m→17, 15m→15, 12m→12, 10m→10, 6m→6`; any other label (`2m`, `70cm`, `23cm`, `gen`, `unknown`, garbage) gets a warn log and no radio write; target pan handle resolution: active slice's `pan` handle if tracked, else the lexicographically lowest tracked handle, else no-op with warn. `dvk_play`: id validated 1–12, else dropped; non-voice mode logs a warning (not blocked). `dvk_stop`: with value stop memory N (validated 1–12); without value stop the now-active memory from the live `/state` id; if none active, warn and drop. Validation drops are silent on the bus (no error topic, no acknowledgment).
+
+Update 2026-10-23: `set_mode` (130dc0f): trim + lowercase; only `cw`/`usb`/`lsb` (→ `CW`/`USB`/`LSB`), anything else gets a warn log and no radio write; targets the TX slice, else the active one; no tracked slice → warn, no-op.
 
 ---
 

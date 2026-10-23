@@ -50,6 +50,13 @@ shari-local services) is now the repo default — `hadiscovery/deploy.sh` seeds
 the broker address as config-only either way. The HA-instance facts (prefix, credentials)
 remain unknown to this repo.
 
+Update 2026-10-23: the shari cutover never happened and shari runs no broker. hadiscovery
+runs on scmino since 2026-10-12, and `deploy.sh` (a249d98) seeds `tcp://192.168.1.50:1883`
+(the HA broker) again. Live split per the root `CLAUDE.md` 2026-10-18 note: every client
+except PLC #1 (`hf/switch` + `hf/pa-arm`) and shelly-power-bridge + its Shelly plugs uses
+the HA broker `192.168.1.50:1883`; the scmino broker `192.168.1.178:1883` is a bridged
+`muehle/#` mirror. hadiscovery's live config is not verified here.
+
 ## [unique] `options_ref` stringifies non-string capability elements
 When a field's `options` are empty, the renderer resolves `options_ref` against the slot's
 `capabilities` map at render time. Non-string capability elements are stringified, so an
@@ -88,5 +95,7 @@ Verified fixed (checked 2026-09-03, not salvaged):
   `"[mqtt] jobs queue full: dropping job (worker saturated)"` when it drops.
 - README "pending on-device deploy" vs reality (PRD §11): **resolved** — component
   CLAUDE.md states deployed and running on shari (22 entities, 5 slots).
+  Update 2026-10-23: README.md itself still said "pending on-device deploy" and "Runs on
+  `shari`"; both now fixed. The service runs on scmino since 2026-10-12.
 - Handler deadlock (PRD §9.1): constraint already carried by `shared/mqtt` comments and
   the repo memory notes (paho handlers must not call blocking Publish); not re-salvaged.

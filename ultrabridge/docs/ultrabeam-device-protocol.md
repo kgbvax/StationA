@@ -352,13 +352,18 @@ Verdict: not re-verified in code (PRD marks it harmless and lock-guarded).
 
 The repo-root documentation and station-integration docs put the Ultrabeam beam on
 antenna-switch port 3. The antennaselect seeded config and the console's antenna map put
-it on port 4. The live config on shari is authoritative, but the PRD's research never read
-it. The bridge itself is agnostic (it tunes the antenna — the switch routes it), but any
-re-integration must confirm the port on-device.
+it on port 4. The live antenna-select config (on scmino since 2026-10-12; was shari) is
+authoritative, but the PRD's research never read it. The bridge itself is agnostic (it
+tunes the antenna — the switch routes it), but any re-integration must confirm the port
+on-device.
 
 Verdict (2026-09-03): still conflicting — root `CLAUDE.md` says `ant/ultrabeam` (port 3)
 while `antennaselect/config.example.toml` maps `port4 = "ultrabeam"`. Needs an operator
 check against the live shari config.
+
+Update 2026-10-23: port 4 as seeded (`antennaselect/config.example.toml`,
+`antennaselect/deploy.sh`); on-site confirmation open. The live antenna-select config to
+check is on scmino.
 
 ## [decision] Real-world retract duration vs the 5 s exchange timeout
 
@@ -388,4 +393,5 @@ design decision coupled to the missing-acknowledgment defect (there is no ack ch
 2. **Legacy embedded HA discovery reliance:** whether any live consumer still relies on the
    legacy embedded HA-discovery path (`mqtt.publish_ha_discovery`), or whether anything
    still sends the deprecated `mode` command alias, was never confirmed against the live
-   shari config; check with the operator before freezing a rebuild.
+   config (on scmino since 2026-10-09; was shari); check with the operator before
+   freezing a rebuild.

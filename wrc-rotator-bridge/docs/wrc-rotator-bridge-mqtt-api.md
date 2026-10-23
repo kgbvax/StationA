@@ -15,7 +15,7 @@ and `internal/rotor/protocol.go`.
 
 | Property | Value |
 |----------|-------|
-| Protocol | MQTT 3.1.1 (plain TCP, `tcp://192.168.1.139:1883`) |
+| Protocol | MQTT 3.1.1 (plain TCP; `deploy.sh` seeds `tcp://192.168.1.50:1883`) |
 | Authentication | Username/password (`hf` user) |
 | Clean session | auto (paho default); `hf/ant-mode/state` and `/cmd` are re-subscribed on every reconnect (ant-mode first) |
 | Auto-reconnect | yes (`SetAutoReconnect`, `SetConnectRetry`) |
@@ -89,7 +89,7 @@ Retained JSON, published once per connect cycle.
   "device": { "model": "Yaesu G-450DC" },
   "link": "ethernet",
   "location": "bauwagen",
-  "host": "shari",
+  "host": "scmino",
   "capabilities": { "axes": ["az"] },
   "expose": {
     "device": { "name": "HF Rotator", "model": "Yaesu G-450DC", "manufacturer": "Yaesu" },

@@ -20,7 +20,7 @@ go build ./cmd/logger-spot-bridge
 go test ./...
 go test ./... -race
 go vet ./... && gofmt -s -w .
-./deploy.sh          # cross-compile linux/arm64 → shari, hardened systemd unit
+./deploy.sh          # cross-compile linux/arm64 → scmino, hardened systemd unit
 ```
 
 Flags: `-config <path>` (default: `config.toml` next to the exe; the service
@@ -77,8 +77,9 @@ MQTT or UDP; deploy.sh runs it before restarting the service).
    LWT covers that) and NOT "logger process alive" (UDP broadcast is
    connectionless; RadioInfo would be the only periodic proof and we don't
    decode it). False from start until the first datagram.
-6. **DEPLOYED 2026-09-16 on shari as a systemd service** (`logger-spot-bridge.service`,
-   `/opt/logger-spot-bridge`, config `/etc/logger-spot-bridge/config.toml` 0600,
+6. **DEPLOYED 2026-09-16 on shari as a systemd service; on scmino since
+   2026-10-18** (129a897; shari no longer runs it). Unit `logger-spot-bridge.service`
+   (`/opt/logger-spot-bridge`, config `/etc/logger-spot-bridge/config.toml` 0600,
    secrets `/etc/logger-spot-bridge/logger-spot-bridge.env` 0600 —
    LOGGER_SPOT_BRIDGE_MQTT_PASSWORD + LOGGER_SPOT_BRIDGE_QRZ_PASSWORD; QRZ
    cache under `/var/lib/logger-spot-bridge/`, the only writable path in the
@@ -93,16 +94,19 @@ MQTT or UDP; deploy.sh runs it before restarting the service).
    `logger-spot-bridge`, files under C:/Users/iotte/logger-spot-bridge/) is
    DISABLED, kept as documented fallback: re-enabling needs Log4OM repointed
    back to the PC and the task re-enabled at its desktop.
-7. **Live config** (seeded on the shari first deploy): broker
-   `tcp://192.168.1.50:1883` (the HA box, which serves `muehle/#`; the shari
-   mosquitto is inactive and the two-broker migration undeployed; hassio
-   addresses are ALSO reachable as `hassio.kgbvax.net` but the config uses the
-   raw IP — `bwbroker` is NXDOMAIN on the unifi DNS). locator JO32WE, QRZ
-   user dl9et, listeners dxlog/n1mm:12060 + log4om:2249. **Log4OM's outbound
-   CALLSIGN target must point at shari:2249** (GUI setting on the logging PC —
-   user action during the 2026-09-16 migration); DXLog's broadcast needs no
-   target. Until repointed, the service is healthy but hears nothing
-   (device_online=false).
+7. **Seed config** (`deploy.sh` defaults; used for the shari first deploy
+   2026-09-16; the scmino file of 2026-10-18 was not checked): broker
+   `tcp://192.168.1.50:1883` (the HA box, which serves `muehle/#`; shari runs
+   no mosquitto; hassio addresses are ALSO reachable as `hassio.kgbvax.net`
+   but the config uses the raw IP — `bwbroker` was NXDOMAIN on the unifi DNS
+   on 2026-09-16; see `../docs/conventions/mqtt-topology.md` for the
+   `bwbroker` rule). locator JO32WE, QRZ user dl9et, listeners
+   dxlog/n1mm:12060 + log4om:2249. **Log4OM's outbound CALLSIGN target must
+   point at the bridge host, scmino:2249 since 2026-10-18** (was shari:2249;
+   GUI setting on the logging PC — the repoint is not recorded in the repo);
+   DXLog's broadcast needs no target. Until repointed, the service is healthy
+   but Log4OM selections never reach it (with no DXLog traffic either,
+   device_online=false).
 8. **`lookupinfo` with an empty call = the clear signal** (operator wiped the
    entry window). `contactinfo` (QSO logged) is deliberately NOT a clear —
    operators stay on the call after logging it.
@@ -120,9 +124,10 @@ MQTT or UDP; deploy.sh runs it before restarting the service).
    dies with run so shutdown never waits on QRZ. QRZ errors never block
    publication (call+RF-only record, pre-QRZ shape). Session key is
    in-memory (re-login on restart is one request); cache TTL 30 d positive /
-   10 min negative, cap 2000, corrupt file = cold start. Not yet deployed —
-   enabling needs QRZ username + `LOGGER_SPOT_BRIDGE_QRZ_PASSWORD` in
-   `start-bridge.cmd` and `[qrz] enabled = true` in the live config.
+   10 min negative, cap 2000, corrupt file = cold start. Enabled by the
+   systemd seed since 2026-09-16 (9a8bc90: `[qrz] enabled = true`, user
+   dl9et; `LOGGER_SPOT_BRIDGE_QRZ_PASSWORD` in the env file). The
+   `start-bridge.cmd` path applies only to the disabled Windows copy.
 
 ## Testing patterns
 

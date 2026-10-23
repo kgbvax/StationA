@@ -103,7 +103,7 @@ on scmino as a hardened systemd service (network-service sandbox: `PrivateDevice
 make build vet test test-race
 ```
 
-Live smoke test (with broker creds in `config.toml` and bridges running on shari):
+Live smoke test (with broker creds in `config.toml` and the station bridges running):
 open the UI, watch the HF cards populate, set a radio freq, watch `antennaselect`
 resolve and the switch move, simulate a 30m `radio/state` to engage the ATU, clear a
 stale retained topic. See the plan file's verification section.

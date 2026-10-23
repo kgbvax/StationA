@@ -23,8 +23,8 @@ and no heartbeat** — no MQTT presence of its own. Its entire bus footprint is
 two subscriptions (`muehle/hf/rotator/state` + `/status`) and two publish
 shapes on `muehle/hf/rotator/cmd`. Delete it and the station runs identically.
 
-This is embedded firmware (Arduino C++ / PlatformIO), not a Go service on
-shari. It therefore uses its **own gitignored secrets file** (`src/secrets.h`,
+This is embedded firmware (Arduino C++ / PlatformIO), not a Go service on a
+station Pi. It therefore uses its **own gitignored secrets file** (`src/secrets.h`,
 copied from `src/secrets.example.h.x`) — **not** the systemd EnvironmentFile
 convention, which is scoped to the Go services (see
 `../docs/conventions/config-and-secrets.md`).
@@ -198,7 +198,7 @@ in `src/secrets.h` (gitignored):
 // src/secrets.h
 #define WIFI_SSID     "..."
 #define WIFI_PASSWORD "..."
-#define MQTT_HOST     "192.168.1.139"   // shack broker, LAN address (never 127.0.0.1)
+#define MQTT_HOST     "192.168.1.178"   // station broker (scmino), LAN address (never 127.0.0.1)
 #define MQTT_PORT     1883
 #define MQTT_USER     "dial"            // narrow account, NOT the broad "hf" account
 #define MQTT_PASSWORD "..."
@@ -209,9 +209,12 @@ in `src/secrets.h` (gitignored):
 
 This is the **embedded-firmware secrets pattern** (like the ant-switch ESPHome
 `secrets.yaml`), distinct from the Go services' EnvironmentFile. The `dial`
-broker account must be added on shari (seed-once broker — hand-edit
-`/etc/mosquitto/acl.conf` + `mosquitto_passwd`, restart mosquitto; see
-`../mqtt-broker/README.md`).
+account (`../mqtt-broker/acl.conf.example`) is not seeded on the scmino
+broker yet (local accounts: `hf` only, `../mqtt-broker/CLAUDE.md`): add it
+by hand there first (seed-once broker — hand-edit `/etc/mosquitto/acl.conf` +
+`mosquitto_passwd`, restart mosquitto; see `../mqtt-broker/README.md`).
+`src/secrets.example.h.x` still names `192.168.1.139` (shari), which runs no
+broker — set `MQTT_HOST` in `src/secrets.h` to a live broker.
 
 ---
 
@@ -226,7 +229,7 @@ the stationa monorepo).
 | MQTT broker topology (accounts, ACLs) | `../docs/conventions/mqtt-topology.md` |
 | Config and secrets convention (embedded-firmware pattern) | `../docs/conventions/config-and-secrets.md` |
 | Bridge-naming convention (devtag `m5dial`) | `../docs/conventions/naming.md` |
-| Design + open-decision notes | `../docs/design-notes.md` (salvaged from the PRD, 2026-09-03) |
+| Design + open-decision notes | `docs/design-notes.md` (this module; salvaged from the PRD, 2026-09-03) |
 
 The wire contract this firmware conforms to is owned by
 `../wrc-rotator-bridge/docs/wrc-rotator-bridge-mqtt-api.md`; the Dial-specific

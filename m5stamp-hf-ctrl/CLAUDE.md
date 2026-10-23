@@ -23,8 +23,8 @@ change hold-off, Ultrabeam settle, antenna move pending, a supervising feed
 offline) block closing and open it only in RX. Full table:
 `docs/m5stamp-hf-ctrl-mqtt-api.md` §4.
 
-This is embedded firmware (Arduino C++ / PlatformIO), not a Go service on
-shari. It therefore uses its **own gitignored secrets file** (`src/secrets.h`,
+This is embedded firmware (Arduino C++ / PlatformIO), not a Go service on a
+station Pi. It therefore uses its **own gitignored secrets file** (`src/secrets.h`,
 copied from `src/secrets.example.h`) — **not** the systemd EnvironmentFile
 convention, which is scoped to the Go services (see
 `../docs/conventions/config-and-secrets.md`).
@@ -153,7 +153,7 @@ map, band allow-list, heartbeat window). Secrets live in `src/secrets.h`
 // src/secrets.h
 #define WIFI_SSID     "..."
 #define WIFI_PASSWORD "..."
-#define MQTT_HOST     "192.168.1.139"
+#define MQTT_HOST     "192.168.1.178"   // station broker on scmino (since 2026-10-03)
 #define MQTT_PORT     1883
 #define MQTT_USER     "hf"
 #define MQTT_PASSWORD "..."
