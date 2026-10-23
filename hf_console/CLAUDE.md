@@ -174,6 +174,17 @@ Two deliberate platform notes:
   (see the iPhone section); the web build gets a placeholder instead of the
   feed (no HLS/TS decoder in the browser player).
 
+## Quick reference (docs/quickref/)
+
+`docs/quickref/hf-console-quickref.html` (+ `.pdf`, A4 landscape, one sheet per page) is the operator quick
+reference: a seeded tablet render of each page (Overview with the settings dialog, HF, Station, UHF, CAM) with
+leader-line call-outs on the key controls. Generated — do not edit it. Call-outs (title, text, which control) live in
+`test/tool/quickref_sheets.dart`, layout in `docs/quickref/template.html`; rebuild with `docs/quickref/build.sh`
+(render test + headless Chrome). A call-out names its control by label/tooltip/type/key and the render resolves it to
+the control's rect, so leaders follow the layout. `test/tool/quickref_callouts_test.dart` runs in the normal
+`flutter test` and fails when a call-out no longer finds its control — fix the call-out and rebuild the sheets.
+Painted content (compass disc, satellite marker, schematic RF path) uses fractional points and is not checked.
+
 ## Band colors (horstreporter convention)
 
 `AppTheme.bandColor(String band)` in `lib/ui/theme.dart` is the canonical
