@@ -363,7 +363,7 @@ final quickrefSheets = <Sheet>[
           UnionAnchor([ButtonAnchor('NORMAL', inside: AntModePanel), ButtonAnchor('MAINT.', inside: AntModePanel)])),
       Callout('Band selection', 'Re-tap active band: SSB↔CW; stripe = spot colour on map',
           UnionAnchor([ButtonAnchor('80m', inside: DvkPanel), ButtonAnchor('10m', inside: DvkPanel)])),
-      Callout('Voice keyer (DVK)', 'Each key transmits a FLEX DVK memory, named in SmartSDR',
+      Callout('Voice keyer (DVK)', 'Double-tap: pick memory + repeat time. Hold 0.7 s: auto-repeat [n] countdown; TX pauses it, tap resumes, hold exits',
           UnionAnchor([ButtonAnchor('CQ contest', inside: DvkPanel), ButtonAnchor('STOP', inside: DvkPanel)])),
       Callout('MIC profiles', 'Hold to rebind; MIC line shows only console-loaded profiles', typeAnchor(MicProfileRow)),
     ],
