@@ -57,6 +57,9 @@ func main() {
 
 	client, err := mqtt.New(ctx, cfg, eng)
 	if err != nil {
+		if ctx.Err() != nil {
+			return // shut down while connecting
+		}
 		slog.Error("mqtt connect", "err", err)
 		os.Exit(1)
 	}

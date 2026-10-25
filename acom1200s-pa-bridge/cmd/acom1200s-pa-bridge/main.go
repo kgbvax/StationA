@@ -7,7 +7,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -55,7 +54,7 @@ func main() {
 	if err := run(ctx, cfg, flags.Debug, logger); err != nil {
 		// A SIGTERM/SIGINT cancels the root context; that's a clean shutdown,
 		// not a failure — exit 0 so `systemctl stop` doesn't report FAILURE.
-		if errors.Is(err, context.Canceled) {
+		if logging.CleanStop(ctx, err) {
 			logger.Info("acom1200s-pa-bridge stopped")
 			return
 		}
