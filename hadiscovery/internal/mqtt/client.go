@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	paho "github.com/eclipse/paho.mqtt.golang"
@@ -63,7 +64,10 @@ func New(ctx context.Context, cfg config.Config, eng *engine.Engine) (*Client, e
 		site:    cfg.MQTT.Site,
 		station: cfg.MQTT.Station,
 		slot:    cfg.MQTT.Slot,
-		jobs:    make(chan func(), 256),
+		// Sized for one connect's burst: every retained /meta plus every retained
+		// discovery config under our node ids plus the echoes of our own publishes.
+		// A dropped job loses a render until the next connect, so keep headroom.
+		jobs: make(chan func(), 2048),
 	}
 	c.ctx, c.cancel = context.WithCancel(ctx)
 	go sharedmqtt.RunJobs(c.ctx, c.jobs)
@@ -88,7 +92,20 @@ func New(ctx context.Context, cfg config.Config, eng *engine.Engine) (*Client, e
 		slog.Info("[mqtt] connected", "broker", cfg.MQTT.Broker, "slot", c.selfBase())
 		c.publishString(c.selfTopic("status"), "online", 1, true)
 		c.publishMeta()
+		// Open the sync pass before subscribing so every retained /meta and config the
+		// broker replays is queued behind BeginSync; sweep once the replay has settled.
+		gen := make(chan uint64, 1)
+		sharedmqtt.Enqueue(c.jobs, func() { gen <- c.eng.BeginSync() })
 		c.subscribeAll()
+		time.AfterFunc(syncSettle, func() {
+			sharedmqtt.Enqueue(c.jobs, func() {
+				select {
+				case g := <-gen:
+					c.eng.Sweep(g)
+				default: // BeginSync job was dropped; no pass to end
+				}
+			})
+		})
 	})
 
 	c.client = paho.NewClient(opts)
@@ -114,6 +131,11 @@ func (c *Client) Close() {
 		c.client.Disconnect(250)
 	}
 }
+
+// syncSettle is how long after subscribing the sync pass waits before sweeping. The broker
+// replays retained messages right after each SUBACK and the jobs worker handles them in
+// order, so this only has to cover the replay plus the render publishes of one connect.
+const syncSettle = 15 * time.Second
 
 // tokenTimeout bounds every paho token Wait (publishes AND subscribes; review
 // S1e — a stalled PUBACK/SUBACK must not park the jobs worker or paho's
@@ -146,7 +168,28 @@ func (c *Client) subscribeAll() {
 	// HA birth: when Home Assistant (re)starts it publishes "online" here; we re-publish
 	// all discovery so its registry is repopulated.
 	c.subscribe("homeassistant/status", c.onHAStatus)
+	// The retained discovery tree, so the sync pass can find configs an earlier process
+	// published that no current /meta renders. Subscribed after the meta filter so the
+	// broker replays configs behind the metas.
+	c.subscribe(c.cfg.MQTT.DiscoveryPrefix+"/+/+/+/config", c.onConfig)
 }
+
+// onConfig forwards discovery configs under this deployment's node ids
+// ("<site>-…", see ha.NodeID) to the engine; everything else in the shared HA tree
+// (zigbee2mqtt, other integrations) is dropped here, on the paho goroutine, without
+// queuing.
+func (c *Client) onConfig(_ paho.Client, msg paho.Message) {
+	topic := msg.Topic()
+	seg := strings.Split(topic, "/")
+	if len(seg) != 5 || !strings.HasPrefix(seg[2], c.nodePrefix()) {
+		return
+	}
+	payload := append([]byte(nil), msg.Payload()...)
+	sharedmqtt.Enqueue(c.jobs, func() { c.eng.OnConfig(topic, payload) })
+}
+
+// nodePrefix is the sanitized "<site>-" every node id of this deployment starts with.
+func (c *Client) nodePrefix() string { return strings.ToLower(c.site) + "-" }
 
 func (c *Client) onMeta(_ paho.Client, msg paho.Message) {
 	// Copy out of the paho message: it is only guaranteed valid for the duration of the

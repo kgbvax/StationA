@@ -115,10 +115,12 @@ trap 'rm -f "$SEED_CONFIG" "${UNIT_FILE:-}"' EXIT
 } > "$SEED_CONFIG"
 
 # --- build for the Pi (Linux arm64) ----------------------------------------
-echo ">> Building ${BINARY} for linux/arm64..."
+# Stamped into every discovery config's origin.sw_version, so HA shows which build is live.
+VERSION="${VERSION:-$(git describe --always --dirty 2>/dev/null || echo dev)}"
+echo ">> Building ${BINARY} ${VERSION} for linux/arm64..."
 OUT="dist/${BINARY}-linux-arm64"
 mkdir -p dist
-GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X hadiscovery/internal/ha.Version=${VERSION:-dev}" -o "$OUT" "$PKG"
+GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X hadiscovery/internal/ha.Version=${VERSION}" -o "$OUT" "$PKG"
 echo "   built $OUT"
 
 # --- generate the systemd unit ---------------------------------------------

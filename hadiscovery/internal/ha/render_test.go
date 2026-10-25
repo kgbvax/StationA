@@ -576,3 +576,155 @@ func TestActionMissingCommand(t *testing.T) {
 		})
 	}
 }
+
+// TestDeviceClassAllowList: a neutral `class` HA does not know (azimuth, swr) or a unit that
+// does not fit the class must not reach device_class — HA rejects the whole config.
+func TestDeviceClassAllowList(t *testing.T) {
+	cases := []struct {
+		name string
+		f    expose.Field
+		want string
+	}{
+		{"azimuth dropped", expose.Field{Key: "az", Type: "number", Unit: "°", Class: "azimuth"}, ""},
+		{"swr dropped", expose.Field{Key: "swr", Type: "number", Unit: "ratio", Class: "swr"}, ""},
+		{"frequency kept", expose.Field{Key: "f", Type: "number", Unit: "Hz", Class: "frequency"}, "frequency"},
+		{"class with wrong unit dropped", expose.Field{Key: "f", Type: "number", Unit: "%", Class: "frequency"}, ""},
+		{"unit-derived", expose.Field{Key: "p", Type: "number", Unit: "W"}, "power"},
+		{"bad class falls back to unit", expose.Field{Key: "p", Type: "number", Unit: "W", Class: "rf_power"}, "power"},
+		{"writable azimuth dropped", expose.Field{Key: "az", Type: "number", Unit: "°", Class: "azimuth", Writable: true,
+			Command: &expose.Command{Action: "set_az", ValueKey: "az", ValueType: "float"}}, ""},
+		{"writable timestamp not a number class", expose.Field{Key: "t", Type: "number", Class: "timestamp", Writable: true,
+			Command: &expose.Command{ValueKey: "t"}}, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			c.f.Name = "X"
+			ents := Render("homeassistant", "", metaFixture([]expose.Field{c.f}, nil, nil))
+			if len(ents) != 1 {
+				t.Fatalf("got %d entities, want 1", len(ents))
+			}
+			p := decode(t, ents[0])
+			if p.DeviceClass != c.want {
+				t.Errorf("device_class = %q, want %q", p.DeviceClass, c.want)
+			}
+			if c.f.Unit != "" && p.UnitOfMeasurement != c.f.Unit {
+				t.Errorf("unit = %q, want %q (unit is kept even when the class is dropped)", p.UnitOfMeasurement, c.f.Unit)
+			}
+		})
+	}
+}
+
+// TestActionWithOptionsRef: an action with a value_key renders one button per option, each
+// with a fixed, non-empty argument (the live tuner tune action, tune_modes [mem, full]).
+func TestActionWithOptionsRef(t *testing.T) {
+	ents := Render("homeassistant", "", metaFixture(nil, []expose.Action{{
+		Key: "tune", Name: "Tune", OptionsRef: "tune_modes",
+		Command: &expose.Command{Action: "tune", ValueKey: "value", ValueType: "enum"},
+	}}, map[string]any{"tune_modes": []any{"mem", "full"}}))
+	if len(ents) != 2 {
+		t.Fatalf("got %d entities, want 2 (one per tune mode)", len(ents))
+	}
+	want := []struct{ topic, name, press string }{
+		{"homeassistant/button/muehle-hf-radio/tune_mem/config", "Tune mem", `{"action":"tune","value":"mem"}`},
+		{"homeassistant/button/muehle-hf-radio/tune_full/config", "Tune full", `{"action":"tune","value":"full"}`},
+	}
+	for i, w := range want {
+		p := decode(t, ents[i])
+		if ents[i].Topic != w.topic || p.Name != w.name || p.PayloadPress != w.press {
+			t.Errorf("button %d = %s %q %s, want %s %q %s", i, ents[i].Topic, p.Name, p.PayloadPress, w.topic, w.name, w.press)
+		}
+		if p.UniqueID != "muehle-hf-radio_tune_"+[]string{"mem", "full"}[i] {
+			t.Errorf("unique_id = %q", p.UniqueID)
+		}
+	}
+}
+
+// TestActionInlineOptionsTyped: inline options with a numeric value_type render unquoted.
+func TestActionInlineOptionsTyped(t *testing.T) {
+	ents := Render("homeassistant", "", metaFixture(nil, []expose.Action{{
+		Key: "dvk", Name: "DVK", Options: []string{"1", "x"},
+		Command: &expose.Command{Action: "dvk_play", ValueKey: "id", ValueType: "int"},
+	}}, nil))
+	if len(ents) != 2 {
+		t.Fatalf("got %d entities, want 2", len(ents))
+	}
+	if p := decode(t, ents[0]); p.PayloadPress != `{"action":"dvk_play","id":1}` {
+		t.Errorf("payload_press = %s", p.PayloadPress)
+	}
+	// A value that does not parse as the declared type is sent as a string, never dropped.
+	if p := decode(t, ents[1]); p.PayloadPress != `{"action":"dvk_play","id":"x"}` {
+		t.Errorf("payload_press = %s", p.PayloadPress)
+	}
+}
+
+// TestActionValueKeyWithoutOptions: an action that needs an argument but has none to offer
+// renders nothing (it used to send an empty value the bridge rejects).
+func TestActionValueKeyWithoutOptions(t *testing.T) {
+	for _, caps := range []map[string]any{nil, {"tune_modes": []any{}}} {
+		ents := Render("homeassistant", "", metaFixture(nil, []expose.Action{{
+			Key: "tune", Name: "Tune", OptionsRef: "tune_modes",
+			Command: &expose.Command{Action: "tune", ValueKey: "value"},
+		}}, caps))
+		if len(ents) != 0 {
+			t.Errorf("caps %v: got %+v, want no buttons", caps, ents)
+		}
+	}
+}
+
+// TestButtonNoEntityCategory: buttons are primary controls, not config entities (HA hides
+// categorised entities from its auto-generated dashboard).
+func TestButtonNoEntityCategory(t *testing.T) {
+	ents := Render("homeassistant", "", metaFixture(nil, []expose.Action{{
+		Key: "retract", Name: "Retract", Command: &expose.Command{Action: "retract"},
+	}}, nil))
+	if strings.Contains(string(ents[0].Payload), "entity_category") {
+		t.Errorf("button payload carries entity_category: %s", ents[0].Payload)
+	}
+}
+
+// TestAvailabilityTwoLayer: a slot exposing device_online gates every entity on /status AND
+// /state.device_online, except the device_online entity itself (bridge layer only).
+func TestAvailabilityTwoLayer(t *testing.T) {
+	ents := Render("homeassistant", "", metaFixture([]expose.Field{
+		{Key: "freq_hz", Name: "Frequency", Type: "number", Unit: "Hz"},
+		{Key: "device_online", Name: "Device online", Type: "boolean"},
+	}, []expose.Action{{Key: "stop", Name: "Stop", Command: &expose.Command{Action: "stop"}}}, nil))
+	if len(ents) != 3 {
+		t.Fatalf("got %d entities, want 3", len(ents))
+	}
+	for _, i := range []int{0, 2} {
+		p := decode(t, ents[i])
+		if len(p.Availability) != 2 {
+			t.Fatalf("%s: availability = %+v, want /status + /state", ents[i].Topic, p.Availability)
+		}
+		if p.Availability[0].Topic != "muehle/hf/radio/status" || p.Availability[0].ValueTemplate != "" {
+			t.Errorf("%s: first availability = %+v, want plain /status", ents[i].Topic, p.Availability[0])
+		}
+		a := p.Availability[1]
+		if a.Topic != "muehle/hf/radio/state" ||
+			a.ValueTemplate != "{{ 'online' if value_json.device_online | default(false) else 'offline' }}" ||
+			a.PayloadAvailable != "online" || a.PayloadNotAvailable != "offline" {
+			t.Errorf("%s: device availability = %+v", ents[i].Topic, a)
+		}
+		if p.AvailabilityMode != "all" {
+			t.Errorf("availability_mode = %q, want all", p.AvailabilityMode)
+		}
+	}
+	if p := decode(t, ents[1]); len(p.Availability) != 1 || p.Availability[0].Topic != "muehle/hf/radio/status" {
+		t.Errorf("device_online entity availability = %+v, want /status only", p.Availability)
+	}
+}
+
+// TestAvailabilityLogicSlot: a slot without device_online keeps the single /status entry.
+func TestAvailabilityLogicSlot(t *testing.T) {
+	ents := Render("homeassistant", "", metaFixture([]expose.Field{
+		{Key: "mode", Name: "Mode", Type: "string"},
+	}, nil, nil))
+	p := decode(t, ents[0])
+	if len(p.Availability) != 1 || p.Availability[0].Topic != "muehle/hf/radio/status" {
+		t.Errorf("availability = %+v, want /status only", p.Availability)
+	}
+	if strings.Contains(string(ents[0].Payload), `"availability":[{"topic":"muehle/hf/radio/status","payload_available":"online","payload_not_available":"offline"}]`) == false {
+		t.Errorf("logic-slot availability wire form changed: %s", ents[0].Payload)
+	}
+}

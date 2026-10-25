@@ -55,8 +55,8 @@ another `slot` and the `hf` password.
 | `internal/config` | TOML config (`[mqtt]` + deployment identity) + `Validate()` |
 | `internal/expose` | the neutral `expose` types (`schema.go`) and `/meta` parser (`meta.go`) — no HA vocabulary |
 | `internal/ha` | **the only HA knowledge** — `render.go` maps neutral→HA; `diagnostic.go` for no-expose slots |
-| `internal/engine` | discovery lifecycle: known-slots map, republish on HA birth, clear on meta-clear, idempotent, no-expose diagnostic |
-| `internal/mqtt` | thin bus layer: own LWT + `/meta`, subscribe `meta_filter` + `homeassistant/status`, feed engine |
+| `internal/engine` | discovery lifecycle: known-slots map, republish on HA birth, clear on meta-clear, idempotent, no-expose diagnostic, per-connect sync pass that clears orphaned configs |
+| `internal/mqtt` | thin bus layer: own LWT + `/meta`, subscribe `meta_filter` + `homeassistant/status` + the discovery tree (sync pass), feed engine |
 | `docs/discovery-mqtt-api.md` | **authoritative** HA mapping + discovery topic layout + rebirth/removal |
 | `config.example.toml` | broker, site/station/slot, discovery prefix, location/host |
 

@@ -153,7 +153,16 @@ func connectMQTT(ctx context.Context, cfg config.Config, log *slog.Logger) (paho
 		c.Publish(avail, 1, true, []byte("online"))
 		log.Info("MQTT (re)connected, published online LWT")
 		// /cmd is not retained (DVK is one-shot); resubscribe on every reconnect.
+		// A retained delivery is a replay of an old intent (e.g. a HA select write,
+		// which hadiscovery publishes retained): drop it, never re-execute it on a
+		// reconnect (model §8 rule 1). Live publishes always arrive unretained.
 		if tok := c.Subscribe(cmd, 1, func(_ pahomqtt.Client, m pahomqtt.Message) {
+			if m.Retained() {
+				if len(m.Payload()) > 0 {
+					log.Warn("ignoring retained /cmd (stale intent; /cmd is one-shot)", "topic", m.Topic())
+				}
+				return
+			}
 			cmdHandler(m.Payload())
 		}); tok.Wait() && tok.Error() != nil {
 			log.Warn("subscribe cmd failed", "err", tok.Error())
