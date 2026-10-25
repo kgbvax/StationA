@@ -70,7 +70,7 @@ func main() {
 	defer cancel()
 
 	if err := run(ctx, cfg, logger); err != nil {
-		if errors.Is(err, context.Canceled) {
+		if logging.CleanStop(ctx, err) {
 			logger.Info("logger-spot-bridge stopped")
 			return
 		}
