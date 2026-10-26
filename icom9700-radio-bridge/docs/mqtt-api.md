@@ -22,7 +22,8 @@ never stale.
 |---|---|---|---|
 | `ts` | RFC3339 | always | publish stamp (on change + 60 s heartbeat) |
 | `session_state` | enum | always | CAPTURE-session state: `idle` \| `connecting` \| `live` \| `error` — the idle-vs-fault discriminator for the audio session |
-| `audio_demand` | bool | always | the audio_on demand is set (TTL-bounded; refreshed by the consumer's audio_on heartbeats) |
+| `audio_demand` | bool | always | at least one holder's audio_on demand is live (each TTL-bounded; refreshed by that consumer's audio_on heartbeats) |
+| `audio_holders` | string[] | always | the live audio-demand holders, sorted (`[]` when none) — e.g. `["bmrec","default"]` |
 | `monitor` | bool | always | the serial CI-V telemetry reader is on |
 | `device_online` | bool | always | **capture liveness** (R16, redefined 2026-09): `session_state == "live"` — `false` on healthy idle, NOT device reachability |
 | `error` | string | on fault | last rejection/session fact (taxonomy below) |
@@ -47,6 +48,8 @@ state exists anymore.
 - `cmd payload too large` — FIXED string: the 4 KB size gate never echoes attacker bytes
 - `stale cmd (age …, bound 30s)` — the ts gate
 - `unknown cmd action "…"` — the action set is the six below; everything else rejects
+- `invalid audio holder "…" (1-32 chars of A-Z a-z 0-9 . _ -)` — audio_on/audio_off with a malformed `holder`
+- `too many audio holders (max 8)` — audio_on from a new holder while 8 others are live
 
 ## /cmd
 
@@ -54,11 +57,13 @@ One-shot (KTD6): QoS-0 subscription (no offline backlog), clear-after-
 execute-or-reject (the empty-payload echo guard), ts gate (30 s, unstamped
 tolerated), 4 KB size gate, rejections clipped to 200 runes.
 
-Exactly six actions — no value arguments, the action name is the intent:
+Exactly six actions — no value arguments, the action name is the intent
+(a `value` key, as vhfcam-restream sends, is ignored). The audio actions
+take one optional argument, `holder`:
 
 | Action | Notes |
 |---|---|
-| `audio_on` / `audio_off` | opens/closes the :50003 RX audio receive stream and publishes its PCM to `audio.publish_addr` (S16LE 48 kHz mono UDP); the demand is TTL-bounded (`audio.demand_ttl`) and refreshed by repeated `audio_on` — a dead consumer releases the session (KTD-2). The audio demand is the session's only hold source |
+| `audio_on` / `audio_off` | opens/closes the :50003 RX audio receive stream and publishes its PCM to every `audio.publish_addr` target (S16LE 48 kHz mono UDP). The demand is held **per holder** (2026-10): `{"action":"audio_on","holder":"bmrec"}`; a missing or empty `holder` is `"default"` (vhfcam-restream sends none). Each holder's demand is TTL-bounded (`audio.demand_ttl`) and refreshed by that holder's repeated `audio_on` — a dead consumer releases only its own hold (KTD-2). The session is held while ANY holder is live; `audio_off` releases only the named holder (an `audio_off` for a holder that holds nothing is a no-op), and the stream closes when the last holder goes. Holders: at most 8 live at once, ids 1-32 chars of `A-Z a-z 0-9 . _ -`; violations reject into `/state.error`. The audio demand is the session's only hold source |
 | `power_on` | blind serial CI-V wake frame `1A 05 02 01` (IC-9700 remote wake from standby; configurable via `serial.power_on_frame`); requires `serial.device` |
 | `park_radio` | turns satellite mode off, then split off, then sets frequency, then mode (the radio restores a per-band stored mode on a band change) to `[park] mode` / `freq_hz` and reads split, frequency and mode back (error on mismatch) through the rigctld at `park.rigctld_addr` (a hamlib rigctld on the host owning a dedicated CI-V port — scmino:4532, `rigctld-scmino/`). The bridge opens no serial port for it. Rejected when `park.rigctld_addr` is empty; /meta `capabilities.park {freq_hz, mode}` is present only when configured |
 | `monitor_on` / `monitor_off` | toggles the serial CI-V telemetry reader (sticky — no TTL: the serial wire is dedicated to this process); requires `serial.device` |

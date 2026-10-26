@@ -66,12 +66,13 @@ freq_hz      = 0                    # park frequency, Hz
 mode         = ""                   # canonical: usb | lsb | cw | am | fm
 
 [audio]
-# The receive-audio publisher: while the audio demand is set (audio_on,
-# TTL-bounded), demodulated audio (S16LE 48 kHz mono) is re-published as
-# UDP datagrams to this address (the vhfcam preview host). Empty = audio
-# cmds are rejected.
-publish_addr = ""                   # e.g. "192.168.1.178:45031" (scmino)
-demand_ttl   = "60s"               # an unrefreshed audio_on releases the session (KTD-2)
+# The receive-audio publisher: while any holder's audio demand is set
+# (audio_on, TTL-bounded per holder), demodulated audio (S16LE 48 kHz mono)
+# is re-published as UDP datagrams to every target listed here. A single
+# string is one target; an array fans out to several consumers. Empty = no
+# PCM is published (the audio cmds still drive the session).
+publish_addr = ""                   # e.g. ["192.168.1.178:45031", "192.168.1.178:45032"] (vhfcam, bmrec)
+demand_ttl   = "60s"               # a holder's unrefreshed audio_on releases its hold (KTD-2)
 
 [log]
 level = "info"                      # debug | info | warn | error

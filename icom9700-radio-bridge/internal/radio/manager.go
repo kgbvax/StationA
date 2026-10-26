@@ -27,7 +27,7 @@ type Config struct {
 	LossWatchdog    time.Duration
 	PingInterval    time.Duration
 
-	// AudioDemandTTL bounds an unrefreshed audio_on (0 = 60 s); AudioSink
+	// AudioDemandTTL bounds a holder's unrefreshed audio_on (0 = 60 s); AudioSink
 	// receives the demodulated audio PCM chunks while the audio stream is
 	// open (the main wiring publishes them to the preview host).
 	AudioDemandTTL time.Duration
@@ -86,9 +86,10 @@ func (m *Manager) Snapshot() Snapshot { return m.sess.Snapshot() }
 // Notify receives a nudge on every state change.
 func (m *Manager) Notify() <-chan struct{} { return m.sess.Notify() }
 
-// SetAudioDemand is the audio_on/audio_off demand: on = connect (when idle)
-// and open the audio receive stream, TTL-bounded so a dead consumer never
-// pins the radio session (KTD-2). Receive-only — the only session hold.
-func (m *Manager) SetAudioDemand(ctx context.Context, on bool) error {
-	return m.sess.SetAudioDemand(ctx, on)
+// SetAudioDemand is holder's audio_on/audio_off demand: on = connect (when
+// idle) and open the audio receive stream, TTL-bounded per holder so a dead
+// consumer never pins the radio session (KTD-2); off releases only holder's
+// hold. Receive-only — the only session hold.
+func (m *Manager) SetAudioDemand(ctx context.Context, holder string, on bool) error {
+	return m.sess.SetAudioDemand(ctx, holder, on)
 }

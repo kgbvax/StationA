@@ -10,8 +10,9 @@
 //	/status  retained online|offline LWT, self-published offline on clean exit
 //	/cmd     one-shot actions (KTD6): QoS-0 subscription, ts gate, 4 KB size
 //	         gate, clear-after-execute-or-reject with the echo guard, clipped
-//	         rejections. Exactly five actions survive: audio_on, audio_off,
-//	         power_on, monitor_on, monitor_off. There is no LAN CI-V command
+//	         rejections. Exactly six actions survive: audio_on, audio_off
+//	         (with an optional per-consumer holder), power_on, monitor_on,
+//	         monitor_off, park_radio. There is no LAN CI-V command
 //	         path anymore — remote TX control was removed (see
 //	         docs/known-issues.md for the history).
 package bridge

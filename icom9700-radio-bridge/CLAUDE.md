@@ -8,9 +8,12 @@ needed again it will be via serial CI-V, not LAN. What remains:
 
 - **RX audio capture** (demand-driven): an `audio_on` /cmd opens the :50003
   receive-audio stream inside the RS-BA1 session and publishes demodulated audio
-  (S16LE 48 kHz mono UDP to `audio.publish_addr`, the vhfcam preview host); the
-  demand is TTL-bounded (`audio.demand_ttl`, 60 s, refreshed by the consumer's
-  audio_on heartbeats) so a dead consumer never pins the radio session (KTD-2).
+  (S16LE 48 kHz mono UDP to every `audio.publish_addr` target — a string or an
+  array: vhfcam preview :45031, bmrec recorder :45032); the demand is held per
+  `holder` (cmd field, missing = `"default"`, max 8 × 32 chars), each
+  TTL-bounded (`audio.demand_ttl`, 60 s, refreshed by that consumer's audio_on
+  heartbeats) so a dead consumer never pins the radio session (KTD-2) and one
+  consumer's `audio_off` never drops another's hold (2026-10).
   The LAN CI-V data stream is NOT opened (`NoCIVData`) — the session carries
   control-keepalives + audio only.
 - **Serial CI-V telemetry** (`internal/civserial`): freq/mode arrive as
@@ -116,11 +119,12 @@ muehle/uhf/radio/cmd       not retained  one-shot intent (bus -> bridge), value-
 
 Landed in U1: the LWT plane (`/status`) and the `/cmd` subscription (stub-rejected).
 Current contract (docs/mqtt-api.md is authoritative): `/state` = capture-session
-state + `audio_demand` + `monitor` + monitor-gated telemetry (`freq_hz`, `band`,
+state + `audio_demand` + `audio_holders` + `monitor` + monitor-gated telemetry (`freq_hz`, `band`,
 `mode`, `satellite`, `s_meter`, `swr`, `alc`; `tx_power` only when the bench
 proves the read) — omitted while the monitor is off or the radio is deaf, never
 zeroed, never frozen. `/cmd` actions: exactly `audio_on`, `audio_off`,
-`power_on`, `monitor_on`, `monitor_off`, `park_radio`.
+`power_on`, `monitor_on`, `monitor_off`, `park_radio`; the audio pair takes an
+optional `holder` (per-consumer demand, see docs/mqtt-api.md).
 
 **park_radio** (2026-10-08): turns satellite mode off, then split off (`S 0 VFOA`, 2026-10-09 — a park left the radio in split, TX on VFO B), then sets mode + frequency
 to `[park]` (`freq_hz`, `mode`) and reads split, frequency and mode back (an error if the radio
@@ -162,7 +166,8 @@ site/station/slot `muehle`/`uhf`/`radio`, `[session]
 idle_timeout=120s max_attempts=3 attempt_spacing=30s`, `[serial] device=""
 baud=115200 meter_interval="500ms" power_on_frame="1a050201"` (device empty =
 monitor_*/power_on rejected), `[audio] publish_addr="" demand_ttl="60s"`
-(publish_addr empty = audio cmds rejected).
+(publish_addr: one `"host:port"` or an array, every target validated at
+startup; empty = no PCM published).
 
 See `../docs/conventions/config-and-secrets.md` for the full convention.
 

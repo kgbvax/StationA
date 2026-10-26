@@ -67,30 +67,15 @@ func main() {
 }
 
 func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
-	// The audio PCM publisher (2026-09-21 preview sink): while the audio
-	// demand is set, demodulated radio audio (S16LE 48 kHz mono) is
-	// re-published as raw UDP datagrams to the preview host. Unconnected
-	// socket + WriteTo on purpose: a connected UDP socket caches ICMP-derived
-	// errors (ECONNREFUSED while the preview restarts) and would fail every
-	// later write silently. The first failure is logged, the rest dropped
-	// (a down preview host must not spam the log).
 	var audioSink func([]byte)
-	if cfg.Audio.PublishAddr != "" {
-		raddr, err := net.ResolveUDPAddr("udp", cfg.Audio.PublishAddr)
+	if len(cfg.Audio.PublishAddr) > 0 {
+		sink, conn, err := newAudioSink(cfg.Audio.PublishAddr, log)
 		if err != nil {
-			return fmt.Errorf("audio.publish_addr: %w", err)
-		}
-		conn, err := net.ListenUDP("udp", &net.UDPAddr{})
-		if err != nil {
-			return fmt.Errorf("audio publish bind: %w", err)
+			return err
 		}
 		defer conn.Close()
-		var firstErr atomic.Bool
-		audioSink = func(pcm []byte) {
-			if _, err := conn.WriteToUDP(pcm, raddr); err != nil && firstErr.CompareAndSwap(false, true) {
-				log.Warn("audio publish write failed (further errors dropped)", "err", err)
-			}
-		}
+		audioSink = sink
+		log.Info("audio publish targets", "targets", []string(cfg.Audio.PublishAddr))
 	}
 
 	// The on-demand radio capture-session manager (U4): Run owns the
@@ -177,6 +162,43 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 	}()
 	br.Run()
 	return ctx.Err()
+}
+
+// newAudioSink builds the audio PCM publisher (2026-09-21 preview sink):
+// while the audio demand is set, demodulated radio audio (S16LE 48 kHz
+// mono) is re-published as raw UDP datagrams to every audio.publish_addr
+// target (2026-10: vhfcam preview + bmrec recorder). Unconnected socket +
+// WriteTo on purpose: a connected UDP socket caches ICMP-derived errors
+// (ECONNREFUSED while a consumer restarts) and would fail every later
+// write silently. A failed send to one target never skips the others;
+// each target's first failure is logged, the rest dropped (a down
+// consumer must not spam the log). The caller closes the returned conn.
+func newAudioSink(addrs []string, log *slog.Logger) (func([]byte), *net.UDPConn, error) {
+	type target struct {
+		addr     *net.UDPAddr
+		firstErr atomic.Bool
+	}
+	targets := make([]*target, 0, len(addrs))
+	for _, a := range addrs {
+		raddr, err := net.ResolveUDPAddr("udp", a)
+		if err != nil {
+			return nil, nil, fmt.Errorf("audio.publish_addr %q: %w", a, err)
+		}
+		targets = append(targets, &target{addr: raddr})
+	}
+	conn, err := net.ListenUDP("udp", &net.UDPAddr{})
+	if err != nil {
+		return nil, nil, fmt.Errorf("audio publish bind: %w", err)
+	}
+	sink := func(pcm []byte) {
+		for _, t := range targets {
+			if _, err := conn.WriteToUDP(pcm, t.addr); err != nil && t.firstErr.CompareAndSwap(false, true) {
+				log.Warn("audio publish write failed (further errors to this target dropped)",
+					"target", t.addr.String(), "err", err)
+			}
+		}
+	}
+	return sink, conn, nil
 }
 
 // monitorAdapter narrows civserial.Monitor onto the bridge's Monitor
