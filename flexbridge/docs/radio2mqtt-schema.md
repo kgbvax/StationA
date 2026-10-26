@@ -99,7 +99,11 @@ subscriber or a late-joiner gets this immediately without polling.
       { "key": "dvk_status", "name": "DVK Status", "type": "string" },
       { "key": "dvk_id",     "name": "DVK Memory", "type": "number" },
       { "key": "mic_profile", "name": "Mic Profile", "type": "string", "writable": true,
-        "command": { "action": "set_mic_profile", "value_key": "value", "value_type": "string" } }
+        "command": { "action": "set_mic_profile", "value_key": "value", "value_type": "string" } },
+      { "key": "split",      "name": "Split",              "type": "boolean" },
+      { "key": "rx_freq_hz", "name": "Split RX frequency", "type": "number", "unit": "Hz", "class": "frequency", "state_class": "measurement" },
+      { "key": "rx_band",    "name": "Split RX band",      "type": "enum", "options_ref": "bands" },
+      { "key": "cross_band", "name": "Split cross-band",   "type": "boolean" }
     ],
     "actions": [
       { "key": "dvk_play_1",  "name": "DVK Play 1",  "command": { "action": "dvk_play_1" } },
@@ -200,7 +204,11 @@ regardless of how many internal receivers the radio has.
     { "id": 2, "name": "dl9et", "duration_ms": 2565 }
   ],
   "mic_profile": "Default ProSet HC6",
-  "mic_profiles": ["Contest", "Default ProSet HC6", "Ragchew"]
+  "mic_profiles": ["Contest", "Default ProSet HC6", "Ragchew"],
+  "split": true,
+  "rx_freq_hz": 18100000,
+  "rx_band": "17m",
+  "cross_band": true
 }
 ```
 
@@ -221,6 +229,10 @@ regardless of how many internal receivers the radio has.
 | `dvk_memories` | object[] | — | DVK memory library as named in SmartSDR, sorted by `id`: `{id, name, duration_ms}` per slot (`duration_ms` 0 = empty slot; unnamed slots carry the radio default `Recording N`). Populated from the `dvk added id=N name="…" duration=…` frames the radio sends in reply to `sub dvk all` (one per slot), updated on rename/re-record (`dvk id=N name=…`) and delete. `/state`-only (not in `expose.fields`); omitted until the radio reports it |
 | `mic_profile` | string | — | Currently-loaded mic profile name (SmartSDR native mic profile). Best-effort: SmartSDR does not report an active mic profile, so the bridge tracks this client-side as the name most recently loaded via `set_mic_profile`; empty until the first load via the bus. Omitted when empty |
 | `mic_profiles` | string[] | — | Available mic-profile names (sorted). Populated from the radio's reply to the one-shot `profile mic info` command (`profile mic list=A^B C^…` status frames; queried once in the handshake on connect). `/state`-only (not in `expose.fields`) |
+| `split` | bool | — | `true` while a slice other than **slice A** carries the TX flag (SmartSDR split; CAT's "TX on VFO B"). `/state` proper keeps following the TX slice — that is where RF goes and what the antenna chain tunes for. Slice A is `index_letter=A`; before the radio has reported a letter the lowest slice index stands in |
+| `rx_freq_hz` | integer | Hz | Slice A's (VFO A's) frequency while `split`; omitted otherwise |
+| `rx_band` | string | — | Slice A's derived band while `split` (same table and hysteresis as `band`); omitted otherwise |
+| `cross_band` | bool | — | `split` with slice A on a different ham band than the TX slice — the "clicked a 17 m spot while VFO B still transmits on 20 m" case. `gen`/`unknown`/empty on either side never count as a mismatch. An operator-intent **warning** (the RF chain follows the TX slice, so nothing is mistuned); cross-band operation is legal and has legitimate uses, so consumers warn and do not block (hf_console banner; m5stamp-hf-ctrl has an opt-in gate compiled out by default). Logged as one Warn per false→true edge |
 
 ### Mode values
 
@@ -441,7 +453,11 @@ binds to sub-receiver topics.
 
 The FLEX-8400 with a single active slice declares `receivers: 1` and publishes
 only `/state`. If multiple slices are configured in SmartSDR, the TX slice
-(or the active slice if none is transmitting) drives `/state`.
+(or the active slice if none is transmitting) drives `/state`. The one
+exception to "only the TX slice" is split: while a slice other than slice A
+holds the TX flag, slice A rides along in `/state` as `rx_freq_hz` / `rx_band`
+(with `split` and `cross_band`, see the field reference) so a consumer can
+see where the operator listens versus where the next key-up goes out.
 
 ---
 
@@ -451,6 +467,7 @@ only `/state`. If multiple slices are configured in SmartSDR, the TX slice
 |---|---|
 | Connect / reconnect | `/meta` (incl. `expose`), `/status` (`online`); HA discovery only if `publish_ha_discovery = true` |
 | Active/TX slice frequency or mode changes | `/state` |
+| Split begins/ends, or slice A's frequency/band changes while split | `/state` (`split`, `rx_freq_hz`, `rx_band`, `cross_band`) |
 | Interlock transitions TX ↔ RX | `/state` |
 | ATU transitions into or out of Tuning | `/state` |
 | Radio drive level changes | `/state` |

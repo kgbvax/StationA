@@ -61,6 +61,32 @@ class Slot {
   bool get isOnline => bridgeOnline && (sessionSlot || deviceOnline);
 }
 
+/// A split with VFO A on another band than the TX slice, as flexbridge reports
+/// it (`/state.split` + `cross_band`, RX side = slice A, TX side = `/state`
+/// proper). The RF chain follows the TX side, so this is an operator-intent
+/// warning, not a hardware fault.
+class SplitState {
+  final String rxBand;
+  final int? rxFreqHz;
+  final String txBand;
+  final int? txFreqHz;
+
+  const SplitState({required this.rxBand, this.rxFreqHz, required this.txBand, this.txFreqHz});
+
+  // Value equality so `context.select` rebuilds the banner only when a side
+  // actually changes, not on every store notification.
+  @override
+  bool operator ==(Object other) =>
+      other is SplitState &&
+      other.rxBand == rxBand &&
+      other.rxFreqHz == rxFreqHz &&
+      other.txBand == txBand &&
+      other.txFreqHz == txFreqHz;
+
+  @override
+  int get hashCode => Object.hash(rxBand, rxFreqHz, txBand, txFreqHz);
+}
+
 /// One recorded fault or error seen on the bus.
 class FaultRecord {
   final String address;
@@ -383,5 +409,22 @@ class BusStore extends ChangeNotifier {
     if (radioTx || paKeyed) return RfState.tx;
     if (stateValueAs<bool>('muehle/hf/radio', 'tuning') == true) return RfState.tune;
     return RfState.rx;
+  }
+
+  /// The cross-band split flexbridge reports, or null. Non-null only while
+  /// the radio is live (bridge + device online, link up) and
+  /// `/state.cross_band` is true: a stale retained snapshot never raises the
+  /// warning — LINK DOWN already says everything may be stale.
+  SplitState? get splitCrossBand {
+    const slot = 'muehle/hf/radio';
+    if (!_linkUp) return null;
+    if (!(_slots[slot]?.isOnline ?? false)) return null;
+    if (stateValueAs<bool>(slot, 'cross_band') != true) return null;
+    return SplitState(
+      rxBand: stateValueAs<String>(slot, 'rx_band') ?? '',
+      rxFreqHz: stateValueAs<num>(slot, 'rx_freq_hz')?.toInt(),
+      txBand: stateValueAs<String>(slot, 'band') ?? '',
+      txFreqHz: stateValueAs<num>(slot, 'freq_hz')?.toInt(),
+    );
   }
 }

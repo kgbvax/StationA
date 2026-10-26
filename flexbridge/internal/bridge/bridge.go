@@ -85,6 +85,10 @@ type radioState struct {
 	dvkMemories    []dvkMemory // DVK memory library sorted by id (copy-on-write; omitempty)
 	micProfile     string      // mic profile currently loaded (active name; omitempty)
 	micProfileList []string    // sorted available mic profile names (omitempty)
+	split          bool        // a TX slice exists that is not slice A (CAT's VFO A): split operation
+	rxFreqHz       int64       // slice A's frequency while split (0 otherwise)
+	rxBand         string      // slice A's derived band while split ("" otherwise)
+	crossBand      bool        // split with slice A on another ham band than the TX slice
 }
 
 // statePayload is the JSON shape published to <slot>/state (retained).
@@ -107,6 +111,10 @@ type statePayload struct {
 	DVKMemories  []dvkMemory `json:"dvk_memories,omitempty"` // DVK memory names/durations from the radio (dynamic; /state only)
 	MicProfile   string      `json:"mic_profile,omitempty"`  // active mic profile name (SmartSDR native profile)
 	MicProfiles  []string    `json:"mic_profiles,omitempty"` // available mic profile names (dynamic; /state only)
+	Split        bool        `json:"split"`                  // the TX slice is not slice A (split operation)
+	RxFreqHz     int64       `json:"rx_freq_hz,omitempty"`   // slice A frequency while split
+	RxBand       string      `json:"rx_band,omitempty"`      // slice A band while split
+	CrossBand    bool        `json:"cross_band"`             // split across two ham bands (operator-intent warning)
 }
 
 // dvkMemory is one DVK memory slot as named on the radio (SmartSDR's DVK
@@ -711,7 +719,29 @@ func (b *Bridge) updateActiveSliceState() bool {
 		}
 	}
 
-	if b.state.freqHz == newFreq && b.state.mode == newMode && b.state.band == newBand {
+	// Split: the TX slice is not slice A. /state keeps following the TX slice
+	// (that is where RF goes and what the antenna chain tunes for); slice A —
+	// what the operator and the logger's CAT call VFO A — rides along as the RX
+	// side so consumers can tell when the two sit on different bands. Only a
+	// real TX flag makes a split: with no TX slice `active` is the active slice
+	// and there is no second VFO to compare against.
+	var (
+		newSplit  bool
+		newRxFreq int64
+		newRxBand string
+		newCross  bool
+	)
+	if rx, ok := resolveRxSlice(b.slices); ok && active.TX && rx.Index != active.Index {
+		newSplit = true
+		newRxFreq = rx.FreqHz
+		newRxBand = b.sliceBand[rx.Index]
+		// gen/unknown/empty is "no information", never a mismatch.
+		newCross = isHamBand(newRxBand) && isHamBand(newBand) && newRxBand != newBand
+	}
+
+	if b.state.freqHz == newFreq && b.state.mode == newMode && b.state.band == newBand &&
+		b.state.split == newSplit && b.state.rxFreqHz == newRxFreq &&
+		b.state.rxBand == newRxBand && b.state.crossBand == newCross {
 		return false
 	}
 	// A nonzero frequency that is reported as "gen" or "unknown" after hysteresis
@@ -720,10 +750,47 @@ func (b *Bridge) updateActiveSliceState() bool {
 	if newFreq > 0 && (newBand == "unknown" || newBand == "gen") {
 		b.log.Warnf("out-of-band frequency from radio: freq_hz=%d band=%q", newFreq, newBand)
 	}
+	// One Warn per cross-band edge (logging.md: degraded, operator-visible), an
+	// Info when it clears — not one line per VFO step while it lasts.
+	if newCross && !b.state.crossBand {
+		b.log.Warnf("split cross-band: rx(slice A)=%s %d Hz, tx=%s %d Hz", newRxBand, newRxFreq, newBand, newFreq)
+	} else if !newCross && b.state.crossBand {
+		b.log.Infof("split cross-band cleared: split=%v band=%s", newSplit, newBand)
+	}
 	b.state.freqHz = newFreq
 	b.state.band = newBand
 	b.state.mode = newMode
+	b.state.split = newSplit
+	b.state.rxFreqHz = newRxFreq
+	b.state.rxBand = newRxBand
+	b.state.crossBand = newCross
 	return true
+}
+
+// resolveRxSlice returns slice A — the slice SmartSDR letters "A", which is
+// what CAT (and so the contest logger) calls VFO A and tunes on a spot click.
+// Falls back to the lowest slice index when no frame has carried an
+// index_letter yet (older firmware / before the first full status). ok is
+// false with no slices tracked.
+func resolveRxSlice(slices map[int]flexradio.SliceStatus) (flexradio.SliceStatus, bool) {
+	var best flexradio.SliceStatus
+	found := false
+	for _, s := range slices {
+		if s.Letter == "A" {
+			return s, true
+		}
+		if !found || s.Index < best.Index {
+			best = s
+			found = true
+		}
+	}
+	return best, found
+}
+
+// isHamBand reports whether a derived band label is a real allocation (not
+// the no-information labels "", "gen", "unknown").
+func isHamBand(band string) bool {
+	return band != "" && band != "gen" && band != "unknown"
 }
 
 // resolveActiveSlice returns the slice that drives the radio state.
@@ -1071,6 +1138,10 @@ func (b *Bridge) publishStateSnapshot(st radioState) {
 		DVKMemories:  st.dvkMemories,
 		MicProfile:   st.micProfile,
 		MicProfiles:  st.micProfileList,
+		Split:        st.split,
+		RxFreqHz:     st.rxFreqHz,
+		RxBand:       st.rxBand,
+		CrossBand:    st.crossBand,
 	}
 	data, err := json.Marshal(p)
 	if err != nil {
@@ -1143,6 +1214,12 @@ func (b *Bridge) publishMeta() {
 				{Key: "dvk_id", Name: "DVK Memory", Type: "number"},
 				{Key: "mic_profile", Name: "Mic Profile", Type: "string", Writable: true,
 					Command: &metaCommand{Action: "set_mic_profile", ValueKey: "value", ValueType: "string"}},
+				// Split operation: /state follows the TX slice; slice A (VFO A)
+				// is published alongside so a cross-band split is visible.
+				{Key: "split", Name: "Split", Type: "boolean"},
+				{Key: "rx_freq_hz", Name: "Split RX frequency", Type: "number", Unit: "Hz", Class: "frequency", StateClass: "measurement"},
+				{Key: "rx_band", Name: "Split RX band", Type: "enum", OptionsRef: "bands"},
+				{Key: "cross_band", Name: "Split cross-band", Type: "boolean"},
 			},
 			Actions: dvkExposeActions(),
 		},

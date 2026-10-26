@@ -76,6 +76,32 @@ Code-check verdict (2026-09-03): **still unresolved** — the conflict persists 
 
 Update 2026-10-23: the docs now follow the seed config. Root `CLAUDE.md`, `README.md` and `docs/station-integration-model.md` §7.1 (`wiring_map` and **Passive resources**) say Ultrabeam port 4 as seeded, fan dipole port 6 and dummy load port 1, and on-site confirmation is still open. The port-3 and fan-dipole-port-2 claims above are history. Port 3 is still in the antennaselect reconcile test fixtures and the stationportal inventory note only. antenna-select moved from shari to scmino on 2026-10-12, so the on-device config to read is now `/etc/antenna-select/config.toml` on scmino.
 
+## [decision] Split cross-band: warn, do not block (2026-10-26)
+
+Observed: working split on 20 m (slice A RX, slice B TX), a spot click in the logger retunes
+VFO A = slice A to 17 m; slice B keeps the TX flag on 20 m. The operator listens on 17 m and
+the next key-up goes out on 20 m. flexbridge publishes the **TX slice**, so antenna-select,
+ultrabridge, the ACOM and the pa-arm all follow 20 m: the RF chain is self-consistent, nothing
+is mistuned. The hazard is operator intent (calling the 17 m station on 20 m, possibly on top
+of someone), not RF into the wrong antenna.
+
+Legitimacy: cross-band HF operation is legal in DL and under IARU/ITU rules — each emission
+only has to lie inside an allocation for the licence class; nothing requires RX and TX on the
+same band. Legitimate uses exist: 60 m cross-band DX (DL is 15 W EIRP on 60 m, the partner
+answers on 40 m; the PA on 40 m is legal), the historical one-sided-allocation cross-band
+tests, and SmartSDR's second-slice-on-another-band monitoring while running. In contests a
+cross-band QSO never counts, so there it is always an error.
+
+Decision: **warn only by default.** flexbridge publishes `split` (TX slice ≠ slice A, the
+CAT/logger notion of VFO A/B, `index_letter=A` with lowest-index fallback), `rx_freq_hz` /
+`rx_band` (slice A while split) and `cross_band` (split across two ham bands; `gen`/`unknown`
+never count). hf_console shows a full-width amber strip on every page while the radio is live
+and `cross_band` is true, and `SPLIT` on the TRX pill. m5stamp-hf-ctrl carries a READINESS
+gate `split cross-band` behind `SPLIT_CROSS_BAND_GATE` (`config.h`), **compiled out in the
+deployed build**; set it to 1 and reflash for contest operation. The reference slice is A (not
+the active slice) so the monitoring workflow — TX stays on slice A, slice B browses another
+band — never trips it.
+
 ## [decision] `device_online` publication form: explicit vs omitted-when-true (PRD §6.3)
 
 The integration model says the field is "omitted when true". The deployed bridges publish `device_online: true` explicitly. Consumers must treat both forms as the same (absence = true) — that consumer rule is normative. A reconstruction must pick a producer convention (PRD recommendation: mandate the explicit boolean for all device slots, and update the model).

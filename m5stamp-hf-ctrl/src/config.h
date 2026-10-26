@@ -100,6 +100,16 @@ static const int BAND_EDGES_COUNT = sizeof(BAND_EDGES) / sizeof(BAND_EDGES[0]);
 // Ultrabeam / pre-positions the ACOM (one broker hop .50→.178), ultrabridge's
 // first 2 s motor poll, the ACOM band walk (~150 ms per step).
 #define BAND_CHANGE_HOLDOFF_MS 3000
+// Split cross-band gate (opt-in, compiled OUT by default). flexbridge flags
+// /state.cross_band when the radio works split with slice A (VFO A, where the
+// operator listens) on another band than the TX slice — typically a spot click
+// that retuned VFO A while VFO B kept TX on the old band. The antenna chain
+// follows the TX slice, so RF is not at risk; the hazard is operator intent.
+// Cross-band is legal and has legitimate uses (60 m cross-band DX, a second
+// slice for monitoring), so the station only WARNS (console banner). Set to 1
+// and reflash for contest operation, where a cross-band QSO is always an
+// error: the gate is then a READINESS gate (blocks closing, opens in RX only).
+#define SPLIT_CROSS_BAND_GATE 0
 
 // --- Ultrabeam (hf/ant-ctrl) --------------------------------------------------
 // The switch port the Ultrabeam is wired to. Ultrabeam gates apply only while

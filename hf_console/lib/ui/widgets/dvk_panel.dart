@@ -137,13 +137,16 @@ class _DvkPanelState extends State<DvkPanel> {
                   style: AppTheme.mono(12, weight: FontWeight.w700, letterSpacing: 0.14, color: AppTheme.txtMute)),
               // A live transmit is the one TRX state that must surface even
               // with the readout pill gone — the DVK buttons don't show it.
+              // Split (TX slice ≠ slice A) rides the same suffix in amber
+              // while not keyed; the cross-band case has its own banner.
               Consumer<BusStore>(builder: (context, store, _) {
-                final tx = store.stateValueAs<String>('muehle/$slot', 'tx');
+                final tx = store.stateValueAs<String>('muehle/$slot', 'tx') == 'tx';
+                final split = store.stateValueAs<bool>('muehle/$slot', 'split') == true;
                 return StatusPill(
                   slots: const ['muehle/hf/radio'],
                   label: 'FLEX-8400',
-                  suffix: tx == 'tx' ? 'TX' : null,
-                  suffixColor: AppTheme.red,
+                  suffix: tx ? 'TX' : (split ? 'SPLIT' : null),
+                  suffixColor: tx ? AppTheme.red : AppTheme.amber,
                 );
               }),
             ],
