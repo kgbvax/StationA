@@ -717,10 +717,11 @@ class _NavTab extends StatelessWidget {
           ),
           child: Text(
             label,
-            style: AppTheme.display(
+            style: AppTheme.body(
               isPhone ? 16 : 20,
               color: active ? AppTheme.txt : AppTheme.txtMute,
               weight: active ? FontWeight.w700 : FontWeight.w600,
+              letterSpacing: 0.04,
             ),
           ),
         ),
