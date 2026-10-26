@@ -1375,31 +1375,19 @@ class _SchematicPainter extends CustomPainter {
       ..color = on ? AppTheme.txtMute : AppTheme.cardLine;
     Paint fill(bool on) => Paint()..color = on ? AppTheme.txtMute : AppTheme.cardLine;
 
-    // Ultrabeam, top view: boom with three elements; arrowheads = direction.
+    // Ultrabeam, top view: a three-element Yagi — reflector longest at the
+    // back, elements shortening toward the front, so the taper is the
+    // direction. Reverse mirrors it (the Ultrabeam swaps its reflector and
+    // director lengths); bidirectional is symmetric.
     c.drawLine(const Offset(590, 358), const Offset(642, 358), ink(true));
-    for (final (x, h) in const [(600.0, 22.0), (616.0, 28.0), (632.0, 20.0)]) {
+    final lengths = switch (s.direction) {
+      'reverse' => const [20.0, 26.0, 30.0],
+      'bidirectional' => const [28.0, 24.0, 28.0],
+      _ => const [30.0, 26.0, 20.0],
+    };
+    for (final (i, x) in const [600.0, 616.0, 632.0].indexed) {
+      final h = lengths[i];
       c.drawLine(Offset(x, 358 - h / 2), Offset(x, 358 + h / 2), ink(true, 2.2));
-    }
-    final dir = s.direction;
-    if (dir == 'forward' || dir == 'bidirectional') {
-      c.drawPath(
-        Path()
-          ..moveTo(642, 353)
-          ..lineTo(650, 358)
-          ..lineTo(642, 363)
-          ..close(),
-        fill(true),
-      );
-    }
-    if (dir == 'reverse' || dir == 'bidirectional') {
-      c.drawPath(
-        Path()
-          ..moveTo(590, 353)
-          ..lineTo(582, 358)
-          ..lineTo(590, 363)
-          ..close(),
-        fill(true),
-      );
     }
 
     // Fan dipole: the generic antenna symbol, doubled.
@@ -1447,9 +1435,10 @@ class _SchematicPainter extends CustomPainter {
     );
     _ground(c, const Offset(594, 486), ink(s.port == 'off', 1.6));
 
-    // X-Quad: elements with the crossed element seen end-on as a dot.
+    // X-Quad: the same Yagi taper (it beams along the az rotator, to the
+    // right), each crossed element seen end-on as a dot.
     c.drawLine(const Offset(588, 640), const Offset(642, 640), ink(true));
-    for (final (x, h) in const [(600.0, 20.0), (614.0, 24.0), (628.0, 18.0)]) {
+    for (final (x, h) in const [(600.0, 26.0), (614.0, 22.0), (628.0, 16.0)]) {
       c.drawLine(Offset(x, 640 - h / 2), Offset(x, 640 + h / 2), ink(true, 2.2));
       c.drawCircle(Offset(x, 640), 3.4, fill(true));
     }
