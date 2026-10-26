@@ -599,3 +599,70 @@ func TestMetaAdvertisesParkOnlyWhenConfigured(t *testing.T) {
 		t.Errorf("park meta = %v", park)
 	}
 }
+
+// holdersOf reads /state.audio_holders.
+func holdersOf(m map[string]any) string {
+	raw, _ := m["audio_holders"].([]any)
+	hs := make([]string, 0, len(raw))
+	for _, h := range raw {
+		s, _ := h.(string)
+		hs = append(hs, s)
+	}
+	return strings.Join(hs, ",")
+}
+
+// Per-holder demand over the bus (2026-10): a holder-less audio_on/off
+// (vhfcam-restream, unchanged) acts as holder "default"; its audio_off
+// leaves bmrec's hold — and the capture session — in place.
+func TestAudioHolderDispatch(t *testing.T) {
+	h := newBH(t)
+	h.captureLive() // holder-less audio_on = "default"
+	h.cli.sendCmd([]byte(`{"action":"audio_on","value":"on","holder":"bmrec"}`))
+	waitTrue(t, "both holders in /state", 3*time.Second, func() bool {
+		return holdersOf(h.cli.lastState(t)) == "bmrec,default"
+	})
+
+	h.cli.sendCmd([]byte(`{"action":"audio_off"}`))
+	waitTrue(t, "default released, bmrec kept", 3*time.Second, func() bool {
+		return holdersOf(h.cli.lastState(t)) == "bmrec"
+	})
+	m := h.cli.lastState(t)
+	if dem, _ := m["audio_demand"].(bool); !dem {
+		t.Fatal("audio_demand cleared while bmrec still holds")
+	}
+	if ss, _ := m["session_state"].(string); ss != radio.StateLive {
+		t.Fatalf("session_state = %q while bmrec holds, want live", ss)
+	}
+	if e, _ := m["error"].(string); e != "" {
+		t.Errorf("/state.error = %q", e)
+	}
+
+	h.cli.sendCmd([]byte(`{"action":"audio_off","holder":"bmrec"}`))
+	waitTrue(t, "audio_demand cleared after the last holder", 3*time.Second, func() bool {
+		m := h.cli.lastState(t)
+		dem, _ := m["audio_demand"].(bool)
+		return !dem && holdersOf(m) == ""
+	})
+	waitCmdCleared(t, h.cli)
+}
+
+// A malformed holder is rejected into /state.error (and cleared, one-shot)
+// without touching the demand.
+func TestAudioHolderRejected(t *testing.T) {
+	h := newBH(t)
+	h.cli.sendCmd([]byte(`{"action":"audio_on","holder":"no spaces allowed"}`))
+	waitTrue(t, "invalid-holder rejection", 3*time.Second, func() bool {
+		return strings.Contains(h.cli.stateErr(t), "invalid audio holder")
+	})
+	waitCmdCleared(t, h.cli)
+	if dem, _ := h.cli.lastState(t)["audio_demand"].(bool); dem {
+		t.Error("a rejected holder set the audio demand")
+	}
+
+	long := strings.Repeat("x", radio.MaxAudioHolderLen+1)
+	h.cli.sendCmd([]byte(`{"action":"audio_on","holder":"` + long + `"}`))
+	waitTrue(t, "over-long holder rejection", 3*time.Second, func() bool {
+		e := h.cli.stateErr(t)
+		return strings.Contains(e, "invalid audio holder") && strings.Contains(e, long)
+	})
+}
