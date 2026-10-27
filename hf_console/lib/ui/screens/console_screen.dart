@@ -146,7 +146,12 @@ class LinkStatusBanner extends StatelessWidget {
 /// out on the other band. Informational by design: cross-band is legal and
 /// has legitimate uses (60 m cross-band, a second slice for monitoring), so
 /// nothing is blocked here; the fix is split-off in SmartSDR or the logger.
-class SplitBandBanner extends StatelessWidget {
+///
+/// The strip flashes — a slow fade between full and dim, never a hard
+/// on/off — so a cross-band split is hard to overlook mid-contest. Honors
+/// reduce-motion (solid strip). The fade repeats forever, so widget tests
+/// must freeze it (TestHarness does) or use plain `pump`s.
+class SplitBandBanner extends StatefulWidget {
   const SplitBandBanner({super.key});
 
   /// Frequency as kHz with one decimal (`18100.0`), the contest-logger form.
@@ -166,18 +171,55 @@ class SplitBandBanner extends StatelessWidget {
   }
 
   @override
+  State<SplitBandBanner> createState() => _SplitBandBannerState();
+}
+
+class _SplitBandBannerState extends State<SplitBandBanner> with SingleTickerProviderStateMixin {
+  late final AnimationController _flash = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 900),
+  );
+
+  /// Bottom of the fade; the strip never goes fully invisible.
+  static const _minOpacity = 0.25;
+
+  @override
+  void dispose() {
+    _flash.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final split = context.select<BusStore, SplitState?>((s) => s.splitCrossBand);
-    if (split == null) return const SizedBox.shrink();
-    return Container(
+    if (split == null) {
+      _flash.stop();
+      return const SizedBox.shrink();
+    }
+    final flashing = !MediaQuery.disableAnimationsOf(context);
+    if (flashing) {
+      if (!_flash.isAnimating) _flash.repeat(reverse: true);
+    } else {
+      _flash.stop();
+      _flash.value = 1.0;
+    }
+    final strip = Container(
       key: const ValueKey('split-band-banner'),
       color: AppTheme.blend(AppTheme.amber, 0.18),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       child: Text(
-        text(split),
+        SplitBandBanner.text(split),
         textAlign: TextAlign.center,
         style: AppTheme.mono(13, color: AppTheme.amber, weight: FontWeight.w700, letterSpacing: 0.14),
       ),
+    );
+    if (!flashing) return strip;
+    return FadeTransition(
+      key: const ValueKey('split-band-flash'),
+      opacity: Tween<double>(begin: _minOpacity, end: 1.0)
+          .chain(CurveTween(curve: Curves.easeInOut))
+          .animate(_flash),
+      child: strip,
     );
   }
 }

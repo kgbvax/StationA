@@ -98,6 +98,47 @@ void main() {
     });
   });
 
+  group('flash', () {
+    final crossBand = BusStore()
+      ..setRadio(freqHz: 14105000, band: '20m', split: true, crossBand: true, rxFreqHz: 18100000, rxBand: '17m');
+
+    const flashKey = ValueKey('split-band-flash');
+    double opacity(WidgetTester tester) => tester.widget<FadeTransition>(find.byKey(flashKey)).opacity.value;
+
+    // TestHarness freezes animations; re-allow motion for the banner only.
+    Widget motion(bool allowed) => Builder(
+          builder: (context) => MediaQuery(
+            data: MediaQuery.of(context).copyWith(disableAnimations: !allowed),
+            child: const SplitBandBanner(),
+          ),
+        );
+
+    testWidgets('fades between full and dim, never off', (tester) async {
+      await tester.pumpWidget(TestHarness(store: crossBand, child: motion(true)));
+      await tester.pump();
+      final seen = <double>[];
+      for (var i = 0; i < 20; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+        seen.add(opacity(tester));
+      }
+      expect(seen.reduce((a, b) => a < b ? a : b), lessThan(0.5));
+      expect(seen.reduce((a, b) => a > b ? a : b), greaterThan(0.9));
+      expect(seen.every((o) => o >= 0.25), isTrue);
+      // Gradual, not a hard on/off: no step between samples spans the range.
+      for (var i = 1; i < seen.length; i++) {
+        expect((seen[i] - seen[i - 1]).abs(), lessThan(0.6));
+      }
+      await tester.pumpWidget(const SizedBox.shrink()); // dispose the repeating ticker
+    });
+
+    testWidgets('reduce-motion holds a solid strip', (tester) async {
+      await tester.pumpWidget(TestHarness(store: crossBand, child: motion(false)));
+      await tester.pump(const Duration(milliseconds: 450));
+      expect(find.byKey(bannerKey), findsOneWidget);
+      expect(find.byKey(flashKey), findsNothing);
+    });
+  });
+
   test('banner text formats kHz with one decimal and tolerates missing parts', () {
     expect(SplitBandBanner.kHz(18100000), '18100.0');
     expect(SplitBandBanner.kHz(14105050), '14105.1');
