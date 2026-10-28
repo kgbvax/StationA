@@ -97,3 +97,8 @@ atu_bands = ["30m", "60m", "80m", "160m"]  # non-resonant bands needing the ATU 
 # operator-set. The switch's "off" position shorts the open ports to ground.
 [idle]
 timeout_minutes = 30
+# Sibling slots that can hold the station in use (receive-only consumers that
+# never touch the VFO): a live /state.station_hold (slot /status online,
+# hold_until in the future) is presence, and the timeout runs from when it ends.
+# bmrec's HF lab publishes its hold on muehle/hf/recorder. Default: none.
+# hold_slots = ["recorder"]

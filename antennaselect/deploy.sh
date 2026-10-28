@@ -38,6 +38,7 @@
 #   TUNER_FOLLOW_RESOURCE tuner_follow.resource (default: fan-dipole)
 #   TUNER_FOLLOW_ATU_BANDS tuner_follow.atu_bands (default: 30m,60m,80m,160m; comma-separated)
 #   IDLE_TIMEOUT_MINUTES  idle.timeout_minutes (default: 30)
+#   IDLE_HOLD_SLOTS       idle.hold_slots (default: recorder = bmrec's HF lab; comma-separated, "" = none)
 #
 # Configuration (including the MQTT password) lives in a single 0600 TOML file
 # on the target, NOT in the systemd unit or process command line. The file is
@@ -82,6 +83,7 @@ TUNER_FOLLOW_SLOT="${TUNER_FOLLOW_SLOT:-tuner}"
 TUNER_FOLLOW_RESOURCE="${TUNER_FOLLOW_RESOURCE:-fan-dipole}"
 TUNER_FOLLOW_ATU_BANDS="${TUNER_FOLLOW_ATU_BANDS:-30m,60m,80m,160m}"
 IDLE_TIMEOUT_MINUTES="${IDLE_TIMEOUT_MINUTES:-30}"
+IDLE_HOLD_SLOTS="${IDLE_HOLD_SLOTS-recorder}"
 
 # Render the comma-separated ATU bands list as a TOML array (["30m", "60m", "160m"]).
 atu_bands_toml() {
@@ -92,6 +94,20 @@ atu_bands_toml() {
     [[ -z "$band" ]] && continue
     if [[ $first -eq 1 ]]; then first=0; else out+=", "; fi
     out+="\"$(toml_escape "$band")\""
+  done
+  out+="]"
+  printf '%s' "$out"
+}
+
+# hold_slots_toml renders IDLE_HOLD_SLOTS (comma-separated) as a TOML string array.
+hold_slots_toml() {
+  local out="[" first=1 slot
+  IFS=',' read -ra _slots <<<"$IDLE_HOLD_SLOTS"
+  for slot in "${_slots[@]}"; do
+    slot="$(echo "$slot" | xargs)"  # trim whitespace
+    [[ -z "$slot" ]] && continue
+    if [[ $first -eq 1 ]]; then first=0; else out+=", "; fi
+    out+="\"$(toml_escape "$slot")\""
   done
   out+="]"
   printf '%s' "$out"
@@ -185,6 +201,9 @@ trap 'rm -f "$SEED_CONFIG" "${UNIT_FILE:-}"' EXIT
   echo "# (a VFO/frequency change or a transmit), the reconciler grounds the antenna"
   echo "# (target = off). The switch's off position shorts the open ports to ground."
   echo "timeout_minutes = ${IDLE_TIMEOUT_MINUTES}"
+  echo "# Receive-only consumers that hold the station in use while live (expiring"
+  echo "# /state.station_hold): bmrec's HF lab publishes on muehle/hf/recorder."
+  echo "hold_slots = $(hold_slots_toml)"
 } > "$SEED_CONFIG"
 
 # --- build for the Pi (Linux arm64) ----------------------------------------

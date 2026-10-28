@@ -84,8 +84,18 @@ type TunerFollow struct {
 // radio/state (freq_hz change or tx == "tx"), not operator-set. The timeout is expressed
 // in whole minutes (matching the codebase's integer-in-TOML convention; the reconciler
 // converts to time.Duration).
+//
+// HoldSlots are sibling slots (same site/station, e.g. "recorder" for bmrec's HF
+// lab) whose /state can hold the station in use: a consumer that uses the radio
+// without a VFO change or a transmit (a receive-only recorder) would otherwise be
+// grounded after the timeout. A hold counts as activity only while it is live —
+// slot /status online, /state station_hold=true and before its hold_until (the
+// publisher refreshes it; capped at 10 min from receipt) — and the timeout runs
+// from when it ends. It never outranks the antenna-mode lock (storm grounding).
+// Empty = no hold slots (the default).
 type Idle struct {
-	TimeoutMinutes int `toml:"timeout_minutes"`
+	TimeoutMinutes int      `toml:"timeout_minutes"`
+	HoldSlots      []string `toml:"hold_slots"`
 }
 
 // Config is the full runtime configuration for the reconciler.
@@ -213,6 +223,11 @@ func (c Config) Validate() error {
 	}
 	if c.Idle.TimeoutMinutes <= 0 {
 		problems = append(problems, "idle.timeout_minutes must be positive")
+	}
+	for _, slot := range c.Idle.HoldSlots {
+		if slot == "" || strings.ContainsAny(slot, "/+# ") || slot == c.MQTT.Slot {
+			problems = append(problems, fmt.Sprintf("idle.hold_slots: %q is not a sibling slot name", slot))
+		}
 	}
 	if len(problems) > 0 {
 		return fmt.Errorf("config: %s", strings.Join(problems, "; "))

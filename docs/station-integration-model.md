@@ -97,8 +97,8 @@ site / station / position / <slot>
   a multi-multi setup: one transmitter per band, shared-resource claims. The station
   node is a structural grouping, not a stateful component: membership is everything
   under its path, and it carries only an inferred `activity` flag (derived by the
-  antenna-select reconciler from radio VFO/frequency changes, transmits and operator
-  holds; published as `activity` / `last_activity` on `hf/antenna-select/state`, since
+  antenna-select reconciler from radio VFO/frequency changes, transmits, operator
+  holds and live station holds of receive-only consumers such as bmrec; published as `activity` / `last_activity` on `hf/antenna-select/state`, since
   the station node itself has no topic).
 - **position**: an operator seat. A single-op shack has only one, and it is left out of
   the address; it appears again only when two operators share a station.
@@ -456,8 +456,8 @@ muehle/hf   |   muehle/uhf
 role:     station
 kind:     { hf | uhf }
 location: bauwagen
-activity: { active | inactive }    # inferred by antenna-select from radio VFO/TX and operator
-                                   # holds; published as hf/antenna-select/state.activity
+activity: { active | inactive }    # inferred by antenna-select from radio VFO/TX, operator
+                                   # holds and station holds (hf/recorder); published as hf/antenna-select/state.activity
                                    # (+ last_activity); read by ladder tier 1 and the powerseq
                                    # idle standby / idle shutdown
 ```
@@ -700,7 +700,7 @@ channel stays directly toggleable for troubleshooting while the sequencer is idl
 (it has grounded the antenna after its idle timeout), no idle watch (UHF radio
 frequency, UHF rotator position) moved, and `running` has lasted the idle timeout →
 `entering_standby`: `power/antennas` off, `power/shack-pc` sleep → `standby`. A
-`last_activity` newer than the standby entry (VFO change, TX, operator hold), a watch
+`last_activity` newer than the standby entry (VFO change, TX, operator hold, station hold), a watch
 moving, or `start` → `waking`: Wake-on-LAN to bwpc, `power/antennas` on, wait for
 `hf/ant-ctrl` + `hf/rotator` online → `running`. antennaselect reconnects the antenna
 on the same activity. UHF use counts as activity because the antenna plug also feeds
@@ -843,6 +843,8 @@ binding below is an optional software override / pre-position path.
   the resolved target; suppressed under the `hf/ant-mode` lock and in manual)
 - `ant-switch.select` ← arbiter(band_policy, wiring_map, ladder)
 - `ant-switch.select` → `off` when the idle timeout elapses with no VFO change or TX
+  and no live station hold (`hf/recorder/state.station_hold`, bmrec's HF lab while it
+  records; expiring, see `antennaselect/docs/antenna-select-mqtt-api.md`)
   (ladder tier 1; walk-away lightning protection), except under an operator `manual`
   stand-down (tier 0): in manual the antenna is **never** moved automatically, and idle
   grounding is itself an automatic move
