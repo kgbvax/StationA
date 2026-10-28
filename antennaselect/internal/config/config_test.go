@@ -112,6 +112,24 @@ timeout_minutes = 45
 		t.Errorf("idle timeout = %d, want 45", cfg.Idle.TimeoutMinutes)
 	}
 
+	if len(cfg.Idle.HoldSlots) != 0 {
+		t.Errorf("hold_slots = %v, want none by default", cfg.Idle.HoldSlots)
+	}
+
+	// Hold slots are sibling slot names, never a path, a wildcard or the
+	// reconciler's own slot.
+	cfg.Idle.HoldSlots = []string{"recorder"}
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("hold_slots [recorder] rejected: %v", err)
+	}
+	for _, bad := range []string{"", "muehle/hf/recorder", "#", "antenna-select"} {
+		cfg.Idle.HoldSlots = []string{bad}
+		if err := cfg.Validate(); err == nil {
+			t.Errorf("hold_slots [%q] accepted", bad)
+		}
+	}
+	cfg.Idle.HoldSlots = nil
+
 	// Non-positive timeout is rejected.
 	cfg.Idle.TimeoutMinutes = 0
 	if err := cfg.Validate(); err == nil {

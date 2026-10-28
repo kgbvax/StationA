@@ -115,6 +115,11 @@ type Client struct {
 	pubActivity string
 	pubHasLast  bool
 
+	// holds are the [idle].hold_slots consumers' station holds (see hold.go);
+	// held is whether one was live at the last evaluation (transition logs).
+	holds map[string]*stationHold
+	held  bool
+
 	// RadioOnline (in.RadioOnline) is the AND of the two radio-liveness signals below;
 	// both are recomputed in onRadioStatus/onRadioState under c.mu.
 	//   radioBridgeOnline — from radio/status (broker LWT): the flexbridge process is up
@@ -250,6 +255,7 @@ func (c *Client) idleLoop() {
 // arrived after the tick but before this job ran does not get clobbered.
 func (c *Client) checkIdle() {
 	c.update(func(in *reconcile.Inputs) {
+		c.applyHolds(in, time.Now())
 		if time.Since(c.lastActivity) >= time.Duration(c.cfg.Idle.TimeoutMinutes)*time.Minute {
 			in.StationActivity = "inactive"
 		}
@@ -278,6 +284,7 @@ func (c *Client) subscribeAll() {
 	if c.cfg.MQTT.AntModeSlot != "" && c.cfg.BandFollow.Slot != "" && c.cfg.BandFollow.Resource != "" {
 		c.subscribe(c.siblingTopic(c.cfg.BandFollow.Slot, "state"), c.onFollowState)
 	}
+	c.subscribeHolds()
 	c.subscribe(c.selfTopic("cmd"), c.onOperatorCmd)
 }
 

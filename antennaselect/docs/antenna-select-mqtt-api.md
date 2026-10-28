@@ -326,6 +326,8 @@ defaults). The `set_inline` vocabulary matches atr1k-tuner-bridge's `/cmd` contr
 | `muehle/hf/ant-switch/state` | `selected` — confirm (`settled`: received, gating is backlog) |
 | `muehle/hf/<mqtt.ant_mode_slot>/state` | `ant_mode`, `lock.ground` via `shared/antmode` — lock tier (§5.1); `ant-mode` at Mühle |
 | `muehle/hf/<band_follow.slot>/state` | `device_online`, `retracted`, `lock` — only to re-send a lost unlock re-extend (§5.1); `ant-ctrl` at Mühle; subscribed only when the lock tier and band-follow are both configured |
+| `muehle/hf/<idle.hold_slots[i]>/status` | holder liveness (its LWT) — a station hold is live only while `online` |
+| `muehle/hf/<idle.hold_slots[i]>/state` | `station_hold`, `hold_until` (`holder`, `reason`: logs only) — a live hold is presence (idle-timeout input); `recorder` (bmrec) at Mühle |
 
 **Emits:** `muehle/hf/ant-switch/cmd` (`select`); `muehle/hf/<band_follow.slot>/cmd`
 (`frequency`, while the followed antenna is selected and no antenna-mode lock is active —
@@ -349,3 +351,38 @@ works as a manual re-arm even while the radio link is down or silent (previously
 overrode every hold in exactly that state). The walk-away re-ground still fires
 `[idle].timeout_minutes` after the last hold or radio activity. A release (`auto`) resets
 nothing.
+
+**Station hold (`[idle].hold_slots`):** a consumer that uses the radio for hours without
+a VFO change or a transmit — bmrec's HF lab records from its own panadapter and DAX-IQ
+stream, receive only — would be grounded (and then put into standby and shut down by
+powerseq) in the middle of a recording. Such a consumer publishes an expiring hold on its
+own sibling slot, and the reconciler treats a **live** hold as presence: on every hold
+message and every idle tick it marks the station `active` and resets the idle clock. The
+walk-away timeout therefore starts when the last hold ends, and a hold arriving on a
+grounded station re-selects the antenna and publishes a fresh `last_activity` (which
+wakes a powerseq standby). The hold is live only while all of these hold:
+
+- the slot's `/status` is `online` (retained; the holder's last will sets `offline`, so a
+  crashed holder or a lost broker connection releases at once);
+- its `/state` (retained) has `"station_hold": true` and a `hold_until` (RFC 3339) in the
+  future — the holder republishes it every heartbeat, so a hung holder expires;
+- the `/state` was received less than 10 minutes ago (a cap on any `hold_until`).
+
+A `/state` that says `station_hold: false`, a cleared retained topic, a hold without a
+parseable `hold_until` and a malformed payload are all *no hold*: the safe default is the
+walk-away grounding. The hold never outranks the antenna-mode lock (§5.1: a storm grounds
+the antenna regardless) or the manual stand-down; it only keeps tier 1 from firing.
+bmrec's payload (slot `muehle/hf/recorder`, held while its HF lab is connected to the
+radio and recording, released when paused, replaying or stopping; heartbeat 20 s, TTL
+60 s):
+
+```json
+{"ts":"2026-10-28T12:00:00Z","station_hold":true,"hold_until":"2026-10-28T12:01:00Z",
+ "holder":"bmrec","reason":"hf lab recording 40m"}
+```
+
+Why an explicit hold and not "a GUI client named bmrec is connected to the radio":
+bmrec stays connected while its recording is paused (waterfall and listening), so the
+radio's client list cannot tell "recording" from "parked", flexbridge would have to grow
+a client-list field, and a stuck client handle would keep the antenna up indefinitely.
+The hold says exactly what the holder means and expires on its own.
