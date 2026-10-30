@@ -53,7 +53,7 @@ All runtime commands are fire-and-forget on the wire; confirmation comes through
 | Band change through native band-stacking | `display pan s <panHandle> band=<bandNumber>` — bandNumber is the wavelength in meters (`20m`→`20`, `160m`→`160`, `6m`→`6`); panHandle is the verbatim hex handle string |
 | Mic-profile load | `profile mic load "<name>"` (name double-quoted, can include spaces) |
 | Slice mode (added 2026-10-23, 130dc0f) | `slice set <sliceIndex> mode=<CW\|USB\|LSB>` — TX slice, else the active one; from the SmartSDR slice wiki, not yet confirmed live on the FLEX-8400 |
-| Slice receive antenna (added 2026-10-30) | `slice set <sliceIndex> rxant=<ANT1\|ANT2\|RX_A>` — the active slice, slice A in split; ports as in the slice's `ant_list`; not yet confirmed live on the FLEX-8400 |
+| Slice receive antenna (added 2026-10-30) | `slice set <sliceIndex> rxant=<ANT1\|ANT2\|RX_A>` — the active slice, slice A in split; ports as in the slice's `ant_list`; confirmed live on the FLEX-8400 2026-10-30 (ANT1 → RX_A → ANT1, echoed as `rxant=` within ~2 s) |
 
 There is deliberately **no** set_freq, set_mode, or set_power command — the bridge never tunes the radio except by band (hard safety boundary).
 

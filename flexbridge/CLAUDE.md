@@ -142,7 +142,7 @@ one-shot intent only (not retained — a stale command must not re-fire on resta
 - `select_rx` + `value` (`ant1`/`ant2`/`rx_a`) — `slice set <idx> rxant=<PORT>` on the
   slice `rx_input` reports (the active slice; slice A in split, the slice the operator
   listens on). A port missing from that slice's reported `ant_list` is dropped. Confirm on
-  `/state.rx_input`. Not yet confirmed live on the FLEX-8400.
+  `/state.rx_input`. Confirmed live on the FLEX-8400 2026-10-30.
 - `dvk_play_<N>` / `dvk_play`+`value` / `dvk_stop` — DVK playback.
 - `set_mic_profile` + `value` (profile name) — native `profile mic load`; confirm on
   `/state.mic_profile`.

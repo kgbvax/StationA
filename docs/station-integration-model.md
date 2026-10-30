@@ -562,7 +562,7 @@ DVK (Digital Voice Keyer) is a SmartSDR v4+ / SmartSDR+ feature: 12 voice memori
 to TX on playback. flexbridge is otherwise read-only; `set_band`, `set_mode` (`cw`/`usb`/
 `lsb` only: the caller picks the sideband; added 2026-10-23, wire command not yet
 confirmed live), `select_rx` (receive antenna, `slice set <idx> rxant=`; added
-2026-10-30, wire command not yet confirmed live; never touches `txant`), DVK, and mic
+2026-10-30, confirmed live on the FLEX-8400; never touches `txant`), DVK, and mic
 profiles are its only `/cmd` surfaces: DVK exposed as
 one-shot actions (`dvk_play_N` buttons + `dvk_stop`), `set_band` as a writable `band`
 setpoint (a select), `set_mic_profile` as a writable `mic_profile` setpoint, `select_rx` as a writable
