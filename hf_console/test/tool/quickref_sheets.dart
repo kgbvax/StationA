@@ -25,6 +25,7 @@ import 'package:hf_console/ui/widgets/pol_ctrl_panel.dart';
 import 'package:hf_console/ui/widgets/power_panel.dart';
 import 'package:hf_console/ui/widgets/station_schematic.dart';
 import 'package:hf_console/ui/widgets/status_pill.dart';
+import 'package:hf_console/ui/widgets/trx_panel.dart';
 import 'package:hf_console/ui/widgets/uhf_radio_panel.dart';
 import 'package:hf_console/ui/widgets/ultrabeam_panel.dart';
 import 'package:hf_console/vhfcam/radio_status.dart';
@@ -362,9 +363,11 @@ final quickrefSheets = <Sheet>[
       Callout('NORMAL / STORM / MAINT.', 'STORM/MAINT.: ground, retract, park, lock until NORMAL; MAINT. ±5° nudge',
           UnionAnchor([ButtonAnchor('NORMAL', inside: AntModePanel), ButtonAnchor('MAINT.', inside: AntModePanel)])),
       Callout('Band selection', 'Re-tap active band: SSB↔CW; stripe = spot colour on map',
-          UnionAnchor([ButtonAnchor('80m', inside: DvkPanel), ButtonAnchor('10m', inside: DvkPanel)])),
+          UnionAnchor([ButtonAnchor('80m', inside: TrxPanel), ButtonAnchor('10m', inside: TrxPanel)])),
       Callout('Voice keyer (DVK)', 'Double-tap: pick memory + repeat time. Hold 0.7 s: auto-repeat [n] countdown; TX pauses it, tap resumes, hold exits',
           UnionAnchor([ButtonAnchor('CQ contest', inside: DvkPanel), ButtonAnchor('STOP', inside: DvkPanel)])),
+      Callout('RX ANT', 'Tap: ANT 1 ↔ RX A on the slice you hear; amber = set in SmartSDR',
+          ButtonAnchor('ANT 1', inside: TrxPanel)),
       Callout('MIC profiles', 'Hold to rebind; MIC line shows only console-loaded profiles', typeAnchor(MicProfileRow)),
     ],
   ),

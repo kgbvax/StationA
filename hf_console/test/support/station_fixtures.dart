@@ -28,7 +28,7 @@ extension StationFixtures on BusStore {
     _logic('muehle/power/shack-pc', {});
     _device('muehle/hf/switch', {'trx': 'on', 'pa': 'on'});
     _device('muehle/hf/pa-arm', {'enabled': true, 'armed': true});
-    _device('muehle/hf/radio', {'freq_hz': 14074000, 'band': '20m', 'mode': 'data', 'tx': 'rx', 'tuning': false});
+    _device('muehle/hf/radio', {'freq_hz': 14074000, 'band': '20m', 'mode': 'data', 'tx': 'rx', 'tuning': false, 'rx_input': 'ant1'});
     _device('muehle/hf/pa', {
       'power': 'on', 'mode': 'operate', 'keyed': 'rx', 'fwd_power_w': 0, 'rfl_power_w': 0,
       'swr': 1.0, 'temp_c': 36, 'fault': 'none', 'error': '',
@@ -83,7 +83,7 @@ extension StationFixtures on BusStore {
         _device('muehle/hf/rotator', {'az': 176, 'target_az': 175, 'moving': false, 'lock': 'storm'});
         _logic('muehle/hf/beam-steer', {'enabled': true, 'lock': 'storm'});
       case StationScenario.tx:
-        _device('muehle/hf/radio', {'freq_hz': 14074000, 'band': '20m', 'mode': 'data', 'tx': 'tx', 'tuning': false});
+        _device('muehle/hf/radio', {'freq_hz': 14074000, 'band': '20m', 'mode': 'data', 'tx': 'tx', 'tuning': false, 'rx_input': 'ant1'});
         _device('muehle/hf/pa', {
           'power': 'on', 'mode': 'operate', 'keyed': 'tx', 'fwd_power_w': 812, 'rfl_power_w': 14,
           'swr': 1.29, 'temp_c': 52, 'fault': 'none', 'error': '',

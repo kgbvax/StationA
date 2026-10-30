@@ -12,6 +12,7 @@ import '../widgets/pa_panel.dart';
 import '../widgets/tuner_panel.dart';
 import '../widgets/ultrabeam_panel.dart';
 import '../widgets/dvk_panel.dart';
+import '../widgets/trx_panel.dart';
 import '../widgets/antenna_panel.dart';
 import '../widgets/ant_mode_panel.dart';
 import '../widgets/power_panel.dart';
@@ -264,6 +265,9 @@ class _HfPage extends StatelessWidget {
     // single vertical scroll of every panel for full feature parity on a
     // small screen; tablets share the two-column shell with the UHF and
     // Station pages (see _TabletShell) so nothing moves on a page switch.
+    //
+    // On both, the DVK keys sit at the bottom left: the most-pressed keys of
+    // a CQ run, where the hand rests — pinned, never scrolled away.
     final isPhone = MediaQuery.of(context).size.shortestSide < 600;
 
     if (isPhone) {
@@ -297,12 +301,15 @@ class _HfPage extends StatelessWidget {
                     RotatorPresetsBar(),
                     PaPanel(),
                     TunerPanel(),
-                    DvkPanel(),
+                    TrxPanel(),
                     FaultsBar(),
                   ],
                 ),
               ),
             ),
+            // Pinned under the scroll column: the thumb finds the keys at
+            // the bottom edge wherever the column is scrolled.
+            const DvkPanel(),
           ],
         ),
       );
@@ -315,12 +322,13 @@ class _HfPage extends StatelessWidget {
       // The antenna mode closes the antenna stack under the map: it locks
       // exactly the controls above it (beam, switch, compass). Compact in
       // normal (mode keys + wind); it grows only with a lock or a storm
-      // suggestion — when the compass has nothing to aim anyway.
-      leftUnderMap: const [UltrabeamPanel(), AntennaPanel(), AntModePanel()],
+      // suggestion — when the compass has nothing to aim anyway. The DVK
+      // keyer closes the left pane: bottom-left corner of the tablet.
+      leftUnderMap: const [UltrabeamPanel(), AntennaPanel(), AntModePanel(), DvkPanel()],
       rightChildren: const [
         PaPanel(),
         TunerPanel(),
-        DvkPanel(),
+        TrxPanel(),
       ],
     );
   }
@@ -351,7 +359,7 @@ class _TabletShell extends StatelessWidget {
   final bool vhfMap;
 
   /// Panels pinned under the map in the left pane (HF: ultrabeam, antenna,
-  /// antenna mode).
+  /// antenna mode, DVK keyer).
   final List<Widget> leftUnderMap;
 
   /// Optional content pinned ABOVE the map in the left pane (CAM: the video

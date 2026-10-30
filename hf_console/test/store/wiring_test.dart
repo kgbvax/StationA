@@ -197,4 +197,21 @@ void main() {
       expect(jsonDecode(rotatorAzPayload(95)), isNot(contains('override')));
     });
   });
+
+  group('radio select_rx', () {
+    test('payload is the shared {action, value} shape', () {
+      expect(jsonDecode(radioSelectRxPayload('rx_a')), {'action': 'select_rx', 'value': 'rx_a'});
+    });
+
+    test('toggle: RX A goes to ANT 1, everything else to RX A', () {
+      expect(toggledRxInput('rx_a'), 'ant1');
+      expect(toggledRxInput('ant1'), 'rx_a');
+      expect(toggledRxInput('ant2'), 'rx_a');
+      expect(toggledRxInput(null), 'rx_a');
+    });
+
+    test('radio commands are not retained', () {
+      expect(cmdRetain['muehle/hf/radio'], isFalse);
+    });
+  });
 }

@@ -8,10 +8,11 @@ import '../../store/bus_store.dart';
 import '../../store/dvk_auto_repeat.dart';
 import '../../store/wiring.dart';
 import '../theme.dart';
-import 'mic_profile_row.dart';
-import 'status_pill.dart';
 
-/// The TRX card: band row, mic profiles and the DVK keys.
+/// The DVK keyer: the memory keys and STOP, as a strip at the bottom left of
+/// the HF page (tablet: under the antenna stack; phone: pinned under the
+/// scroll column) — the most-pressed keys of a CQ run, where the hand rests.
+/// Band, RX antenna and mic profiles are the TRX card ([TrxPanel]).
 ///
 /// Each DVK key is bound to a memory (default: its own number) and an
 /// auto-repeat interval, both persisted. Gestures on a key:
@@ -37,6 +38,9 @@ class DvkPanel extends StatefulWidget {
   static const int minRepeatS = 1;
   static const int maxRepeatS = 30;
   static const int defaultRepeatS = 3;
+
+  /// Key height: above the 48 dp minimum, these are hit without looking.
+  static const double keyHeight = 56;
 
   /// Hold time that enters / leaves auto mode.
   static const Duration holdDuration = Duration(milliseconds: 700);
@@ -121,116 +125,15 @@ class _DvkPanelState extends State<DvkPanel> {
 
   @override
   Widget build(BuildContext context) {
+    // A strip, not a card with a header: the keys are the content, and every
+    // pixel of height comes out of the map above it.
     return Container(
       decoration: BoxDecoration(
         color: AppTheme.card,
         border: Border(top: BorderSide(color: AppTheme.cardLine), bottom: BorderSide(color: AppTheme.cardLine)),
       ),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text('TRX',
-                  style: AppTheme.mono(12, weight: FontWeight.w700, letterSpacing: 0.14, color: AppTheme.txtMute)),
-              // A live transmit is the one TRX state that must surface even
-              // with the readout pill gone — the DVK buttons don't show it.
-              // Split (TX slice ≠ slice A) rides the same suffix in amber
-              // while not keyed; the cross-band case has its own banner.
-              Consumer<BusStore>(builder: (context, store, _) {
-                final tx = store.stateValueAs<String>('muehle/$slot', 'tx') == 'tx';
-                final split = store.stateValueAs<bool>('muehle/$slot', 'split') == true;
-                return StatusPill(
-                  slots: const ['muehle/hf/radio'],
-                  label: 'FLEX-8400',
-                  suffix: tx ? 'TX' : (split ? 'SPLIT' : null),
-                  suffixColor: tx ? AppTheme.red : AppTheme.amber,
-                );
-              }),
-            ],
-          ),
-          const SizedBox(height: 8),
-          _buildBandRow(context),
-          const SizedBox(height: 8),
-          const MicProfileRow(),
-          const SizedBox(height: 8),
-          _buildButtonRow(context),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildBandRow(BuildContext context) {
-    return Consumer<BusStore>(
-      builder: (context, store, _) {
-        final slotState = store.slots['muehle/$slot'];
-        final online = (slotState?.isOnline ?? false) && store.linkUp;
-        final currentBand = store.stateValueAs<String>('muehle/$slot', 'band') ?? '';
-        final mode = store.stateValueAs<String>('muehle/$slot', 'mode');
-        final freqHz = store.stateValueAs<num>('muehle/$slot', 'freq_hz');
-        final mqtt = context.read<MqttService>();
-
-        // Tapping the band the radio is already on toggles CW <-> SSB
-        // (sideband by frequency, toggledSsbCwMode) instead of re-stacking.
-        void onBand(String band) {
-          final payload = band == currentBand
-              ? radioSetModePayload(toggledSsbCwMode(mode, freqHz))
-              : radioSetBandPayload(band);
-          mqtt.publish(topic, payload, retain: false);
-        }
-
-        const bands = ['80', '40', '20', '17', '15', '12', '10'];
-        // One row of equal-width buttons (a Wrap split 5 + 2 on the tablet).
-        // Each carries a short underline in its horstreporter band colour
-        // (AppTheme.bandColor, fixed across themes) so a band button and the
-        // spot dots of that band on the map read as the same thing.
-        return Row(
-          children: [
-            for (final (i, band) in bands.indexed)
-              Expanded(
-                child: Padding(
-                  padding: EdgeInsets.only(right: i < bands.length - 1 ? 6 : 0),
-                  child: _bandButton(
-                    '${band}m',
-                    active: currentBand == '${band}m',
-                    onPressed: online ? () => onBand('${band}m') : null,
-                  ),
-                ),
-              ),
-          ],
-        );
-      },
-    );
-  }
-
-  Widget _bandButton(String band, {required bool active, VoidCallback? onPressed}) {
-    final stripe = AppTheme.bandColor(band);
-    return ElevatedButton(
-      onPressed: onPressed,
-      style: AppTheme.actionButton(active: active).copyWith(
-        minimumSize: const WidgetStatePropertyAll(Size(0, 48)),
-        padding: const WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: 4, vertical: 6)),
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          FittedBox(fit: BoxFit.scaleDown, child: Text(band, maxLines: 1)),
-          const SizedBox(height: 4),
-          // Full button width, 6 px tall: a short 3 px dash was too small to
-          // tell the band colours apart at arm's length on the tablet.
-          Container(
-            key: ValueKey('band-stripe-$band'),
-            width: double.infinity,
-            height: 6,
-            decoration: BoxDecoration(
-              color: onPressed == null ? AppTheme.blend(stripe, 0.35) : stripe,
-              borderRadius: BorderRadius.circular(3),
-            ),
-          ),
-        ],
-      ),
+      child: _buildButtonRow(context),
     );
   }
 
@@ -244,19 +147,21 @@ class _DvkPanelState extends State<DvkPanel> {
         final isPlaying = status == 'playback';
         final names = DvkPanel.memoryNames(store.stateValue('muehle/$slot', 'dvk_memories'));
 
+        // Keys from the left edge; STOP at the far end behind a wider gap, so
+        // a key press that lands off-target never cuts the message.
         return Row(
           children: [
             for (var n = 1; n <= buttonCount; n++)
               Expanded(
                 child: Padding(
-                  padding: const EdgeInsets.only(right: 8),
+                  padding: EdgeInsets.only(right: n < buttonCount ? 8 : 20),
                   child: _dvkButton(n, online, auto, names, active: online && isPlaying && activeId == _memory[n - 1]),
                 ),
               ),
             ElevatedButton(
               onPressed: online ? _onStop : null,
               style: AppTheme.actionButton(danger: true).copyWith(
-                minimumSize: const WidgetStatePropertyAll(Size(64, 48)),
+                minimumSize: const WidgetStatePropertyAll(Size(88, DvkPanel.keyHeight)),
                 padding: const WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: 12, vertical: 6)),
               ),
               child: const Text('STOP'),
@@ -331,7 +236,7 @@ class _DvkPanelState extends State<DvkPanel> {
               statesController: controller,
               onPressed: online ? () {} : null,
               style: AppTheme.actionButton(active: active).copyWith(
-                minimumSize: const WidgetStatePropertyAll(Size(0, 48)),
+                minimumSize: const WidgetStatePropertyAll(Size(0, DvkPanel.keyHeight)),
                 padding: const WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: 8, vertical: 6)),
                 // Armed (running or paused) is visible at a glance.
                 side: isAuto ? WidgetStatePropertyAll(BorderSide(color: AppTheme.accent, width: 2.6)) : null,

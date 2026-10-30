@@ -323,6 +323,7 @@ extension BusStoreFixtures on BusStore {
     bool crossBand = false,
     int? rxFreqHz,
     String rxBand = '',
+    String? rxInput,
   }) {
     setOnline('muehle/hf/radio');
     applyState('muehle/hf/radio', {
@@ -342,6 +343,9 @@ extension BusStoreFixtures on BusStore {
       'cross_band': crossBand,
       if (rxFreqHz != null) 'rx_freq_hz': rxFreqHz,
       if (rxBand.isNotEmpty) 'rx_band': rxBand,
+      // Receive antenna of the listened-on slice; omitted like an older
+      // flexbridge that does not publish it.
+      if (rxInput != null) 'rx_input': rxInput,
     });
   }
 
