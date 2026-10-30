@@ -176,17 +176,19 @@ func tokenizeQuoted(s string) []string {
 // SliceStatus holds the per-slice fields flexbridge publishes. Populated
 // from "slice" status lines.
 type SliceStatus struct {
-	Index      int    // first topic arg (slice list index)
-	RcvrIndex  int    // second topic arg (receiver/panadapter index, may be absent)
-	Letter     string // index_letter=<A|B|...> — the slice letter SmartSDR shows (CAT's VFO A/B); "" if never reported
-	PanHandle  string // pan=<handle> the slice is on (hex pan stream id, e.g. "0x40000000"); "" if absent
-	FreqHz     int64  // frequency in Hz (parsed from RF_frequency in MHz or freq)
-	Mode       string // USB, LSB, CW, ...
-	Active     bool   // active=1
-	TX         bool   // tx=1
-	AGCMode    string // agc_mode / agc
-	FilterLow  int    // filter_lo (Hz)
-	FilterHigh int    // filter_hi (Hz)
+	Index      int      // first topic arg (slice list index)
+	RcvrIndex  int      // second topic arg (receiver/panadapter index, may be absent)
+	Letter     string   // index_letter=<A|B|...> — the slice letter SmartSDR shows (CAT's VFO A/B); "" if never reported
+	PanHandle  string   // pan=<handle> the slice is on (hex pan stream id, e.g. "0x40000000"); "" if absent
+	FreqHz     int64    // frequency in Hz (parsed from RF_frequency in MHz or freq)
+	Mode       string   // USB, LSB, CW, ...
+	Active     bool     // active=1
+	TX         bool     // tx=1
+	AGCMode    string   // agc_mode / agc
+	FilterLow  int      // filter_lo (Hz)
+	FilterHigh int      // filter_hi (Hz)
+	RxAnt      string   // rxant=<ANT1|ANT2|RX_A|XVTA…> — the slice's receive antenna port; "" if never reported
+	AntList    []string // ant_list=<comma list> — receive ports the slice may select; nil if never reported
 }
 
 // ParseSlice parses an "S|slice ..." status line body into a SliceStatus.
@@ -234,6 +236,20 @@ func ParseSlice(topicArgs, fieldsStr string, prev ...SliceStatus) (SliceStatus, 
 	// reference (bridge.resolveRxSlice).
 	if v, ok := f["index_letter"]; ok {
 		s.Letter = strings.ToUpper(strings.TrimSpace(v))
+	}
+	// Receive antenna port and the ports this slice may select. ant_list is a
+	// comma list without spaces (e.g. "ANT1,ANT2,RX_A,XVTA"); tx_ant_list is a
+	// different key and is not read here.
+	if v, ok := f["rxant"]; ok {
+		s.RxAnt = strings.ToUpper(strings.TrimSpace(v))
+	}
+	if v, ok := f["ant_list"]; ok {
+		s.AntList = nil
+		for _, a := range strings.Split(v, ",") {
+			if a = strings.ToUpper(strings.TrimSpace(a)); a != "" {
+				s.AntList = append(s.AntList, a)
+			}
+		}
 	}
 	// Frequency: prefer RF_frequency (MHz float); fall back to legacy freq.
 	// SmartSDR sends incremental slice updates — only changed fields appear —

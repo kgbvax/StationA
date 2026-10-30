@@ -12,7 +12,7 @@ flexbridge implements the `radio` slot of the station integration model
 | `/meta` | yes | bridge → bus | birth certificate: identity + capabilities |
 | `/state` | yes | bridge → bus | live radio state (JSON snapshot) |
 | `/status` | yes | broker LWT | liveness: `online` / `offline` |
-| `/cmd` | no | bus → bridge | intent: band changes (`set_band`) + slice mode (`set_mode`) + DVK playback + mic-profile load (`set_mic_profile`) (one-shot, not retained) |
+| `/cmd` | no | bus → bridge | intent: band changes (`set_band`) + slice mode (`set_mode`) + receive antenna (`select_rx`) + DVK playback + mic-profile load (`set_mic_profile`) (one-shot, not retained) |
 
 ---
 
@@ -103,7 +103,9 @@ subscriber or a late-joiner gets this immediately without polling.
       { "key": "split",      "name": "Split",              "type": "boolean" },
       { "key": "rx_freq_hz", "name": "Split RX frequency", "type": "number", "unit": "Hz", "class": "frequency", "state_class": "measurement" },
       { "key": "rx_band",    "name": "Split RX band",      "type": "enum", "options_ref": "bands" },
-      { "key": "cross_band", "name": "Split cross-band",   "type": "boolean" }
+      { "key": "cross_band", "name": "Split cross-band",   "type": "boolean" },
+      { "key": "rx_input",   "name": "RX antenna",         "type": "enum", "options_ref": "rx_inputs", "writable": true,
+        "command": { "action": "select_rx", "value_key": "value", "value_type": "string" } }
     ],
     "actions": [
       { "key": "dvk_play_1",  "name": "DVK Play 1",  "command": { "action": "dvk_play_1" } },
@@ -139,6 +141,9 @@ input, not as a stored setpoint). `mic_profile` is a writable string setpoint: p
 **available** mic-profile list is dynamic, so it lives on `/state.mic_profiles` only — the
 expose `fields` schema has no array type, so it is not declared in `expose.fields` (a
 consumer reads it from `/state`; hadiscovery rendering of the dynamic list is future work).
+`rx_input` is a writable enum setpoint over `capabilities.rx_inputs`: publishing
+`{"action":"select_rx","value":"rx_a"}` switches the receive antenna of the slice being
+listened on; the result is observed back on `/state.rx_input`.
 `/cmd` also accepts `set_mode` (`cw`/`usb`/`lsb`, see below), but `mode` is not declared
 writable in `expose`, so consumers render it read-only.
 The other read-write surface is one-shot `actions` (buttons), not writable setpoint
@@ -208,7 +213,8 @@ regardless of how many internal receivers the radio has.
   "split": true,
   "rx_freq_hz": 18100000,
   "rx_band": "17m",
-  "cross_band": true
+  "cross_band": true,
+  "rx_input": "ant1"
 }
 ```
 
@@ -233,6 +239,7 @@ regardless of how many internal receivers the radio has.
 | `rx_freq_hz` | integer | Hz | Slice A's (VFO A's) frequency while `split`; omitted otherwise |
 | `rx_band` | string | — | Slice A's derived band while `split` (same table and hysteresis as `band`); omitted otherwise |
 | `cross_band` | bool | — | `split` with slice A on a different ham band than the TX slice — the "clicked a 17 m spot while VFO B still transmits on 20 m" case. `gen`/`unknown`/empty on either side never count as a mismatch. An operator-intent **warning** (the RF chain follows the TX slice, so nothing is mistuned); cross-band operation is legal and has legitimate uses, so consumers warn and do not block (hf_console banner; m5stamp-hf-ctrl has an opt-in gate compiled out by default). Logged as one Warn per false→true edge |
+| `rx_input` | string | — | Receive antenna of the slice being listened on — the slice `/state` follows, or slice A while `split` — from the slice's `rxant=`, lowercased: `ant1` \| `ant2` \| `rx_a` \| `xvta`. Changes made in SmartSDR republish `/state`. Omitted until a slice has reported `rxant` |
 
 ### Mode values
 
@@ -296,6 +303,7 @@ Accepted actions:
 |---|---|---|
 | `set_band` | `"<band>"` (e.g. `"20m"`) | **Native band-stacking.** Changes the band on the active slice's panadapter (`display pan s <handle> band=<wavelength>`, where the wavelength is the band number — `20m`→`20`, `160m`→`160`, `6m`→`6`) and the radio restores the last-used frequency/mode for that band. Only the FLEX-8400's regular bands (`160m`–`6m`) are supported; VHF/UHF XVTR bands and `gen`/`unknown` are rejected. Requires a panadapter to be open; if none is tracked the command is a logged no-op |
 | `set_mode` | `"cw"` / `"usb"` / `"lsb"` | **Slice mode.** Sends `slice set <idx> mode=<CW\|USB\|LSB>` to the slice `/state` reports (the TX slice, else the active one). Only these three are accepted; the caller picks the sideband (hf_console: LSB below 10 MHz, USB above). With no slice tracked the command is a logged no-op |
+| `select_rx` | `"ant1"` / `"ant2"` / `"rx_a"` | **Receive antenna.** Sends `slice set <idx> rxant=<ANT1\|ANT2\|RX_A>` to the slice `rx_input` reports (the active slice; slice A while `split`). Receive path only — `txant` is never changed. A port missing from that slice's reported `ant_list` is dropped with a warn log; with no slice tracked the command is a logged no-op. Confirmed live on the FLEX-8400 (2026-10-30) |
 | `dvk_play_<N>` | — | Play DVK memory N (1–12) and key the transmitter (SmartSDR keys TX automatically on `playback_start`; no separate `xmit` needed). The per-memory form is what the HA buttons use — no `value` to inject |
 | `dvk_play` | `"N"` | Same, value form (for scripts / Node-RED) |
 | `dvk_stop` | `"N"` | Stop memory N and unkey |
@@ -307,6 +315,7 @@ Examples:
 ```json
 {"action":"set_band","value":"20m"}
 {"action":"set_mode","value":"cw"}
+{"action":"select_rx","value":"rx_a"}
 {"action":"dvk_play_3"}
 {"action":"dvk_play","value":"3"}
 {"action":"dvk_stop"}
@@ -315,7 +324,7 @@ Examples:
 ```
 
 **No command-ack is published.** Consumers observe the result on `/state` —
-`freq_hz`/`band`/`mode` for `set_band`, `mode` for `set_mode`, `dvk_status`/`dvk_id` for DVK,
+`freq_hz`/`band`/`mode` for `set_band`, `mode` for `set_mode`, `rx_input` for `select_rx`, `dvk_status`/`dvk_id` for DVK,
 `mic_profile` for mic-profile load — the stationa
 fire-and-observe plane discipline: send intent, watch state.
 
@@ -477,6 +486,8 @@ see where the operator listens versus where the next key-up goes out.
 | `/cmd` `set_band` received | radio band command sent; radio band-stacks → confirm on `/state` (`freq_hz`, `band`, `mode`) |
 | `/cmd` DVK play/stop received | radio command sent; confirm on `/state` (`dvk_status`, `dvk_id`) |
 | `/cmd` `set_mode` received | radio `slice set <idx> mode=` sent → confirm on `/state.mode` |
+| Receive antenna of the listened-on slice changes (`rxant=`, from the bus or SmartSDR) | `/state` (`rx_input`) |
+| `/cmd` `select_rx` received | radio `slice set <idx> rxant=` sent → confirm on `/state.rx_input` |
 | `/cmd` `set_mic_profile` received | radio `profile mic load` sent; bridge tracks `/state.mic_profile` client-side (radio reports no active mic profile) |
 | Every 5 s while `device_online` is true | `/state` (unchanged snapshot; `StateHeartbeat`) |
 | Radio link lost | `/state` once with `device_online: false`; the heartbeat pauses until the next handshake |

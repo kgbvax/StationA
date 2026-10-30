@@ -123,7 +123,9 @@ the park themselves. The console only mirrors the lock so a refused tap is never
 - `BusStore.antMode` reads `/state` per the slot's rules (same as `shared/antmode.Parse`): no retained state →
   normal; a locked snapshot holds while antmode's `/status` is offline (a dead owner never unlocks); a malformed one
   keeps the last known mode (counted in `malformedPayloads`); `ts` is not checked.
-- `AntModePanel` — the strip under the antenna switch (phones: after it in the scroll column): NORMAL / STORM /
+- `AntModePanel` — on the **Station** page, under the power card in the rail (phones: after it in the scroll
+  column); it left the HF page to make room for the DVK keys. The HF page still sees the lock (the locked panels'
+  pill bands, the compass pill) and the storm suggestion (faults list). NORMAL / STORM /
   MAINT. keys, each change behind a confirmation dialog (`set_ant_mode`); REPARK (confirmed) while locked; phase,
   park/drift, source, auto exit, wind, presence and the active DWD warnings as mono lines; the storm suggestion
   (`storm_suggested`) as a banner with ENTER STORM (same confirmation) / DISMISS (`dismiss_suggestion`). With antmode
@@ -219,7 +221,7 @@ Retained cmd slots (self-healing steady state): `power/psu-13v8`, `power/antenna
 
 Retained but one-shot (consumer clears the topic after every execution — a command does NOT re-apply if the bridge restarts): `hf/ant-ctrl`, `hf/ant-mode` (`set_ant_mode` / `repark` / `dismiss_suggestion`; antmode applies, then clears — a request sent during a short antmode restart is applied once it is back, within the 30 s window of the `ts` the console stamps on it).
 
-Non-retained (one-shot): `power/shack-pc` (`sleep` — retained, it would re-sleep the PC on every wake), `hf/pa`, `hf/rotator`, `hf/tuner`, `hf/power-seq`, `hf/radio` (DVK `play`/`stop`), `uhf/az-rotator`, `uhf/el-rotator` (sat `goto`/`stop` — a stale retained or queued motion must never replay against real antennas), `uhf/radio` (icom9700-radio-bridge, receive-only since 2026-09: the action set is exactly `audio_on`/`audio_off`/`power_on`/`monitor_on`/`monitor_off`/`park_radio` — `park_radio` retunes via the bridge's rigctld on scmino; there is no PTT/arm/tuning path anymore).
+Non-retained (one-shot): `power/shack-pc` (`sleep` — retained, it would re-sleep the PC on every wake), `hf/pa`, `hf/rotator`, `hf/tuner`, `hf/power-seq`, `hf/radio` (DVK `play`/`stop`, `set_band`/`set_mode`/`set_mic_profile`/`select_rx`), `uhf/az-rotator`, `uhf/el-rotator` (sat `goto`/`stop` — a stale retained or queued motion must never replay against real antennas), `uhf/radio` (icom9700-radio-bridge, receive-only since 2026-09: the action set is exactly `audio_on`/`audio_off`/`power_on`/`monitor_on`/`monitor_off`/`park_radio` — `park_radio` retunes via the bridge's rigctld on scmino; there is no PTT/arm/tuning path anymore).
 
 The machine-readable source of truth is `cmdRetain` in `lib/store/wiring.dart`; keep this list in sync with it.
 
@@ -275,6 +277,12 @@ directly over TCP.
 The same Flutter app targets iOS. On iPhone the console reflows into a single
 vertical scroll (DX map on top, then every control panel) via the
 `shortestSide < 600` branch in `_HfPage`; tablets keep the side-by-side grid.
+On both, the HF page's DVK keyer (`DvkPanel`: the memory keys + STOP) sits at
+the bottom left, pinned and never scrolled: on tablets it closes the left pane
+under the antenna stack, on phones it is a bar under the scroll column. Band
+row, RX antenna (`RxAntennaButton`, ANT 1 ↔ RX A via flexbridge `select_rx`,
+label from `/state.rx_input`) and mic profiles are the TRX card (`TrxPanel`)
+in the right rail / scroll column.
 Raw-TCP MQTT bypasses iOS App Transport Security (ATS governs only
 NSURLSession/HTTP/WS), so **no `NSAllowsArbitraryLoads` is set** — adding it
 would be an App-Review red flag and is unnecessary. The DX-spot HTTPS feed is

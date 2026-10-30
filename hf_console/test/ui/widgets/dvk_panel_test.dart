@@ -93,35 +93,6 @@ void main() {
       expect(mqtt.publishes.single.payload, contains('dvk_play_2'));
     });
 
-    testWidgets('another band sends set_band', (tester) async {
-      final store = BusStore();
-      store.setRadio(freqHz: 3700000, band: '80m', mode: 'lsb');
-      final mqtt = await pump(tester, store);
-
-      await tester.tap(find.widgetWithText(ElevatedButton, '40m'));
-      await tester.pumpAndSettle();
-      expect(mqtt.publishes.single.payload, radioSetBandPayload('40m'));
-    });
-
-    testWidgets('the active band toggles SSB <-> CW', (tester) async {
-      final store = BusStore();
-      store.setRadio(freqHz: 3700000, band: '80m', mode: 'lsb');
-      final mqtt = await pump(tester, store);
-
-      await tester.tap(find.widgetWithText(ElevatedButton, '80m'));
-      await tester.pumpAndSettle();
-      expect(mqtt.publishes.single.topic, 'muehle/hf/radio/cmd');
-      expect(mqtt.publishes.single.payload, radioSetModePayload('cw'));
-      expect(mqtt.publishes.single.retain, isFalse);
-
-      store.setRadio(freqHz: 3550000, band: '80m', mode: 'cw');
-      await tester.pumpAndSettle();
-      mqtt.resetPublishes();
-      await tester.tap(find.widgetWithText(ElevatedButton, '80m'));
-      await tester.pumpAndSettle();
-      expect(mqtt.publishes.single.payload, radioSetModePayload('lsb'));
-    });
-
     testWidgets('a plain tap waits out the double-tap window, then plays', (tester) async {
       final store = BusStore()..setRadio();
       final mqtt = await pump(tester, store);
