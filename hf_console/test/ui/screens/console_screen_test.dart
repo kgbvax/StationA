@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hf_console/dxspot/dxspot_service.dart';
 import 'package:hf_console/store/bus_store.dart';
 import 'package:hf_console/ui/screens/console_screen.dart';
+import 'package:hf_console/ui/widgets/ant_mode_panel.dart';
 import 'package:hf_console/ui/widgets/cam_record_controls.dart';
 import 'package:hf_console/ui/widgets/dvk_panel.dart';
 import 'package:hf_console/ui/widgets/dx_map_container.dart';
@@ -197,6 +198,21 @@ void main() {
       // The strip is one row of keys; the map keeps the rest.
       expect(dvk.height, lessThan(80));
       expect(map.height, greaterThan(300));
+    });
+
+    testWidgets('antenna mode is on the Station page, not on HF', (tester) async {
+      final store = BusStore()..setRadio(rxInput: 'ant1');
+      await tester.binding.setSurfaceSize(null);
+      tester.view.devicePixelRatio = 1.5;
+      tester.view.physicalSize = const Size(2001, 1200);
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(TestHarness(store: store, mqtt: FakeMqttService(store), child: const ConsoleScreen()));
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.byType(AntModePanel), findsNothing); // the console opens on HF
+
+      await tester.tap(find.text('Station'));
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.byType(AntModePanel), findsOneWidget);
     });
 
     testWidgets('phone HF: DVK keys pinned at the bottom while the column scrolls', (tester) async {

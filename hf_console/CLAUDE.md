@@ -123,7 +123,9 @@ the park themselves. The console only mirrors the lock so a refused tap is never
 - `BusStore.antMode` reads `/state` per the slot's rules (same as `shared/antmode.Parse`): no retained state →
   normal; a locked snapshot holds while antmode's `/status` is offline (a dead owner never unlocks); a malformed one
   keeps the last known mode (counted in `malformedPayloads`); `ts` is not checked.
-- `AntModePanel` — the strip under the antenna switch (phones: after it in the scroll column): NORMAL / STORM /
+- `AntModePanel` — on the **Station** page, under the power card in the rail (phones: after it in the scroll
+  column); it left the HF page to make room for the DVK keys. The HF page still sees the lock (the locked panels'
+  pill bands, the compass pill) and the storm suggestion (faults list). NORMAL / STORM /
   MAINT. keys, each change behind a confirmation dialog (`set_ant_mode`); REPARK (confirmed) while locked; phase,
   park/drift, source, auto exit, wind, presence and the active DWD warnings as mono lines; the storm suggestion
   (`storm_suggested`) as a banner with ENTER STORM (same confirmation) / DISMISS (`dismiss_suggestion`). With antmode

@@ -360,8 +360,6 @@ final quickrefSheets = <Sheet>[
       Callout('Antenna ports', '30-min idle grounds unless MANUAL tapped',
           UnionAnchor([ButtonAnchor('GND', inside: AntennaPanel), ButtonAnchor('FAN DIPOLE', inside: AntennaPanel)]),
           marker: 'above'),
-      Callout('NORMAL / STORM / MAINT.', 'STORM/MAINT.: ground, retract, park, lock until NORMAL; MAINT. ±5° nudge',
-          UnionAnchor([ButtonAnchor('NORMAL', inside: AntModePanel), ButtonAnchor('MAINT.', inside: AntModePanel)])),
       Callout('Band selection', 'Re-tap active band: SSB↔CW; stripe = spot colour on map',
           UnionAnchor([ButtonAnchor('80m', inside: TrxPanel), ButtonAnchor('10m', inside: TrxPanel)])),
       Callout('Voice keyer (DVK)', 'Double-tap: pick memory + repeat time. Hold 0.7 s: auto-repeat [n] countdown; TX pauses it, tap resumes, hold exits',
@@ -374,7 +372,7 @@ final quickrefSheets = <Sheet>[
   Sheet(
     id: 'station',
     title: 'Station page',
-    purpose: 'Power the station up and down; see what runs where.',
+    purpose: 'Power the station up and down, set the antenna mode; see what runs where.',
     page: 'Station',
     seed: () => _running('Station'),
     callouts: [
@@ -382,6 +380,8 @@ final quickrefSheets = <Sheet>[
           UnionAnchor([ButtonAnchor('START', inside: PowerPanel), ButtonAnchor('STOP', inside: PowerPanel)])),
       Callout('Phase (ON / STANDBY)', 'Unused station drops to STANDBY; a FLEX VFO change wakes it',
           TextAnchor('ON', inside: PowerPanel, inflate: 4)),
+      Callout('NORMAL / STORM / MAINT.', 'STORM/MAINT.: ground, retract, park, lock until NORMAL; MAINT. ±5° nudge on the HF compass',
+          UnionAnchor([ButtonAnchor('NORMAL', inside: AntModePanel), ButtonAnchor('MAINT.', inside: AntModePanel)])),
       Callout('Bridges n/m', 'Up / expected bridges on that host; tap lists each',
           UnionAnchor([TextAnchor('HOSTS & NETWORK', inside: StationSchematic), TextAnchor('SHARI', inside: StationSchematic)],
               grow: const EdgeInsets.fromLTRB(20, 6, 75, 52))),

@@ -297,7 +297,6 @@ class _HfPage extends StatelessWidget {
                   children: const [
                     UltrabeamPanel(),
                     AntennaPanel(),
-                    AntModePanel(),
                     RotatorPresetsBar(),
                     PaPanel(),
                     TunerPanel(),
@@ -319,12 +318,11 @@ class _HfPage extends StatelessWidget {
       page: 'hf',
       onSelect: onSelect,
       rotator: hfRotator,
-      // The antenna mode closes the antenna stack under the map: it locks
-      // exactly the controls above it (beam, switch, compass). Compact in
-      // normal (mode keys + wind); it grows only with a lock or a storm
-      // suggestion — when the compass has nothing to aim anyway. The DVK
-      // keyer closes the left pane: bottom-left corner of the tablet.
-      leftUnderMap: const [UltrabeamPanel(), AntennaPanel(), AntModePanel(), DvkPanel()],
+      // The DVK keyer closes the left pane: bottom-left corner of the
+      // tablet. The antenna mode (NORMAL/STORM/MAINT.) lives on the Station
+      // page — it is set rarely; its lock and storm suggestion still reach
+      // this page through the faults list and the panels' own lock state.
+      leftUnderMap: const [UltrabeamPanel(), AntennaPanel(), DvkPanel()],
       rightChildren: const [
         PaPanel(),
         TunerPanel(),
@@ -359,7 +357,7 @@ class _TabletShell extends StatelessWidget {
   final bool vhfMap;
 
   /// Panels pinned under the map in the left pane (HF: ultrabeam, antenna,
-  /// antenna mode, DVK keyer).
+  /// DVK keyer).
   final List<Widget> leftUnderMap;
 
   /// Optional content pinned ABOVE the map in the left pane (CAM: the video
@@ -501,6 +499,7 @@ class _StationPage extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: const [
                     PowerPanel(),
+                    AntModePanel(),
                     SizedBox(height: 40),
                     FaultsBar(),
                   ],
@@ -521,11 +520,14 @@ class _StationPage extends StatelessWidget {
       // column — the sheet is too dense there.
       rotator: null,
       leftPane: const StationSchematic(),
+      // Antenna mode (NORMAL/STORM/MAINT.) is a station-level setting, made
+      // rarely — here, not on the HF page, where the DVK keys took its room.
       rightChildren: const [
         PowerPanel(),
+        AntModePanel(),
       ],
-      // Station page = station health: the space under the power card goes
-      // to the full fault list.
+      // Station page = station health: the space under the cards goes to
+      // the full fault list.
       expandFaults: true,
     );
   }
