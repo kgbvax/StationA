@@ -428,3 +428,27 @@ func TestParseDiscoveryReply(t *testing.T) {
 		t.Errorf("IP = %v", r.IP)
 	}
 }
+
+// TestParseSlice_RxAnt: rxant and ant_list (not tx_ant_list) are read from a
+// FLEX-8400-format slice line and survive a partial update that omits them.
+func TestParseSlice_RxAnt(t *testing.T) {
+	full := "in_use=1 RF_frequency=14.306000 index_letter=A rxant=ANT1 mode=USB pan=0x40000000 txant=ANT1 tx=1 active=1 ant_list=ANT1,ANT2,RX_A,XVTA tx_ant_list=ANT1,ANT2,XVTA"
+	s, err := ParseSlice("0", full)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.RxAnt != "ANT1" {
+		t.Errorf("RxAnt = %q, want ANT1", s.RxAnt)
+	}
+	if want := []string{"ANT1", "ANT2", "RX_A", "XVTA"}; !reflect.DeepEqual(s.AntList, want) {
+		t.Errorf("AntList = %v, want %v", s.AntList, want)
+	}
+	s, _ = ParseSlice("0", "rxant=RX_A", s)
+	if s.RxAnt != "RX_A" || len(s.AntList) != 4 {
+		t.Errorf("after rxant update: RxAnt=%q AntList=%v", s.RxAnt, s.AntList)
+	}
+	s, _ = ParseSlice("0", "RF_frequency=14.200000", s)
+	if s.RxAnt != "RX_A" || len(s.AntList) != 4 {
+		t.Errorf("partial update dropped antenna fields: RxAnt=%q AntList=%v", s.RxAnt, s.AntList)
+	}
+}

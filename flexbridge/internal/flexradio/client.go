@@ -275,6 +275,7 @@ type Commander interface {
 	SetBand(panHandle string, bandNumber int) error // display pan s <handle> band=<n>
 	SetMicProfile(name string) error                // profile mic load "<name>"
 	SetSliceMode(slice int, mode string) error      // slice set <idx> mode=<MODE>
+	SetSliceRxAnt(slice int, ant string) error      // slice set <idx> rxant=<PORT>
 }
 
 // DVKPlay triggers playback of DVK memory id (1-12) and keys the transmitter.
@@ -309,6 +310,14 @@ func (c *Client) SetMicProfile(name string) error {
 // vocabulary before calling. The result is observed on the slice status stream.
 func (c *Client) SetSliceMode(slice int, mode string) error {
 	return c.Send(context.Background(), fmt.Sprintf("slice set %d mode=%s", slice, mode))
+}
+
+// SetSliceRxAnt selects the receive antenna port of slice index slice
+// (SmartSDR `slice set <idx> rxant=<PORT>`; ports as in the slice's ant_list,
+// e.g. ANT1, RX_A). Receive path only: txant is untouched. The result is
+// observed on the slice status stream (rxant=).
+func (c *Client) SetSliceRxAnt(slice int, ant string) error {
+	return c.Send(context.Background(), fmt.Sprintf("slice set %d rxant=%s", slice, ant))
 }
 
 // Run blocks reading status lines and dispatching them to the handler.

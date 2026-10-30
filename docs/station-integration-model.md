@@ -541,12 +541,14 @@ state:        freq_hz (Hz int); band(derived); mode (canonical); tx {rx|tx};
               /state-only, omitted until reported);
               mic_profile (active name, client-side tracked; empty until first load);
               mic_profiles (available names, sorted; /state-only, from `profile mic info`);
-              rx_input (omitempty, adapter work pending)
+              rx_input {ant1|ant2|rx_a|xvta} (omitempty; receive antenna of the slice
+              listened on — slice A while split)
               — always the active/TX receiver
-intent:       set_band {label}; set_mode {cw|usb|lsb}; dvk_play_<N> / dvk_play {1..12};
-              dvk_stop {id|active}; set_mic_profile {name}   # /cmd NOT retained (one-shot)
+intent:       set_band {label}; set_mode {cw|usb|lsb}; select_rx {ant1|ant2|rx_a};
+              dvk_play_<N> / dvk_play {1..12}; dvk_stop {id|active};
+              set_mic_profile {name}   # /cmd NOT retained (one-shot)
 ```
-The role's other intents (`set_freq_hz`, `set_drive`, `select_rx`, `tune {start|stop}`)
+The role's other intents (`set_freq_hz`, `set_drive`, `tune {start|stop}`)
 are not implemented by flexbridge, which rejects them as unknown actions; ATU tuning is
 the `hf/tuner` slot's own `tune` action.
 `set_band` drives SmartSDR **native band-stacking**: the bridge sends
@@ -559,12 +561,15 @@ are out of scope.
 DVK (Digital Voice Keyer) is a SmartSDR v4+ / SmartSDR+ feature: 12 voice memories keyed
 to TX on playback. flexbridge is otherwise read-only; `set_band`, `set_mode` (`cw`/`usb`/
 `lsb` only: the caller picks the sideband; added 2026-10-23, wire command not yet
-confirmed live), DVK, and mic profiles are its only `/cmd` surfaces: DVK exposed as
+confirmed live), `select_rx` (receive antenna, `slice set <idx> rxant=`; added
+2026-10-30, wire command not yet confirmed live; never touches `txant`), DVK, and mic
+profiles are its only `/cmd` surfaces: DVK exposed as
 one-shot actions (`dvk_play_N` buttons + `dvk_stop`), `set_band` as a writable `band`
-setpoint (a select), `set_mic_profile` as a writable `mic_profile` setpoint; `set_mode`
+setpoint (a select), `set_mic_profile` as a writable `mic_profile` setpoint, `select_rx` as a writable
+`rx_input` setpoint over `rx_inputs`; `set_mode`
 is `/cmd`-only (not in `expose`, where `mode` stays read-only) and applies to the TX
 slice (else the active one). All are observed on `/state`: `freq_hz`/`band`/`mode` for
-`set_band`, `mode` for `set_mode`, `dvk_status`/`dvk_id` for DVK, `mic_profile`/
+`set_band`, `mode` for `set_mode`, `rx_input` for `select_rx`, `dvk_status`/`dvk_id` for DVK, `mic_profile`/
 `mic_profiles` for mic profiles. Voice modes only; the radio refuses DVK in cw/data.
 Mic profiles use SmartSDR's **native** `profile mic load "<name>"`; the radio is the
 single source of truth and the bridge keeps no preset layer. `set_mic_profile` loads a profile.
@@ -1546,7 +1551,9 @@ Encoding decisions worth copying:
   `drive_pct`; keep the name short and match the source API.
 - `rx_input` is omitempty; an adapter that does not yet parse RX-input selection
   omits it rather than guessing. Consumers that need it check for its presence.
-  flexbridge does not parse RX-input selection yet, so it omits `rx_input`.
+  flexbridge publishes it (since 2026-10-30) from the slice's `rxant=`, lowercased, for
+  the slice being listened on (the active slice; slice A while split), and omits it
+  until a slice has reported `rxant`.
 - **Liveness is the `/status` topic, never an `online` field in `/state`.** A dead node
   cannot update its own state document to say it is gone, which is why the Last
   Will publishes to a separate topic. `status` is a plain string (`online` / `offline`),
@@ -1560,8 +1567,8 @@ Encoding decisions worth copying:
   gates open the arm relay while `hf/radio` reports `tuning` or `hf/tuner` reports a tune
   cycle (`settling`). The role's other intents (`set_freq_hz`, `set_mode`, `set_drive`,
   `select_rx`, `set_band`) are direct intents. flexbridge implements `set_band`,
-  `set_mode` (`cw`/`usb`/`lsb`), `set_mic_profile` and the DVK actions, and rejects
-  `set_freq_hz`, `set_drive` and `select_rx` as unknown actions. `set_band` is the
+  `set_mode` (`cw`/`usb`/`lsb`), `select_rx` (`ant1`/`ant2`/`rx_a`), `set_mic_profile`
+  and the DVK actions, and rejects `set_freq_hz` and `set_drive` as unknown actions. `set_band` is the
   band-stacking convenience (§4; §7.1 `muehle/hf/radio`): it changes the band and lets
   the radio pick the frequency, so `/state` stays frequency-derived rather than carrying
   a band setpoint.

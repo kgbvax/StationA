@@ -422,12 +422,13 @@ func TestBridge_MetaTopic(t *testing.T) {
 		t.Fatalf("meta missing expose block; got %v", meta["expose"])
 	}
 	fields, _ := expose["fields"].([]any)
-	if len(fields) != 14 {
-		t.Errorf("expose.fields len = %d, want 14 (device_online,freq_hz,band,mode,drive,tx,tuning,dvk_status,dvk_id,mic_profile,split,rx_freq_hz,rx_band,cross_band)", len(fields))
+	if len(fields) != 15 {
+		t.Errorf("expose.fields len = %d, want 15 (device_online,freq_hz,band,mode,drive,tx,tuning,dvk_status,dvk_id,mic_profile,split,rx_freq_hz,rx_band,cross_band,rx_input)", len(fields))
 	}
-	// Radio tuning state is read-only except band and mic_profile, which are
-	// writable setpoints (set_band → native band-stacking; set_mic_profile →
-	// native profile mic load). Every other field must not be writable; DVK is
+	// Radio tuning state is read-only except band, mic_profile and rx_input,
+	// which are writable setpoints (set_band → native band-stacking;
+	// set_mic_profile → native profile mic load; select_rx → slice rxant).
+	// Every other field must not be writable; DVK is
 	// driven via one-shot actions, not setpoint fields.
 	for i, f := range fields {
 		fm, _ := f.(map[string]any)
@@ -436,7 +437,7 @@ func TestBridge_MetaTopic(t *testing.T) {
 			continue
 		}
 		key, _ := fm["key"].(string)
-		if _, w := fm["writable"]; w && key != "band" && key != "mic_profile" {
+		if _, w := fm["writable"]; w && key != "band" && key != "mic_profile" && key != "rx_input" {
 			t.Errorf("expose field %v must not be writable", key)
 		}
 	}
@@ -508,6 +509,25 @@ type fakeCommander struct {
 	bandCall       []bandCall
 	micProfileCall []string
 	modeCall       []modeCall
+	rxAntCall      []rxAntCall
+}
+
+type rxAntCall struct {
+	Slice int
+	Ant   string
+}
+
+func (f *fakeCommander) SetSliceRxAnt(slice int, ant string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.rxAntCall = append(f.rxAntCall, rxAntCall{slice, ant})
+	return nil
+}
+
+func (f *fakeCommander) rxAnts() []rxAntCall {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]rxAntCall(nil), f.rxAntCall...)
 }
 
 type modeCall struct {
@@ -809,6 +829,104 @@ func TestHandleCommand_SetMode(t *testing.T) {
 		b, _ := newTestBridge(t)
 		b.HandleCommand(cmdJSON("set_mode", "cw")) // must not panic
 	})
+}
+
+// TestHandleCommand_SelectRx: select_rx sets rxant on the slice rx_input
+// reports — the active slice, slice A in split — with the firmware port name;
+// unknown values, ports outside the slice's ant_list, no tracked slice and a
+// missing commander are no-ops.
+func TestHandleCommand_SelectRx(t *testing.T) {
+	t.Run("targets the active slice", func(t *testing.T) {
+		b, _ := newTestBridge(t)
+		fc := &fakeCommander{}
+		b.SetCommander(fc)
+		handleLine(t, b, "S0|slice 0 0 RF_frequency=14.200000 mode=USB active=1 tx=1 index_letter=A rxant=ANT1 ant_list=ANT1,ANT2,RX_A,XVTA")
+		b.HandleCommand(cmdJSON("select_rx", "rx_a"))
+		b.HandleCommand(cmdJSON("select_rx", " ANT1 "))
+		b.HandleCommand(cmdJSON("select_rx", "ant2"))
+		want := []rxAntCall{{0, "RX_A"}, {0, "ANT1"}, {0, "ANT2"}}
+		if got := fc.rxAnts(); !reflect.DeepEqual(got, want) {
+			t.Errorf("select_rx calls = %v, want %v", got, want)
+		}
+	})
+
+	t.Run("split targets slice A, not the TX slice", func(t *testing.T) {
+		b, _ := newTestBridge(t)
+		fc := &fakeCommander{}
+		b.SetCommander(fc)
+		splitOn20m(t, b)
+		b.HandleCommand(cmdJSON("select_rx", "rx_a"))
+		want := []rxAntCall{{0, "RX_A"}}
+		if got := fc.rxAnts(); !reflect.DeepEqual(got, want) {
+			t.Errorf("select_rx calls = %v, want %v", got, want)
+		}
+	})
+
+	t.Run("port missing from ant_list is a no-op", func(t *testing.T) {
+		b, _ := newTestBridge(t)
+		fc := &fakeCommander{}
+		b.SetCommander(fc)
+		handleLine(t, b, "S0|slice 0 0 RF_frequency=14.200000 mode=USB active=1 rxant=ANT1 ant_list=ANT1,ANT2,XVTA")
+		b.HandleCommand(cmdJSON("select_rx", "rx_a"))
+		if got := fc.rxAnts(); len(got) != 0 {
+			t.Errorf("select_rx calls = %v, want none", got)
+		}
+	})
+
+	t.Run("unsupported value is a no-op", func(t *testing.T) {
+		b, _ := newTestBridge(t)
+		fc := &fakeCommander{}
+		b.SetCommander(fc)
+		handleLine(t, b, "S0|slice 0 0 RF_frequency=14.200000 mode=USB active=1 rxant=ANT1")
+		for _, v := range []string{"xvta", "RX_B", "ANT1 txant=ANT2", ""} {
+			b.HandleCommand(cmdJSON("select_rx", v))
+		}
+		if got := fc.rxAnts(); len(got) != 0 {
+			t.Errorf("select_rx calls = %v, want none", got)
+		}
+	})
+
+	t.Run("no slice tracked is a no-op", func(t *testing.T) {
+		b, _ := newTestBridge(t)
+		fc := &fakeCommander{}
+		b.SetCommander(fc)
+		b.HandleCommand(cmdJSON("select_rx", "rx_a"))
+		if got := fc.rxAnts(); len(got) != 0 {
+			t.Errorf("select_rx calls = %v, want none (no slice)", got)
+		}
+	})
+
+	t.Run("nil commander no-ops (radio offline)", func(t *testing.T) {
+		b, _ := newTestBridge(t)
+		b.HandleCommand(cmdJSON("select_rx", "rx_a")) // must not panic
+	})
+}
+
+// TestBridge_RxInputState: rx_input follows the listened-on slice's rxant,
+// republishes on a change made elsewhere (SmartSDR), and in split reports
+// slice A's antenna rather than the TX slice's.
+func TestBridge_RxInputState(t *testing.T) {
+	b, pub := newTestBridge(t)
+	pub.Reset()
+	handleLine(t, b, "S0|slice 0 0 RF_frequency=14.200000 mode=USB active=1 tx=1 index_letter=A rxant=ANT1")
+	if snap, _ := lastState(pub.Messages(), testStateTopic); snap.RxInput != "ant1" {
+		t.Fatalf("rx_input = %q, want ant1", snap.RxInput)
+	}
+	pub.Reset()
+	handleLine(t, b, "S0|slice 0 0 rxant=RX_A")
+	snap, ok := lastState(pub.Messages(), testStateTopic)
+	if !ok || snap.RxInput != "rx_a" {
+		t.Fatalf("after rxant=RX_A: published=%v rx_input=%q, want rx_a", ok, snap.RxInput)
+	}
+
+	// Split: slice B transmits on ANT2-receive; rx_input stays slice A's.
+	pub.Reset()
+	handleLine(t, b, "S0|slice 0 0 tx=0")
+	handleLine(t, b, "S0|slice 1 0 RF_frequency=14.205000 mode=USB active=0 tx=1 index_letter=B rxant=ANT2")
+	snap, _ = lastState(pub.Messages(), testStateTopic)
+	if !snap.Split || snap.RxInput != "rx_a" {
+		t.Errorf("split: split=%v rx_input=%q, want true/rx_a", snap.Split, snap.RxInput)
+	}
 }
 
 func TestHandleCommand_SetBand_SuppressesTransientBand(t *testing.T) {
