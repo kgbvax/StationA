@@ -7,7 +7,9 @@
 #
 # The browser cannot open raw TCP sockets, so the web build connects to the
 # Go bridge via WebSocket (/mqtt); the bridge forwards bytes to the station
-# MQTT broker (192.168.1.50:1883).
+# MQTT broker on scmino (192.168.1.178:1883), not the HA broker .50: the
+# console must keep its bus when the HA box or the house link is down
+# (2026-10-31: .50 went off the network and the console showed LINK DOWN).
 #
 # Usage:
 #   ./deploy.sh                       # deploy to default host 192.168.1.178 (scmino)
@@ -20,7 +22,7 @@
 #   SERVICE_USER    system user to run as (default: hfconsoleweb)
 #   INSTALL_DIR     remote install dir    (default: /opt/hf-console-web)
 #   HTTP_PORT       HTTP/WebSocket port   (default: 8091)
-#   MQTT_BROKER     MQTT broker TCP addr  (default: 192.168.1.50:1883, the station broker)
+#   MQTT_BROKER     MQTT broker TCP addr  (default: 192.168.1.178:1883, the scmino station broker)
 #
 set -euo pipefail
 
@@ -31,7 +33,7 @@ SERVICE_NAME="${SERVICE_NAME:-hf-console-web}"
 SERVICE_USER="${SERVICE_USER:-hfconsoleweb}"
 INSTALL_DIR="${INSTALL_DIR:-/opt/hf-console-web}"
 HTTP_PORT="${HTTP_PORT:-8091}"
-MQTT_BROKER="${MQTT_BROKER:-192.168.1.50:1883}"
+MQTT_BROKER="${MQTT_BROKER:-192.168.1.178:1883}"
 
 # Allow "user@host" in SSH_HOST; otherwise prepend SSH_USER.
 if [[ "$SSH_HOST" == *"@"* ]]; then
