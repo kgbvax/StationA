@@ -51,6 +51,9 @@ tool/prebuild.sh
 
 echo ">> Building Flutter web..."
 flutter build web --release --base-href /
+# No service worker (web/flutter_bootstrap.js); this one unregisters the
+# worker older builds left in browsers.
+cp tool/web/flutter_service_worker.js build/web/flutter_service_worker.js
 
 # --- build Go bridge --------------------------------------------------------
 echo ">> Building WebSocket bridge for linux/arm64..."

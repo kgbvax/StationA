@@ -275,6 +275,11 @@ derives its WebSocket endpoint from its own origin (`Uri.base`), so the build
 works on whichever host serves it. The Android APK continues to connect
 directly over TCP.
 
+The web build registers **no service worker** (custom `web/flutter_bootstrap.js`): Flutter's caching worker kept
+serving the previous build after a deploy. `deploy.sh` replaces the generated `flutter_service_worker.js` with
+`tool/web/flutter_service_worker.js`, a kill switch that clears and unregisters the worker older builds left in
+browsers. A plain reload picks up a new deploy (the bridge sends `Cache-Control: no-cache`).
+
 ### iPhone (IPA, self-sideloaded)
 
 The same Flutter app targets iOS. On iPhone the console reflows into a single
