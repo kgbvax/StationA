@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hf_console/store/bus_store.dart';
 import 'package:hf_console/store/wiring.dart';
+import 'package:hf_console/ui/widgets/pulsing_amber_button.dart';
+import 'package:hf_console/ui/widgets/rx_antenna_button.dart';
 import 'package:hf_console/ui/widgets/trx_panel.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../support/fake_mqtt_service.dart';
@@ -108,6 +110,44 @@ void main() {
       store.setBridgeOffline('muehle/hf/radio');
       await pump(tester, store);
       expect(button(tester).onPressed, isNull);
+    });
+
+    bool pulsing(WidgetTester tester) =>
+        tester.widget<PulsingAmberButton>(find.byType(PulsingAmberButton)).engaged;
+
+    testWidgets('RX A pulses above 40m, not on 40m and below', (tester) async {
+      final store = BusStore()..setRadio(band: '40m', rxInput: 'rx_a');
+      await pump(tester, store);
+      expect(pulsing(tester), isFalse);
+
+      store.setRadio(band: '30m', rxInput: 'rx_a');
+      await tester.pump();
+      expect(pulsing(tester), isTrue);
+
+      store.setRadio(band: '80m', rxInput: 'rx_a');
+      await tester.pump();
+      expect(pulsing(tester), isFalse);
+
+      // ANT 1 on a high band is the normal state.
+      store.setRadio(band: '20m', rxInput: 'ant1');
+      await tester.pump();
+      expect(pulsing(tester), isFalse);
+    });
+
+    testWidgets('in split the listened-on band (rx_band) decides', (tester) async {
+      final store = BusStore()
+        ..setRadio(band: '20m', split: true, rxBand: '80m', rxInput: 'rx_a');
+      await pump(tester, store);
+      expect(pulsing(tester), isFalse);
+    });
+
+    test('aboveRxABands', () {
+      for (final b in ['30m', '20m', '17m', '15m', '12m', '10m', '6m', '2m', '70cm']) {
+        expect(RxAntennaButton.aboveRxABands(b), isTrue, reason: b);
+      }
+      for (final b in ['160m', '80m', '60m', '40m', '', 'gen']) {
+        expect(RxAntennaButton.aboveRxABands(b), isFalse, reason: b);
+      }
     });
   });
 }

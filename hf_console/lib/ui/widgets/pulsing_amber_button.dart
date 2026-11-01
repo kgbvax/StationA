@@ -18,6 +18,8 @@ class PulsingAmberButton extends StatefulWidget {
     super.key,
     required this.engaged,
     this.idleStyle,
+    this.style,
+    this.buttonKey,
     this.onPressed,
     required this.child,
   });
@@ -27,6 +29,13 @@ class PulsingAmberButton extends StatefulWidget {
 
   /// Style when not engaged; defaults to the plain inactive action button.
   final ButtonStyle? idleStyle;
+
+  /// Layout overrides (size, padding) laid over both states; the pulse colour
+  /// still wins.
+  final ButtonStyle? style;
+
+  /// Key for the inner [ElevatedButton], so tests can find it.
+  final Key? buttonKey;
 
   final VoidCallback? onPressed;
   final Widget child;
@@ -66,6 +75,7 @@ class _PulsingAmberButtonState extends State<PulsingAmberButton> with SingleTick
         ButtonStyle style = widget.engaged
             ? AppTheme.actionButton(amberActive: true)
             : (widget.idleStyle ?? AppTheme.actionButton());
+        if (widget.style != null) style = widget.style!.merge(style);
         if (pulsing) {
           final t = Curves.easeInOut.transform(_pulse.value);
           style = style.copyWith(
@@ -75,6 +85,7 @@ class _PulsingAmberButtonState extends State<PulsingAmberButton> with SingleTick
           );
         }
         return ElevatedButton(
+          key: widget.buttonKey,
           onPressed: widget.onPressed,
           style: style,
           child: widget.child,

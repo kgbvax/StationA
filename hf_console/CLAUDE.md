@@ -284,7 +284,8 @@ On both, the HF page's DVK keyer (`DvkPanel`: the memory keys + STOP) sits at
 the bottom left, pinned and never scrolled: on tablets it closes the left pane
 under the antenna stack, on phones it is a bar under the scroll column. Band
 row, RX antenna (`RxAntennaButton`, ANT 1 ↔ RX A via flexbridge `select_rx`,
-label from `/state.rx_input`) and mic profiles are the TRX card (`TrxPanel`)
+label from `/state.rx_input`; RX A on a band above 40m — 30m and up, the
+listened-on `rx_band` in split — pulses amber like the Ultrabeam 180°) and mic profiles are the TRX card (`TrxPanel`)
 in the right rail / scroll column.
 Raw-TCP MQTT bypasses iOS App Transport Security (ATS governs only
 NSURLSession/HTTP/WS), so **no `NSAllowsArbitraryLoads` is set** — adding it

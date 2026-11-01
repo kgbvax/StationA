@@ -4,6 +4,7 @@ import '../../mqtt/mqtt_service.dart';
 import '../../store/bus_store.dart';
 import '../../store/wiring.dart';
 import '../theme.dart';
+import 'pulsing_amber_button.dart';
 
 /// Receive antenna of the slice being listened on (flexbridge `/state.rx_input`:
 /// the active slice, slice A in split), as one toggle: ANT 1 ↔ RX A.
@@ -12,7 +13,9 @@ import '../theme.dart';
 /// shows up here; a tap sends `select_rx` and the label moves only when the
 /// radio confirms on `/state` (no optimistic flip, like the SSB/CW toggle).
 /// RX A is lit; ANT 1 is the plain resting state; anything else (ANT 2, XVTA)
-/// is amber because the console never sets it. Receive path only: the TX
+/// is amber because the console never sets it. RX A on a band above 40m (30m
+/// and up; the listened-on band, `rx_band` in split) pulses amber like the
+/// Ultrabeam's 180° — the low-band RX antenna is likely left over. Receive path only: the TX
 /// antenna and the antenna-select / PA chain are untouched.
 ///
 /// Disabled (`—`) while the radio or link is down, or when the bridge does not
@@ -33,6 +36,16 @@ class RxAntennaButton extends StatelessWidget {
         _ => input.toUpperCase().replaceAll('_', ' '),
       };
 
+  /// True for a band above 40m in frequency (30m … 6m, and any cm band):
+  /// RX A is a low-band receive antenna, so selecting it up there is almost
+  /// certainly a leftover. Unknown or empty labels are not flagged.
+  static bool aboveRxABands(String band) {
+    final m = RegExp(r'^(\d+(?:\.\d+)?)(c?m)$').firstMatch(band.trim().toLowerCase());
+    if (m == null) return false;
+    if (m.group(2) == 'cm') return true;
+    return double.parse(m.group(1)!) < 40;
+  }
+
   @override
   Widget build(BuildContext context) {
     return Consumer<BusStore>(
@@ -43,6 +56,12 @@ class RxAntennaButton extends StatelessWidget {
         final enabled = online && known;
         final isRxA = known && input == 'rx_a';
         final unusual = known && input != 'rx_a' && input != 'ant1';
+        // The band being listened on: slice A (rx_band) in split, else the
+        // TX slice's band.
+        final rxBand = store.stateValueAs<String>(address, 'rx_band');
+        final band = (rxBand != null && rxBand.isNotEmpty) ? rxBand : store.stateValueAs<String>(address, 'band');
+        // RX A above 40m: amber pulse like the Ultrabeam's 180°.
+        final rxAOffBand = online && isRxA && band != null && aboveRxABands(band);
 
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -54,16 +73,18 @@ class RxAntennaButton extends StatelessWidget {
             Semantics(
               label: known ? 'Receive antenna ${label(input)}' : 'Receive antenna unknown',
               hint: enabled ? 'Switch to ${label(toggledRxInput(input))}' : null,
-              child: ElevatedButton(
-                key: const ValueKey('rx-antenna-btn'),
+              child: PulsingAmberButton(
+                buttonKey: const ValueKey('rx-antenna-btn'),
+                engaged: rxAOffBand,
                 onPressed: enabled
                     ? () => context
                         .read<MqttService>()
                         .publish(topic, radioSelectRxPayload(toggledRxInput(input)), retain: false)
                     : null,
-                style: AppTheme.actionButton(active: isRxA, amber: unusual).copyWith(
-                  minimumSize: const WidgetStatePropertyAll(Size(0, 48)),
-                  padding: const WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: 6, vertical: 6)),
+                idleStyle: AppTheme.actionButton(active: isRxA, amber: unusual),
+                style: const ButtonStyle(
+                  minimumSize: WidgetStatePropertyAll(Size(0, 48)),
+                  padding: WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: 6, vertical: 6)),
                 ),
                 child: FittedBox(
                   fit: BoxFit.scaleDown,
