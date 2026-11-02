@@ -16,7 +16,7 @@ slot    = "cqfinder"
 [mqtt]
 broker = "tcp://127.0.0.1:1883"   # the station broker on scmino
 site   = "muehle"
-# user = "hf"
+user   = "hf"                     # the scmino broker requires a login; password: CHASE_QUEUE_MQTT_PASSWORD
 
 [http]
 listen = "127.0.0.1:8095"         # contest file upload and health, loopback only
