@@ -31,6 +31,7 @@ type Config struct {
 	Log4OM  Log4OMUDP   `toml:"log4om"`
 	ClubLog ClubLogConf `toml:"clublog"`
 	QRZ     QRZConf     `toml:"qrz"`
+	Cluster ClusterConf `toml:"cluster"`
 	Log     LogConfig   `toml:"log"`
 }
 
@@ -99,6 +100,18 @@ type QRZConf struct {
 
 // Enabled reports whether callbook lookups are configured.
 func (q QRZConf) Enabled() bool { return q.User != "" && q.Password != "" }
+
+// ClusterConf is chase-queue's own DX-cluster login (telnet). Its spots hide
+// the heard stations they name and list the needed ones as cluster rows.
+type ClusterConf struct {
+	// Address is the node, host:port ("" = no cluster login).
+	Address string `toml:"address"`
+	// Call is the login callsign; spots by this call (the operator's own)
+	// are not listed.
+	Call string `toml:"call"`
+	// Skimmer keeps CW/RTTY skimmer spots (spotter "-#"); off by default.
+	Skimmer bool `toml:"skimmer"`
+}
 
 // LogConfig controls logging.
 type LogConfig struct {
@@ -202,6 +215,14 @@ func (c Config) Validate() error {
 	}
 	if c.ClubLog.Token != "" && c.ClubLog.Call == "" {
 		return errors.New("clublog.call is required with a Club Log token")
+	}
+	if c.Cluster.Address != "" {
+		if _, _, err := net.SplitHostPort(c.Cluster.Address); err != nil {
+			return fmt.Errorf("cluster.address %q: want host:port", c.Cluster.Address)
+		}
+		if c.Cluster.Call == "" {
+			return errors.New("cluster.call is required with cluster.address")
+		}
 	}
 	if c.QRZ.Password != "" && c.QRZ.User == "" {
 		return errors.New("qrz.user is required with a QRZ password")

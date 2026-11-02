@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -24,7 +25,9 @@ import (
 
 	"chase-queue/internal/bus"
 	"chase-queue/internal/callbook"
+	"chase-queue/internal/calls"
 	"chase-queue/internal/clublog"
+	"chase-queue/internal/cluster"
 	"chase-queue/internal/config"
 	"chase-queue/internal/cty"
 	"chase-queue/internal/dxlog"
@@ -49,7 +52,8 @@ type Service struct {
 	dxl   *dxlog.Listener
 	l4    *log4om.Listener
 	cl    *clublog.Confirmations
-	book  *callbook.Book // nil without a QRZ login
+	book  *callbook.Book  // nil without a QRZ login
+	dxc   *cluster.Client // nil without a cluster login
 
 	jobs  chan func() // /cmd work
 	dirty chan struct{}
@@ -110,6 +114,9 @@ func New(cfg config.Config, st *store.Store, log *slog.Logger) *Service {
 	}
 	if cfg.Log4OM.Listen != "" {
 		s.l4 = log4om.New(cfg.Log4OM.Listen, config.Prefixes(cfg.Log4OM.AllowFrom), log)
+	}
+	if cfg.Cluster.Address != "" {
+		s.dxc = &cluster.Client{Addr: cfg.Cluster.Address, Call: cfg.Cluster.Call}
 	}
 	if cfg.QRZ.Enabled() {
 		s.book = callbook.New(callbook.Config{
@@ -175,6 +182,9 @@ func (s *Service) Run(ctx context.Context) error {
 	}
 	if s.book != nil {
 		spawn(func() { s.book.Run(ctx) })
+	}
+	if s.dxc != nil {
+		spawn(func() { s.dxc.Run(ctx, s.onClusterSpot) })
 	}
 	spawn(func() { s.publisher(ctx) })
 	spawn(func() { s.candidateWorker(ctx) })
@@ -352,6 +362,15 @@ func (s *Service) problems(st bus.ChaseState) []string {
 	if !s.ranks.Loaded() {
 		out = append(out, "Club Log Most Wanted not loaded: no rarity order")
 	}
+	if s.dxc != nil {
+		if cs := s.dxc.State(); !cs.Connected && s.now().Sub(cs.Since) > time.Minute {
+			p := "DX cluster not connected"
+			if cs.LastError != "" {
+				p += ": " + cs.LastError
+			}
+			out = append(out, p)
+		}
+	}
 	if s.book != nil {
 		if p := s.book.Problem(); p != "" {
 			out = append(out, p)
@@ -367,6 +386,19 @@ func (s *Service) compute() bus.ChaseState {
 	st.TS = s.now().UTC()
 	st.Problems = s.problems(st)
 	return st
+}
+
+// onClusterSpot takes one spot of the cluster login. Skimmer spots (unless
+// configured) and the operator's own spots are dropped.
+func (s *Service) onClusterSpot(sp cluster.Spot) {
+	if sp.Skimmer() && !s.cfg.Cluster.Skimmer {
+		return
+	}
+	if calls.SameStation(strings.TrimSuffix(sp.Spotter, "-#"), s.cfg.Cluster.Call) {
+		return
+	}
+	s.eng.AddClusterSpot(engine.ClusterSpot{Call: sp.Call, Band: sp.Band, Spotter: sp.Spotter, Comment: sp.Comment, FreqHz: sp.FreqHz, At: sp.At})
+	s.poke()
 }
 
 // enrich adds the callbook entry and the worked-before history to each

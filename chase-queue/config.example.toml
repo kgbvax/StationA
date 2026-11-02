@@ -40,6 +40,13 @@ listen = "127.0.0.1:8095"         # contest file upload and health, loopback onl
 # confirmed_status = [1, 3]       # matrix values that mean confirmed; verify with -clublog-probe
 # refresh_minutes  = 45
 
+# DX cluster (telnet). Its spots hide the heard stations they name and list
+# the needed ones as cluster rows. Spots by this call (your own) are skipped.
+# [cluster]
+# address = "dxc.example.org:7300"
+# call    = "DL9ET"
+# skimmer = false                # keep CW/RTTY skimmer spots ("-#")
+
 # QRZ.com XML callbook: name, QTH, locator and picture of the stations on the
 # list. Locator and picture need a QRZ XML subscription; without one QRZ
 # returns name and address only. The password goes in the env file.

@@ -14,11 +14,14 @@ Requirements: `../docs/plans/2026-11-01-2252-feat-chase-queue-v1-plan.md`.
 - **DX chasing** (no instance): needed when the DXCC entity is **not confirmed on the band**; an entity
   confirmed on no band ranks before one new on this band, rarest first. History: Club Log confirmations
   (token API), Log4OM's ADIF UDP QSOs. Tag `need`. Until Club Log has loaded, nothing is tagged.
+- Both: with `[cluster]` set, chase-queue reads a DX cluster itself (telnet). Its spots hide the heard
+  stations they name, and **needed** spotted stations join `ranked` as `source:"cluster"` rows (negative
+  `row_id`, `spot` block, ≤ 40), ordered with the heard rows by the same rules.
 - Both: each listed call carries `info` (QRZ.com callbook: name, QTH, locator, picture) and
   `worked_before` (QSO count, bands, modes, last QSO from the station log and stored contest logs).
   Enrichment never changes the ranking.
-- Both: a station spotted on the cluster (same station, same band, 30 min), worked, handled or skipped is
-  **not listed**. Not-needed stations stay below the needed ones.
+- Both: a heard station spotted on the cluster (same station, same band, 30 min), and any station worked,
+  handled or skipped, is **not listed** as a heard row. Not-needed stations stay below the needed ones.
 
 ## Layout
 
@@ -30,6 +33,7 @@ Requirements: `../docs/plans/2026-11-01-2252-feat-chase-queue-v1-plan.md`.
 | `internal/bus` | wire types (the contract with bmrec) |
 | `internal/contest`, `cty`, `dxlog`, `clublog` | ported from bmrec (definition/prefill/value/queue, cty.dat+csv, DXLog XML, Most Wanted) plus the Club Log token client |
 | `internal/log4om`, `adif` | Log4OM ADIF_MESSAGE UDP listener and tolerant ADIF parser |
+| `internal/cluster` | DX-cluster telnet client (login, `DX de` parser, reconnect) |
 | `internal/qrz`, `callbook` | QRZ.com XML client; background lookup worker with memory + SQLite cache |
 | `internal/store` | SQLite (modernc, pure Go): contests, QSOs, log, confirmations, DX skips, callbook cache |
 

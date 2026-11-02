@@ -2,6 +2,7 @@ package app
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"chase-queue/internal/bus"
+	"chase-queue/internal/cluster"
 	"chase-queue/internal/config"
 	"chase-queue/internal/store"
 )
@@ -240,5 +242,26 @@ func TestQRZPasswordHygiene(t *testing.T) {
 		if bytes.Contains(out, []byte(pw)) {
 			t.Fatalf("password leaked: %s", out)
 		}
+	}
+}
+
+func TestClusterSpotFiltersAndProblem(t *testing.T) {
+	s := newSvc(t)
+	s.cfg.Cluster.Call = "DL9ET"
+	s.eng.SetConfirmations(nil)
+	at := time.Now()
+	s.onClusterSpot(cluster.Spot{Spotter: "DL1ABC-#", Call: "EA8AAA", Band: "20m", FreqHz: 14025000, At: at}) // skimmer
+	s.onClusterSpot(cluster.Spot{Spotter: "DL9ET", Call: "EA8BBB", Band: "20m", FreqHz: 14026000, At: at})    // own spot
+	s.onClusterSpot(cluster.Spot{Spotter: "SP5XYZ", Call: "EA8CCC", Band: "20m", FreqHz: 14027000, At: at})
+	st := s.compute()
+	if len(st.Ranked) != 1 || st.Ranked[0].Call != "EA8CCC" || st.Ranked[0].Source != bus.SourceCluster {
+		t.Fatalf("%+v", st.Ranked)
+	}
+	s.dxc = &cluster.Client{Addr: "127.0.0.1:1", Call: "DL9ET", Now: func() time.Time { return time.Now().Add(-2 * time.Minute) }}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	s.dxc.Run(ctx, nil) // records "disconnected since" two minutes ago, then stops
+	if !strings.Contains(strings.Join(s.compute().Problems, "|"), "DX cluster not connected") {
+		t.Fatal("cluster problem not reported")
 	}
 }

@@ -84,6 +84,11 @@ type Engine struct {
 	last     []undo
 	listed   map[int64]bus.Ranked // the last computed list, by row
 
+	// DX-cluster spots of the last SpotHorizon, by call|band; each keeps the
+	// negative row id it was listed under while it lasts
+	clSpots map[string]*clusterSpot
+	clNext  int64
+
 	// contest
 	contest store.Contest
 	model   *contest.Model
@@ -107,7 +112,46 @@ func New(cfg Config) *Engine {
 	}
 	return &Engine{cfg: cfg, activity: bus.ActivityDX, skipRows: map[int64]bool{}, listed: map[int64]bus.Ranked{},
 		handled: map[string]string{}, skipped: map[string]skipMark{}, dxWorked: map[store.WorkedKey]bool{},
-		confirmed: map[int]map[string]bool{}, dxSkips: map[string]time.Time{}}
+		confirmed: map[int]map[string]bool{}, dxSkips: map[string]time.Time{}, clSpots: map[string]*clusterSpot{}}
+}
+
+// MaxClusterRows caps the cluster rows on the list.
+const MaxClusterRows = 40
+
+type clusterSpot struct {
+	rowID       int64
+	call, band  string
+	freqHz      float64
+	spotter     string
+	comment     string
+	first, last time.Time
+}
+
+// ClusterSpot is one spot from chase-queue's own DX-cluster login.
+type ClusterSpot struct {
+	Call, Band, Spotter, Comment string
+	FreqHz                       float64
+	At                           time.Time
+}
+
+// AddClusterSpot records a DX-cluster spot. The station is then spotted (a
+// heard row of it leaves the list) and, while needed, listed as a cluster
+// row for SpotHorizon after its latest spot.
+func (e *Engine) AddClusterSpot(s ClusterSpot) {
+	call := contest.NormalizeCall(s.Call)
+	if call == "" || s.Band == "" {
+		return
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	k := call + "|" + s.Band
+	cs := e.clSpots[k]
+	if cs == nil {
+		e.clNext--
+		cs = &clusterSpot{rowID: e.clNext, call: call, band: s.Band, first: s.At}
+		e.clSpots[k] = cs
+	}
+	cs.freqHz, cs.spotter, cs.comment, cs.last = s.FreqHz, s.Spotter, s.Comment, s.At
 }
 
 func key(call, band string) string { return contest.NormalizeCall(call) + "|" + band }
@@ -234,7 +278,11 @@ func NextUTCMidnight(t time.Time) time.Time {
 // within the horizon: the same call, or a portable form of it that resolves
 // to the same entity.
 func (e *Engine) spottedLocked(call, band string, now time.Time) bool {
-	for _, s := range e.spots {
+	spots := e.spots
+	for _, cs := range e.clSpots {
+		spots = append(spots[:len(spots):len(spots)], bus.Spot{Call: cs.call, Band: cs.band, At: cs.last})
+	}
+	for _, s := range spots {
 		if now.Sub(s.At) > SpotHorizon || s.Band != band || !calls.SameStation(s.Call, call) {
 			continue
 		}
@@ -286,24 +334,44 @@ func (e *Engine) Compute() bus.ChaseState {
 			delete(e.dxSkips, k)
 		}
 	}
+	for k, cs := range e.clSpots {
+		if now.Sub(cs.last) > SpotHorizon {
+			delete(e.clSpots, k)
+		}
+	}
 	contestOn := e.activity == bus.ActivityContest && e.model != nil
-	cands := make([]contest.Candidate, 0, len(e.cands))
+	value := func(c *contest.Candidate) {
+		if contestOn {
+			c.Val = e.model.Value(c.Call, c.Band, e.held)
+		} else {
+			c.Val = e.dxValueLocked(c.Call, c.Band)
+		}
+		if c.Val.NewDXCC != nil && e.cfg.Rank != nil {
+			c.Rank, _ = e.cfg.Rank(c.Val.NewDXCC.ADIF)
+		}
+	}
+	cands := make([]contest.Candidate, 0, len(e.cands)+len(e.clSpots))
 	for _, r := range e.cands {
 		c := contest.Candidate{RowID: r.RowID, Band: r.Band, FreqHz: r.FreqHz, Call: strings.ToUpper(strings.TrimSpace(r.Call)),
 			Trusted: r.Trusted, FirstSeen: r.FirstUTC, LastHeard: r.LastUTC, Likelihood: 0, Skipped: e.skipRows[r.RowID]}
 		if c.Call != "" {
-			if contestOn {
-				c.Val = e.model.Value(c.Call, c.Band, e.held)
-			} else {
-				c.Val = e.dxValueLocked(c.Call, c.Band)
+			// a heard station on the cluster leaves: its cluster row stands for it
+			if e.spottedLocked(c.Call, c.Band, now) {
+				continue
 			}
-			if c.Val.NewDXCC != nil && e.cfg.Rank != nil {
-				c.Rank, _ = e.cfg.Rank(c.Val.NewDXCC.ADIF)
-			}
+			value(&c)
 		}
 		cands = append(cands, c)
 	}
-	v := contest.Verdicts{Spotted: func(call, band string) bool { return e.spottedLocked(call, band, now) }}
+	cluster := map[int64]*clusterSpot{}
+	for _, cs := range e.clSpots {
+		c := contest.Candidate{RowID: cs.rowID, Band: cs.band, FreqHz: cs.freqHz, Call: cs.call, Trusted: true,
+			FirstSeen: cs.first, LastHeard: cs.last}
+		value(&c)
+		cands = append(cands, c)
+		cluster[cs.rowID] = cs
+	}
+	v := contest.Verdicts{}
 	tag := bus.TagNeed
 	if contestOn {
 		tag = bus.TagMult
@@ -329,8 +397,18 @@ func (e *Engine) Compute() bus.ChaseState {
 			Unsupported: e.model.Def.UnsupportedSlots()}
 	}
 	e.listed = map[int64]bus.Ranked{}
+	nCluster := 0
 	for _, it := range res.Queue {
 		r := bus.Ranked{RowID: it.RowID, Call: it.Call, Band: it.Band, Needed: it.Tier == contest.TierNewMult}
+		if cs := cluster[it.RowID]; cs != nil {
+			// only needed cluster stations are listed: the cluster is full of the rest
+			if !r.Needed || nCluster >= MaxClusterRows {
+				continue
+			}
+			nCluster++
+			r.Source = bus.SourceCluster
+			r.Spot = &bus.ClusterSpot{FreqHz: int64(cs.freqHz), Spotter: cs.spotter, Comment: cs.comment, At: cs.last}
+		}
 		if r.Needed {
 			r.Tag = tag
 		}

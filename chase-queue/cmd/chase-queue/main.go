@@ -41,6 +41,7 @@ func main() {
 	if *check {
 		fmt.Printf("slot %s/%s/%s  broker %s  data %s  http %s\n", cfg.MQTT.Site, cfg.Slot.Station, cfg.Slot.Slot, cfg.MQTT.Broker, cfg.DataDir, cfg.HTTP.Listen)
 		fmt.Printf("dxlog %q  log4om %q  clublog call %q token set %v\n", cfg.Contest.Listen, cfg.Log4OM.Listen, cfg.ClubLog.Call, cfg.ClubLog.Token != "")
+		fmt.Printf("cluster %q  call %q  skimmer %v\n", cfg.Cluster.Address, cfg.Cluster.Call, cfg.Cluster.Skimmer)
 		fmt.Printf("qrz user %q  password set %v  refresh %d days\n", cfg.QRZ.User, cfg.QRZ.Password != "", cfg.QRZ.RefreshDays)
 		fmt.Println("config check OK")
 		return

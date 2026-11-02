@@ -39,6 +39,14 @@ chase-queue implements the `hf/chase` logic slot (role `chase-queue`) of the sta
 - `activity` is `dx` or `contest`; `contest` is present in a contest. `tag` is `need` (DX) or `mult` (contest)
   on needed rows, absent otherwise. `undo` names what Undo would reverse (a callsign or `skip`).
 - `problems` are what keeps the ranking from being right, worst first; absent when none.
+- Rows from the DX cluster (`[cluster]`, chase-queue's own telnet login) carry `source:"cluster"`, a
+  **negative** `row_id` (no bmrec row; stable while the spot lasts) and
+  `spot:{freq_hz, spotter, comment, at}` of the latest spot. Only **needed** cluster stations are listed (at
+  most 40), ranked by the same rules as the heard rows and mixed into the same order. A heard station that is
+  on the cluster leaves the list and its cluster row stands for it. Skimmer spots (unless `skimmer = true`)
+  and the operator's own spots are dropped; a spot lasts 30 minutes. `skip`/`handled`/`undo` work on cluster
+  rows by their `row_id`. A consumer that joins rows to bmrec's board by `row_id` must treat `source:"cluster"`
+  rows as having no board row.
 - Each row with a call may carry two enrichments (both optional; consumers must not depend on them):
   - `info` — the QRZ.com callbook entry: `{source:"qrz", call, name, qth, state, country, grid, lat, lon,
     image, cq_zone, itu_zone}`. `call` is the entry's call (the home call of a portable form); `image` is a
@@ -88,6 +96,8 @@ An action on a row no longer listed is logged and ignored.
 
 ## 7. Other inputs
 
-DXLog.net UDP XML on `[contest] listen`; Log4OM `ADIF_MESSAGE` UDP on `[log4om] listen`; Club Log token API
+A DX-cluster telnet node on `[cluster] address` (login `call`; reconnects with backoff, a node silent for 10
+minutes is reconnected; "DX cluster not connected" in `problems` after a minute down); DXLog.net UDP XML on
+`[contest] listen`; Log4OM `ADIF_MESSAGE` UDP on `[log4om] listen`; Club Log token API
 (`/logs/{call}/dxcc-matrix`) and the public Most Wanted list; the QRZ.com XML callbook (`xmldata.qrz.com`,
 login `[qrz] user` + `CHASE_QUEUE_QRZ_PASSWORD`; entries cached in SQLite for `refresh_days`, not-found for a day).

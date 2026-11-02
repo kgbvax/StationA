@@ -71,12 +71,28 @@ type Ranked struct {
 	Band   string `json:"band"`
 	Needed bool   `json:"needed"`
 	Tag    string `json:"tag,omitempty"`
+	// Source is "cluster" for a station chase-queue's own DX-cluster login
+	// spotted (RowID is then negative and no bmrec row); absent for a row
+	// bmrec hears.
+	Source string       `json:"source,omitempty"`
+	Spot   *ClusterSpot `json:"spot,omitempty"` // with Source "cluster"
 	// Info is the callbook entry (QRZ.com); absent until looked up, when the
 	// call is not in the callbook, or with no QRZ login configured.
 	Info *CallInfo `json:"info,omitempty"`
 	// Worked is the station log's history of this call; absent when never
 	// worked.
 	Worked *WorkedBefore `json:"worked_before,omitempty"`
+}
+
+// SourceCluster marks a ranked row from the DX cluster.
+const SourceCluster = "cluster"
+
+// ClusterSpot is the latest cluster spot of a cluster row.
+type ClusterSpot struct {
+	FreqHz  int64     `json:"freq_hz"`
+	Spotter string    `json:"spotter"`
+	Comment string    `json:"comment,omitempty"`
+	At      time.Time `json:"at"`
 }
 
 // CallInfo is what the callbook says about a callsign. Street address,
