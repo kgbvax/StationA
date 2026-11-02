@@ -6,13 +6,13 @@
 #
 # Config:  /etc/chase-queue/config.toml            (0600, seed-once)
 # Secrets: /etc/chase-queue/chase-queue.env        (0600, seed-once)
-#            CHASE_QUEUE_MQTT_PASSWORD, CHASE_QUEUE_CLUBLOG_TOKEN
+#            CHASE_QUEUE_MQTT_PASSWORD, CHASE_QUEUE_CLUBLOG_TOKEN, CHASE_QUEUE_QRZ_PASSWORD
 # Data:    /var/lib/chase-queue (StateDirectory): database, contest files,
 #          cty.dat + cty.csv (installed from CTY_DIR when missing)
 #
 # Usage:
 #   CTY_DIR=/path/with/cty.dat+cty.csv ./deploy.sh
-#   SSH_HOST=io@scmino MQTT_PASSWORD=... CLUBLOG_TOKEN=... ./deploy.sh   # first deploy
+#   SSH_HOST=io@scmino MQTT_PASSWORD=... CLUBLOG_TOKEN=... QRZ_PASSWORD=... ./deploy.sh   # first deploy
 #
 set -euo pipefail
 
@@ -29,6 +29,7 @@ PKG=./cmd/chase-queue
 DATA_DIR=/var/lib/chase-queue
 MQTT_PASSWORD="${MQTT_PASSWORD:-}"
 CLUBLOG_TOKEN="${CLUBLOG_TOKEN:-}"
+QRZ_PASSWORD="${QRZ_PASSWORD:-}"
 CTY_DIR="${CTY_DIR:-}"
 
 if [[ "$SSH_HOST" == *"@"* ]]; then SSH_TARGET="$SSH_HOST"; else SSH_TARGET="${SSH_USER}@${SSH_HOST}"; fi
@@ -44,6 +45,7 @@ trap 'rm -f "$SEED_ENV" "$UNIT_FILE"' EXIT
   echo "# chase-queue EnvironmentFile (read by the systemd unit). Keep 0600."
   if [[ -n "$MQTT_PASSWORD" ]]; then echo "CHASE_QUEUE_MQTT_PASSWORD='"$(esc "$MQTT_PASSWORD")"'"; else echo "# CHASE_QUEUE_MQTT_PASSWORD=\"...\""; fi
   if [[ -n "$CLUBLOG_TOKEN" ]]; then echo "CHASE_QUEUE_CLUBLOG_TOKEN='"$(esc "$CLUBLOG_TOKEN")"'"; else echo "# CHASE_QUEUE_CLUBLOG_TOKEN=\"cl_...\""; fi
+  if [[ -n "$QRZ_PASSWORD" ]]; then echo "CHASE_QUEUE_QRZ_PASSWORD='"$(esc "$QRZ_PASSWORD")"'"; else echo "# CHASE_QUEUE_QRZ_PASSWORD=\"...\""; fi
 } > "$SEED_ENV"
 
 echo ">> Building ${BINARY} for linux/arm64..."

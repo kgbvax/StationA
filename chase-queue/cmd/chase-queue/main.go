@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -20,6 +21,7 @@ import (
 	"chase-queue/internal/app"
 	"chase-queue/internal/clublog"
 	"chase-queue/internal/config"
+	"chase-queue/internal/qrz"
 	"chase-queue/internal/store"
 )
 
@@ -28,6 +30,7 @@ func main() {
 	flags := config.RegisterFlags(fs)
 	check := fs.Bool("check", false, "validate the config, print it redacted, exit")
 	probe := fs.Bool("clublog-probe", false, "fetch the Club Log matrix once and print how many cells carry each status value, then exit")
+	qrzLookup := fs.String("qrz-lookup", "", "look one callsign up on QRZ.com with the configured login, print the entry, exit")
 	_ = fs.Parse(os.Args[1:])
 
 	cfg, err := config.Load(flags)
@@ -38,7 +41,24 @@ func main() {
 	if *check {
 		fmt.Printf("slot %s/%s/%s  broker %s  data %s  http %s\n", cfg.MQTT.Site, cfg.Slot.Station, cfg.Slot.Slot, cfg.MQTT.Broker, cfg.DataDir, cfg.HTTP.Listen)
 		fmt.Printf("dxlog %q  log4om %q  clublog call %q token set %v\n", cfg.Contest.Listen, cfg.Log4OM.Listen, cfg.ClubLog.Call, cfg.ClubLog.Token != "")
+		fmt.Printf("qrz user %q  password set %v  refresh %d days\n", cfg.QRZ.User, cfg.QRZ.Password != "", cfg.QRZ.RefreshDays)
 		fmt.Println("config check OK")
+		return
+	}
+	if *qrzLookup != "" {
+		if !cfg.QRZ.Enabled() {
+			fmt.Fprintln(os.Stderr, "chase-queue: set qrz.user and CHASE_QUEUE_QRZ_PASSWORD")
+			os.Exit(2)
+		}
+		c := &qrz.Client{User: cfg.QRZ.User, Password: cfg.QRZ.Password, Agent: "chase-queue"}
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		r, err := c.Lookup(ctx, strings.ToUpper(*qrzLookup))
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "chase-queue: qrz lookup failed:", err)
+			os.Exit(1)
+		}
+		fmt.Printf("subscription: %s\n%+v\n", c.Subscription(), r)
 		return
 	}
 	if *probe {

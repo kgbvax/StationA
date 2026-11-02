@@ -14,6 +14,9 @@ Requirements: `../docs/plans/2026-11-01-2252-feat-chase-queue-v1-plan.md`.
 - **DX chasing** (no instance): needed when the DXCC entity is **not confirmed on the band**; an entity
   confirmed on no band ranks before one new on this band, rarest first. History: Club Log confirmations
   (token API), Log4OM's ADIF UDP QSOs. Tag `need`. Until Club Log has loaded, nothing is tagged.
+- Both: each listed call carries `info` (QRZ.com callbook: name, QTH, locator, picture) and
+  `worked_before` (QSO count, bands, modes, last QSO from the station log and stored contest logs).
+  Enrichment never changes the ranking.
 - Both: a station spotted on the cluster (same station, same band, 30 min), worked, handled or skipped is
   **not listed**. Not-needed stations stay below the needed ones.
 
@@ -21,13 +24,14 @@ Requirements: `../docs/plans/2026-11-01-2252-feat-chase-queue-v1-plan.md`.
 
 | Path | Role |
 |---|---|
-| `cmd/chase-queue` | main; `-check`, `-clublog-probe` |
+| `cmd/chase-queue` | main; `-check`, `-clublog-probe`, `-qrz-lookup` |
 | `internal/engine` | pure ranking + Skip/handled/Undo state; one mutex, no I/O |
 | `internal/app` | service: jobs worker, publisher, MQTT, local HTTP, contest manager |
 | `internal/bus` | wire types (the contract with bmrec) |
 | `internal/contest`, `cty`, `dxlog`, `clublog` | ported from bmrec (definition/prefill/value/queue, cty.dat+csv, DXLog XML, Most Wanted) plus the Club Log token client |
 | `internal/log4om`, `adif` | Log4OM ADIF_MESSAGE UDP listener and tolerant ADIF parser |
-| `internal/store` | SQLite (modernc, pure Go): contests, QSOs, log, confirmations, DX skips |
+| `internal/qrz`, `callbook` | QRZ.com XML client; background lookup worker with memory + SQLite cache |
+| `internal/store` | SQLite (modernc, pure Go): contests, QSOs, log, confirmations, DX skips, callbook cache |
 
 ## Rules that matter
 
@@ -38,7 +42,8 @@ Requirements: `../docs/plans/2026-11-01-2252-feat-chase-queue-v1-plan.md`.
 - **A stale or repeated `seq` never moves the ranking back.** `/state.seq` echoes the candidates' `seq`.
 - **An action on a row no longer listed is ignored** (`ErrNotListed`): two windows cannot act twice.
 - **DX QSY does not hide a station**; DX Skip lasts until 00:00 UTC; Undo does not cross activities.
-- **Secrets are env-only** (`CHASE_QUEUE_MQTT_PASSWORD`, `CHASE_QUEUE_CLUBLOG_TOKEN`), never in the TOML,
+- **Secrets are env-only** (`CHASE_QUEUE_MQTT_PASSWORD`, `CHASE_QUEUE_CLUBLOG_TOKEN`,
+  `CHASE_QUEUE_QRZ_PASSWORD`), never in the TOML,
   logs, errors, `/state`, `/meta` or HTTP (tested). Callsigns and logs are personal data: the database stays
   under `/var/lib/chase-queue`, never in git.
 - **Club Log's matrix status values are undocumented.** `clublog.confirmed_status` (default `[1,3]`) is a
@@ -46,6 +51,11 @@ Requirements: `../docs/plans/2026-11-01-2252-feat-chase-queue-v1-plan.md`.
   "needed". The committed fixture is synthetic.
 - **Worked** = a Log4OM QSO or a stored Club Log log QSO on that call and band, any mode, ever. **The Club
   Log log download is not implemented yet** (only the confirmation matrix); `store.ReplaceLogQSOs` is the seam.
+- **Callbook lookups never run on the publish path.** `callbook.Book.Info` answers from memory and queues a
+  lookup; one worker asks QRZ (a portable form not found is retried under its home call) and pokes the
+  publisher. A refused login backs off an hour and shows in `problems`. The QRZ XML login goes in the request
+  URL (QRZ's documented GET), so `qrz` strips `*url.Error` before an error leaves the package (tested).
+  `chase-queue -qrz-lookup CALL` checks a login by hand.
 - **Ports:** UDP 12060 is taken by logger-spot-bridge on scmino, so DXLog needs a second broadcast target on
   `contest.listen` (default 12061); Log4OM needs its own outbound ADIF_MESSAGE connection to `log4om.listen`
   (2340), Log4OM ≥ 2.42.

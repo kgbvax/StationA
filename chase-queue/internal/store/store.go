@@ -55,6 +55,14 @@ func (s *Store) migrate() error {
 			return err
 		}
 	}
+	if version < 2 {
+		if _, err := s.db.Exec(schemaV2); err != nil {
+			return err
+		}
+		if _, err := s.db.Exec(`PRAGMA user_version=2`); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -165,6 +173,19 @@ CREATE TABLE IF NOT EXISTS dx_skips (
     until_utc TEXT NOT NULL,
     PRIMARY KEY (call, band)
 );
+`
+
+// v2: the callbook cache (one row per looked-up call; data is the published
+// bus.CallInfo JSON, empty when the call is not in the callbook) and a call
+// index on the contest log for worked-before.
+const schemaV2 = `
+CREATE TABLE IF NOT EXISTS callbook (
+    call        TEXT PRIMARY KEY,
+    found       INTEGER NOT NULL,
+    data        TEXT NOT NULL DEFAULT '',
+    fetched_utc TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_contest_qsos_call_only ON contest_qsos(call);
 `
 
 func boolInt(b bool) int {

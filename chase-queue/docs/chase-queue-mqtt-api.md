@@ -39,6 +39,23 @@ chase-queue implements the `hf/chase` logic slot (role `chase-queue`) of the sta
 - `activity` is `dx` or `contest`; `contest` is present in a contest. `tag` is `need` (DX) or `mult` (contest)
   on needed rows, absent otherwise. `undo` names what Undo would reverse (a callsign or `skip`).
 - `problems` are what keeps the ranking from being right, worst first; absent when none.
+- Each row with a call may carry two enrichments (both optional; consumers must not depend on them):
+  - `info` — the QRZ.com callbook entry: `{source:"qrz", call, name, qth, state, country, grid, lat, lon,
+    image, cq_zone, itu_zone}`. `call` is the entry's call (the home call of a portable form); `image` is a
+    picture URL. Absent until looked up (the row republishes when the lookup lands), when QRZ does not have
+    the call, or with no `[qrz]` login. Grid, lat/lon and image need a QRZ XML subscription. Street address,
+    e-mail and birth date are never published.
+  - `worked_before` — `{qsos, bands, modes, this_band, last}` from the station log (Log4OM, Club Log) and the
+    stored DXLog contest logs, any mode, ever (contest logs are pruned with their instance after 30 days).
+    A QSO two sources report counts once (same band and minute). `bands` is low to high; `this_band` says
+    the row's own band is among them. Absent when the call was never worked.
+
+```json
+{"row_id":7,"call":"EA8XYZ","band":"20m","needed":true,"tag":"need",
+ "info":{"source":"qrz","call":"EA8XYZ","name":"Juan Perez","qth":"Las Palmas","country":"Canary Islands",
+         "grid":"IL28gc","lat":28.1,"lon":-15.4,"image":"https://cdn-xml.qrz.com/…","cq_zone":33,"itu_zone":36},
+ "worked_before":{"qsos":2,"bands":["40m","15m"],"modes":["CW","FT8"],"this_band":false,"last":"2025-05-01T10:00:00Z"}}
+```
 - Republished on change and every 30 s.
 
 ## 4. `/cmd` (`shared/schema.CmdPayload`; `value` is a string)
@@ -72,4 +89,5 @@ An action on a row no longer listed is logged and ignored.
 ## 7. Other inputs
 
 DXLog.net UDP XML on `[contest] listen`; Log4OM `ADIF_MESSAGE` UDP on `[log4om] listen`; Club Log token API
-(`/logs/{call}/dxcc-matrix`) and the public Most Wanted list.
+(`/logs/{call}/dxcc-matrix`) and the public Most Wanted list; the QRZ.com XML callbook (`xmldata.qrz.com`,
+login `[qrz] user` + `CHASE_QUEUE_QRZ_PASSWORD`; entries cached in SQLite for `refresh_days`, not-found for a day).

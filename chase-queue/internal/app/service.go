@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -22,12 +23,14 @@ import (
 	"codeberg.org/kgbvax/stationa/shared/schema"
 
 	"chase-queue/internal/bus"
+	"chase-queue/internal/callbook"
 	"chase-queue/internal/clublog"
 	"chase-queue/internal/config"
 	"chase-queue/internal/cty"
 	"chase-queue/internal/dxlog"
 	"chase-queue/internal/engine"
 	"chase-queue/internal/log4om"
+	"chase-queue/internal/qrz"
 	"chase-queue/internal/store"
 )
 
@@ -46,6 +49,7 @@ type Service struct {
 	dxl   *dxlog.Listener
 	l4    *log4om.Listener
 	cl    *clublog.Confirmations
+	book  *callbook.Book // nil without a QRZ login
 
 	jobs  chan func() // /cmd work
 	dirty chan struct{}
@@ -107,6 +111,14 @@ func New(cfg config.Config, st *store.Store, log *slog.Logger) *Service {
 	if cfg.Log4OM.Listen != "" {
 		s.l4 = log4om.New(cfg.Log4OM.Listen, config.Prefixes(cfg.Log4OM.AllowFrom), log)
 	}
+	if cfg.QRZ.Enabled() {
+		s.book = callbook.New(callbook.Config{
+			Looker:  &qrz.Client{User: cfg.QRZ.User, Password: cfg.QRZ.Password, Agent: "chase-queue"},
+			Cache:   st,
+			TTL:     time.Duration(cfg.QRZ.RefreshDays) * 24 * time.Hour,
+			Changed: s.poke,
+		}, log)
+	}
 	if cfg.ClubLog.Token != "" {
 		s.cl = &clublog.Confirmations{Token: cfg.ClubLog.Token, Call: cfg.ClubLog.Call, Confirmed: cfg.ClubLog.Confirmed}
 	} else {
@@ -160,6 +172,9 @@ func (s *Service) Run(ctx context.Context) error {
 	}
 	if s.cl != nil {
 		spawn(func() { s.refreshConfirmations(ctx) })
+	}
+	if s.book != nil {
+		spawn(func() { s.book.Run(ctx) })
 	}
 	spawn(func() { s.publisher(ctx) })
 	spawn(func() { s.candidateWorker(ctx) })
@@ -337,15 +352,51 @@ func (s *Service) problems(st bus.ChaseState) []string {
 	if !s.ranks.Loaded() {
 		out = append(out, "Club Log Most Wanted not loaded: no rarity order")
 	}
+	if s.book != nil {
+		if p := s.book.Problem(); p != "" {
+			out = append(out, p)
+		}
+	}
 	return out
 }
 
 // compute builds the state to publish.
 func (s *Service) compute() bus.ChaseState {
 	st := s.eng.Compute()
+	s.enrich(&st)
 	st.TS = s.now().UTC()
 	st.Problems = s.problems(st)
 	return st
+}
+
+// enrich adds the callbook entry and the worked-before history to each
+// listed call. Callbook data comes from memory only (a missing entry is
+// looked up in the background and republished when it lands).
+func (s *Service) enrich(st *bus.ChaseState) {
+	var calls []string
+	for _, r := range st.Ranked {
+		if r.Call != "" {
+			calls = append(calls, r.Call)
+		}
+	}
+	worked, err := s.st.WorkedBefore(calls)
+	if err != nil {
+		s.log.Warn("reading worked-before failed", "err", err)
+	}
+	for i := range st.Ranked {
+		r := &st.Ranked[i]
+		if r.Call == "" {
+			continue
+		}
+		if w := worked[r.Call]; w != nil {
+			c := *w
+			c.ThisBand = slices.Contains(c.Bands, r.Band)
+			r.Worked = &c
+		}
+		if s.book != nil {
+			r.Info = s.book.Info(r.Call)
+		}
+	}
 }
 
 // publisher publishes /state when something changed and every heartbeat.

@@ -30,6 +30,7 @@ type Config struct {
 	Contest ContestUDP  `toml:"contest"`
 	Log4OM  Log4OMUDP   `toml:"log4om"`
 	ClubLog ClubLogConf `toml:"clublog"`
+	QRZ     QRZConf     `toml:"qrz"`
 	Log     LogConfig   `toml:"log"`
 }
 
@@ -83,6 +84,22 @@ type ClubLogConf struct {
 	RefreshMinutes int `toml:"refresh_minutes"`
 }
 
+// QRZConf is the QRZ.com XML callbook login (name, QTH, locator, picture of
+// the stations on the list). Full data needs a QRZ XML subscription; without
+// one QRZ returns name and address only.
+type QRZConf struct {
+	// User is the QRZ login (a callsign).
+	User string `toml:"user"`
+	// Password is env only: CHASE_QUEUE_QRZ_PASSWORD.
+	Password string `toml:"-"`
+	// RefreshDays is how long a callbook entry is kept before it is looked
+	// up again (default 30).
+	RefreshDays int `toml:"refresh_days"`
+}
+
+// Enabled reports whether callbook lookups are configured.
+func (q QRZConf) Enabled() bool { return q.User != "" && q.Password != "" }
+
 // LogConfig controls logging.
 type LogConfig struct {
 	Level string `toml:"level"`
@@ -98,6 +115,7 @@ func Defaults() Config {
 		MQTT:    MQTTConfig{Broker: "tcp://127.0.0.1:1883", Site: "muehle"},
 		HTTP:    HTTPConfig{Listen: "127.0.0.1:8095"},
 		ClubLog: ClubLogConf{Confirmed: []int{1, 3}, RefreshMinutes: 45},
+		QRZ:     QRZConf{RefreshDays: 30},
 		Log:     LogConfig{Level: "info"},
 	}
 }
@@ -141,6 +159,9 @@ func Load(f *Flags) (Config, error) {
 	if v := os.Getenv("CHASE_QUEUE_CLUBLOG_TOKEN"); v != "" {
 		cfg.ClubLog.Token = v
 	}
+	if v := os.Getenv("CHASE_QUEUE_QRZ_PASSWORD"); v != "" {
+		cfg.QRZ.Password = v
+	}
 	if f.LogLevel != "" {
 		cfg.Log.Level = strings.ToLower(f.LogLevel)
 	}
@@ -181,6 +202,12 @@ func (c Config) Validate() error {
 	}
 	if c.ClubLog.Token != "" && c.ClubLog.Call == "" {
 		return errors.New("clublog.call is required with a Club Log token")
+	}
+	if c.QRZ.Password != "" && c.QRZ.User == "" {
+		return errors.New("qrz.user is required with a QRZ password")
+	}
+	if c.QRZ.RefreshDays < 1 {
+		return errors.New("qrz.refresh_days must be at least 1")
 	}
 	if len(c.ClubLog.Confirmed) == 0 {
 		return errors.New("clublog.confirmed_status must not be empty")

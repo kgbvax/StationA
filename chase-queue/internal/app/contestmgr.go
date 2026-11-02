@@ -269,10 +269,14 @@ func (s *Service) reloadQSOs() {
 	})
 }
 
-// keep prunes old instances and files daily.
+// keep prunes old instances, files and callbook entries daily.
 func (s *Service) keep(done <-chan struct{}) {
 	prune := func() {
 		now := s.now()
+		// an entry past its refresh is still shown while it is looked up again; twice that is unused
+		if err := s.st.PruneCallbook(now.Add(-2 * time.Duration(s.cfg.QRZ.RefreshDays) * 24 * time.Hour)); err != nil {
+			s.log.Warn("pruning the callbook cache failed", "err", err)
+		}
 		paths, n, err := s.st.PruneContests(now.Add(-contestKeep), s.actID.Load())
 		if err != nil {
 			s.log.Warn("pruning contest instances failed", "err", err)

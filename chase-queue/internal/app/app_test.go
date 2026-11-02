@@ -187,3 +187,58 @@ func TestStaleCandidatesProblem(t *testing.T) {
 		t.Fatal("stale candidates not reported")
 	}
 }
+
+func TestWorkedBeforeOnState(t *testing.T) {
+	s := newSvc(t)
+	s.eng.SetConfirmations(nil)
+	at := time.Date(2025, 5, 1, 10, 0, 0, 0, time.UTC)
+	if err := s.st.AddLogQSOs([]store.LogQSO{{Source: store.SourceLog4OM, Call: "EA8XYZ", Band: "40m", Mode: "CW", At: at}}); err != nil {
+		t.Fatal(err)
+	}
+	s.onCandidates(state(1, row(1, "EA8XYZ"), row(2, "K1ABC")))
+	st := s.compute()
+	if len(st.Ranked) != 2 {
+		t.Fatalf("%+v", st)
+	}
+	for _, r := range st.Ranked {
+		switch r.Call {
+		case "EA8XYZ":
+			if r.Worked == nil || r.Worked.QSOs != 1 || r.Worked.ThisBand || r.Worked.Bands[0] != "40m" {
+				t.Fatalf("%+v", r.Worked)
+			}
+		case "K1ABC":
+			if r.Worked != nil {
+				t.Fatalf("%+v", r.Worked)
+			}
+		}
+		if r.Info != nil {
+			t.Fatal("callbook data without a QRZ login")
+		}
+	}
+}
+
+func TestQRZPasswordHygiene(t *testing.T) {
+	const pw = "qrz_super_secret_pw"
+	t.Setenv("CHASE_QUEUE_QRZ_PASSWORD", pw)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "c.toml")
+	os.WriteFile(path, []byte("data_dir = \""+dir+"\"\n[qrz]\nuser = \"DL1ABC\"\n"), 0o600)
+	cfg, err := config.Load(&config.Flags{ConfigPath: path})
+	if err != nil || !cfg.QRZ.Enabled() {
+		t.Fatalf("%v %+v", err, cfg.QRZ)
+	}
+	st, err := store.Open(filepath.Join(dir, "q.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	s := New(cfg, st, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	s.onCandidates(state(1, row(1, "EA8XYZ")))
+	b, _ := json.Marshal(s.compute())
+	meta, _ := s.metaPayload()
+	for _, out := range [][]byte{b, meta} {
+		if bytes.Contains(out, []byte(pw)) {
+			t.Fatalf("password leaked: %s", out)
+		}
+	}
+}

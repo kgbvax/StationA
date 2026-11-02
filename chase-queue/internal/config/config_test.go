@@ -52,3 +52,15 @@ func TestTokenNotInTOML(t *testing.T) {
 		t.Fatalf("token read from the file: %v %q", err, cfg.ClubLog.Token)
 	}
 }
+
+func TestQRZPasswordNeedsUser(t *testing.T) {
+	c := Defaults()
+	c.QRZ.Password = "x"
+	if c.Validate() == nil {
+		t.Fatal("password without user accepted")
+	}
+	c.QRZ.User = "DL1ABC"
+	if err := c.Validate(); err != nil {
+		t.Fatal(err)
+	}
+}

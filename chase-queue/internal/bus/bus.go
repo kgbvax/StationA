@@ -71,6 +71,39 @@ type Ranked struct {
 	Band   string `json:"band"`
 	Needed bool   `json:"needed"`
 	Tag    string `json:"tag,omitempty"`
+	// Info is the callbook entry (QRZ.com); absent until looked up, when the
+	// call is not in the callbook, or with no QRZ login configured.
+	Info *CallInfo `json:"info,omitempty"`
+	// Worked is the station log's history of this call; absent when never
+	// worked.
+	Worked *WorkedBefore `json:"worked_before,omitempty"`
+}
+
+// CallInfo is what the callbook says about a callsign. Street address,
+// e-mail and birth date are never published.
+type CallInfo struct {
+	Source  string   `json:"source"` // "qrz"
+	Call    string   `json:"call"`   // the callbook entry's call (the home call of a portable form)
+	Name    string   `json:"name,omitempty"`
+	QTH     string   `json:"qth,omitempty"` // city
+	State   string   `json:"state,omitempty"`
+	Country string   `json:"country,omitempty"`
+	Grid    string   `json:"grid,omitempty"`
+	Lat     *float64 `json:"lat,omitempty"`
+	Lon     *float64 `json:"lon,omitempty"`
+	Image   string   `json:"image,omitempty"` // URL of the operator's picture
+	CQZone  int      `json:"cq_zone,omitempty"`
+	ITUZone int      `json:"itu_zone,omitempty"`
+}
+
+// WorkedBefore summarises the QSOs with a call in the station log (Log4OM,
+// Club Log) and the stored DXLog contest logs, any mode, ever.
+type WorkedBefore struct {
+	QSOs     int       `json:"qsos"`
+	Bands    []string  `json:"bands"`           // band order, low to high
+	Modes    []string  `json:"modes,omitempty"` // as logged, upper case
+	ThisBand bool      `json:"this_band"`       // worked on the row's band
+	Last     time.Time `json:"last"`
 }
 
 // ContestInfo describes the running contest instance.
