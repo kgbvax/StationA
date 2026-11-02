@@ -18,23 +18,22 @@ type CQFinderState struct {
 
 // Candidate is one open CQ row of bmrec's board.
 type Candidate struct {
-	RowID   int64   `json:"row_id"`
-	Call    string  `json:"call,omitempty"` // "" = no callsign yet
-	Trusted bool    `json:"trusted"`        // read back by the answering station or typed by the operator
-	Band    string  `json:"band"`
-	FreqHz  float64 `json:"freq_hz"`
-	// CQScore orders callsign-less candidates.
-	CQScore  float64   `json:"cq_score"`
-	FirstUTC time.Time `json:"first_utc"`
-	LastUTC  time.Time `json:"last_utc"`
+	RowID      int64     `json:"row_id"`
+	Call       string    `json:"call,omitempty"` // "" = no callsign yet
+	CallSource string    `json:"call_source,omitempty"`
+	Trusted    bool      `json:"call_trusted"` // read back by the answering station or typed by the operator
+	Band       string    `json:"band"`
+	FreqHz     float64   `json:"freq_hz"`
+	FirstUTC   time.Time `json:"first_heard"`
+	LastUTC    time.Time `json:"last_heard"`
 }
 
-// Spot is a human DX-cluster spot, or a spot the operator posted (Own).
+// Spot is a human DX-cluster spot or a spot the operator posted.
 type Spot struct {
-	Call string    `json:"call"`
-	Band string    `json:"band"`
-	At   time.Time `json:"at"`
-	Own  bool      `json:"own,omitempty"`
+	Call   string    `json:"call"`
+	Band   string    `json:"band"`
+	At     time.Time `json:"at"`
+	Source string    `json:"source"` // "cluster" | "own"
 }
 
 // Activities.
@@ -63,10 +62,6 @@ type ChaseState struct {
 	Undo string `json:"undo,omitempty"`
 	// Problems are what keeps the ranking from being right, worst first.
 	Problems []string `json:"problems,omitempty"`
-	// Instances are the stored contest instances, newest first.
-	Instances []Instance `json:"instances"`
-	// Files are the uploaded contest definitions and prefill databases.
-	Files []File `json:"files"`
 }
 
 // Ranked is one station on the list.
@@ -87,48 +82,27 @@ type ContestInfo struct {
 	Unsupported []string `json:"unsupported,omitempty"`
 }
 
-// Instance is a stored contest instance.
-type Instance struct {
-	ID           int64  `json:"id"`
-	Name         string `json:"name"`
-	StartDate    string `json:"start_date"`
-	DefinitionID int64  `json:"definition_id"`
-	PrefillID    int64  `json:"prefill_id"`
-	Activated    string `json:"activated"`
-}
-
-// File is an uploaded contest file.
-type File struct {
-	ID          int64  `json:"id"`
-	Kind        string `json:"kind"`
-	Name        string `json:"name"`
-	ContestName string `json:"contest_name,omitempty"`
-	DBFile      string `json:"db_file,omitempty"`
-	Uploaded    string `json:"uploaded"`
-}
-
-// /cmd actions. Each rides in shared/schema.CmdPayload; the value is the JSON
-// object given here, encoded as a string.
+// /cmd actions: shared/schema.CmdPayload {action, value}; value is a string.
 const (
-	CmdSkip    = "skip"            // value: Target
-	CmdHandled = "handled"         // value: Target with How ("spot" | "qsy"); contest only
-	CmdUndo    = "undo"            // value: ""
-	CmdSetMode = "set_mode"        // value: ModeReq
-	CmdDelete  = "delete_instance" // value: instance id
+	CmdSkip           = "skip"            // value: Target JSON
+	CmdHandled        = "handled"         // value: Target JSON; a contest QSY
+	CmdUndo           = "undo"            // value: ""
+	CmdSetMode        = "set_mode"        // value: "dx"
+	CmdSwitchInstance = "switch_instance" // value: SwitchReq JSON
+	CmdDeleteInstance = "delete_instance" // value: instance id
 )
 
 // Target names the row an action is for, as the window saw it.
 type Target struct {
 	RowID int64  `json:"row_id"`
 	Band  string `json:"band"`
-	Call  string `json:"call,omitempty"` // the call the operator settled on (may differ from the row's)
+	Call  string `json:"call,omitempty"` // the call the operator settled on
 	How   string `json:"how,omitempty"`
 }
 
-// ModeReq switches the activity: DX chasing, or a contest instance (an
-// existing one, or a new one from an uploaded definition and a start date).
-type ModeReq struct {
-	Activity     string `json:"activity"`
+// SwitchReq starts contest mode on an existing instance, or on a new one from
+// an uploaded definition (and prefill) and a start date.
+type SwitchReq struct {
 	Instance     int64  `json:"instance,omitempty"`
 	New          bool   `json:"new,omitempty"`
 	StartDate    string `json:"start_date,omitempty"`

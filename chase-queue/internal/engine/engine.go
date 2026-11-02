@@ -278,7 +278,7 @@ func (e *Engine) Compute() bus.ChaseState {
 	cands := make([]contest.Candidate, 0, len(e.cands))
 	for _, r := range e.cands {
 		c := contest.Candidate{RowID: r.RowID, Band: r.Band, FreqHz: r.FreqHz, Call: strings.ToUpper(strings.TrimSpace(r.Call)),
-			Trusted: r.Trusted, FirstSeen: r.FirstUTC, LastHeard: r.LastUTC, Likelihood: r.CQScore, Skipped: e.skipRows[r.RowID]}
+			Trusted: r.Trusted, FirstSeen: r.FirstUTC, LastHeard: r.LastUTC, Likelihood: 0, Skipped: e.skipRows[r.RowID]}
 		if c.Call != "" {
 			if contestOn {
 				c.Val = e.model.Value(c.Call, c.Band, e.held)

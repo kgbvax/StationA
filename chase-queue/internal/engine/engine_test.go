@@ -145,7 +145,7 @@ func TestSpottedLeavesAtOnceAndAgesOut(t *testing.T) {
 func TestRestartRebuildsSpotsFromState(t *testing.T) {
 	f := newDX(t)
 	f.e.SetConfirmations(nil)
-	st := f.rank(7, []bus.Candidate{cand(1, "EA8XYZ", "20m", true)}, bus.Spot{Call: "EA8XYZ", Band: "20m", At: f.now.Add(-10 * time.Minute), Own: true})
+	st := f.rank(7, []bus.Candidate{cand(1, "EA8XYZ", "20m", true)}, bus.Spot{Call: "EA8XYZ", Band: "20m", At: f.now.Add(-10 * time.Minute), Source: "own"})
 	want(t, st)
 	if st.Seq != 7 {
 		t.Fatal(st.Seq)

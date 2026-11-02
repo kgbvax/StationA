@@ -1,0 +1,374 @@
+// Package app wires chase-queue together: the engine, the SQLite store, the
+// history sources (DXLog, Log4OM, Club Log), the MQTT slot and the local HTTP
+// API. All MQTT callbacks only enqueue work; one worker applies it, and one
+// publisher turns the engine's state into the retained /state.
+package app
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"log/slog"
+	"net/http"
+	"os"
+	"path/filepath"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	pahomqtt "github.com/eclipse/paho.mqtt.golang"
+
+	sharedmqtt "codeberg.org/kgbvax/stationa/shared/mqtt"
+	"codeberg.org/kgbvax/stationa/shared/schema"
+
+	"chase-queue/internal/bus"
+	"chase-queue/internal/clublog"
+	"chase-queue/internal/config"
+	"chase-queue/internal/cty"
+	"chase-queue/internal/dxlog"
+	"chase-queue/internal/engine"
+	"chase-queue/internal/log4om"
+	"chase-queue/internal/store"
+)
+
+const heartbeat = 30 * time.Second
+
+// Service is a running chase-queue.
+type Service struct {
+	cfg config.Config
+	log *slog.Logger
+	st  *store.Store
+	eng *engine.Engine
+	cty *cty.DB
+	now func() time.Time
+
+	ranks *clublog.MostWanted
+	dxl   *dxlog.Listener
+	l4    *log4om.Listener
+	cl    *clublog.Confirmations
+
+	jobs  chan func()
+	dirty chan struct{}
+
+	switchMu      sync.Mutex
+	mu            sync.Mutex // guards the fields below
+	defName       string
+	prefillN      int
+	finderSeen    time.Time // when bmrec's candidates last arrived
+	clState       string    // "", "loaded", "token rejected", "failed: ...", "no token"
+	clLoaded      time.Time
+	l4Seen        time.Time
+	actID         atomic.Int64
+	actName       atomic.Pointer[string]
+	reloadPending atomic.Bool
+
+	client   pahomqtt.Client
+	topics   struct{ meta, state, status, cmd, finder, finderStatus string }
+	lastPub  []byte      // publisher goroutine only
+	forcePub atomic.Bool // set on (re)connect: publish even if unchanged
+}
+
+// New builds a service on an open store.
+func New(cfg config.Config, st *store.Store, log *slog.Logger) *Service {
+	s := &Service{cfg: cfg, log: log, st: st, now: time.Now,
+		jobs: make(chan func(), 64), dirty: make(chan struct{}, 1)}
+	db, err := cty.OpenContest(cfg.DataDir)
+	if err != nil {
+		log.Warn("cty.dat unusable; entities read as unknown (put cty.dat and cty.csv in data_dir)", "err", err)
+	}
+	s.cty = db
+	s.ranks = clublog.New("", st, log)
+	s.eng = engine.New(engine.Config{Store: st, CTY: db, Rank: s.ranks.Rank})
+	site := cfg.MQTT.Site
+	s.topics.meta = schema.MetaTopic(site, cfg.Slot.Station, cfg.Slot.Slot)
+	s.topics.state = schema.StateTopic(site, cfg.Slot.Station, cfg.Slot.Slot)
+	s.topics.status = schema.StatusTopic(site, cfg.Slot.Station, cfg.Slot.Slot)
+	s.topics.cmd = schema.CmdTopic(site, cfg.Slot.Station, cfg.Slot.Slot)
+	s.topics.finder = schema.StateTopic(site, cfg.Finder.Station, cfg.Finder.Slot)
+	s.topics.finderStatus = schema.StatusTopic(site, cfg.Finder.Station, cfg.Finder.Slot)
+	if cfg.Contest.Listen != "" {
+		s.dxl = dxlog.NewListener(dxlog.ListenerConfig{Listen: cfg.Contest.Listen, AllowFrom: config.Prefixes(cfg.Contest.AllowFrom),
+			Instance: func() int64 { return s.actID.Load() },
+			Active: func() (string, bool) {
+				p := s.actName.Load()
+				if p == nil || s.actID.Load() == 0 {
+					return "", false
+				}
+				return *p, true
+			}}, log)
+	}
+	if cfg.Log4OM.Listen != "" {
+		s.l4 = log4om.New(cfg.Log4OM.Listen, config.Prefixes(cfg.Log4OM.AllowFrom), log)
+	}
+	if cfg.ClubLog.Token != "" {
+		s.cl = &clublog.Confirmations{Token: cfg.ClubLog.Token, Call: cfg.ClubLog.Call, Confirmed: cfg.ClubLog.Confirmed}
+	} else {
+		s.clState = "no token"
+	}
+	return s
+}
+
+// poke asks the publisher for a fresh /state.
+func (s *Service) poke() {
+	select {
+	case s.dirty <- struct{}{}:
+	default:
+	}
+}
+
+// Run serves until ctx ends.
+func (s *Service) Run(ctx context.Context) error {
+	if err := os.MkdirAll(filepath.Join(s.cfg.DataDir, contestDirName), 0o750); err != nil {
+		return err
+	}
+	done := make(chan struct{})
+	var wg sync.WaitGroup
+	spawn := func(f func()) { wg.Add(1); go func() { defer wg.Done(); f() }() }
+
+	// restore history, then start the sources
+	if err := s.loadHistory(); err != nil {
+		return err
+	}
+	s.resumeActive()
+	go sharedmqtt.RunJobs(ctx, s.jobs)
+	spawn(func() { s.ranks.Run(ctx) })
+	spawn(func() { s.keep(ctx.Done()) })
+	if s.dxl != nil {
+		spawn(func() { _ = s.dxl.Run(ctx) })
+		spawn(func() {
+			dxlog.Write(ctx, s.dxl.Events(), dxlog.WriterConfig{Store: s.st,
+				Contest: func() int64 { return s.actID.Load() }, Changed: s.reloadQSOs}, s.log)
+		})
+	}
+	errCh := make(chan error, 2)
+	if s.l4 != nil {
+		spawn(func() {
+			if err := s.l4.Run(ctx); err != nil {
+				errCh <- err
+			}
+		})
+		spawn(func() { s.consumeLog4OM(ctx) })
+	}
+	if s.cl != nil {
+		spawn(func() { s.refreshConfirmations(ctx) })
+	}
+	spawn(func() { s.publisher(ctx) })
+
+	srv := &http.Server{Addr: s.cfg.HTTP.Listen, Handler: s.handler(), ReadHeaderTimeout: 10 * time.Second}
+	spawn(func() {
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			errCh <- err
+		}
+	})
+	spawn(func() {
+		<-ctx.Done()
+		sctx, c := context.WithTimeout(context.Background(), 3*time.Second)
+		defer c()
+		_ = srv.Shutdown(sctx)
+	})
+
+	if err := s.connect(ctx); err != nil {
+		return err
+	}
+	var runErr error
+	select {
+	case <-ctx.Done():
+	case runErr = <-errCh:
+	}
+	s.shutdownBus()
+	go func() { wg.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+	}
+	return runErr
+}
+
+// loadHistory restores the worked log, confirmations and DX skips.
+func (s *Service) loadHistory() error {
+	w, err := s.st.WorkedSet()
+	if err != nil {
+		return err
+	}
+	s.eng.SetDXWorked(w)
+	if cs, err := s.st.Confirmations(); err == nil && len(cs) > 0 {
+		s.eng.SetConfirmations(cs)
+		s.mu.Lock()
+		s.clState = "stored"
+		s.mu.Unlock()
+	}
+	if ks, err := s.st.DXSkips(s.now()); err == nil {
+		s.eng.SetDXSkips(ks)
+	}
+	return nil
+}
+
+func (s *Service) consumeLog4OM(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case q := <-s.l4.QSOs():
+			if err := s.st.AddLogQSOs([]store.LogQSO{q}); err != nil {
+				s.log.Warn("storing a Log4OM QSO failed", "err", err)
+				continue
+			}
+			s.eng.AddDXWorked(q.Call, q.Band)
+			s.mu.Lock()
+			s.l4Seen = s.now()
+			s.mu.Unlock()
+			s.poke()
+		}
+	}
+}
+
+// refreshConfirmations fetches Club Log's confirmations now and every
+// refresh_minutes. A rejected token stops the retries.
+func (s *Service) refreshConfirmations(ctx context.Context) {
+	every := time.Duration(s.cfg.ClubLog.RefreshMinutes) * time.Minute
+	for {
+		wait := every
+		cs, err := s.cl.Fetch(ctx)
+		var rl *clublog.RateLimited
+		switch {
+		case err == nil:
+			if err := s.st.ReplaceConfirmations(cs); err != nil {
+				s.log.Warn("storing Club Log confirmations failed", "err", err)
+			}
+			s.eng.SetConfirmations(cs)
+			s.mu.Lock()
+			s.clState, s.clLoaded = "loaded", s.now()
+			s.mu.Unlock()
+			s.log.Info("club log confirmations loaded", "cells", len(cs))
+		case errors.Is(err, clublog.ErrAuth):
+			s.setCL("token rejected")
+			s.log.Error("Club Log rejected the token; not retrying until restart")
+			s.poke()
+			return
+		case errors.As(err, &rl):
+			wait = rl.Wait
+			s.setCL("failed: rate limited")
+		default:
+			if ctx.Err() != nil {
+				return
+			}
+			s.setCL("failed")
+			wait = 10 * time.Minute
+			s.log.Warn("club log fetch failed", "err", err)
+		}
+		s.poke()
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(wait):
+		}
+	}
+}
+
+func (s *Service) setCL(v string) { s.mu.Lock(); s.clState = v; s.mu.Unlock() }
+
+// contestStatus is the setup panel's status block (keys the bmrec UI reads).
+func (s *Service) contestStatus() map[string]any {
+	s.mu.Lock()
+	st := map[string]any{"definition": s.defName, "prefill_entries": s.prefillN}
+	s.mu.Unlock()
+	if age, ok := s.ranks.Age(); ok {
+		st["ranks_age_s"] = int(age / time.Second)
+	}
+	st["ranks_loaded"] = s.ranks.Loaded()
+	if _, err := os.Stat(filepath.Join(s.cfg.DataDir, "cty.csv")); err != nil {
+		st["cty_numbers_missing"] = true
+	}
+	if s.dxl != nil {
+		st["listener"] = s.dxl.State()
+	}
+	return st
+}
+
+// problems lists what keeps the ranking from being right, worst first.
+func (s *Service) problems(st bus.ChaseState) []string {
+	var out []string
+	s.mu.Lock()
+	seen, cl := s.finderSeen, s.clState
+	s.mu.Unlock()
+	if seen.IsZero() || s.now().Sub(seen) > 2*time.Minute {
+		out = append(out, "No candidates from bmrec")
+	}
+	if _, err := os.Stat(filepath.Join(s.cfg.DataDir, "cty.csv")); err != nil || s.cty == nil {
+		out = append(out, "cty.dat or cty.csv missing: entities cannot be told")
+	}
+	if st.Activity == bus.ActivityDX {
+		switch cl {
+		case "no token":
+			out = append(out, "Club Log: no token configured")
+		case "token rejected":
+			out = append(out, "Club Log rejected the token")
+		case "", "failed", "failed: rate limited":
+			if !s.eng.ConfirmationsLoaded() {
+				out = append(out, "Club Log confirmations not loaded yet")
+			}
+		}
+		if s.l4 == nil {
+			out = append(out, "Log4OM feed not configured: worked stations are not tracked live")
+		}
+	} else if s.dxl == nil {
+		out = append(out, "No DXLog feed configured: the contest log is not visible")
+	} else if cs := s.dxl.State(); !cs.Listening {
+		out = append(out, "DXLog feed not listening: "+cs.LastError)
+	} else if st.Contest != nil && st.Contest.QSOs == 0 {
+		out = append(out, "No QSOs from DXLog yet")
+	}
+	if !s.ranks.Loaded() {
+		out = append(out, "Club Log Most Wanted not loaded: no rarity order")
+	}
+	return out
+}
+
+// compute builds the state to publish.
+func (s *Service) compute() bus.ChaseState {
+	st := s.eng.Compute()
+	st.TS = s.now().UTC()
+	st.Problems = s.problems(st)
+	return st
+}
+
+// publisher publishes /state when something changed and every heartbeat.
+func (s *Service) publisher(ctx context.Context) {
+	tick := time.NewTicker(heartbeat)
+	defer tick.Stop()
+	publish := func(force bool) {
+		st := s.compute()
+		cmp := st
+		cmp.TS = time.Time{}
+		key, _ := json.Marshal(cmp)
+		if s.forcePub.Swap(false) {
+			force = true
+		}
+		if !force && string(key) == string(s.lastPub) {
+			return
+		}
+		b, err := json.Marshal(st)
+		if err != nil {
+			s.log.Warn("state marshal failed", "err", err)
+			return
+		}
+		if s.publishState(b) {
+			s.lastPub = key
+		}
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-s.dirty:
+			time.Sleep(100 * time.Millisecond) // coalesce bursts
+			select {
+			case <-s.dirty:
+			default:
+			}
+			publish(false)
+		case <-tick.C:
+			publish(true)
+		}
+	}
+}
