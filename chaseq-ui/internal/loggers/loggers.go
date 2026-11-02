@@ -36,4 +36,6 @@ var validCall = regexp.MustCompile(`^[A-Z0-9]{1,4}[A-Z0-9/]*$`)
 
 // ValidCall reports whether call is plausible enough to send: upper-case
 // letters, digits and '/' only, so nothing odd reaches a logger's entry line.
-func ValidCall(call string) bool { return len(call) >= 3 && len(call) <= 20 && validCall.MatchString(call) }
+func ValidCall(call string) bool {
+	return len(call) >= 3 && len(call) <= 20 && validCall.MatchString(call)
+}

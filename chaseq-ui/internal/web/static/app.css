@@ -1,0 +1,30 @@
+:root { --bg:#111418; --fg:#e6e9ee; --dim:#8a93a3; --line:#2b323d; --hi:#243a5e; --ok:#3fb27f; --warn:#e0a030; --bad:#e05a5a; font-family: system-ui, sans-serif; }
+* { box-sizing: border-box; }
+body { margin:0; background:var(--bg); color:var(--fg); font-size:16px; }
+#app { display:flex; flex-direction:column; height:100vh; }
+/* Panels are square; only controls and badges are rounded. */
+.bar { display:flex; gap:1rem; padding:.4rem .8rem; border-bottom:1px solid var(--line); }
+.activity { font-weight:600; }
+.undo { color:var(--dim); }
+.status { padding:.35rem .8rem; border-bottom:1px solid var(--line); }
+.status.offline { background:#4a1f1f; }
+.status.problem { background:#3d3418; color:#f0d58a; }
+.filters { display:flex; flex-wrap:wrap; gap:.3rem; padding:.4rem .8rem; border-bottom:1px solid var(--line); }
+.chip { border:1px solid var(--line); border-radius:999px; background:transparent; color:var(--fg); padding:.15rem .6rem; font:inherit; cursor:pointer; }
+.chip.on { background:var(--hi); border-color:#5b86c9; }
+.chip:focus-visible, .rows:focus-visible { outline:2px solid #7fb0ff; outline-offset:1px; }
+.summary { padding:.2rem .8rem; color:var(--dim); border-bottom:1px solid var(--line); }
+.rows { list-style:none; margin:0; padding:0; flex:1; overflow-y:auto; }
+.row { display:flex; align-items:center; gap:1rem; padding:.45rem .8rem; border-bottom:1px solid var(--line); cursor:pointer; }
+.row.hi { background:var(--hi); }
+.row.notune .freq { color:var(--warn); }
+.call { width:9rem; font-weight:600; font-size:1.1rem; }
+.band { width:3.5rem; color:var(--dim); }
+.freq { width:7rem; font-variant-numeric:tabular-nums; }
+.badge { border-radius:999px; padding:0 .55rem; font-size:.8rem; background:#2d4a3a; color:#9fe0bb; }
+.badge.mult { background:#4a3a2d; color:#f0c89a; }
+.empty { padding:1rem .8rem; color:var(--dim); }
+.result { padding:.4rem .8rem; border-top:1px solid var(--line); min-height:2.2rem; display:flex; flex-wrap:wrap; gap:.8rem; }
+.part.ok { color:var(--ok); } .part.failed { color:var(--bad); }
+.part.skipped, .part.NotConfirmed, .part { color:var(--dim); }
+.part.failed { color:var(--bad); }

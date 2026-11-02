@@ -31,7 +31,11 @@ func (p *pub) Publish(topic string, payload []byte) error {
 	return p.err
 }
 
-func (p *pub) all() []string { p.mu.Lock(); defer p.mu.Unlock(); return append([]string(nil), p.msgs...) }
+func (p *pub) all() []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]string(nil), p.msgs...)
+}
 
 type fakeLogger struct {
 	name  string

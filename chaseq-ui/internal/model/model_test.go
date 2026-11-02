@@ -1,6 +1,7 @@
 package model
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -168,5 +169,15 @@ func TestFiltersRoundTripAndCorrupt(t *testing.T) {
 	}
 	if g := LoadFilters(filepath.Join(t.TempDir(), "missing.json")); g.Active() {
 		t.Errorf("missing file = %+v", g)
+	}
+}
+
+func TestCorruptFiltersFileMeansNoFilter(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "filters.json")
+	if err := os.WriteFile(p, []byte("{not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if f := LoadFilters(p); f.Active() {
+		t.Errorf("corrupt file gave %+v", f)
 	}
 }

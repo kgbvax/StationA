@@ -63,7 +63,7 @@ func fakeLog4OM(t *testing.T, port int, done string) <-chan string {
 				continue
 			}
 			s := strings.Index(req, "<MessageId>") + len("<MessageId>")
-			id := req[s : strings.Index(req, "</MessageId>")]
+			id := req[s:strings.Index(req, "</MessageId>")]
 			out, _ := net.DialUDP("udp4", nil, &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: port + 1})
 			fmt.Fprintf(out, "<RemoteControlResponse><MessageId>%s</MessageId><Done>%s</Done></RemoteControlResponse>", id, done)
 			out.Close()
