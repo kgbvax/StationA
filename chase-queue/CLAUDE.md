@@ -61,6 +61,10 @@ Requirements: `../docs/plans/2026-11-01-2252-feat-chase-queue-v1-plan.md`.
   publisher. A refused login backs off an hour and shows in `problems`. The QRZ XML login goes in the request
   URL (QRZ's documented GET), so `qrz` strips `*url.Error` before an error leaves the package (tested).
   `chase-queue -qrz-lookup CALL` checks a login by hand.
+- **Country files refresh themselves.** At start and daily chase-queue fetches AD1C's `bigcty/cty.dat` +
+  `cty.csv` into `data_dir`; a download that does not parse or does not resolve DL1ABC to 230 never replaces
+  the old files. New files apply at once in DX mode; a running contest keeps its model until re-activated.
+  Without them every station is "unknown" and nothing is listed as needed (first deploy, 2026-11-02).
 - **Ports:** UDP 12060 is taken by logger-spot-bridge on scmino, so DXLog needs a second broadcast target on
   `contest.listen` (default 12061); Log4OM needs its own outbound ADIF_MESSAGE connection to `log4om.listen`
   (2340), Log4OM ≥ 2.42.

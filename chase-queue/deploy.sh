@@ -8,7 +8,8 @@
 # Secrets: /etc/chase-queue/chase-queue.env        (0600, seed-once)
 #            CHASE_QUEUE_MQTT_PASSWORD, CHASE_QUEUE_CLUBLOG_TOKEN, CHASE_QUEUE_QRZ_PASSWORD
 # Data:    /var/lib/chase-queue (StateDirectory): database, contest files,
-#          cty.dat + cty.csv (installed from CTY_DIR when missing)
+#          cty.dat + cty.csv (fetched by the service from country-files.com at
+#          start and daily; CTY_DIR only pre-seeds them when missing)
 #
 # Usage:
 #   CTY_DIR=/path/with/cty.dat+cty.csv ./deploy.sh

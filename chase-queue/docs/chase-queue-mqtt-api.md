@@ -99,5 +99,5 @@ An action on a row no longer listed is logged and ignored.
 A DX-cluster telnet node on `[cluster] address` (login `call`; reconnects with backoff, a node silent for 10
 minutes is reconnected; "DX cluster not connected" in `problems` after a minute down); DXLog.net UDP XML on
 `[contest] listen`; Log4OM `ADIF_MESSAGE` UDP on `[log4om] listen`; Club Log token API
-(`/logs/{call}/dxcc-matrix`) and the public Most Wanted list; the QRZ.com XML callbook (`xmldata.qrz.com`,
+(`/logs/{call}/dxcc-matrix`) and the public Most Wanted list; AD1C's country files (`country-files.com/bigcty/`, at start and daily); the QRZ.com XML callbook (`xmldata.qrz.com`,
 login `[qrz] user` + `CHASE_QUEUE_QRZ_PASSWORD`; entries cached in SQLite for `refresh_days`, not-found for a day).

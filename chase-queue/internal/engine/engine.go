@@ -424,6 +424,13 @@ func (e *Engine) Compute() bus.ChaseState {
 	return st
 }
 
+// SetCTY replaces the country files (after a refresh).
+func (e *Engine) SetCTY(db *cty.DB) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.cfg.CTY = db
+}
+
 // ConfirmationsLoaded reports whether Club Log's confirmations are known.
 func (e *Engine) ConfirmationsLoaded() bool {
 	e.mu.Lock()

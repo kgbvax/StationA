@@ -42,7 +42,7 @@ func (s *Service) loadModel(c store.Contest) (*contest.Model, int, error) {
 	if err != nil {
 		return nil, 0, err
 	}
-	model := &contest.Model{Def: def, CTY: s.cty}
+	model := &contest.Model{Def: def, CTY: s.cty.Load()}
 	prefillN := 0
 	if c.PrefillFileID != 0 {
 		if pf, ok, err := s.st.ContestFileByID(c.PrefillFileID); err == nil && ok {

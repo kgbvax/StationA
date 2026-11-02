@@ -45,7 +45,7 @@ type Service struct {
 	log *slog.Logger
 	st  *store.Store
 	eng *engine.Engine
-	cty *cty.DB
+	cty atomic.Pointer[cty.DB] // nil until cty.dat is there; replaced by a refresh
 	now func() time.Time
 
 	ranks *clublog.MostWanted
@@ -91,7 +91,7 @@ func New(cfg config.Config, st *store.Store, log *slog.Logger) *Service {
 	if err != nil {
 		log.Warn("cty.dat unusable; entities read as unknown (put cty.dat and cty.csv in data_dir)", "err", err)
 	}
-	s.cty = db
+	s.cty.Store(db)
 	s.ranks = clublog.New("", st, log)
 	s.eng = engine.New(engine.Config{Store: st, CTY: db, Rank: s.ranks.Rank})
 	site := cfg.MQTT.Site
@@ -186,6 +186,7 @@ func (s *Service) Run(ctx context.Context) error {
 	if s.dxc != nil {
 		spawn(func() { s.dxc.Run(ctx, s.onClusterSpot) })
 	}
+	spawn(func() { s.refreshCTY(ctx) })
 	spawn(func() { s.publisher(ctx) })
 	spawn(func() { s.candidateWorker(ctx) })
 
@@ -298,6 +299,44 @@ func (s *Service) refreshConfirmations(ctx context.Context) {
 	}
 }
 
+// ctyRefresh is how often AD1C's country files are fetched.
+const ctyRefresh = 24 * time.Hour
+
+// refreshCTY keeps cty.dat and cty.csv current: now, then daily. New files
+// take effect at once for DX chasing; a running contest instance keeps its
+// model until it is activated again.
+func (s *Service) refreshCTY(ctx context.Context) {
+	f := cty.Fetcher{}
+	for {
+		wait := ctyRefresh
+		changed, err := f.Refresh(ctx, s.cfg.DataDir)
+		switch {
+		case err != nil:
+			if ctx.Err() != nil {
+				return
+			}
+			s.log.Warn("refreshing the country files failed; keeping the current ones", "err", err)
+			wait = time.Hour
+		case changed:
+			db, err := cty.OpenContest(s.cfg.DataDir)
+			if err != nil || db == nil {
+				s.log.Warn("the refreshed country files did not load", "err", err)
+				wait = time.Hour
+				break
+			}
+			s.cty.Store(db)
+			s.eng.SetCTY(db)
+			s.log.Info("country files refreshed")
+			s.poke()
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(wait):
+		}
+	}
+}
+
 func (s *Service) setL4Error(v string) { s.mu.Lock(); s.l4Err = v; s.mu.Unlock() }
 
 func (s *Service) setCL(v string) { s.mu.Lock(); s.clState = v; s.mu.Unlock() }
@@ -329,7 +368,7 @@ func (s *Service) problems(st bus.ChaseState) []string {
 	if seen.IsZero() || s.now().Sub(seen) > 2*time.Minute {
 		out = append(out, "No candidates from bmrec")
 	}
-	if _, err := os.Stat(filepath.Join(s.cfg.DataDir, "cty.csv")); err != nil || s.cty == nil {
+	if _, err := os.Stat(filepath.Join(s.cfg.DataDir, "cty.csv")); err != nil || s.cty.Load() == nil {
 		out = append(out, "cty.dat or cty.csv missing: entities cannot be told")
 	}
 	if st.Activity == bus.ActivityDX {
