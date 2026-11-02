@@ -7,6 +7,8 @@ import (
 	"time"
 
 	sharedmqtt "codeberg.org/kgbvax/stationa/shared/mqtt"
+
+	"icom9700-radio-bridge/internal/radio"
 )
 
 // The /cmd gate set, lifted from the spid-ercm mqttslot template (KTD6
@@ -22,10 +24,14 @@ const (
 	cmdErrMax         = 200
 )
 
-// busCmd is the /cmd payload: the stationa value-key convention. The five
+// busCmd is the /cmd payload: the stationa value-key convention. The
 // surviving actions carry no value — the action name is the whole intent.
+// Holder (audio_on/audio_off only, 2026-10) names the consumer the audio
+// demand is held for; empty = radio.DefaultAudioHolder, so consumers that
+// predate holders (vhfcam-restream) keep working unchanged.
 type busCmd struct {
 	Action string `json:"action"`
+	Holder string `json:"holder,omitempty"`
 	Ts     string `json:"ts,omitempty"`
 }
 
@@ -66,12 +72,18 @@ func (b *Bridge) onCmd(payload []byte) {
 	}
 
 	switch cmd.Action {
-	case "audio_on":
-		b.log.Info("rx cmd", "action", cmd.Action)
-		sharedmqtt.Enqueue(b.jobs, func() { b.executeAudioDemand(true) })
-	case "audio_off":
-		b.log.Info("rx cmd", "action", cmd.Action)
-		sharedmqtt.Enqueue(b.jobs, func() { b.executeAudioDemand(false) })
+	case "audio_on", "audio_off":
+		holder := cmd.Holder
+		if holder == "" {
+			holder = radio.DefaultAudioHolder
+		}
+		if err := radio.ValidateAudioHolder(holder); err != nil {
+			b.rejectAsync(err.Error())
+			return
+		}
+		on := cmd.Action == "audio_on"
+		b.log.Info("rx cmd", "action", cmd.Action, "holder", holder)
+		sharedmqtt.Enqueue(b.jobs, func() { b.executeAudioDemand(holder, on) })
 	case "monitor_on":
 		b.log.Info("rx cmd", "action", cmd.Action)
 		sharedmqtt.Enqueue(b.jobs, func() { b.executeMonitor(true) })
@@ -89,12 +101,12 @@ func (b *Bridge) onCmd(payload []byte) {
 	}
 }
 
-// executeAudioDemand applies the audio_on/audio_off demand (the session's
-// only hold source — receive-only, no arm gate exists anymore).
-func (b *Bridge) executeAudioDemand(on bool) {
+// executeAudioDemand applies holder's audio_on/audio_off demand (the
+// session's only hold source — receive-only, no arm gate exists anymore).
+func (b *Bridge) executeAudioDemand(holder string, on bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	err := b.mgr.SetAudioDemand(ctx, on)
+	err := b.mgr.SetAudioDemand(ctx, holder, on)
 	if err != nil {
 		b.setCmdErr(err.Error())
 	} else {

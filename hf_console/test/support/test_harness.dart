@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:hf_console/mqtt/mqtt_service.dart';
 import 'package:hf_console/store/bus_store.dart';
+import 'package:hf_console/store/dvk_auto_repeat.dart';
 import 'package:hf_console/dxspot/dxspot_service.dart';
 import 'package:hf_console/ui/theme.dart';
 import 'package:hf_console/vhfcam/vhfcam_service.dart';
@@ -12,12 +13,15 @@ import 'fake_mqtt_service.dart';
 /// Provides a [BusStore], a [FakeMqttService] and an idle [DxSpotService] (no
 /// station locator → overlay off, beam-only compass) so panels can read slot
 /// state and publish commands without touching a real broker or SSE feed.
+/// [dvkAuto] defaults to a controller on the harness store and mqtt, created
+/// once per mounted tree and disposed with it (no timers outlive the test).
 class TestHarness extends StatelessWidget {
   final Widget child;
   final BusStore? store;
   final FakeMqttService? mqtt;
   final DxSpotService? dxSpot;
   final VhfcamService? vhfcam;
+  final DvkAutoRepeat? dvkAuto;
 
   const TestHarness({
     super.key,
@@ -26,6 +30,7 @@ class TestHarness extends StatelessWidget {
     this.mqtt,
     this.dxSpot,
     this.vhfcam,
+    this.dvkAuto,
   });
 
   @override
@@ -48,6 +53,10 @@ class TestHarness extends StatelessWidget {
         // Never polled under test (the poll loop only runs after start()).
         ChangeNotifierProvider<VhfcamService>.value(value: vhfcam ?? VhfcamService()),
         Provider<MqttService>.value(value: fakeMqtt),
+        if (dvkAuto != null)
+          ChangeNotifierProvider<DvkAutoRepeat>.value(value: dvkAuto!)
+        else
+          ChangeNotifierProvider<DvkAutoRepeat>(create: (_) => DvkAutoRepeat(busStore, fakeMqtt)),
       ],
       child: MaterialApp(
         debugShowCheckedModeBanner: false,

@@ -8,7 +8,10 @@
 // session exists solely to carry the :50003 receive-audio stream. While
 // the audio demand is set the session is kept open; the demand is
 // TTL-bounded and refreshed by the consumer's audio_on heartbeats, so a
-// dead consumer never pins the radio (KTD-2). Telemetry flows over the
+// dead consumer never pins the radio (KTD-2). The demand is held per
+// holder (2026-10: vhfcam-restream and bmrec consume at once): each holder
+// has its own TTL, the session is held while ANY holder is live, and one
+// holder's audio_off never drops another's hold. Telemetry flows over the
 // dedicated serial CI-V monitor (internal/civserial), never over this
 // session.
 //
@@ -20,7 +23,9 @@ package radio
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
+	"slices"
 	"sync"
 	"time"
 
@@ -35,6 +40,35 @@ const (
 	StateLive       = "live"
 	StateError      = "error"
 )
+
+// Audio-demand holders (2026-10). A holder is the consumer id an
+// audio_on/audio_off acts for; DefaultAudioHolder stands in when the cmd
+// names none, so pre-holder consumers (vhfcam-restream) work unchanged.
+// The holder set is bounded: at most MaxAudioHolders live holders, ids of
+// 1..MaxAudioHolderLen bytes from [A-Za-z0-9._-].
+const (
+	DefaultAudioHolder = "default"
+	MaxAudioHolders    = 8
+	MaxAudioHolderLen  = 32
+)
+
+// ErrTooManyAudioHolders rejects an audio_on from a new holder while
+// MaxAudioHolders others are live.
+var ErrTooManyAudioHolders = fmt.Errorf("too many audio holders (max %d)", MaxAudioHolders)
+
+// ValidateAudioHolder checks a holder id against the bounds above.
+func ValidateAudioHolder(h string) error {
+	ok := h != "" && len(h) <= MaxAudioHolderLen
+	for i := 0; ok && i < len(h); i++ {
+		c := h[i]
+		ok = c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' ||
+			c == '.' || c == '_' || c == '-'
+	}
+	if !ok {
+		return fmt.Errorf("invalid audio holder %q (1-%d chars of A-Z a-z 0-9 . _ -)", h, MaxAudioHolderLen)
+	}
+	return nil
+}
 
 // SessionOptions configure the lifecycle. All timers are shrinkable for
 // tests against the fake radio.
@@ -58,8 +92,9 @@ type SessionOptions struct {
 	// PingInterval passes through to the transport's keepalive cadence
 	// (tests shrink it; it must stay ≪ LossWatchdog — see fastSessionOpts).
 	PingInterval time.Duration
-	// AudioDemandTTL bounds an audio demand without a refreshing audio_on
-	// (a dead preview consumer must not pin the radio session). 0 = 60 s.
+	// AudioDemandTTL bounds each holder's audio demand without a refreshing
+	// audio_on (a dead preview consumer must not pin the radio session).
+	// 0 = 60 s.
 	AudioDemandTTL time.Duration
 	// AudioSink receives the demodulated audio PCM chunks while the audio
 	// stream is open (the main wiring publishes them to the preview host).
@@ -73,7 +108,10 @@ type SessionOptions struct {
 type Snapshot struct {
 	SessionState string
 	Err          string
-	AudioDemand  bool
+	AudioDemand  bool // any holder live
+	// AudioHolders lists the live holders, sorted (nil when none). The
+	// slice is replaced on every change, never mutated in place.
+	AudioHolders []string
 	RadioName    string
 	// ConnectAttempts is the cumulative count of Dial attempts since the
 	// session was created (diagnostics; the attempt-policy tests pin it).
@@ -104,7 +142,7 @@ type Session struct {
 
 	mu           sync.Mutex
 	snap         Snapshot
-	audioDemand  bool
+	holders      map[string]time.Time // live audio-demand holder -> TTL expiry; written only by Run
 	client       *civ.Client
 	routeCh      chan struct{} // closed when the frame drainer is torn down
 	audioRouteCh chan struct{} // same, for the audio PCM router
@@ -112,8 +150,9 @@ type Session struct {
 }
 
 type audioReq struct {
-	on  bool
-	err chan error
+	holder string
+	on     bool
+	err    chan error
 }
 
 // NewSession builds the state machine.
@@ -147,6 +186,7 @@ func NewSession(opts SessionOptions) *Session {
 		stopped:  make(chan struct{}),
 		runDone:  make(chan struct{}),
 		notifyCh: make(chan struct{}, 1),
+		holders:  make(map[string]time.Time),
 	}
 }
 
@@ -161,27 +201,36 @@ func (s *Session) Snapshot() Snapshot {
 	return s.snap
 }
 
-// SetAudioDemand sets/clears the audio demand: on = connect (when idle) and
-// open the audio receive stream; off = close it. The demand is TTL-bounded
-// (AudioDemandTTL) — consumers refresh it with repeated audio_on — so a dead
-// consumer never pins the radio session (KTD-2). A connect failure while
-// setting the demand rejects the cmd; the demand itself is NOT set in that
-// case (the operator retries). This is the session's only hold source: no
-// LAN command path exists anymore (receive-only posture, 2026-09).
-func (s *Session) SetAudioDemand(ctx context.Context, on bool) error {
+// SetAudioDemand sets/clears holder's audio demand: on = connect (when
+// idle) and open the audio receive stream; off = release holder's hold, and
+// close the stream once no holder is left. Each holder's demand is
+// TTL-bounded (AudioDemandTTL) — consumers refresh it with repeated audio_on
+// — so a dead consumer never pins the radio session (KTD-2). A connect
+// failure while setting the demand rejects the cmd; the demand itself is NOT
+// set in that case (the operator retries). This is the session's only hold
+// source: no LAN command path exists anymore (receive-only posture, 2026-09).
+func (s *Session) SetAudioDemand(ctx context.Context, holder string, on bool) error {
 	select {
 	case <-s.stopped:
 		return ErrSessionStopped
 	default:
 	}
+	if err := ValidateAudioHolder(holder); err != nil {
+		return err
+	}
 	if on {
+		// Reject a holder over the bound before connecting for it (Run
+		// re-checks authoritatively when it applies the demand).
+		if !s.canHold(holder, time.Now()) {
+			return ErrTooManyAudioHolders
+		}
 		if _, err := s.connectAndRun(ctx, func(*civ.Client) error { return nil }); err != nil {
 			return err
 		}
 	}
 	done := make(chan error, 1)
 	select {
-	case s.audioCh <- audioReq{on: on, err: done}:
+	case s.audioCh <- audioReq{holder: holder, on: on, err: done}:
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-s.stopped:
@@ -195,11 +244,96 @@ func (s *Session) SetAudioDemand(ctx context.Context, on bool) error {
 	}
 }
 
-// audioDemanded reports the audio demand under the state mutex.
+// audioDemanded reports whether any holder's audio demand is set, under
+// the state mutex.
 func (s *Session) audioDemanded() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.audioDemand
+	return len(s.holders) > 0
+}
+
+// canHold reports whether holder may take (or refresh) an audio demand
+// now: it already holds one, or fewer than MaxAudioHolders others are live.
+func (s *Session) canHold(holder string, now time.Time) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.holders[holder]; ok {
+		return true
+	}
+	live := 0
+	for _, exp := range s.holders {
+		if exp.After(now) {
+			live++
+		}
+	}
+	return live < MaxAudioHolders
+}
+
+// applyAudioReq applies one audio_on/audio_off to the holder set (Run
+// only): expired holders are dropped first, then holder's demand is set
+// (expiry now+TTL) or released. A new holder beyond MaxAudioHolders is
+// rejected with the set unchanged.
+func (s *Session) applyAudioReq(ar audioReq, now time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.expireHoldersLocked(now)
+	_, had := s.holders[ar.holder]
+	if ar.on {
+		if !had && len(s.holders) >= MaxAudioHolders {
+			return ErrTooManyAudioHolders
+		}
+		s.holders[ar.holder] = now.Add(s.opts.AudioDemandTTL)
+		if !had {
+			s.log.Info("audio demand acquired", "holder", ar.holder, "holders", len(s.holders))
+		}
+	} else if had {
+		delete(s.holders, ar.holder)
+		s.log.Info("audio demand released", "holder", ar.holder, "holders", len(s.holders))
+	}
+	s.syncHoldersLocked()
+	return nil
+}
+
+// expireHoldersLocked drops every holder whose TTL ran out by now and
+// reports how many went. Caller holds s.mu.
+func (s *Session) expireHoldersLocked(now time.Time) int {
+	n := 0
+	for h, exp := range s.holders {
+		if !exp.After(now) {
+			delete(s.holders, h)
+			s.log.Info("audio demand expired (no refreshing audio_on)", "holder", h, "holders", len(s.holders))
+			n++
+		}
+	}
+	if n > 0 {
+		s.syncHoldersLocked()
+	}
+	return n
+}
+
+// syncHoldersLocked mirrors the holder set into the snapshot (a fresh
+// slice every time — Snapshot hands the slice out). Caller holds s.mu.
+func (s *Session) syncHoldersLocked() {
+	s.snap.AudioDemand = len(s.holders) > 0
+	var hs []string
+	for h := range s.holders {
+		hs = append(hs, h)
+	}
+	slices.Sort(hs)
+	s.snap.AudioHolders = hs
+}
+
+// nextHolderExpiry returns the earliest holder expiry (zero when none).
+func (s *Session) nextHolderExpiry() time.Time {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var next time.Time
+	for _, exp := range s.holders {
+		if next.IsZero() || exp.Before(next) {
+			next = exp
+		}
+	}
+	return next
 }
 
 // ensureAudio opens the audio receive stream + PCM router on the live client
@@ -353,6 +487,30 @@ func (s *Session) Run(ctx context.Context) error {
 		}
 	}
 	defer stopAudioTTL()
+	// One timer serves every holder: it is armed at the earliest expiry
+	// and re-armed after each holder change or expiry.
+	rearmAudioTTL := func(now time.Time) {
+		stopAudioTTL()
+		if next := s.nextHolderExpiry(); !next.IsZero() {
+			audioTTLTimer = time.NewTimer(max(next.Sub(now), 0))
+			audioTTLC = audioTTLTimer.C
+		}
+	}
+	// releaseAudio runs when the last holder goes: close the audio stream
+	// and hand the session to the idle clock.
+	releaseAudio := func() {
+		s.mu.Lock()
+		c := s.client
+		s.mu.Unlock()
+		if c != nil {
+			c.CloseAudio()
+		}
+		if s.live() {
+			stopIdle()
+			idleTimer = time.NewTimer(s.opts.IdleTimeout)
+			idleC = idleTimer.C
+		}
+	}
 
 	s.setState(StateIdle, "")
 
@@ -397,56 +555,43 @@ func (s *Session) Run(ctx context.Context) error {
 			s.ensureAudio()
 
 		case ar := <-s.audioCh:
-			s.mu.Lock()
-			s.audioDemand = ar.on
-			s.snap.AudioDemand = ar.on
-			s.mu.Unlock()
+			now := time.Now()
+			if err := s.applyAudioReq(ar, now); err != nil {
+				ar.err <- err
+				continue
+			}
 			s.notify()
 			ar.err <- nil
-			if ar.on {
-				// The audio demand holds the session open; audio_on is
-				// heartbeat-refreshed by the consumer and expires via the
-				// TTL — a dead consumer never pins the radio (KTD-2).
+			rearmAudioTTL(now)
+			if s.audioDemanded() {
+				// Any live holder holds the session open; each holder's
+				// audio_on is heartbeat-refreshed by its consumer and
+				// expires via its own TTL — a dead consumer never pins the
+				// radio (KTD-2).
 				stopIdle()
-				stopAudioTTL()
-				audioTTLTimer = time.NewTimer(s.opts.AudioDemandTTL)
-				audioTTLC = audioTTLTimer.C
 				if s.live() {
 					s.ensureAudio()
 				}
 			} else {
-				stopAudioTTL()
-				if s.live() {
-					s.mu.Lock()
-					c := s.client
-					s.mu.Unlock()
-					if c != nil {
-						c.CloseAudio()
-					}
-				}
-				if s.live() {
-					stopIdle()
-					idleTimer = time.NewTimer(s.opts.IdleTimeout)
-					idleC = idleTimer.C
-				}
+				// The last holder released (or an audio_off with no hold).
+				releaseAudio()
 			}
 
 		case <-audioTTLC:
-			// Audio demand expired without a refreshing audio_on: close
-			// the audio stream and release the session to the idle clock.
+			// A holder's demand expired without a refreshing audio_on: drop
+			// it; once none is left, close the audio stream and release
+			// the session to the idle clock.
+			audioTTLTimer, audioTTLC = nil, nil
+			now := time.Now()
 			s.mu.Lock()
-			s.audioDemand = false
-			s.snap.AudioDemand = false
-			c := s.client
+			expired := s.expireHoldersLocked(now)
 			s.mu.Unlock()
-			s.notify()
-			if c != nil {
-				c.CloseAudio()
-			}
-			if s.live() {
-				stopIdle()
-				idleTimer = time.NewTimer(s.opts.IdleTimeout)
-				idleC = idleTimer.C
+			rearmAudioTTL(now)
+			if expired > 0 {
+				s.notify()
+				if !s.audioDemanded() {
+					releaseAudio()
+				}
 			}
 
 		case <-idleC:

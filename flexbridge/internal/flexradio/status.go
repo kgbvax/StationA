@@ -178,6 +178,7 @@ func tokenizeQuoted(s string) []string {
 type SliceStatus struct {
 	Index      int    // first topic arg (slice list index)
 	RcvrIndex  int    // second topic arg (receiver/panadapter index, may be absent)
+	Letter     string // index_letter=<A|B|...> — the slice letter SmartSDR shows (CAT's VFO A/B); "" if never reported
 	PanHandle  string // pan=<handle> the slice is on (hex pan stream id, e.g. "0x40000000"); "" if absent
 	FreqHz     int64  // frequency in Hz (parsed from RF_frequency in MHz or freq)
 	Mode       string // USB, LSB, CW, ...
@@ -227,6 +228,12 @@ func ParseSlice(topicArgs, fieldsStr string, prev ...SliceStatus) (SliceStatus, 
 	// the single/lowest tracked pan when PanHandle is empty (single-pan station).
 	if v, ok := f["pan"]; ok {
 		s.PanHandle = v
+	}
+	// Slice letter (A, B, …): what SmartSDR labels the slice and what CAT maps
+	// VFO A/B to. The bridge's split detection takes slice A as the RX
+	// reference (bridge.resolveRxSlice).
+	if v, ok := f["index_letter"]; ok {
+		s.Letter = strings.ToUpper(strings.TrimSpace(v))
 	}
 	// Frequency: prefer RF_frequency (MHz float); fall back to legacy freq.
 	// SmartSDR sends incremental slice updates — only changed fields appear —

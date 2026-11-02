@@ -64,12 +64,13 @@ deterministic mapper (~5 type branches) from neutral primitives to HA components
 | neutral field | → HA component | notes |
 |---|---|---|
 | `number`, not `writable` | `sensor` | `state_topic=<addr>/state`, `value_template={{ value_json.<key> }}`, unit→`device_class`, `state_class` carried through |
-| `number`, `writable` | `number` | + `command_topic=<addr>/cmd`, `command_template` from `command`, `min`/`max`/`step`, `mode: box`, **retained** (model §8 exception: keeps the retained `/cmd` tracking the latest operator intent — steady-state slots re-apply it on their own reconnect; one-shot slots clear it after execution (§8 rule 1), so a retained HA write cannot re-fire) |
+| `number`, `writable` | `number` | + `command_topic=<addr>/cmd`, `command_template` from `command`, `min`/`max`/`step`, `mode: box`, **retained** (model §8 exception: keeps the retained `/cmd` tracking the latest operator intent — steady-state slots re-apply it on their own reconnect; one-shot consumers clear it after execution or drop retained `/cmd` deliveries (§8 rule 1: ultrabridge clears; acombridge, flexbridge, wrc-rotator-bridge drop), so a retained HA write cannot re-fire) |
 | `enum`, not `writable` | `sensor` | `value_template` (options are informational; not emitted on a sensor) |
 | `enum`, `writable` | `select` | + `command_topic`, `options` (resolve `options_ref` against `capabilities`, else inline `options`), `command_template` from `command`, **retained** (same rationale as the writable number). **Skipped** if `writable` but no `command`. |
 | `boolean` | `binary_sensor` | see §2.3 |
 | `string` | `sensor` | `value_template` only; no unit/class |
-| `action` (in `actions[]`) | `button` | `command_topic`, `payload_press` = static JSON of `command` |
+| `action` (in `actions[]`), action-only `command` | `button` | `command_topic`, `payload_press` = static JSON of `command`, no `entity_category` (buttons are primary controls) |
+| `action` with a `value_key` | one `button` per option | options from inline `options`, else `options_ref` into `capabilities`; object id `<key>_<option>`, name `<name> <option>`, `payload_press` carries that option as the value (e.g. tuner `tune_mem` → `{"action":"tune","value":"mem"}`). **Skipped** if no option resolves: an empty value is never sent. |
 
 **Normalization:** a HA `number`/`select` both reads state from `state_topic` **and**
 commands via `command_topic`, so a slot does **not** need separate read/write entities.
@@ -84,6 +85,11 @@ Every entity hadiscovery renders gets, from the slot context (not from `expose`)
 - `state_topic` = `<addr>/state` (for state-reading components)
 - `command_topic` = `<addr>/cmd` (for writable components / buttons)
 - `availability` = `[{ "topic": "<addr>/status", "payload_available": "online", "payload_not_available": "offline" }]`
+- plus, when the slot exposes a boolean `device_online` field, a second entry
+  `{ "topic": "<addr>/state", "value_template": "{{ 'online' if value_json.device_online | default(false) else 'offline' }}", … }`,
+  so HA follows the station's two-layer liveness (bridge LWT **and** device link). The
+  `device_online` entity itself keeps the `/status` entry only, so it reads `off` (not
+  unavailable) while the device is down. Logic slots without `device_online` keep `/status` only.
 - `availability_mode` = `"all"`
 - `unique_id` = `<nodeID>_<objectID>`, where `nodeID = sanitize("<site>-<station>-<slot>")` (e.g. `muehle-hf-radio`) and `objectID = sanitize(field.key)`
 - `device` block (see §2.4)
@@ -133,6 +139,7 @@ hadiscovery owns the only structured→template step:
 | `action` + `value_key` | `{"action":"<action>","<value_key>":<placeholder>}` |
 | `value_key` only | `{"<value_key>":<placeholder>}` |
 | `action` only (button) | `{"action":"<action>"}` |
+| `action` + `value_key` (button per option) | `{"action":"<action>","<value_key>":<option>}` — option as a JSON string, or unquoted when `value_type` is `int`/`float`/`bool` and it parses |
 
 `value_type` → placeholder (Jinja coercion of the user-supplied value):
 
@@ -151,15 +158,22 @@ Examples:
 
 ### 2.6 unit → device_class
 
-A field's explicit `class` (a generic semantic hint) wins; otherwise the unit is mapped:
+A field's explicit `class` (a generic station semantic hint) is tried first, then the
+unit-derived class below. Either is emitted **only** if it is on hadiscovery's allow-list
+of HA device classes for that component (`sensorDeviceClasses` / `numberDeviceClasses` in
+`internal/ha/render.go`) **and** the field's unit is one HA accepts for it; otherwise no
+`device_class` is emitted and the unit is kept. HA rejects the entire discovery config on
+an unknown `device_class` or a mismatched unit, so a station hint such as `azimuth` or
+`swr` (not HA classes) must never pass through — it used to, and HA dropped the rotator
+azimuth, target azimuth, UHF azimuth and tuner SWR entities.
 
 | unit | HA `device_class` |
 |---|---|
 | `Hz` | `frequency` |
-| `°C`, `degC` | `temperature` |
-| `W`, `Watts` | `power` |
-| `V`, `Volts` | `voltage` |
-| `A`, `Amps` | `current` |
+| `°C` | `temperature` |
+| `W` | `power` |
+| `V` | `voltage` |
+| `A` | `current` |
 | `dBm` | `signal_strength` |
 | (other / none) | *(omitted)* |
 
@@ -215,6 +229,19 @@ restart; ubctrl did). A single central consumer makes rebirth uniform across all
   remaining ones re-published.
 - **Idempotent:** a byte-identical re-delivery of a retained `/meta` is a **no-op**
   (no churn on the bus). hadiscovery stores the rendered entity set per slot and compares.
+- **Sync pass on every connect:** the in-memory entity map starts empty on each start, so
+  it alone cannot see configs an earlier process published. On every (re)connect
+  hadiscovery also subscribes `<discovery_prefix>/+/+/+/config` (only node ids starting
+  `<site>-` are considered) and records each retained config whose `origin.name` is
+  `hadiscovery`. About 15 s after subscribing (the broker's retained replay has been
+  handled by then) it sweeps: slots it knew whose `/meta` the broker no longer carries
+  lose their discovery, and every recorded hadiscovery config that no current `/meta`
+  renders is cleared (empty retained). Configs from other publishers (zigbee2mqtt, legacy
+  embedded bridge discovery) are never touched. One hadiscovery per site prefix is assumed.
+- **Logging:** every publish that changes a slot logs `discovery published`/`discovery
+  updated` (slot, entities, cleared); each sweep logs `discovery in sync` (slots, entities,
+  slots_removed, orphans_cleared) and one line per orphan cleared. A byte-identical
+  re-delivery logs nothing.
 - **No expose block:** a slot that publishes `/meta` without `expose` gets a single
   `binary_sensor` diagnostic entity (object id `online`) reading `<addr>/status`, tagged
   `entity_category: diagnostic`, so it is at least visible in HA as a liveness device.

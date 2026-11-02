@@ -9,7 +9,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -70,7 +69,7 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	if err := run(ctx, cfg, log); err != nil && !errors.Is(err, context.Canceled) {
+	if err := run(ctx, cfg, log); err != nil && !logging.CleanStop(ctx, err) {
 		log.Error("exited", "err", err)
 		os.Exit(1)
 	}

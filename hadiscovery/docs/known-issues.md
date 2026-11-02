@@ -6,9 +6,10 @@ A bridge that publishes a `class` HA does not recognize yields an invalid discov
 payload. The neutral/HA boundary is only convention here — nothing validates the neutral
 `class` string against HA's vocabulary. (PRD §9.4.)
 
-Verbatim code-check: **still open.** `hadiscovery/internal/ha/render.go` —
-`deviceClassFor` returns `f.Class` verbatim when set (line ~344), no validation against
-HA's `device_class` vocabulary anywhere.
+**Fixed 2026-10-25:** `deviceClassFor` validates the class (and the unit) against a
+per-component allow-list and emits no `device_class` otherwise (`TestDeviceClassAllowList`).
+Live impact before the fix: HA rejected the HF rotator azimuth number, target azimuth,
+UHF azimuth and tuner SWR configs (station hints `azimuth`, `swr`).
 
 ## [defect] `sanitize` is lowercase-only (case-collision)
 Two distinct keys that differ only by case collide into the same HA object id (`Freq` and

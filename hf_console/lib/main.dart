@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'store/bus_store.dart';
 import 'store/credential_store.dart';
+import 'store/dvk_auto_repeat.dart';
 import 'mqtt/mqtt_service.dart';
 import 'dxspot/dxspot_service.dart';
 import 'vhfcam/vhfcam_service.dart';
@@ -49,6 +50,7 @@ class _AppRootState extends State<_AppRoot> with WidgetsBindingObserver {
   final _storage = CredentialStore();
   final _store = BusStore();
   late final MqttService _mqtt;
+  late final DvkAutoRepeat _dvkAuto;
   final _dxSpot = DxSpotService();
   final _vhfcam = VhfcamService();
   bool _ready = false;
@@ -61,6 +63,9 @@ class _AppRootState extends State<_AppRoot> with WidgetsBindingObserver {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _mqtt = MqttService(_store);
+    // Owned here, not by DvkPanel: a running auto-repeat loop must survive the
+    // panel being rebuilt on a phone <-> tablet layout switch.
+    _dvkAuto = DvkAutoRepeat(_store, _mqtt);
     _store.addListener(_onBusStoreUpdate);
     _enforceFullScreen();
     _tryAutoConnect();
@@ -152,6 +157,7 @@ class _AppRootState extends State<_AppRoot> with WidgetsBindingObserver {
     _store.removeListener(_onBusStoreUpdate);
     _dxSpot.dispose();
     _vhfcam.dispose();
+    _dvkAuto.dispose();
     _mqtt.dispose();
     super.dispose();
   }
@@ -163,6 +169,7 @@ class _AppRootState extends State<_AppRoot> with WidgetsBindingObserver {
         ChangeNotifierProvider<BusStore>.value(value: _store),
         ChangeNotifierProvider<DxSpotService>.value(value: _dxSpot),
         ChangeNotifierProvider<VhfcamService>.value(value: _vhfcam),
+        ChangeNotifierProvider<DvkAutoRepeat>.value(value: _dvkAuto),
         Provider<MqttService>.value(value: _mqtt),
       ],
       child: ValueListenableBuilder<AppColorScheme>(

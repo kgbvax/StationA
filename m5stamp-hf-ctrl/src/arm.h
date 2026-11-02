@@ -60,6 +60,7 @@ struct Radio {
     bool rx = false;             // tx == "rx"; anything else ⇒ not RX
     uint32_t freqHz = 0;
     String band = "";            // derived from freqHz (flexbridge hysteresis), "" = none
+    bool crossBand = false;      // /state.cross_band: split with VFO A on another band (missing ⇒ false)
     // Heartbeat: refreshed only by a NEW ts that is not the first message after a
     // subscribe — a retained replay (resubscribe, or the .50↔.178 bridge
     // reconnecting) repeats the old ts and must not revive a dead feed.
@@ -143,6 +144,7 @@ inline void invalidate() {
     radio.deviceOnline = false;
     radio.tuning = true;
     radio.rx = false;
+    radio.crossBand = false;
     radio.msgsSinceSub = 0;
     radio.freshValid = false;
     antSw.statusOnline = false;
@@ -229,6 +231,7 @@ inline void onRadioState(const uint8_t* payload, unsigned int len, unsigned long
         filter["tx"] = true;
         filter["freq_hz"] = true;
         filter["ts"] = true;
+        filter["cross_band"] = true;
         init = true;
     }
     JsonDocument doc;
@@ -237,6 +240,8 @@ inline void onRadioState(const uint8_t* payload, unsigned int len, unsigned long
     radio.deviceOnline = doc["device_online"] | false;
     radio.tuning = doc["tuning"] | true;
     radio.rx = strcmp(doc["tx"] | "", "rx") == 0;
+    // Absent on a flexbridge without split reporting ⇒ false (never blocks).
+    radio.crossBand = doc["cross_band"] | false;
     // Any non-RX message restarts the close dwell, even if an "rx" follows in
     // the same loop pass (a QSK/VOX gap must never complete the dwell).
     if (!radio.rx) closeOkValid = false;
@@ -538,6 +543,12 @@ inline Eval evaluate(unsigned long now) {
 
     // station still following a change
     if (bandEdgeValid && (now - bandEdgeMs) < BAND_CHANGE_HOLDOFF_MS) ready("band change settling", false);
+#if SPLIT_CROSS_BAND_GATE
+    // Opt-in (config.h): VFO A on another band than the TX slice. Readiness,
+    // not hazard — the chain is tuned for the TX band, RF is safe; it only
+    // keeps the PA from arming for an over the operator probably did not mean.
+    if (radio.statusOnline && radio.deviceOnline && radio.crossBand) ready("split cross-band", false);
+#endif
     if (antSel.statusOnline && antSel.target.length() > 0 && antSw.stateSeen &&
         antSel.target != antSw.selected) {
         ready("antenna not converged", false);

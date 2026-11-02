@@ -230,6 +230,13 @@ hardware key line).
 | ATU tune | hazard | `hf/tuner/status` + `/state.settling` | tuner live and settling (an offline tuner does not block) | `tuner tuning` |
 | band change | readiness | radio band edge | 3 s after the radio moves to a different ham band | `band change settling` |
 | converged | readiness | `hf/antenna-select/status` + `/state.target` | reconciler online, target set and ≠ `ant-switch.selected` (a port move is pending; empty target = manual mode, no opinion) | `antenna not converged` |
+| split cross-band† | readiness | `hf/radio/state.cross_band` | radio live and flexbridge reports a split with slice A (VFO A) on another band than the TX slice (missing field ⇒ false) | `split cross-band` |
+
+† **Compile-time opt-in, off in the deployed build** (`SPLIT_CROSS_BAND_GATE 0` in
+`config.h`). The antenna chain follows the TX slice, so RF is not at risk; cross-band
+is legal and has legitimate uses (60 m cross-band DX, a second slice for monitoring),
+so the station only warns (hf_console banner). Build with the flag at 1 for contest
+operation, where a cross-band QSO is always an error.
 
 \* Ultrabeam gates apply only while `ant-switch.selected == ULTRABEAM_PORT`
 (`port4`, `config.h`; the station docs still say port 3 — known issue O14).

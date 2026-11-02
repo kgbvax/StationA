@@ -387,3 +387,72 @@ func TestParkConfigValidation(t *testing.T) {
 		}
 	}
 }
+
+// audio.publish_addr takes the original single-string form (the deployed
+// shari config) or an array of targets (2026-10: vhfcam + bmrec).
+func TestAudioPublishAddrForms(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		toml string
+		want []string
+	}{
+		{"absent", "", nil},
+		{"empty string", `publish_addr = ""`, nil},
+		{"single string", `publish_addr = "192.168.1.178:45031"`, []string{"192.168.1.178:45031"}},
+		{"array", `publish_addr = ["192.168.1.178:45031", "192.168.1.178:45032"]`,
+			[]string{"192.168.1.178:45031", "192.168.1.178:45032"}},
+		{"empty array", `publish_addr = []`, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "c.toml")
+			if err := os.WriteFile(path, []byte("[audio]\n"+tc.toml+"\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := loadFile(t, path)
+			if err != nil {
+				t.Fatalf("load: %v", err)
+			}
+			if got := []string(cfg.Audio.PublishAddr); strings.Join(got, "|") != strings.Join(tc.want, "|") {
+				t.Errorf("publish_addr = %q, want %q", got, tc.want)
+			}
+			if err := cfg.Validate(); err != nil {
+				t.Errorf("validate: %v", err)
+			}
+		})
+	}
+}
+
+func TestAudioPublishAddrWrongTypeRejected(t *testing.T) {
+	for _, bad := range []string{`publish_addr = 45031`, `publish_addr = ["h:1", 2]`} {
+		path := filepath.Join(t.TempDir(), "c.toml")
+		if err := os.WriteFile(path, []byte("[audio]\n"+bad+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := loadFile(t, path); err == nil {
+			t.Errorf("%s: load must fail", bad)
+		}
+	}
+}
+
+// Every publish target is validated at startup, not just the first.
+func TestValidateAudioPublishAddrs(t *testing.T) {
+	cfg := Defaults()
+	cfg.Audio.PublishAddr = AddrList{"192.168.1.178:45031", "scmino.local:45032", "[::1]:45033"}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("valid targets rejected: %v", err)
+	}
+	for _, bad := range []AddrList{
+		{"192.168.1.178:45031", ""},
+		{"192.168.1.178:45031", "192.168.1.178"},
+		{"192.168.1.178:45031", ":45032"},
+		{"192.168.1.178:45031", "192.168.1.178:0"},
+		{"192.168.1.178:45031", "192.168.1.178:70000"},
+		{"192.168.1.178:45031", "192.168.1.178:audio"},
+		{"192.168.1.178:45031", "192.168.1.178:45031"},
+	} {
+		cfg.Audio.PublishAddr = bad
+		if cfg.Validate() == nil {
+			t.Errorf("publish_addr %q must be rejected", bad)
+		}
+	}
+}

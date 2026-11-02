@@ -422,8 +422,8 @@ func TestBridge_MetaTopic(t *testing.T) {
 		t.Fatalf("meta missing expose block; got %v", meta["expose"])
 	}
 	fields, _ := expose["fields"].([]any)
-	if len(fields) != 10 {
-		t.Errorf("expose.fields len = %d, want 10 (device_online,freq_hz,band,mode,drive,tx,tuning,dvk_status,dvk_id,mic_profile)", len(fields))
+	if len(fields) != 14 {
+		t.Errorf("expose.fields len = %d, want 14 (device_online,freq_hz,band,mode,drive,tx,tuning,dvk_status,dvk_id,mic_profile,split,rx_freq_hz,rx_band,cross_band)", len(fields))
 	}
 	// Radio tuning state is read-only except band and mic_profile, which are
 	// writable setpoints (set_band → native band-stacking; set_mic_profile →

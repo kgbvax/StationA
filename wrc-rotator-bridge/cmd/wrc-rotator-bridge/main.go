@@ -9,7 +9,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -57,7 +56,7 @@ func main() {
 	if err := run(ctx, cfg, flags.Debug, logger); err != nil {
 		// A SIGTERM/SIGINT cancels the root context; that's a clean shutdown,
 		// not a failure — exit 0 so `systemctl stop` doesn't report FAILURE.
-		if errors.Is(err, context.Canceled) {
+		if logging.CleanStop(ctx, err) {
 			logger.Info("wrc-rotator-bridge stopped")
 			return
 		}
@@ -274,6 +273,16 @@ func connectMQTT(ctx context.Context, cfg config.Config, log *slog.Logger) (paho
 		}
 		// /cmd is not retained; resubscribe on every reconnect.
 		if tok := c.Subscribe(cmd, 1, func(_ pahomqtt.Client, m pahomqtt.Message) {
+			// A retained delivery is a replay of an old intent (e.g. a HA az
+			// write, which hadiscovery publishes retained): drop it so a
+			// reconnect never turns the rotator unattended (model §8 rule 1).
+			// Live publishes always arrive unretained.
+			if m.Retained() {
+				if len(m.Payload()) > 0 {
+					log.Warn("ignoring retained /cmd (stale intent; /cmd is one-shot)", "topic", m.Topic())
+				}
+				return
+			}
 			// Runs in paho's goroutine; cmdHandler only enqueues for the /cmd
 			// worker, which reaches the WRC through the lock gate.
 			cmdHandler(m.Payload())

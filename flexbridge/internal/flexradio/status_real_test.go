@@ -132,6 +132,28 @@ func TestParseMeterListReply_EmptyOrMalformed(t *testing.T) {
 	}
 }
 
+func TestParseSlice_IndexLetter(t *testing.T) {
+	// SmartSDR letters its slices (index_letter=A/B/…); CAT maps VFO A/B to
+	// them, so the bridge's split detection keys on the letter, not the index.
+	s, err := ParseSlice("1", "RF_frequency=14.105000 mode=USB active=0 tx=1 index_letter=B")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Letter != "B" {
+		t.Errorf("Letter = %q, want B", s.Letter)
+	}
+	// Partial update without the field keeps the letter.
+	cur, _ := ParseSlice("1", "RF_frequency=14.110000", s)
+	if cur.Letter != "B" {
+		t.Errorf("Letter after partial update = %q, want B", cur.Letter)
+	}
+	// Never reported: empty (the bridge falls back to the lowest index).
+	n, _ := ParseSlice("0", "RF_frequency=14.100000 mode=USB active=1")
+	if n.Letter != "" {
+		t.Errorf("Letter = %q, want empty", n.Letter)
+	}
+}
+
 func TestParseSlice_PartialUpdatePreservesActive(t *testing.T) {
 	// SmartSDR sends partial updates: only changed fields are included.
 	// A frequency-only update must not clobber Active=true from the previous state.

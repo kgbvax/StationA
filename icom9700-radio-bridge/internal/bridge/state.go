@@ -1,6 +1,7 @@
 package bridge
 
 import (
+	"strings"
 	"time"
 
 	"icom9700-radio-bridge/internal/radio"
@@ -10,13 +11,14 @@ import (
 // serialized form. ts is stamped at publish time. The radio telemetry is
 // the serial monitor's snapshot, folded in at assembly time.
 type snap struct {
-	session     string
-	audioDemand bool
-	monitor     bool
-	err         string
-	radio       RadioState
-	responding  bool // only meaningful (and published) while monitor is on
-	hasRadio    bool // any telemetry observed since monitor on
+	session      string
+	audioDemand  bool
+	audioHolders string // live holders, sorted, comma-joined (keeps snap comparable)
+	monitor      bool
+	err          string
+	radio        RadioState
+	responding   bool // only meaningful (and published) while monitor is on
+	hasRadio     bool // any telemetry observed since monitor on
 }
 
 // snapshot builds the comparable /state snapshot from the manager's
@@ -32,10 +34,11 @@ func (b *Bridge) snapshot() snap {
 		err = b.cmdErr
 	}
 	sn := snap{
-		session:     ss.SessionState,
-		audioDemand: ss.AudioDemand,
-		monitor:     b.monitorOn,
-		err:         err,
+		session:      ss.SessionState,
+		audioDemand:  ss.AudioDemand,
+		audioHolders: strings.Join(ss.AudioHolders, ","),
+		monitor:      b.monitorOn,
+		err:          err,
 	}
 	if b.opts.Monitor != nil && b.monitorOn {
 		sn.radio = b.opts.Monitor.Snapshot()
@@ -83,10 +86,15 @@ func (b *Bridge) resetDedup() {
 // (session_state == live; healthy idle reads false, R16).
 func (b *Bridge) statePayload(sn snap) map[string]any {
 	live := sn.session == radio.StateLive
+	holders := []string{} // [] not null when none
+	if sn.audioHolders != "" {
+		holders = strings.Split(sn.audioHolders, ",")
+	}
 	p := map[string]any{
 		"ts":            time.Now().UTC().Format(time.RFC3339),
 		"session_state": sn.session,
 		"audio_demand":  sn.audioDemand,
+		"audio_holders": holders,
 		"monitor":       sn.monitor,
 		"device_online": live,
 	}

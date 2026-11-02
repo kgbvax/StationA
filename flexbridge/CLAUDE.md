@@ -113,7 +113,17 @@ The `site`, `station`, and `slot` values are configurable via `config.toml`.
 `ts`, `freq_hz` (Hz integer), `band` (derived), `mode` (canonical: `cw`/`usb`/`lsb`/`am`/`fm`/`data`),
 `tx` (`rx`/`tx`), `tuning` (bool), `drive` (0–100), `device_online` (radio link liveness),
 `dvk_status` (`idle`/`recording`/`preview`/`playback`/`disabled`), `dvk_id` (active DVK memory 1–12), `dvk_memories` (`[{id,name,duration_ms}]`, slot names from SmartSDR),
-`mic_profile` (active mic profile name), `mic_profiles` (available mic profile names, sorted).
+`mic_profile` (active mic profile name), `mic_profiles` (available mic profile names, sorted),
+`split` (the TX slice is not slice A), `rx_freq_hz` + `rx_band` (slice A while split, omitted
+otherwise), `cross_band` (split with slice A on another ham band than the TX slice).
+
+**Split.** `/state` always follows the TX slice (that is where RF goes and what antenna-select,
+ultrabridge and the pa-arm tune for). Slice A — `index_letter=A`, what SmartSDR CAT and so the
+logger call VFO A — is published alongside as the RX side while another slice holds `tx=1`
+(`resolveRxSlice`; lowest index when no letter has been seen). `cross_band` is the operator-intent
+warning (spot click retuned VFO A, VFO B still transmitting on the old band); `gen`/`unknown`
+never count as a mismatch. One Warn per edge. Consumers warn, they do not block: cross-band is
+legal and has legitimate uses (`../docs/known-issues.md`, "Split cross-band").
 
 **flexbridge is read-only except for band changes, slice mode, DVK, and mic profiles.** `/cmd` carries
 one-shot intent only (not retained — a stale command must not re-fire on restart):

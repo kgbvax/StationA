@@ -50,6 +50,9 @@ func main() {
 
 	client, seq, err := mqtt.New(ctx, cfg, logger)
 	if err != nil {
+		if ctx.Err() != nil {
+			return // shut down while connecting
+		}
 		logger.Error("powerseq: mqtt init failed", "err", err)
 		os.Exit(1)
 	}

@@ -11,6 +11,8 @@ package ha
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
+	"strconv"
 	"strings"
 
 	"hadiscovery/internal/expose"
@@ -30,12 +32,19 @@ type Entity struct {
 }
 
 // availability is one entry in the HA availability list. Every entity of a slot shares the
-// slot's own /status LWT as its availability topic.
+// slot's own /status LWT as its availability topic; a device-backed slot (one that exposes
+// a boolean device_online field) adds its /state device_online as a second entry, so HA
+// follows the station's two-layer liveness rule (bridge up AND device link up).
 type availability struct {
 	Topic               string `json:"topic"`
 	PayloadAvailable    string `json:"payload_available"`
 	PayloadNotAvailable string `json:"payload_not_available"`
+	ValueTemplate       string `json:"value_template,omitempty"`
 }
+
+// deviceOnlineKey is the /state field that carries the device-link layer of the station's
+// two-layer liveness (integration model: /status = bridge LWT, device_online = device link).
+const deviceOnlineKey = "device_online"
 
 type devicePayload struct {
 	Identifiers   []string `json:"identifiers"`
@@ -90,17 +99,32 @@ func Render(prefix, area string, m expose.SlotMeta) []Entity {
 	}
 	nodeID := NodeID(m)
 	dev := deviceBlock(m, nodeID, area)
-	avail := []availability{{
+	stateTopic := m.Addr + "/state"
+	cmdTopic := m.Addr + "/cmd"
+	bridgeAvail := []availability{{
 		Topic:               m.Addr + "/status",
 		PayloadAvailable:    "online",
 		PayloadNotAvailable: "offline",
 	}}
-	stateTopic := m.Addr + "/state"
-	cmdTopic := m.Addr + "/cmd"
+	avail := bridgeAvail
+	if exposesDeviceOnline(m.Expose) {
+		avail = append(append([]availability(nil), bridgeAvail...), availability{
+			Topic:               stateTopic,
+			PayloadAvailable:    "online",
+			PayloadNotAvailable: "offline",
+			ValueTemplate:       "{{ 'online' if value_json." + deviceOnlineKey + " | default(false) else 'offline' }}",
+		})
+	}
 
 	var ents []Entity
 	for _, f := range m.Expose.Fields {
-		comp, p := fieldEntity(f, stateTopic, cmdTopic, nodeID, m.Capabilities, dev, avail)
+		// The device_online entity itself follows only the bridge layer: gating it on
+		// device_online would make it go unavailable exactly when it should read "off".
+		fa := avail
+		if f.Key == deviceOnlineKey {
+			fa = bridgeAvail
+		}
+		comp, p := fieldEntity(f, stateTopic, cmdTopic, nodeID, m.Capabilities, dev, fa)
 		if comp == "" {
 			continue
 		}
@@ -112,18 +136,27 @@ func Render(prefix, area string, m expose.SlotMeta) []Entity {
 		})
 	}
 	for _, a := range m.Expose.Actions {
-		p := actionEntity(a, cmdTopic, nodeID, dev, avail)
-		if p == nil {
-			continue
+		for _, b := range actionButtons(a, m.Capabilities) {
+			oid := sanitize(b.key)
+			ents = append(ents, Entity{
+				Component: "button",
+				ObjectID:  oid,
+				Topic:     ConfigTopic(prefix, "button", nodeID, oid),
+				Payload:   buttonPayload(b, cmdTopic, nodeID, dev, avail),
+			})
 		}
-		ents = append(ents, Entity{
-			Component: "button",
-			ObjectID:  sanitize(a.Key),
-			Topic:     ConfigTopic(prefix, "button", nodeID, sanitize(a.Key)),
-			Payload:   p,
-		})
 	}
 	return ents
+}
+
+// exposesDeviceOnline reports whether the slot declares the device-link liveness field.
+func exposesDeviceOnline(ex *expose.Expose) bool {
+	for _, f := range ex.Fields {
+		if f.Key == deviceOnlineKey && f.Type == "boolean" {
+			return true
+		}
+	}
+	return false
 }
 
 // fieldEntity renders one expose field to (HA component, payload JSON). Returns "" component
@@ -145,7 +178,11 @@ func fieldEntity(f expose.Field, stateTopic, cmdTopic, nodeID string, caps map[s
 	switch f.Type {
 	case "number":
 		base.UnitOfMeasurement = f.Unit
-		base.DeviceClass = deviceClassFor(f)
+		if f.Writable {
+			base.DeviceClass = deviceClassFor(f, numberDeviceClasses)
+		} else {
+			base.DeviceClass = deviceClassFor(f, sensorDeviceClasses)
+		}
 		if f.Writable {
 			if !writableCommandValid(f.Command) {
 				return "", nil
@@ -161,11 +198,11 @@ func fieldEntity(f expose.Field, stateTopic, cmdTopic, nodeID string, caps map[s
 			// steady-state slot (power, switch, pa-arm) the retained value is what the
 			// target re-applies on its own reconnect — a non-retained HA write would
 			// desync it (powerseq retains "off" at shutdown, the operator switches on via
-			// HA, a bridge restart replays "off" and cuts the rail). For a one-shot slot
-			// (ant-ctrl) the consumer now clears the topic after every execution (model
-			// §8 rule 1), so a retained HA write executes exactly once and cannot
-			// re-fire. Retaining here is safe in both regimes; NOT retaining it is safe
-			// in neither.
+			// HA, a bridge restart replays "off" and cuts the rail). A one-shot consumer
+			// must not re-execute a retained replay (model §8 rule 1): it either clears
+			// the topic after executing (ultrabridge) or drops m.Retained() deliveries
+			// (acombridge, flexbridge, wrc-rotator-bridge). Retaining here is safe only
+			// because every one-shot consumer does one of the two.
 			// A writable number reads its current value from the same state field.
 			base.Retain = true
 			return "number", marshal(base)
@@ -223,25 +260,80 @@ func fieldEntity(f expose.Field, stateTopic, cmdTopic, nodeID string, caps map[s
 	return "", nil
 }
 
-// actionEntity renders a one-shot button. Actions require a command with a non-empty
-// action name (buttons are action-only).
-func actionEntity(a expose.Action, cmdTopic, nodeID string, dev devicePayload, avail []availability) []byte {
-	if a.Command == nil || a.Command.Action == "" {
+// button is one rendered press target: its object key, display name and static payload.
+type button struct {
+	key, name, payload string
+}
+
+// actionButtons expands one expose action into HA buttons. Actions require a command with a
+// non-empty action name. An action-only command is one button. An action whose command
+// carries a value_key gets one button per option (inline options, else options_ref into
+// capabilities), keyed "<key>_<option>" — a HA button sends a fixed payload, so the argument
+// must be fixed per button. An action with a value_key but no resolvable options renders
+// nothing: an empty argument is never a valid command (the tuner rejects tune "").
+func actionButtons(a expose.Action, caps map[string]any) []button {
+	c := a.Command
+	if c == nil || c.Action == "" {
 		return nil
 	}
-	oid := sanitize(a.Key)
-	p := discoveryPayload{
+	if c.ValueKey == "" {
+		return []button{{key: a.Key, name: a.Name, payload: fmt.Sprintf(`{"action":%s}`, jsonString(c.Action))}}
+	}
+	opts := a.Options
+	if len(opts) == 0 && a.OptionsRef != "" {
+		opts = expose.CapStringList(caps, a.OptionsRef)
+	}
+	out := make([]button, 0, len(opts))
+	for _, o := range opts {
+		out = append(out, button{
+			key:     a.Key + "_" + o,
+			name:    a.Name + " " + o,
+			payload: fmt.Sprintf(`{"action":%s,%s:%s}`, jsonString(c.Action), jsonString(c.ValueKey), literalValue(o, c.ValueType)),
+		})
+	}
+	return out
+}
+
+// buttonPayload renders one button's discovery config. Buttons carry no entity_category:
+// they are the slot's primary controls (DVK, rotate, retract, tune), and HA hides
+// categorised entities from its auto-generated dashboard.
+func buttonPayload(b button, cmdTopic, nodeID string, dev devicePayload, avail []availability) []byte {
+	oid := sanitize(b.key)
+	return marshal(discoveryPayload{
 		UniqueID:         nodeID + "_" + oid,
-		Name:             a.Name,
+		Name:             b.name,
 		CommandTopic:     cmdTopic,
-		PayloadPress:     commandPayload(a.Command),
-		EntityCategory:   "config",
+		PayloadPress:     b.payload,
 		Availability:     avail,
 		AvailabilityMode: "all",
 		Device:           dev,
 		Origin:           originPayload{Name: "hadiscovery", SWVersion: Version},
+	})
+}
+
+// literalValue renders a fixed argument as a JSON literal per value_type: numbers and
+// bools unquoted when they parse, everything else a JSON string.
+func literalValue(v, valueType string) string {
+	switch valueType {
+	case "int":
+		if _, err := strconv.ParseInt(v, 10, 64); err == nil {
+			return v
+		}
+	case "float":
+		if _, err := strconv.ParseFloat(v, 64); err == nil {
+			return v
+		}
+	case "bool":
+		if b, err := strconv.ParseBool(v); err == nil {
+			return strconv.FormatBool(b)
+		}
 	}
-	return marshal(p)
+	return jsonString(v)
+}
+
+func jsonString(s string) string {
+	b, _ := json.Marshal(s)
+	return string(b)
 }
 
 // deviceBlock builds the HA device block for a slot: identifiers are the nodeID (one device
@@ -305,25 +397,6 @@ func commandTemplate(c *expose.Command) string {
 	}
 }
 
-// commandPayload renders a button's command descriptor into the static payload_press JSON
-// (no template — a button sends a fixed payload).
-func commandPayload(c *expose.Command) string {
-	if c == nil {
-		return ""
-	}
-	if c.Action != "" && c.ValueKey == "" {
-		return fmt.Sprintf(`{"action":"%s"}`, c.Action)
-	}
-	if c.Action == "" && c.ValueKey != "" {
-		// A button with a value key is unusual; emit the key with an empty value.
-		return fmt.Sprintf(`{"%s":""}`, c.ValueKey)
-	}
-	if c.Action != "" && c.ValueKey != "" {
-		return fmt.Sprintf(`{"action":"%s","%s":""}`, c.Action, c.ValueKey)
-	}
-	return ""
-}
-
 // valuePlaceholder returns the HA Jinja placeholder for the user-supplied value, coerced per
 // value_type.
 func valuePlaceholder(valueType string) string {
@@ -337,15 +410,64 @@ func valuePlaceholder(valueType string) string {
 	}
 }
 
-// deviceClassFor maps a neutral unit/class to the HA device_class. If the field carries an
-// explicit `class`, that wins (it is already a generic semantic hint the consumer may pass
-// through where HA accepts it); otherwise the unit is mapped via unitToDeviceClass.
-func deviceClassFor(f expose.Field) string {
-	if f.Class != "" {
-		return f.Class
+// deviceClassFor maps a neutral unit/class to the HA device_class for one component. The
+// neutral `class` is a station semantic hint, not HA vocabulary: it is passed through only
+// when HA knows it for that component and the field's unit is one HA accepts for it.
+// Otherwise the unit-derived class is tried the same way, and failing both no device_class
+// is emitted. HA rejects the whole discovery config on an unknown device_class (or a unit
+// that does not fit it), so an unvalidated pass-through loses the entity entirely — the
+// station's `azimuth` and `swr` hints did exactly that.
+func deviceClassFor(f expose.Field, classes map[string][]string) string {
+	for _, dc := range []string{f.Class, unitToDeviceClass(f.Unit)} {
+		if dc == "" {
+			continue
+		}
+		units, ok := classes[dc]
+		if !ok {
+			continue
+		}
+		if len(units) == 0 || slices.Contains(units, f.Unit) {
+			return dc
+		}
 	}
-	return unitToDeviceClass(f.Unit)
+	return ""
 }
+
+// sensorDeviceClasses lists the HA sensor device classes hadiscovery may emit, each with the
+// units HA accepts for it (nil = no unit check). Deliberately a subset of HA's
+// SensorDeviceClass: the classes a station field can plausibly carry. A class not listed
+// here is dropped, never guessed.
+var sensorDeviceClasses = map[string][]string{
+	"frequency":       {"Hz", "kHz", "MHz", "GHz"},
+	"power":           {"mW", "W", "kW", "MW"},
+	"apparent_power":  {"VA"},
+	"voltage":         {"µV", "mV", "V", "kV"},
+	"current":         {"mA", "A"},
+	"temperature":     {"°C", "°F", "K"},
+	"signal_strength": {"dB", "dBm"},
+	"sound_pressure":  {"dB", "dBA"},
+	"distance":        {"mm", "cm", "m", "km", "in", "ft", "yd", "mi", "nmi"},
+	"speed":           {"m/s", "km/h", "mph", "kn", "ft/s"},
+	"wind_speed":      {"m/s", "km/h", "mph", "kn", "ft/s", "Beaufort"},
+	"duration":        {"µs", "ms", "s", "min", "h", "d"},
+	"humidity":        {"%"},
+	"battery":         {"%"},
+	"energy":          {"Wh", "kWh", "MWh"},
+	"data_rate":       {"bit/s", "kbit/s", "Mbit/s", "B/s", "kB/s", "MB/s"},
+	"timestamp":       nil,
+}
+
+// numberDeviceClasses is the subset valid for a HA number (NumberDeviceClass has no
+// timestamp).
+var numberDeviceClasses = func() map[string][]string {
+	m := make(map[string][]string, len(sensorDeviceClasses))
+	for k, v := range sensorDeviceClasses {
+		if k != "timestamp" {
+			m[k] = v
+		}
+	}
+	return m
+}()
 
 // unitToDeviceClass maps a unit string to the HA device_class, where a valid one exists.
 // Mirrors flexbridge/internal/ha/deviceClassFor.

@@ -424,3 +424,141 @@ func TestEntitiesEqual(t *testing.T) {
 		t.Error("equal-content payloads should be equal")
 	}
 }
+
+// cfgPayload is a minimal discovery config as hadiscovery (or another publisher) stamps it.
+func cfgPayload(origin string) []byte {
+	return []byte(`{"unique_id":"x","origin":{"name":"` + origin + `"}}`)
+}
+
+// TestSweepClearsOrphansFromEarlierRun: after a restart the engine learns, from the broker's
+// retained configs, what an earlier process published, and clears what no current /meta
+// renders — removed slots, dropped fields — but never configs of other publishers.
+func TestSweepClearsOrphansFromEarlierRun(t *testing.T) {
+	eng := NewEngine("homeassistant", "")
+	pub := &fakePub{}
+	eng.SetPub(pub)
+
+	gen := eng.BeginSync()
+	payload, topic := metaFor("radio", []expose.Field{{Key: "freq_hz", Type: "number"}})
+	eng.OnMeta(topic, payload)
+	live := "homeassistant/sensor/muehle-hf-radio/freq_hz/config"
+	stale := []string{
+		"homeassistant/select/muehle-power-master/power/config",      // slot gone
+		"homeassistant/binary_sensor/muehle-hf-radio/online/config",  // old diagnostic
+		"homeassistant/sensor/muehle-uhf-radio-bench/freq_hz/config", // slot gone
+	}
+	eng.OnConfig(live, cfgPayload("hadiscovery"))
+	for _, s := range stale {
+		eng.OnConfig(s, cfgPayload("hadiscovery"))
+	}
+	foreign := "homeassistant/sensor/muehle-hf-radio/legacy/config"
+	eng.OnConfig(foreign, cfgPayload("flexbridge"))
+	withdrawn := "homeassistant/sensor/muehle-hf-pa/old/config"
+	eng.OnConfig(withdrawn, cfgPayload("hadiscovery"))
+	eng.OnConfig(withdrawn, nil) // cleared meanwhile (e.g. our own clear's echo)
+
+	pub.calls = nil
+	res, ok := eng.Sweep(gen)
+	if !ok {
+		t.Fatal("sweep for the current generation was ignored")
+	}
+	if res.OrphansCleared != len(stale) || res.Slots != 1 || res.Entities != 1 || res.SlotsRemoved != 0 {
+		t.Errorf("result = %+v", res)
+	}
+	cleared := map[string]bool{}
+	for _, c := range pub.calls {
+		if len(c.payload) != 0 || !c.retained {
+			t.Errorf("sweep publish %s not an empty retained clear", c.topic)
+		}
+		cleared[c.topic] = true
+	}
+	for _, s := range stale {
+		if !cleared[s] {
+			t.Errorf("orphan %s not cleared", s)
+		}
+	}
+	for _, keep := range []string{live, foreign, withdrawn} {
+		if cleared[keep] {
+			t.Errorf("%s must not be cleared", keep)
+		}
+	}
+}
+
+// TestSweepRemovesSlotWhoseMetaVanished: a slot known from before a reconnect whose retained
+// /meta is no longer on the broker (cleared while disconnected) loses its discovery.
+func TestSweepRemovesSlotWhoseMetaVanished(t *testing.T) {
+	eng := NewEngine("homeassistant", "")
+	pub := &fakePub{}
+	eng.SetPub(pub)
+	pRadio, tRadio := metaFor("radio", []expose.Field{{Key: "freq_hz", Type: "number"}})
+	pPa := []byte(`{"schema":"1.0","role":"pa","expose":{"fields":[{"key":"temp_c","name":"T","type":"number"}]}}`)
+	eng.OnMeta(tRadio, pRadio)
+	eng.OnMeta("muehle/hf/pa/meta", pPa)
+
+	// Reconnect: only the radio's /meta is re-delivered.
+	gen := eng.BeginSync()
+	eng.OnMeta(tRadio, pRadio)
+	pub.calls = nil
+	res, _ := eng.Sweep(gen)
+	if res.SlotsRemoved != 1 || res.Slots != 1 {
+		t.Errorf("result = %+v, want pa removed", res)
+	}
+	if len(pub.calls) != 1 || pub.calls[0].topic != "homeassistant/sensor/muehle-hf-pa/temp_c/config" || len(pub.calls[0].payload) != 0 {
+		t.Errorf("calls = %+v, want one clear of the pa config", pub.calls)
+	}
+	if addrs := eng.KnownAddrs(); len(addrs) != 1 || addrs[0] != "muehle/hf/radio" {
+		t.Errorf("known = %v", addrs)
+	}
+}
+
+// failPub fails every publish to topics containing substr.
+type failPub struct {
+	fakePub
+	substr string
+}
+
+func (f *failPub) Publish(topic string, q byte, retained bool, payload []byte) error {
+	if strings.Contains(topic, f.substr) && len(payload) != 0 {
+		return errors.New("boom")
+	}
+	return f.fakePub.Publish(topic, q, retained, payload)
+}
+
+// TestSweepKeepsConfigsOfFailedRender: when a slot's publish fails during the pass its
+// current topics still count as live, so the sweep does not clear valid retained configs.
+func TestSweepKeepsConfigsOfFailedRender(t *testing.T) {
+	eng := NewEngine("homeassistant", "")
+	pub := &failPub{substr: "muehle-hf-radio"}
+	eng.SetPub(pub)
+	gen := eng.BeginSync()
+	payload, topic := metaFor("radio", []expose.Field{{Key: "freq_hz", Type: "number"}})
+	eng.OnMeta(topic, payload)
+	eng.OnConfig("homeassistant/sensor/muehle-hf-radio/freq_hz/config", cfgPayload("hadiscovery"))
+	pub.calls = nil
+	res, _ := eng.Sweep(gen)
+	if res.OrphansCleared != 0 || len(pub.calls) != 0 {
+		t.Errorf("result = %+v calls = %+v, want nothing cleared", res, pub.calls)
+	}
+}
+
+// TestSweepStaleGenerationIgnored: a sweep timer from an earlier connection must not end the
+// pass of a newer one; OnConfig outside a pass is ignored.
+func TestSweepStaleGenerationIgnored(t *testing.T) {
+	eng := NewEngine("homeassistant", "")
+	pub := &fakePub{}
+	eng.SetPub(pub)
+	eng.OnConfig("homeassistant/sensor/muehle-x/y/config", cfgPayload("hadiscovery")) // no pass: ignored
+	old := eng.BeginSync()
+	cur := eng.BeginSync()
+	if _, ok := eng.Sweep(old); ok {
+		t.Error("stale-generation sweep ran")
+	}
+	eng.OnConfig("homeassistant/sensor/muehle-x/y/config", cfgPayload("hadiscovery"))
+	res, ok := eng.Sweep(cur)
+	if !ok || res.OrphansCleared != 1 {
+		t.Errorf("current sweep = %+v %v, want 1 orphan cleared", res, ok)
+	}
+	if _, ok := eng.Sweep(cur); ok {
+		t.Error("second sweep for the same pass ran")
+	}
+}

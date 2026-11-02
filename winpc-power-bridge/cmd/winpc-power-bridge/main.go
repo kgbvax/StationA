@@ -24,6 +24,7 @@ import (
 
 	pahomqtt "github.com/eclipse/paho.mqtt.golang"
 
+	"codeberg.org/kgbvax/stationa/shared/logging"
 	sharedmqtt "codeberg.org/kgbvax/stationa/shared/mqtt"
 	schema "codeberg.org/kgbvax/stationa/shared/schema"
 
@@ -82,7 +83,7 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	if err := run(ctx, cfg, log); err != nil && !errors.Is(err, context.Canceled) {
+	if err := run(ctx, cfg, log); err != nil && !logging.CleanStop(ctx, err) {
 		log.Error(component+" exited", "err", err)
 		closeLog()
 		os.Exit(1)

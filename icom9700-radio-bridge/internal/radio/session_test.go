@@ -3,6 +3,7 @@ package radio
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"testing"
@@ -93,7 +94,7 @@ func TestAudioOffReleasesSession(t *testing.T) {
 	h := newHarness(t, nil)
 	waitState(t, h.s, StateIdle, time.Second)
 
-	if err := h.s.SetAudioDemand(h.ctx, true); err != nil {
+	if err := h.s.SetAudioDemand(h.ctx, DefaultAudioHolder, true); err != nil {
 		t.Fatalf("SetAudioDemand(true): %v", err)
 	}
 	snap := waitState(t, h.s, StateLive, time.Second)
@@ -101,7 +102,7 @@ func TestAudioOffReleasesSession(t *testing.T) {
 		t.Errorf("RadioName = %q", snap.RadioName)
 	}
 
-	if err := h.s.SetAudioDemand(h.ctx, false); err != nil {
+	if err := h.s.SetAudioDemand(h.ctx, DefaultAudioHolder, false); err != nil {
 		t.Fatalf("SetAudioDemand(false): %v", err)
 	}
 	// Idle timeout disconnects: back to idle (the polite teardown is the
@@ -117,7 +118,7 @@ func TestAudioConnectDuringRadioOff(t *testing.T) {
 	h := newHarness(t, nil)
 	h.f.SetSilent(true)
 
-	err := h.s.SetAudioDemand(h.ctx, true)
+	err := h.s.SetAudioDemand(h.ctx, DefaultAudioHolder, true)
 	if err == nil {
 		t.Fatal("SetAudioDemand against a silent radio must fail")
 	}
@@ -149,7 +150,7 @@ func TestWFViewContention(t *testing.T) {
 	h := newHarness(t, nil)
 	h.f.SetRefuseLogin(true)
 
-	err := h.s.SetAudioDemand(h.ctx, true)
+	err := h.s.SetAudioDemand(h.ctx, DefaultAudioHolder, true)
 	if err == nil {
 		t.Fatal("audio demand against refused logins must fail")
 	}
@@ -164,7 +165,7 @@ func TestWFViewContention(t *testing.T) {
 		t.Fatalf("login attempts = %d, want 3 spaced attempts", logins)
 	}
 	// The next demand retries the full series (error -> connecting).
-	err = h.s.SetAudioDemand(h.ctx, true)
+	err = h.s.SetAudioDemand(h.ctx, DefaultAudioHolder, true)
 	if err == nil {
 		t.Fatal("second demand must fail too")
 	}
@@ -180,7 +181,7 @@ func TestLoginBusySingleAttempt(t *testing.T) {
 	h := newHarness(t, nil)
 	h.f.SetBusyLogin(true)
 
-	err := h.s.SetAudioDemand(h.ctx, true)
+	err := h.s.SetAudioDemand(h.ctx, DefaultAudioHolder, true)
 	if !errors.Is(err, civ.ErrLoginBusy) {
 		t.Fatalf("err = %v, want ErrLoginBusy", err)
 	}
@@ -204,7 +205,7 @@ func TestSessionLossRecoversAudioDemand(t *testing.T) {
 	})
 	waitState(t, h.s, StateIdle, time.Second)
 
-	if err := h.s.SetAudioDemand(h.ctx, true); err != nil {
+	if err := h.s.SetAudioDemand(h.ctx, DefaultAudioHolder, true); err != nil {
 		t.Fatalf("SetAudioDemand(true): %v", err)
 	}
 	waitState(t, h.s, StateLive, time.Second)
@@ -221,7 +222,7 @@ func TestSessionLossRecoversAudioDemand(t *testing.T) {
 	h.f.SetSilent(false)
 	h.f.SetRadioSID(0xcafebabe)
 	loginsBefore, _, _, _, _ := h.f.Counts()
-	if err := h.s.SetAudioDemand(h.ctx, true); err != nil {
+	if err := h.s.SetAudioDemand(h.ctx, DefaultAudioHolder, true); err != nil {
 		t.Fatalf("refreshing demand after reboot: %v", err)
 	}
 	loginsAfter, _, _, _, _ := h.f.Counts()
@@ -237,7 +238,7 @@ func TestErrorDecaysToIdle(t *testing.T) {
 	h := newHarness(t, nil)
 	h.f.SetSilent(true)
 
-	if err := h.s.SetAudioDemand(h.ctx, true); err == nil {
+	if err := h.s.SetAudioDemand(h.ctx, DefaultAudioHolder, true); err == nil {
 		t.Fatal("connect against a silent radio must fail")
 	}
 	waitState(t, h.s, StateError, time.Second)
@@ -260,7 +261,7 @@ func TestAudioDemandLifecycle(t *testing.T) {
 	})
 	waitState(t, h.s, StateIdle, time.Second)
 
-	if err := h.s.SetAudioDemand(h.ctx, true); err != nil {
+	if err := h.s.SetAudioDemand(h.ctx, DefaultAudioHolder, true); err != nil {
 		t.Fatalf("SetAudioDemand(true): %v", err)
 	}
 	waitState(t, h.s, StateLive, time.Second)
@@ -273,7 +274,7 @@ func TestAudioDemandLifecycle(t *testing.T) {
 	}
 
 	// A refreshing audio_on before the TTL keeps the demand alive.
-	if err := h.s.SetAudioDemand(h.ctx, true); err != nil {
+	if err := h.s.SetAudioDemand(h.ctx, DefaultAudioHolder, true); err != nil {
 		t.Fatalf("SetAudioDemand refresh: %v", err)
 	}
 	time.Sleep(250 * time.Millisecond)
@@ -288,7 +289,7 @@ func TestAudioDemandLifecycle(t *testing.T) {
 	}
 
 	// audio_off during idle is a clean no-op.
-	if err := h.s.SetAudioDemand(h.ctx, false); err != nil {
+	if err := h.s.SetAudioDemand(h.ctx, DefaultAudioHolder, false); err != nil {
 		t.Fatalf("SetAudioDemand(false): %v", err)
 	}
 }
@@ -333,23 +334,188 @@ func TestAudioReopenWithinLiveSessionStillForwards(t *testing.T) {
 		}
 	}
 
-	if err := h.s.SetAudioDemand(h.ctx, true); err != nil {
+	if err := h.s.SetAudioDemand(h.ctx, DefaultAudioHolder, true); err != nil {
 		t.Fatalf("audio_on: %v", err)
 	}
 	waitState(t, h.s, StateLive, time.Second)
 	expectPCM(1)
 
 	for round := 2; round <= 3; round++ {
-		if err := h.s.SetAudioDemand(h.ctx, false); err != nil {
+		if err := h.s.SetAudioDemand(h.ctx, DefaultAudioHolder, false); err != nil {
 			t.Fatalf("audio_off: %v", err)
 		}
 		time.Sleep(50 * time.Millisecond) // the router sees its stream close
-		if err := h.s.SetAudioDemand(h.ctx, true); err != nil {
+		if err := h.s.SetAudioDemand(h.ctx, DefaultAudioHolder, true); err != nil {
 			t.Fatalf("audio_on: %v", err)
 		}
 		if s := h.s.Snapshot().SessionState; s != StateLive {
 			t.Fatalf("round %d: session left live (%q)", round, s)
 		}
 		expectPCM(round)
+	}
+}
+
+// Per-holder demand (2026-10, vhfcam + bmrec): one holder's audio_off
+// releases only that holder — the session stays live and the PCM keeps
+// flowing to the sink for the other — and the last holder's audio_off
+// releases the session to the idle clock.
+func TestAudioOffReleasesOnlyItsHolder(t *testing.T) {
+	audio := civ.NewFakeAudio(t)
+	got := make(chan []byte, 256)
+	h := newHarness(t, func(o *SessionOptions) {
+		o.AudioPort = audio.Port()
+		o.AudioDemandTTL = 5 * time.Second
+		o.AudioSink = func(pcm []byte) {
+			select {
+			case got <- pcm:
+			default:
+			}
+		}
+	})
+	waitState(t, h.s, StateIdle, time.Second)
+
+	expectPCM := func(tag byte) {
+		t.Helper()
+		pcm := make([]byte, 640)
+		pcm[0] = tag
+		deadline := time.After(2 * time.Second)
+		for seq := uint16(1); ; seq++ {
+			audio.Send(seq, pcm)
+			select {
+			case p := <-got:
+				if len(p) == len(pcm) && p[0] == tag {
+					return
+				}
+			case <-time.After(30 * time.Millisecond):
+			case <-deadline:
+				t.Fatalf("tag %d: no PCM reached the sink", tag)
+			}
+		}
+	}
+
+	if err := h.s.SetAudioDemand(h.ctx, DefaultAudioHolder, true); err != nil {
+		t.Fatalf("audio_on default: %v", err)
+	}
+	if err := h.s.SetAudioDemand(h.ctx, "bmrec", true); err != nil {
+		t.Fatalf("audio_on bmrec: %v", err)
+	}
+	waitState(t, h.s, StateLive, time.Second)
+	if got := h.s.Snapshot().AudioHolders; strings.Join(got, ",") != "bmrec,default" {
+		t.Fatalf("AudioHolders = %q, want [bmrec default]", got)
+	}
+	expectPCM(1)
+
+	// vhfcam's audio_off (no holder = default) must not drop bmrec's hold.
+	if err := h.s.SetAudioDemand(h.ctx, DefaultAudioHolder, false); err != nil {
+		t.Fatalf("audio_off default: %v", err)
+	}
+	snap := h.s.Snapshot()
+	if !snap.AudioDemand || strings.Join(snap.AudioHolders, ",") != "bmrec" {
+		t.Fatalf("after default audio_off: demand=%v holders=%q, want true [bmrec]", snap.AudioDemand, snap.AudioHolders)
+	}
+	expectPCM(2)                       // the stream was not closed under bmrec
+	time.Sleep(400 * time.Millisecond) // ~2.5x the idle timeout
+	if s := h.s.Snapshot().SessionState; s != StateLive {
+		t.Fatalf("bmrec's hold did not keep the session live (at %q)", s)
+	}
+
+	// An audio_off from a holder that holds nothing is a no-op.
+	if err := h.s.SetAudioDemand(h.ctx, "stranger", false); err != nil {
+		t.Fatalf("audio_off stranger: %v", err)
+	}
+	if !h.s.Snapshot().AudioDemand {
+		t.Fatal("a non-holder's audio_off dropped the demand")
+	}
+
+	// The last holder's audio_off releases the session.
+	if err := h.s.SetAudioDemand(h.ctx, "bmrec", false); err != nil {
+		t.Fatalf("audio_off bmrec: %v", err)
+	}
+	if snap := h.s.Snapshot(); snap.AudioDemand || len(snap.AudioHolders) != 0 {
+		t.Fatalf("after last audio_off: demand=%v holders=%q", snap.AudioDemand, snap.AudioHolders)
+	}
+	waitState(t, h.s, StateIdle, 2*time.Second)
+}
+
+// Each holder's TTL runs on its own: a holder that stops heartbeating
+// expires while a refreshing holder keeps the session live; once the last
+// holder stops refreshing, the session idles out.
+func TestAudioHolderTTLsIndependent(t *testing.T) {
+	h := newHarness(t, func(o *SessionOptions) {
+		o.AudioDemandTTL = 300 * time.Millisecond
+		o.AudioSink = func([]byte) {}
+	})
+	waitState(t, h.s, StateIdle, time.Second)
+
+	for _, holder := range []string{DefaultAudioHolder, "bmrec"} {
+		if err := h.s.SetAudioDemand(h.ctx, holder, true); err != nil {
+			t.Fatalf("audio_on %s: %v", holder, err)
+		}
+	}
+	waitState(t, h.s, StateLive, time.Second)
+
+	// Only bmrec heartbeats, well inside its TTL, for ~3 TTLs.
+	for i := 0; i < 9; i++ {
+		time.Sleep(100 * time.Millisecond)
+		if err := h.s.SetAudioDemand(h.ctx, "bmrec", true); err != nil {
+			t.Fatalf("bmrec refresh: %v", err)
+		}
+	}
+	snap := h.s.Snapshot()
+	if snap.SessionState != StateLive {
+		t.Fatalf("refreshing holder did not hold the session (at %q)", snap.SessionState)
+	}
+	if strings.Join(snap.AudioHolders, ",") != "bmrec" {
+		t.Fatalf("AudioHolders = %q, want [bmrec] (default's TTL ran out)", snap.AudioHolders)
+	}
+
+	// bmrec stops too: its TTL expires and the session idles out.
+	waitState(t, h.s, StateIdle, 3*time.Second)
+	if snap := h.s.Snapshot(); snap.AudioDemand || len(snap.AudioHolders) != 0 {
+		t.Errorf("demand survived every holder's TTL: demand=%v holders=%q", snap.AudioDemand, snap.AudioHolders)
+	}
+}
+
+// The holder set is bounded: ids are 1..MaxAudioHolderLen chars of
+// [A-Za-z0-9._-], and at most MaxAudioHolders holders live at once (a live
+// holder may still refresh; a released slot is reusable).
+func TestAudioHolderBounds(t *testing.T) {
+	h := newHarness(t, func(o *SessionOptions) {
+		o.AudioDemandTTL = 5 * time.Second
+		o.AudioSink = func([]byte) {}
+	})
+	waitState(t, h.s, StateIdle, time.Second)
+
+	for _, bad := range []string{"", strings.Repeat("x", MaxAudioHolderLen+1), "a b", "a,b", "bmrec\n", "ünï"} {
+		if err := h.s.SetAudioDemand(h.ctx, bad, true); err == nil || !strings.Contains(err.Error(), "invalid audio holder") {
+			t.Errorf("holder %q: err = %v, want the invalid-holder rejection", bad, err)
+		}
+	}
+	if s := h.s.Snapshot(); s.SessionState != StateIdle || s.AudioDemand {
+		t.Fatalf("an invalid holder touched the session (state %q demand %v)", s.SessionState, s.AudioDemand)
+	}
+	if err := ValidateAudioHolder(strings.Repeat("x", MaxAudioHolderLen)); err != nil {
+		t.Errorf("max-length holder rejected: %v", err)
+	}
+
+	for i := 0; i < MaxAudioHolders; i++ {
+		if err := h.s.SetAudioDemand(h.ctx, fmt.Sprintf("h%d", i), true); err != nil {
+			t.Fatalf("holder %d: %v", i, err)
+		}
+	}
+	if err := h.s.SetAudioDemand(h.ctx, "one-too-many", true); !errors.Is(err, ErrTooManyAudioHolders) {
+		t.Fatalf("holder %d: err = %v, want ErrTooManyAudioHolders", MaxAudioHolders+1, err)
+	}
+	if n := len(h.s.Snapshot().AudioHolders); n != MaxAudioHolders {
+		t.Fatalf("%d holders live, want %d", n, MaxAudioHolders)
+	}
+	if err := h.s.SetAudioDemand(h.ctx, "h0", true); err != nil {
+		t.Errorf("a live holder's refresh at the bound was rejected: %v", err)
+	}
+	if err := h.s.SetAudioDemand(h.ctx, "h0", false); err != nil {
+		t.Fatalf("audio_off h0: %v", err)
+	}
+	if err := h.s.SetAudioDemand(h.ctx, "one-too-many", true); err != nil {
+		t.Errorf("released slot not reusable: %v", err)
 	}
 }

@@ -151,6 +151,18 @@ the park themselves. The console only mirrors the lock so a refused tap is never
   failed park still lands in the list via the slot's `/state.fault`. The station schematic draws an `Ant mode` pill
   beside Beam steer (warn while locked or suggesting, alarm on a fault).
 
+## Split cross-band strip (all pages)
+
+flexbridge's `/state` is the TX slice; while a slice other than slice A holds the TX flag it adds `split`,
+`rx_freq_hz` / `rx_band` (slice A = VFO A, where the operator listens and where a logger spot click lands) and
+`cross_band` (the two on different ham bands). `BusStore.splitCrossBand` is non-null only while the radio is live
+(bridge + device online, link up) and `cross_band` is true; `SplitBandBanner` (`console_screen.dart`, under the
+LINK DOWN strip, every page and form factor) then shows an amber full-width line:
+`SPLIT CROSS-BAND — RX 17m 18100.0 · TX 20m 14105.0 — TRANSMIT GOES OUT ON 20m`. The TRX pill says `SPLIT` while
+split and not keyed. Informational by design — the antenna chain follows the TX slice, cross-band is legal and has
+legitimate uses, so nothing is blocked and there is no button; the fix is split-off in SmartSDR or the logger
+(`../docs/known-issues.md`, "Split cross-band: warn, do not block").
+
 ## Antenna cam (CAM tab)
 
 The CAM tab plays vhfcam-restream's live HLS preview (`/hls/live.m3u8` on the

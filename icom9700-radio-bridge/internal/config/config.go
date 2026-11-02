@@ -20,7 +20,9 @@ import (
 	"flag"
 	"fmt"
 	"io/fs"
+	"net"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -112,17 +114,49 @@ type SessionConfig struct {
 // AudioConfig holds the receive-audio publisher (2026-09-21 preview sink):
 // while the audio demand is set (audio_on / audio_off cmds, TTL-bounded),
 // demodulated audio leaves the radio's :50003 stream and is re-published as
-// raw UDP datagrams — S16LE 48 kHz mono — to PublishAddr (the preview host).
+// raw UDP datagrams — S16LE 48 kHz mono — to every PublishAddr target (the
+// consumers: vhfcam preview, bmrec recorder).
 type AudioConfig struct {
-	// PublishAddr is the udp host:port PCM goes to (e.g. the preview host
-	// "192.168.1.178:45031", scmino). Empty (default) = audio cmds are rejected.
-	PublishAddr string `toml:"publish_addr"`
-	// DemandTTL bounds an audio demand without a refreshing audio_on (a
-	// duration string, "60s" — a dead preview consumer must not pin the
+	// PublishAddr lists the udp host:port targets every PCM chunk goes to,
+	// e.g. ["192.168.1.178:45031", "192.168.1.178:45032"] (vhfcam-restream
+	// and bmrec on scmino). A single string is one target (the original
+	// form, still valid). Empty (default) = no PCM is published.
+	PublishAddr AddrList `toml:"publish_addr"`
+	// DemandTTL bounds each holder's audio demand without a refreshing
+	// audio_on (a duration string, "60s" — a dead consumer must not pin the
 	// radio session, KTD-2). Parsed into DemandTTLDur at load.
 	DemandTTL string `toml:"demand_ttl"`
 
 	DemandTTLDur time.Duration `toml:"-"`
+}
+
+// AddrList is a list of udp host:port targets. In TOML it is either a
+// single string (one target; "" = none) or an array of strings, so a
+// config written for the single-target form keeps loading unchanged.
+type AddrList []string
+
+// UnmarshalTOML implements toml.Unmarshaler for the string-or-array form.
+func (a *AddrList) UnmarshalTOML(v any) error {
+	switch v := v.(type) {
+	case string:
+		*a = nil
+		if v != "" {
+			*a = AddrList{v}
+		}
+	case []any:
+		out := make(AddrList, 0, len(v))
+		for i, e := range v {
+			s, ok := e.(string)
+			if !ok {
+				return fmt.Errorf("element %d: want a \"host:port\" string, got %T", i, e)
+			}
+			out = append(out, s)
+		}
+		*a = out
+	default:
+		return fmt.Errorf("want a \"host:port\" string or an array of them, got %T", v)
+	}
+	return nil
 }
 
 // SerialConfig holds the read-only serial CI-V telemetry reader (2026-09
@@ -370,6 +404,20 @@ func (c Config) Validate() error {
 	}
 	if c.Serial.MeterIntervalDur <= 0 {
 		return fmt.Errorf("serial.meter_interval must be > 0 (got %s)", c.Serial.MeterIntervalDur)
+	}
+	seen := make(map[string]bool, len(c.Audio.PublishAddr))
+	for _, addr := range c.Audio.PublishAddr {
+		host, port, err := net.SplitHostPort(addr)
+		if err != nil {
+			return fmt.Errorf("audio.publish_addr %q: %w", addr, err)
+		}
+		if p, perr := strconv.Atoi(port); host == "" || perr != nil || p < 1 || p > 65535 {
+			return fmt.Errorf("audio.publish_addr %q: want host:port with a non-empty host and a port 1-65535", addr)
+		}
+		if seen[addr] {
+			return fmt.Errorf("audio.publish_addr %q listed twice", addr)
+		}
+		seen[addr] = true
 	}
 	if c.Park.RigctldAddr != "" {
 		if err := rigctl.Validate(c.Park.FreqHz, c.Park.Mode); err != nil {

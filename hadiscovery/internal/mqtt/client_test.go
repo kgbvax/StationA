@@ -132,3 +132,24 @@ func TestOnHAStatusDefersEngineWork(t *testing.T) {
 		t.Fatal("onHAStatus blocked the caller goroutine")
 	}
 }
+
+// TestOnConfigFiltersNodePrefix: only discovery configs under this deployment's node ids
+// are queued for the engine; the rest of the shared HA tree is dropped on the paho
+// goroutine without a job.
+func TestOnConfigFiltersNodePrefix(t *testing.T) {
+	c := &Client{eng: engine.NewEngine("homeassistant", ""), site: "muehle", jobs: make(chan func(), 8)}
+	for _, topic := range []string{
+		"homeassistant/sensor/0x00158d0005442fc6/temperature/config", // zigbee2mqtt
+		"homeassistant/sensor/flexradio-flexradio/band/config",       // legacy embedded discovery
+		"homeassistant/sensor/muehle-hf-radio/config",                // wrong depth
+	} {
+		c.onConfig(nil, fakeMessage{topic: topic, payload: []byte(`{}`)})
+	}
+	if n := len(c.jobs); n != 0 {
+		t.Fatalf("queued %d jobs for foreign configs, want 0", n)
+	}
+	c.onConfig(nil, fakeMessage{topic: "homeassistant/select/muehle-power-master/power/config", payload: []byte(`{}`)})
+	if n := len(c.jobs); n != 1 {
+		t.Fatalf("queued %d jobs for a station config, want 1", n)
+	}
+}

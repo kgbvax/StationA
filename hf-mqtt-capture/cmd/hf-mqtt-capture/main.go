@@ -58,7 +58,7 @@ func main() {
 	}
 	defer writer.close()
 
-	if err := run(ctx, cfg, writer, logger); err != nil {
+	if err := run(ctx, cfg, writer, logger); err != nil && !logging.CleanStop(ctx, err) {
 		logger.Error("run failed", "err", err)
 		os.Exit(1)
 	}

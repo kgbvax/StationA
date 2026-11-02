@@ -319,6 +319,10 @@ extension BusStoreFixtures on BusStore {
     String tx = 'rx',
     bool tuning = false,
     int drive = 50,
+    bool split = false,
+    bool crossBand = false,
+    int? rxFreqHz,
+    String rxBand = '',
   }) {
     setOnline('muehle/hf/radio');
     applyState('muehle/hf/radio', {
@@ -332,6 +336,12 @@ extension BusStoreFixtures on BusStore {
       'dvk_id': 0,
       'device_online': true,
       'ts': '2026-08-20T14:30:00.000000',
+      // Split (flexbridge): /state is the TX slice; rx_* is slice A while a
+      // different slice holds the TX flag, omitted otherwise.
+      'split': split,
+      'cross_band': crossBand,
+      if (rxFreqHz != null) 'rx_freq_hz': rxFreqHz,
+      if (rxBand.isNotEmpty) 'rx_band': rxBand,
     });
   }
 

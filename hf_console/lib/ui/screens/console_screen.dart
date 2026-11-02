@@ -97,6 +97,7 @@ class _ConsoleScreenState extends State<ConsoleScreen> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           const LinkStatusBanner(),
+          const SplitBandBanner(),
           Expanded(
             key: ValueKey(AppTheme.selected),
             child: _PageContent(
@@ -134,6 +135,91 @@ class LinkStatusBanner extends StatelessWidget {
           ),
         );
       },
+    );
+  }
+}
+
+/// Full-width amber strip while the radio is in a cross-band split: VFO A
+/// (slice A, where the operator listens and where the logger's spot click
+/// landed) sits on one band, the TX slice on another. The antenna chain
+/// follows the TX slice, so RF is not at risk — the next key-up simply goes
+/// out on the other band. Informational by design: cross-band is legal and
+/// has legitimate uses (60 m cross-band, a second slice for monitoring), so
+/// nothing is blocked here; the fix is split-off in SmartSDR or the logger.
+///
+/// The strip flashes — a slow fade between full and dim, never a hard
+/// on/off — so a cross-band split is hard to overlook mid-contest. Honors
+/// reduce-motion (solid strip). The fade repeats forever, so widget tests
+/// must freeze it (TestHarness does) or use plain `pump`s.
+class SplitBandBanner extends StatefulWidget {
+  const SplitBandBanner({super.key});
+
+  /// Frequency as kHz with one decimal (`18100.0`), the contest-logger form.
+  /// Integer math: `(hz / 1000).toStringAsFixed(1)` rounds 14105.05 down to
+  /// `14105.0` (binary float), integer tenths round half up.
+  static String kHz(int? hz) {
+    if (hz == null) return '';
+    final tenths = (hz + 50) ~/ 100;
+    return '${tenths ~/ 10}.${tenths % 10}';
+  }
+
+  /// The strip's text for [s].
+  static String text(SplitState s) {
+    final rx = [s.rxBand, kHz(s.rxFreqHz)].where((p) => p.isNotEmpty).join(' ');
+    final tx = [s.txBand, kHz(s.txFreqHz)].where((p) => p.isNotEmpty).join(' ');
+    return 'SPLIT CROSS-BAND — RX $rx · TX $tx — TRANSMIT GOES OUT ON ${s.txBand}';
+  }
+
+  @override
+  State<SplitBandBanner> createState() => _SplitBandBannerState();
+}
+
+class _SplitBandBannerState extends State<SplitBandBanner> with SingleTickerProviderStateMixin {
+  late final AnimationController _flash = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 900),
+  );
+
+  /// Bottom of the fade; the strip never goes fully invisible.
+  static const _minOpacity = 0.25;
+
+  @override
+  void dispose() {
+    _flash.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final split = context.select<BusStore, SplitState?>((s) => s.splitCrossBand);
+    if (split == null) {
+      _flash.stop();
+      return const SizedBox.shrink();
+    }
+    final flashing = !MediaQuery.disableAnimationsOf(context);
+    if (flashing) {
+      if (!_flash.isAnimating) _flash.repeat(reverse: true);
+    } else {
+      _flash.stop();
+      _flash.value = 1.0;
+    }
+    final strip = Container(
+      key: const ValueKey('split-band-banner'),
+      color: AppTheme.blend(AppTheme.amber, 0.18),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      child: Text(
+        SplitBandBanner.text(split),
+        textAlign: TextAlign.center,
+        style: AppTheme.mono(13, color: AppTheme.amber, weight: FontWeight.w700, letterSpacing: 0.14),
+      ),
+    );
+    if (!flashing) return strip;
+    return FadeTransition(
+      key: const ValueKey('split-band-flash'),
+      opacity: Tween<double>(begin: _minOpacity, end: 1.0)
+          .chain(CurveTween(curve: Curves.easeInOut))
+          .animate(_flash),
+      child: strip,
     );
   }
 }
@@ -673,10 +759,11 @@ class _NavTab extends StatelessWidget {
           ),
           child: Text(
             label,
-            style: AppTheme.display(
+            style: AppTheme.body(
               isPhone ? 16 : 20,
               color: active ? AppTheme.txt : AppTheme.txtMute,
               weight: active ? FontWeight.w700 : FontWeight.w600,
+              letterSpacing: 0.04,
             ),
           ),
         ),

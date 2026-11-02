@@ -275,7 +275,8 @@ Configured with an `[idle]` block; omit all three to disable.
   lasted at least `timeout_minutes` (no standby right after a start or wake).
   → `entering_standby` → `[[standby]]` → `standby`.
 - **Wake** (from `standby`): the activity slot reports a `last_activity` newer
-  than the standby entry (VFO change, TX, operator hold — antennaselect
+  than the standby entry (VFO change, TX, operator hold, a live station hold
+  such as bmrec's HF lab recording — antennaselect
   publishes no `last_activity` after a restart, so a restart never wakes), a
   watch moves, or `start` arrives. → `waking` → `[[wake]]` → `running`.
   antennaselect reconnects the antenna on the same activity.

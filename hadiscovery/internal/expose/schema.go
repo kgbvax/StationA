@@ -46,11 +46,16 @@ type Field struct {
 	Step       any      `json:"step,omitempty"`        // writable number
 }
 
-// Action describes a one-shot button.
+// Action describes a one-shot button. An action whose command carries a value_key takes
+// one argument from a fixed set: inline Options, or OptionsRef into capabilities (e.g. the
+// tuner's tune action with tune_modes [mem, full]). A consumer renders one button per
+// option; an action with a value_key and no resolvable options is unrenderable.
 type Action struct {
-	Key     string   `json:"key"`     // becomes the entity object id
-	Name    string   `json:"name"`    // display name
-	Command *Command `json:"command"` // the /cmd payload to send on press
+	Key        string   `json:"key"`                   // becomes the entity object id
+	Name       string   `json:"name"`                  // display name
+	Options    []string `json:"options,omitempty"`     // inline argument values
+	OptionsRef string   `json:"options_ref,omitempty"` // key into capabilities for the values
+	Command    *Command `json:"command"`               // the /cmd payload to send on press
 }
 
 // Command describes how a write is encoded on /cmd, in structured form (never a
@@ -61,5 +66,5 @@ type Action struct {
 type Command struct {
 	Action    string `json:"action,omitempty"`
 	ValueKey  string `json:"value_key,omitempty"`
-	ValueType string `json:"value_type,omitempty"` // string | int | float
+	ValueType string `json:"value_type,omitempty"` // string | enum | int | float | bool
 }
