@@ -142,8 +142,9 @@ class Callout {
   final String text;
   final Anchor anchor;
 
-  /// Preferred side for the numbered marker ('left', 'right', 'above',
-  /// 'below') when the default (left of the box) would cover a neighbour.
+  /// Preferred place for the numbered marker ('left', 'right', 'above',
+  /// 'below', or 'inside' the box's left end) when the default (left of the
+  /// box) would sit closer to a neighbour than to its own control.
   final String? marker;
   const Callout(this.title, this.text, this.anchor, {this.marker});
 }
@@ -336,9 +337,11 @@ final quickrefSheets = <Sheet>[
     callouts: [
       Callout('Station · HF · UHF · CAM', 'These are the page buttons: tap a name to switch',
           UnionAnchor([ButtonAnchor('Station', inside: ConsoleScreen), ButtonAnchor('CAM', inside: ConsoleScreen)])),
-      Callout('LINK DOWN banner', 'This console lost the broker; bus commands dropped, not queued', typeAnchor(LinkStatusBanner)),
+      Callout('LINK DOWN banner', 'This console lost the broker; bus commands dropped, not queued', typeAnchor(LinkStatusBanner),
+          marker: 'inside'),
       Callout('Status pill', 'Any one device down or unpowered turns the pill OFFLINE', typeAnchor(StatusPill, inside: PowerPanel)),
-      Callout('FAULTS', 'Grey: cleared, or antenna gear unpowered on purpose', typeAnchor(FaultsBar)),
+      Callout('FAULTS', 'Grey: cleared, or antenna gear unpowered on purpose', TextAnchor('FAULTS', inside: FaultsBar),
+          marker: 'right'),
     ],
   ),
   Sheet(
@@ -384,7 +387,8 @@ final quickrefSheets = <Sheet>[
               grow: const EdgeInsets.fromLTRB(20, 6, 75, 52))),
       Callout('Schematic block (tap)', 'Tap any block for bridge, host, all values; no controls',
           UnionAnchor([TextAnchor('ACOM', inside: StationSchematic), TextAnchor('Temp', inside: StationSchematic)],
-              grow: const EdgeInsets.fromLTRB(10, 9, 90, 9))),
+              grow: const EdgeInsets.fromLTRB(10, 9, 90, 9)),
+          marker: 'above'),
     ],
   ),
   Sheet(

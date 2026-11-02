@@ -11,7 +11,7 @@
   with {sheets:[{id,title,purpose,width,height,image,callouts:[{title,text,rect:[x,y,w,h],marker?}]}]};
   rects are in logical screenshot pixels (the image itself is rendered at 2x),
   a zero-size rect is a point.
-  Layout: numbered markers on the screenshot, the legend underneath.
+  Layout: numbered markers beside the controls (no outlines), the legend underneath.
 -->
 <style>
   @page { size: A4 landscape; margin: 0; }
@@ -147,12 +147,12 @@ function renderSheet(sheet, n, total) {
         `<line x1="${b.x}" y1="${b.y}" x2="${px}" y2="${py}" stroke="var(--co)" stroke-width="1.4"/>` +
         `<circle cx="${b.x}" cy="${b.y}" r="3.2" fill="var(--co)" stroke="#fff" stroke-width="1"/>`);
     } else {
-      svg.insertAdjacentHTML("beforeend",
-        `<rect x="${b.x - 1.5}" y="${b.y - 1.5}" width="${b.w + 3}" height="${b.h + 3}" rx="2" fill="none" stroke="var(--co)" stroke-width="1.6"/>`);
-      // Beside the box, never on what it marks: left, right, above, below,
-      // then the top-left corner as the last resort.
+      // No outline: the marker alone points at the control. Beside it, never
+      // on what it marks: left, right, above, below, then the top-left
+      // corner as the last resort.
       const cy = b.y + b.h / 2, g = R + 2.5;
-      const side = { left: [b.x - g, cy], right: [b.x + b.w + g, cy], above: [b.x + R, b.y - g], below: [b.x + R, b.y + b.h + g] };
+      const side = { left: [b.x - g, cy], right: [b.x + b.w + g, cy], above: [b.x + R, b.y - g], below: [b.x + R, b.y + b.h + g],
+                     inside: [b.x + R + 3, cy] };
       const tries = [side[c.marker], side.left, side.right, side.above, side.below,
                      [b.x + b.w - R, b.y - g], [b.x + b.w - R, b.y + b.h + g]].filter(Boolean);
       [px, py] = tries.find(([x, y]) => free(x, y, i)) || [Math.max(b.x, ox + R + 1), Math.max(b.y, oy + R + 1)];
