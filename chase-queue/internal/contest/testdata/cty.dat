@@ -1,0 +1,22 @@
+England:                  14:  27:  EU:   52.77:    1.47:     0.0:  G:
+    2E,G,M,=M0ABC;
+Ireland:                  14:  27:  EU:   53.00:    8.00:     0.0:  EI:
+    EI,EJ;
+Scotland:                 14:  27:  EU:   56.82:    4.18:     0.0:  GM:
+    2M,GM,MM;
+Italy:                    15:  28:  EU:   42.00:  -13.00:    -1.0:  I:
+    I,IK,IZ;
+Sicily:                   15:  28:  EU:   37.50:  -14.00:    -1.0:  *IT9:
+    IT9;
+Spain:                    14:  37:  EU:   40.00:    4.00:    -1.0:  EA:
+    EA,EB,EC;
+Canary Islands:           33:  36:  AF:   28.30:   16.60:     0.0:  EA8:
+    EA8;
+Fed. Rep. of Germany:     14:  28:  EU:   51.00:  -10.00:    -1.0:  DL:
+    DA,DB,DC,DD,DE,DF,DG,DH,DJ,DK,DL;
+United States:            05:  08:  NA:   37.53:   91.67:     5.0:  K:
+    K,N,W;
+Hawaii:                   31:  61:  OC:   21.12:  157.50:    10.0:  KH6:
+    KH6;
+Austria:                  15:  28:  EU:   47.33:  -13.33:    -1.0:  OE:
+    OE;
