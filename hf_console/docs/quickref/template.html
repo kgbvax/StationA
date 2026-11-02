@@ -49,7 +49,8 @@
   .shot { position: absolute; }
   .shot img { display: block; width: 100%; height: 100%; border: 0.3mm solid #000; }
   svg.over { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
-  .legend { position: absolute; display: grid; column-gap: 6mm; row-gap: 2mm; align-items: start; }
+  .legend { position: absolute; column-gap: 6mm; }
+  .legend .item { break-inside: avoid; margin-bottom: 2mm; }
   .legend .item { display: grid; grid-template-columns: 5.2mm 1fr; column-gap: 1.8mm; font-size: 8.2pt; line-height: 1.25; }
   .legend .item b { font: 600 8.2pt var(--mono); letter-spacing: .02em; }
   .legend .item > div > span { color: var(--mute); }
@@ -95,11 +96,13 @@ function renderSheet(sheet, n, total) {
   const cos = ordered(sheet.callouts);
   const gap = 3 * MM;
 
-  // Legend first (to measure it): up to four columns under the screenshot.
+  // Legend first (to measure it): up to four columns under the screenshot,
+  // numbered down each column.
   let legend = null, lh = 0;
   if (cos.length) {
     const cols = Math.min(4, cos.length);
-    main.insertAdjacentHTML("beforeend", `<div class="legend" style="grid-template-columns:repeat(${cols},1fr)">` +
+    // Flowing columns: a long item lengthens only its own column.
+    main.insertAdjacentHTML("beforeend", `<div class="legend" style="column-count:${cols}">` +
       cos.map((c, i) => `<div class="item"><span class="num">${i + 1}</span><div><b>${esc(c.title)}</b><br><span>${esc(c.text)}</span></div></div>`).join("") +
       `</div>`);
     legend = main.lastElementChild;
