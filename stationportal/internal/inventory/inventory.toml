@@ -159,7 +159,7 @@ name     = "bwpc"
 addr     = "192.168.1.197"
 hardware = "Shack PC"
 os       = "Windows"
-role     = "DXLog / Log4OM logger, PstRotator, OscarWatch (Satellite link ws :7373); winpc-power-bridge (sleeps in idle standby, woken by WOL)"
+role     = "DXLog / Log4OM logger, PstRotator, OscarWatch (Satellite link ws :7373); winpc-power-bridge (sleeps in idle standby, woken by WOL); chaseq-ui (chase-queue list window)"
 
 [[host]]
 name     = "lenovo-tab"
@@ -416,6 +416,13 @@ kind  = "bridge"
 host  = "bwpc"
 note  = "Task Scheduler at logon (user session); sleep cmd from powerseq standby"
 slots = ["muehle/power/shack-pc"]
+
+[[software]]
+name = "chaseq-ui"
+path = "chaseq-ui/"
+kind = "ui"
+host = "bwpc"
+note = "Task Scheduler at logon; chase-queue list window, Enter = QSY + callsign into Log4OM/DXLog"
 
 [[software]]
 name  = "icom9700-radio-bridge"

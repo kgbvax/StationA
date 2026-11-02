@@ -45,6 +45,7 @@ created in-repo. There are no separate per-component remotes to push to.
 | m5dial-hf-rotctrl | `m5dial-hf-rotctrl/` | M5Stack Dial firmware — HF rotator control head (analog meter face + knob; not a slot; consumer + /cmd stimulator) |
 | m5dualkey-hf-antctrl | `m5dualkey-hf-antctrl/` | M5Stack Chain DualKey firmware — Ultrabeam direction keys (A forward / B reverse / A+B bidirectional, LED shows `hf/ant-ctrl` direction; chained M5 Chain Key toggles DVK memory 2 on `hf/radio`; not a slot; consumer + /cmd stimulator) |
 | chase-queue | `chase-queue/` | Chase queue → `hf/chase` — ranks the CQ stations bmrec hears (`hf/cqfinder`) by what is needed: contest multipliers (DXLog feed), DXCC entities not confirmed on the band (Club Log, Log4OM feed); SQLite (first DB in the repo); runs on scmino |
+| chaseq-ui | `chaseq-ui/` | Native window on bwpc (glaze, qslotter stack; own Go module outside `go.work`, build with `GOWORK=off`) showing chase-queue's ranked list (`muehle/hf/chase`, frequencies joined from bmrec's `cqfinder`) with local band/needed-only filters; Enter/click tunes the FLEX (flexbridge `set_freq` + `set_mode`) and puts the callsign into Log4OM (Remote Control `SetCallsign`) and DXLog (`dxlog/ChaseqCallsign.cs` script), `handled` in contest; Skip/Undo go to chase-queue. Consumer + `/cmd` sender, not a slot |
 | logger-spot-bridge | `logger-spot-bridge/` | Shack-logger bridge (DXLog/Log4OM) → `hf/spots` — the operator-keyed station (call, position, beam bearing) |
 | oscarwatch-sattrack-bridge | `oscarwatch-sattrack-bridge/` | OscarWatch Satellite-link WebSocket bridge → `uhf/sat-track` — the satellite being tracked (name, NORAD, transponder, az/el, range, range rate, sunlit, derived sub-satellite point, radio-corrected up/downlink); read-only, runs on scmino |
 | testui | `testui/` | MQTT relay + schema-aware browser UI for the bus (not a slot; passive consumer + /cmd stimulator) |
@@ -123,7 +124,7 @@ oscarwatch-sattrack-bridge, vhfcam-restream (:8083), the hf_console web channel
 `hf-console-web` (:8091), testui (:8090), the landing page stationportal (:80) and the
 station Mosquitto mirror. **shari** (`192.168.1.139`, Raspberry Pi 4) runs only
 spid-ercm-rotator-bridge and hf-mqtt-capture (plus HamClock and SvxLink, which are not repo
-components). winpc-power-bridge runs on the Windows shack PC bwpc (`192.168.1.197`).
+components). winpc-power-bridge and chaseq-ui run on the Windows shack PC bwpc (`192.168.1.197`). chaseq-ui is the one Go component outside `go.work` (glaze needs Go 1.27.1): build it with `GOWORK=off`; its DXLog script `chaseq-ui/dxlog/ChaseqCallsign.cs` is installed into DXLog.net once (steps in `chaseq-ui/README.md`) and has not yet been run live.
 
 ```bash
 # SSH in
