@@ -1,0 +1,44 @@
+# chase-queue configuration (seed-once; 0600). Secrets are NOT here: the MQTT
+# password and the Club Log token live in the EnvironmentFile
+# (CHASE_QUEUE_MQTT_PASSWORD, CHASE_QUEUE_CLUBLOG_TOKEN).
+
+host     = "scmino"
+data_dir = "/var/lib/chase-queue"   # database, contest files, cty.dat + cty.csv
+
+[slot]                # this component: muehle/hf/chase
+station = "hf"
+slot    = "chase"
+
+[cqfinder]            # bmrec's candidate slot: muehle/hf/cqfinder
+station = "hf"
+slot    = "cqfinder"
+
+[mqtt]
+broker = "tcp://127.0.0.1:1883"   # the station broker on scmino
+site   = "muehle"
+# user = "hf"
+
+[http]
+listen = "127.0.0.1:8095"         # contest file upload and health, loopback only
+
+# DXLog.net's UDP QSO broadcast, for contests. 12060 is taken by
+# logger-spot-bridge on scmino: give DXLog a second target on this port.
+# [contest]
+# listen     = "0.0.0.0:12061"
+# allow_from = ["192.168.1.20"]   # the logging PC (IPs or CIDRs); required
+
+# Log4OM 2.42+: Settings > Software integration > Connections > UDP outbound,
+# type ADIF_MESSAGE, target scmino:2340.
+# [log4om]
+# listen     = "0.0.0.0:2340"
+# allow_from = ["192.168.1.20"]
+
+# Club Log confirmations (DX chasing). Create a personal API token under
+# Club Log > Settings > API and put it in the env file.
+# [clublog]
+# call             = "DL9ET"
+# confirmed_status = [1, 3]       # matrix values that mean confirmed; verify with -clublog-probe
+# refresh_minutes  = 45
+
+[log]
+level = "info"

@@ -272,6 +272,20 @@ link      = "LAN UDP"
 host      = "scmino"
 
 [[slot]]
+address   = "muehle/hf/chase"
+component = "chase-queue"
+device    = "logic slot — ranks the CQ stations bmrec hears (needed + priority)"
+link      = "none"
+host      = "scmino"
+
+[[slot]]
+address   = "muehle/hf/cqfinder"
+component = "bmrec"
+device    = "bmrec CQ finder — open CQ rows and recent spots for the chase queue"
+link      = "none"
+host      = "scmino"
+
+[[slot]]
 address   = "muehle/hf/beam-steer"
 component = "beamsteer"
 device    = "logic slot — PstRotator UDP :12050"
@@ -447,6 +461,25 @@ host  = "scmino"
 unit  = "logger-spot-bridge"
 ports = "12060/udp, 2249/udp"
 slots = ["muehle/hf/spots"]
+
+[[software]]
+name  = "chase-queue"
+path  = "chase-queue/"
+kind  = "logic"
+host  = "scmino"
+unit  = "chase-queue"
+ports = "2340/udp (Log4OM), 12061/udp (DXLog), 127.0.0.1:8095"
+note  = "Needed + priority for the CQ stations bmrec hears: contest multipliers, DXCC entities not confirmed on the band"
+slots = ["muehle/hf/chase"]
+
+[[software]]
+name  = "bmrec"
+path  = "../bmrec"
+kind  = "tool"
+host  = "scmino"
+unit  = "bmrec"
+note  = "HF/UHF recorder and CQ finder (separate repo); publishes the CQ finder candidates"
+slots = ["muehle/hf/cqfinder"]
 
 [[software]]
 name  = "antennaselect"

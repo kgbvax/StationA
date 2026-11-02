@@ -31,7 +31,7 @@ func (s *Service) connect(ctx context.Context) error {
 		o.SetPassword(s.cfg.MQTT.Password)
 	}
 	o.SetAutoReconnect(true)
-	o.SetCleanSession(false)
+	o.SetCleanSession(true) // retained candidates replay on subscribe; /cmd is QoS 0 so nothing queues offline
 	o.SetWill(s.topics.status, "offline", 1, true)
 	o.OnConnect = func(c pahomqtt.Client) {
 		s.log.Info("MQTT (re)connected", "broker", s.cfg.MQTT.Broker)
@@ -43,7 +43,7 @@ func (s *Service) connect(ctx context.Context) error {
 			p := append([]byte(nil), m.Payload()...)
 			sharedmqtt.Enqueue(s.jobs, func() { s.onCandidates(p) })
 		})
-		c.Subscribe(s.topics.cmd, 1, func(_ pahomqtt.Client, m pahomqtt.Message) {
+		c.Subscribe(s.topics.cmd, 0, func(_ pahomqtt.Client, m pahomqtt.Message) {
 			p := append([]byte(nil), m.Payload()...)
 			sharedmqtt.Enqueue(s.jobs, func() { s.onCmd(p) })
 		})
