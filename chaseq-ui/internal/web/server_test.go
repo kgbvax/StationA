@@ -64,6 +64,7 @@ func newServer(t *testing.T) (*Server, *model.Model, *pub, *lg) {
 func do(t *testing.T, h http.Handler, method, path string, hdr map[string]string) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest(method, path, nil)
+	req.Host = "127.0.0.1:8480"
 	for k, v := range hdr {
 		req.Header.Set(k, v)
 	}
@@ -186,5 +187,53 @@ func TestEventsSendsListChanged(t *testing.T) {
 	s.Notify()
 	if got := read(); got != "event: list_changed\n" {
 		t.Errorf("after Notify = %q", got)
+	}
+}
+
+func TestHostGuardRefusesRebindingAndForeignOrigin(t *testing.T) {
+	s, _, p, _ := newServer(t)
+	for _, host := range []string{"evil.example:8480", "evil.example", "10.0.0.5:8480"} {
+		req := httptest.NewRequest("POST", "/act", nil)
+		req.Host = host
+		req.Header.Set("X-Chaseq", "1")
+		req.Header.Set("Origin", "http://"+host)
+		rec := httptest.NewRecorder()
+		s.Handler().ServeHTTP(rec, req)
+		if rec.Code != 403 {
+			t.Errorf("Host %q: code = %d, want 403", host, rec.Code)
+		}
+		get := httptest.NewRequest("GET", "/list", nil)
+		get.Host = host
+		rec = httptest.NewRecorder()
+		s.Handler().ServeHTTP(rec, get)
+		if rec.Code != 403 {
+			t.Errorf("GET Host %q: code = %d, want 403", host, rec.Code)
+		}
+	}
+	if p.n() != 0 {
+		t.Errorf("published %d messages for refused requests", p.n())
+	}
+	// A loopback name still works (httptest uses example.com by default, so set it).
+	req := httptest.NewRequest("GET", "/healthz", nil)
+	req.Host = "127.0.0.1:8480"
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, req)
+	if rec.Code != 200 {
+		t.Errorf("loopback healthz code = %d", rec.Code)
+	}
+}
+
+func TestRapidFilterTogglesAreNotLost(t *testing.T) {
+	s, m, _, _ := newServer(t)
+	done := make(chan struct{})
+	for _, b := range []string{"20m", "40m", "80m", "15m"} {
+		b := b
+		go func() { do(t, s.Handler(), "POST", "/filters?band="+b, csrf); done <- struct{}{} }()
+	}
+	for i := 0; i < 4; i++ {
+		<-done
+	}
+	if got := m.Filters().Bands; len(got) != 4 {
+		t.Errorf("bands = %v, want all four toggles kept", got)
 	}
 }

@@ -109,7 +109,7 @@ func TestActContestTunesFillsAndMarksHandled(t *testing.T) { // AE4
 	g.pub.onP = func(topic, payload string) {
 		prev(topic, payload)
 		if strings.Contains(payload, `"handled"`) {
-			g.m.SetChase(bus.ChaseState{Activity: bus.ActivityContest})
+			g.m.SetChase(bus.ChaseState{Activity: bus.ActivityContest, Undo: "DL1ABC"})
 		}
 	}
 	rep := g.r.Act(context.Background(), 7)
@@ -286,5 +286,50 @@ func TestRowLeftTheList(t *testing.T) {
 	rep := g.r.Act(context.Background(), 12345)
 	if status(rep, "List") != loggers.Failed || len(g.pub.all()) != 0 {
 		t.Errorf("parts = %+v", rep.Parts)
+	}
+}
+
+func TestUndoWithNothingToUndoPublishesNothing(t *testing.T) {
+	g := newRig(bus.ActivityDX, rk(7, "EA8XYZ", "20m"))
+	rep := g.r.Undo(context.Background())
+	if len(g.pub.all()) != 0 || status(rep, "chase-queue") != loggers.NotConfirmed {
+		t.Errorf("published %q, parts %+v", g.pub.all(), rep.Parts)
+	}
+}
+
+func TestSkipNeedsTheUndoMarkNotJustTheRowGone(t *testing.T) {
+	g := newRig(bus.ActivityDX, rk(7, "EA8XYZ", "20m"), rk(2, "B2", "20m"))
+	// The row expires on its own but chase-queue never took the skip.
+	g.pub.onP = func(_, payload string) {
+		if strings.Contains(payload, `"skip"`) {
+			g.m.SetChase(bus.ChaseState{Activity: "dx", Ranked: []bus.Ranked{rk(2, "B2", "20m")}})
+		}
+	}
+	rep := g.r.Skip(context.Background(), 7)
+	if status(rep, "chase-queue") != loggers.NotConfirmed {
+		t.Errorf("parts = %+v", rep.Parts)
+	}
+}
+
+func TestUndoNotConfirmedByUnrelatedListChange(t *testing.T) {
+	g := newRig(bus.ActivityDX, rk(7, "EA8XYZ", "20m"))
+	g.m.SetChase(bus.ChaseState{Activity: "dx", Undo: "EA8XYZ", Ranked: []bus.Ranked{rk(7, "EA8XYZ", "20m")}})
+	// Same undo label, one row leaves: not an undo.
+	g.pub.onP = func(_, payload string) {
+		if strings.Contains(payload, `"undo"`) {
+			g.m.SetChase(bus.ChaseState{Activity: "dx", Undo: "EA8XYZ"})
+		}
+	}
+	if rep := g.r.Undo(context.Background()); status(rep, "chase-queue") != loggers.NotConfirmed {
+		t.Errorf("parts = %+v", rep.Parts)
+	}
+}
+
+func TestSplitWithoutSliceAFrequencyIsNotAFalseTimeout(t *testing.T) {
+	g := newRig(bus.ActivityDX, rk(7, "EA8XYZ", "20m"))
+	g.rad.Set(bus.RadioState{Split: true, FreqHz: 14105000}) // no rx_freq_hz
+	rep := g.r.Act(context.Background(), 7)
+	if status(rep, "Radio") != loggers.OK || !strings.Contains(rep.Parts[0].Detail, "slice A frequency not reported") {
+		t.Errorf("radio part = %+v", rep.Parts[0])
 	}
 }

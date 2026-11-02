@@ -35,7 +35,7 @@ func (l *Log4OM) SendCall(ctx context.Context, call string) Result {
 	if !ValidCall(call) {
 		return Result{Skipped, "no valid callsign"}
 	}
-	ra, err := net.ResolveUDPAddr("udp", l.Addr)
+	ra, err := net.ResolveUDPAddr("udp4", l.Addr)
 	if err != nil {
 		return Result{Failed, "address: " + err.Error()}
 	}
@@ -49,7 +49,7 @@ func (l *Log4OM) SendCall(ctx context.Context, call string) Result {
 	}
 	id := newGUID()
 	msg := fmt.Sprintf("<RemoteControlRequest><MessageId>%s</MessageId><RemoteControlMessage>SetCallsign</RemoteControlMessage><Callsign>%s</Callsign></RemoteControlRequest>", id, call)
-	conn, err := net.DialUDP("udp", nil, ra)
+	conn, err := net.DialUDP("udp4", nil, ra)
 	if err != nil {
 		return Result{Failed, err.Error()}
 	}

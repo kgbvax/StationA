@@ -51,9 +51,11 @@ scp "dist/${EXE}" "${USER}@${HOST}:${DEST}/${EXE}"
 GOT=$($SSH "powershell -NoProfile -c \"(Get-FileHash -Algorithm SHA256 '${WDEST}\\${EXE}').Hash.ToLower()\"" | tr -d '\r')
 [ "$GOT" = "$WANT" ] || { echo "SHA-256 mismatch: $GOT != $WANT" >&2; exit 1; }
 
-$SSH "cmd /c \"if not exist ${WDEST}\\config.toml (echo seed) else (echo exists)\"" | grep -q seed &&
-    scp .deploy-seed.toml "${USER}@${HOST}:${DEST}/config.toml" ||
+if $SSH "cmd /c \"if not exist ${WDEST}\\config.toml (echo seed) else (echo exists)\"" | grep -q seed; then
+    scp .deploy-seed.toml "${USER}@${HOST}:${DEST}/config.toml" || { echo "seeding config.toml failed" >&2; exit 1; }
+else
     echo "    config.toml already present - left alone (seed-once)"
+fi
 
 echo "==> registering logon task ${TASK}"
 WHO=$($SSH whoami | tr -d '\r')

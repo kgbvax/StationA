@@ -25,6 +25,7 @@ body { margin:0; background:var(--bg); color:var(--fg); font-size:16px; }
 .badge.mult { background:#4a3a2d; color:#f0c89a; }
 .empty { padding:1rem .8rem; color:var(--dim); }
 .result { padding:.4rem .8rem; border-top:1px solid var(--line); min-height:2.2rem; display:flex; flex-wrap:wrap; gap:.8rem; }
-.part.ok { color:var(--ok); } .part.failed { color:var(--bad); }
-.part.skipped, .part.NotConfirmed, .part { color:var(--dim); }
-.part.failed { color:var(--bad); }
+.part { color:var(--dim); }
+.part[data-status="ok"] { color:var(--ok); }
+.part[data-status="failed"] { color:var(--bad); }
+.part[data-status="not confirmed"] { color:var(--warn); }

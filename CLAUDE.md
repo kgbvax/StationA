@@ -124,7 +124,7 @@ oscarwatch-sattrack-bridge, vhfcam-restream (:8083), the hf_console web channel
 `hf-console-web` (:8091), testui (:8090), the landing page stationportal (:80) and the
 station Mosquitto mirror. **shari** (`192.168.1.139`, Raspberry Pi 4) runs only
 spid-ercm-rotator-bridge and hf-mqtt-capture (plus HamClock and SvxLink, which are not repo
-components). winpc-power-bridge and chaseq-ui run on the Windows shack PC bwpc (`192.168.1.197`).
+components). winpc-power-bridge and chaseq-ui run on the Windows shack PC bwpc (`192.168.1.197`). chaseq-ui is the one Go component outside `go.work` (glaze needs Go 1.27.1): build it with `GOWORK=off`; its DXLog script `chaseq-ui/dxlog/ChaseqCallsign.cs` is installed into DXLog.net once (steps in `chaseq-ui/README.md`) and has not yet been run live.
 
 ```bash
 # SSH in

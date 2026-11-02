@@ -87,7 +87,32 @@ func (s *Server) Handler() http.Handler {
 			go s.Quit()
 		}
 	}))
-	return mux
+	return s.hostGuard(mux)
+}
+
+// hostGuard refuses any request whose Host is not a loopback name: a page on
+// another site that rebinds its DNS name to 127.0.0.1 would otherwise be
+// same-origin with this server and could press Enter for the operator.
+func (s *Server) hostGuard(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !loopbackHost(r.Host) {
+			http.Error(w, "host not allowed", http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func loopbackHost(hostport string) bool {
+	h, _, err := net.SplitHostPort(hostport)
+	if err != nil {
+		h = hostport
+	}
+	switch h {
+	case "127.0.0.1", "localhost", "::1", "[::1]":
+		return true
+	}
+	return false
 }
 
 // write guards a state-changing route: same-origin only, and a custom header
@@ -96,7 +121,7 @@ func (s *Server) write(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if o := r.Header.Get("Origin"); o != "" {
 			u, err := url.Parse(o)
-			if err != nil || u.Host != r.Host {
+			if err != nil || u.Host != r.Host || !loopbackHost(u.Host) {
 				http.Error(w, "cross-origin request refused", http.StatusForbidden)
 				return
 			}
@@ -239,26 +264,30 @@ func (s *Server) undo(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) filters(w http.ResponseWriter, r *http.Request) {
-	f := s.Model.Filters()
 	q := r.URL.Query()
-	if b := q.Get("band"); b != "" {
+	band := q.Get("band")
+	if band != "" {
 		ok := false
 		for _, x := range Bands {
-			ok = ok || x == b
+			ok = ok || x == band
 		}
 		if !ok {
 			http.Error(w, "bad band", http.StatusBadRequest)
 			return
 		}
-		f = f.ToggleBand(b)
 	}
-	if n := q.Get("needed"); n != "" {
-		f.NeededOnly = n == "1"
-	}
-	if q.Get("clear") == "1" {
-		f = model.Filters{}
-	}
-	s.Model.SetFilters(f)
+	f := s.Model.UpdateFilters(func(f model.Filters) model.Filters {
+		if band != "" {
+			f = f.ToggleBand(band)
+		}
+		if n := q.Get("needed"); n != "" {
+			f.NeededOnly = n == "1"
+		}
+		if q.Get("clear") == "1" {
+			f = model.Filters{}
+		}
+		return f
+	})
 	_ = model.SaveFilters(s.FiltersPath, f)
 	s.Notify()
 	w.WriteHeader(http.StatusNoContent)
@@ -266,7 +295,9 @@ func (s *Server) filters(w http.ResponseWriter, r *http.Request) {
 
 // Serve serves on ln until ctx is done.
 func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
-	srv := &http.Server{Handler: s.Handler(), ReadHeaderTimeout: 5 * time.Second}
+	srv := &http.Server{Handler: s.Handler(), ReadHeaderTimeout: 5 * time.Second,
+		// Open SSE streams end with ctx instead of holding Shutdown up.
+		BaseContext: func(net.Listener) context.Context { return ctx }}
 	go func() {
 		<-ctx.Done()
 		sh, c := context.WithTimeout(context.Background(), time.Second)

@@ -3,12 +3,18 @@
 // focus, never while a filter chip does (a stray Skip changes every view).
 (function () {
   const H = { 'X-Chaseq': '1' };
-  const post = (url) => fetch(url, { method: 'POST', headers: H }).then(() => window.chaseqRefresh && window.chaseqRefresh());
+  const post = (url) => fetch(url, { method: 'POST', headers: H }).then((r) => {
+    // A refused request (400/403) carries no report: say so in the result strip.
+    if (!r.ok && r.status !== 409) window.chaseqFailed && window.chaseqFailed(r.status);
+    return window.chaseqRefresh && window.chaseqRefresh();
+  }, () => window.chaseqFailed && window.chaseqFailed(0));
   const onChip = () => document.activeElement && document.activeElement.classList.contains('chip');
   const chips = () => Array.from(document.querySelectorAll('.filters .chip'));
 
   document.addEventListener('keydown', (e) => {
     if (e.ctrlKey || e.metaKey || e.altKey) return;
+    // A held key must not queue the same action thirty times a second.
+    if (e.repeat && (e.key === 'Enter' || e.key === 's' || e.key === 'u' || e.key === ' ')) { e.preventDefault(); return; }
     if (onChip()) {
       const list = chips(), i = list.indexOf(document.activeElement);
       if (e.key === 'ArrowRight') { list[Math.min(i + 1, list.length - 1)].focus(); e.preventDefault(); }

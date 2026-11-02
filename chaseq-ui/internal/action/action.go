@@ -106,7 +106,7 @@ func (r *Runner) Act(ctx context.Context, rowID int64) Report {
 		rep.Parts = append(rep.Parts, part(l.Name(), res.Status, res.Detail))
 	}
 	if activity, _ := r.Model.Activity(); activity == bus.ActivityContest {
-		rep.Parts = append(rep.Parts, r.chaseCmd("handled", row, func() bool { return !r.Model.StillListed(row.RowID) }))
+		rep.Parts = append(rep.Parts, r.chaseCmd("handled", row))
 	}
 	return rep
 }
@@ -126,7 +126,7 @@ func (r *Runner) Skip(ctx context.Context, rowID int64) Report {
 		rep.Parts = append(rep.Parts, part("List", loggers.Failed, refuse))
 		return rep
 	}
-	rep.Parts = append(rep.Parts, r.chaseCmd("skip", row, func() bool { return !r.Model.StillListed(row.RowID) }))
+	rep.Parts = append(rep.Parts, r.chaseCmd("skip", row))
 	return rep
 }
 
@@ -139,12 +139,28 @@ func (r *Runner) Undo(ctx context.Context) Report {
 		rep.Parts = append(rep.Parts, part("List", loggers.Failed, refuse))
 		return rep
 	}
-	before := r.Model.Signature()
+	beforeLabel, beforeIDs := r.Model.UndoState()
+	if beforeLabel == "" {
+		rep.Parts = append(rep.Parts, part("chase-queue", loggers.NotConfirmed, "nothing to undo"))
+		return rep
+	}
 	if err := r.Pub.Publish(r.ChaseCmd, bus.CmdPayload("undo", "")); err != nil {
 		rep.Parts = append(rep.Parts, part("chase-queue", loggers.Failed, err.Error()))
 		return rep
 	}
-	if r.waitFor(r.timing().ConfirmWait, func() bool { return r.Model.Signature() != before }) {
+	// Undo shows as a changed label or a row that was not listed before.
+	if r.waitFor(r.timing().ConfirmWait, func() bool {
+		label, ids := r.Model.UndoState()
+		if label != beforeLabel {
+			return true
+		}
+		for id := range ids {
+			if !beforeIDs[id] {
+				return true
+			}
+		}
+		return false
+	}) {
 		rep.Parts = append(rep.Parts, part("chase-queue", loggers.OK, ""))
 	} else {
 		rep.Parts = append(rep.Parts, part("chase-queue", loggers.NotConfirmed, "list unchanged after 5 s (nothing to undo?)"))
@@ -175,6 +191,13 @@ func (r *Runner) tune(ctx context.Context, row model.Row) Part {
 	} else if err := r.Pub.Publish(r.RadioCmd, bus.CmdPayload("set_mode", Sideband(row.FreqHz))); err != nil {
 		return part("Radio", loggers.Failed, err.Error())
 	}
+	if st := r.Radio.Get(); st.Split && st.RxFreqHz == 0 {
+		// flexbridge reports no slice-A frequency: nothing to confirm against.
+		if note != "" {
+			note += "; "
+		}
+		return part("Radio", loggers.OK, note+"slice A frequency not reported")
+	}
 	if r.waitFor(r.timing().TuneWait, func() bool { return near(r.Radio.Get().Tuned(), row.FreqHz) }) {
 		return part("Radio", loggers.OK, note)
 	}
@@ -184,7 +207,15 @@ func (r *Runner) tune(ctx context.Context, row model.Row) Part {
 	return part("Radio", loggers.NotConfirmed, "radio did not report the new frequency in time"+note)
 }
 
-func (r *Runner) chaseCmd(action string, row model.Row, effect func() bool) Part {
+// chaseCmd sends skip/handled and confirms it: the row is gone from the next
+// chase state AND the undo label shows chase-queue took a mark (a row that
+// merely expired, or a dropped command, leaves the label alone).
+func (r *Runner) chaseCmd(action string, row model.Row) Part {
+	beforeLabel, _ := r.Model.UndoState()
+	effect := func() bool {
+		label, _ := r.Model.UndoState()
+		return !r.Model.StillListed(row.RowID) && label != "" && (label != beforeLabel || beforeLabel == "")
+	}
 	t := bus.Target{RowID: row.RowID, Band: row.Band, Call: row.Call}
 	if err := r.Pub.Publish(r.ChaseCmd, bus.CmdPayload(action, bus.TargetValue(t))); err != nil {
 		return part("chase-queue", loggers.Failed, err.Error())
@@ -192,7 +223,7 @@ func (r *Runner) chaseCmd(action string, row model.Row, effect func() bool) Part
 	if r.waitFor(r.timing().ConfirmWait, effect) {
 		return part("chase-queue", loggers.OK, "")
 	}
-	return part("chase-queue", loggers.NotConfirmed, "the row was still listed after 5 s")
+	return part("chase-queue", loggers.NotConfirmed, "chase-queue did not show the mark after 5 s")
 }
 
 func (r *Runner) waitFor(d time.Duration, cond func() bool) bool {

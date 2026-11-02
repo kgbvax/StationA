@@ -37,6 +37,10 @@ public class ChaseqCallsign
     {
         form = main;
         udp = new UdpClient(new IPEndPoint(IPAddress.Loopback, Port));
+        // Windows reports an ICMP "port unreachable" (chaseq-ui closed its socket
+        // before our reply) as a receive error that would end the loop: switch
+        // that off (SIO_UDP_CONNRESET).
+        try { udp.Client.IOControl(-1744830452, new byte[] { 0 }, null); } catch (Exception) { }
         worker = new Thread(Listen) { IsBackground = true, Name = "chaseq-callsign" };
         worker.Start();
     }
@@ -54,7 +58,9 @@ public class ChaseqCallsign
         {
             byte[] data;
             try { data = udp.Receive(ref any); }
-            catch (Exception) { return; }
+            catch (ObjectDisposedException) { return; }
+            catch (SocketException) { if (stop) return; continue; }
+            catch (Exception) { if (stop) return; continue; }
             var msg = Encoding.ASCII.GetString(data).Trim();
             string reply = "ERR";
             if (msg.StartsWith("CALL "))

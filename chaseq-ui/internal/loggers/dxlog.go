@@ -31,7 +31,7 @@ func (d *DXLog) SendCall(ctx context.Context, call string) Result {
 	if !ValidCall(call) {
 		return Result{Skipped, "no valid callsign"}
 	}
-	conn, err := net.Dial("udp", d.Addr)
+	conn, err := net.Dial("udp4", d.Addr)
 	if err != nil {
 		return Result{Failed, err.Error()}
 	}

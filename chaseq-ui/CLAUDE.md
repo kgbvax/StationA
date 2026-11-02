@@ -45,7 +45,7 @@ and publish retained `muehle/hf/chase/state`, `…/chase/status` and `…/cqfind
 - **Contest only:** Enter also sends `handled` (as bmrec does; `how` defaults to `qsy` in chase-queue). DX rows stay listed.
 - **Frequency:** cluster rows carry `spot.freq_hz`; heard rows get it from bmrec's `cqfinder/state` by `row_id`.
   A heard row bmrec no longer has cannot be tuned.
-- **Up/Down/Enter/`s`/`u` act on the list only while the list has focus**; a filter chip with focus swallows them.
+- **Enter/`s`/`u` act from anywhere except a filter chip** (a focused chip swallows them); arrows only ever move the highlight. A held key is ignored (`e.repeat`). The page fragment is only swapped when it changed, so focus and scroll survive.
 - **Secrets:** `CHASEQ_UI_MQTT_PASSWORD` (user env var on bwpc); TOML `[mqtt] password` is only a fallback;
   never logged (`Config.String` redacts).
 - Log4OM answers on its inbound port + 1 as an IPv4 broadcast: the reply socket binds `udp4` on all interfaces;

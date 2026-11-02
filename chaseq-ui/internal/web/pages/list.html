@@ -10,9 +10,9 @@
   {{if .View.Filters.Active}}<button type="button" class="chip clear" data-clear="1">clear</button>{{end}}
 </div>
 {{if .View.Filters.Active}}<div class="summary">Filter:{{range .View.Filters.Bands}} {{.}}{{end}}{{if .View.Filters.NeededOnly}} needed only{{end}}{{if .View.Hidden}} - {{.View.Hidden}} hidden by filter{{end}}</div>{{end}}
-<ol id="rows" class="rows" tabindex="0">
+<ol id="rows" class="rows" tabindex="0" role="listbox" aria-label="Chase queue"{{range .View.Rows}}{{if .Highlighted}} aria-activedescendant="row-{{.RowID}}"{{end}}{{end}}>
 {{range .View.Rows}}
-  <li class="row{{if .Highlighted}} hi{{end}}{{if not .Tunable}} notune{{end}}" data-row="{{.RowID}}" aria-selected="{{.Highlighted}}">
+  <li class="row{{if .Highlighted}} hi{{end}}{{if not .Tunable}} notune{{end}}" id="row-{{.RowID}}" data-row="{{.RowID}}" role="option" aria-selected="{{.Highlighted}}">
     <span class="call">{{if .Call}}{{.Call}}{{else}}no call{{end}}</span>
     <span class="band">{{.Band}}</span>
     <span class="freq">{{if .Tunable}}{{khz .FreqHz}}{{else}}no freq{{end}}</span>
@@ -24,6 +24,6 @@
 </ol>
 <footer class="result" aria-live="polite">
 {{with .Last}}<strong>{{if eq .Action "act"}}{{.Call}}{{else if eq .Action "skip"}}Skip {{.Call}}{{else}}Undo{{end}}</strong>
-  {{range .Parts}}<span class="part {{.Status}}">{{.Name}}: {{.Status}}{{if .Detail}} ({{.Detail}}){{end}}</span>{{end}}
+  {{range .Parts}}<span class="part" data-status="{{.Status}}">{{.Name}}: {{.Status}}{{if .Detail}} ({{.Detail}}){{end}}</span>{{end}}
 {{end}}
 </footer>

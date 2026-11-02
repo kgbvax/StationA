@@ -121,6 +121,26 @@ func (m *Model) SetFilters(f Filters) {
 	m.filters = f
 }
 
+// UpdateFilters changes the filters atomically and returns the result.
+func (m *Model) UpdateFilters(f func(Filters) Filters) Filters {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.filters = f(m.filters)
+	return m.filters
+}
+
+// UndoState is the undo label and the set of listed row ids, for confirming
+// an Undo from the list's visible effect.
+func (m *Model) UndoState() (string, map[int64]bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	ids := make(map[int64]bool, len(m.chase.Ranked))
+	for _, r := range m.chase.Ranked {
+		ids[r.RowID] = true
+	}
+	return m.chase.Undo, ids
+}
+
 // Filters returns the current filters.
 func (m *Model) Filters() Filters {
 	m.mu.Lock()
