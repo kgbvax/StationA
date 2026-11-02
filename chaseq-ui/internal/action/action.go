@@ -211,10 +211,16 @@ func (r *Runner) tune(ctx context.Context, row model.Row) Part {
 // chase state AND the undo label shows chase-queue took a mark (a row that
 // merely expired, or a dropped command, leaves the label alone).
 func (r *Runner) chaseCmd(action string, row model.Row) Part {
-	beforeLabel, _ := r.Model.UndoState()
+	// chase-queue labels the undo entry with the call, or "skip" without one.
+	// Repeated marks repeat the label (the same call on two bands), so the
+	// confirmation is "row gone and the label is the one this mark sets".
+	want := row.Call
+	if want == "" {
+		want = "skip"
+	}
 	effect := func() bool {
 		label, _ := r.Model.UndoState()
-		return !r.Model.StillListed(row.RowID) && label != "" && (label != beforeLabel || beforeLabel == "")
+		return !r.Model.StillListed(row.RowID) && label == want
 	}
 	t := bus.Target{RowID: row.RowID, Band: row.Band, Call: row.Call}
 	if err := r.Pub.Publish(r.ChaseCmd, bus.CmdPayload(action, bus.TargetValue(t))); err != nil {

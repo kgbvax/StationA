@@ -16,7 +16,7 @@ type DXLog struct {
 // NewDXLog returns a sender for the script listening at addr.
 func NewDXLog(addr string, timeout time.Duration) *DXLog {
 	if timeout <= 0 {
-		timeout = 500 * time.Millisecond
+		timeout = time.Second
 	}
 	return &DXLog{Addr: addr, Timeout: timeout}
 }
@@ -24,9 +24,8 @@ func NewDXLog(addr string, timeout time.Duration) *DXLog {
 // Name implements Sender.
 func (d *DXLog) Name() string { return "DXLog" }
 
-// SendCall implements Sender. An ICMP "unreachable" on the connected socket
-// means nobody listens (DXLog or its script is not running): failed. No reply
-// but no error: sent, not confirmed.
+// SendCall implements Sender. No "OK" within the timeout is failed: the script
+// always answers.
 func (d *DXLog) SendCall(ctx context.Context, call string) Result {
 	if !ValidCall(call) {
 		return Result{Skipped, "no valid callsign"}
@@ -43,10 +42,9 @@ func (d *DXLog) SendCall(ctx context.Context, call string) Result {
 	buf := make([]byte, 64)
 	n, err := conn.Read(buf)
 	if err != nil {
-		if ne, ok := err.(net.Error); ok && ne.Timeout() {
-			return Result{NotConfirmed, "sent, no reply"}
-		}
-		return Result{Failed, "not reached (is the DXLog script running?)"}
+		// The script always answers, and Go on Windows hides ICMP "unreachable",
+		// so silence on loopback means nobody is listening (or DXLog is stuck).
+		return Result{Failed, "no answer (is DXLog running with the script?)"}
 	}
 	if string(buf[:n]) == "OK" {
 		return Result{OK, ""}

@@ -4,6 +4,7 @@
 (function () {
   let busy = false, again = false, last = '';
   window.chaseqFailed = function (status) {
+    last = ''; // the next refresh must replace the strip we are about to overwrite
     const f = document.querySelector('.result');
     if (f) f.innerHTML = '<span class="part" data-status="failed">request failed' + (status ? ' (' + status + ')' : '') + '</span>';
   };
@@ -12,7 +13,7 @@
     busy = true;
     try {
       const focused = document.activeElement && document.activeElement.dataset;
-      const key = focused && (focused.band ? 'band' : focused.needed !== undefined ? 'needed' : null);
+      const key = focused && (focused.band ? 'band' : focused.needed !== undefined ? 'needed' : focused.clear ? 'clear' : null);
       const val = key && focused[key];
       const r = await fetch('/list', { cache: 'no-store' });
       if (r.ok) {
@@ -28,7 +29,9 @@
         if (hi) hi.scrollIntoView({ block: 'nearest' });
         if (key) {
           const el = document.querySelector('[data-' + key + ']' + (key === 'band' ? '[data-band="' + val + '"]' : ''));
-          if (el) el.focus();
+          // A chip that vanished (clear after clearing) hands focus to the list,
+          // never to the page body, where Enter would act.
+          if (el) el.focus(); else if (rows) rows.focus();
         }
       }
     } finally {

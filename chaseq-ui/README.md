@@ -24,4 +24,4 @@ DXLog's UI thread and answers `OK`. Copy it into DXLog's scripts folder and enab
 DXLog yet.** First live check: press Enter on a row with DXLog open. If the callsign does not appear, the
 script's `Initialize` signature or the `txtCallSign` lookup needs adjusting to DXLog's own example scripts; if
 setting `Text` does not reach DXLog's entry line, use the `SendKeys` fallback noted in `SetCall`. With DXLog
-(or the script) not running, the DXLog part reports "not reached" and Log4OM still gets the call.
+(or the script) not running, the DXLog part reports "no answer" after 1 s and Log4OM still gets the call.

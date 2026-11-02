@@ -131,7 +131,7 @@ func TestDXLogNobodyListening(t *testing.T) {
 	addr := c.LocalAddr().String()
 	c.Close() // port now unbound
 	r := NewDXLog(addr, 500*time.Millisecond).SendCall(context.Background(), "EA8XYZ")
-	if r.Status != Failed && r.Status != NotConfirmed {
+	if r.Status != Failed {
 		t.Errorf("result = %+v", r)
 	}
 	if r.Status == OK {

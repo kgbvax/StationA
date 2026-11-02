@@ -333,3 +333,29 @@ func TestSplitWithoutSliceAFrequencyIsNotAFalseTimeout(t *testing.T) {
 		t.Errorf("radio part = %+v", rep.Parts[0])
 	}
 }
+
+// The same call on a second band repeats the undo label; the skip is still confirmed.
+func TestSkipConfirmedWhenUndoLabelRepeats(t *testing.T) {
+	g := newRig(bus.ActivityDX, rk(7, "K1ABC", "40m"))
+	g.m.SetChase(bus.ChaseState{Activity: "dx", Undo: "K1ABC", Ranked: []bus.Ranked{rk(7, "K1ABC", "40m")}})
+	g.pub.onP = func(_, payload string) {
+		if strings.Contains(payload, `"skip"`) {
+			g.m.SetChase(bus.ChaseState{Activity: "dx", Undo: "K1ABC"})
+		}
+	}
+	if rep := g.r.Skip(context.Background(), 7); status(rep, "chase-queue") != loggers.OK {
+		t.Errorf("parts = %+v", rep.Parts)
+	}
+}
+
+func TestSkipOfRowWithoutCallExpectsSkipLabel(t *testing.T) {
+	g := newRig(bus.ActivityDX, rk(9, "", "20m"))
+	g.pub.onP = func(_, payload string) {
+		if strings.Contains(payload, `"skip"`) {
+			g.m.SetChase(bus.ChaseState{Activity: "dx", Undo: "skip"})
+		}
+	}
+	if rep := g.r.Skip(context.Background(), 9); status(rep, "chase-queue") != loggers.OK {
+		t.Errorf("parts = %+v", rep.Parts)
+	}
+}
