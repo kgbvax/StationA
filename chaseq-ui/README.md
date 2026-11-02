@@ -8,8 +8,7 @@ Build/test/layout: `CLAUDE.md`. Config: `config.example.toml`. Deploy: `./deploy
 
 ## Setup on bwpc
 
-1. Copy `config.example.toml` to `C:\Users\iotte\chaseq-ui\config.toml`; set the MQTT password as the user
-   environment variable `CHASEQ_UI_MQTT_PASSWORD` (`rundll32 sysdm.cpl,EditEnvironmentVariables`).
+1. Copy `config.example.toml` to `C:\Users\iotte\chaseq-ui\config.toml`; set `[mqtt] password`.
 2. **Log4OM:** Settings → Connections → Remote Control Interface: note the inbound UDP port and put it in
    `[loggers] log4om_addr`. Log4OM ignores `SetCallsign` when you have already typed a call by hand.
 3. **DXLog.net:** see below.

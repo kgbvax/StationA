@@ -1,20 +1,14 @@
 // Package config holds chaseq-ui's runtime configuration: a TOML file next to
-// the executable, with the MQTT password taken from the environment
-// (CHASEQ_UI_MQTT_PASSWORD) and the TOML value only as a fallback, as for
-// winpc-power-bridge on the same host.
+// the executable, MQTT password included, as for qslotter.
 package config
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/BurntSushi/toml"
 )
-
-// EnvPrefix is the env-override prefix.
-const EnvPrefix = "CHASEQ_UI_"
 
 // Config is the top-level configuration.
 type Config struct {
@@ -76,7 +70,7 @@ func Default() Config {
 	}
 }
 
-// Load reads path (TOML) over the defaults, then applies env overrides.
+// Load reads path (TOML) over the defaults, 
 // A missing path is not an error: the defaults are used.
 func Load(path string) (Config, error) {
 	c := Default()
@@ -85,15 +79,6 @@ func Load(path string) (Config, error) {
 			return c, fmt.Errorf("config %s: %w", path, err)
 		}
 		c.dir = filepath.Dir(path)
-	}
-	if v := os.Getenv(EnvPrefix + "MQTT_PASSWORD"); v != "" {
-		c.MQTT.Password = v
-	}
-	if v := os.Getenv(EnvPrefix + "MQTT_BROKER"); v != "" {
-		c.MQTT.Broker = v
-	}
-	if v := os.Getenv(EnvPrefix + "HTTP_LISTEN"); v != "" {
-		c.HTTP.Listen = v
 	}
 	return c, nil
 }

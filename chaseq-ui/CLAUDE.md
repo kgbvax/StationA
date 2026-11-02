@@ -19,7 +19,7 @@ GOWORK=off CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags "-s -w -H=w
 ```
 
 Local run against a scratch broker: `mosquitto -c` on another port, then
-`CHASEQ_UI_MQTT_BROKER=tcp://127.0.0.1:18883 GOWORK=off go run ./cmd/chaseq-ui -ui headless` (or `-ui browser`)
+a config with `[mqtt] broker = "tcp://127.0.0.1:18883"`, then `GOWORK=off go run ./cmd/chaseq-ui -config <file> -ui headless` (or `-ui browser`)
 and publish retained `muehle/hf/chase/state`, `…/chase/status` and `…/cqfinder/state`.
 
 ## Layout
@@ -46,7 +46,7 @@ and publish retained `muehle/hf/chase/state`, `…/chase/status` and `…/cqfind
 - **Frequency:** cluster rows carry `spot.freq_hz`; heard rows get it from bmrec's `cqfinder/state` by `row_id`.
   A heard row bmrec no longer has cannot be tuned.
 - **Enter/`s`/`u` act from anywhere except a filter chip** (a focused chip swallows them); arrows only ever move the highlight. A held key is ignored (`e.repeat`). The page fragment is only swapped when it changed, so focus and scroll survive.
-- **Secrets:** `CHASEQ_UI_MQTT_PASSWORD` (user env var on bwpc); TOML `[mqtt] password` is only a fallback;
+- **Secrets:** MQTT password in `config.toml` `[mqtt] password` (no env vars, like qslotter);
   never logged (`Config.String` redacts).
 - Log4OM answers on its inbound port + 1 as an IPv4 broadcast: the reply socket binds `udp4` on all interfaces;
   Windows Defender Firewall may need to allow it, else the Log4OM part says "sent, no reply".

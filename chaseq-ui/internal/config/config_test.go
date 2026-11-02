@@ -16,19 +16,7 @@ func write(t *testing.T, body string) string {
 	return p
 }
 
-func TestEnvPasswordWinsOverToml(t *testing.T) {
-	t.Setenv("CHASEQ_UI_MQTT_PASSWORD", "from-env")
-	c, err := Load(write(t, "[mqtt]\npassword = \"from-toml\"\n"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if c.MQTT.Password != "from-env" {
-		t.Errorf("password = %q, want from-env", c.MQTT.Password)
-	}
-}
-
-func TestTomlPasswordFallbackAndNone(t *testing.T) {
-	t.Setenv("CHASEQ_UI_MQTT_PASSWORD", "")
+func TestTomlPasswordAndNone(t *testing.T) {
 	c, _ := Load(write(t, "[mqtt]\npassword = \"from-toml\"\n"))
 	if c.MQTT.Password != "from-toml" {
 		t.Errorf("password = %q, want from-toml", c.MQTT.Password)
@@ -40,8 +28,7 @@ func TestTomlPasswordFallbackAndNone(t *testing.T) {
 }
 
 func TestStringNeverShowsPassword(t *testing.T) {
-	t.Setenv("CHASEQ_UI_MQTT_PASSWORD", "s3cret-pw")
-	c, _ := Load("")
+	c, _ := Load(write(t, "[mqtt]\npassword = \"s3cret-pw\"\n"))
 	if strings.Contains(c.String(), "s3cret-pw") {
 		t.Errorf("String() leaks the password: %s", c.String())
 	}

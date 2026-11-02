@@ -1,11 +1,10 @@
 # chaseq-ui config. Copy to config.toml next to chaseq-ui.exe (C:\Users\iotte\chaseq-ui\).
-# The MQTT password is NOT set here: put it in the user environment variable
-# CHASEQ_UI_MQTT_PASSWORD (rundll32 sysdm.cpl,EditEnvironmentVariables). A [mqtt] password
-# below is only a fallback.
+# The MQTT password goes in [mqtt] below (this file stays on bwpc; deploy.sh copies it once).
 
 [mqtt]
 broker    = "tcp://192.168.1.178:1883"   # the scmino station broker
 user      = "hf"
+password  = ""                           # the hf broker password
 client_id = "muehle-chaseq-ui"
 
 [topics]

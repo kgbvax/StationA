@@ -30,9 +30,8 @@ WANT=$(shasum -a 256 "dist/${EXE}" | cut -d' ' -f1)
 echo "==> seeding config (once; an existing config.toml is never touched)"
 if [ ! -f .deploy-seed.toml ]; then
     cp config.example.toml .deploy-seed.toml
-    echo "    created .deploy-seed.toml from config.example.toml - review it (Log4OM port!),"
-    echo "    then re-run deploy.sh. Set the MQTT password on the PC as the user environment"
-    echo "    variable CHASEQ_UI_MQTT_PASSWORD (rundll32 sysdm.cpl,EditEnvironmentVariables)."
+    echo "    created .deploy-seed.toml from config.example.toml - review it: [mqtt] password and the"
+    echo "    Log4OM port, then re-run deploy.sh."
     exit 0
 fi
 
