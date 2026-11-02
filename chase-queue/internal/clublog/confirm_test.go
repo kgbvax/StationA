@@ -40,6 +40,9 @@ func TestParseMatrixWrappedAndBad(t *testing.T) {
 	if _, err := ParseMatrix([]byte(`{"x":1}`), []int{1}); err == nil {
 		t.Fatal("empty matrix accepted")
 	}
+	if _, err := ParseMatrix([]byte(`{"230":{"20":2}}`), []int{1}); err == nil {
+		t.Fatal("a matrix with no confirmed cell must not replace the stored set")
+	}
 }
 
 func TestFetchAuthRateLimitAndTokenHygiene(t *testing.T) {

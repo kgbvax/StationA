@@ -285,3 +285,43 @@ func TestUndoDoesNotCrossActivities(t *testing.T) {
 		t.Fatalf("got %v", err)
 	}
 }
+
+func TestSeqRestartAcceptedWhenNewer(t *testing.T) {
+	f := newDX(t)
+	f.e.SetCandidates(bus.CQFinderState{Seq: 5000, TS: f.now, Rows: []bus.Candidate{cand(1, "EA8XYZ", "20m", true)}})
+	// bmrec restarted: its counter starts again, but its clock moved on
+	if !f.e.SetCandidates(bus.CQFinderState{Seq: 1, TS: f.now.Add(time.Minute), Rows: []bus.Candidate{cand(2, "DL1ABC", "20m", true)}}) {
+		t.Fatal("restarted bmrec ignored")
+	}
+	if st := f.e.Compute(); len(st.Ranked) != 1 || st.Ranked[0].RowID != 2 {
+		t.Fatalf("%+v", st)
+	}
+	// a lower seq with an older clock is still stale
+	f.e.SetCandidates(bus.CQFinderState{Seq: 7, TS: f.now.Add(2 * time.Minute)})
+	if f.e.SetCandidates(bus.CQFinderState{Seq: 3, TS: f.now, Rows: []bus.Candidate{cand(9, "G4ABC", "20m", true)}}) {
+		t.Fatal("stale state taken")
+	}
+}
+
+func TestActionUsesTheListedCallNotThePayloadCall(t *testing.T) {
+	f := newDX(t)
+	f.e.SetConfirmations(nil)
+	f.rank(1, []bus.Candidate{cand(1, "EA8XYZ", "20m", true)})
+	if err := f.e.Skip(bus.Target{RowID: 1, Band: "20m", Call: "K1ABC"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := f.st.skips["EA8XYZ|20m"]; !ok || len(f.st.skips) != 1 {
+		t.Fatalf("skipped %v", f.st.skips)
+	}
+}
+
+func TestTypedCallForCalllessRowIsValidated(t *testing.T) {
+	f := newContest(t)
+	f.rank(1, []bus.Candidate{cand(1, "", "20m", false)})
+	if err := f.e.Handled(bus.Target{RowID: 1, Band: "20m", Call: "x'; DROP TABLE", How: "spot"}); !errors.Is(err, errBadCall) {
+		t.Fatalf("got %v", err)
+	}
+	if err := f.e.Handled(bus.Target{RowID: 1, Band: "20m", Call: "ea8xyz", How: "spot"}); err != nil || f.st.handled["EA8XYZ|20m"] != "spot" {
+		t.Fatalf("%v %v", err, f.st.handled)
+	}
+}

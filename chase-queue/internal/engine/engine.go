@@ -9,6 +9,7 @@ package engine
 
 import (
 	"errors"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -34,7 +35,10 @@ var (
 	ErrNothingToUndo = errors.New("nothing to undo")
 	// ErrNeedCall: marking a station handled needs a callsign.
 	ErrNeedCall = errors.New("a callsign is needed")
+	errBadCall  = errors.New("not a callsign")
 )
+
+var validCall = regexp.MustCompile(`^[A-Z0-9]{1,6}(/[A-Z0-9]{1,6}){0,2}$`)
 
 // Persister is what the engine stores.
 type Persister interface {
@@ -73,6 +77,7 @@ type Engine struct {
 	mu       sync.Mutex
 	activity string
 	seq      int64
+	candTS   time.Time
 	cands    []bus.Candidate
 	spots    []bus.Spot
 	skipRows map[int64]bool // callsign-less candidates skipped, by row
@@ -112,10 +117,12 @@ func key(call, band string) string { return contest.NormalizeCall(call) + "|" + 
 func (e *Engine) SetCandidates(st bus.CQFinderState) bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if st.Seq != 0 && st.Seq < e.seq {
+	// a lower seq is stale unless bmrec's clock says the state is newer: bmrec
+	// restarting restarts its counter
+	if st.Seq != 0 && st.Seq < e.seq && !st.TS.After(e.candTS) {
 		return false
 	}
-	e.seq, e.cands, e.spots = st.Seq, st.Rows, st.Spotted
+	e.seq, e.candTS, e.cands, e.spots = st.Seq, st.TS, st.Rows, st.Spotted
 	// row skips of rows that are gone are no longer needed
 	open := map[int64]bool{}
 	for _, c := range st.Rows {
@@ -274,6 +281,11 @@ func (e *Engine) Compute() bus.ChaseState {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	now := e.cfg.Now()
+	for k, until := range e.dxSkips {
+		if !now.Before(until) {
+			delete(e.dxSkips, k)
+		}
+	}
 	contestOn := e.activity == bus.ActivityContest && e.model != nil
 	cands := make([]contest.Candidate, 0, len(e.cands))
 	for _, r := range e.cands {
@@ -345,18 +357,42 @@ func (e *Engine) ConfirmationsLoaded() bool {
 // it (its callsign is confirmed), in DX chasing until 00:00 UTC. A row
 // without a callsign is skipped by row.
 func (e *Engine) Skip(t bus.Target) error {
+	persist, err := e.skip(t)
+	if persist != nil {
+		if perr := persist(); err == nil {
+			err = perr
+		}
+	}
+	return err
+}
+
+// actCall is the callsign an action applies to: the listed row's own, else
+// the one the operator typed (validated), never a payload call that
+// contradicts the row.
+func actCall(r bus.Ranked, typed string) (string, error) {
+	if c := contest.NormalizeCall(r.Call); c != "" {
+		return c, nil
+	}
+	c := contest.NormalizeCall(typed)
+	if c != "" && !validCall.MatchString(c) {
+		return "", errBadCall
+	}
+	return c, nil
+}
+
+func (e *Engine) skip(t bus.Target) (func() error, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	r, ok := e.listed[t.RowID]
 	if !ok || r.Band != t.Band {
-		return ErrNotListed
+		return nil, ErrNotListed
 	}
-	call := contest.NormalizeCall(t.Call)
-	if call == "" {
-		call = contest.NormalizeCall(r.Call)
+	call, err := actCall(r, t.Call)
+	if err != nil {
+		return nil, err
 	}
 	u := undo{act: e.activity, op: "skip", call: call, band: t.Band, rowID: t.RowID, contestID: e.contest.ID}
-	var err error
+	var persist func() error
 	switch {
 	case call == "":
 		e.skipRows[t.RowID] = true
@@ -366,64 +402,85 @@ func (e *Engine) Skip(t bus.Target) error {
 		until := NextUTCMidnight(e.cfg.Now())
 		e.dxSkips[key(call, t.Band)] = until
 		if e.cfg.Store != nil {
-			err = e.cfg.Store.SetDXSkip(store.DXSkip{Call: call, Band: t.Band, Until: until})
+			persist = func() error { return e.cfg.Store.SetDXSkip(store.DXSkip{Call: call, Band: t.Band, Until: until}) }
 		}
 	}
 	e.pushLocked(u)
 	delete(e.listed, t.RowID)
-	return err
+	return persist, nil
 }
 
 // Handled marks a contest station dealt with (spotted or tuned to). In DX
 // chasing a QSY only tunes the radio: the station stays until it is logged.
 func (e *Engine) Handled(t bus.Target) error {
+	persist, err := e.handled1(t)
+	if persist != nil {
+		if perr := persist(); err == nil {
+			err = perr
+		}
+	}
+	return err
+}
+
+func (e *Engine) handled1(t bus.Target) (func() error, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if e.activity != bus.ActivityContest {
-		return nil
+		return nil, nil
 	}
 	r, ok := e.listed[t.RowID]
 	if !ok || r.Band != t.Band {
-		return ErrNotListed
+		return nil, ErrNotListed
 	}
-	call := contest.NormalizeCall(t.Call)
-	if call == "" {
-		call = contest.NormalizeCall(r.Call)
+	call, err := actCall(r, t.Call)
+	if err != nil {
+		return nil, err
 	}
 	if call == "" {
 		if t.How != "qsy" {
-			return ErrNeedCall
+			return nil, ErrNeedCall
 		}
 		// a candidate without a callsign that was tuned to: out of the list by row, like a skip
 		e.skipRows[t.RowID] = true
 		e.pushLocked(undo{act: e.activity, op: "skip", band: t.Band, rowID: t.RowID})
 		delete(e.listed, t.RowID)
-		return nil
+		return nil, nil
 	}
 	how := t.How
 	if how == "" {
 		how = "spot"
 	}
 	e.handled[key(call, t.Band)] = how
-	var err error
+	var persist func() error
 	if e.cfg.Store != nil {
-		err = e.cfg.Store.MarkContestHandled(e.contest.ID, call, t.Band, how, e.cfg.Now())
+		cid, now := e.contest.ID, e.cfg.Now()
+		persist = func() error { return e.cfg.Store.MarkContestHandled(cid, call, t.Band, how, now) }
 	}
 	e.pushLocked(undo{act: e.activity, op: "handled", call: call, band: t.Band, contestID: e.contest.ID})
 	delete(e.listed, t.RowID)
-	return err
+	return persist, nil
 }
 
 // Undo reverses the last Skip or handled mark of the current activity.
 func (e *Engine) Undo() error {
+	persist, err := e.undo1()
+	if persist != nil {
+		if perr := persist(); err == nil {
+			err = perr
+		}
+	}
+	return err
+}
+
+func (e *Engine) undo1() (func() error, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if len(e.last) == 0 {
-		return ErrNothingToUndo
+		return nil, ErrNothingToUndo
 	}
 	u := e.last[len(e.last)-1]
 	e.last = e.last[:len(e.last)-1]
-	var err error
+	var persist func() error
 	switch {
 	case u.op == "skip" && u.call == "":
 		delete(e.skipRows, u.rowID)
@@ -432,15 +489,15 @@ func (e *Engine) Undo() error {
 	case u.op == "skip":
 		delete(e.dxSkips, key(u.call, u.band))
 		if e.cfg.Store != nil {
-			err = e.cfg.Store.ClearDXSkip(u.call, u.band)
+			persist = func() error { return e.cfg.Store.ClearDXSkip(u.call, u.band) }
 		}
 	case u.op == "handled":
 		delete(e.handled, key(u.call, u.band))
 		if e.cfg.Store != nil {
-			err = e.cfg.Store.ClearContestHandled(u.contestID, u.call, u.band)
+			persist = func() error { return e.cfg.Store.ClearContestHandled(u.contestID, u.call, u.band) }
 		}
 	}
-	return err
+	return persist, nil
 }
 
 func (e *Engine) pushLocked(u undo) {

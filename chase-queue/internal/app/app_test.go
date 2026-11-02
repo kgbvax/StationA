@@ -128,13 +128,24 @@ func TestHTTPOverviewAndUploadErrors(t *testing.T) {
 	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"instances"`) {
 		t.Fatalf("%d %s", rec.Code, rec.Body)
 	}
-	rec = httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest("POST", "/contest/files", bytes.NewReader([]byte(`{"kind":"nope","name":"x","text":"y"}`))))
+	post := func(body string, hdr ...string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest("POST", "/contest/files", bytes.NewReader([]byte(body)))
+		r.Header.Set("Content-Type", "application/json")
+		for i := 0; i+1 < len(hdr); i += 2 {
+			r.Header.Set(hdr[i], hdr[i+1])
+		}
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		return w
+	}
+	if c := post(`{"kind":"definition","name":"x","text":"y"}`, "Origin", "http://evil.example").Code; c != http.StatusForbidden {
+		t.Fatalf("browser origin accepted: %d", c)
+	}
+	rec = post(`{"kind":"nope","name":"x","text":"y"}`)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("%d", rec.Code)
 	}
-	rec = httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest("POST", "/contest/files", bytes.NewReader([]byte(`{"kind":"definition","name":"x.txt","text":"not a definition"}`))))
+	rec = post(`{"kind":"definition","name":"x.txt","text":"not a definition"}`)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("%d %s", rec.Code, rec.Body)
 	}

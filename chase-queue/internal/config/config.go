@@ -182,6 +182,12 @@ func (c Config) Validate() error {
 	if c.ClubLog.Token != "" && c.ClubLog.Call == "" {
 		return errors.New("clublog.call is required with a Club Log token")
 	}
+	if len(c.ClubLog.Confirmed) == 0 {
+		return errors.New("clublog.confirmed_status must not be empty")
+	}
+	if host, _, _ := net.SplitHostPort(c.HTTP.Listen); host != "127.0.0.1" && host != "::1" && host != "localhost" {
+		return fmt.Errorf("http.listen %q: the upload API has no auth and must listen on loopback", c.HTTP.Listen)
+	}
 	if c.ClubLog.RefreshMinutes < 10 {
 		return errors.New("clublog.refresh_minutes must be at least 10 (Club Log allows 1,000 requests a day)")
 	}

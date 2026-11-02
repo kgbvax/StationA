@@ -40,8 +40,13 @@ func (s *Service) connect(ctx context.Context) error {
 			c.Publish(s.topics.meta, 1, true, meta)
 		}
 		c.Subscribe(s.topics.finder, 1, func(_ pahomqtt.Client, m pahomqtt.Message) {
-			p := append([]byte(nil), m.Payload()...)
-			sharedmqtt.Enqueue(s.jobs, func() { s.onCandidates(p) })
+			s.candMu.Lock()
+			s.candRaw = append(s.candRaw[:0], m.Payload()...)
+			s.candMu.Unlock()
+			select {
+			case s.candSig <- struct{}{}:
+			default:
+			}
 		})
 		c.Subscribe(s.topics.cmd, 0, func(_ pahomqtt.Client, m pahomqtt.Message) {
 			p := append([]byte(nil), m.Payload()...)
@@ -51,27 +56,54 @@ func (s *Service) connect(ctx context.Context) error {
 		s.poke() // republish the retained state after a broker restart
 	}
 	o.OnConnectionLost = func(_ pahomqtt.Client, err error) { s.log.Warn("MQTT connection lost", "err", err) }
-	s.client = pahomqtt.NewClient(o)
-	if err := sharedmqtt.Connect(ctx, s.client); err != nil {
+	c := pahomqtt.NewClient(o)
+	s.clientMu.Lock()
+	s.client = c
+	s.clientMu.Unlock()
+	if err := sharedmqtt.Connect(ctx, c); err != nil {
 		return fmt.Errorf("mqtt connect: %w", err)
 	}
 	return nil
 }
 
+func (s *Service) getClient() pahomqtt.Client {
+	s.clientMu.Lock()
+	defer s.clientMu.Unlock()
+	return s.client
+}
+
 func (s *Service) shutdownBus() {
-	if s.client != nil && s.client.IsConnected() {
-		t := s.client.Publish(s.topics.status, 1, true, []byte("offline"))
+	if c := s.getClient(); c != nil && c.IsConnected() {
+		t := c.Publish(s.topics.status, 1, true, []byte("offline"))
 		t.WaitTimeout(2 * time.Second)
-		s.client.Disconnect(500)
+		c.Disconnect(500)
+	}
+}
+
+// candidateWorker applies the newest candidate state. bmrec republishes
+// often; only the latest matters, so a slow /cmd or contest switch never
+// makes states queue up or /cmd get dropped.
+func (s *Service) candidateWorker(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-s.candSig:
+			s.candMu.Lock()
+			p := append([]byte(nil), s.candRaw...)
+			s.candMu.Unlock()
+			s.onCandidates(p)
+		}
 	}
 }
 
 // publishState writes the retained /state with a bounded wait.
 func (s *Service) publishState(b []byte) bool {
-	if s.client == nil || !s.client.IsConnected() {
+	c := s.getClient()
+	if c == nil || !c.IsConnected() {
 		return false
 	}
-	t := s.client.Publish(s.topics.state, 1, true, b)
+	t := c.Publish(s.topics.state, 1, true, b)
 	if !t.WaitTimeout(10 * time.Second) {
 		return false
 	}

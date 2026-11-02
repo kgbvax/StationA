@@ -73,7 +73,9 @@ func (s *Service) SwitchDX() error {
 	s.mu.Lock()
 	s.defName, s.prefillN = "", 0
 	s.mu.Unlock()
-	_ = s.st.SetSetting(activeSetting, "0")
+	if err := s.st.SetSetting(activeSetting, "0"); err != nil {
+		s.log.Warn("storing the active contest failed", "err", err)
+	}
 	s.poke()
 	return nil
 }
@@ -136,12 +138,15 @@ func (s *Service) SwitchContest(req bus.SwitchReq) error {
 	s.mu.Unlock()
 	name := model.Def.Name
 	s.actName.Store(&name)
-	s.actID.Store(c.ID)
+	s.eng.ActivateContest(c, model, handled, qsos)
+	s.actID.Store(c.ID) // after the engine: the DXLog writer files QSOs under this id
 	if s.dxl != nil {
 		s.dxl.ResetCompleteLog()
 	}
-	s.eng.ActivateContest(c, model, handled, qsos)
-	_ = s.st.SetSetting(activeSetting, fmt.Sprint(c.ID))
+	if err := s.st.SetSetting(activeSetting, fmt.Sprint(c.ID)); err != nil {
+		s.log.Warn("storing the active contest failed; a restart will start in DX mode", "err", err)
+	}
+	s.reloadQSOs() // QSOs written between the read above and the activation
 	s.poke()
 	return nil
 }

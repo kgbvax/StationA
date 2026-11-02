@@ -197,5 +197,8 @@ func ParseMatrix(body []byte, confirmed []int) ([]store.Confirmation, error) {
 			out = append(out, store.Confirmation{DXCC: c.dxcc, Band: c.band})
 		}
 	}
+	if len(out) == 0 {
+		return nil, errors.New("the Club Log matrix has cells but none with a confirmed status: check confirmed_status with -clublog-probe")
+	}
 	return out, nil
 }

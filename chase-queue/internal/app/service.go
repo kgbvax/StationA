@@ -47,8 +47,14 @@ type Service struct {
 	l4    *log4om.Listener
 	cl    *clublog.Confirmations
 
-	jobs  chan func()
+	jobs  chan func() // /cmd work
 	dirty chan struct{}
+
+	candMu    sync.Mutex // the newest candidate state; older ones are dropped, never queued
+	candRaw   []byte
+	candSig   chan struct{}
+	uploadSem chan struct{}
+	clientMu  sync.Mutex
 
 	switchMu      sync.Mutex
 	mu            sync.Mutex // guards the fields below
@@ -58,6 +64,7 @@ type Service struct {
 	clState       string    // "", "loaded", "token rejected", "failed: ...", "no token"
 	clLoaded      time.Time
 	l4Seen        time.Time
+	l4Err         string
 	actID         atomic.Int64
 	actName       atomic.Pointer[string]
 	reloadPending atomic.Bool
@@ -71,7 +78,7 @@ type Service struct {
 // New builds a service on an open store.
 func New(cfg config.Config, st *store.Store, log *slog.Logger) *Service {
 	s := &Service{cfg: cfg, log: log, st: st, now: time.Now,
-		jobs: make(chan func(), 64), dirty: make(chan struct{}, 1)}
+		jobs: make(chan func(), 64), dirty: make(chan struct{}, 1), candSig: make(chan struct{}, 1), uploadSem: make(chan struct{}, 1)}
 	db, err := cty.OpenContest(cfg.DataDir)
 	if err != nil {
 		log.Warn("cty.dat unusable; entities read as unknown (put cty.dat and cty.csv in data_dir)", "err", err)
@@ -144,7 +151,9 @@ func (s *Service) Run(ctx context.Context) error {
 	if s.l4 != nil {
 		spawn(func() {
 			if err := s.l4.Run(ctx); err != nil {
-				errCh <- err
+				s.log.Error("Log4OM listener failed; worked stations are no longer tracked live", "err", err)
+				s.setL4Error(err.Error())
+				s.poke()
 			}
 		})
 		spawn(func() { s.consumeLog4OM(ctx) })
@@ -153,8 +162,9 @@ func (s *Service) Run(ctx context.Context) error {
 		spawn(func() { s.refreshConfirmations(ctx) })
 	}
 	spawn(func() { s.publisher(ctx) })
+	spawn(func() { s.candidateWorker(ctx) })
 
-	srv := &http.Server{Addr: s.cfg.HTTP.Listen, Handler: s.handler(), ReadHeaderTimeout: 10 * time.Second}
+	srv := &http.Server{Addr: s.cfg.HTTP.Listen, Handler: s.handler(), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: time.Minute, WriteTimeout: time.Minute}
 	spawn(func() {
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
@@ -210,8 +220,7 @@ func (s *Service) consumeLog4OM(ctx context.Context) {
 			return
 		case q := <-s.l4.QSOs():
 			if err := s.st.AddLogQSOs([]store.LogQSO{q}); err != nil {
-				s.log.Warn("storing a Log4OM QSO failed", "err", err)
-				continue
+				s.log.Warn("storing a Log4OM QSO failed; it counts as worked until restart", "err", err)
 			}
 			s.eng.AddDXWorked(q.Call, q.Band)
 			s.mu.Lock()
@@ -242,9 +251,8 @@ func (s *Service) refreshConfirmations(ctx context.Context) {
 			s.log.Info("club log confirmations loaded", "cells", len(cs))
 		case errors.Is(err, clublog.ErrAuth):
 			s.setCL("token rejected")
-			s.log.Error("Club Log rejected the token; not retrying until restart")
-			s.poke()
-			return
+			s.log.Error("Club Log rejected the token; retrying in an hour")
+			wait = time.Hour
 		case errors.As(err, &rl):
 			wait = rl.Wait
 			s.setCL("failed: rate limited")
@@ -264,6 +272,8 @@ func (s *Service) refreshConfirmations(ctx context.Context) {
 		}
 	}
 }
+
+func (s *Service) setL4Error(v string) { s.mu.Lock(); s.l4Err = v; s.mu.Unlock() }
 
 func (s *Service) setCL(v string) { s.mu.Lock(); s.clState = v; s.mu.Unlock() }
 
@@ -308,8 +318,14 @@ func (s *Service) problems(st bus.ChaseState) []string {
 				out = append(out, "Club Log confirmations not loaded yet")
 			}
 		}
-		if s.l4 == nil {
+		s.mu.Lock()
+		l4Err := s.l4Err
+		s.mu.Unlock()
+		switch {
+		case s.l4 == nil:
 			out = append(out, "Log4OM feed not configured: worked stations are not tracked live")
+		case l4Err != "":
+			out = append(out, "Log4OM feed not listening: "+l4Err)
 		}
 	} else if s.dxl == nil {
 		out = append(out, "No DXLog feed configured: the contest log is not visible")

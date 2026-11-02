@@ -34,15 +34,16 @@ CTY_DIR="${CTY_DIR:-}"
 if [[ "$SSH_HOST" == *"@"* ]]; then SSH_TARGET="$SSH_HOST"; else SSH_TARGET="${SSH_USER}@${SSH_HOST}"; fi
 cd "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-esc() { local s="$1"; s="${s//\\/\\\\}"; s="${s//\"/\\\"}"; printf '%s' "$s"; }
+# single-quoted for systemd's EnvironmentFile and for sourcing; no $ or backtick expansion
+esc() { local s="$1"; case "$s" in *$'\n'*) echo "secret contains a newline" >&2; exit 1;; esac; printf '%s' "${s//\'/\'\\\'\'}"; }
 
 SEED_ENV="$(umask 077; mktemp)"
 UNIT_FILE="$(mktemp)"
 trap 'rm -f "$SEED_ENV" "$UNIT_FILE"' EXIT
 {
   echo "# chase-queue EnvironmentFile (read by the systemd unit). Keep 0600."
-  if [[ -n "$MQTT_PASSWORD" ]]; then echo "CHASE_QUEUE_MQTT_PASSWORD=\"$(esc "$MQTT_PASSWORD")\""; else echo "# CHASE_QUEUE_MQTT_PASSWORD=\"...\""; fi
-  if [[ -n "$CLUBLOG_TOKEN" ]]; then echo "CHASE_QUEUE_CLUBLOG_TOKEN=\"$(esc "$CLUBLOG_TOKEN")\""; else echo "# CHASE_QUEUE_CLUBLOG_TOKEN=\"cl_...\""; fi
+  if [[ -n "$MQTT_PASSWORD" ]]; then echo "CHASE_QUEUE_MQTT_PASSWORD='"$(esc "$MQTT_PASSWORD")"'"; else echo "# CHASE_QUEUE_MQTT_PASSWORD=\"...\""; fi
+  if [[ -n "$CLUBLOG_TOKEN" ]]; then echo "CHASE_QUEUE_CLUBLOG_TOKEN='"$(esc "$CLUBLOG_TOKEN")"'"; else echo "# CHASE_QUEUE_CLUBLOG_TOKEN=\"cl_...\""; fi
 } > "$SEED_ENV"
 
 echo ">> Building ${BINARY} for linux/arm64..."
@@ -66,6 +67,7 @@ User=${SERVICE_USER}
 Group=${SERVICE_USER}
 ConfigurationDirectory=${SERVICE_NAME}
 StateDirectory=${SERVICE_NAME}
+StateDirectoryMode=0750
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
@@ -118,14 +120,17 @@ if [ -e "$CONFIG_FILE" ]; then echo "   config exists -- untouched (seed-once)."
   sudo install -o "$SERVICE_USER" -g "$SERVICE_USER" -m 0600 "/tmp/${SERVICE_NAME}.config.seed" "$CONFIG_FILE"; echo "   seeded $CONFIG_FILE"; fi
 if [ -e "$ENV_FILE" ]; then echo "   env file exists -- untouched (seed-once)."; else
   sudo install -o "$SERVICE_USER" -g "$SERVICE_USER" -m 0600 "/tmp/${SERVICE_NAME}.env.seed" "$ENV_FILE"; echo "   seeded $ENV_FILE"; fi
-sudo install -o root -g root -m 0755 "/tmp/${BINARY}.new" "$INSTALL_DIR/$BINARY"
-sudo install -o root -g root -m 0644 "/tmp/${SERVICE_NAME}.service" "/etc/systemd/system/${SERVICE_NAME}.service"
-sudo systemctl daemon-reload
-sudo systemctl enable "$SERVICE_NAME" >/dev/null
-if sudo bash -c "set -a; . '$ENV_FILE'; set +a; exec '$INSTALL_DIR/$BINARY' -config '$CONFIG_FILE' -check"; then
+sudo install -o root -g root -m 0755 "/tmp/${BINARY}.new" "$INSTALL_DIR/$BINARY.next"
+# check the new binary against the existing config before it replaces the running one
+if sudo bash -c "set -a; . '$ENV_FILE'; set +a; exec '$INSTALL_DIR/$BINARY.next' -config '$CONFIG_FILE' -check"; then
+  sudo mv -f "$INSTALL_DIR/$BINARY.next" "$INSTALL_DIR/$BINARY"
+  sudo install -o root -g root -m 0644 "/tmp/${SERVICE_NAME}.service" "/etc/systemd/system/${SERVICE_NAME}.service"
+  sudo systemctl daemon-reload
+  sudo systemctl enable "$SERVICE_NAME" >/dev/null
   sudo systemctl restart "$SERVICE_NAME"; echo "   service restarted."
 else
-  echo "!! config check FAILED; the service was NOT restarted. Fix $CONFIG_FILE / $ENV_FILE and re-run."; exit 1
+  sudo rm -f "$INSTALL_DIR/$BINARY.next"
+  echo "!! config check FAILED; nothing was replaced and the service was NOT restarted. Fix $CONFIG_FILE / $ENV_FILE and re-run."; exit 1
 fi
 REMOTE
 echo ">> done. Logs: ssh ${SSH_TARGET} journalctl -u ${SERVICE_NAME} -f"

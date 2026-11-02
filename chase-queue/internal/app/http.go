@@ -22,6 +22,18 @@ func (s *Service) handler() http.Handler {
 		writeJSON(w, http.StatusOK, ov)
 	})
 	mux.HandleFunc("POST /contest/files", func(w http.ResponseWriter, r *http.Request) {
+		// a browser page must not be able to write here: bmrec's server proxies this
+		if r.Header.Get("Origin") != "" || r.Header.Get("Sec-Fetch-Site") != "" || !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "JSON from the bmrec server only"})
+			return
+		}
+		select {
+		case s.uploadSem <- struct{}{}:
+			defer func() { <-s.uploadSem }()
+		default:
+			writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "another upload is in progress"})
+			return
+		}
 		b, err := io.ReadAll(io.LimitReader(r.Body, contestUploadMax+64<<10+1))
 		if err != nil || len(b) > contestUploadMax+64<<10 {
 			writeJSON(w, http.StatusRequestEntityTooLarge, map[string]string{"error": "the file is larger than 8 MiB"})
