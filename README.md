@@ -84,6 +84,7 @@ can be built and run day to day.
 | [oscarwatch-sattrack-bridge](oscarwatch-sattrack-bridge/) | Satellite-tracking source (OscarWatch Satellite link) | `muehle/uhf/sat-track` | WebSocket (OscarWatch, read-only) |
 | [winpc-power-bridge](winpc-power-bridge/) | Shack-PC sleep agent (Windows, runs on `bwpc`; `sleep` is refused while the operator uses the PC) | `muehle/power/shack-pc` | ethernet (offline = asleep) |
 | [logger-spot-bridge](logger-spot-bridge/) | Shack-logger bridge (DXLog/Log4OM): the operator-keyed station (call, position, beam bearing) | `muehle/hf/spots` | LAN UDP broadcasts |
+| [chase-queue](chase-queue/) | Chase queue: ranks the CQ stations bmrec hears by what is needed (contest multipliers, DXCC entities not confirmed on the band) | `muehle/hf/chase` | logic slot (DXLog/Log4OM UDP, Club Log) |
 | [beamsteer](beamsteer/) | Smart rotation: emulates PstRotator for the contest logger; flips the Ultrabeam 180° or rotates to the cheaper lobe | `muehle/hf/beam-steer` | logic slot (PstRotator UDP :12050) |
 | [antmode](antmode/) | Antenna-mode lock (normal/storm/maintenance) for the Ultrabeam and the HF rotator; polls NINA/DWD | `muehle/hf/ant-mode` | logic slot |
 | [icom9700-radio-bridge](icom9700-radio-bridge/) | IC-9700 UHF radio bridge (demand-driven RX audio capture; `park_radio` retune via rigctld-ic9700; read-only serial CI-V telemetry supported but disabled on scmino; no remote TX) | `muehle/uhf/radio` | LAN (RS-BA1, audio); CI-V via rigctld-ic9700 (park only) |
@@ -144,6 +145,7 @@ muehle/
     rotator/         ← wrc-rotator-bridge   (Yaesu G-450DC via AF6SA WRC, websocket)
     tuner/           ← atr1k-tuner-bridge (ATR-1000 ATU, wifi)
     discovery/       ← hadiscovery      (HA discovery consumer - reads /meta.expose)
+    chase/           ← chase-queue (ranked CQ stations: needed + priority)
     spots/           ← logger-spot-bridge (DXLog/Log4OM - the operator-keyed station)
     beam-steer/      ← beamsteer        (smart rotation - PstRotator UDP emulator)
     ant-mode/        ← antmode          (antenna-mode lock: normal/storm/maintenance)

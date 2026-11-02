@@ -24,7 +24,8 @@ single broker address, so each is simply repointed at the shack broker.
 > **transitional mirror**: `muehle/#` in both directions, `homeassistant/status`
 > in, `homeassistant/+/+/+/config` out (see `mqtt-broker/mosquitto.conf.example`).
 > **Clients so far:** the M5 Stamp PLC #1 (2026-10-03) and shelly-power-bridge
-> with its Shelly plugs (2026-10-18). Per the root `CLAUDE.md` live-state note
+> with its Shelly plugs (2026-10-18), and the hf_console web channel
+> hf-console-web (2026-10-31, logging in as `hf`). Per the root `CLAUDE.md` live-state note
 > (2026-10-18), every other client still uses `.50`, the live station broker
 > (per-service configs not verified live). Clients move one at a time by
 > changing their broker address to `192.168.1.178:1883`; once every client has

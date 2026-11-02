@@ -1,6 +1,6 @@
 # hf_console — Mühle HF station tablet/phone console
 
-Flutter console for operating the HF portion of the Mühle station from an Android tablet or an iPhone. Connects directly to the MQTT broker — raw TCP on Android/iOS, WebSocket via the Go bridge on web. The setup screen and the web bridge default to the HA broker `192.168.1.50:1883`, the live station broker for most clients (root `CLAUDE.md` live-state note). The station broker on scmino (`192.168.1.178:1883`, see `../mqtt-broker/README.md`) mirrors `muehle/#` both ways; a console pointed at it keeps working when the shack↔house link is down. shari runs no broker.
+Flutter console for operating the HF portion of the Mühle station from an Android tablet or an iPhone. Connects directly to the MQTT broker — raw TCP on Android/iOS, WebSocket via the Go bridge on web. The setup screen defaults to the HA broker `192.168.1.50:1883`, the live station broker for most clients (root `CLAUDE.md` live-state note); the web bridge defaults to the scmino broker (see "Web channel on scmino"). The station broker on scmino (`192.168.1.178:1883`, see `../mqtt-broker/README.md`) mirrors `muehle/#` both ways; a console pointed at it keeps working when the shack↔house link is down. shari runs no broker.
 
 ## Design
 
@@ -123,7 +123,9 @@ the park themselves. The console only mirrors the lock so a refused tap is never
 - `BusStore.antMode` reads `/state` per the slot's rules (same as `shared/antmode.Parse`): no retained state →
   normal; a locked snapshot holds while antmode's `/status` is offline (a dead owner never unlocks); a malformed one
   keeps the last known mode (counted in `malformedPayloads`); `ts` is not checked.
-- `AntModePanel` — the strip under the antenna switch (phones: after it in the scroll column): NORMAL / STORM /
+- `AntModePanel` — on the **Station** page, under the power card in the rail (phones: after it in the scroll
+  column); it left the HF page to make room for the DVK keys. The HF page still sees the lock (the locked panels'
+  pill bands, the compass pill) and the storm suggestion (faults list). NORMAL / STORM /
   MAINT. keys, each change behind a confirmation dialog (`set_ant_mode`); REPARK (confirmed) while locked; phase,
   park/drift, source, auto exit, wind, presence and the active DWD warnings as mono lines; the storm suggestion
   (`storm_suggested`) as a banner with ENTER STORM (same confirmation) / DISMISS (`dismiss_suggestion`). With antmode
@@ -219,7 +221,7 @@ Retained cmd slots (self-healing steady state): `power/psu-13v8`, `power/antenna
 
 Retained but one-shot (consumer clears the topic after every execution — a command does NOT re-apply if the bridge restarts): `hf/ant-ctrl`, `hf/ant-mode` (`set_ant_mode` / `repark` / `dismiss_suggestion`; antmode applies, then clears — a request sent during a short antmode restart is applied once it is back, within the 30 s window of the `ts` the console stamps on it).
 
-Non-retained (one-shot): `power/shack-pc` (`sleep` — retained, it would re-sleep the PC on every wake), `hf/pa`, `hf/rotator`, `hf/tuner`, `hf/power-seq`, `hf/radio` (DVK `play`/`stop`), `uhf/az-rotator`, `uhf/el-rotator` (sat `goto`/`stop` — a stale retained or queued motion must never replay against real antennas), `uhf/radio` (icom9700-radio-bridge, receive-only since 2026-09: the action set is exactly `audio_on`/`audio_off`/`power_on`/`monitor_on`/`monitor_off`/`park_radio` — `park_radio` retunes via the bridge's rigctld on scmino; there is no PTT/arm/tuning path anymore).
+Non-retained (one-shot): `power/shack-pc` (`sleep` — retained, it would re-sleep the PC on every wake), `hf/pa`, `hf/rotator`, `hf/tuner`, `hf/power-seq`, `hf/radio` (DVK `play`/`stop`, `set_band`/`set_mode`/`set_mic_profile`/`select_rx`), `uhf/az-rotator`, `uhf/el-rotator` (sat `goto`/`stop` — a stale retained or queued motion must never replay against real antennas), `uhf/radio` (icom9700-radio-bridge, receive-only since 2026-09: the action set is exactly `audio_on`/`audio_off`/`power_on`/`monitor_on`/`monitor_off`/`park_radio` — `park_radio` retunes via the bridge's rigctld on scmino; there is no PTT/arm/tuning path anymore).
 
 The machine-readable source of truth is `cmdRetain` in `lib/store/wiring.dart`; keep this list in sync with it.
 
@@ -265,16 +267,31 @@ http://scmino:8091/
 The browser cannot open raw TCP sockets, so the web build uses WebSocket. The
 Go bridge (`webbridge/`) serves the static Flutter build at `/` and forwards
 the `/mqtt` WebSocket stream byte-for-byte to the station broker
-(`-mqtt-broker`, default `192.168.1.50:1883` — the live HA broker). The page
+(`-mqtt-broker`, default `192.168.1.178:1883` — the scmino station broker,
+since 2026-10-31; it was `.50` before, so every redeploy wrote `.50` into
+the unit). The bridge forwards the browser's login unchanged, so that
+account must exist on the scmino broker (the web console logs in as `hf`). The page
 derives its WebSocket endpoint from its own origin (`Uri.base`), so the build
 works on whichever host serves it. The Android APK continues to connect
 directly over TCP.
+
+The web build registers **no service worker** (custom `web/flutter_bootstrap.js`): Flutter's caching worker kept
+serving the previous build after a deploy. `deploy.sh` replaces the generated `flutter_service_worker.js` with
+`tool/web/flutter_service_worker.js`, a kill switch that clears and unregisters the worker older builds left in
+browsers. A plain reload picks up a new deploy (the bridge sends `Cache-Control: no-cache`).
 
 ### iPhone (IPA, self-sideloaded)
 
 The same Flutter app targets iOS. On iPhone the console reflows into a single
 vertical scroll (DX map on top, then every control panel) via the
 `shortestSide < 600` branch in `_HfPage`; tablets keep the side-by-side grid.
+On both, the HF page's DVK keyer (`DvkPanel`: the memory keys + STOP) sits at
+the bottom left, pinned and never scrolled: on tablets it closes the left pane
+under the antenna stack, on phones it is a bar under the scroll column. Band
+row, RX antenna (`RxAntennaButton`, ANT 1 ↔ RX A via flexbridge `select_rx`,
+label from `/state.rx_input`; RX A on a band above 40m — 30m and up, the
+listened-on `rx_band` in split — pulses amber like the Ultrabeam 180°) and mic profiles are the TRX card (`TrxPanel`)
+in the right rail / scroll column.
 Raw-TCP MQTT bypasses iOS App Transport Security (ATS governs only
 NSURLSession/HTTP/WS), so **no `NSAllowsArbitraryLoads` is set** — adding it
 would be an App-Review red flag and is unnecessary. The DX-spot HTTPS feed is

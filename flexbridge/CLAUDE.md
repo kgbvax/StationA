@@ -3,7 +3,8 @@
 flexbridge is a **read-only** bridge for radio tuning state: it observes a FlexRadio
 SmartSDR radio (the station's FLEX-8400; the SmartSDR TCP/IP API is common to the 6000 and
 8000 series) over the SmartSDR TCP/IP API, and publishes state to MQTT. The exceptions are
-**band changes**, **slice mode**, the **Digital Voice Keyer (DVK)**, and **mic profiles**:
+**band changes**, **slice mode**, the **receive antenna**, the **Digital Voice Keyer (DVK)**,
+and **mic profiles**:
 
 - **Band changes** (`set_band`): the bridge drives SmartSDR's native band-stacking from
   the `/cmd` plane — `display pan s <pan_handle> band=<wavelength>` changes the band on a
@@ -14,6 +15,9 @@ SmartSDR radio (the station's FLEX-8400; the SmartSDR TCP/IP API is common to th
 - **Slice mode** (`set_mode`, `cw`/`usb`/`lsb`): `slice set <idx> mode=<MODE>` on the
   slice `/state` reports (TX, else active). The caller picks the sideband; the bridge only
   maps the name.
+- **Receive antenna** (`select_rx`, `ant1`/`ant2`/`rx_a`): `slice set <idx> rxant=<PORT>` on
+  the slice being listened on (`rxInputSlice`: the active slice, slice A in split). Receive
+  path only; `txant`, and with it antenna-select and the PA chain, is untouched.
 - **DVK** (SmartSDR v4+): the bridge drives DVK playback (play/stop) from `/cmd` and
   observes DVK status on `/state`.
 - **Mic profiles** (`set_mic_profile`): the bridge drives SmartSDR's **native** mic profiles
@@ -24,7 +28,7 @@ SmartSDR radio (the station's FLEX-8400; the SmartSDR TCP/IP API is common to th
   a custom preset layer. There is **no save** — `profile mic save` is obsolete on SmartSDR
   v4+ (malformed reply); profile creation uses a file-transfer mechanism out of scope here.
 
-Apart from band changes, slice mode, DVK, and mic profiles it never sends commands to the radio.
+Apart from band changes, slice mode, receive antenna, DVK, and mic profiles it never sends commands to the radio.
 
 ---
 
@@ -78,11 +82,11 @@ is change-gated.
 A further path drives the radio: the paho `/cmd` subscription. Its handler must not call the
 bridge inline (a band-change or DVK command is a blocking TCP write), so it funnels payloads
 through a bounded channel to a single `sharedmqtt.RunJobs` worker that calls
-`Bridge.HandleCommand` serially. `HandleCommand` dispatches `set_band`, `set_mode`, DVK
+`Bridge.HandleCommand` serially. `HandleCommand` dispatches `set_band`, `set_freq`, `set_mode`, `select_rx`, DVK
 and `set_mic_profile` intent to the radio through the `Commander` interface
 (`*flexradio.Client` implements it, injected per connect cycle via `SetCommander`;
 `Reset()` clears it on disconnect). No ack is published — consumers confirm on `/state`
-(`freq_hz`/`band`/`mode` for band changes, `mode` for `set_mode`, `dvk_status`/`dvk_id` for
+(`freq_hz`/`band`/`mode` for band changes, `mode` for `set_mode`, `rx_input` for `select_rx`, `dvk_status`/`dvk_id` for
 DVK, `mic_profile` for mic profiles), the fire-and-observe plane discipline. Panadapters are tracked from `sub pan all` status so
 `set_band` can target a pan handle.
 
@@ -104,7 +108,7 @@ flexbridge publishes to the station integration model topics:
 muehle/hf/radio/meta      retained  birth certificate (capabilities + expose JSON)
 muehle/hf/radio/state     retained  live state JSON snapshot
 muehle/hf/radio/status    retained  online | offline (LWT)
-muehle/hf/radio/cmd       not retained  band / mode / DVK / mic-profile intent (bus → bridge)
+muehle/hf/radio/cmd       not retained  band / mode / rx antenna / DVK / mic-profile intent (bus → bridge)
 ```
 
 The `site`, `station`, and `slot` values are configurable via `config.toml`.
@@ -115,7 +119,9 @@ The `site`, `station`, and `slot` values are configurable via `config.toml`.
 `dvk_status` (`idle`/`recording`/`preview`/`playback`/`disabled`), `dvk_id` (active DVK memory 1–12), `dvk_memories` (`[{id,name,duration_ms}]`, slot names from SmartSDR),
 `mic_profile` (active mic profile name), `mic_profiles` (available mic profile names, sorted),
 `split` (the TX slice is not slice A), `rx_freq_hz` + `rx_band` (slice A while split, omitted
-otherwise), `cross_band` (split with slice A on another ham band than the TX slice).
+otherwise), `cross_band` (split with slice A on another ham band than the TX slice),
+`rx_input` (receive antenna of the slice being listened on, lowercased port: `ant1`/`ant2`/`rx_a`/`xvta`;
+omitted until a slice has reported `rxant`).
 
 **Split.** `/state` always follows the TX slice (that is where RF goes and what antenna-select,
 ultrabridge and the pa-arm tune for). Slice A — `index_letter=A`, what SmartSDR CAT and so the
@@ -125,7 +131,7 @@ warning (spot click retuned VFO A, VFO B still transmitting on the old band); `g
 never count as a mismatch. One Warn per edge. Consumers warn, they do not block: cross-band is
 legal and has legitimate uses (`../docs/known-issues.md`, "Split cross-band").
 
-**flexbridge is read-only except for band changes, slice mode, DVK, and mic profiles.** `/cmd` carries
+**flexbridge is read-only except for band changes, slice mode, receive antenna, DVK, and mic profiles.** `/cmd` carries
 one-shot intent only (not retained — a stale command must not re-fire on restart):
 
 - `set_band` + `value` (band label, e.g. `"20m"`) — native band-stacking; the radio restores
@@ -133,6 +139,13 @@ one-shot intent only (not retained — a stale command must not re-fire on resta
 - `set_mode` + `value` (`cw`/`usb`/`lsb` only) — `slice set <idx> mode=<MODE>` on the TX
   slice, else the active one; confirm on `/state.mode`. Not yet confirmed live on the
   FLEX-8400 (130dc0f).
+- `set_freq` + `value` (integer Hz, 1.8–54 MHz) — `slice tune <idx> <MHz>` on `rxInputSlice`
+  (the TX slice, slice A in split); confirm on `/state.freq_hz` (`rx_freq_hz` in split). Used by
+  chaseq-ui. Not yet confirmed live on the FLEX-8400.
+- `select_rx` + `value` (`ant1`/`ant2`/`rx_a`) — `slice set <idx> rxant=<PORT>` on the
+  slice `rx_input` reports (the active slice; slice A in split, the slice the operator
+  listens on). A port missing from that slice's reported `ant_list` is dropped. Confirm on
+  `/state.rx_input`. Confirmed live on the FLEX-8400 2026-10-30.
 - `dvk_play_<N>` / `dvk_play`+`value` / `dvk_stop` — DVK playback.
 - `set_mic_profile` + `value` (profile name) — native `profile mic load`; confirm on
   `/state.mic_profile`.
@@ -148,8 +161,9 @@ first load via the bus. The `set_mic_profile` known-name guard drops unknown nam
 the list is populated (an empty list — before
 the first `profile mic info` response — does not block).
 
-It is not a general radio-control channel (no `set_freq_hz`/`set_drive`; `set_mode` takes
-only `cw`/`usb`/`lsb`, and `mode` is not writable in `expose`).
+It is not a general radio-control channel (no `set_drive`; `set_mode` takes
+only `cw`/`usb`/`lsb`, and `mode` is not writable in `expose`; `select_rx` changes only the
+receive antenna, never `txant`).
 Panadapters are tracked via `sub pan all`; `set_band` targets the active slice's panadapter,
 falling back to the single/lowest tracked pan. If no panadapter is open, `set_band` is a
 logged no-op.

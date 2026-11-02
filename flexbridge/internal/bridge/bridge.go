@@ -89,6 +89,7 @@ type radioState struct {
 	rxFreqHz       int64       // slice A's frequency while split (0 otherwise)
 	rxBand         string      // slice A's derived band while split ("" otherwise)
 	crossBand      bool        // split with slice A on another ham band than the TX slice
+	rxInput        string      // receive antenna of rxInputSlice, lowercased wire port (ant1|ant2|rx_a|xvta); "" unknown
 }
 
 // statePayload is the JSON shape published to <slot>/state (retained).
@@ -115,6 +116,7 @@ type statePayload struct {
 	RxFreqHz     int64       `json:"rx_freq_hz,omitempty"`   // slice A frequency while split
 	RxBand       string      `json:"rx_band,omitempty"`      // slice A band while split
 	CrossBand    bool        `json:"cross_band"`             // split across two ham bands (operator-intent warning)
+	RxInput      string      `json:"rx_input,omitempty"`     // receive antenna of the slice being listened on (select_rx target)
 }
 
 // dvkMemory is one DVK memory slot as named on the radio (SmartSDR's DVK
@@ -739,9 +741,15 @@ func (b *Bridge) updateActiveSliceState() bool {
 		newCross = isHamBand(newRxBand) && isHamBand(newBand) && newRxBand != newBand
 	}
 
+	var newRxInput string
+	if s, ok := rxInputSlice(b.slices); ok {
+		newRxInput = strings.ToLower(s.RxAnt)
+	}
+
 	if b.state.freqHz == newFreq && b.state.mode == newMode && b.state.band == newBand &&
 		b.state.split == newSplit && b.state.rxFreqHz == newRxFreq &&
-		b.state.rxBand == newRxBand && b.state.crossBand == newCross {
+		b.state.rxBand == newRxBand && b.state.crossBand == newCross &&
+		b.state.rxInput == newRxInput {
 		return false
 	}
 	// A nonzero frequency that is reported as "gen" or "unknown" after hysteresis
@@ -764,7 +772,31 @@ func (b *Bridge) updateActiveSliceState() bool {
 	b.state.rxFreqHz = newRxFreq
 	b.state.rxBand = newRxBand
 	b.state.crossBand = newCross
+	b.state.rxInput = newRxInput
 	return true
+}
+
+// set_freq accepts 1.8–54 MHz: the amateur HF/6 m range, so a stray value
+// cannot send the receiver to a nonsense frequency.
+const (
+	setFreqMinHz = 1_800_000
+	setFreqMaxHz = 54_000_000
+)
+
+// rxInputSlice returns the slice whose receive antenna /state reports as
+// rx_input and select_rx changes: the active slice (the one /state follows),
+// except in split, where it is slice A — the slice the operator listens on.
+// The receive antenna belongs to the receiver, not to the TX slice. Uses the
+// same split predicate as updateActiveSliceState.
+func rxInputSlice(slices map[int]flexradio.SliceStatus) (flexradio.SliceStatus, bool) {
+	active, ok := resolveActiveSlice(slices)
+	if !ok {
+		return flexradio.SliceStatus{}, false
+	}
+	if rx, ok := resolveRxSlice(slices); ok && active.TX && rx.Index != active.Index {
+		return rx, true
+	}
+	return active, true
 }
 
 // resolveRxSlice returns slice A — the slice SmartSDR letters "A", which is
@@ -1000,6 +1032,56 @@ func (b *Bridge) HandleCommand(payload []byte) {
 			b.log.Warnf("cmd set_mode: %v", err)
 		}
 
+	case c.Action == "set_freq":
+		// Tune the receive slice CAT calls VFO A (rxInputSlice: the active slice,
+		// slice A in split) so a logger following the radio follows the tune.
+		// value is integer Hz inside the HF range; the caller sets the mode.
+		hz, err := strconv.ParseInt(strings.TrimSpace(c.Value), 10, 64)
+		if err != nil || hz < setFreqMinHz || hz > setFreqMaxHz {
+			b.log.Warnf("cmd set_freq: unsupported frequency %q", c.Value)
+			return
+		}
+		b.mu.RLock()
+		target, hasSlice := rxInputSlice(b.slices)
+		b.mu.RUnlock()
+		if !hasSlice {
+			b.log.Warnf("cmd set_freq: no active slice tracked")
+			return
+		}
+		b.log.Infof("cmd set_freq: freq_hz=%d slice=%d", hz, target.Index)
+		if err := cmd.TuneSlice(target.Index, hz); err != nil {
+			b.log.Warnf("cmd set_freq: %v", err)
+		}
+
+	case c.Action == "select_rx":
+		// Receive antenna of the slice being listened on (rxInputSlice: the
+		// active slice, slice A in split) — the slice /state's rx_input reports,
+		// so the console's toggle changes exactly what it shows. Receive path
+		// only: txant, and with it the antenna-select/PA chain, is untouched.
+		canonical := strings.ToLower(strings.TrimSpace(c.Value))
+		wire, ok := rxInputWire[canonical]
+		if !ok {
+			b.log.Warnf("cmd select_rx: unsupported rx input %q", c.Value)
+			return
+		}
+		b.mu.RLock()
+		target, hasSlice := rxInputSlice(b.slices)
+		b.mu.RUnlock()
+		if !hasSlice {
+			b.log.Warnf("cmd select_rx: no active slice tracked")
+			return
+		}
+		// The slice's own ant_list is authoritative when known (e.g. no RX_A
+		// on a slice whose receiver lacks it); an unreported list does not block.
+		if len(target.AntList) > 0 && !containsPort(target.AntList, wire) {
+			b.log.Warnf("cmd select_rx: %s not in slice %d ant_list %v", wire, target.Index, target.AntList)
+			return
+		}
+		b.log.Infof("cmd select_rx: rx_input=%s slice=%d", canonical, target.Index)
+		if err := cmd.SetSliceRxAnt(target.Index, wire); err != nil {
+			b.log.Warnf("cmd select_rx: %v", err)
+		}
+
 	case c.Action == "set_mic_profile":
 		// Native SmartSDR mic-profile load. The name is double-quoted on the
 		// wire, so reject names containing quotes/control chars. If the tracked
@@ -1048,6 +1130,20 @@ func (b *Bridge) HandleCommand(payload []byte) {
 // slice mode strings. Deliberately narrow: the console's SSB/CW toggle needs
 // these three; data/AM/FM stay with the radio's own band-stacking.
 var sliceModeWire = map[string]string{"cw": "CW", "usb": "USB", "lsb": "LSB"}
+
+// rxInputWire maps the canonical rx_input names select_rx accepts (the
+// lowercased ports /meta advertises as capabilities.rx_inputs) to SmartSDR's
+// slice rxant port strings.
+var rxInputWire = map[string]string{"ant1": "ANT1", "ant2": "ANT2", "rx_a": "RX_A"}
+
+func containsPort(list []string, port string) bool {
+	for _, p := range list {
+		if p == port {
+			return true
+		}
+	}
+	return false
+}
 
 // targetPanHandle resolves which panadapter a band change should target. It
 // prefers the panadapter the active slice is on (when the slice status carried
@@ -1142,6 +1238,7 @@ func (b *Bridge) publishStateSnapshot(st radioState) {
 		RxFreqHz:     st.rxFreqHz,
 		RxBand:       st.rxBand,
 		CrossBand:    st.crossBand,
+		RxInput:      st.rxInput,
 	}
 	data, err := json.Marshal(p)
 	if err != nil {
@@ -1220,6 +1317,9 @@ func (b *Bridge) publishMeta() {
 				{Key: "rx_freq_hz", Name: "Split RX frequency", Type: "number", Unit: "Hz", Class: "frequency", StateClass: "measurement"},
 				{Key: "rx_band", Name: "Split RX band", Type: "enum", OptionsRef: "bands"},
 				{Key: "cross_band", Name: "Split cross-band", Type: "boolean"},
+				// Receive antenna of the slice being listened on (slice A in split).
+				{Key: "rx_input", Name: "RX antenna", Type: "enum", OptionsRef: "rx_inputs", Writable: true,
+					Command: &metaCommand{Action: "select_rx", ValueKey: "value", ValueType: "string"}},
 			},
 			Actions: dvkExposeActions(),
 		},

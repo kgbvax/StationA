@@ -390,3 +390,11 @@ String toggledSsbCwMode(String? mode, num? freqHz) {
 
 String radioSetMicProfilePayload(String name) =>
     cmdPayload('set_mic_profile', name);
+
+// radio.select_rx value is the canonical receive input: "ant1" / "ant2" /
+// "rx_a" (flexbridge sends `slice set <idx> rxant=` to the listened-on slice).
+String radioSelectRxPayload(String input) => cmdPayload('select_rx', input);
+
+/// The RX-antenna toggle: RX A goes back to ANT 1, every other input (ANT 1,
+/// or an unusual ANT 2 / XVTA set from SmartSDR) goes to RX A.
+String toggledRxInput(String? current) => current == 'rx_a' ? 'ant1' : 'rx_a';

@@ -214,6 +214,33 @@ func TestSend_MicProfile(t *testing.T) {
 
 }
 
+func TestSend_SliceRxAnt(t *testing.T) {
+	clientConn, radioConn := net.Pipe()
+	client := newClientFromConn(clientConn)
+	defer client.Close()
+
+	cmds := make(chan string, 1)
+	go func() {
+		defer radioConn.Close()
+		sc := bufio.NewScanner(radioConn)
+		for sc.Scan() {
+			cmds <- sc.Text()
+		}
+	}()
+
+	if err := client.SetSliceRxAnt(1, "RX_A"); err != nil {
+		t.Fatalf("SetSliceRxAnt: %v", err)
+	}
+	select {
+	case got := <-cmds:
+		if want := "C1|slice set 1 rxant=RX_A"; got != want {
+			t.Errorf("SetSliceRxAnt sent %q, want %q", got, want)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("SetSliceRxAnt: no command sent")
+	}
+}
+
 func TestRun_CtxCancel(t *testing.T) {
 	clientConn, radioConn := net.Pipe()
 	defer clientConn.Close()

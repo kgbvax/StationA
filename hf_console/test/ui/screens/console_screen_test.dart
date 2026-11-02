@@ -3,9 +3,12 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hf_console/dxspot/dxspot_service.dart';
 import 'package:hf_console/store/bus_store.dart';
 import 'package:hf_console/ui/screens/console_screen.dart';
+import 'package:hf_console/ui/widgets/ant_mode_panel.dart';
 import 'package:hf_console/ui/widgets/cam_record_controls.dart';
+import 'package:hf_console/ui/widgets/dvk_panel.dart';
 import 'package:hf_console/ui/widgets/dx_map_container.dart';
 import 'package:hf_console/ui/widgets/station_schematic.dart';
+import 'package:hf_console/ui/widgets/trx_panel.dart';
 import '../../support/fake_mqtt_service.dart';
 import '../../support/fixtures.dart';
 import '../../support/test_harness.dart';
@@ -173,6 +176,65 @@ void main() {
       expect(find.text('GND'), findsOneWidget);
       // Faults bar is shown on the HF page.
       expect(find.text('FAULTS'), findsOneWidget);
+    });
+
+    testWidgets('tablet HF: DVK keys at the bottom left, TRX in the rail', (tester) async {
+      final store = BusStore()..setRadio(rxInput: 'ant1');
+      // Earlier tests leave a binding surface size behind; size the view instead.
+      await tester.binding.setSurfaceSize(null);
+      tester.view.devicePixelRatio = 1.5;
+      tester.view.physicalSize = const Size(2001, 1200); // Lenovo Tab, 1334×800
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(TestHarness(store: store, mqtt: FakeMqttService(store), child: const ConsoleScreen()));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      final dvk = tester.getRect(find.byType(DvkPanel));
+      final map = tester.getRect(find.byType(DxMapContainer));
+      final trx = tester.getRect(find.byType(TrxPanel));
+      expect(dvk.left, closeTo(0, 1)); // inside the pane's 1 px border
+      expect(dvk.bottom, closeTo(800, 1));
+      expect(dvk.top, greaterThanOrEqualTo(map.bottom));
+      expect(dvk.right, lessThanOrEqualTo(trx.left));
+      // The strip is one row of keys; the map keeps the rest.
+      expect(dvk.height, lessThan(80));
+      expect(map.height, greaterThan(300));
+    });
+
+    testWidgets('antenna mode is on the Station page, not on HF', (tester) async {
+      final store = BusStore()..setRadio(rxInput: 'ant1');
+      await tester.binding.setSurfaceSize(null);
+      tester.view.devicePixelRatio = 1.5;
+      tester.view.physicalSize = const Size(2001, 1200);
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(TestHarness(store: store, mqtt: FakeMqttService(store), child: const ConsoleScreen()));
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.byType(AntModePanel), findsNothing); // the console opens on HF
+
+      await tester.tap(find.text('Station'));
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.byType(AntModePanel), findsOneWidget);
+    });
+
+    testWidgets('phone HF: DVK keys pinned at the bottom while the column scrolls', (tester) async {
+      final store = BusStore()..setRadio(rxInput: 'ant1');
+      // Earlier tests leave a binding surface size behind; size the view instead.
+      await tester.binding.setSurfaceSize(null);
+      // 540×960 logical: the phone branch (shortestSide < 600), wide enough
+      // that the test font (Ahem, every glyph a full em box) fits the top bar.
+      tester.view.devicePixelRatio = 3;
+      tester.view.physicalSize = const Size(1620, 2880);
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(TestHarness(store: store, mqtt: FakeMqttService(store), child: const ConsoleScreen()));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      final before = tester.getRect(find.byType(DvkPanel));
+      expect(before.bottom, closeTo(960, 1));
+      expect(before.left, closeTo(0, 1));
+      await tester.drag(find.byType(SingleChildScrollView).first, const Offset(0, -2000));
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(tester.getRect(find.byType(DvkPanel)), before);
+      // The TRX card (with the RX antenna) is reachable in the column.
+      expect(find.byType(TrxPanel), findsOneWidget);
     });
 
     testWidgets('station page renders power and climate modules', (tester) async {
