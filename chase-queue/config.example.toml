@@ -43,9 +43,10 @@ listen = "127.0.0.1:8095"         # contest file upload and health, loopback onl
 # QRZ.com XML callbook: name, QTH, locator and picture of the stations on the
 # list. Locator and picture need a QRZ XML subscription; without one QRZ
 # returns name and address only. The password goes in the env file.
-# [qrz]
-# user         = "DL9ET"
-# refresh_days = 30              # look a call up again after this long
+# Lookups stay off until CHASE_QUEUE_QRZ_PASSWORD is set.
+[qrz]
+user         = "DL9ET"
+refresh_days = 30                # look a call up again after this long
 
 [log]
 level = "info"
