@@ -42,10 +42,12 @@ listen = "127.0.0.1:8095"         # contest file upload and health, loopback onl
 
 # DX cluster (telnet). Its spots hide the heard stations they name and list
 # the needed ones as cluster rows. Spots by this call (your own) are skipped.
-# [cluster]
-# address = "dxc.example.org:7300"
-# call    = "DL9ET"
-# skimmer = false                # keep CW/RTTY skimmer spots ("-#")
+# The node runs on bwpc, which sleeps in powerseq standby: "DX cluster not
+# connected" in problems is expected then.
+[cluster]
+address = "192.168.1.197:23"     # bwpc
+call    = "DL9ET"
+skimmer = false                  # keep CW/RTTY skimmer spots ("-#")
 
 # QRZ.com XML callbook: name, QTH, locator and picture of the stations on the
 # list. Locator and picture need a QRZ XML subscription; without one QRZ

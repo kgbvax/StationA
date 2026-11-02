@@ -469,7 +469,7 @@ kind  = "logic"
 host  = "scmino"
 unit  = "chase-queue"
 ports = "2340/udp (Log4OM), 12061/udp (DXLog), 127.0.0.1:8095"
-note  = "Needed + priority for the CQ stations bmrec hears: contest multipliers, DXCC entities not confirmed on the band"
+note  = "Needed + priority for the CQ stations bmrec hears and the DX cluster (bwpc :23/tcp) spots: contest multipliers, DXCC entities not confirmed on the band; QRZ.com callbook"
 slots = ["muehle/hf/chase"]
 
 [[software]]
