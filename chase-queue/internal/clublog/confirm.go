@@ -37,8 +37,8 @@ type Confirmations struct {
 	Token string
 	Call  string
 	// Confirmed lists the matrix status values that mean confirmed (or
-	// verified). The values are not documented by Club Log; check them with
-	// the -clublog-probe mode against the web chart.
+	// verified). Club Log does not document them; checked against the web
+	// chart on 2026-11-02: 1 = Confirmed, 2 = Worked, 3 = Verified.
 	Confirmed []int
 	HTTP      *http.Client
 	UserAgent string
@@ -155,10 +155,7 @@ func parseCells(body []byte) ([]cell, error) {
 			if !ok {
 				continue
 			}
-			b = strings.ToLower(strings.TrimSpace(b))
-			if !strings.HasSuffix(b, "m") {
-				b += "m"
-			}
+			b = bandName(b)
 			out = append(out, cell{adif, b, st})
 		}
 	}
@@ -166,6 +163,20 @@ func parseCells(body []byte) ([]cell, error) {
 		return nil, errors.New("the Club Log matrix has no entity/band cells")
 	}
 	return out, nil
+}
+
+// bandName turns a matrix band key ("20", "20m", "70", "23") into the
+// station's band name; the UHF keys are centimetres.
+func bandName(k string) string {
+	k = strings.ToLower(strings.TrimSpace(k))
+	switch k {
+	case "70", "23", "13":
+		return k + "cm"
+	}
+	if strings.HasSuffix(k, "m") {
+		return k
+	}
+	return k + "m"
 }
 
 func number(raw json.RawMessage) (int, bool) {

@@ -50,9 +50,10 @@ Requirements: `../docs/plans/2026-11-01-2252-feat-chase-queue-v1-plan.md`.
   `CHASE_QUEUE_QRZ_PASSWORD`), never in the TOML,
   logs, errors, `/state`, `/meta` or HTTP (tested). Callsigns and logs are personal data: the database stays
   under `/var/lib/chase-queue`, never in git.
-- **Club Log's matrix status values are undocumented.** `clublog.confirmed_status` (default `[1,3]`) is a
-  guess: run `chase-queue -clublog-probe` with a real token and compare with the web chart before trusting
-  "needed". The committed fixture is synthetic.
+- **Club Log's matrix status values are undocumented** but were checked against the web chart (2026-11-02,
+  Belgium/Germany/Åland rows): **1 = Confirmed, 2 = Worked, 3 = Verified**, so `clublog.confirmed_status`
+  defaults to `[1,3]`. `chase-queue -clublog-probe` prints the counts per value if Club Log ever changes them.
+  Band keys are metres, except `70`/`23`/`13` = cm. The committed fixture is synthetic.
 - **Worked** = a Log4OM QSO or a stored Club Log log QSO on that call and band, any mode, ever. **The Club
   Log log download is not implemented yet** (only the confirmation matrix); `store.ReplaceLogQSOs` is the seam.
 - **Callbook lookups never run on the publish path.** `callbook.Book.Info` answers from memory and queues a

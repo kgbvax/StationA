@@ -85,3 +85,11 @@ func TestFetchAuthRateLimitAndTokenHygiene(t *testing.T) {
 		t.Fatalf("%v", err)
 	}
 }
+
+func TestBandNames(t *testing.T) {
+	for in, want := range map[string]string{"20": "20m", "20m": "20m", "160": "160m", "2": "2m", "70": "70cm", "23": "23cm", "13": "13cm", "70cm": "70cm"} {
+		if got := bandName(in); got != want {
+			t.Errorf("%s: %s", in, got)
+		}
+	}
+}

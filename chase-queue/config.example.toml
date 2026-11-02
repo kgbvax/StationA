@@ -37,7 +37,7 @@ listen = "127.0.0.1:8095"         # contest file upload and health, loopback onl
 # Club Log > Settings > API and put it in the env file.
 # [clublog]
 # call             = "DL9ET"
-# confirmed_status = [1, 3]       # matrix values that mean confirmed; verify with -clublog-probe
+# confirmed_status = [1, 3]       # 1 Confirmed, 3 Verified (2 = Worked); checked against the web chart
 # refresh_minutes  = 45
 
 # DX cluster (telnet). Its spots hide the heard stations they name and list
