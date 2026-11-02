@@ -82,7 +82,7 @@ is change-gated.
 A further path drives the radio: the paho `/cmd` subscription. Its handler must not call the
 bridge inline (a band-change or DVK command is a blocking TCP write), so it funnels payloads
 through a bounded channel to a single `sharedmqtt.RunJobs` worker that calls
-`Bridge.HandleCommand` serially. `HandleCommand` dispatches `set_band`, `set_mode`, `select_rx`, DVK
+`Bridge.HandleCommand` serially. `HandleCommand` dispatches `set_band`, `set_freq`, `set_mode`, `select_rx`, DVK
 and `set_mic_profile` intent to the radio through the `Commander` interface
 (`*flexradio.Client` implements it, injected per connect cycle via `SetCommander`;
 `Reset()` clears it on disconnect). No ack is published — consumers confirm on `/state`
@@ -139,6 +139,9 @@ one-shot intent only (not retained — a stale command must not re-fire on resta
 - `set_mode` + `value` (`cw`/`usb`/`lsb` only) — `slice set <idx> mode=<MODE>` on the TX
   slice, else the active one; confirm on `/state.mode`. Not yet confirmed live on the
   FLEX-8400 (130dc0f).
+- `set_freq` + `value` (integer Hz, 1.8–54 MHz) — `slice tune <idx> <MHz>` on `rxInputSlice`
+  (the TX slice, slice A in split); confirm on `/state.freq_hz` (`rx_freq_hz` in split). Used by
+  chaseq-ui. Not yet confirmed live on the FLEX-8400.
 - `select_rx` + `value` (`ant1`/`ant2`/`rx_a`) — `slice set <idx> rxant=<PORT>` on the
   slice `rx_input` reports (the active slice; slice A in split, the slice the operator
   listens on). A port missing from that slice's reported `ant_list` is dropped. Confirm on
@@ -158,7 +161,7 @@ first load via the bus. The `set_mic_profile` known-name guard drops unknown nam
 the list is populated (an empty list — before
 the first `profile mic info` response — does not block).
 
-It is not a general radio-control channel (no `set_freq_hz`/`set_drive`; `set_mode` takes
+It is not a general radio-control channel (no `set_drive`; `set_mode` takes
 only `cw`/`usb`/`lsb`, and `mode` is not writable in `expose`; `select_rx` changes only the
 receive antenna, never `txant`).
 Panadapters are tracked via `sub pan all`; `set_band` targets the active slice's panadapter,

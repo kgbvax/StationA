@@ -776,6 +776,13 @@ func (b *Bridge) updateActiveSliceState() bool {
 	return true
 }
 
+// set_freq accepts 1.8–54 MHz: the amateur HF/6 m range, so a stray value
+// cannot send the receiver to a nonsense frequency.
+const (
+	setFreqMinHz = 1_800_000
+	setFreqMaxHz = 54_000_000
+)
+
 // rxInputSlice returns the slice whose receive antenna /state reports as
 // rx_input and select_rx changes: the active slice (the one /state follows),
 // except in split, where it is slice A — the slice the operator listens on.
@@ -1023,6 +1030,27 @@ func (b *Bridge) HandleCommand(payload []byte) {
 		b.log.Infof("cmd set_mode: mode=%s slice=%d", canonical, active.Index)
 		if err := cmd.SetSliceMode(active.Index, wire); err != nil {
 			b.log.Warnf("cmd set_mode: %v", err)
+		}
+
+	case c.Action == "set_freq":
+		// Tune the receive slice CAT calls VFO A (rxInputSlice: the active slice,
+		// slice A in split) so a logger following the radio follows the tune.
+		// value is integer Hz inside the HF range; the caller sets the mode.
+		hz, err := strconv.ParseInt(strings.TrimSpace(c.Value), 10, 64)
+		if err != nil || hz < setFreqMinHz || hz > setFreqMaxHz {
+			b.log.Warnf("cmd set_freq: unsupported frequency %q", c.Value)
+			return
+		}
+		b.mu.RLock()
+		target, hasSlice := rxInputSlice(b.slices)
+		b.mu.RUnlock()
+		if !hasSlice {
+			b.log.Warnf("cmd set_freq: no active slice tracked")
+			return
+		}
+		b.log.Infof("cmd set_freq: freq_hz=%d slice=%d", hz, target.Index)
+		if err := cmd.TuneSlice(target.Index, hz); err != nil {
+			b.log.Warnf("cmd set_freq: %v", err)
 		}
 
 	case c.Action == "select_rx":
