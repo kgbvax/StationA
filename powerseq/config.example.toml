@@ -341,10 +341,12 @@ slot = "hf/switch"
 action = "set_trx"
 value = "off"
 
+# The FLEX-8400 needs time to power down after remote-on is revoked;
+# the 2 s stagger cut the PSU too early. 12 s (stagger + 10 s).
 [[shutdown]]
 name = "stagger-4"
 kind = "delay"
-duration = "stagger"
+duration_s = 12
 
 [[shutdown]]
 name = "psu-off"
@@ -421,10 +423,12 @@ slot = "hf/switch"
 action = "set_trx"
 value = "off"
 
+# The FLEX-8400 needs time to power down after remote-on is revoked;
+# the 2 s stagger cut the PSU too early. 12 s (stagger + 10 s).
 [[idle_shutdown]]
 name = "stagger-4"
 kind = "delay"
-duration = "stagger"
+duration_s = 12
 
 [[idle_shutdown]]
 name = "psu-off"
