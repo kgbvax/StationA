@@ -118,8 +118,8 @@ Behaviour change worth knowing: in a contest DXCC stays a goal (priority below t
 - **Award definitions load once at start** (restart to change them). The Log4OM award XML schema is not
   documented; `internal/award/importxml.go` looks fields up by name (AwardType, QsoField, AllowedDxcc,
   AwardItems/AwardItem/RC, ConfirmationMethod, AwardConfigs/AwardConfig with Bands, Modes, EmissionType) and is
-  tested on a real WAS export (`testdata/award_WAS_log4om.xml`, 50 states, 133 configs). Not yet tried on a
-  real DXCC export. A config named like its award is the award itself; `WAS-10-CW` keeps its name.
+  tested on a real WAS export (`testdata/award_WAS_log4om.xml`, 50 states, 133 configs). A real DXCC export (`QsoField Dxcc`, 402 entities, no configs)
+  is recognised as the built-in award: `-import-award-xml` prints that and exits 4 without output. A config named like its award is the award itself; `WAS-10-CW` keeps its name.
 - **Callbook lookups never run on the publish path.** `callbook.Book.Info` answers from memory and queues a
   lookup; one worker asks QRZ (a portable form not found is retried under its home call) and pokes the
   publisher. A refused login backs off an hour and shows in `problems`. The QRZ XML login goes in the request

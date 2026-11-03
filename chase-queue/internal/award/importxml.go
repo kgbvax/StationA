@@ -12,6 +12,10 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
+// ErrBuiltIn is returned for the DXCC award (QsoField Dxcc): chase-queue has it
+// built in (DXCC per band from cty and Club Log), so there is nothing to import.
+var ErrBuiltIn = errors.New("DXCC is built in (per band, from cty and Club Log): nothing to import")
+
 // ErrDeferred is returned for a REFERENCE award (SOTA, WWFF, POTA): those
 // come back together later, so they are not imported.
 var ErrDeferred = errors.New("REFERENCE awards (SOTA, WWFF, POTA) are deferred and not imported")
@@ -160,6 +164,9 @@ func ImportXML(r io.Reader) (def Definition, notes []string, err error) {
 		def.Name = code
 	}
 	def.Field = strings.ToUpper(a.str("qsofield", "matchfield", "field"))
+	if def.Field == "DXCC" {
+		return Definition{}, nil, fmt.Errorf("award %s: %w", code, ErrBuiltIn)
+	}
 	if def.Field != "STATE" {
 		return Definition{}, nil, fmt.Errorf("award %s: QSO field %q is not supported (only STATE)", code, def.Field)
 	}

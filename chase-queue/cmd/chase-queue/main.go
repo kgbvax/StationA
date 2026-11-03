@@ -134,7 +134,7 @@ func newLogger(level string) *slog.Logger {
 
 // importAwardXML prints the definition file for a Log4OM award export; it
 // returns the exit code: 0 done, 1 unreadable or unusable, 3 a REFERENCE
-// award (deferred).
+// award (deferred), 4 the DXCC award (built in, nothing to import).
 func importAwardXML(path string, stdout, stderr io.Writer) int {
 	f, err := os.Open(path)
 	if err != nil {
@@ -146,6 +146,10 @@ func importAwardXML(path string, stdout, stderr io.Writer) int {
 	if errors.Is(err, award.ErrDeferred) {
 		fmt.Fprintf(stderr, "chase-queue: deferred: %v\n", err)
 		return 3
+	}
+	if errors.Is(err, award.ErrBuiltIn) {
+		fmt.Fprintf(stderr, "chase-queue: %v\n", err)
+		return 4
 	}
 	if err != nil {
 		fmt.Fprintf(stderr, "chase-queue: %v\n", err)

@@ -32,3 +32,12 @@ func TestImportAwardXMLReferenceIsDeferred(t *testing.T) {
 		t.Fatal(code)
 	}
 }
+
+// The real Log4OM DXCC export (QsoField Dxcc, 402 entities, no configurations):
+// DXCC is built in, so the importer says so and writes nothing.
+func TestImportAwardXMLDXCCIsBuiltIn(t *testing.T) {
+	var out, errb bytes.Buffer
+	if code := importAwardXML("../../internal/award/testdata/award_DXCC_log4om.xml", &out, &errb); code != 4 || out.Len() != 0 || !strings.Contains(errb.String(), "built in") {
+		t.Fatalf("%d %q %q", code, out.String(), errb.String())
+	}
+}

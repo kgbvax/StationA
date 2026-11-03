@@ -951,9 +951,9 @@ gate, logger senders); **not merged or deployed yet**. Open items, so a later se
    defaults to `trusted`; `qualified` needs bmrec to send `"qualified": true|false` on every `cqfinder` row
    (spec: `chase-queue/docs/chase-queue-mqtt-api.md` section 5). Until then keep `trusted`; with `qualified`
    and no field the list is empty and `/state.problems` says `bmrec sends no qualified flag`.
-8. **Log4OM award XML importer: only WAS is tested on a real export** (fixed 2026-11-04: item key in `RC`,
-   mode class in `EmissionType`). A real DXCC export (`dxcc.xml`) is untested; the copy received was all zero
-   bytes. Definitions load at start.
+8. **Log4OM award XML importer is tested on real WAS and DXCC exports** (fixed 2026-11-04: item key in `RC`,
+   mode class in `EmissionType`; DXCC is built in, so its export imports nothing, exit code 4). Definitions
+   load at start.
 9. **Merge-only import does not remove QSOs deleted in the logger.** `replace_source` (per-source snapshot
    replace) exists but is off by default; use it only with a full, valid export of that source.
 10. **POTA, SOTA and WWFF are deferred** (rejected as goals); station-log keeps their ADIF reference fields.
