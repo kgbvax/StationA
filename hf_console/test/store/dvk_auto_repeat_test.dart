@@ -23,19 +23,20 @@ class _Rig {
   }
 
   /// The radio's /state as the bridge would publish it.
-  void radio({String tx = 'rx', String dvk = 'idle', int id = 0, bool tuning = false}) {
+  void radio({String tx = 'rx', String dvk = 'idle', int id = 0, bool tuning = false, String band = '20m'}) {
     store.applyStatus(_radio, 'online');
     store.applyState(_radio, {
       'tx': tx,
       'tuning': tuning,
       'dvk_status': dvk,
       'dvk_id': id,
+      'band': band,
       'device_online': true,
     });
   }
 
   /// The radio reports memory [id] on air (status + keyed together).
-  void playback(int id) => radio(tx: 'tx', dvk: 'playback', id: id);
+  void playback(int id, {String band = '20m'}) => radio(tx: 'tx', dvk: 'playback', id: id, band: band);
 
   /// Everything on `hf/radio/cmd` as the action names, in order.
   List<String> get actions => [
@@ -909,6 +910,77 @@ void main() {
         expect(rig.auto.remaining, 3);
         async.elapse(const Duration(seconds: 3));
         expect(rig.actions, ['dvk_play_1', 'dvk_play_1']);
+        rig.auto.exit();
+        rig.dispose();
+      });
+    });
+  });
+
+  group('band change', () {
+    test('during the countdown exits auto mode', () {
+      fakeAsync((async) {
+        final rig = _Rig();
+        rig.auto.enter(1, 2, 3);
+        rig.playback(2);
+        rig.radio();
+        expect(rig.auto.phase, DvkAutoPhase.countdown);
+
+        rig.radio(band: '40m');
+        expect(rig.auto.phase, isNull);
+        expect(rig.auto.button, isNull);
+        expect(async.pendingTimers, isEmpty);
+        async.elapse(const Duration(seconds: 10));
+        expect(rig.actions, ['dvk_play_2']);
+        rig.dispose();
+      });
+    });
+
+    test('while the message is on air cuts it and exits', () {
+      fakeAsync((async) {
+        final rig = _Rig();
+        rig.auto.enter(1, 2, 3);
+        rig.playback(2);
+        rig.playback(2, band: '40m');
+        expect(rig.auto.phase, isNull);
+        expect(rig.actions, ['dvk_play_2', 'dvk_stop']);
+        expect(rig.stopValues, ['2']);
+        rig.dispose();
+      });
+    });
+
+    test('while paused disarms the button', () {
+      fakeAsync((async) {
+        final rig = _Rig();
+        rig.auto.enter(1, 2, 3);
+        rig.auto.pause();
+        expect(rig.auto.phase, DvkAutoPhase.paused);
+        rig.radio(band: '15m');
+        expect(rig.auto.button, isNull);
+        expect(rig.actions, ['dvk_play_2']);
+        rig.dispose();
+      });
+    });
+
+    test('a missing band is no change', () {
+      fakeAsync((async) {
+        final rig = _Rig();
+        rig.auto.enter(1, 2, 3);
+        rig.playback(2, band: '');
+        expect(rig.auto.phase, DvkAutoPhase.playing);
+        rig.radio(); // back to 20m: same band as at enter
+        expect(rig.auto.phase, DvkAutoPhase.countdown);
+        rig.auto.exit();
+        rig.dispose();
+      });
+    });
+
+    test('a band change before enter does not affect the new loop', () {
+      fakeAsync((async) {
+        final rig = _Rig();
+        rig.radio(band: '40m');
+        rig.auto.enter(1, 2, 3);
+        rig.playback(2, band: '40m');
+        expect(rig.auto.phase, DvkAutoPhase.playing);
         rig.auto.exit();
         rig.dispose();
       });
