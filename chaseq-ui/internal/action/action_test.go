@@ -70,7 +70,7 @@ func newRig(activity string, rows ...bus.Ranked) *rig {
 	p := &pub{}
 	rad := &Radio{}
 	l4 := &fakeLogger{name: "Log4OM", res: loggers.Result{Status: loggers.OK}}
-	dx := &fakeLogger{name: "DXLog", res: loggers.Result{Status: loggers.OK}}
+	dx := &fakeLogger{name: "Other", res: loggers.Result{Status: loggers.OK}}
 	r := &Runner{Model: m, Radio: rad, Pub: p, ChaseCmd: "t/chase/cmd", RadioCmd: "t/radio/cmd",
 		Loggers: []loggers.Sender{l4, dx}, Timing: fast}
 	return &rig{r, m, p, rad, l4, dx}
@@ -125,7 +125,7 @@ func TestActContestTunesFillsAndMarksHandled(t *testing.T) { // AE4
 		!strings.Contains(msgs[2], `\"call\":\"DL1ABC\"`) {
 		t.Fatalf("published = %q", msgs)
 	}
-	for _, n := range []string{"Radio", "Log4OM", "DXLog", "chase-queue"} {
+	for _, n := range []string{"Radio", "Log4OM", "Other", "chase-queue"} {
 		if status(rep, n) != loggers.OK {
 			t.Errorf("%s = %v (%+v)", n, status(rep, n), rep.Parts)
 		}
@@ -163,7 +163,7 @@ func TestActOneLoggerFails(t *testing.T) { // AE2
 	followRadio(g, 14231500)
 	g.dx.res = loggers.Result{Status: loggers.Failed, Detail: "not reached"}
 	rep := g.r.Act(context.Background(), 7)
-	if status(rep, "Log4OM") != loggers.OK || status(rep, "DXLog") != loggers.Failed || status(rep, "Radio") != loggers.OK {
+	if status(rep, "Log4OM") != loggers.OK || status(rep, "Other") != loggers.Failed || status(rep, "Radio") != loggers.OK {
 		t.Errorf("parts = %+v", rep.Parts)
 	}
 }

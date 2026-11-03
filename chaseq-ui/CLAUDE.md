@@ -1,8 +1,8 @@
 # CLAUDE.md — chaseq-ui
 
 chaseq-ui is the operator's window onto chase-queue (`muehle/hf/chase`): a native window on the shack
-PC bwpc showing the ranked list, with Enter/click = tune the FLEX and put the callsign into Log4OM and
-DXLog. It is **not a slot** (consumer + `/cmd` sender, like testui). It owns no ranking: chase-queue decides
+PC bwpc showing the ranked list, with Enter/click = tune the FLEX and put the callsign into Log4OM.
+It is **not a slot** (consumer + `/cmd` sender, like testui). It owns no ranking: chase-queue decides
 what is needed and in which order; chaseq-ui adds local view filters only. Plan:
 `../docs/plans/2026-11-02-1908-feat-chaseq-ui-plan.md`. Domain roles and the target (self-contained rows, configurable loggers): `../docs/chasing-stations-architecture.md`.
 
@@ -29,10 +29,9 @@ and publish retained `muehle/hf/chase/state`, and `…/chase/status`.
 | `internal/bus` | wire types copied from chase-queue (its `internal/bus` cannot be imported), decoders, MQTT session |
 | `internal/model` | pure list model: rows as sent (freq, mode, worked marks), filters (persisted JSON), highlight by `row_id`, staleness (75 s) |
 | `internal/action` | Enter/Skip/Undo runner; one action at a time; every part reports its own result |
-| `internal/loggers` | Log4OM Remote Control `SetCallsign` (UDP, reply on port+1) and the DXLog script sender |
+| `internal/loggers` | Log4OM Remote Control `SetCallsign` (UDP, reply on port+1); `Sender` is the seam for further loggers |
 | `internal/web` | loopback pages, SSE (`/events`), write routes guarded by same-origin + `X-Chaseq` header |
 | `internal/desktop` | glaze window (the only package importing glaze) |
-| `dxlog/ChaseqCallsign.cs` | DXLog.net script: loopback UDP `CALL <call>` → entry field (**untested in DXLog**, see README) |
 
 ## Rules that matter
 

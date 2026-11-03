@@ -929,7 +929,8 @@ Target roles: `docs/chasing-stations-architecture.md`. Open items of the deploye
 1. **The DX cluster stops while bwpc sleeps.** chase-queue reads Log4OM's internal
    cluster on bwpc `:23`; in powerseq standby there are no cluster rows and no cluster
    hiding (`chase-queue/config.example.toml` `[cluster]`).
-2. **chaseq-ui's DXLog script has not run live** (`chaseq-ui/dxlog/ChaseqCallsign.cs`).
+2. ~~chaseq-ui's DXLog script has not run live~~ — moot: the script and the DXLog sender were
+   removed (2026-11-03); Enter puts the call into Log4OM only.
 3. **bmrec reads chase-queue's `undo` as an object**, chase-queue publishes a string
    (`chase-queue/internal/bus/bus.go`). The fix belongs to bmrec.
 4. **No logbook history before deployment.** Worked = Log4OM UDP QSOs since chase-queue

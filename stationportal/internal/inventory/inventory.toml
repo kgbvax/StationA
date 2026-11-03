@@ -422,7 +422,7 @@ name = "chaseq-ui"
 path = "chaseq-ui/"
 kind = "ui"
 host = "bwpc"
-note = "Task Scheduler at logon; chase-queue list window, Enter = QSY + callsign into Log4OM/DXLog"
+note = "Task Scheduler at logon; chase-queue list window, Enter = QSY + callsign into Log4OM"
 
 [[software]]
 name  = "icom9700-radio-bridge"

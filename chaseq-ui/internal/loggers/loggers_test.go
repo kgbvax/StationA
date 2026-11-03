@@ -103,38 +103,3 @@ func TestLog4OMRefusesBadCall(t *testing.T) {
 		t.Errorf("result = %+v", r)
 	}
 }
-
-func TestDXLogSender(t *testing.T) {
-	c, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer c.Close()
-	go func() {
-		buf := make([]byte, 64)
-		n, from, _ := c.ReadFromUDP(buf)
-		if string(buf[:n]) == "CALL EA8XYZ" {
-			c.WriteToUDP([]byte("OK"), from)
-		}
-	}()
-	addr := c.LocalAddr().String()
-	if r := NewDXLog(addr, time.Second).SendCall(context.Background(), "EA8XYZ"); r.Status != OK {
-		t.Errorf("result = %+v", r)
-	}
-	if r := NewDXLog(addr, time.Second).SendCall(context.Background(), "bad call"); r.Status != Skipped {
-		t.Errorf("bad call result = %+v", r)
-	}
-}
-
-func TestDXLogNobodyListening(t *testing.T) {
-	c, _ := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
-	addr := c.LocalAddr().String()
-	c.Close() // port now unbound
-	r := NewDXLog(addr, 500*time.Millisecond).SendCall(context.Background(), "EA8XYZ")
-	if r.Status != Failed {
-		t.Errorf("result = %+v", r)
-	}
-	if r.Status == OK {
-		t.Error("must not report ok")
-	}
-}

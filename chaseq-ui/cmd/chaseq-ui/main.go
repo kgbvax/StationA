@@ -1,6 +1,6 @@
 // chaseq-ui shows chase-queue's ranked list in a native window on the shack
-// PC. Enter on a row tunes the radio and puts the callsign into Log4OM and
-// DXLog; Skip and Undo go back to chase-queue. It is a consumer of
+// PC. Enter on a row tunes the radio and puts the callsign into Log4OM;
+// Skip and Undo go back to chase-queue. It is a consumer of
 // muehle/hf/chase and a /cmd sender, not a slot.
 package main
 
@@ -84,7 +84,6 @@ func main() {
 		ChaseCmd: cfg.ChaseCmd(), RadioCmd: cfg.RadioCmd(),
 		Loggers: []loggers.Sender{
 			loggers.NewLog4OM(cfg.Loggers.Log4OMAddr, l4Timeout),
-			loggers.NewDXLog(cfg.Loggers.DXLogAddr, 0),
 		},
 		Timing: action.DefaultTiming,
 	}

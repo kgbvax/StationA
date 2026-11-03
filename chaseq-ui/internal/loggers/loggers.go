@@ -1,6 +1,5 @@
 // Package loggers puts a callsign into the loggers on this PC: Log4OM through
-// its Remote Control Interface (UDP) and DXLog.net through the small script
-// chaseq-ui ships (dxlog/ChaseqCallsign.cs).
+// its Remote Control Interface (UDP). Another logger is one more Sender.
 package loggers
 
 import (

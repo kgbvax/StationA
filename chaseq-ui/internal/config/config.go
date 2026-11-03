@@ -47,7 +47,6 @@ type HTTPConfig struct {
 // LoggersConfig names where the callsign is sent.
 type LoggersConfig struct {
 	Log4OMAddr   string `toml:"log4om_addr"`    // Remote Control Interface inbound UDP
-	DXLogAddr    string `toml:"dxlog_addr"`     // chaseq-ui DXLog script listener
 	Log4OMTimout string `toml:"log4om_timeout"` // reply wait, Go duration
 }
 
@@ -63,7 +62,7 @@ func Default() Config {
 		Topics: TopicsConfig{Site: "muehle", Station: "hf", Chase: "chase", Radio: "radio"},
 		HTTP:   HTTPConfig{Listen: "127.0.0.1:8480"},
 		Loggers: LoggersConfig{
-			Log4OMAddr: "127.0.0.1:2241", DXLogAddr: "127.0.0.1:9889", Log4OMTimout: "500ms",
+			Log4OMAddr: "127.0.0.1:2241", Log4OMTimout: "500ms",
 		},
 		FiltersFile: "filters.json",
 	}

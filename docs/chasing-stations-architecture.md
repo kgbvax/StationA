@@ -86,8 +86,9 @@ stays display-only. A consumer never needs bmrec's `cqfinder` topic to tune a ro
 
 - **In:** clusters (1..n, RBN optional), bmrec qualified rows, award definitions incl. contests, goals,
   buddies, QRZ.com enrichment, station-log via ADIF import, activation (QSY + logger call), skip/undo.
-- **Deferred (may come later):** POTA. Reference awards that are matched only through cluster comments
-  (SOTA, WWFF) are in the same class, see §6.
+- **Deferred (may come later):** POTA, SOTA and WWFF (operator decision 2026-11-03). They are reference
+  awards that can be matched only through cluster comments (ideation #7) and come back together.
+  station-log still stores their ADIF reference fields, so no history is lost meanwhile.
 - **Out:** keeping the loggers in sync with each other or with station-log, logging the QSO, spotting
   (posting to a cluster).
 
@@ -116,7 +117,7 @@ stays display-only. A consumer never needs bmrec's `cqfinder` topic to tune a ro
    qualification field in bmrec's `cqfinder` rows (bmrec change, outside this repo).
 5. **Buddies** as a ranking input.
 6. **Clusters 1..n.** `[[cluster]]` list with a name per source. RBN per source. A band table beyond HF 160–10 m.
-7. **chaseq-ui:** configurable logger senders (no fixed Log4OM + DXLog pair). Show `info` / `worked_before`.
+7. **chaseq-ui:** configurable logger senders (today Log4OM only; the DXLog script was dropped 2026-11-03). Show `info` / `worked_before`.
 
 ## 5. Gaps: as-is (main 3226c43) vs this target
 
@@ -133,13 +134,11 @@ stays display-only. A consumer never needs bmrec's `cqfinder` topic to tune a ro
 | QRZ.com enrichment | matches | Display-only, cached. chaseq-ui does not show it yet. |
 | Self-contained rows / UI only displays | matches | Every row carries `freq_hz`, `mode` and `source`; chase-queue derives the mode (sideband rule for bmrec rows; comment keyword, then IARU R1 band plan for cluster rows). Worked-on-band rows are listed last-but-candidates, not needed. chaseq-ui reads `freq_hz`/`mode`/`worked_before` from the row and no longer subscribes to `cqfinder`. |
 | Local filters | matches | Band (160–6 m, fixed) and needed-only. |
-| Activate = QSY + logger | partial | FLEX via flexbridge `set_freq`/`set_mode`. Loggers fixed to Log4OM + DXLog. The DXLog script has not run live. |
+| Activate = QSY + logger | partial | FLEX via flexbridge `set_freq`/`set_mode`. Logger fixed to Log4OM (the DXLog script was dropped 2026-11-03). |
 | skip/undo from the UI | matches | `handled` is sent in contest only. |
 
 ## 6. Open questions
 
-- **SOTA / WWFF.** They are reference awards like POTA and can be matched only through cluster comments
-  (ideation #7). Deferred with POTA, or in scope with the award model?
 - **Snapshot import.** A full Log4OM ADIF file carries deletes. Merge-only import does not remove a QSO that
   was deleted in the logger. Does station-log also need a per-source snapshot replace?
 - **Scoring across awards.** How several `needs` on one row add up in the ranking.
