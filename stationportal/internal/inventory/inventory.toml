@@ -159,7 +159,7 @@ name     = "bwpc"
 addr     = "192.168.1.197"
 hardware = "Shack PC"
 os       = "Windows"
-role     = "DXLog / Log4OM logger, PstRotator, OscarWatch (Satellite link ws :7373); winpc-power-bridge (sleeps in idle standby, woken by WOL)"
+role     = "DXLog / Log4OM logger, PstRotator, OscarWatch (Satellite link ws :7373); winpc-power-bridge (sleeps in idle standby, woken by WOL); chaseq-ui (chase-queue list window)"
 
 [[host]]
 name     = "lenovo-tab"
@@ -269,6 +269,20 @@ address   = "muehle/hf/spots"
 component = "logger-spot-bridge"
 device    = "DXLog / Log4OM UDP broadcasts"
 link      = "LAN UDP"
+host      = "scmino"
+
+[[slot]]
+address   = "muehle/hf/chase"
+component = "chase-queue"
+device    = "logic slot — ranks the CQ stations bmrec hears (needed + priority)"
+link      = "none"
+host      = "scmino"
+
+[[slot]]
+address   = "muehle/hf/cqfinder"
+component = "bmrec"
+device    = "bmrec CQ finder — open CQ rows and recent spots for the chase queue"
+link      = "none"
 host      = "scmino"
 
 [[slot]]
@@ -404,6 +418,13 @@ note  = "Task Scheduler at logon (user session); sleep cmd from powerseq standby
 slots = ["muehle/power/shack-pc"]
 
 [[software]]
+name = "chaseq-ui"
+path = "chaseq-ui/"
+kind = "ui"
+host = "bwpc"
+note = "Task Scheduler at logon; chase-queue list window, Enter = QSY + callsign into Log4OM/DXLog"
+
+[[software]]
 name  = "icom9700-radio-bridge"
 path  = "icom9700-radio-bridge/"
 kind  = "bridge"
@@ -447,6 +468,25 @@ host  = "scmino"
 unit  = "logger-spot-bridge"
 ports = "12060/udp, 2249/udp"
 slots = ["muehle/hf/spots"]
+
+[[software]]
+name  = "chase-queue"
+path  = "chase-queue/"
+kind  = "logic"
+host  = "scmino"
+unit  = "chase-queue"
+ports = "2340/udp (Log4OM), 12061/udp (DXLog), 127.0.0.1:8095"
+note  = "Needed + priority for the CQ stations bmrec hears and the DX cluster (bwpc :23/tcp) spots: contest multipliers, DXCC entities not confirmed on the band; QRZ.com callbook"
+slots = ["muehle/hf/chase"]
+
+[[software]]
+name  = "bmrec"
+path  = "../bmrec"
+kind  = "tool"
+host  = "scmino"
+unit  = "bmrec"
+note  = "HF/UHF recorder and CQ finder (separate repo); publishes the CQ finder candidates"
+slots = ["muehle/hf/cqfinder"]
 
 [[software]]
 name  = "antennaselect"

@@ -10,7 +10,8 @@
 // This keys a transmitter without anyone watching, so every automatic play is
 // preceded by a fresh look at the bus (link up, radio online, no carrier, DVK
 // idle) and any doubt resolves to [DvkAutoPhase.paused] — armed but silent.
-// The loop never resumes by itself after a pause.
+// The loop never resumes by itself after a pause. A band change leaves auto
+// mode altogether: the message was meant for the band it was armed on.
 
 import 'dart:async';
 import 'dart:math' as math;
@@ -60,6 +61,10 @@ class DvkAutoRepeat extends ChangeNotifier {
   /// Carrier state at the previous bus update, for rising-edge detection.
   bool _lastRf = false;
 
+  /// Last known radio band. Null or empty (no report yet) is no information
+  /// and never counts as a change.
+  String? _lastBand;
+
   /// A bus loss (link or radio slot down) paused the loop while its own play
   /// was starting or on air. The phase says nothing about the message any more,
   /// so this remembers that [_playId] may still be on the air until a stop is
@@ -71,6 +76,7 @@ class DvkAutoRepeat extends ChangeNotifier {
 
   DvkAutoRepeat(this._store, this._mqtt) {
     _lastRf = _rfKeyed;
+    _lastBand = _band;
     _store.addListener(_onStore);
   }
 
@@ -96,6 +102,11 @@ class DvkAutoRepeat extends ChangeNotifier {
   bool get _rfKeyed => _store.rfState != RfState.rx;
 
   String get _dvkStatus => _store.stateValueAs<String>(_radio, 'dvk_status') ?? 'idle';
+
+  String? get _band {
+    final b = _store.stateValueAs<String>(_radio, 'band');
+    return (b == null || b.isEmpty) ? null : b;
+  }
 
   int get _dvkId => _store.stateValueAs<num>(_radio, 'dvk_id')?.toInt() ?? 0;
 
@@ -271,9 +282,19 @@ class DvkAutoRepeat extends ChangeNotifier {
     final rf = _rfKeyed;
     final risingRf = rf && !_lastRf;
     _lastRf = rf;
+    final band = _band;
+    final bandChanged = band != null && _lastBand != null && band != _lastBand;
+    if (band != null) _lastBand = band;
 
     final phase = _phase;
-    if (phase == null || phase == DvkAutoPhase.paused) return;
+    if (phase == null) return;
+    if (bandChanged) {
+      // Armed or running alike: the operator moved on. exit() cuts our own
+      // message if it may still be on air.
+      exit();
+      return;
+    }
+    if (phase == DvkAutoPhase.paused) return;
 
     if (!_available) {
       // The phase is about to stop saying whether our message may be on air.

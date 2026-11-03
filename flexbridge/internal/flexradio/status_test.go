@@ -196,13 +196,17 @@ func TestParseSlice_FreqFormats(t *testing.T) {
 	}
 }
 
-func TestParseTxPower(t *testing.T) {
-	n, ok := ParseTxPower("tx_power=100")
-	if !ok || n != 100 {
-		t.Errorf("got (%d,%v), want (100,true)", n, ok)
+func TestParseTransmit(t *testing.T) {
+	ts := ParseTransmit("rfpower=37 tunepower=10 tx_slice_mode=USB")
+	if !ts.HasRF || ts.RFPower != 37 || !ts.HasTune || ts.TunePower != 10 || ts.HasMax {
+		t.Errorf("got %+v, want rf=37 tune=10 no max", ts)
 	}
-	if _, ok := ParseTxPower("status=Available"); ok {
-		t.Error("absent tx_power should return ok=false")
+	ts = ParseTransmit("tune=0 max_power_level=100")
+	if ts.HasRF || ts.HasTune || !ts.HasMax || ts.MaxPowerLevel != 100 {
+		t.Errorf("got %+v, want only max=100", ts)
+	}
+	if ts := ParseTransmit("rfpower=abc"); ts.HasRF {
+		t.Error("non-numeric rfpower must leave HasRF false")
 	}
 }
 

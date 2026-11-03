@@ -11,7 +11,7 @@
   with {sheets:[{id,title,purpose,width,height,image,callouts:[{title,text,rect:[x,y,w,h],marker?}]}]};
   rects are in logical screenshot pixels (the image itself is rendered at 2x),
   a zero-size rect is a point.
-  Layout: numbered markers on the screenshot, the legend underneath.
+  Layout: numbered markers beside the controls (no outlines), the legend underneath.
 -->
 <style>
   @page { size: A4 landscape; margin: 0; }
@@ -49,7 +49,8 @@
   .shot { position: absolute; }
   .shot img { display: block; width: 100%; height: 100%; border: 0.3mm solid #000; }
   svg.over { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
-  .legend { position: absolute; display: grid; column-gap: 6mm; row-gap: 2mm; align-items: start; }
+  .legend { position: absolute; column-gap: 6mm; }
+  .legend .item { break-inside: avoid; margin-bottom: 2mm; }
   .legend .item { display: grid; grid-template-columns: 5.2mm 1fr; column-gap: 1.8mm; font-size: 8.2pt; line-height: 1.25; }
   .legend .item b { font: 600 8.2pt var(--mono); letter-spacing: .02em; }
   .legend .item > div > span { color: var(--mute); }
@@ -95,11 +96,13 @@ function renderSheet(sheet, n, total) {
   const cos = ordered(sheet.callouts);
   const gap = 3 * MM;
 
-  // Legend first (to measure it): up to four columns under the screenshot.
+  // Legend first (to measure it): up to four columns under the screenshot,
+  // numbered down each column.
   let legend = null, lh = 0;
   if (cos.length) {
     const cols = Math.min(4, cos.length);
-    main.insertAdjacentHTML("beforeend", `<div class="legend" style="grid-template-columns:repeat(${cols},1fr)">` +
+    // Flowing columns: a long item lengthens only its own column.
+    main.insertAdjacentHTML("beforeend", `<div class="legend" style="column-count:${cols}">` +
       cos.map((c, i) => `<div class="item"><span class="num">${i + 1}</span><div><b>${esc(c.title)}</b><br><span>${esc(c.text)}</span></div></div>`).join("") +
       `</div>`);
     legend = main.lastElementChild;
@@ -147,12 +150,12 @@ function renderSheet(sheet, n, total) {
         `<line x1="${b.x}" y1="${b.y}" x2="${px}" y2="${py}" stroke="var(--co)" stroke-width="1.4"/>` +
         `<circle cx="${b.x}" cy="${b.y}" r="3.2" fill="var(--co)" stroke="#fff" stroke-width="1"/>`);
     } else {
-      svg.insertAdjacentHTML("beforeend",
-        `<rect x="${b.x - 1.5}" y="${b.y - 1.5}" width="${b.w + 3}" height="${b.h + 3}" rx="2" fill="none" stroke="var(--co)" stroke-width="1.6"/>`);
-      // Beside the box, never on what it marks: left, right, above, below,
-      // then the top-left corner as the last resort.
+      // No outline: the marker alone points at the control. Beside it, never
+      // on what it marks: left, right, above, below, then the top-left
+      // corner as the last resort.
       const cy = b.y + b.h / 2, g = R + 2.5;
-      const side = { left: [b.x - g, cy], right: [b.x + b.w + g, cy], above: [b.x + R, b.y - g], below: [b.x + R, b.y + b.h + g] };
+      const side = { left: [b.x - g, cy], right: [b.x + b.w + g, cy], above: [b.x + R, b.y - g], below: [b.x + R, b.y + b.h + g],
+                     inside: [b.x + R + 3, cy] };
       const tries = [side[c.marker], side.left, side.right, side.above, side.below,
                      [b.x + b.w - R, b.y - g], [b.x + b.w - R, b.y + b.h + g]].filter(Boolean);
       [px, py] = tries.find(([x, y]) => free(x, y, i)) || [Math.max(b.x, ox + R + 1), Math.max(b.y, oy + R + 1)];

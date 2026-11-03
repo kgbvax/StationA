@@ -1,0 +1,31 @@
+# chaseq-ui config. Copy to config.toml next to chaseq-ui.exe (C:\Users\iotte\chaseq-ui\).
+# The MQTT password goes in [mqtt] below (this file stays on bwpc; deploy.sh copies it once).
+
+[mqtt]
+broker    = "tcp://192.168.1.178:1883"   # the scmino station broker
+user      = "hf"
+password  = ""                           # the hf broker password
+client_id = "muehle-chaseq-ui"
+
+[topics]
+site     = "muehle"
+station  = "hf"
+chase    = "chase"      # chase-queue slot
+cqfinder = "cqfinder"   # bmrec candidates (frequencies)
+radio    = "radio"      # flexbridge slot
+
+[http]
+listen = "127.0.0.1:8480"
+
+[loggers]
+# Log4OM Settings -> Connections -> Remote Control Interface: the inbound UDP port.
+# 2241 is the usual default; check it there.
+log4om_addr    = "127.0.0.1:2241"
+log4om_timeout = "500ms"
+# chaseq-ui's DXLog script (dxlog/ChaseqCallsign.cs) listens here.
+dxlog_addr = "127.0.0.1:9889"
+
+filters_file = "filters.json"
+
+[log]
+file = "chaseq-ui.log"   # a windowsgui exe has no stderr

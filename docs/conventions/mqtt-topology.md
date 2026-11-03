@@ -67,6 +67,7 @@ one" (§9).
 | Shelly plugs, M5 Stamp PLC #1 and #2, M5 DualKey, M5 Dial, hf_console tablet (setup default), winpc-power-bridge (bwpc) | `192.168.1.178:1883` | the station broker |
 | ant-switch ESP | `waveshare_relay-antswitch-bridge/esphome/station-at1.yaml` and its `docs/known-issues.md` | verify on the device that it names `192.168.1.178` |
 | Workstation (dev `go run`, `mosquitto_sub`) | `192.168.1.178:1883` (station broker); `192.168.1.50:1883` also shows every `muehle/#` topic through the mirror | shari (`.139`) runs no broker |
+| chaseq-ui (bwpc) | `192.168.1.178:1883` | consumer of `hf/chase`, `hf/cqfinder`, `hf/radio`; sends `/cmd` to `hf/chase` and `hf/radio`; account `hf`; client ID `muehle-chaseq-ui` |
 | HA's MQTT integration | `192.168.1.50:1883` | HA's own broker, unchanged |
 
 `127.0.0.1` reaches the station broker only on scmino; shari runs no broker.

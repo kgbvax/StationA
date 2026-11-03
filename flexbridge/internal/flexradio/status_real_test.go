@@ -296,3 +296,31 @@ func TestParseProfile_RealMicList(t *testing.T) {
 		t.Error("IsCurrent = true for a list frame, want false")
 	}
 }
+
+// TestParseTransmit_RealFirmware guards the `transmit` status frames the
+// FLEX-8400 (fw v4.2.20) sends after `sub tx all`, captured verbatim on shari
+// 2026-10-06. The power fields arrive split across two frames, so ParseTransmit
+// must report per-field presence (the bridge merges them).
+func TestParseTransmit_RealFirmware(t *testing.T) {
+	lines := []string{
+		"S5E719E98|transmit tx_rf_power_changes_allowed=1 tune=0 tune_mode=single_tone mon_available=1 max_power_level=100",
+		"S5E719E98|transmit freq=14.213000 rfpower=37 tunepower=10 tx_slice_mode=USB hwalc_enabled=0 inhibit=0 dax=1 sb_monitor=1 mon_gain_sb=48 mon_pan_sb=50 met_in_rx=1 am_carrier_level=83 mic_selection=ACC mic_level=85 mic_boost=0 mic_bias=1 mic_acc=1 compander=0 compander_level=60 vox_enable=0 vox_level=39 vox_delay=12 speech_processor_enable=1 speech_processor_level=2 lo=350 hi=2950 tx_filter_changes_allowed=1 tx_antenna=ANT1 pitch=600 speed=30 iambic=1 iambic_mode=1 swap_paddles=0 break_in=1 break_in_delay=5 cwl_enabled=0 sidetone=1 mon_gain_cw=80 mon_pan_cw=50 synccwx=1",
+	}
+	var got []TransmitStatus
+	for _, l := range lines {
+		f, err := ParseFrame(l)
+		if err != nil {
+			t.Fatalf("ParseFrame(%q): %v", l, err)
+		}
+		if f.Kind != FrameStatus || f.Topic != "transmit" || f.TopicArgs != "" {
+			t.Fatalf("frame = kind %v topic %q args %q, want status/transmit/no args", f.Kind, f.Topic, f.TopicArgs)
+		}
+		got = append(got, ParseTransmit(f.RawBody))
+	}
+	if g := got[0]; !g.HasMax || g.MaxPowerLevel != 100 || g.HasRF || g.HasTune {
+		t.Errorf("frame 1 = %+v, want only max_power_level=100", g)
+	}
+	if g := got[1]; !g.HasRF || g.RFPower != 37 || !g.HasTune || g.TunePower != 10 || g.HasMax {
+		t.Errorf("frame 2 = %+v, want rfpower=37 tunepower=10", g)
+	}
+}

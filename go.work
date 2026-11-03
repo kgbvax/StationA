@@ -6,6 +6,7 @@ use (
 	./antmode
 	./atr1k-tuner-bridge
 	./beamsteer
+	./chase-queue
 	./flexbridge
 	./hadiscovery
 	./hf-mqtt-capture

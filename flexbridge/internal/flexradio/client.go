@@ -142,6 +142,7 @@ func (c *Client) Handshake(ctx context.Context) (RadioInfo, error) {
 		"sub interlock all",
 		"sub atu all",
 		"sub pan all", // panadapter status: pan stream ids (handles) + band, for band changes
+		"sub tx all",  // transmit status: rfpower/tunepower/max_power_level, for the power ceiling
 	}
 	for _, s := range subs {
 		if _, err := c.sendAwaitReply(ctx, s); err != nil {
@@ -269,6 +270,12 @@ func (c *Client) Send(ctx context.Context, cmd string) error {
 // (`profile mic save "<name>"` is obsolete on SmartSDR v4+ — the radio returns
 // malformed — so there is no SaveMicProfile here; profile creation/editing now
 // uses a file-transfer mechanism, out of scope.)
+//
+// SetRFPower / SetTunePower / SetMaxPowerLevel exist ONLY to enforce the
+// power ceiling (set_rf_power_limit): the bridge calls them to lower a value
+// that is over the limit, or to set/lift the radio-side max_power_level
+// ceiling — never to raise output. The `transmit set` wire form is from
+// FlexLib; the status fields were confirmed live on the FLEX-8400.
 type Commander interface {
 	DVKPlay(id int) error                           // dvk playback_start id=<id>
 	DVKStop(id int) error                           // dvk playback_stop  id=<id>
@@ -276,6 +283,25 @@ type Commander interface {
 	SetMicProfile(name string) error                // profile mic load "<name>"
 	SetSliceMode(slice int, mode string) error      // slice set <idx> mode=<MODE>
 	SetSliceRxAnt(slice int, ant string) error      // slice set <idx> rxant=<PORT>
+	TuneSlice(slice int, freqHz int64) error        // slice tune <idx> <MHz>
+	SetRFPower(level int) error                     // transmit set rfpower=<n>
+	SetTunePower(level int) error                   // transmit set tunepower=<n>
+	SetMaxPowerLevel(level int) error               // transmit set max_power_level=<n>
+}
+
+// SetRFPower sets the transmit RF power slider (0–100; watts on the FLEX-8400).
+func (c *Client) SetRFPower(level int) error {
+	return c.Send(context.Background(), fmt.Sprintf("transmit set rfpower=%d", level))
+}
+
+// SetTunePower sets the TUNE carrier power (0–100).
+func (c *Client) SetTunePower(level int) error {
+	return c.Send(context.Background(), fmt.Sprintf("transmit set tunepower=%d", level))
+}
+
+// SetMaxPowerLevel sets the radio-side transmit power ceiling (0–100).
+func (c *Client) SetMaxPowerLevel(level int) error {
+	return c.Send(context.Background(), fmt.Sprintf("transmit set max_power_level=%d", level))
 }
 
 // DVKPlay triggers playback of DVK memory id (1-12) and keys the transmitter.
@@ -310,6 +336,13 @@ func (c *Client) SetMicProfile(name string) error {
 // vocabulary before calling. The result is observed on the slice status stream.
 func (c *Client) SetSliceMode(slice int, mode string) error {
 	return c.Send(context.Background(), fmt.Sprintf("slice set %d mode=%s", slice, mode))
+}
+
+// TuneSlice tunes slice index slice to freqHz (SmartSDR `slice tune <idx>
+// <MHz>`, the command a logger's spot click ends in). The result is observed
+// on the slice status stream (RF_frequency=).
+func (c *Client) TuneSlice(slice int, freqHz int64) error {
+	return c.Send(context.Background(), fmt.Sprintf("slice tune %d %.6f", slice, float64(freqHz)/1e6))
 }
 
 // SetSliceRxAnt selects the receive antenna port of slice index slice

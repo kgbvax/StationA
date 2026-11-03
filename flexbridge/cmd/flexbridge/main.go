@@ -71,13 +71,14 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 	// exists.
 	pub := &bridge.PahoPublisher{}
 	b := bridge.New(bridge.Config{
-		Site:               cfg.MQTT.Site,
-		Station:            cfg.MQTT.Station,
-		Slot:               cfg.MQTT.Slot,
-		Location:           cfg.MQTT.Location,
-		DiscoveryPrefix:    cfg.MQTT.DiscoveryPrefix,
-		AvailTopic:         availabilityTopic(cfg),
-		PublishHADiscovery: cfg.MQTT.PublishHADiscovery,
+		Site:                cfg.MQTT.Site,
+		Station:             cfg.MQTT.Station,
+		Slot:                cfg.MQTT.Slot,
+		Location:            cfg.MQTT.Location,
+		DiscoveryPrefix:     cfg.MQTT.DiscoveryPrefix,
+		AvailTopic:          availabilityTopic(cfg),
+		PublishHADiscovery:  cfg.MQTT.PublishHADiscovery,
+		PowerLimitMechanism: cfg.PowerLimit.Mechanism,
 	}, pub, &slogAdapter{log})
 
 	// /cmd dispatch: paho runs message handlers on its own goroutine, and a DVK
@@ -109,6 +110,12 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 	// 10 s heartbeat) would starve and silently drop the arm. The heartbeat
 	// self-suspends whenever device_online=false. See Bridge.StateHeartbeat.
 	go b.StateHeartbeat(ctx, bridge.DefaultStateHeartbeat)
+
+	// 2b. RF power-ceiling enforcer (set_rf_power_limit from tx-guard): clamps
+	// against the radio's transmit status bridge-locally. Process lifetime, like
+	// the heartbeat; it no-ops while the radio is offline or no ceiling is known.
+	go b.RunPowerLimit(ctx)
+	log.Info("rf power limit enforcer started", "mechanism", cfg.PowerLimit.Mechanism)
 
 	// 3. Run the radio-connection loop until ctx is cancelled.
 	_, err = radioLoop(ctx, cfg, b, pub, log)
@@ -312,8 +319,9 @@ func runOnce(ctx context.Context, cfg config.Config, host string, b *bridge.Brid
 		})
 		log.Info("radio identified", "model", info.Model, "serial", info.Serial, "firmware", info.Firmware)
 	}
-	// The *Client implements flexradio.Commander (DVKPlay/DVKStop). Install it
-	// so /cmd DVK intent reaches the radio; Reset() clears it on disconnect.
+	// The *Client implements flexradio.Commander. Install it so /cmd intent
+	// reaches the radio and the power-ceiling enforcer re-applies a held
+	// ceiling; Reset() clears it on disconnect.
 	b.SetCommander(client)
 	log.Info("handshake complete; observing")
 

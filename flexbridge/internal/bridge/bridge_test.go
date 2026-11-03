@@ -422,8 +422,8 @@ func TestBridge_MetaTopic(t *testing.T) {
 		t.Fatalf("meta missing expose block; got %v", meta["expose"])
 	}
 	fields, _ := expose["fields"].([]any)
-	if len(fields) != 15 {
-		t.Errorf("expose.fields len = %d, want 15 (device_online,freq_hz,band,mode,drive,tx,tuning,dvk_status,dvk_id,mic_profile,split,rx_freq_hz,rx_band,cross_band,rx_input)", len(fields))
+	if len(fields) != 17 {
+		t.Errorf("expose.fields len = %d, want 17 (device_online,freq_hz,band,mode,drive,tx,tuning,dvk_status,dvk_id,mic_profile,rf_power_w,rf_power_limit_w,split,rx_freq_hz,rx_band,cross_band,rx_input)", len(fields))
 	}
 	// Radio tuning state is read-only except band, mic_profile and rx_input,
 	// which are writable setpoints (set_band → native band-stacking;
@@ -510,6 +510,8 @@ type fakeCommander struct {
 	micProfileCall []string
 	modeCall       []modeCall
 	rxAntCall      []rxAntCall
+	tuneCall       []tuneCall
+	txCall         []txCmd
 }
 
 type rxAntCall struct {
@@ -528,6 +530,24 @@ func (f *fakeCommander) rxAnts() []rxAntCall {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]rxAntCall(nil), f.rxAntCall...)
+}
+
+type tuneCall struct {
+	Slice  int
+	FreqHz int64
+}
+
+func (f *fakeCommander) TuneSlice(slice int, freqHz int64) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.tuneCall = append(f.tuneCall, tuneCall{slice, freqHz})
+	return nil
+}
+
+func (f *fakeCommander) tunes() []tuneCall {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]tuneCall(nil), f.tuneCall...)
 }
 
 type modeCall struct {
@@ -579,6 +599,23 @@ func (f *fakeCommander) SetMicProfile(name string) error {
 	defer f.mu.Unlock()
 	f.micProfileCall = append(f.micProfileCall, name)
 	return nil
+}
+
+func (f *fakeCommander) SetRFPower(level int) error       { return f.tx(knobRF, level) }
+func (f *fakeCommander) SetTunePower(level int) error     { return f.tx(knobTune, level) }
+func (f *fakeCommander) SetMaxPowerLevel(level int) error { return f.tx(knobMax, level) }
+
+func (f *fakeCommander) tx(k txKnob, level int) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.txCall = append(f.txCall, txCmd{k, level})
+	return nil
+}
+
+func (f *fakeCommander) txCmds() []txCmd {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]txCmd(nil), f.txCall...)
 }
 
 func (f *fakeCommander) plays() []int {
@@ -1358,4 +1395,61 @@ func countFrom(msgs []MemoMsg) int {
 		}
 	}
 	return n
+}
+
+// TestHandleCommand_SetFreq: set_freq tunes the slice CAT calls VFO A
+// (rxInputSlice: the TX slice, slice A in split); non-numeric or out-of-range
+// values, no tracked slice and a missing commander are no-ops.
+func TestHandleCommand_SetFreq(t *testing.T) {
+	t.Run("targets the TX slice when not split", func(t *testing.T) {
+		b, _ := newTestBridge(t)
+		fc := &fakeCommander{}
+		b.SetCommander(fc)
+		handleLine(t, b, "S0|slice 1 0 RF_frequency=14.200000 mode=USB active=1 tx=1 index_letter=A")
+		b.HandleCommand(cmdJSON("set_freq", " 14231500 "))
+		want := []tuneCall{{1, 14231500}}
+		if got := fc.tunes(); !reflect.DeepEqual(got, want) {
+			t.Errorf("set_freq calls = %v, want %v", got, want)
+		}
+	})
+
+	t.Run("split targets slice A, not the TX slice", func(t *testing.T) {
+		b, _ := newTestBridge(t)
+		fc := &fakeCommander{}
+		b.SetCommander(fc)
+		splitOn20m(t, b)
+		b.HandleCommand(cmdJSON("set_freq", "14231500"))
+		want := []tuneCall{{0, 14231500}}
+		if got := fc.tunes(); !reflect.DeepEqual(got, want) {
+			t.Errorf("set_freq calls = %v, want %v", got, want)
+		}
+	})
+
+	t.Run("bad values are no-ops", func(t *testing.T) {
+		b, _ := newTestBridge(t)
+		fc := &fakeCommander{}
+		b.SetCommander(fc)
+		handleLine(t, b, "S0|slice 0 0 RF_frequency=14.200000 mode=USB active=1 tx=1")
+		for _, v := range []string{"abc", "0", "-5", "60000000", "1799999", "14.2", ""} {
+			b.HandleCommand(cmdJSON("set_freq", v))
+		}
+		if got := fc.tunes(); len(got) != 0 {
+			t.Errorf("set_freq calls = %v, want none", got)
+		}
+	})
+
+	t.Run("no slice tracked is a no-op", func(t *testing.T) {
+		b, _ := newTestBridge(t)
+		fc := &fakeCommander{}
+		b.SetCommander(fc)
+		b.HandleCommand(cmdJSON("set_freq", "14231500"))
+		if got := fc.tunes(); len(got) != 0 {
+			t.Errorf("set_freq calls = %v, want none (no slice)", got)
+		}
+	})
+
+	t.Run("nil commander no-ops (radio offline)", func(t *testing.T) {
+		b, _ := newTestBridge(t)
+		b.HandleCommand(cmdJSON("set_freq", "14231500")) // must not panic
+	})
 }
