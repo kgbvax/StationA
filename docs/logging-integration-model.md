@@ -277,9 +277,13 @@ Consumers build their own bandmap from the event stream. `source` ∈ `rbn|clust
 QSY and rotator need **no new topics** — they reuse existing station slots. This pass only
 *reads* `radio/state`; the logger QSY write path is deferred (chaseq-ui's QSY is the one realized write path).
 
-The persistent QSO record for the chasing domain is the planned `station-log` component
-(`chasing-stations-architecture.md` §2.2): a consumer of `…/log/event` and of ADIF imports
-that owns a local log database. The ingest adapters here stay its sources.
+The persistent QSO record for the chasing domain is the `station-log` component, realized as slot
+`muehle/hf/station-log` (role `log-store`, `station-log/`; `chasing-stations-architecture.md` §2.2). It owns a
+local log database fed by ADIF import with automatic duplicate merge and, optionally, Log4OM's `ADIF_MESSAGE`
+UDP. It publishes its own non-retained, QoS 1 `…/station-log/event` (added / merged / deleted, stable `id`) in the
+spirit of §4/§6.1, with its own envelope (`station-log/docs/station-log-mqtt-api.md`); it does not yet consume
+`…/log/event`. Keeping the loggers in sync with it is out of scope. The ingest adapters here remain possible
+future sources.
 
 ---
 

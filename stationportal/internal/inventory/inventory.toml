@@ -274,7 +274,14 @@ host      = "scmino"
 [[slot]]
 address   = "muehle/hf/chase"
 component = "chase-queue"
-device    = "logic slot — ranks the CQ stations bmrec hears and the needed DX-cluster spots (needed + priority)"
+device    = "logic slot — ranks the qualified CQ stations bmrec hears and the needed DX-cluster spots by the active awards (goals), self-contained rows"
+link      = "none"
+host      = "scmino"
+
+[[slot]]
+address   = "muehle/hf/station-log"
+component = "station-log"
+device    = "logic slot — the station's QSO record (local SQLite log, ADIF import with duplicate merge); worked/confirmed view for chase-queue"
 link      = "none"
 host      = "scmino"
 
@@ -422,7 +429,7 @@ name = "chaseq-ui"
 path = "chaseq-ui/"
 kind = "ui"
 host = "bwpc"
-note = "Task Scheduler at logon; chase-queue list window, Enter = QSY + callsign into Log4OM"
+note = "Task Scheduler at logon; chase-queue list window, Enter = QSY (frequency + mode) + callsign into the configured logger(s) (Log4OM)"
 
 [[software]]
 name  = "icom9700-radio-bridge"
@@ -475,9 +482,19 @@ path  = "chase-queue/"
 kind  = "logic"
 host  = "scmino"
 unit  = "chase-queue"
-ports = "2340/udp (Log4OM), 12061/udp (DXLog), 127.0.0.1:8095"
-note  = "Needed + priority for the CQ stations bmrec hears and the DX cluster (bwpc :23/tcp) spots: contest multipliers, DXCC entities not confirmed on the band; QRZ.com callbook"
+ports = "127.0.0.1:8095, 12061/udp (DXLog contest feed), 2340/udp (Log4OM, only without [station_log])"
+note  = "Ranks the qualified CQ stations bmrec hears and the DX cluster (bwpc :23/tcp) spots by the active awards (goals: DXCC per band, field awards, the running contest); worked/confirmed view from station-log; Club Log matrix; QRZ.com callbook"
 slots = ["muehle/hf/chase"]
+
+[[software]]
+name  = "station-log"
+path  = "station-log/"
+kind  = "logic"
+host  = "scmino"
+unit  = "station-log"
+ports = "127.0.0.1:8096 (import + read API), 2341/udp (Log4OM ADIF_MESSAGE, optional)"
+note  = "QSO record: ADIF import with automatic duplicate merge, answers worked/confirmed (SQLite in /var/lib/station-log); deploy before chase-queue"
+slots = ["muehle/hf/station-log"]
 
 [[software]]
 name  = "bmrec"

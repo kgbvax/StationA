@@ -318,7 +318,8 @@ entirely).
   logic slot that turns a logger bearing into rotator and antenna-direction intents,
   `hf/beam-steer`), `bandmap` (the operator-keyed station from the shack logger,
   `hf/spots`; read-only, fronts software), `chase-queue` (a logic slot that ranks the stations
-  on the air by what is needed, `hf/chase`; see `chasing-stations-architecture.md`) and `discovery` (a consumer that renders
+  on the air by what is needed, `hf/chase`; see `chasing-stations-architecture.md`), `log-store` (a logic
+  slot holding the station's QSO record, `hf/station-log`) and `discovery` (a consumer that renders
   `/meta` `expose` into a consumer's discovery format, `hf/discovery`). Passive:
   `ant/*`, `mast/*`, `preamp/*` (masthead LNA).
 - **Capability keys** are role-specific; each slot's block in §7 and its component's
@@ -821,7 +822,15 @@ nothing is keyed)`.
 **`muehle/hf/chase`**: the chase queue (logic slot, `chase-queue` on `scmino`, role
 `chase-queue`). Reads bmrec's `hf/cqfinder` candidates and a DX cluster, publishes the
 retained ranked list; `/cmd` skip, handled, undo and the contest-instance actions. Contract:
-`chase-queue/docs/chase-queue-mqtt-api.md`; domain roles: `chasing-stations-architecture.md`.
+`chase-queue/docs/chase-queue-mqtt-api.md`; domain roles: `chasing-stations-architecture.md`. Rows are
+self-contained (`freq_hz`, `mode`, `source`, `needs[]`); what is needed comes from the enabled awards (goals).
+
+**`muehle/hf/station-log`**: the station's QSO record (logic slot, `station-log` on `scmino`, role
+`log-store`). Takes QSOs in by ADIF import with automatic duplicate merge (and an optional Log4OM
+`ADIF_MESSAGE` UDP feeder); no `/cmd`, subscribes to nothing.
+`state: ts; qso_count; own_calls; last_import; problems`; a non-retained, QoS 1 `…/event` per added, merged or
+deleted QSO; the whole log is read over HTTP (`127.0.0.1:8096`, `GET /v1/worked`), not over MQTT. Consumer:
+chase-queue. Contract: `station-log/docs/station-log-mqtt-api.md`.
 
 **`muehle/hf/discovery`**: HA discovery consumer (logic slot, `hadiscovery`; see §7.3, §9)
 ```
@@ -837,7 +846,8 @@ open, see `docs/known-issues.md`), `ant/fan-dipole` 80/40 (port 6),
 **Adapters:** all HF bridges run on host `scmino`: `radio` (flexbridge), `tuner`, HF
 `rotator` and `pa` since 2026-10-12, and `ant-ctrl` since 2026-10-09; `pa-arm` + `switch`
 are a self-hosted M5 Stamp PLC and `ant-switch` is an ESPHome board. The Shelly power
-bridge and the `power-seq` sequencer run on `scmino` (since 2026-10-18). See §7.3. The PA
+bridge and the `power-seq` sequencer run on `scmino` (since 2026-10-18); the logic slots `chase` and
+`station-log` (no device) run there too. See §7.3. The PA
 bridge talks to the ACOM 1200S over USB-serial (Prolific, 9600 8N1) for telemetry,
 `/cmd set_band` band-walk commands (sent by the antenna-select PA band-follow, on in the
 seeded config (`[pa_follow] enabled = true`; off in the built-in defaults), or by an

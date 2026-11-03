@@ -3,7 +3,7 @@
 Status: **target architecture, 2026-11-03** (operator-directed). It supersedes the role and scope statements
 of `plans/2026-11-01-2252-feat-chase-queue-v1-plan.md` and `plans/2026-11-02-1908-feat-chaseq-ui-plan.md`
 where they conflict. Those plans stay the record of what v1 built. §5 lists the gaps between this target and
-the code as of `main` 3226c43.
+the code of the 2026-11-03 implementation branch (`claude/chasing-stations-architecture-b2ac20`, built on `main` 1e3ea39; not yet merged or deployed).
 
 ## 1. Purpose
 
@@ -68,8 +68,8 @@ source) applies to **station-log**, not to chase-queue.
 - **Feeders** (later, outside the domain's decision logic): Log4OM `ADIF_MESSAGE` UDP and the Club Log
   confirmation matrix move here from chase-queue, and Log4OM full ADIF file / ADIF POST (ideation #2) can follow.
   Each feeder is an import path into the same store.
-- Slot address and role name are to be fixed when it is planned (proposal: `muehle/hf/station-log`, role
-  `log-store`).
+- Slot `muehle/hf/station-log`, role `log-store` (fixed 2026-11-03). HTTP on `127.0.0.1:8096`; contract in
+  `station-log/docs/station-log-mqtt-api.md`.
 
 chase-queue keeps a **derived log view** (worked/confirmed per call, entity, band, mode). It loads the view
 from the station-log API at start and keeps it current from the events, so ranking never waits on a remote
@@ -103,43 +103,79 @@ stays display-only. A consumer never needs bmrec's `cqfinder` topic to tune a ro
 
 ## 4. Roadmap (each item gets its own plan)
 
-1. **Self-contained rows.** chase-queue publishes `freq_hz`, `mode` and `source` on every row (backend done:
-   `source` is `bmrec` | `cluster`, mode derived in `chase-queue/internal/mode`). Decision with it: a station
-   worked on the row's band is no longer hidden, in DX and contest mode; it is listed after the unworked ones
-   with `needed:false`, no tag and `worked_before.this_band`. chaseq-ui dropped its `cqfinder` join, and QSY uses
-   the row's mode instead of the frequency rule.
-2. **station-log v1.** New module: store, ADIF import + duplicate merge, `-import-adif FILE`, upload API,
-   MQTT `/state` + events, read API. chase-queue builds its log view from it. The Log4OM UDP listener and the
-   Club Log client move to it as feeders.
-3. **Generic award model.** Evaluator + definition file + Log4OM XML importer. DXCC-per-band and contest
-   become definitions. Goals. `needs[]` on the wire. chaseq-ui shows the award(s) per row.
-4. **bmrec qualification gate.** chase-queue takes only qualified (or high-confidence) rows. This needs a
-   qualification field in bmrec's `cqfinder` rows (bmrec change, outside this repo).
-5. **Buddies** as a ranking input.
-6. **Clusters 1..n.** `[[cluster]]` list with a name per source. RBN per source. A band table beyond HF 160–10 m.
-7. **chaseq-ui:** configurable logger senders (today Log4OM only; the DXLog script was dropped 2026-11-03). Show `info` / `worked_before`.
+Status 2026-11-03: items 1 to 7 are built on the implementation branch; nothing is deployed from it yet.
+Deploy order: **station-log, then chase-queue, then chaseq-ui** (an older chase-queue leaves rows untunable and
+sets no mode; chase-queue without station-log keeps its local log). Cutover steps: `known-issues.md` "Chasing
+Stations" and `chase-queue/CLAUDE.md`.
 
-## 5. Gaps: as-is (main 3226c43) vs this target
+1. **Self-contained rows.** Built and merged on main. chase-queue publishes `freq_hz`, `mode` and `source` on
+   every row (mode derived in `chase-queue/internal/mode`); a station worked on the row's band is listed after
+   the unworked ones with `needed:false`, no tag and `worked_before.this_band`. chaseq-ui has no `cqfinder`
+   join; QSY uses the row's mode.
+2. **station-log v1.** Built: new module `station-log/` (SQLite store, ADIF import with duplicate merge,
+   `-import-adif FILE`, `POST /import` with optional `replace_source`, MQTT `/meta` `/state` and
+   `…/event`, read API `GET /v1/worked /v1/qsos /v1/stats`, optional Log4OM `ADIF_MESSAGE` UDP feeder on 2341).
+   chase-queue builds its log view from it (`[station_log]`, `internal/logview`: load at start, on reconnect and
+   periodically; kept current from the events). **Left:** the Club Log confirmation matrix stays in
+   chase-queue (decided: it is entity-level, not a QSO list, so it is no feeder unless a Club Log log download
+   is built); Log4OM full-ADIF file / ADIF POST feeder (ideation #2).
+3. **Generic award model.** Built: `chase-queue/internal/award` (definition file in TOML, slot evaluator,
+   built-in DXCC per band, field awards such as WAS, contest wrapper, Log4OM XML importer
+   `-import-award-xml`), `[[goal]]` with priority, `needs[]` on the wire, chaseq-ui shows the award(s) per row
+   and has an award filter. **Left:** the XML importer is written against synthetic fixtures; check it against
+   the real `award_WAS.xml` before relying on it. Definitions load once at start (restart to change). No
+   catalog refresh (ideation #4). Only field awards (a `QsoField` with allowed values) and DXCC are
+   covered; POTA, SOTA and WWFF are deferred and rejected.
+4. **bmrec qualification gate.** chase-queue side built: `[bmrec] gate` = `off` | `trusted` (default) |
+   `qualified`, rows kept out counted in `/state.bmrec_unqualified`. **Left, in bmrec (outside this repo):**
+   send `qualified` on every `cqfinder` row (spec: `chase-queue/docs/chase-queue-mqtt-api.md` section 5).
+   Until then the gate stays `trusted`.
+5. **Buddies.** Built: `[[buddy]]` (call, note, boost); `buddy:true` on the row, own tier below the needed
+   block, first among needed rows of equal goal priority; chaseq-ui shows a badge and the note.
+6. **Clusters 1..n.** Built: `[[cluster]]` list with a name per source (`cluster_name` on the row), RBN
+   per entry (`skimmer`), the same call and band on several clusters is one row; band table extended by 6 m,
+   2 m and 70 cm. **Left:** a second cluster is not configured live, and the Log4OM cluster on bwpc still
+   stops while bwpc sleeps.
+7. **chaseq-ui.** Built: configurable logger senders (`[[loggers.sender]]`, `Sender` seam; only `log4om`
+   exists), `info` / `worked_before` / `needs` / `buddy` shown, filters for band, needed only and award.
+   **Left:** a second logger kind; filters beyond HF bands are not exposed (rows on 6 m and VHF/UHF arrive,
+   the UI band list is fixed).
+
+## 5. Gaps: as-is (implementation branch) vs this target
 
 | Target | Status | As-is |
 |---|---|---|
-| 1..n clusters, RBN optional | partial | One `[cluster]` struct (`chase-queue/internal/config/config.go`), one telnet login. RBN = `skimmer` on/off. HF 160–10 m only (`internal/band/band.go`). The feed stops while bwpc sleeps (powerseq standby). |
-| Cluster spots = available stations | differs | Cluster spots mainly hide heard rows. Only needed cluster spots become rows, at most 40 (`engine.go` `Compute`). |
-| Only qualified bmrec rows | differs | Every open bmrec row is listed, also untrusted and call-less ones. `call_trusted` is used only for contest skips; `call_source` is not read. |
-| station-log | missing | History is in chase-queue: Log4OM UDP since start + Club Log DXCC×band matrix. No import, no backfill, `STATION_CALLSIGN` ignored. |
-| Award definitions, Log4OM XML | missing | One hard-coded rule (DXCC not confirmed on the band, any mode). Contest is a separate, exclusive evaluator. |
-| Contest = one award type | differs | Contest is an "activity" with its own mode switch (`set_mode`, `switch_instance`). |
-| Buddies | missing | — |
-| Needed for which award | missing | Wire has `needed` + `tag` only. The engine computes per-slot valuations and drops them. |
-| QRZ.com enrichment | matches | Display-only, cached. chaseq-ui does not show it yet. |
-| Self-contained rows / UI only displays | matches | Every row carries `freq_hz`, `mode` and `source`; chase-queue derives the mode (sideband rule for bmrec rows; comment keyword, then IARU R1 band plan for cluster rows). Worked-on-band rows are listed last-but-candidates, not needed. chaseq-ui reads `freq_hz`/`mode`/`worked_before` from the row and no longer subscribes to `cqfinder`. |
-| Local filters | matches | Band (160–6 m, fixed) and needed-only. |
-| Activate = QSY + logger | partial | FLEX via flexbridge `set_freq`/`set_mode`. Logger fixed to Log4OM (the DXLog script was dropped 2026-11-03). |
+| 1..n clusters, RBN optional | matches | `[[cluster]]` entries with a name each, one reconnecting telnet client per entry, RBN per entry, merge by call+band. Bands 160-10 m, 6 m, 2 m, 70 cm. Left: no second cluster configured live; the Log4OM cluster stops while bwpc sleeps (powerseq standby). |
+| Cluster spots = available stations | matches | Needed cluster spots (and buddies) become rows with `source:"cluster"` and `cluster_name`, at most 40; a spot also hides the heard row it names. |
+| Only qualified bmrec rows | partial | The gate exists (`off` / `trusted` / `qualified`). Default `trusted` (call read back or typed). `qualified` needs bmrec to send the field, which it does not yet (bmrec change pending). |
+| station-log | matches (not deployed) | Own module and slot with ADIF import, duplicate merge, `replace_source`, events and read API. chase-queue's log view reads it. Left: Club Log matrix feeder (stays in chase-queue by decision), Log4OM full-ADIF / ADIF POST feeder. |
+| Award definitions, Log4OM XML | partial | Definition files + built-in DXCC + XML importer. The importer is untested against a real Log4OM export. Definitions load at start only. |
+| Contest = one award type | matches | The contest is the award `contest` (priority 100) while an instance runs; `set_mode` / `switch_instance` remain as instance control, `activity` is derived. DXCC stays a goal in a contest unless a `[[goal]]` turns it off. |
+| Buddies | matches | `[[buddy]]`, see item 5. |
+| Needed for which award | matches | `needs[]` `{award, key, band, mode, status}` on every needed row; `needed` + `tag` are the derived summary. |
+| QRZ.com enrichment | matches | Display-only, cached; chaseq-ui shows `info` as one line. |
+| Self-contained rows / UI only displays | matches | `freq_hz`, `mode`, `source` on every row; chaseq-ui has no `cqfinder` subscription. |
+| Local filters | matches | Band, needed only, award. |
+| Activate = QSY + logger | partial | FLEX via flexbridge `set_freq` / `set_mode`; loggers are config (`[[loggers.sender]]`), only Log4OM exists. |
 | skip/undo from the UI | matches | `handled` is sent in contest only. |
 
-## 6. Open questions
+## 6. Open questions and defaults chosen
 
-- **Snapshot import.** A full Log4OM ADIF file carries deletes. Merge-only import does not remove a QSO that
-  was deleted in the logger. Does station-log also need a per-source snapshot replace?
-- **Scoring across awards.** How several `needs` on one row add up in the ranking.
-- **station-log slot address and role name.**
+Defaults taken on 2026-11-03 so the implementation could proceed; change them here and in code together.
+
+- **Snapshot import.** Decided: optional. `POST /import?replace_source=NAME` (CLI `-source NAME
+  -replace-source`) deletes the QSOs that source NAME contributed to and the file does not mention, unless
+  another source contributed too. Off by default; refused for an empty, truncated or partly invalid file and
+  for a delete of more than half of the source (`force` overrides the last). Plain imports stay merge-only.
+- **Scoring across awards.** Decided: goal priority of the first award that needs the station, then the number
+  of satisfied-by-this-station awards (more first), then the existing keys of the old order (NewSlots, Most
+  Wanted, first seen). With one goal this is the old order. Defaults: contest 100, DXCC 10, other awards 50.
+- **station-log slot address and role name.** Decided: `muehle/hf/station-log`, role `log-store`.
+- **bmrec gate default.** `trusted`. `qualified` is the target once bmrec sends the field.
+- **bmrec `qualified` field (to do in bmrec).** Each `cqfinder/state.rows` entry gets `"qualified": true|false`
+  on every row (no `omitempty`): true when the operator qualified the row on the HF CQ page or the detection is
+  confident, false otherwise. Full spec: `chase-queue/docs/chase-queue-mqtt-api.md` section 5. Without the field,
+  `gate = "qualified"` lists nothing and reports `bmrec sends no qualified flag`.
+- **Club Log matrix.** Stays in chase-queue: it is an entity-level matrix, not a QSO list.
+- **Still open.** Whether the real Log4OM award XML parses with the importer; whether the simplified IARU R1
+  band plan gives the right mode on the air; whether a second cluster (RBN) is wanted live.

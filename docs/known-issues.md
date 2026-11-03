@@ -923,26 +923,43 @@ changed the following; the contract has the normative wording.
 
 ## [decision] Chasing Stations — open items (2026-11-03)
 
-Target roles: `docs/chasing-stations-architecture.md`. Open items of the deployed v1
-(chase-queue, chaseq-ui), so a later session does not re-discover them:
+Target roles: `docs/chasing-stations-architecture.md`. The target is built on branch
+`claude/chasing-stations-architecture-b2ac20` (station-log, awards/goals, `needs[]`, buddies, clusters 1..n, bmrec
+gate, logger senders); **not merged or deployed yet**. Open items, so a later session does not re-discover them:
 
 1. **The DX cluster stops while bwpc sleeps.** chase-queue reads Log4OM's internal
    cluster on bwpc `:23`; in powerseq standby there are no cluster rows and no cluster
-   hiding (`chase-queue/config.example.toml` `[cluster]`).
+   hiding (`chase-queue/config.example.toml` `[[cluster]]`). A second `[[cluster]]` (e.g. RBN) would
+   not depend on bwpc; none is configured.
 2. ~~chaseq-ui's DXLog script has not run live~~ — moot: the script and the DXLog sender were
-   removed (2026-11-03); Enter puts the call into Log4OM only.
+   removed (2026-11-03); Enter puts the call into Log4OM only (loggers are `[[loggers.sender]]` config).
 3. **bmrec reads chase-queue's `undo` as an object**, chase-queue publishes a string
    (`chase-queue/internal/bus/bus.go`). The fix belongs to bmrec.
-4. **No logbook history before deployment.** Worked = Log4OM UDP QSOs since chase-queue
-   started; the Club Log log download is not built (`store.ReplaceLogQSOs` is unused).
-   Target: the separate `station-log` component with ADIF import.
-5. **Worked in a contest means "dupe".** Stations worked on the band are no longer hidden
-   but listed last (needed false). In DX mode the tier and `worked_before` read the same
-   history (station log + stored contest logs). In a contest the tier is the running contest
-   log under its DOUBLE_QSO rule, so `worked_before.bands` can name the band while
-   `this_band` is false. `this_band` follows the tier, so it never contradicts `needed`. Both cover only QSOs since deployment until `station-log`.
-6. **Row mode is derived, not read.** Rows now carry `freq_hz`, `mode` and `source`
-   (chase-queue `internal/mode`: sideband rule, comment keyword, IARU R1 band plan; unclear
-   = no mode). Resolved on the backend and in chaseq-ui (QSY uses the row mode, no `cqfinder` join).
-   Open: the band-plan table is simplified and untested live, and an older chase-queue leaves
-   heard rows untunable and sets no mode.
+4. ~~No logbook history before deployment~~ — resolved in code by `station-log` (ADIF import with duplicate
+   merge, `GET /v1/worked`, events); chase-queue builds its log view from it. Live only after the cutover below.
+   Until then worked = Log4OM UDP QSOs since chase-queue started. The Club Log **matrix** stays in chase-queue
+   (entity-level, not a QSO list); the Club Log log download is not built.
+5. **Worked in a contest means "dupe".** Stations worked on the band are listed last (needed false). With
+   station-log the DX tier and `worked_before` read the log view (call+band+mode class, ever); in a contest the tier is
+   the running contest log under its DOUBLE_QSO rule, so `worked_before.bands` can name the band while
+   `this_band` is false. `this_band` follows the tier, so it never contradicts `needed`. Contest QSOs from DXLog
+   are not part of `worked_before` while the log view is on; they reach station-log only by ADIF import.
+6. **Row mode is derived, not read** (chase-queue `internal/mode`: sideband rule, comment keyword, IARU R1 band
+   plan; unclear = no mode). Resolved on the backend and in chaseq-ui. Open: the band-plan table is simplified
+   and untested live, and an older chase-queue leaves heard rows untunable and sets no mode.
+7. **bmrec `qualified` field pending (bmrec change, outside this repo).** chase-queue's `[bmrec] gate`
+   defaults to `trusted`; `qualified` needs bmrec to send `"qualified": true|false` on every `cqfinder` row
+   (spec: `chase-queue/docs/chase-queue-mqtt-api.md` section 5). Until then keep `trusted`; with `qualified`
+   and no field the list is empty and `/state.problems` says `bmrec sends no qualified flag`.
+8. **Log4OM award XML importer is untested on a real export.** `chase-queue -import-award-xml` was written
+   against synthetic fixtures; check it with a real `award_WAS.xml` before relying on it. Definitions load at start.
+9. **Merge-only import does not remove QSOs deleted in the logger.** `replace_source` (per-source snapshot
+   replace) exists but is off by default; use it only with a full, valid export of that source.
+10. **POTA, SOTA and WWFF are deferred** (rejected as goals); station-log keeps their ADIF reference fields.
+11. **Deploy order and cutover.** Deploy `station-log` (scmino, `station-log/deploy.sh`), then `chase-queue`,
+    then `chaseq-ui` (bwpc). Cutover: (1) import the Log4OM ADIF export
+    (`station-log -import-adif FILE -source log4om-file`); (2) point Log4OM's UDP `ADIF_MESSAGE` at station-log
+    (`scmino:2341`, `[log4om]` in its config) instead of chase-queue's `2340`; (3) add `[station_log]` to
+    `/etc/chase-queue/config.toml` and restart (`[log4om]` is then ignored with a Warn; remove it);
+    (4) rollback = delete `[station_log]` and point Log4OM back at 2340. Then update the stationportal and the
+    hf_console host map if anything moved (both already list `station-log`).

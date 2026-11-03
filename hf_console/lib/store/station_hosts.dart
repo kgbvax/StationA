@@ -37,6 +37,8 @@ const slotHosts = <String, SlotHost>{
   'muehle/hf/power-seq': SlotHost('powerseq', 'scmino'),
   'muehle/hf/discovery': SlotHost('hadiscovery', 'scmino'),
   'muehle/hf/spots': SlotHost('logger-spot-bridge', 'scmino'),
+  'muehle/hf/chase': SlotHost('chase-queue', 'scmino'),
+  'muehle/hf/station-log': SlotHost('station-log', 'scmino'),
   'muehle/uhf/radio': SlotHost('icom9700-radio-bridge', 'scmino'),
   'muehle/uhf/sat-track': SlotHost('oscarwatch-sattrack-bridge', 'scmino'),
   'muehle/uhf/az-rotator': SlotHost('spid-ercm-rotator-bridge', 'shari'),
