@@ -97,7 +97,7 @@ static const int BAND_EDGES_COUNT = sizeof(BAND_EDGES) / sizeof(BAND_EDGES[0]);
 #define ARM_CLOSE_DWELL_MS 1000
 // After the radio moves to a different ham band, hold the arm open while the
 // rest of the station follows: antennaselect switches the port / retunes the
-// Ultrabeam / pre-positions the ACOM (one broker hop .50→.178), ultrabridge's
+// Ultrabeam / pre-positions the ACOM (all on the scmino broker), ultrabridge's
 // first 2 s motor poll, the ACOM band walk (~150 ms per step).
 #define BAND_CHANGE_HOLDOFF_MS 3000
 // Split cross-band gate (opt-in, compiled OUT by default). flexbridge flags

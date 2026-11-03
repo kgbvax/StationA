@@ -50,7 +50,7 @@ func Default() Config {
 		HTTPAddr: "127.0.0.1:8090",
 		Site:     "muehle",
 		MQTT: MQTT{
-			Broker:   "tcp://192.168.1.50:1883",
+			Broker:   "tcp://192.168.1.178:1883",
 			ClientID: "testui",
 			Site:     "muehle",
 			User:     "hf",

@@ -15,6 +15,6 @@ log_level        = "info"
 # inventory = "/etc/stationportal/inventory.toml"
 
 [mqtt]
-broker    = "tcp://192.168.1.50:1883"   # the live broker — NOT the scmino mirror
+broker    = "tcp://192.168.1.178:1883"   # the scmino station broker
 client_id = "stationportal"
 user      = "hf"

@@ -16,7 +16,7 @@ on-the-wire contract — derived from `internal/bridge/bridge.go` and
 
 | Property | Value |
 |----------|-------|
-| Protocol | MQTT 3.1.1 (plain TCP; `deploy.sh` seeds `tcp://192.168.1.50:1883`) |
+| Protocol | MQTT 3.1.1 (plain TCP; `deploy.sh` seeds `tcp://192.168.1.178:1883`) |
 | Authentication | Username/password (`hf` user) |
 | Clean session | auto (paho default); `/cmd` is re-subscribed on every reconnect |
 | Auto-reconnect | yes (`SetAutoReconnect`, `SetConnectRetry`) |

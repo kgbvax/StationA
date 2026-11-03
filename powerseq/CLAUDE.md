@@ -195,7 +195,7 @@ unexpectedly). It is also **subscribed at QoS 0** so the broker never queues a
 `/cmd` for replay. Every received `/cmd` and every phase change is logged at
 Info. The MQTT session is **clean** (`CleanSession=true`): all inputs are
 retained and replay on each subscribe. The persistent session it replaced
-stopped receiving every QoS-1 message on the HA broker on 2026-10-18 (only
+stopped receiving every QoS-1 message on the HA broker (then the station broker) on 2026-10-18 (only
 the PLC's QoS-0 bridged topics arrived), so `hf/radio`/`hf/pa` were never seen
 and cold starts timed out. A wait timeout now names what was seen, e.g.
 `wait-radio-online: timeout (hf/radio status=none state=none)`. On (re)connect the runner re-publishes the retained

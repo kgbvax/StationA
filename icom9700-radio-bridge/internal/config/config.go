@@ -204,10 +204,8 @@ func Defaults() Config {
 	return Config{
 		RadioHost: "9700.kgbvax.net",
 		MQTT: MQTTConfig{
-			// KTD-7: the broker is addressed via bwbroker DNS indirection,
-			// not a hardcoded LAN address — the user repoints the DNS entry
-			// as the station's broker migrates.
-			Broker:          "tcp://bwbroker:1883",
+			// The station broker (Mosquitto on scmino).
+			Broker:          "tcp://192.168.1.178:1883",
 			ClientID:        "",
 			User:            "hf",
 			DiscoveryPrefix: "homeassistant",

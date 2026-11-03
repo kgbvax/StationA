@@ -118,10 +118,8 @@ load ~+0.8; keep the HD profile clean — 1080p software x264 is not budgeted).
   leave a gap.
 - **Planes**: publishes `muehle/hf/vhfcam/status` (retained LWT online/offline)
   and `/state` (`mqtt_connected`, per-field stale flags). No `/meta` or
-  `/cmd` yet. Broker is the **hassio** one (`tcp://192.168.1.50:1883`, the `deploy.sh`
-  seed) — the shari-local mosquitto of older repo docs was never deployed,
-  and the scmino station broker is a bridged mirror of `.50` (see
-  `../mqtt-broker/CLAUDE.md`).
+  `/cmd` yet. Broker is the scmino station broker (`tcp://192.168.1.178:1883`, the `deploy.sh`
+  seed; see `../mqtt-broker/CLAUDE.md`).
 - paho conventions apply: handlers Enqueue (never publish inline),
   ctx-aware connect via `shared/mqtt`.
 - Later phases (planned, not built): phase 2 = Go-rendered overlay PNG piped

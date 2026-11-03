@@ -12,9 +12,9 @@
 #define SECRET_WIFI_SSID "CHANGE_ME"
 #define SECRET_WIFI_PASSWORD "CHANGE_ME"
 
-// MQTT broker — the one ultrabridge (muehle/hf/ant-ctrl) is on. The account
+// MQTT broker — the station broker on scmino, where ultrabridge (muehle/hf/ant-ctrl) is on. The account
 // needs read on muehle/hf/ant-ctrl/{state,status} and write on .../cmd.
-#define SECRET_MQTT_HOST "192.168.1.50"
+#define SECRET_MQTT_HOST "192.168.1.178"
 #define SECRET_MQTT_PORT 1883
 #define SECRET_MQTT_USERNAME "CHANGE_ME"
 #define SECRET_MQTT_PASSWORD "CHANGE_ME"

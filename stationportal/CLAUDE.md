@@ -15,8 +15,8 @@ The station **landing page** on scmino, port 80 (`http://scmino/`). One page wit
   ports; liveness from their slots, else from a named link probe.
 - **Hosts** and **passive resources** (antennas, camera).
 
-It is **not a slot**: a passive consumer of `muehle/#` on the live broker
-(`.50`, not the scmino mirror) — no publishes, no LWT. Server-rendered HTML,
+It is **not a slot**: a passive consumer of `muehle/#` on the station broker
+(scmino) — no publishes, no LWT. Server-rendered HTML,
 no JavaScript; `<meta refresh>` every probe interval. `/api/inventory` returns
 the same data as JSON, `/healthz` answers `ok`. `/quickref` (HTML) and `/quickref.pdf`
 serve the hf_console operator quick reference — embedded copies (`internal/web/assets/quickref.{html,pdf}`)

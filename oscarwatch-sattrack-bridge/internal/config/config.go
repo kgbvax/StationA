@@ -77,7 +77,7 @@ type LogConfig struct {
 }
 
 // Defaults returns the station defaults: slot uhf/sat-track, OscarWatch on
-// BWPC, the live hassio broker.
+// BWPC, the scmino station broker.
 func Defaults() Config {
 	return Config{
 		Host:     "scmino",
@@ -85,7 +85,7 @@ func Defaults() Config {
 		Slot:     SlotConfig{Station: "uhf", Slot: "sat-track"},
 		Source:   SourceConfig{URL: "ws://192.168.1.197:7373/", PingInterval: 30 * time.Second},
 		MQTT: MQTTConfig{
-			Broker: "tcp://192.168.1.50:1883",
+			Broker: "tcp://192.168.1.178:1883",
 			User:   "hf",
 			Site:   "muehle",
 		},

@@ -120,15 +120,10 @@ channel (:8091), testui (:8090) and the landing page (:80). **shari**
 `hf-mqtt-capture`. `winpc-power-bridge` runs on the shack PC bwpc
 (`192.168.1.197`). The ant-switch, the M5 Stamp PLCs and the control heads are
 embedded firmware that speak MQTT directly. Everything lives under the
-`muehle/…` address tree. Most clients still connect to the Home Assistant Mosquitto at
-`192.168.1.50:1883` (root `CLAUDE.md`, as of 2026-10-18;
-per-service broker settings are seed-once configs, so the repo does not settle
-it per service). A station Mosquitto on scmino (`192.168.1.178:1883`) mirrors
-`muehle/#` in both directions and serves M5 Stamp PLC #1 and
-shelly-power-bridge with its Shelly plugs; see `mqtt-broker/CLAUDE.md`. The
-shack-local broker originally planned for shari was never deployed (shari runs
-no mosquitto); `docs/conventions/mqtt-topology.md` describes the target end
-state, in which the scmino station broker is authoritative for `muehle/#`. (The former `uhf/rotator` slot —
+`muehle/…` address tree. All clients connect to the station Mosquitto on scmino (`192.168.1.178:1883`), which
+mirrors `muehle/#` in both directions to the Home Assistant broker (`192.168.1.50:1883`);
+see `mqtt-broker/CLAUDE.md` and `docs/conventions/mqtt-topology.md`. shari runs no
+mosquitto. (The former `uhf/rotator` slot —
 pelcobridge2, an interactive Pelco-D/P pan/tilt TUI on the shack PC — was
 retired 2026-10-10, not in use; UHF az/el is `spid-ercm-rotator-bridge`.)
 

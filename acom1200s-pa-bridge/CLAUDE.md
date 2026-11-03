@@ -163,10 +163,8 @@ See `../docs/conventions/config-and-secrets.md` for the full convention.
 Target: Raspberry Pi **scmino** (`192.168.1.178`, user `io`) since 2026-10-12 — the ACOM's Prolific
 USB-serial adapter is plugged into scmino's USB (it was on shari, `192.168.1.139`). The shari
 copy is disabled, not removed (rollback). Never run two instances: they share the MQTT
-client_id `muehle-hf-pa` and kick each other off the broker. `deploy.sh` seeds the HA broker
-`tcp://192.168.1.50:1883`; `127.0.0.1` on scmino is the station broker, a bridged `muehle/#`
-mirror of `.50` (live split per the root `CLAUDE.md` 2026-10-18 note; this service's live
-config is not verified).
+client_id `muehle-hf-pa` and kick each other off the broker. `deploy.sh` seeds the scmino station broker
+`tcp://192.168.1.178:1883` (`127.0.0.1` on scmino is the same broker).
 
 ```bash
 ./deploy.sh              # cross-compile, ship, install as a hardened systemd service

@@ -16,7 +16,7 @@ step with the PC's wired NIC MAC).
 
 | Property | Value |
 |----------|-------|
-| Protocol | MQTT 3.1.1, plain TCP (default `tcp://192.168.1.50:1883`, the live broker) |
+| Protocol | MQTT 3.1.1, plain TCP (default `tcp://192.168.1.178:1883`, the scmino station broker) |
 | Authentication | user `hf`; password from env `WINPC_POWER_BRIDGE_MQTT_PASSWORD` (TOML fallback) |
 | Client ID | `<site>-<station>-<slot>` = `muehle-power-shack-pc` |
 | Clean session | **true** — nothing is queued for the agent while the PC sleeps |
@@ -117,7 +117,7 @@ whenever `/status` is `offline`.
   `Warn` log line, so a stale retained `sleep` can never put the PC to sleep at
   boot or right after a wake. In `powerseq`, set `retain = false` on the step.
   If a retained `sleep` is left on the broker, clear it:
-  `mosquitto_pub -h 192.168.1.50 -u hf -P "$MQTT_PASSWORD" -t muehle/power/shack-pc/cmd -r -n`.
+  `mosquitto_pub -h 192.168.1.178 -u hf -P "$MQTT_PASSWORD" -t muehle/power/shack-pc/cmd -r -n`.
 - `value` is ignored (powerseq's `cmd` step requires one; any string is fine).
 - Unknown actions and malformed JSON are logged and ignored; `/state` is not
   touched. An empty payload is ignored silently.

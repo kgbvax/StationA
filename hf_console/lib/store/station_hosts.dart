@@ -61,6 +61,6 @@ class StationHost {
 const stationHosts = <String, StationHost>{
   'bwpc': StationHost('bwpc', 'Windows', '192.168.1.197', 'Loggers, OscarWatch, PstRotator'),
   'scmino': StationHost('scmino', 'Pi CM5', '192.168.1.178', 'Station bridges, logic slots, broker mirror'),
-  'hassio': StationHost('hassio', 'Broker', '192.168.1.50', 'Home Assistant + the live station broker'),
+  'hassio': StationHost('hassio', 'Broker', '192.168.1.50', 'Home Assistant; its broker only mirrors muehle/# from scmino'),
   'shari': StationHost('shari', 'Pi 4', '192.168.1.139', 'Sat rotator bridge, HamClock, SvxLink'),
 };

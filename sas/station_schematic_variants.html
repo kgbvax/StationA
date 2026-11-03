@@ -554,7 +554,7 @@ function drawSheet(S, V, C) {
       rows[0].r = word; rows[0].rTone = on ? null : 'txtMute';
     } else if (id === 'console') {
       if (!S.link) { q = 'ok'; level = 'alarm'; }
-      rows.push({k:'pair', y:34, l:'MQTT', r:S.link ? 'up' : 'down'}, {k:'pair', y:50, l:'Broker', r:'.50'});
+      rows.push({k:'pair', y:34, l:'MQTT', r:S.link ? 'up' : 'down'}, {k:'pair', y:50, l:'Broker', r:'.178'});
     } else if (id === 'hassio') {
       rows.push({k:'pair', y:34, l:h.ip.replace('192.168.1', ''), r:''}, {k:'pair', y:50, l:'MQTT', r:':1883'});
     } else {
@@ -785,7 +785,7 @@ function details(S, id) {
     }
     if (h === 'bwpc') rows.push(['Agent', S.slots['power/shack-pc'].status === 'online' ? 'awake' : 'asleep'], ['Runs', 'DXLog, Log4OM, OscarWatch, PstRotator']);
     if (h === 'console') rows.push(['MQTT link', S.link ? 'up' : 'down', S.link ? 'ok' : 'bad']);
-    if (h === 'hassio') rows.push(['Role', 'live broker :1883'], ['Mirror', 'scmino .178']);
+    if (h === 'hassio') rows.push(['Role', 'HA broker :1883'], ['Mirror', 'station broker scmino .178']);
     return {title:m.title, addr:h === 'console' ? 'tablet' : m.ip, rows};
   }
   const m = SLOTMETA[id], s = S.slots[id], q = quality(S, id);

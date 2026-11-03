@@ -37,8 +37,7 @@
 #   DEVICE_MODEL    device.model value     (default: Yaesu G-450DC)
 #   DEVICE_LINK     device.link value      (default: ethernet)
 #   LOG_LEVEL       log.level value        (default: info)
-#   MQTT_BROKER     mqtt.broker value      (default: tcp://192.168.1.50:1883, the live HA broker;
-#                                           127.0.0.1 on scmino is the not-yet-used mirror)
+#   MQTT_BROKER     mqtt.broker value      (default: tcp://192.168.1.178:1883, the scmino station broker)
 #   MQTT_SITE       mqtt.site              (default: muehle)
 #   MQTT_STATION    mqtt.station           (default: hf)
 #   MQTT_SLOT       mqtt.slot              (default: rotator)
@@ -81,7 +80,7 @@ HOST_NAME="${HOST_NAME:-scmino}"
 DEVICE_MODEL="${DEVICE_MODEL:-Yaesu G-450DC}"
 DEVICE_LINK="${DEVICE_LINK:-ethernet}"
 LOG_LEVEL="${LOG_LEVEL:-info}"
-MQTT_BROKER="${MQTT_BROKER:-tcp://192.168.1.50:1883}"
+MQTT_BROKER="${MQTT_BROKER:-tcp://192.168.1.178:1883}"
 MQTT_SITE="${MQTT_SITE:-muehle}"
 MQTT_STATION="${MQTT_STATION:-hf}"
 MQTT_SLOT="${MQTT_SLOT:-rotator}"

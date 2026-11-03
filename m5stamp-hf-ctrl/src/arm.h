@@ -62,7 +62,7 @@ struct Radio {
     String band = "";            // derived from freqHz (flexbridge hysteresis), "" = none
     bool crossBand = false;      // /state.cross_band: split with VFO A on another band (missing ⇒ false)
     // Heartbeat: refreshed only by a NEW ts that is not the first message after a
-    // subscribe — a retained replay (resubscribe, or the .50↔.178 bridge
+    // subscribe — a retained replay (resubscribe, or the .178↔.50 mirror bridge
     // reconnecting) repeats the old ts and must not revive a dead feed.
     String lastTs = "";          // survives reconnects
     uint8_t msgsSinceSub = 0;    // saturates at 2 (only "first after subscribe" matters)

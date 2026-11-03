@@ -19,8 +19,7 @@
 #   INSTALL_DIR       remote install dir    (default: /opt/antenna-select)
 #   BINARY            binary name           (default: antennaselect)
 #
-#   MQTT_BROKER       mqtt.broker     value (default: tcp://192.168.1.50:1883, the live broker;
-#                     127.0.0.1 on scmino is the not-yet-used mirror)
+#   MQTT_BROKER       mqtt.broker     value (default: tcp://192.168.1.178:1883, the scmino station broker)
 #   MQTT_SITE         mqtt.site       value (default: muehle)
 #   MQTT_STATION      mqtt.station    value (default: hf)
 #   MQTT_SLOT         mqtt.slot       value (default: antenna-select)
@@ -66,7 +65,7 @@ CONFIG_FILE="${CONFIG_FILE:-${CONFIG_DIR}/config.toml}"
 BINARY="${BINARY:-antennaselect}"
 PKG="./cmd/antennaselect"
 
-MQTT_BROKER="${MQTT_BROKER:-tcp://192.168.1.50:1883}"
+MQTT_BROKER="${MQTT_BROKER:-tcp://192.168.1.178:1883}"
 MQTT_SITE="${MQTT_SITE:-muehle}"
 MQTT_STATION="${MQTT_STATION:-hf}"
 MQTT_SLOT="${MQTT_SLOT:-antenna-select}"

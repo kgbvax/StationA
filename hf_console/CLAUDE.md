@@ -1,6 +1,6 @@
 # hf_console — Mühle HF station tablet/phone console
 
-Flutter console for operating the HF portion of the Mühle station from an Android tablet or an iPhone. Connects directly to the MQTT broker — raw TCP on Android/iOS, WebSocket via the Go bridge on web. The setup screen defaults to the HA broker `192.168.1.50:1883`, the live station broker for most clients (root `CLAUDE.md` live-state note); the web bridge defaults to the scmino broker (see "Web channel on scmino"). The station broker on scmino (`192.168.1.178:1883`, see `../mqtt-broker/README.md`) mirrors `muehle/#` both ways; a console pointed at it keeps working when the shack↔house link is down. shari runs no broker.
+Flutter console for operating the HF portion of the Mühle station from an Android tablet or an iPhone. Connects directly to the MQTT broker — raw TCP on Android/iOS, WebSocket via the Go bridge on web. The setup screen and the web bridge both default to the station broker on scmino (`192.168.1.178:1883`, see `../mqtt-broker/README.md`; web: see "Web channel on scmino"). It mirrors `muehle/#` both ways to the Home Assistant broker; the console keeps working when the shack↔house link is down. shari runs no broker.
 
 ## Design
 
@@ -38,7 +38,7 @@ See `../sas/tablet_console_hybrid_preview.html` for the approved high-fidelity r
 
 ## MQTT
 
-Uses `mqtt_client` v10.x, MQTT 3.1.1, direct TCP to the broker entered on first launch (setup screen default `192.168.1.50:1883`; see the intro). Credentials stored in `flutter_secure_storage`; entered on first launch (use the dedicated `console` account below).
+Uses `mqtt_client` v10.x, MQTT 3.1.1, direct TCP to the broker entered on first launch (setup screen default `192.168.1.178:1883`; see the intro). Credentials stored in `flutter_secure_storage`; entered on first launch (use the dedicated `console` account below).
 
 Create a dedicated broker user `console` with narrow ACL (as in `../mqtt-broker/acl.conf.example`; not seeded on the scmino broker yet, whose only local account is `hf`):
 - subscribe: `muehle/+/+/state`, `muehle/+/+/meta`, `muehle/+/+/status`
@@ -268,7 +268,7 @@ The browser cannot open raw TCP sockets, so the web build uses WebSocket. The
 Go bridge (`webbridge/`) serves the static Flutter build at `/` and forwards
 the `/mqtt` WebSocket stream byte-for-byte to the station broker
 (`-mqtt-broker`, default `192.168.1.178:1883` — the scmino station broker,
-since 2026-10-31; it was `.50` before, so every redeploy wrote `.50` into
+since 2026-10-31; it was `.50` before, so every redeploy then wrote `.50` into
 the unit). The bridge forwards the browser's login unchanged, so that
 account must exist on the scmino broker (the web console logs in as `hf`). The page
 derives its WebSocket endpoint from its own origin (`Uri.base`), so the build

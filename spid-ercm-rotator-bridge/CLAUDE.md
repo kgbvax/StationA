@@ -200,11 +200,8 @@ See `../docs/conventions/config-and-secrets.md` for the full convention and
 ## Deployment
 
 Target: Raspberry Pi (`shari`, `192.168.1.139`, user `io`) — live there.
-deploy.sh seeds `broker = "tcp://127.0.0.1:1883"`, but shari runs no broker
-(its mosquitto is inactive): the live on-device config must point elsewhere,
-and which broker it uses is not recorded in the repo (root CLAUDE.md live-state
-note: every client except PLC #1 and shelly-power-bridge uses `.50`;
-per-service configs not verified). A re-seed from the deploy.sh defaults would
+deploy.sh seeds `broker = "tcp://192.168.1.178:1883"` (the scmino station broker;
+shari runs no broker of its own). A re-seed from the deploy.sh defaults would
 also lose the live el `max=180` (`EL_MAX` defaults to 90; `../docs/known-issues.md`).
 
 ```bash

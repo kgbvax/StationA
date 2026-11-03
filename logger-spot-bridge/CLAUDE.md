@@ -96,11 +96,8 @@ MQTT or UDP; deploy.sh runs it before restarting the service).
    back to the PC and the task re-enabled at its desktop.
 7. **Seed config** (`deploy.sh` defaults; used for the shari first deploy
    2026-09-16; the scmino file of 2026-10-18 was not checked): broker
-   `tcp://192.168.1.50:1883` (the HA box, which serves `muehle/#`; shari runs
-   no mosquitto; hassio addresses are ALSO reachable as `hassio.kgbvax.net`
-   but the config uses the raw IP — `bwbroker` was NXDOMAIN on the unifi DNS
-   on 2026-09-16; see `../docs/conventions/mqtt-topology.md` for the
-   `bwbroker` rule). locator JO32WE, QRZ user dl9et, listeners
+   `tcp://192.168.1.178:1883` (the scmino station broker; see
+   `../docs/conventions/mqtt-topology.md`). locator JO32WE, QRZ user dl9et, listeners
    dxlog/n1mm:12060 + log4om:2249. **Log4OM's outbound CALLSIGN target must
    point at the bridge host, scmino:2249 since 2026-10-18** (was shari:2249;
    GUI setting on the logging PC — the repoint is not recorded in the repo);

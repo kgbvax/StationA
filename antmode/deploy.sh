@@ -21,7 +21,7 @@
 #   INSTALL_DIR       remote install dir    (default: /opt/antmode)
 #   BINARY            binary name           (default: antmode)
 #
-#   MQTT_BROKER       mqtt.broker     value (default: tcp://192.168.1.50:1883 — the live
+#   MQTT_BROKER       mqtt.broker     value (default: tcp://192.168.1.178:1883, the scmino
 #                     station broker)
 #   MQTT_SITE         mqtt.site       value (default: muehle)
 #   MQTT_STATION      mqtt.station    value (default: hf)
@@ -65,7 +65,7 @@ CONFIG_FILE="${CONFIG_FILE:-${CONFIG_DIR}/config.toml}"
 BINARY="${BINARY:-antmode}"
 PKG="./cmd/antmode"
 
-MQTT_BROKER="${MQTT_BROKER:-tcp://192.168.1.50:1883}"
+MQTT_BROKER="${MQTT_BROKER:-tcp://192.168.1.178:1883}"
 MQTT_SITE="${MQTT_SITE:-muehle}"
 MQTT_STATION="${MQTT_STATION:-hf}"
 MQTT_SLOT="${MQTT_SLOT:-ant-mode}"

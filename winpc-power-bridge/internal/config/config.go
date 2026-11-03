@@ -98,7 +98,7 @@ func Defaults() Config {
 		Host:     "bwpc",
 		Location: "bauwagen",
 		MQTT: MQTTConfig{
-			Broker:  "tcp://192.168.1.50:1883",
+			Broker:  "tcp://192.168.1.178:1883",
 			User:    "hf",
 			Site:    "muehle",
 			Station: "power",

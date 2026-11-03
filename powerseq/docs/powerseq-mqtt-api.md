@@ -23,7 +23,7 @@ change the order, targets, waits, or delays. The subscribed topics (§7) and the
 
 | Property | Value |
 |----------|-------|
-| Protocol | MQTT 3.1.1 (plain TCP; `deploy.sh` seeds `tcp://127.0.0.1:1883`, on scmino the bridged `muehle/#` mirror; the live config was not verified, see the root `CLAUDE.md` live-state note) |
+| Protocol | MQTT 3.1.1 (plain TCP; `deploy.sh` seeds `tcp://127.0.0.1:1883`, the station broker on scmino) |
 | Authentication | Username/password (`hf` user) |
 | Clean session | true (since 2026-10-18); own `/cmd` is re-subscribed on every reconnect |
 | Auto-reconnect | yes |
@@ -34,7 +34,7 @@ interrupts the connect (it does not hang until systemd SIGKILL).
 
 The session is clean (`CleanSession=true`, since 2026-10-18): every input is
 retained and replays on each subscribe, and a resumed persistent session on
-the HA broker stopped delivering QoS-1 messages. The
+the HA broker (then the station broker) stopped delivering QoS-1 messages. The
 **own `/cmd` subscription is QoS 0** on purpose: with a persistent session a
 QoS-1 subscription would let the broker queue a `/cmd` published while powerseq is offline and replay it on
 reconnect — re-energizing the station, the exact case the "own `/cmd` not
@@ -191,7 +191,7 @@ restores an idle sequencer's `/state` instead of leaving it absent.
 `muehle/hf/power-seq/cmd`. Example:
 
 ```bash
-mosquitto_pub -h 192.168.1.50 -u hf -P "$MQTT_PASSWORD" -t 'muehle/hf/power-seq/cmd' \
+mosquitto_pub -h 192.168.1.178 -u hf -P "$MQTT_PASSWORD" -t 'muehle/hf/power-seq/cmd' \
   -m '{"action":"start"}'
 ```
 

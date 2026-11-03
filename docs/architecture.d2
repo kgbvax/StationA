@@ -56,7 +56,7 @@ bus: {
   }
 
   ha-broker: {
-    label: "HA Mosquitto\n192.168.1.50:1883\nmost services still connect here (2026-10-18)"
+    label: "HA Mosquitto\n192.168.1.50:1883\nHome Assistant side of the muehle/# mirror"
     class: infra
   }
 }
@@ -291,11 +291,11 @@ antennas: {
 # ---------------- consumers on the LAN ----------------
 
 consumers: {
-  label: "LAN clients (tablet setup default: HA broker 192.168.1.50:1883)"
+  label: "LAN clients (tablet setup default: station broker 192.168.1.178:1883)"
   style.fill: cornsilk
   style.stroke: darkgoldenrod
 
-  tablet: { label: "hf_console tablet\n(Flutter; broker .50 by setup default)" ; class: ui }
+  tablet: { label: "hf_console tablet\n(Flutter; broker scmino .178 by setup default)" ; class: ui }
 }
 
 # ---------------- wiring: bridge ↔ bus ----------------

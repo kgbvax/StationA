@@ -2,38 +2,32 @@
 
 This is the **station MQTT broker**: a Mosquitto instance on
 [scmino](../CLAUDE.md) (`192.168.1.178`; originally planned for shari) that the
-station components move to one at a time, with a mosquitto `bridge` connection
+station components connect to, with a mosquitto `bridge` connection
 replicating the `muehle/#` namespace to the Home Assistant broker at
 `192.168.1.50:1883` (HA's own Mosquitto add-on).
 
-**Why.** The HA broker is in the house, not the shack. Every station component
-reaches it over the house LAN, so if the shack↔house link drops the
+**Why.** The HA broker is in the house, not the shack. Station components that used it
+would reach it over the house LAN, so if the shack↔house link drops the
 station loses its entire bus — `antennaselect`, `powerseq`, and the `hf_console`
 tablet can no longer coordinate even though all the radios/PAs/rotators are
-physically fine and locally reachable. A shack-local broker gives the station a
+physically fine and locally reachable. The shack-local broker gives the station a
 working bus independent of the house link; HA is a consumer that catches up
 when the link returns.
 
 This is **not a Go component** (no `go.mod`, not in `go.work`) — it is plain
 config + a deploy script, like the ESPHome/PlatformIO projects. **No station
 component code changes were needed**: every component already configures a
-single broker address, so each is simply repointed at the shack broker.
+single broker address, so each is simply pointed at the shack broker.
 
-> **Current state (2026-10-23).** The broker runs on **scmino**
-> (`192.168.1.178:1883`; since 2026-10-01) and is bridged to `.50` as a
-> **transitional mirror**: `muehle/#` in both directions, `homeassistant/status`
+> **Current state.** The broker runs on **scmino** (`192.168.1.178:1883`; since
+> 2026-10-01) and is the station broker: all station clients connect to it. It is
+> bridged to `.50` as a `muehle/#` mirror in both directions, `homeassistant/status`
 > in, `homeassistant/+/+/+/config` out (see `mqtt-broker/mosquitto.conf.example`).
-> **Clients so far:** the M5 Stamp PLC #1 (2026-10-03) and shelly-power-bridge
-> with its Shelly plugs (2026-10-18), and the hf_console web channel
-> hf-console-web (2026-10-31, logging in as `hf`). Per the root `CLAUDE.md` live-state note
-> (2026-10-18), every other client still uses `.50`, the live station broker
-> (per-service configs not verified live). Clients move one at a time by
-> changing their broker address to `192.168.1.178:1883`; once every client has
-> moved, narrow the bridge to the split mapping below. The bridge logs in to
-> `.50` as `hf`; the only local account is `hf`. shari runs no broker.
-> Never put a `bwbroker` alias in any `/etc/hosts` — live services resolve
-> that name to `.50` (2026-09-26 incident). The topology, ACL and repointing
-> sections below describe the target design.
+> The bridge logs in to `.50` as `hf`; the only local account is `hf`. shari runs
+> no broker. Never put a `bwbroker` alias in any `/etc/hosts` that points anywhere
+> but the station broker (in the 2026-09-26 incident it resolved to `.50`). The
+> topology and ACL sections below describe the split-mapping design the bridge
+> may be narrowed to.
 
 ## Topology
 
@@ -156,9 +150,9 @@ settings (it would no-op):
    by default). The bridge forwards this in to drive `hadiscovery`.
 3. HA's MQTT integration keeps pointing at `.50` — no change there.
 
-## Repointing station components
+## Pointing station components at the broker
 
-After the broker is up, repoint every component. There is **no code change** —
+Every component points at this broker; this checklist is for new, replaced or re-flashed ones. There is **no code change** —
 only broker addresses in config / defaults / docs. Defaults were updated across
 the repo; on the devices, the seeded config files own the values, so edit them
 in place where they diverge.
@@ -167,8 +161,8 @@ in place where they diverge.
 `flexbridge`, `ultrabridge`, `acom1200s-pa-bridge`, `wrc-rotator-bridge`,
 `atr1k-tuner-bridge`, `powerseq`, `antennaselect`, `antmode`, `beamsteer`,
 `hadiscovery`, `logger-spot-bridge`, `icom9700-radio-bridge`, … (the root
-`CLAUDE.md` host list). `shelly-power-bridge` already uses the broker
-(`tcp://192.168.1.178:1883`, since 2026-10-18). Edit `/etc/<service>/config.toml` `mqtt.broker` (or the matching
+`CLAUDE.md` host list). `shelly-power-bridge` uses the broker
+(`tcp://192.168.1.178:1883`). Edit `/etc/<service>/config.toml` `mqtt.broker` (or the matching
 `*_MQTT_BROKER` env override) and the `*_MQTT_PASSWORD` to the shack broker's
 `hf` password, then `sudo systemctl restart <service>`.
 
@@ -190,7 +184,7 @@ in place where they diverge.
 
 ## Operational behavior
 
-- **Shack↔house link down:** once every client has moved, the station keeps its
+- **Shack↔house link down:** the station keeps its
   full local bus on scmino (Go services via `127.0.0.1`, remote devices via the
   scmino IP); `antennaselect`,
   `powerseq`, and the console keep working. HA goes stale and **cannot command
@@ -204,7 +198,7 @@ in place where they diverge.
   forwards it in → `hadiscovery` republishes discovery out → HA ingests. This
   is the standard HA-rebirth flow, unchanged from the single-broker setup.
 - **Cold start, HA down:** `hadiscovery` publishes nothing until an HA birth
-  arrives over the bridge — same as today.
+  arrives over the bridge.
 
 ## Verification
 
@@ -213,10 +207,10 @@ in place where they diverge.
 2. **Bridge both directions + retain:** publish a retained
    `muehle/test/foo/state` on `127.0.0.1`, subscribe to it on `.50` → arrives.
    Publish `muehle/test/foo/cmd` on `.50`, subscribe on `127.0.0.1` → arrives.
-3. **Canary service:** repoint one lightweight service first (e.g.
-   `antennaselect`) to `127.0.0.1`, restart, confirm its `muehle/.../meta` +
-   `/state` appear on `.50` (bridged) and the HA entity shows up. Then roll the
-   rest out service-by-service.
+3. **Canary service:** when pointing a service at the broker, start with a
+   lightweight one (e.g. `antennaselect`) at `127.0.0.1`, restart, confirm its
+   `muehle/.../meta` + `/state` appear on `.50` (bridged) and the HA entity
+   shows up.
 4. **hadiscovery:** with HA up, restart `hadiscovery` → on HA birth it
    republishes discovery; confirm HA entities appear. Toggle a writable HA
    entity → confirm the `cmd` arrives at the shack broker

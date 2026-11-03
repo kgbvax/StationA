@@ -11,7 +11,7 @@ import (
 
 func TestDefaultsTargetLiveBrokerOnPort80(t *testing.T) {
 	d := Default()
-	if d.HTTPAddr != ":80" || d.MQTT.Broker != "tcp://192.168.1.50:1883" || d.MQTT.ClientID != "stationportal" {
+	if d.HTTPAddr != ":80" || d.MQTT.Broker != "tcp://192.168.1.178:1883" || d.MQTT.ClientID != "stationportal" {
 		t.Fatalf("unexpected defaults: %+v", d)
 	}
 }

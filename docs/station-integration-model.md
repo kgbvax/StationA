@@ -1104,7 +1104,7 @@ muehle/host/scmino      # Raspberry Pi CM5, Debian 12 arm64 — runs most statio
 | Power sequencer (`powerseq`) | `hf/power-seq` | `scmino` |
 | HA discovery bridge (optional, `hadiscovery`) | `hf/discovery` (logic slot); consumer of `meta`/`state`/`status` | `scmino` |
 | VHF cam restreamer (`vhfcam-restream`, :8083) | `hf/vhfcam` (`/status` + `/state` only) | `scmino` |
-| Station broker (`mqtt-broker`, Mosquitto :1883, `muehle/#` mirror of the HA broker `.50`) | none | `scmino` |
+| Station broker (`mqtt-broker`, Mosquitto :1883, `muehle/#` mirror to the HA broker `.50`) | none | `scmino` |
 | Console web / testui / stationportal (:8091 / :8090 / :80) | consumers, no slot | `scmino` |
 
 Embedded controllers combine device, adapter, and host in one node and are often the
@@ -1221,15 +1221,13 @@ connection can be diagnosed. Broker: Mosquitto with a persistent store (so retai
 `meta` and `state` survive a restart); EMQX only if a rules engine or clustering is
 wanted later, and neither is wanted at present.
 
-**Broker topology (as deployed, 2026-10-23):** the station broker is Mosquitto
+**Broker topology:** the station broker is Mosquitto
 (`mqtt-broker/`, persistent store) on **scmino** (`192.168.1.178:1883`). It is bridged
 both ways to the Home Assistant broker at `192.168.1.50:1883` (HA's own Mosquitto
-add-on) as a transitional mirror: `muehle/#` both ways, `homeassistant/status` in,
-`homeassistant/+/+/+/config` out. Per `mqtt-broker/CLAUDE.md` its clients so far are the
-M5 Stamp PLC #1 and `shelly-power-bridge` with its Shelly plugs; root `CLAUDE.md`
-(2026-10-18) records the other services as still on `.50`. Per-service endpoints are
-seed-once device config, are not tracked in the repo and are not verified live (most
-`deploy.sh` seed defaults name `.50`, some `127.0.0.1`). shari runs no broker.
+add-on) as a `muehle/#` mirror: `muehle/#` both ways, `homeassistant/status` in,
+`homeassistant/+/+/+/config` out. All station clients connect to the scmino broker.
+Per-service endpoints are seed-once device config and are not tracked in the repo.
+shari runs no broker.
 **Target:** every client moves to the scmino broker, which becomes
 authoritative for `muehle/#`, so the station can keep a working bus when the shack↔house
 link is down. The bridge then narrows to the split mapping: slot
@@ -1365,9 +1363,8 @@ The known limits of the current design are listed below.
   (`spid-ercm-rotator-bridge`, whose rotctld, PstRotator and GS-232B listeners also live
   there) and runs the bus logger (`hf-mqtt-capture`). The shack PC (`bwpc`) fronts
   `power/shack-pc` (`winpc-power-bridge`) and runs OscarWatch, the source behind
-  `uhf/sat-track`; the UHF pan/tilt head (`pelcobridge2`) was retired 2026-10-10. Root
-  `CLAUDE.md` (2026-10-18) records most services as still connecting directly to the HA
-  broker (`192.168.1.50`); the scmino broker mirrors `muehle/#` to it. A host loss takes
+  `uhf/sat-track`; the UHF pan/tilt head (`pelcobridge2`) was retired 2026-10-10. The
+  scmino broker mirrors `muehle/#` to the HA broker (`192.168.1.50`). A host loss takes
   its whole cluster offline at once (correctly, via last-will, but simultaneously). The
   station depends on host liveness, which is worth monitoring; the reconciler running on
   `scmino` adds to that host's coordination single point (see §11).

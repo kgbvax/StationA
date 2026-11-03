@@ -6,8 +6,8 @@
 #
 # See README.md for the two-broker topology (station broker on scmino, HA broker
 # at 192.168.1.50 untouched, a mosquitto bridge between). Since 2026-10-01 the
-# scmino broker runs as a transitional MIRROR of .50 — no client uses it yet;
-# .50 is still the live station broker.
+# scmino broker is the station broker, with a MIRROR of muehle/# to and from .50
+# for Home Assistant.
 #
 # Usage:
 #   ./deploy.sh                       # deploy to default host scmino
@@ -179,4 +179,4 @@ echo "   ACL:     ${ACL_FILE}"
 echo "   Secrets: ${PASSWD_FILE}  (hf / bridge / console / dial users)"
 echo "   Logs:    ssh ${SSH_TARGET} 'journalctl -u mosquitto -f'"
 echo "   Next:    reconfigure the HA Mosquitto add-on with the 'stationa-bridge' account + ACL"
-echo "            (see README.md 'HA-side setup'), then (later, one at a time) repoint station components at 192.168.1.178:1883."
+echo "            (see README.md 'HA-side setup'), then point any new or re-flashed station component at 192.168.1.178:1883."

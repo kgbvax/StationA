@@ -12,11 +12,8 @@
 radio_host = "9700.kgbvax.net"
 
 [mqtt]
-# KTD-7: the broker is addressed via the bwbroker DNS indirection, not a
-# hardcoded LAN address — the DNS entry is repointed as the station's broker
-# migrates. It must resolve to the muehle/#-authoritative broker (never the
-# HA consumer broker — replication is split-direction).
-broker           = "tcp://bwbroker:1883"
+# The station broker (Mosquitto on scmino).
+broker           = "tcp://192.168.1.178:1883"
 client_id        = ""                 # default: "<site>-<station>-<slot>" (model §8)
 user             = "hf"
 # password = ...                  # FORBIDDEN: loaded from ICOM9700_MQTT_PASSWORD
