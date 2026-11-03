@@ -160,7 +160,7 @@ trusting it on the new broker topology.
 Update 2026-10-23: resolved — PLC #1 was USB-flashed 2026-10-03 and is
 OTA-capable since (`deploy.sh ota`, host `m5stamp-plc-1.local`). It moved to
 the scmino station broker `192.168.1.178` (2b1fe5e; `src/secrets.example.h`),
-the first client there (root CLAUDE.md live-state note). shari (`.139`) runs no
+the first client there. shari (`.139`) runs no
 broker.
 
 ## [decision] O9 / O10 — Two documented deviations from station convention

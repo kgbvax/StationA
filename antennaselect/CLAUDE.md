@@ -24,7 +24,7 @@ go vet ./... && gofmt -l .     # vet + format check
 
 # Run locally against a broker (no hardware needed — it is pure logic over MQTT)
 go run ./cmd/antennaselect -config ./config.example.toml
-go run ./cmd/antennaselect -broker tcp://192.168.1.50:1883    # broker via flag
+go run ./cmd/antennaselect -broker tcp://192.168.1.178:1883    # broker via flag
 ```
 
 ## Layout
@@ -49,7 +49,7 @@ config to `scmino`, and installs the `antenna-select` service (seed-once; see
 device, no HTTP server — so the unit carries no `DeviceAllow`/`SupplementaryGroups`.
 
 ```bash
-./deploy.sh                                      # defaults: scmino, broker tcp://192.168.1.50:1883 (live broker)
+./deploy.sh                                      # defaults: scmino, broker tcp://192.168.1.178:1883 (scmino station broker)
 MQTT_PASSWORD=... ./deploy.sh                    # seed the password on first deploy
 ssh io@192.168.1.178 'journalctl -u antenna-select -f'
 ```

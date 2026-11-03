@@ -41,7 +41,7 @@ Watch it:
 
 ```bash
 ssh io@192.168.1.178 journalctl -u oscarwatch-sattrack-bridge -f
-mosquitto_sub -h 192.168.1.50 -u hf -P "$MQTT_PASSWORD" -t 'muehle/uhf/sat-track/#' -v
+mosquitto_sub -h 192.168.1.178 -u hf -P "$MQTT_PASSWORD" -t 'muehle/uhf/sat-track/#' -v
 ```
 
 Configuration: [config.example.toml](config.example.toml). Operational facts are in

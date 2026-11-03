@@ -38,7 +38,7 @@ stale_after = "10m"
 #username = "YOUR-QRZ-CALL"
 
 [mqtt]
-broker    = "tcp://hassio.kgbvax.net:1883"
+broker    = "tcp://192.168.1.178:1883"
 client_id = ""
 user      = "hf"
 password  = ""

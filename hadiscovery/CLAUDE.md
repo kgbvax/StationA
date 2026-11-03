@@ -37,7 +37,7 @@ go vet ./... && gofmt -l .     # vet + format check
 
 # Run locally against a broker (no hardware — passive MQTT consumer)
 go run ./cmd/hadiscovery -config ./config.example.toml                                  # broker 127.0.0.1 (example)
-go run ./cmd/hadiscovery -config ./config.example.toml -broker tcp://192.168.1.50:1883  # station bus via flag
+go run ./cmd/hadiscovery -config ./config.example.toml -broker tcp://192.168.1.178:1883  # station bus via flag
 ```
 
 Without `-config` it loads `/etc/hadiscovery/config.toml` or bare defaults, and bare
@@ -68,7 +68,7 @@ config to `scmino`, and installs the `hadiscovery` service (seed-once; see
 — so the unit carries no `DeviceAllow`/`SupplementaryGroups`.
 
 ```bash
-./deploy.sh                                      # defaults: scmino, broker tcp://192.168.1.50:1883 (HA broker)
+./deploy.sh                                      # defaults: scmino, broker tcp://192.168.1.178:1883 (scmino station broker)
 MQTT_PASSWORD=... ./deploy.sh                    # seed the password on first deploy
 ssh io@192.168.1.178 'journalctl -u hadiscovery -f'
 ```

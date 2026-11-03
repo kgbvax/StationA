@@ -80,7 +80,7 @@ radio_host = ""            # empty = UDP autodiscovery (deploy.sh seeds 192.168.
 radio_serial = ""          # empty = first radio found
 
 [mqtt]
-broker = "tcp://192.168.1.50:1883"   # deploy.sh seed (HA broker); built-in default tcp://127.0.0.1:1883
+broker = "tcp://192.168.1.178:1883"  # deploy.sh seed (scmino station broker); built-in default tcp://127.0.0.1:1883
 # user here; password via EnvironmentFile (see below)
 site     = "muehle"
 station  = "hf"

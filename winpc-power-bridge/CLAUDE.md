@@ -102,9 +102,7 @@ user profile, which only the user, SYSTEM and Administrators can read. No
 password flag exists. Other env overrides: `WINPC_POWER_BRIDGE_MQTT_BROKER`,
 `_CLIENT_ID`, `_USER`, `_SITE`.
 
-Default broker: `tcp://192.168.1.50:1883` (the HA broker; the live broker for
-every client except PLC #1 and shelly-power-bridge per the root CLAUDE.md
-live-state note; the live bwpc config was not checked).
+Default broker: `tcp://192.168.1.178:1883` (the scmino station broker).
 
 ---
 
@@ -149,7 +147,7 @@ every minute.
 
 Check: `schtasks /query /tn winpc-power-bridge /v /fo list` on the PC, the log
 file in the install dir, and the bus:
-`mosquitto_sub -h 192.168.1.50 -u hf -P "$MQTT_PASSWORD" -t 'muehle/power/shack-pc/#' -v`.
+`mosquitto_sub -h 192.168.1.178 -u hf -P "$MQTT_PASSWORD" -t 'muehle/power/shack-pc/#' -v`.
 
 ---
 

@@ -5,10 +5,10 @@ import (
 	"testing"
 )
 
-// okConfig is the deployed shape: hassio broker, hf user, DXLog listener.
+// okConfig is the deployed shape: scmino station broker, hf user, DXLog listener.
 func okConfig() Config {
 	cfg := Defaults()
-	cfg.MQTT.Broker = "tcp://hassio.kgbvax.net:1883"
+	cfg.MQTT.Broker = "tcp://192.168.1.178:1883"
 	cfg.MQTT.User = "hf"
 	cfg.StationLocator = "JO31"
 	return cfg
@@ -85,7 +85,7 @@ func TestCheckResolveFailure(t *testing.T) {
 	t.Setenv("LOGGER_SPOT_BRIDGE_MQTT_PASSWORD", "x")
 	cfg := okConfig()
 	// .invalid is reserved by RFC 2606 and never resolves.
-	cfg.MQTT.Broker = "tcp://bwbroker.invalid:1883"
+	cfg.MQTT.Broker = "tcp://broker.invalid:1883"
 	if _, err := Check(cfg, true); err == nil {
 		t.Fatal("expected DNS-resolution failure for a nonexistent broker host")
 	}

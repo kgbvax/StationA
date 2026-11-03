@@ -54,7 +54,7 @@ locator = "JO32WE"
 alt_m   = 40
 
 [mqtt]
-broker = "tcp://192.168.1.50:1883"
+broker = "tcp://192.168.1.178:1883"
 user   = "hf"
 site   = "muehle"
 

@@ -1,7 +1,7 @@
 # testui — stationa MQTT test/monitor console
 
 A workstation-side Go relay + schema-aware browser UI for watching and stimulating the
-Mühle station bus. The browser cannot speak raw MQTT (the broker at `192.168.1.50`
+Mühle station bus. The browser cannot speak raw MQTT (the station broker at `192.168.1.178`
 exposes only `1883`/`8883`, no WebSocket listener), and the `hf` MQTT password must not
 reach a web page — so a small Go binary acts as **relay + static server**: it connects to
 the broker with paho (credentials from a local `0600` config), subscribes `muehle/#`,

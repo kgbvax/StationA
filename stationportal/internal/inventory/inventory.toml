@@ -86,17 +86,17 @@ note  = "Gateway + UniFi Protect (VHF camera)"
 
 [[link]]
 group = "Infrastructure"
-name  = "MQTT broker (live)"
+name  = "MQTT broker (Home Assistant)"
 url   = "mqtt://192.168.1.50:1883"
 host  = "hassio"
-note  = "HA Mosquitto add-on — live broker for every station client except PLC #1 and the Shelly bridge + plugs"
+note  = "HA Mosquitto add-on — remote end of the station broker's muehle/# mirror; serves HA's own MQTT devices"
 
 [[link]]
 group = "Infrastructure"
-name  = "MQTT broker mirror"
+name  = "MQTT broker (station)"
 url   = "mqtt://192.168.1.178:1883"
 host  = "scmino"
-note  = "Station Mosquitto, bridged to .50 (muehle/# both ways) — clients: PLC #1, shelly-power-bridge + Shelly plugs"
+note  = "Station Mosquitto — the station bus; bridged to the HA broker .50 (muehle/# both ways)"
 
 [[link]]
 group = "Infrastructure"
@@ -145,7 +145,7 @@ name     = "hassio"
 addr     = "192.168.1.50"
 hardware = "Home Assistant host"
 os       = "Home Assistant OS"
-role     = "Home Assistant + Mosquitto add-on (the live station broker for most clients)"
+role     = "Home Assistant + Mosquitto add-on"
 
 [[host]]
 name     = "unifi"
@@ -577,13 +577,13 @@ note  = "This page"
 
 [[software]]
 name  = "mqtt-broker"
-link  = "MQTT broker mirror"
+link  = "MQTT broker (station)"
 path  = "mqtt-broker/"
 kind  = "infra"
 host  = "scmino"
 unit  = "mosquitto"
 ports = "1883/tcp"
-note  = "Bridged mirror of .50 — clients: PLC #1, shelly-power-bridge + Shelly plugs"
+note  = "Station broker; muehle/# bridged both ways to the HA broker .50"
 
 [[software]]
 name  = "hf_console (APK)"

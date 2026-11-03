@@ -157,11 +157,7 @@ env prefix is `ICOM9700_` (plan-pinned, shorter than the dir-name-derived
 convention); the other overridable vars are listed in `config.example.toml`.
 
 Key defaults: `radio_host = "9700.kgbvax.net"`, `[mqtt] broker =
-"tcp://bwbroker:1883"` (**KTD-7**: bwbroker DNS indirection; deploy.sh gates
-only on the name resolving on the target. KTD-7's "never the HA consumer
-broker" rule belongs to the split-direction shari design, which was never
-deployed; `../docs/conventions/mqtt-topology.md` records that live services
-resolve `bwbroker` to `.50`. This bridge's live config is not verified),
+"tcp://192.168.1.178:1883"` (the scmino station broker; deploy.sh `MQTT_BROKER` overrides),
 site/station/slot `muehle`/`uhf`/`radio`, `[session]
 idle_timeout=120s max_attempts=3 attempt_spacing=30s`, `[serial] device=""
 baud=115200 meter_interval="500ms" power_on_frame="1a050201"` (device empty =
@@ -194,7 +190,7 @@ RestrictAddressFamilies=AF_INET AF_INET6, empty CapabilityBoundingSet,
 **MemoryMax=256M** (UDP retransmit buffers and all radio-silence-growable
 structures must stay bounded, R18). Seed-once 0600 TOML + 0600 env file.
 Radio-side prerequisites: CI-V USB Baud 115200, CI-V Transceive ON; the
-exposure review and bwbroker resolution notes are recorded in the station
+exposure review is recorded in the station
 register `../docs/known-issues.md`.
 
 See `../docs/conventions/deployment.md` for the general pattern.

@@ -178,11 +178,10 @@ behavior.
 ## [decision] Broker address is compile-time for this device
 
 For embedded devices the broker address is compile-time configuration
-(`mqtt_broker` substitution variable, default `192.168.1.50`). A broker migration to
-shari therefore needs a re-flash/reconfigure of this device — unlike the hosted bridges,
+(`mqtt_broker` substitution variable, default `192.168.1.178`, the scmino station broker). A broker migration
+therefore needs a re-flash/reconfigure of this device — unlike the hosted bridges,
 which only change a config file.
 
-Update 2026-10-23: `esphome/station-at1.yaml` now sets `mqtt_broker: "192.168.1.139"`
-(shari, cd58466, 2026-08-26), but shari runs no broker. Which broker the flashed device
-uses is not recorded in the repo. Before a re-flash, set `mqtt_broker` to a live broker
-(`192.168.1.50`, or the scmino station broker `192.168.1.178`).
+`esphome/station-at1.yaml` sets `mqtt_broker: "192.168.1.178"`, the scmino station broker. It used to
+point at shari (`192.168.1.139`), which never ran a broker; a device flashed from that older
+build needs a re-flash (or an OTA with the current YAML) to move over.

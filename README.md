@@ -108,7 +108,7 @@ Consumers, control heads and infrastructure that are not slots:
 | [stationportal](stationportal/) | Station landing page (:80): probed service links, live slot/hardware inventory from `/meta` | scmino |
 | [m5dial-hf-rotctrl](m5dial-hf-rotctrl/) | M5Stack Dial firmware: analog-meter control head for the HF rotator | embedded |
 | [m5dualkey-hf-antctrl](m5dualkey-hf-antctrl/) | M5Stack Chain DualKey firmware: Ultrabeam direction keys (a chained Chain Key toggles DVK memory 2 on `hf/radio`) | embedded |
-| [mqtt-broker](mqtt-broker/) | Station Mosquitto config and deploy, bridged to the HA broker (see the broker note below) | scmino |
+| [mqtt-broker](mqtt-broker/) | Station Mosquitto config and deploy, mirrored to the HA broker (see the broker note below) | scmino |
 | [hf-mqtt-capture](hf-mqtt-capture/) | Passive recorder of the HF bus (`muehle/hf/#`) to hourly log files | shari |
 
 The **power-distribution layer** shows how the model's slots fit together: `shelly-power-bridge`
@@ -201,13 +201,10 @@ subdirectories and are not in `go.work`. Bridges import `shared/` but never anot
 bridge's `internal/` (Go's `internal/` rule enforces this across separate modules).
 
 **MQTT broker:** the station Mosquitto runs on scmino (`192.168.1.178:1883`, persistent
-store; `mqtt-broker/`), bridged to the Home Assistant broker at `192.168.1.50:1883` as a
-transitional `muehle/#` mirror. Clients move to it one at a time. Per `mqtt-broker/CLAUDE.md`
-the M5 Stamp PLC #1 and shelly-power-bridge (with its Shelly plugs) use it, and
-most of the others still connect to `192.168.1.50` (root `CLAUDE.md`, 2026-10-18); each service's seed-once
-on-device config sets its own broker, so check there. The original 2026-08 design put this
-broker on shari; it was never deployed there. `docs/conventions/mqtt-topology.md` describes the
-target end state, with the scmino broker authoritative for `muehle/#`.
+store; `mqtt-broker/`) and is the broker every station client connects to. It is bridged to
+the Home Assistant broker at `192.168.1.50:1883` as a `muehle/#` mirror, which is how Home
+Assistant sees the bus. `docs/conventions/mqtt-topology.md` describes the topology; the
+scmino broker is authoritative for `muehle/#`.
 
 **scmino** (Raspberry Pi CM5, `192.168.1.178`, user `io`): the station broker and almost
 every Go service, as hardened systemd units. **shari** (Raspberry Pi, `192.168.1.139`,

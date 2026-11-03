@@ -111,7 +111,7 @@ func Defaults() Config {
 		Listeners:  []ListenerConfig{{Name: "dxlog", Kind: "n1mm", Port: 12060}},
 		QRZ:        QRZConfig{CacheDays: 30, NegativeMinutes: 10},
 		MQTT: MQTTConfig{
-			Broker: "tcp://hassio.kgbvax.net:1883",
+			Broker: "tcp://192.168.1.178:1883",
 			User:   "hf",
 			Site:   "muehle",
 		},
@@ -172,7 +172,7 @@ func Load(f *Flags) (Config, error) {
 		cfg.MQTT.Site = "muehle"
 	}
 	if cfg.MQTT.Broker == "" {
-		cfg.MQTT.Broker = "tcp://hassio.kgbvax.net:1883"
+		cfg.MQTT.Broker = "tcp://192.168.1.178:1883"
 	}
 	if cfg.Host == "" {
 		cfg.Host = "shack-pc"

@@ -31,11 +31,9 @@ log_type information
 # serving HA's other MQTT devices. This connection block is a client of the HA
 # broker; it connects out from this host.
 #
-# TRANSITIONAL MIRROR (since 2026-10-01). .50 is still the live station broker
-# and no client uses this one yet. The bridge mirrors the whole muehle/#
-# namespace in BOTH directions, so clients can move here one at a time: a moved
-# service still sees the slots that stay on .50, and HA still sees the moved
-# one. Loop guard: `try_private true` (default) — the remote is mosquitto too,
+# MIRROR (since 2026-10-01). This broker is the station broker; all station
+# clients use it. The bridge mirrors the whole muehle/#
+# namespace in BOTH directions, so HA sees every slot and can command it. Loop guard: `try_private true` (default) — the remote is mosquitto too,
 # so it never sends the bridge's own messages back. cleansession true: after an
 # outage .50 does NOT replay queued messages (a stale /cmd replay moved the
 # antenna once); retained state re-syncs on every reconnect anyway.
@@ -56,15 +54,14 @@ notification_topic local/bridge-to-ha
 topic muehle/# both 1
 
 # HA birth -> this broker (inbound). HA publishes homeassistant/status=online on
-# startup; hadiscovery (once it runs against this broker) re-publishes then.
+# startup; hadiscovery (which runs against this broker) re-publishes then.
 topic homeassistant/status in 1
 
-# HA discovery config, rendered on THIS broker by hadiscovery once it moves
-# here, -> HA (outbound). HA discovery objects are
+# HA discovery config, rendered on THIS broker by hadiscovery, -> HA (outbound). HA discovery objects are
 # homeassistant/<component>/<node>/<object>/config.
 topic homeassistant/+/+/+/config out 1
 
-# --- END STATE (after EVERY client has moved here) --------------------------
+# --- END STATE (optional narrowing of the bridge) ---------------------------
 # Replace `topic muehle/# both 1` above with the split mapping below. Split
 # directions make message loops structurally impossible.
 #

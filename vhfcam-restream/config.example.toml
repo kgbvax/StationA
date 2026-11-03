@@ -65,7 +65,7 @@ radio_audio_cmd_topic  = "muehle/uhf/radio/cmd"
 # `enabled` is safe — only this flag needs a restart-less switch.
 [overlay]
 enabled       = true
-mqtt_broker   = "tcp://192.168.1.50:1883"
+mqtt_broker   = "tcp://192.168.1.178:1883"
 mqtt_user     = "hf"
 mqtt_password = "<mqtt-hf-password>"   # or env VHFCAM_MQTT_PASSWORD
 site          = "muehle"

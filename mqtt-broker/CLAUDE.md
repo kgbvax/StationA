@@ -4,21 +4,20 @@ The **station Mosquitto broker**, running on **scmino** (`192.168.1.178`,
 since 2026-10-01; originally planned for shari) and bridged to the Home
 Assistant broker at `192.168.1.50:1883`.
 
-**Current state: transitional mirror, two clients.** `.50` is still the live
-station broker. First client moved 2026-10-03: the M5 Stamp PLC #1
-(`m5stamp-hf-ctrl`, `hf/switch` + `hf/pa-arm`; `MQTT_HOST` in its gitignored
-`src/secrets.h`) — it reads `hf/radio/state` and `hf/ant-switch/state` through
-the bridge. Second, 2026-10-18: shelly-power-bridge (`power/*`, on scmino) and
-the Shelly plugs it fronts. A Shelly's native topics (`<shelly_id>/…`) are NOT
-under `muehle/#`, so a plug must use the same broker as the bridge. The bridge mirrors `muehle/#` both ways (login `hf` on `.50`),
-so clients can move here one at a time; narrow it to the split mapping in
-`mosquitto.conf.example` once all have moved. Local accounts: `hf` only
+**Current state: this is the station broker.** All station clients connect to
+`192.168.1.178:1883`, including M5 Stamp PLC #1 (`m5stamp-hf-ctrl`, `hf/switch` +
+`hf/pa-arm`; `MQTT_HOST` in its gitignored `src/secrets.h`), shelly-power-bridge
+(`power/*`) and the Shelly plugs it fronts. A Shelly's native topics
+(`<shelly_id>/…`) are NOT under `muehle/#`, so a plug must use the same broker as
+the bridge. The bridge to the HA broker `.50` mirrors `muehle/#` both ways (login
+`hf` on `.50`), so Home Assistant sees the bus; it may later be narrowed to the split
+mapping in `mosquitto.conf.example`. Local accounts: `hf` only
 (`deploy.sh` skips an account without a password; `bridge`/`console`/`dial` from
 `acl.conf.example` are not seeded on scmino).
-Never add a `bwbroker` hosts alias anywhere — live services resolve it to
-`.50` (2026-09-26 incident). It exists so the station keeps a working `muehle/#` bus
-even when the shack↔house link is down; HA is a consumer that catches up when the
-link returns.
+Never add a `bwbroker` hosts alias that points anywhere but the station broker (in
+the 2026-09-26 incident it resolved to `.50`). The broker exists so the station keeps
+a working `muehle/#` bus even when the shack↔house link is down; HA is a consumer that
+catches up when the link returns.
 
 This is **not a Go component** — no `go.mod`, not in `go.work`. It is plain
 config + a deploy script, like the ESPHome/PlatformIO projects:

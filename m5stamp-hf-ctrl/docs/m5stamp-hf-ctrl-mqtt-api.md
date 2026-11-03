@@ -244,7 +244,7 @@ operation, where a cross-band QSO is always an error.
 **Liveness.** Only flexbridge heartbeats its `/state` (5 s), so only the radio
 feed has an age window; its heartbeat is refreshed only by a `ts` that differs
 from the last one seen and is not the first message after a subscribe — a
-retained replay (resubscribe, or the `.50`↔`.178` bridge reconnecting) cannot
+retained replay (resubscribe, or the `.178`↔`.50` mirror bridge reconnecting) cannot
 revive a dead feed. The other producers publish change-only; their liveness is
 the two-layer rule (`/status` LWT ∧ `device_online`). On WiFi loss, a pa-arm
 disconnect, and each (re)subscribe, every input resets to the closed side, so

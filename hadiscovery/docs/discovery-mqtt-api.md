@@ -264,9 +264,9 @@ replaced by the real entities (the diagnostic topic is cleared).
 # the scmino service first): the same site/station/slot shares the deployed instance's
 # client id and topics. The example's broker is 127.0.0.1; -broker points at the station bus.
 cp config.example.toml /tmp/hadiscovery.toml   # edit password + slot
-go run ./cmd/hadiscovery -config /tmp/hadiscovery.toml -broker tcp://192.168.1.50:1883
+go run ./cmd/hadiscovery -config /tmp/hadiscovery.toml -broker tcp://192.168.1.178:1883
 
-# watch the discovery tree:
+# watch the discovery tree (on the HA broker .50, where HA reads it via the station broker's bridge):
 mosquitto_sub -h 192.168.1.50 -u hf -P "$MQTT_PASSWORD" -t 'homeassistant/#' -v
 
 # confirm a specific slot:

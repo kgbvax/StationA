@@ -40,7 +40,7 @@ sudo cat /var/log/hf-mqtt-capture/2026-08-19/10.log
 Edit `/etc/hf-mqtt-capture/config.toml` on shari:
 
 ```toml
-broker   = "tcp://127.0.0.1:1883"   # deploy.sh seed default; shari runs no broker
+broker   = "tcp://192.168.1.178:1883"   # deploy.sh seed default: scmino station broker
 user     = "hf"
 password = ""
 site     = "muehle"
@@ -49,9 +49,8 @@ log_dir  = "/var/log/hf-mqtt-capture"
 retention_hours = 72
 ```
 
-The seed default `tcp://127.0.0.1:1883` reaches nothing on shari (its mosquitto is
-inactive), so the live config must name a remote broker, e.g. `tcp://192.168.1.50:1883`.
-Which broker the deployed config uses is not recorded in the repo.
+The seed default is the scmino station broker `tcp://192.168.1.178:1883` (shari runs no
+broker of its own). Which broker the deployed config uses is not recorded in the repo.
 
 Then restart the service:
 

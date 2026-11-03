@@ -60,10 +60,8 @@ checked from the repo — needs the human at the device.
 - Broker-topology decision (PRD §18.3, production = `192.168.1.50:1883` at PRD time) is
   RESOLVED: the shack-local broker on shari was merged to main 2026-08-29 and
   `deploy.sh` now defaults to `tcp://127.0.0.1:1883`. Dropped.
-  Update 2026-10-23: the shari broker was never deployed (shari runs no mosquitto).
-  `deploy.sh` now seeds `tcp://192.168.1.50:1883` (HA broker); the scmino broker
-  `192.168.1.178:1883` is a bridged `muehle/#` mirror (root `CLAUDE.md` live-state
-  note, 2026-10-18; the live config on scmino was not checked).
+  Update: the shari broker was never deployed (shari runs no mosquitto). The station
+  broker is Mosquitto on scmino; `deploy.sh` now seeds `tcp://192.168.1.178:1883`.
 
 ## [defect] First key-up after grounding transmits into the grounded switch (PRD §16.1)
 

@@ -36,10 +36,9 @@ func TestDefaults(t *testing.T) {
 	if cfg.RadioHost != "9700.kgbvax.net" {
 		t.Errorf("default radio_host = %q, want 9700.kgbvax.net", cfg.RadioHost)
 	}
-	// KTD-7: the broker default is the bwbroker DNS indirection, never a
-	// hardcoded broker LAN address.
-	if cfg.MQTT.Broker != "tcp://bwbroker:1883" {
-		t.Errorf("default broker = %q, want tcp://bwbroker:1883", cfg.MQTT.Broker)
+	// The broker default is the scmino station broker.
+	if cfg.MQTT.Broker != "tcp://192.168.1.178:1883" {
+		t.Errorf("default broker = %q, want tcp://192.168.1.178:1883", cfg.MQTT.Broker)
 	}
 	if cfg.MQTT.Site != "muehle" || cfg.MQTT.Station != "uhf" || cfg.MQTT.Slot != "radio" {
 		t.Errorf("default station-model address = %q/%q/%q, want muehle/uhf/radio",
@@ -87,8 +86,8 @@ func TestExampleConfigParses(t *testing.T) {
 	if cfg.RadioHost != "9700.kgbvax.net" {
 		t.Errorf("radio_host = %q, want 9700.kgbvax.net", cfg.RadioHost)
 	}
-	if cfg.MQTT.Broker != "tcp://bwbroker:1883" {
-		t.Errorf("broker = %q, want tcp://bwbroker:1883", cfg.MQTT.Broker)
+	if cfg.MQTT.Broker != "tcp://192.168.1.178:1883" {
+		t.Errorf("broker = %q, want tcp://192.168.1.178:1883", cfg.MQTT.Broker)
 	}
 	if cfg.MQTT.Site != "muehle" || cfg.MQTT.Station != "uhf" || cfg.MQTT.Slot != "radio" {
 		t.Errorf("station-model address = %q/%q/%q, want muehle/uhf/radio",
@@ -135,8 +134,8 @@ func TestAbsentDefaultConfigUsesDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("absent default config must not error: %v", err)
 	}
-	if cfg.MQTT.Broker != "tcp://bwbroker:1883" {
-		t.Errorf("broker = %q, want default tcp://bwbroker:1883", cfg.MQTT.Broker)
+	if cfg.MQTT.Broker != "tcp://192.168.1.178:1883" {
+		t.Errorf("broker = %q, want default tcp://192.168.1.178:1883", cfg.MQTT.Broker)
 	}
 	if cfg.MQTT.Site != "muehle" || cfg.MQTT.Station != "uhf" || cfg.MQTT.Slot != "radio" {
 		t.Errorf("station-model address = %q/%q/%q, want muehle/uhf/radio",

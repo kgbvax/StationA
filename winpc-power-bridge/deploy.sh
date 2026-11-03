@@ -119,7 +119,7 @@ ssh "${USER}@${HOST}" "schtasks /run /tn ${TASK}" ||
     echo "    could not start now (user not logged on?) — it starts at the next logon"
 
 echo "==> done. Check on the bus:"
-echo "    mosquitto_sub -h 192.168.1.50 -u hf -P \"\$MQTT_PASSWORD\" -t 'muehle/power/shack-pc/#' -v"
+echo "    mosquitto_sub -h 192.168.1.178 -u hf -P \"\$MQTT_PASSWORD\" -t 'muehle/power/shack-pc/#' -v"
 echo "    Log on the PC: ${DEST}/winpc-power-bridge.log"
 echo
 echo "==> NIC MAC addresses (the wired one goes into powerseq's wol step):"

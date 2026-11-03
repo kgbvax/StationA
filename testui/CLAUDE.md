@@ -11,7 +11,7 @@ the unit runs under a stricter sandbox than the serial bridges (`PrivateDevices=
 
 ## Why a relay (not a direct browser MQTT client)
 
-The broker (`192.168.1.50`) has only `1883`/`8883` open — no WebSocket listener — so a
+The station broker (`192.168.1.178`) has only `1883`/`8883` open — no WebSocket listener — so a
 browser cannot use MQTT.js. The Go relay speaks raw MQTT to the broker (credentials from
 a local `0600` config or `TESTUI_MQTT_PASSWORD`), and exposes HTTP+SSE to the browser.
 The browser uses plain `fetch` + `EventSource`.
@@ -104,10 +104,8 @@ make build vet test test-race
 ```
 
 The unit binds HTTP to `0.0.0.0:8090` (config `http_addr`), so the browser reaches
-`http://scmino:8090` directly. `deploy.sh` seeds the HA broker `tcp://192.168.1.50:1883`,
-the live station broker for most clients (root `CLAUDE.md` live-state note) — not
-`127.0.0.1`, which on scmino is the station mirror broker (clients so far: PLC #1 and
-shelly-power-bridge). On a fresh host the
+`http://scmino:8090` directly. `deploy.sh` seeds the station broker `tcp://192.168.1.178:1883`
+(Mosquitto on scmino). On a fresh host the
 `hf` MQTT password is pulled on-device from an existing station service env (never leaves
 the Pi); scmino had none at the time, so the 2026-10-02 move copied
 `/etc/testui/{config.toml,testui.env}` from shari instead. `/api/publish` + `/api/clear` are

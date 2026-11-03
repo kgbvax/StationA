@@ -19,8 +19,8 @@
 #   SERVICE_USER    system user to run as (default: stationportal)
 #   INSTALL_DIR     remote install dir    (default: /opt/stationportal)
 #   HTTP_ADDR       http_addr value       (default: :80)
-#   MQTT_BROKER     mqtt.broker value     (default: tcp://192.168.1.50:1883 — the live
-#                   broker; NOT 127.0.0.1, which on scmino is the not-yet-used mirror)
+#   MQTT_BROKER     mqtt.broker value     (default: tcp://192.168.1.178:1883 — the
+#                   scmino station broker)
 #   MQTT_USER       mqtt.user value       (default: hf)
 #
 # Config is a 0600 TOML (/etc/stationportal/config.toml); the MQTT password is NOT
@@ -45,7 +45,7 @@ BINARY="${BINARY:-stationportal}"
 PKG="./cmd/stationportal"
 
 HTTP_ADDR="${HTTP_ADDR:-:80}"
-MQTT_BROKER="${MQTT_BROKER:-tcp://192.168.1.50:1883}"
+MQTT_BROKER="${MQTT_BROKER:-tcp://192.168.1.178:1883}"
 MQTT_USER="${MQTT_USER:-hf}"
 
 if [[ "$SSH_HOST" == *"@"* ]]; then

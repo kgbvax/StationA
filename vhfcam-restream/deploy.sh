@@ -30,7 +30,7 @@
 #
 # Overlay (drawtext burn-in of station data; needs the station MQTT broker):
 #   OVERLAY_ENABLED overlay.enabled value (default: false)
-#   MQTT_BROKER     overlay.mqtt_broker   (default: tcp://192.168.1.50:1883)
+#   MQTT_BROKER     overlay.mqtt_broker   (default: tcp://192.168.1.178:1883)
 #   MQTT_USER       overlay.mqtt_user     (default: hf)
 #   MQTT_PASSWORD   overlay.mqtt_password (default: empty -> set on device)
 #
@@ -76,7 +76,7 @@ FFMPEG_BIN="${FFMPEG_BIN:-/usr/bin/ffmpeg}"
 LOG_LEVEL="${LOG_LEVEL:-info}"
 
 OVERLAY_ENABLED="${OVERLAY_ENABLED:-false}"
-MQTT_BROKER="${MQTT_BROKER:-tcp://192.168.1.50:1883}"
+MQTT_BROKER="${MQTT_BROKER:-tcp://192.168.1.178:1883}"
 MQTT_USER="${MQTT_USER:-hf}"
 MQTT_PASSWORD="${MQTT_PASSWORD:-}"
 ENABLED="${ENABLED:-true}"

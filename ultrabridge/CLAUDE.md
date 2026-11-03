@@ -160,9 +160,7 @@ See `../docs/conventions/config-and-secrets.md` for the full convention.
 
 The script seeds `/etc/ultrabridge/config.toml` on first deploy only (seed-once). To change
 settings after the first deploy, edit the file on scmino directly. The seeded broker
-`tcp://127.0.0.1:1883` is the scmino station broker, a bridged `muehle/#` mirror of the HA
-broker `192.168.1.50`; the root `CLAUDE.md` 2026-10-18 note puts every client except PLC #1
-and shelly-power-bridge on `.50`. This service's live config is not verified.
+`tcp://127.0.0.1:1883` is the scmino station broker (the service runs on scmino).
 
 ```bash
 ssh io@192.168.1.178 'journalctl -u ultrabridge -f'

@@ -496,14 +496,11 @@ PRD 00 §7 items later resolved in code, recorded so nobody re-opens them:
   2026-09-03 per project memory.
   Update (2026-10-23): this was never deployed on shari, which runs no Mosquitto. The
   station broker runs on scmino (192.168.1.178:1883). It is bridged to the HA broker
-  192.168.1.50 as a transitional `muehle/#` mirror in both directions. Per
-  `mqtt-broker/CLAUDE.md` (as of 2026-10-18), every client except M5 Stamp PLC #1 and
-  shelly-power-bridge with its Shelly plugs still connects to `.50`. The
-  split-direction design in `docs/conventions/mqtt-topology.md` is the target, with
-  scmino in place of shari, not the live state. The repo is ambiguous for powerseq and
-  ultrabridge: their `deploy.sh` defaults are `tcp://127.0.0.1:1883`, which on scmino is
-  the scmino broker. Root `CLAUDE.md` puts them on `.50` with the other services, but their
-  live configs are not verified.
+  192.168.1.50 as a `muehle/#` mirror in both directions, and all station clients now
+  connect to the scmino broker (the earlier note here that most clients were still on
+  `.50` is superseded). The split-direction design in
+  `docs/conventions/mqtt-topology.md` is an optional narrowing of the bridge, with
+  scmino in place of shari, not the live state.
 - **Legacy bridge naming (PRD 00 §7.12).** Tracked in
   `docs/conventions/naming.md` (legacy → target: `flexbridge` → `flex-radio-bridge`,
   `ultrabridge` → `ultrabeam-ant-ctrl-bridge`); rename deferred because it touches
@@ -630,10 +627,9 @@ actuates real hardware:
   requires deliberate pairing. Manual bring-up surface only; nothing in the
   station depends on it.
 - **MQTT `/cmd` via the station broker** (since 3c2941d, 2026-09-14, the firmware
-  config targets the HA broker 192.168.1.50 directly, `xphasectrl.yaml` `mqtt_broker`;
-  this takes effect at the PLC #2 USB flash. Any `.50` client with write rights reaches
-  `/cmd` directly, with no HA-bridge forwarding hop, and the scmino broker's both-ways
-  `muehle/#` mirror also forwards a `/cmd` published there) — *accepted as-is* (same posture as the rotator
+  config targeted the HA broker 192.168.1.50 directly, `xphasectrl.yaml` `mqtt_broker`;
+  the PLC now belongs on the station broker 192.168.1.178, and a `/cmd` published on
+  either broker reaches the other through the both-ways `muehle/#` mirror) — *accepted as-is* (same posture as the rotator
   vectors 3/4 above): any broker account with `hf`-class write rights can set
   polarization. Accepted because polarization switching is low-consequence
   (relay phase, no mechanical motion) and operator-driven by design; the
@@ -658,8 +654,8 @@ actuates real hardware:
 > Control-exposure vectors (1, 2, 3, 4, 5, 8, 9) are MOOT. The credential vectors
 > (6, 7) stand for the audio-session login. Vector 10's read-only expose posture still
 > holds (the PTT/arm buttons it guarded against no longer exist), and vector 11 (the
-> `bwbroker` indirection) still applies: the bridge still addresses
-> `tcp://bwbroker:1883`, and `deploy.sh` still gates on its resolution.
+> `bwbroker` indirection) is historical: the bridge default is now
+> `tcp://192.168.1.178:1883` and `deploy.sh` no longer gates on a name.
 > Any future TX path (serial CI-V per the operator decision) must re-run this
 > review. The block below is kept as the audit record.
 
@@ -726,7 +722,7 @@ Each vector states the surface, the exposure, and the decision:
    the rotation path. The vector assumes a passive listener on the shack LAN — the
    radio ports must stay un-forwarded off-LAN (checked at deploy gate 2).
 7. **The bridge's own MQTT credential hop.** Surface: the bridge's broker
-   connection, `tcp://bwbroker:1883`. Exposure: this is the **first shari-hosted
+   connection (at review time `tcp://bwbroker:1883`). Exposure: this is the **first shari-hosted
    service on a non-loopback plaintext `tcp://` broker path** (every other shari
    service uses `127.0.0.1`); a passive capture on that hop recovers the broker
    account password, whose publish reach includes `arm` then `ptt`. *Accepted under
@@ -736,9 +732,8 @@ Each vector states the surface, the exposure, and the decision:
    addressing table (see `docs/conventions/mqtt-topology.md`, vector 11's gate).
    Update (2026-10-23): the bridge has run on scmino since 2026-10-18, and shari runs
    no broker, so the "every other shari service uses `127.0.0.1`" contrast no longer
-   holds. Many station services default to the HA broker `.50` over plaintext LAN
-   `tcp://` in their `deploy.sh` (for example antmode, beamsteer, flexbridge, testui and
-   stationportal; repo defaults, not live-verified), so this hop is common practice, not
+   holds. Station services connect to the scmino broker over plaintext LAN
+   `tcp://` or loopback (repo defaults), so this hop is common practice, not
    an exception. Since the receive-only pivot the bridge has no `arm`/`ptt` actions, but
    the `hf` account still reaches every slot's `/cmd`. The exposure and its acceptance
    under the house-LAN trust posture are unchanged.
@@ -773,13 +768,9 @@ Each vector states the surface, the exposure, and the decision:
     business). Bound: deploy gate 2 verifies resolution (`getent hosts bwbroker`)
     before config is seeded; the exception to the topology addressing rule is
     annotated in `docs/conventions/mqtt-topology.md`.
-    Update (2026-10-23): the split-direction shack broker never went live. The repo does
-    not record what `bwbroker` resolves to on scmino, where the bridge has run since
-    2026-10-18 (mqtt-topology.md: the 2026-09-26 incident note says `.50`, and
-    logger-spot-bridge/CLAUDE.md records NXDOMAIN on the UniFi DNS; verify with
-    `getent hosts bwbroker`). While the scmino broker mirrors `muehle/#` both ways, either
-    `.50` or `.178` is correct today. The stranding risk returns only once clients have
-    moved to scmino and its bridge is narrowed to the split mapping.
+    Update: the split-direction shack broker never went live, and the bridge now
+    addresses the station broker directly (`tcp://192.168.1.178:1883`), so this vector
+    no longer applies unless a name is reintroduced.
 
 **Register verdict:** all eleven vectors accepted under the house-LAN trust posture,
 each with its boundings stated above — and vectors 2, 4, and 9 are conditional on the

@@ -21,7 +21,7 @@
 #   BAUD            baud  value              (default: 19200)
 #   LOCATION        location value           (default: bauwagen)  [published in /meta]
 #   HOST_NAME       host value               (default: scmino)    [published in /meta]
-#   MQTT_BROKER     mqtt.broker value        (default: tcp://127.0.0.1:1883, the shack broker on shari)
+#   MQTT_BROKER     mqtt.broker value        (default: tcp://127.0.0.1:1883, the station broker on scmino)
 #   MQTT_SITE       mqtt.site                (default: empty)
 #   MQTT_STATION    mqtt.station             (default: empty)
 #   MQTT_SLOT       mqtt.slot                (default: ant-ctrl, the canonical role)

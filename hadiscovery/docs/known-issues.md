@@ -52,11 +52,11 @@ the broker address as config-only either way. The HA-instance facts (prefix, cre
 remain unknown to this repo.
 
 Update 2026-10-23: the shari cutover never happened and shari runs no broker. hadiscovery
-runs on scmino since 2026-10-12, and `deploy.sh` (a249d98) seeds `tcp://192.168.1.50:1883`
-(the HA broker) again. Live split per the root `CLAUDE.md` 2026-10-18 note: every client
-except PLC #1 (`hf/switch` + `hf/pa-arm`) and shelly-power-bridge + its Shelly plugs uses
-the HA broker `192.168.1.50:1883`; the scmino broker `192.168.1.178:1883` is a bridged
-`muehle/#` mirror. hadiscovery's live config is not verified here.
+runs on scmino since 2026-10-12. Current state: the scmino station broker
+`192.168.1.178:1883` is the station broker, `deploy.sh` seeds
+`tcp://192.168.1.178:1883`, and the rendered `homeassistant/+/+/+/config` objects reach
+Home Assistant through that broker's bridge to the HA broker `192.168.1.50:1883`.
+hadiscovery's live config is not verified here.
 
 ## [unique] `options_ref` stringifies non-string capability elements
 When a field's `options` are empty, the renderer resolves `options_ref` against the slot's

@@ -22,12 +22,10 @@
 #   INSTALL_DIR     remote install dir    (default: /opt/icom9700-radio-bridge)
 #   BINARY          binary name           (default: icom9700-radio-bridge)
 #
-#   SKIP_BROKER_DNS_CHECK  set 1 to skip the KTD-7 bwbroker resolution gate
-#
 #   RADIO_HOST      radio_host value        (default: 9700.kgbvax.net)
 #   LOCATION        location value          (default: bauwagen)  [published in /meta]
 #   LOG_LEVEL       log.level value         (default: info)
-#   MQTT_BROKER     mqtt.broker value       (default: tcp://bwbroker:1883 — KTD-7)
+#   MQTT_BROKER     mqtt.broker value       (default: tcp://192.168.1.178:1883)
 #   MQTT_SITE       mqtt.site               (default: muehle)
 #   MQTT_STATION    mqtt.station            (default: uhf)
 #   MQTT_SLOT       mqtt.slot               (default: radio)
@@ -68,7 +66,7 @@ PKG="./cmd/icom9700-radio-bridge"
 RADIO_HOST="${RADIO_HOST:-9700.kgbvax.net}"
 LOCATION="${LOCATION:-bauwagen}"
 LOG_LEVEL="${LOG_LEVEL:-info}"
-MQTT_BROKER="${MQTT_BROKER:-tcp://bwbroker:1883}"
+MQTT_BROKER="${MQTT_BROKER:-tcp://192.168.1.178:1883}"
 MQTT_SITE="${MQTT_SITE:-muehle}"
 MQTT_STATION="${MQTT_STATION:-uhf}"
 MQTT_SLOT="${MQTT_SLOT:-radio}"
@@ -90,22 +88,6 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
-
-# --- KTD-7 deploy gate: bwbroker must resolve on the target ------------------
-# The broker is addressed via bwbroker DNS indirection; it must resolve to the
-# muehle/#-authoritative broker — NOT the HA consumer broker (replication is
-# split-direction, so a bridge pointed at the HA side strands the slot from
-# shari-local consumers and deafens it to console cmds). Also confirm the
-# bridge's MQTT account ('hf') exists on whichever broker it resolves to.
-if [[ "${SKIP_BROKER_DNS_CHECK:-0}" != "1" ]]; then
-  echo ">> Checking bwbroker resolution on ${SSH_TARGET} (KTD-7 gate)..."
-  if ! ssh "$SSH_TARGET" "getent hosts bwbroker" 2>/dev/null; then
-    echo "!! 'bwbroker' does not resolve on ${SSH_TARGET} — No-Go per KTD-7." >&2
-    echo "   Fix the DNS entry, or set SKIP_BROKER_DNS_CHECK=1 to deploy anyway" >&2
-    echo "   (then edit broker = in ${CONFIG_FILE} on the device)." >&2
-    exit 1
-  fi
-fi
 
 # --- TOML/env escaping helper ------------------------------------------------
 # Escape backslashes and double quotes for a TOML basic string or a systemd
@@ -135,8 +117,7 @@ trap 'rm -f "$SEED_CONFIG" "$SEED_ENV" "${UNIT_FILE:-}"' EXIT
   echo "radio_host   = \"$(toml_escape "$RADIO_HOST")\""
   echo ""
   echo "[mqtt]"
-  echo "# KTD-7: bwbroker DNS indirection — must resolve to the muehle/#-authoritative"
-  echo "# broker, never the HA consumer broker (split-direction replication)."
+  echo "# Station broker (Mosquitto on scmino)."
   echo "broker           = \"$(toml_escape "$MQTT_BROKER")\""
   echo '# client_id defaults to "<site>-<station>-<slot>" (model §8).'
   echo "site             = \"$(toml_escape "$MQTT_SITE")\""

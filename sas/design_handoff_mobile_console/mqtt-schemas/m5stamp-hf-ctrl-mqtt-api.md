@@ -13,7 +13,7 @@ compound device; the shared `device{model,serial}` is the relationship, model
 
 | Property | Value |
 |----------|-------|
-| Protocol | MQTT 3.1.1 (plain TCP, `192.168.1.50:1883`) |
+| Protocol | MQTT 3.1.1 (plain TCP, `192.168.1.178:1883`) |
 | Authentication | Username/password (`hf` user) |
 | Clean session | false; retained `/cmd` is replayed on every reconnect (self-heal) |
 | Auto-reconnect | handled in `loop()` (WiFi + two MQTT clients) |

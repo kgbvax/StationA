@@ -11,7 +11,7 @@ host     = "bwpc"       # compute node, published in /meta
 location = "bauwagen"   # physical location, published in /meta
 
 [mqtt]
-broker    = "tcp://192.168.1.50:1883"   # live station broker (HA, .50)
+broker    = "tcp://192.168.1.178:1883"  # station broker (scmino)
 client_id = ""                          # default: muehle-power-shack-pc
 user      = "hf"
 password  = ""                          # fallback only; env WINPC_POWER_BRIDGE_MQTT_PASSWORD wins

@@ -53,7 +53,7 @@ created in-repo. There are no separate per-component remotes to push to.
 | vhfcam-restream | `vhfcam-restream/` | VHF cam (UniFi Protect RTSPS) multi-sink restreamer — YouTube Live + LAN web preview (:8083) with operational-data overlay (AZ/EL/freq/TX drawtext from the bus) and IC-9700 RX audio (demand-driven via icom9700-radio-bridge); web radio controls; Go supervisor around ffmpeg; MQTT consumer + minimal `/status`/`/state` planes (`muehle/hf/vhfcam`). **Runs on scmino** (`192.168.1.178`), not shari |
 | stationportal | `stationportal/` | Station landing page on scmino :80 (`http://scmino/`) — links to every key service (probed), live slot/hardware inventory from `/meta` + two-layer liveness, software/host/resource inventory (not a slot; passive consumer) |
 | hf-mqtt-capture | `hf-mqtt-capture/` | Passive MQTT recorder: `muehle/hf/#` to hourly log files in `/var/log/hf-mqtt-capture/` (72 h retention); runs on shari (not a slot) |
-| mqtt-broker | `mqtt-broker/` | Station Mosquitto broker on **scmino** (`192.168.1.178:1883`), bridged to the HA broker `.50` as a transitional `muehle/#` mirror — **clients: the M5 Stamp PLC #1 (2026-10-03) and shelly-power-bridge + its Shelly plugs (2026-10-18), chase-queue (loopback) and chaseq-ui (2026-11-02); everything else still connects to `.50` per the 2026-10-18 live-state note (per-service configs not verified live)** (infra — not a slot, not Go) |
+| mqtt-broker | `mqtt-broker/` | Station Mosquitto broker on **scmino** (`192.168.1.178:1883`) — the station broker every client connects to; bridged to the Home Assistant broker `192.168.1.50` as a `muehle/#` mirror (infra — not a slot, not Go) |
 
 Non-component directories: `sas/` (hf_console design artefacts and the mobile-console design
 handoff), `requirements/` (file-based requirements queue for the /loop workflow, see
@@ -148,11 +148,10 @@ sudo systemctl restart flexbridge
 sudo systemctl restart ultrabridge
 ```
 
-The station broker is Mosquitto on scmino (`192.168.1.178:1883`, `mqtt-broker/`), bridged
-both ways to the Home Assistant broker `192.168.1.50:1883` as a `muehle/#` mirror. PLC #1
-and shelly-power-bridge (+ its Shelly plugs) use the scmino broker; per the 2026-10-18
-live-state note below, the other services still connect to `.50` (per-service configs not
-verified live). shari runs no broker. See `mqtt-broker/` and
+The station broker is Mosquitto on scmino (`192.168.1.178:1883`, `mqtt-broker/`); every
+station client connects to it. It is bridged both ways to the Home Assistant broker
+`192.168.1.50:1883` as a `muehle/#` mirror, so Home Assistant sees the bus; the HA broker is
+not a station broker. shari runs no broker. See `mqtt-broker/` and
 `docs/conventions/mqtt-topology.md`.
 
 ---
@@ -188,20 +187,13 @@ from `flexbridge/`). Cross-cutting Go code, not docs, lives in the `shared/` mod
 
 ## MQTT broker access
 
-> **Live state (2026-10-18):** every station client except the M5 Stamp PLC #1
-> (`hf/switch` + `hf/pa-arm`) and shelly-power-bridge + its Shelly plugs
-> (`power/*`) still uses the HA broker `192.168.1.50:1883`.
-> shari runs no mosquitto. A new station broker runs on **scmino**
-> (`192.168.1.178:1883`) as a bridged `muehle/#` mirror of `.50`; the PLC
-> moved there first — see `mqtt-broker/CLAUDE.md`. The broker was
-> originally planned for shari; it now runs on scmino.
-
-Target design: the station Mosquitto on scmino (`mqtt-broker/`) becomes authoritative for
-`muehle/#` and bridges to the HA broker `192.168.1.50:1883` (HA's Mosquitto add-on,
-untouched; it keeps serving HA's other MQTT devices). Clients move to
-`192.168.1.178:1883` one at a time; once all have moved, the bridge narrows to the split
-mapping in `mqtt-broker/mosquitto.conf.example`. See `docs/conventions/mqtt-topology.md`
-for the full topology, topic-direction table, and ACLs.
+The station broker is Mosquitto on **scmino** (`192.168.1.178:1883`, `mqtt-broker/`) and is
+authoritative for `muehle/#`; all station clients connect to it (services on scmino may use
+loopback). It bridges to the Home Assistant broker `192.168.1.50:1883` (HA's Mosquitto
+add-on, untouched; it keeps serving HA's other MQTT devices) as a `muehle/#` mirror, which
+is how Home Assistant's MQTT integration sees the station. shari runs no mosquitto. The
+bridge may later narrow to the split mapping in `mqtt-broker/mosquitto.conf.example`. See
+`docs/conventions/mqtt-topology.md` for the full topology, topic-direction table, and ACLs.
 
 Credentials: the scmino station broker has one local account, `hf` (in
 `/etc/mosquitto/passwd` on scmino, 0600, owned by the mosquitto user); per
@@ -212,18 +204,19 @@ README HA-side setup is the target design. The `bridge`/`console`/`dial` account
 the target split topology and are not in use yet. Do not pass credentials on the command
 line or in shell history.
 
-To inspect the bus from a workstation (either broker shows all of `muehle/#`):
+To inspect the bus from a workstation (the scmino broker is the station broker; the HA
+broker `.50` also shows all of `muehle/#` through the mirror):
 
 ```bash
-# Subscribe to all topics under muehle/ (HA broker .50; station broker: -h 192.168.1.178)
-mosquitto_sub -h 192.168.1.50 -u hf -P "$MQTT_PASSWORD" -t 'muehle/#' -v
+# Subscribe to all topics under muehle/ on the station broker (scmino)
+mosquitto_sub -h 192.168.1.178 -u hf -P "$MQTT_PASSWORD" -t 'muehle/#' -v
 
 # Watch a single slot
-mosquitto_sub -h 192.168.1.50 -u hf -P "$MQTT_PASSWORD" -t 'muehle/hf/radio/#' -v
+mosquitto_sub -h 192.168.1.178 -u hf -P "$MQTT_PASSWORD" -t 'muehle/hf/radio/#' -v
 ```
 
-Most services still connect to `.50` (live-state note, 2026-10-18); the scmino station
-broker mirrors `muehle/#` to and from it, and HA's MQTT integration reads it on `.50`.
+The scmino station broker mirrors `muehle/#` to and from the HA broker `.50`, and HA's MQTT
+integration reads it there.
 
 ---
 

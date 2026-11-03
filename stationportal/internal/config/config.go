@@ -42,9 +42,8 @@ type Config struct {
 	MQTT          MQTT   `toml:"mqtt"`
 }
 
-// Default returns the built-in defaults. The broker is the live station broker
-// on hassio (.50), not the scmino mirror on 127.0.0.1 — no app uses the mirror
-// yet. ClientID is fixed and distinct from any slot-derived client ID.
+// Default returns the built-in defaults. The broker is the scmino station
+// broker. ClientID is fixed and distinct from any slot-derived client ID.
 func Default() Config {
 	return Config{
 		HTTPAddr:       ":80",
@@ -53,7 +52,7 @@ func Default() Config {
 		ProbeTimeoutS:  3,
 		LogLevel:       "info",
 		MQTT: MQTT{
-			Broker:   "tcp://192.168.1.50:1883",
+			Broker:   "tcp://192.168.1.178:1883",
 			ClientID: "stationportal",
 			User:     "hf",
 		},

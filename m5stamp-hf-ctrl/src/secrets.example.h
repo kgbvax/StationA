@@ -12,8 +12,8 @@
 #define WIFI_SSID "CHANGE_ME"
 #define WIFI_PASSWORD "CHANGE_ME"
 
-// MQTT broker — the station broker on scmino (192.168.1.178:1883), bridged to
-// the HA broker .50; see ../mqtt-broker/CLAUDE.md. shari (.139) runs no broker:
+// MQTT broker — the station broker on scmino (192.168.1.178:1883), mirrored to
+// the HA broker; see ../mqtt-broker/CLAUDE.md. shari (.139) runs no broker:
 // a PLC pointed there never comes online (hit 2026-10-03).
 #define MQTT_HOST "192.168.1.178"
 #define MQTT_PORT 1883
