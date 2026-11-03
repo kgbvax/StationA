@@ -274,14 +274,10 @@ func NextUTCMidnight(t time.Time) time.Time {
 	return time.Date(y, m, d+1, 0, 0, 0, 0, time.UTC)
 }
 
-// spottedLocked says whether a human spot names this station on the band
+// spottedLocked says whether one of spots names this station on the band
 // within the horizon: the same call, or a portable form of it that resolves
 // to the same entity.
-func (e *Engine) spottedLocked(call, band string, now time.Time) bool {
-	spots := e.spots
-	for _, cs := range e.clSpots {
-		spots = append(spots[:len(spots):len(spots)], bus.Spot{Call: cs.call, Band: cs.band, At: cs.last})
-	}
+func (e *Engine) spottedLocked(spots []bus.Spot, call, band string, now time.Time) bool {
 	for _, s := range spots {
 		if now.Sub(s.At) > SpotHorizon || s.Band != band || !calls.SameStation(s.Call, call) {
 			continue
@@ -350,16 +346,26 @@ func (e *Engine) Compute() bus.ChaseState {
 			c.Rank, _ = e.cfg.Rank(c.Val.NewDXCC.ADIF)
 		}
 	}
+	own := make([]bus.Spot, 0, len(e.clSpots))
+	for _, cs := range e.clSpots {
+		own = append(own, bus.Spot{Call: cs.call, Band: cs.band, At: cs.last})
+	}
 	cands := make([]contest.Candidate, 0, len(e.cands)+len(e.clSpots))
 	for _, r := range e.cands {
 		c := contest.Candidate{RowID: r.RowID, Band: r.Band, FreqHz: r.FreqHz, Call: strings.ToUpper(strings.TrimSpace(r.Call)),
 			Trusted: r.Trusted, FirstSeen: r.FirstUTC, LastHeard: r.LastUTC, Likelihood: 0, Skipped: e.skipRows[r.RowID]}
 		if c.Call != "" {
-			// a heard station on the cluster leaves: its cluster row stands for it
-			if e.spottedLocked(c.Call, c.Band, now) {
+			// a heard station on our own cluster login leaves: its cluster row stands for it
+			if e.spottedLocked(own, c.Call, c.Band, now) {
 				continue
 			}
 			value(&c)
+			// a spot only bmrec has (its own post, which our login drops as the
+			// operator's, or another node) has no cluster row here: it hides a
+			// station that is not needed, never a needed one
+			if c.Val.Class != contest.ClassNew && e.spottedLocked(e.spots, c.Call, c.Band, now) {
+				continue
+			}
 		}
 		cands = append(cands, c)
 	}
