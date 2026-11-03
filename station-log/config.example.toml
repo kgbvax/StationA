@@ -1,0 +1,38 @@
+# station-log configuration (seed-once; 0600). The only secret, the MQTT
+# password, is NOT here: it lives in the EnvironmentFile
+# (STATION_LOG_MQTT_PASSWORD).
+
+host     = "scmino"
+data_dir = "/var/lib/station-log"   # the SQLite log; personal data, never in git
+
+# Own callsign of a record with neither STATION_CALLSIGN nor OPERATOR.
+default_own_call = "DL9ET"
+
+# Duplicate merge: the same own call + call + band + mode class within +- this
+# window is one QSO (a later import merges into it).
+dup_window = "5m"
+
+[slot]                # this component: muehle/hf/station-log
+station = "hf"
+slot    = "station-log"
+
+[mqtt]
+broker = "tcp://127.0.0.1:1883"   # the station broker on scmino
+site   = "muehle"
+user   = "hf"                     # password: STATION_LOG_MQTT_PASSWORD
+
+[http]
+listen = "127.0.0.1:8096"         # POST /import and the read API
+# A LAN listener needs allow_from (POST /import has no auth):
+# listen     = "0.0.0.0:8096"
+# allow_from = ["192.168.1.0/24"]
+
+# Log4OM 2.42+: Settings > Software integration > Connections > UDP outbound,
+# type ADIF_MESSAGE, target scmino:2341 (chase-queue's own listener, if still
+# on, uses 2340). Each QSO takes the same merge path as an ADIF import.
+# [log4om]
+# listen     = "0.0.0.0:2341"
+# allow_from = ["192.168.1.197"]
+
+[log]
+level = "info"
