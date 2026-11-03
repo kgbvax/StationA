@@ -115,12 +115,16 @@ func want(t *testing.T, st bus.ChaseState, ws ...int64) {
 	}
 }
 
-func TestContestWorkedHiddenOtherBandListed(t *testing.T) {
+func TestContestWorkedListedNotNeededOtherBandNeeded(t *testing.T) {
 	f := newContest(t, logq("EA8ABC", "20m"))
 	st := f.rank(1, []bus.Candidate{cand(1, "EA8ABC", "20m", true), cand(2, "EA8ABC", "40m", true)})
-	want(t, st, 2)
+	// the dupe is listed after the station still needed on 40m, as not needed
+	want(t, st, 2, 1)
 	if !st.Ranked[0].Needed || st.Ranked[0].Tag != bus.TagMult {
 		t.Fatalf("%+v", st.Ranked[0])
+	}
+	if d := st.Ranked[1]; d.Needed || d.Tag != "" {
+		t.Fatalf("%+v", d)
 	}
 }
 
@@ -247,14 +251,49 @@ func TestDXOrderNeverConfirmedFirstThenRarest(t *testing.T) {
 	}
 }
 
-func TestDXWorkedHidesButEntityStaysNeeded(t *testing.T) {
+func TestDXWorkedListedLastNotNeeded(t *testing.T) {
 	f := newDX(t)
 	f.e.SetConfirmations(nil)
 	f.e.AddDXWorked("EA8XYZ", "20m")
-	st := f.rank(1, []bus.Candidate{cand(1, "EA8XYZ", "20m", true), cand(2, "EA8ABC", "20m", true)})
-	want(t, st, 2)
+	st := f.rank(1, []bus.Candidate{cand(1, "EA8XYZ", "20m", true), cand(2, "EA8ABC", "20m", true),
+		{RowID: 3, Band: "20m", FreqHz: 14.3e6}})
+	// worked on the band: below the needed one, above the callsign-less candidate; needed false, no tag
+	want(t, st, 2, 1, 3)
 	if !st.Ranked[0].Needed {
-		t.Fatal("entity should stay needed")
+		t.Fatal("entity should stay needed for the unworked station")
+	}
+	if w := st.Ranked[1]; w.Needed || w.Tag != "" {
+		t.Fatalf("%+v", w)
+	}
+	// worked on another band only: still needed
+	f.e.AddDXWorked("EA8DEF", "40m")
+	st = f.rank(2, []bus.Candidate{cand(1, "EA8DEF", "20m", true)})
+	if !st.Ranked[0].Needed || st.Ranked[0].Tag != bus.TagNeed {
+		t.Fatalf("%+v", st.Ranked[0])
+	}
+}
+
+func TestHeardRowsCarryFreqModeSource(t *testing.T) {
+	f := newDX(t)
+	f.e.SetConfirmations(nil)
+	lsb := cand(1, "EA8XYZ", "40m", true)
+	lsb.FreqHz = 7_150_400.4
+	usb := cand(2, "DL1ABC", "20m", true)
+	usb.FreqHz = 14_250_000
+	none := bus.Candidate{RowID: 3, Band: "20m"}
+	st := f.rank(1, []bus.Candidate{lsb, usb, none})
+	got := map[int64]bus.Ranked{}
+	for _, r := range st.Ranked {
+		got[r.RowID] = r
+	}
+	if r := got[1]; r.FreqHz != 7_150_400 || r.Mode != "lsb" || r.Source != bus.SourceBmrec {
+		t.Fatalf("%+v", r)
+	}
+	if r := got[2]; r.FreqHz != 14_250_000 || r.Mode != "usb" || r.Source != bus.SourceBmrec {
+		t.Fatalf("%+v", r)
+	}
+	if r := got[3]; r.FreqHz != 0 || r.Mode != "" || r.Source != bus.SourceBmrec {
+		t.Fatalf("%+v", r)
 	}
 }
 
@@ -344,5 +383,43 @@ func TestTypedCallForCalllessRowIsValidated(t *testing.T) {
 	}
 	if err := f.e.Handled(bus.Target{RowID: 1, Band: "20m", Call: "ea8xyz", How: "spot"}); err != nil || f.st.handled["EA8XYZ|20m"] != "spot" {
 		t.Fatalf("%v %v", err, f.st.handled)
+	}
+}
+
+func TestWorkedStationStaysListedWhenSpotted(t *testing.T) {
+	f := newDX(t)
+	f.e.SetConfirmations(nil)
+	f.e.AddDXWorked("EA8XYZ", "20m")
+	rows := []bus.Candidate{cand(1, "EA8XYZ", "20m", true)}
+	// a spot only bmrec has, and one of our own cluster login: the worked station stays either way
+	st := f.rank(1, rows, bus.Spot{Call: "EA8XYZ", Band: "20m", At: f.now, Source: "cluster"})
+	want(t, st, 1)
+	f.e.AddClusterSpot(ClusterSpot{Call: "EA8XYZ", Band: "20m", FreqHz: 14025000, At: f.now})
+	st = f.e.Compute()
+	want(t, st, 1)
+	if r := st.Ranked[0]; r.Needed || r.Tag != "" || !r.OnBand || r.Source != bus.SourceBmrec {
+		t.Fatalf("%+v", r)
+	}
+}
+
+func TestWorkedStationSkippedStaysHiddenDX(t *testing.T) {
+	f := newDX(t)
+	f.e.SetConfirmations(nil)
+	f.e.AddDXWorked("EA8XYZ", "20m")
+	st := f.rank(1, []bus.Candidate{cand(1, "EA8XYZ", "20m", true)})
+	want(t, st, 1)
+	if err := f.e.Skip(bus.Target{RowID: 1, Band: "20m"}); err != nil {
+		t.Fatal(err)
+	}
+	want(t, f.e.Compute())
+}
+
+func TestPortableHeardCallMatchesPlainWorkedCall(t *testing.T) {
+	f := newDX(t)
+	f.e.SetConfirmations(nil)
+	f.e.AddDXWorked("EA8XYZ", "20m")
+	st := f.rank(1, []bus.Candidate{cand(1, "EA8XYZ/P", "20m", true)})
+	if r := st.Ranked[0]; r.Needed || !r.OnBand {
+		t.Fatalf("%+v", r)
 	}
 }

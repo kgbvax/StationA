@@ -71,21 +71,37 @@ type Ranked struct {
 	Band   string `json:"band"`
 	Needed bool   `json:"needed"`
 	Tag    string `json:"tag,omitempty"`
-	// Source is "cluster" for a station chase-queue's own DX-cluster login
-	// spotted (RowID is then negative and no bmrec row); absent for a row
-	// bmrec hears.
-	Source string       `json:"source,omitempty"`
+	// FreqHz is the station's frequency in Hz: the heard row's, or the latest
+	// spot's for a cluster row. Absent only when unknown.
+	FreqHz int64 `json:"freq_hz,omitempty"`
+	// Mode is the canonical mode (cw, usb, lsb, am, fm, data) chase-queue
+	// derives from the frequency and, for a cluster spot, its comment; absent
+	// when unclear.
+	Mode string `json:"mode,omitempty"`
+	// Source is "bmrec" for a row bmrec hears and "cluster" for a station
+	// chase-queue's own DX-cluster login spotted (RowID is then negative and
+	// there is no bmrec row). Every row is self-contained: a consumer needs no
+	// other topic to show it.
+	Source string       `json:"source"`
 	Spot   *ClusterSpot `json:"spot,omitempty"` // with Source "cluster"
 	// Info is the callbook entry (QRZ.com); absent until looked up, when the
 	// call is not in the callbook, or with no QRZ login configured.
 	Info *CallInfo `json:"info,omitempty"`
 	// Worked is the station log's history of this call; absent when never
-	// worked.
+	// worked. A station worked on the row's band (ThisBand) is still listed,
+	// after the unworked ones, with Needed false and no Tag.
 	Worked *WorkedBefore `json:"worked_before,omitempty"`
+	// OnBand is the engine's verdict that the station counts as worked on the
+	// row's band (the tier of the row); it decides Worked.ThisBand and is not
+	// published.
+	OnBand bool `json:"-"`
 }
 
-// SourceCluster marks a ranked row from the DX cluster.
-const SourceCluster = "cluster"
+// Ranked row sources.
+const (
+	SourceBmrec   = "bmrec"
+	SourceCluster = "cluster"
+)
 
 // ClusterSpot is the latest cluster spot of a cluster row.
 type ClusterSpot struct {

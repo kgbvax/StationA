@@ -935,7 +935,13 @@ Target roles: `docs/chasing-stations-architecture.md`. Open items of the deploye
 4. **No logbook history before deployment.** Worked = Log4OM UDP QSOs since chase-queue
    started; the Club Log log download is not built (`store.ReplaceLogQSOs` is unused).
    Target: the separate `station-log` component with ADIF import.
-5. **Worked-hiding and `worked_before` use different QSO sets.** DX hiding reads only
-   the station log; `worked_before` also counts stored contest QSOs.
-6. **QSY mode comes from the frequency only** (chaseq-ui: LSB below 10 MHz, else USB):
-   a CW or digital spot is tuned as SSB until rows carry a mode.
+5. **Worked in a contest means "dupe".** Stations worked on the band are no longer hidden
+   but listed last (needed false). In DX mode the tier and `worked_before` read the same
+   history (station log + stored contest logs). In a contest the tier is the running contest
+   log under its DOUBLE_QSO rule, so `worked_before.bands` can name the band while
+   `this_band` is false. `this_band` follows the tier, so it never contradicts `needed`. Both cover only QSOs since deployment until `station-log`.
+6. **Row mode is derived, not read.** Rows now carry `freq_hz`, `mode` and `source`
+   (chase-queue `internal/mode`: sideband rule, comment keyword, IARU R1 band plan; unclear
+   = no mode). Resolved on the backend and in chaseq-ui (QSY uses the row mode, no `cqfinder` join).
+   Open: the band-plan table is simplified and untested live, and an older chase-queue leaves
+   heard rows untunable and sets no mode.

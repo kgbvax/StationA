@@ -52,6 +52,23 @@ func TestWorkedSetAcrossSources(t *testing.T) {
 	if !w[WorkedKey{"EA8XYZ", "20m"}] || !w[WorkedKey{"VP8LP", "40m"}] || len(w) != 2 {
 		t.Fatalf("%v", w)
 	}
+	// valid contest QSOs count, invalid ones do not
+	c, err := s.CreateContest("TEST", "2026-11-01", 0, 0, at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertContestQSOs(c.ID, []ContestQSO{
+		{StationID: "a", QSOID: "1", Call: "K1ABC", Band: "15m", Mode: "SSB", At: at},
+		{StationID: "a", QSOID: "2", Call: "K2ABC", Band: "15m", Mode: "SSB", At: at, Invalid: true},
+	}, at); err != nil {
+		t.Fatal(err)
+	}
+	if w, _ := s.WorkedSet(); !w[WorkedKey{"K1ABC", "15m"}] || w[WorkedKey{"K2ABC", "15m"}] || len(w) != 3 {
+		t.Fatalf("%v", w)
+	}
+	if _, err := s.DeleteContest(c.ID); err != nil {
+		t.Fatal(err)
+	}
 	// a second Club Log download replaces only Club Log's QSOs
 	if err := s.ReplaceLogQSOs(SourceClubLog, nil); err != nil {
 		t.Fatal(err)

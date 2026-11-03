@@ -12,19 +12,26 @@ v1 requirements: `../docs/plans/2026-11-01-2252-feat-chase-queue-v1-plan.md`.
 
 - **Contest** (instance running): ranking from bmrec's former contest engine — new multipliers first
   (more new slots, then Club Log Most Wanted rank, then district/zone), then unknown, unworked, no-call
-  candidates. History: DXLog's UDP feed. Tag `mult` on new multipliers only.
+  worked-on-this-band (dupes), no-call candidates. History: DXLog's UDP feed. Tag `mult` on new
+  multipliers only.
 - **DX chasing** (no instance): needed when the DXCC entity is **not confirmed on the band**; an entity
   confirmed on no band ranks before one new on this band, rarest first. History: Club Log confirmations
-  (token API), Log4OM's ADIF UDP QSOs. Tag `need`. Until Club Log has loaded, nothing is tagged.
+  (token API), Log4OM's ADIF UDP QSOs. Tag `need`. Until Club Log has loaded, nothing is tagged. A station
+  already worked on the row's band is **listed, not hidden**, `needed:false`, no tag, in its own tier
+  after the unworked ones.
 - Both: with `[cluster]` set, chase-queue reads a DX cluster itself (telnet). Its spots hide the heard
   stations they name, and **needed** spotted stations join `ranked` as `source:"cluster"` rows (negative
   `row_id`, `spot` block, ≤ 40), ordered with the heard rows by the same rules.
 - Both: each listed call carries `info` (QRZ.com callbook: name, QTH, locator, picture) and
-  `worked_before` (QSO count, bands, modes, last QSO from the station log and stored contest logs).
-  Enrichment never changes the ranking.
+  `worked_before` (QSO count, bands, modes, `this_band`, last QSO from the station log and stored contest
+  logs; so far only QSOs since deployment, until `station-log`). Enrichment never changes the ranking.
+- Both: **every row is self-contained**: `freq_hz`, `mode` (derived: bmrec rows get the sideband rule, LSB
+  below 10 MHz except 60 m; cluster rows the comment keyword, else the IARU R1 band plan, else absent;
+  `internal/mode`) and `source` (`bmrec` | `cluster`), so a consumer never reads bmrec's `cqfinder`.
 - Both: a heard station spotted on chase-queue's own cluster login (same station, same band, 30 min) is replaced
-  by its cluster row; a spot only bmrec relays hides it only when it is not needed. Any station worked,
-  handled or skipped is **not listed** as a heard row. Not-needed stations stay below the needed ones.
+  by its cluster row; a spot only bmrec relays hides it only when it is not needed. A station handled or
+  skipped is **not listed** as a heard row; one worked on the band is listed (tier above). Only needed
+  cluster stations are listed, so a worked cluster station is not. Not-needed stations stay below the needed ones.
 
 ## Layout
 

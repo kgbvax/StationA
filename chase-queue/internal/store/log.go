@@ -66,10 +66,12 @@ func (s *Store) ReplaceLogQSOs(source string, qs []LogQSO) error {
 // WorkedKey is one callsign worked on one band.
 type WorkedKey struct{ Call, Band string }
 
-// WorkedSet returns every callsign and band of the log, whatever the source
-// and mode.
+// WorkedSet returns every callsign and band of the log and of the stored
+// contest logs (valid QSOs), whatever the source and mode: the same history
+// WorkedBefore reports, so a row's tier and its worked_before agree.
 func (s *Store) WorkedSet() (map[WorkedKey]bool, error) {
-	rows, err := s.db.Query(`SELECT DISTINCT call, band FROM log_qsos`)
+	rows, err := s.db.Query(`SELECT call, band FROM log_qsos
+		UNION SELECT call, band FROM contest_qsos WHERE invalid=0`)
 	if err != nil {
 		return nil, err
 	}

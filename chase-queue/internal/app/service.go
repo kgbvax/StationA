@@ -29,6 +29,7 @@ import (
 	"chase-queue/internal/clublog"
 	"chase-queue/internal/cluster"
 	"chase-queue/internal/config"
+	"chase-queue/internal/contest"
 	"chase-queue/internal/cty"
 	"chase-queue/internal/dxlog"
 	"chase-queue/internal/engine"
@@ -444,10 +445,15 @@ func (s *Service) onClusterSpot(sp cluster.Spot) {
 // listed call. Callbook data comes from memory only (a missing entry is
 // looked up in the background and republished when it lands).
 func (s *Service) enrich(st *bus.ChaseState) {
+	// both the heard form and the normalized one (EA8XYZ/P, DL1ABC-1) are
+	// looked up: the engine matches the log on the normalized call
 	var calls []string
 	for _, r := range st.Ranked {
 		if r.Call != "" {
 			calls = append(calls, r.Call)
+			if n := contest.NormalizeCall(r.Call); n != r.Call {
+				calls = append(calls, n)
+			}
 		}
 	}
 	worked, err := s.st.WorkedBefore(calls)
@@ -459,9 +465,21 @@ func (s *Service) enrich(st *bus.ChaseState) {
 		if r.Call == "" {
 			continue
 		}
-		if w := worked[r.Call]; w != nil {
-			c := *w
-			c.ThisBand = slices.Contains(c.Bands, r.Band)
+		w := worked[r.Call]
+		if w == nil {
+			w = worked[contest.NormalizeCall(r.Call)]
+		}
+		if w != nil || r.OnBand {
+			var c bus.WorkedBefore
+			if w != nil {
+				c = *w
+			}
+			// ThisBand is the engine's verdict, the one that tiers the row, so
+			// the marker and needed/tag never contradict each other
+			c.ThisBand = r.OnBand
+			if r.OnBand && !slices.Contains(c.Bands, r.Band) {
+				c.Bands = append(slices.Clone(c.Bands), r.Band)
+			}
 			r.Worked = &c
 		}
 		if s.book != nil {

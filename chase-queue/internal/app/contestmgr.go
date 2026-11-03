@@ -70,6 +70,12 @@ func (s *Service) SwitchDX() error {
 	defer s.switchMu.Unlock()
 	s.actID.Store(0)
 	s.eng.ActivateDX()
+	// the contest's QSOs count as worked in DX from now on
+	if w, err := s.st.WorkedSet(); err == nil {
+		s.eng.SetDXWorked(w)
+	} else {
+		s.log.Warn("reloading the worked set failed", "err", err)
+	}
 	s.mu.Lock()
 	s.defName, s.prefillN = "", 0
 	s.mu.Unlock()

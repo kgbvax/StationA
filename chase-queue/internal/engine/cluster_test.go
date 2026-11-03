@@ -26,8 +26,12 @@ func TestClusterSpotsMergeIntoRanking(t *testing.T) {
 	if ea8.Call != "EA8XYZ" || ea8.Source != bus.SourceCluster || ea8.RowID >= 0 || ea8.Spot == nil || ea8.Spot.FreqHz != 14025000 || ea8.Tag != bus.TagNeed {
 		t.Fatalf("%+v", ea8)
 	}
-	if g4.Call != "G4AAA" || g4.Source != bus.SourceCluster || dl3.RowID != 2 || dl3.Source != "" {
+	if g4.Call != "G4AAA" || g4.Source != bus.SourceCluster || dl3.RowID != 2 || dl3.Source != bus.SourceBmrec {
 		t.Fatalf("%+v %+v", g4, dl3)
+	}
+	// self-contained rows: frequency and derived mode on both kinds
+	if ea8.FreqHz != 14025000 || ea8.Mode != "cw" || dl3.FreqHz != 14.2e6+2000 || dl3.Mode != "usb" {
+		t.Fatalf("%+v %+v", ea8, dl3)
 	}
 	// row ids are stable while the spot lasts
 	spot("EA8XYZ", f.now)
@@ -56,5 +60,30 @@ func TestClusterRowsCapped(t *testing.T) {
 	}
 	if st := f.e.Compute(); len(st.Ranked) != MaxClusterRows {
 		t.Fatalf("%d rows", len(st.Ranked))
+	}
+}
+
+func TestClusterRowModeFromCommentThenBandPlan(t *testing.T) {
+	f := newDX(t)
+	f.e.SetConfirmations(nil)
+	f.e.AddClusterSpot(ClusterSpot{Call: "EA8AAA", Band: "20m", Comment: "FT8 -10", FreqHz: 14_250_000, At: f.now})
+	f.e.AddClusterSpot(ClusterSpot{Call: "EA8BBB", Band: "20m", Comment: "up 2", FreqHz: 14_250_000, At: f.now})
+	f.e.AddClusterSpot(ClusterSpot{Call: "EA8CCC", Band: "20m", Comment: "", FreqHz: 14_105_000, At: f.now})
+	modes := map[string]string{}
+	for _, r := range f.rank(1, nil).Ranked {
+		modes[r.Call] = r.Mode
+	}
+	if modes["EA8AAA"] != "data" || modes["EA8BBB"] != "usb" || modes["EA8CCC"] != "" {
+		t.Fatalf("%v", modes)
+	}
+}
+
+func TestWorkedClusterStationNotListed(t *testing.T) {
+	f := newDX(t)
+	f.e.SetConfirmations(nil)
+	f.e.AddDXWorked("EA8XYZ", "20m")
+	f.e.AddClusterSpot(ClusterSpot{Call: "EA8XYZ", Band: "20m", FreqHz: 14_025_000, At: f.now})
+	if st := f.rank(1, nil); len(st.Ranked) != 0 {
+		t.Fatalf("%+v", st.Ranked)
 	}
 }

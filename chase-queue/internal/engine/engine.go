@@ -2,13 +2,15 @@
 // activity: in a contest by multiplier value and the contest log, in DX
 // chasing by DXCC entities not yet confirmed on the band. It hides stations
 // spotted on the cluster (same station, same band, within 30 minutes),
-// already worked, handled or skipped, and keeps the Skip, handled and Undo
+// handled or skipped; one already worked on the band stays, below the
+// unworked ones and not needed. It keeps the Skip, handled and Undo
 // state every window shares. It does no I/O of its own beyond the Persister
 // it is handed; one mutex guards it and is never held across I/O.
 package engine
 
 import (
 	"errors"
+	"math"
 	"regexp"
 	"slices"
 	"strings"
@@ -19,6 +21,7 @@ import (
 	"chase-queue/internal/calls"
 	"chase-queue/internal/contest"
 	"chase-queue/internal/cty"
+	"chase-queue/internal/mode"
 	"chase-queue/internal/store"
 )
 
@@ -350,20 +353,28 @@ func (e *Engine) Compute() bus.ChaseState {
 	for _, cs := range e.clSpots {
 		own = append(own, bus.Spot{Call: cs.call, Band: cs.band, At: cs.last})
 	}
+	workedOn := func(call, band string) bool {
+		if contestOn {
+			return e.worked.Has(call, band)
+		}
+		return e.dxWorked[store.WorkedKey{Call: contest.NormalizeCall(call), Band: band}]
+	}
 	cands := make([]contest.Candidate, 0, len(e.cands)+len(e.clSpots))
 	for _, r := range e.cands {
 		c := contest.Candidate{RowID: r.RowID, Band: r.Band, FreqHz: r.FreqHz, Call: strings.ToUpper(strings.TrimSpace(r.Call)),
 			Trusted: r.Trusted, FirstSeen: r.FirstUTC, LastHeard: r.LastUTC, Likelihood: 0, Skipped: e.skipRows[r.RowID]}
 		if c.Call != "" {
 			// a heard station on our own cluster login leaves: its cluster row stands for it
-			if e.spottedLocked(own, c.Call, c.Band, now) {
+			// (a station worked on the band has no cluster row, so it stays)
+			onBand := workedOn(c.Call, c.Band)
+			if !onBand && e.spottedLocked(own, c.Call, c.Band, now) {
 				continue
 			}
 			value(&c)
 			// a spot only bmrec has (its own post, which our login drops as the
 			// operator's, or another node) has no cluster row here: it hides a
 			// station that is not needed, never a needed one
-			if c.Val.Class != contest.ClassNew && e.spottedLocked(e.spots, c.Call, c.Band, now) {
+			if c.Val.Class != contest.ClassNew && !onBand && e.spottedLocked(e.spots, c.Call, c.Band, now) {
 				continue
 			}
 		}
@@ -381,16 +392,14 @@ func (e *Engine) Compute() bus.ChaseState {
 	tag := bus.TagNeed
 	if contestOn {
 		tag = bus.TagMult
-		v.Worked = e.worked.Has
+		v.Worked = workedOn
 		v.Handled = func(call, band string) bool { _, ok := e.handled[key(call, band)]; return ok }
 		v.Skipped = func(c contest.Candidate) (bool, bool) {
 			m, ok := e.skipped[key(c.Call, c.Band)]
 			return ok, ok && c.Trusted && !m.trusted
 		}
 	} else {
-		v.Worked = func(call, band string) bool {
-			return e.dxWorked[store.WorkedKey{Call: contest.NormalizeCall(call), Band: band}]
-		}
+		v.Worked = workedOn
 		v.Skipped = func(c contest.Candidate) (bool, bool) {
 			until, ok := e.dxSkips[key(c.Call, c.Band)]
 			return ok && now.Before(until), false
@@ -405,7 +414,8 @@ func (e *Engine) Compute() bus.ChaseState {
 	e.listed = map[int64]bus.Ranked{}
 	nCluster := 0
 	for _, it := range res.Queue {
-		r := bus.Ranked{RowID: it.RowID, Call: it.Call, Band: it.Band, Needed: it.Tier == contest.TierNewMult}
+		r := bus.Ranked{RowID: it.RowID, Call: it.Call, Band: it.Band, Needed: it.Tier == contest.TierNewMult, OnBand: it.Tier == contest.TierWorked,
+			FreqHz: int64(math.Round(it.FreqHz)), Source: bus.SourceBmrec, Mode: mode.Sideband(it.FreqHz)}
 		if cs := cluster[it.RowID]; cs != nil {
 			// only needed cluster stations are listed: the cluster is full of the rest
 			if !r.Needed || nCluster >= MaxClusterRows {
@@ -413,6 +423,7 @@ func (e *Engine) Compute() bus.ChaseState {
 			}
 			nCluster++
 			r.Source = bus.SourceCluster
+			r.Mode = mode.Derive(cs.freqHz, cs.comment)
 			r.Spot = &bus.ClusterSpot{FreqHz: int64(cs.freqHz), Spotter: cs.spotter, Comment: cs.comment, At: cs.last}
 		}
 		if r.Needed {

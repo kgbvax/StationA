@@ -219,6 +219,25 @@ func TestWorkedBeforeOnState(t *testing.T) {
 	}
 }
 
+func TestWorkedBeforeOnBandFollowsTheTier(t *testing.T) {
+	s := newSvc(t)
+	s.eng.SetConfirmations(nil)
+	at := time.Date(2025, 5, 1, 10, 0, 0, 0, time.UTC)
+	if err := s.st.AddLogQSOs([]store.LogQSO{{Source: store.SourceLog4OM, Call: "EA8XYZ", Band: "20m", Mode: "SSB", At: at}}); err != nil {
+		t.Fatal(err)
+	}
+	s.eng.AddDXWorked("EA8XYZ", "20m")
+	s.onCandidates(state(1, row(1, "EA8XYZ/P")))
+	st := s.compute()
+	if len(st.Ranked) != 1 {
+		t.Fatalf("%+v", st)
+	}
+	r := st.Ranked[0]
+	if r.Needed || r.Tag != "" || r.Worked == nil || !r.Worked.ThisBand || r.Worked.QSOs != 1 {
+		t.Fatalf("%+v %+v", r, r.Worked)
+	}
+}
+
 func TestQRZPasswordHygiene(t *testing.T) {
 	const pw = "qrz_super_secret_pw"
 	t.Setenv("CHASE_QUEUE_QRZ_PASSWORD", pw)

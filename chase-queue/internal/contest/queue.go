@@ -13,12 +13,12 @@ const (
 	TierNewMult   Tier = iota // would give a new multiplier
 	TierUnknown               // multiplier state cannot be told
 	TierUnworked              // has a callsign, nothing new
+	TierWorked                // already worked on this band: listed, not needed
 	TierCandidate             // no callsign yet
 )
 
 // Why a station is not in the queue (R21).
 const (
-	HiddenWorked  = "worked"
 	HiddenSpotted = "spotted"
 	HiddenHandled = "handled"
 	HiddenSkipped = "skipped"
@@ -73,10 +73,12 @@ type Result struct {
 
 func has(f func(string, string) bool, call, band string) bool { return f != nil && f(call, band) }
 
-func tierOf(c Candidate) Tier {
+func tierOf(c Candidate, worked bool) Tier {
 	switch {
 	case c.Call == "":
 		return TierCandidate
+	case worked:
+		return TierWorked
 	case c.Val.Class == ClassNew:
 		return TierNewMult
 	case c.Val.Class == ClassUnknown:
@@ -86,7 +88,8 @@ func tierOf(c Candidate) Tier {
 }
 
 // Order applies R19's eligibility (done by the caller), R11/R16's hiding
-// and R13's tiers. Within the new-multiplier tier: more new slots first,
+// and R13's tiers. A station already worked on its band (a dupe in a contest)
+// is not hidden: it sits in TierWorked, after every unworked one. Within the new-multiplier tier: more new slots first,
 // then ranked DXCC entities by Club Log rank, then stations new only in a
 // district or zone slot, each by age (oldest first).
 func Order(cands []Candidate, v Verdicts) Result {
@@ -95,8 +98,6 @@ func Order(cands []Candidate, v Verdicts) Result {
 		if c.Call != "" {
 			reason := ""
 			switch {
-			case has(v.Worked, c.Call, c.Band):
-				reason = HiddenWorked
 			case has(v.Handled, c.Call, c.Band):
 				reason = HiddenHandled
 			case has(v.Spotted, c.Call, c.Band):
@@ -116,7 +117,7 @@ func Order(cands []Candidate, v Verdicts) Result {
 			res.Hidden = append(res.Hidden, HiddenItem{c, HiddenSkipped})
 			continue
 		}
-		res.Queue = append(res.Queue, Item{c, tierOf(c)})
+		res.Queue = append(res.Queue, Item{c, tierOf(c, c.Call != "" && has(v.Worked, c.Call, c.Band))})
 	}
 	slices.SortStableFunc(res.Queue, func(a, b Item) int {
 		if a.Tier != b.Tier {

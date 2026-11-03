@@ -102,8 +102,11 @@ stays display-only. A consumer never needs bmrec's `cqfinder` topic to tune a ro
 
 ## 4. Roadmap (each item gets its own plan)
 
-1. **Self-contained rows.** chase-queue publishes `freq_hz`, `mode` and `source` on every row. chaseq-ui drops
-   its `cqfinder` join, and QSY uses the row's mode instead of the frequency rule.
+1. **Self-contained rows.** chase-queue publishes `freq_hz`, `mode` and `source` on every row (backend done:
+   `source` is `bmrec` | `cluster`, mode derived in `chase-queue/internal/mode`). Decision with it: a station
+   worked on the row's band is no longer hidden, in DX and contest mode; it is listed after the unworked ones
+   with `needed:false`, no tag and `worked_before.this_band`. chaseq-ui dropped its `cqfinder` join, and QSY uses
+   the row's mode instead of the frequency rule.
 2. **station-log v1.** New module: store, ADIF import + duplicate merge, `-import-adif FILE`, upload API,
    MQTT `/state` + events, read API. chase-queue builds its log view from it. The Log4OM UDP listener and the
    Club Log client move to it as feeders.
@@ -128,7 +131,7 @@ stays display-only. A consumer never needs bmrec's `cqfinder` topic to tune a ro
 | Buddies | missing | — |
 | Needed for which award | missing | Wire has `needed` + `tag` only. The engine computes per-slot valuations and drops them. |
 | QRZ.com enrichment | matches | Display-only, cached. chaseq-ui does not show it yet. |
-| Self-contained rows / UI only displays | differs | Heard rows carry no frequency or mode. chaseq-ui joins bmrec's `cqfinder/state` itself and picks the mode from the frequency. |
+| Self-contained rows / UI only displays | matches | Every row carries `freq_hz`, `mode` and `source`; chase-queue derives the mode (sideband rule for bmrec rows; comment keyword, then IARU R1 band plan for cluster rows). Worked-on-band rows are listed last-but-candidates, not needed. chaseq-ui reads `freq_hz`/`mode`/`worked_before` from the row and no longer subscribes to `cqfinder`. |
 | Local filters | matches | Band (160–6 m, fixed) and needed-only. |
 | Activate = QSY + logger | partial | FLEX via flexbridge `set_freq`/`set_mode`. Loggers fixed to Log4OM + DXLog. The DXLog script has not run live. |
 | skip/undo from the UI | matches | `handled` is sent in contest only. |

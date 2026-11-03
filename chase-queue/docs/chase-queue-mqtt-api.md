@@ -40,7 +40,18 @@ In a contest, `activity` is `contest`, `tag` is `mult`, and a `contest` block is
 ```
 
 - `seq` echoes the candidates' `seq`. `ranked` is the list, in work order; a row bmrec has that is absent
-  here is not listed (spotted, worked, skipped, handled).
+  here is not listed (spotted, skipped, handled). A station worked on the row's band **is** listed (below).
+- Order: needed (new multiplier / entity) -> unknown -> unworked, not needed -> **worked on this band**
+  (`worked_before.this_band`; in DX mode worked in the station log or a stored contest log, in a contest a dupe under the contest's
+  rule; `needed:false`, no `tag`) -> candidates without a call.
+- Every row is self-contained: `source` is always set (`bmrec` for a row bmrec hears, `cluster` below),
+  `freq_hz` is the frequency in Hz (the bmrec candidate's rounded, or the latest cluster spot's; absent when
+  unknown) and `mode` is one of `cw`, `usb`, `lsb`, `am`, `fm`, `data`, absent when unclear. chase-queue
+  derives the mode: a bmrec row (bmrec hears only SSB) by the sideband rule (LSB below 10 MHz except 60 m,
+  else USB); a cluster row from its comment (`CW`; `FT8`, `FT4`, `RTTY`, `PSK*`, `JT65`, `JS8`, `DIGI`, ... ->
+  `data`; `SSB` -> sideband rule; `USB`/`LSB`/`AM`/`FM` literal), else from the IARU Region 1 band-plan
+  segment at the frequency (CW segments -> `cw`; narrow digital segments and 3 kHz around the standard
+  FT8/FT4 dial frequencies -> `data`; phone segments -> sideband rule). A consumer needs no `cqfinder` topic.
 - `activity` is `dx` or `contest`; `contest` is present in a contest. `tag` is `need` (DX) or `mult` (contest)
   on needed rows, absent otherwise. `undo` names what Undo would reverse (a callsign or `skip`).
 - `problems` are what keeps the ranking from being right, worst first; absent when none.
@@ -62,11 +73,14 @@ In a contest, `activity` is `contest`, `tag` is `mult`, and a `contest` block is
     e-mail and birth date are never published.
   - `worked_before` — `{qsos, bands, modes, this_band, last}` from the station log (Log4OM, Club Log) and the
     stored DXLog contest logs, any mode, ever (contest logs are pruned with their instance after 30 days).
-    A QSO two sources report counts once (same band and minute). `bands` is low to high; `this_band` says
-    the row's own band is among them. Absent when the call was never worked.
+    A QSO two sources report counts once (same band and minute). `bands` is low to high; `this_band` is true
+    exactly when the row sits in the worked-on-this-band tier above (the engine's verdict). In DX mode that is the same history as `bands`;
+    in a contest it is the contest's dupe rule, so a band in `bands` can show `this_band` false there. Portable
+    and SSID forms (EA8XYZ/P) are looked up under their normalized call too. Absent when the call was never worked. Only QSOs since chase-queue
+    started are known until `station-log` exists.
 
 ```json
-{"row_id":7,"call":"EA8XYZ","band":"20m","needed":true,"tag":"need",
+{"row_id":7,"call":"EA8XYZ","band":"20m","needed":true,"tag":"need","source":"bmrec","freq_hz":14205000,"mode":"usb",
  "info":{"source":"qrz","call":"EA8XYZ","name":"Juan Perez","qth":"Las Palmas","country":"Canary Islands",
          "grid":"IL28gc","lat":28.1,"lon":-15.4,"image":"https://cdn-xml.qrz.com/…","cq_zone":33,"itu_zone":36},
  "worked_before":{"qsos":2,"bands":["40m","15m"],"modes":["CW","FT8"],"this_band":false,"last":"2025-05-01T10:00:00Z"}}
