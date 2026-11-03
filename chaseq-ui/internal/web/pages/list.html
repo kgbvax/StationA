@@ -16,6 +16,8 @@
     <span class="call">{{if .Call}}{{.Call}}{{else}}no call{{end}}</span>
     <span class="band">{{.Band}}</span>
     <span class="freq">{{if .Tunable}}{{khz .FreqHz}}{{else}}no freq{{end}}</span>
+    <span class="mode">{{.Mode}}</span>
+    <span class="wkd">{{if .WorkedThisBand}}<span class="wk this" title="worked on this band">worked {{.Band}}</span>{{else if .Worked}}<span class="wk other" title="worked before on other bands">wkd{{range .WorkedOther}} {{.}}{{end}}</span>{{end}}</span>
     {{if .Tag}}<span class="badge {{.Tag}}">{{.Tag}}</span>{{end}}
   </li>
 {{else}}

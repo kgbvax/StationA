@@ -13,16 +13,15 @@ import (
 
 // Topics are the topics a Session uses.
 type Topics struct {
-	ChaseState, ChaseStatus, CQFinderState, RadioState string
+	ChaseState, ChaseStatus, RadioState string
 }
 
 // Handlers receive decoded messages. They run on the Session's jobs worker,
 // never on paho's dispatch goroutine, and must not block for long.
 type Handlers struct {
-	Chase    func(ChaseState)
-	Status   func(online bool)
-	CQFinder func(CQFinderState)
-	Radio    func(RadioState)
+	Chase  func(ChaseState)
+	Status func(online bool)
+	Radio  func(RadioState)
 }
 
 // Options configure a Session.
@@ -99,13 +98,6 @@ func (s *Session) onConnect(c pahomqtt.Client) {
 	sub(t.ChaseStatus, func(p []byte) {
 		if h.Status != nil {
 			h.Status(string(p) == "online")
-		}
-	})
-	sub(t.CQFinderState, func(p []byte) {
-		if st, err := DecodeCQFinder(p); err != nil {
-			s.opt.Log.Warn("bad payload", "err", err)
-		} else if h.CQFinder != nil {
-			h.CQFinder(st)
 		}
 	})
 	sub(t.RadioState, func(p []byte) {

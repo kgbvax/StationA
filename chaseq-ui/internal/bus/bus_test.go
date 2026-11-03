@@ -7,7 +7,7 @@ import (
 
 func TestDecodeChase(t *testing.T) {
 	p := []byte(`{"ts":"2026-11-02T10:00:00Z","seq":42,"activity":"contest","contest":{"id":1,"name":"UKEIDXSSB"},
-	 "ranked":[{"row_id":7,"call":"EA8XYZ","band":"20m","needed":true,"tag":"mult"},
+	 "ranked":[{"row_id":7,"call":"EA8XYZ","band":"20m","freq_hz":14231500,"mode":"usb","needed":true,"tag":"mult","source":"bmrec"},
 	           {"row_id":-3,"call":"DL1ABC","band":"20m","needed":true,"tag":"need","source":"cluster","spot":{"freq_hz":14025000}}],
 	 "undo":"EA8XYZ","problems":["Club Log confirmations not loaded yet"]}`)
 	s, err := DecodeChase(p)
@@ -20,18 +20,23 @@ func TestDecodeChase(t *testing.T) {
 	if len(s.Ranked) != 2 || s.Ranked[1].Source != SourceCluster || s.Ranked[1].Spot.FreqHz != 14025000 {
 		t.Errorf("ranked = %+v", s.Ranked)
 	}
+	r0 := s.Ranked[0]
+	if r0.FreqHz != 14231500 || r0.Mode != "usb" || r0.Source != SourceBmrec || r0.WorkedBefore != nil {
+		t.Errorf("row 0 = %+v", r0)
+	}
 	if s.Undo != "EA8XYZ" || len(s.Problems) != 1 {
 		t.Errorf("undo/problems = %q %v", s.Undo, s.Problems)
 	}
 }
 
-func TestDecodeCQFinderFloatFreq(t *testing.T) {
-	s, err := DecodeCQFinder([]byte(`{"seq":1,"rows":[{"row_id":7,"call":"EA8XYZ","band":"20m","freq_hz":14231500.4}]}`))
+func TestDecodeWorkedBefore(t *testing.T) {
+	s, err := DecodeChase([]byte(`{"ranked":[{"row_id":1,"band":"20m","worked_before":{"qsos":3,"bands":["20m","40m"],"modes":["cw"],"this_band":true,"last":"2026-05-01"}}]}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(s.Rows) != 1 || s.Rows[0].FreqHz != 14231500.4 {
-		t.Errorf("rows = %+v", s.Rows)
+	w := s.Ranked[0].WorkedBefore
+	if w == nil || w.QSOs != 3 || !w.ThisBand || len(w.Bands) != 2 || w.Last != "2026-05-01" {
+		t.Errorf("worked_before = %+v", w)
 	}
 }
 

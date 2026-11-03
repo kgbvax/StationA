@@ -103,20 +103,30 @@ func TestFilteredToEmptyReportsHidden(t *testing.T) {
 	}
 }
 
-func TestFrequencyJoinAndCluster(t *testing.T) {
+func TestRowFrequencyModeAndWorked(t *testing.T) {
 	m, _ := newModel()
+	heard := rk(7, "EA8XYZ", "20m", true)
+	heard.FreqHz, heard.Mode, heard.Source = 14231500, "usb", bus.SourceBmrec
+	heard.WorkedBefore = &bus.WorkedBefore{QSOs: 2, Bands: []string{"20m", "40m", "15m"}, ThisBand: false}
+	old := rk(8, "NOFREQ", "20m", true) // older chase-queue: no freq_hz
 	cl := bus.Ranked{RowID: -3, Call: "DL1ABC", Band: "20m", Needed: true, Source: bus.SourceCluster, Spot: &bus.ClusterSpot{FreqHz: 14025000}}
-	m.SetChase(chase(rk(7, "EA8XYZ", "20m", true), rk(8, "NOFREQ", "20m", true), cl))
-	m.SetCQFinder(bus.CQFinderState{Rows: []bus.Candidate{{RowID: 7, FreqHz: 14231500.4}}})
+	dupe := rk(9, "W1AW", "20m", false)
+	dupe.WorkedBefore = &bus.WorkedBefore{QSOs: 1, Bands: []string{"20m"}, ThisBand: true}
+	m.SetChase(chase(heard, old, cl, dupe))
 	v := m.Snapshot()
-	if v.Rows[0].FreqHz != 14231500 || !v.Rows[0].Tunable() {
-		t.Errorf("heard row freq = %d", v.Rows[0].FreqHz)
+	r := v.Rows[0]
+	if r.FreqHz != 14231500 || !r.Tunable() || r.Mode != "usb" || !r.Worked || r.WorkedThisBand ||
+		len(r.WorkedOther) != 2 || r.WorkedOther[0] != "40m" || r.WorkedOther[1] != "15m" {
+		t.Errorf("heard row = %+v", r)
 	}
-	if v.Rows[1].Tunable() {
-		t.Errorf("row without a cqfinder row must not be tunable")
+	if v.Rows[1].Tunable() || v.Rows[1].Worked {
+		t.Errorf("row without freq_hz must not be tunable: %+v", v.Rows[1])
 	}
 	if v.Rows[2].FreqHz != 14025000 || !v.Rows[2].Cluster {
 		t.Errorf("cluster row freq = %d", v.Rows[2].FreqHz)
+	}
+	if d := v.Rows[3]; !d.Worked || !d.WorkedThisBand || len(d.WorkedOther) != 0 {
+		t.Errorf("dupe row = %+v", d)
 	}
 }
 

@@ -186,10 +186,19 @@ func (r *Runner) tune(ctx context.Context, row model.Row) Part {
 	}
 	note := ""
 	// set_mode targets the TX slice, so in split it would change the wrong one.
-	if r.Radio.Get().Split {
+	// flexbridge accepts only cw/usb/lsb: data, am, fm and unknown leave the mode.
+	switch {
+	case !settableMode(row.Mode):
+		note = "mode unchanged"
+		if row.Mode != "" {
+			note += " (" + row.Mode + ")"
+		}
+	case r.Radio.Get().Split:
 		note = "split: mode unchanged"
-	} else if err := r.Pub.Publish(r.RadioCmd, bus.CmdPayload("set_mode", Sideband(row.FreqHz))); err != nil {
-		return part("Radio", loggers.Failed, err.Error())
+	default:
+		if err := r.Pub.Publish(r.RadioCmd, bus.CmdPayload("set_mode", row.Mode)); err != nil {
+			return part("Radio", loggers.Failed, err.Error())
+		}
 	}
 	if st := r.Radio.Get(); st.Split && st.RxFreqHz == 0 {
 		// flexbridge reports no slice-A frequency: nothing to confirm against.
@@ -247,11 +256,5 @@ func (r *Runner) waitFor(d time.Duration, cond func() bool) bool {
 
 func near(a, b int64) bool { return math.Abs(float64(a-b)) <= 50 }
 
-// Sideband is the mode for a frequency: LSB on 160/80/40 m, USB on 60 m and
-// from 30 m up (bmrec's band table).
-func Sideband(freqHz int64) string {
-	if freqHz < 10_000_000 && !(freqHz >= 5_250_000 && freqHz <= 5_450_000) {
-		return "lsb"
-	}
-	return "usb"
-}
+// settableMode reports whether flexbridge's set_mode takes the mode.
+func settableMode(m string) bool { return m == "cw" || m == "usb" || m == "lsb" }

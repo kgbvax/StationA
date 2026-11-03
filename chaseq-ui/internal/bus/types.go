@@ -34,38 +34,40 @@ type ContestInfo struct {
 	Name string `json:"name"`
 }
 
-// Ranked is one station on the list.
+// Ranked is one station on the list. Rows are self-contained: freq_hz and
+// mode come with the row (an older chase-queue sends neither; a cluster row
+// then still has spot.freq_hz).
 type Ranked struct {
-	RowID  int64        `json:"row_id"`
-	Call   string       `json:"call,omitempty"`
-	Band   string       `json:"band"`
-	Needed bool         `json:"needed"`
-	Tag    string       `json:"tag,omitempty"`
-	Source string       `json:"source,omitempty"` // "cluster" for a DX-cluster row
-	Spot   *ClusterSpot `json:"spot,omitempty"`
+	RowID        int64         `json:"row_id"`
+	Call         string        `json:"call,omitempty"`
+	Band         string        `json:"band"`
+	FreqHz       int64         `json:"freq_hz,omitempty"`
+	Mode         string        `json:"mode,omitempty"` // canonical; "" = unknown
+	Needed       bool          `json:"needed"`
+	Tag          string        `json:"tag,omitempty"`
+	Source       string        `json:"source,omitempty"` // "bmrec" or "cluster"
+	Spot         *ClusterSpot  `json:"spot,omitempty"`
+	WorkedBefore *WorkedBefore `json:"worked_before,omitempty"` // nil = never worked
 }
 
-// SourceCluster marks a ranked row from the DX cluster.
-const SourceCluster = "cluster"
+// Row sources.
+const (
+	SourceBmrec   = "bmrec"
+	SourceCluster = "cluster"
+)
 
 // ClusterSpot is the latest cluster spot of a cluster row.
 type ClusterSpot struct {
 	FreqHz int64 `json:"freq_hz"`
 }
 
-// CQFinderState is bmrec's retained <site>/hf/cqfinder/state.
-type CQFinderState struct {
-	TS   time.Time   `json:"ts"`
-	Seq  int64       `json:"seq"`
-	Rows []Candidate `json:"rows"`
-}
-
-// Candidate is one open CQ row heard by bmrec.
-type Candidate struct {
-	RowID  int64   `json:"row_id"`
-	Call   string  `json:"call,omitempty"`
-	Band   string  `json:"band"`
-	FreqHz float64 `json:"freq_hz"`
+// WorkedBefore is what the logs know about earlier QSOs with the call.
+type WorkedBefore struct {
+	QSOs     int      `json:"qsos"`
+	Bands    []string `json:"bands,omitempty"`
+	Modes    []string `json:"modes,omitempty"`
+	ThisBand bool     `json:"this_band"`
+	Last     string   `json:"last,omitempty"`
 }
 
 // RadioState is flexbridge's retained <site>/hf/radio/state (the fields
@@ -98,15 +100,6 @@ func DecodeChase(p []byte) (ChaseState, error) {
 	var s ChaseState
 	if err := json.Unmarshal(p, &s); err != nil {
 		return ChaseState{}, fmt.Errorf("chase state: %w", err)
-	}
-	return s, nil
-}
-
-// DecodeCQFinder decodes a cqfinder state payload.
-func DecodeCQFinder(p []byte) (CQFinderState, error) {
-	var s CQFinderState
-	if err := json.Unmarshal(p, &s); err != nil {
-		return CQFinderState{}, fmt.Errorf("cqfinder state: %w", err)
 	}
 	return s, nil
 }

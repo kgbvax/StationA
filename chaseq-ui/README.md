@@ -3,6 +3,8 @@
 The chase-queue list in a window on the shack PC. Arrow keys move the highlight (nothing is tuned);
 **Enter or a click** tunes the FLEX to the station and puts its callsign into Log4OM and DXLog; `s` Skip,
 `u` Undo; `f` focuses the band / needed-only filters (Left/Right, Space, Esc back to the list).
+Each row shows frequency, mode and a worked mark: a boxed "worked 20m" = already worked on this band (listed, not
+needed), "wkd 40m 15m" = worked on other bands only, nothing = never worked. Frequency and mode come from chase-queue's row.
 
 Build/test/layout: `CLAUDE.md`. Config: `config.example.toml`. Deploy: `./deploy.sh` (bwpc, on request).
 

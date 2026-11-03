@@ -5,7 +5,6 @@ package model
 
 import (
 	"fmt"
-	"math"
 	"sync"
 	"time"
 
@@ -21,11 +20,17 @@ type Row struct {
 	RowID       int64
 	Call        string
 	Band        string
-	FreqHz      int64 // 0 = unknown
+	FreqHz      int64  // 0 = unknown
+	Mode        string // canonical; "" = unknown
 	Needed      bool
 	Tag         string
 	Cluster     bool
 	Highlighted bool
+	// Worked: the call is in the log at all. WorkedThisBand: on this band (the
+	// row then comes with Needed false). WorkedOther: the other bands.
+	Worked         bool
+	WorkedThisBand bool
+	WorkedOther    []string
 }
 
 // Tunable reports whether the radio can be tuned to this row.
@@ -53,7 +58,6 @@ type Model struct {
 	haveChase bool
 	lastChase time.Time
 	status    *bool // nil = unknown
-	freq      map[int64]int64
 	filters   Filters
 	highlight int64
 	version   uint64
@@ -64,7 +68,7 @@ func New(now func() time.Time) *Model {
 	if now == nil {
 		now = time.Now
 	}
-	return &Model{now: now, freq: map[int64]int64{}}
+	return &Model{now: now}
 }
 
 // SetChase takes a chase state.
@@ -99,19 +103,6 @@ func (m *Model) SetStatus(online bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.status = &online
-}
-
-// SetCQFinder takes bmrec's candidates: the frequency of heard stations.
-func (m *Model) SetCQFinder(s bus.CQFinderState) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	f := make(map[int64]int64, len(s.Rows))
-	for _, r := range s.Rows {
-		if r.FreqHz > 0 {
-			f[r.RowID] = int64(math.Round(r.FreqHz))
-		}
-	}
-	m.freq = f
 }
 
 // SetFilters replaces the filters.
@@ -269,12 +260,18 @@ func (m *Model) shown() ([]Row, int) {
 			hidden++
 			continue
 		}
-		row := Row{RowID: r.RowID, Call: r.Call, Band: r.Band, Needed: r.Needed, Tag: r.Tag,
-			Cluster: r.Source == bus.SourceCluster}
-		if row.Cluster && r.Spot != nil {
+		row := Row{RowID: r.RowID, Call: r.Call, Band: r.Band, FreqHz: r.FreqHz, Mode: r.Mode,
+			Needed: r.Needed, Tag: r.Tag, Cluster: r.Source == bus.SourceCluster}
+		if row.FreqHz == 0 && row.Cluster && r.Spot != nil {
 			row.FreqHz = r.Spot.FreqHz
-		} else {
-			row.FreqHz = m.freq[r.RowID]
+		}
+		if w := r.WorkedBefore; w != nil {
+			row.Worked, row.WorkedThisBand = true, w.ThisBand
+			for _, b := range w.Bands {
+				if b != r.Band {
+					row.WorkedOther = append(row.WorkedOther, b)
+				}
+			}
 		}
 		rows = append(rows, row)
 	}

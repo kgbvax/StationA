@@ -33,11 +33,10 @@ type MQTTConfig struct {
 
 // TopicsConfig names the slots chaseq-ui talks to.
 type TopicsConfig struct {
-	Site     string `toml:"site"`
-	Station  string `toml:"station"`
-	Chase    string `toml:"chase"`    // chase-queue slot
-	CQFinder string `toml:"cqfinder"` // bmrec candidates slot
-	Radio    string `toml:"radio"`    // flexbridge slot
+	Site    string `toml:"site"`
+	Station string `toml:"station"`
+	Chase   string `toml:"chase"` // chase-queue slot
+	Radio   string `toml:"radio"` // flexbridge slot
 }
 
 // HTTPConfig is the loopback server the window loads.
@@ -61,7 +60,7 @@ type LogConfig struct {
 func Default() Config {
 	return Config{
 		MQTT:   MQTTConfig{Broker: "tcp://192.168.1.178:1883", User: "hf", ClientID: "muehle-chaseq-ui"},
-		Topics: TopicsConfig{Site: "muehle", Station: "hf", Chase: "chase", CQFinder: "cqfinder", Radio: "radio"},
+		Topics: TopicsConfig{Site: "muehle", Station: "hf", Chase: "chase", Radio: "radio"},
 		HTTP:   HTTPConfig{Listen: "127.0.0.1:8480"},
 		Loggers: LoggersConfig{
 			Log4OMAddr: "127.0.0.1:2241", DXLogAddr: "127.0.0.1:9889", Log4OMTimout: "500ms",
@@ -70,7 +69,7 @@ func Default() Config {
 	}
 }
 
-// Load reads path (TOML) over the defaults, 
+// Load reads path (TOML) over the defaults,
 // A missing path is not an error: the defaults are used.
 func Load(path string) (Config, error) {
 	c := Default()
@@ -116,9 +115,8 @@ func (c Config) slot(slot, suffix string) string {
 }
 
 // ChaseState etc. return the full topic names.
-func (c Config) ChaseState() string    { return c.slot(c.Topics.Chase, "state") }
-func (c Config) ChaseStatus() string   { return c.slot(c.Topics.Chase, "status") }
-func (c Config) ChaseCmd() string      { return c.slot(c.Topics.Chase, "cmd") }
-func (c Config) CQFinderState() string { return c.slot(c.Topics.CQFinder, "state") }
-func (c Config) RadioState() string    { return c.slot(c.Topics.Radio, "state") }
-func (c Config) RadioCmd() string      { return c.slot(c.Topics.Radio, "cmd") }
+func (c Config) ChaseState() string  { return c.slot(c.Topics.Chase, "state") }
+func (c Config) ChaseStatus() string { return c.slot(c.Topics.Chase, "status") }
+func (c Config) ChaseCmd() string    { return c.slot(c.Topics.Chase, "cmd") }
+func (c Config) RadioState() string  { return c.slot(c.Topics.Radio, "state") }
+func (c Config) RadioCmd() string    { return c.slot(c.Topics.Radio, "cmd") }

@@ -70,14 +70,12 @@ func main() {
 	}
 	sess := bus.NewSession(bus.Options{
 		Broker: cfg.MQTT.Broker, User: cfg.MQTT.User, Password: cfg.MQTT.Password, ClientID: cfg.MQTT.ClientID,
-		Log: log,
-		Topics: bus.Topics{ChaseState: cfg.ChaseState(), ChaseStatus: cfg.ChaseStatus(),
-			CQFinderState: cfg.CQFinderState(), RadioState: cfg.RadioState()},
+		Log:    log,
+		Topics: bus.Topics{ChaseState: cfg.ChaseState(), ChaseStatus: cfg.ChaseStatus(), RadioState: cfg.RadioState()},
 		Handlers: bus.Handlers{
-			Chase:    func(s bus.ChaseState) { m.SetChase(s); notify() },
-			Status:   func(on bool) { m.SetStatus(on); notify() },
-			CQFinder: func(s bus.CQFinderState) { m.SetCQFinder(s); notify() },
-			Radio:    radio.Set,
+			Chase:  func(s bus.ChaseState) { m.SetChase(s); notify() },
+			Status: func(on bool) { m.SetStatus(on); notify() },
+			Radio:  radio.Set,
 		},
 	})
 	l4Timeout, _ := time.ParseDuration(cfg.Loggers.Log4OMTimout)

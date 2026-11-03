@@ -11,7 +11,6 @@ client_id = "muehle-chaseq-ui"
 site     = "muehle"
 station  = "hf"
 chase    = "chase"      # chase-queue slot
-cqfinder = "cqfinder"   # bmrec candidates (frequencies)
 radio    = "radio"      # flexbridge slot
 
 [http]

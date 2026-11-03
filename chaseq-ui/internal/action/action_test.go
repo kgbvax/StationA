@@ -67,9 +67,6 @@ type rig struct {
 func newRig(activity string, rows ...bus.Ranked) *rig {
 	m := model.New(nil)
 	m.SetChase(bus.ChaseState{Activity: activity, Ranked: rows})
-	m.SetCQFinder(bus.CQFinderState{Rows: []bus.Candidate{
-		{RowID: 7, FreqHz: 14231500}, {RowID: 8, FreqHz: 7074000}, {RowID: 9, FreqHz: 5357000},
-	}})
 	p := &pub{}
 	rad := &Radio{}
 	l4 := &fakeLogger{name: "Log4OM", res: loggers.Result{Status: loggers.OK}}
@@ -80,7 +77,16 @@ func newRig(activity string, rows ...bus.Ranked) *rig {
 }
 
 func rk(id int64, call, band string) bus.Ranked {
-	return bus.Ranked{RowID: id, Call: call, Band: band, Needed: true}
+	r := bus.Ranked{RowID: id, Call: call, Band: band, Needed: true}
+	switch id {
+	case 7:
+		r.FreqHz, r.Mode = 14231500, "usb"
+	case 8:
+		r.FreqHz, r.Mode = 7074000, "lsb"
+	case 9:
+		r.FreqHz, r.Mode = 5357000, "usb"
+	}
+	return r
 }
 
 func status(rep Report, name string) loggers.Status {
@@ -162,17 +168,22 @@ func TestActOneLoggerFails(t *testing.T) { // AE2
 	}
 }
 
-func TestSideband(t *testing.T) {
-	for hz, want := range map[int64]string{7074000: "lsb", 14200000: "usb", 5357000: "usb", 1850000: "lsb", 10130000: "usb"} {
-		if got := Sideband(hz); got != want {
-			t.Errorf("Sideband(%d) = %s, want %s", hz, got, want)
+func TestModeFromRow(t *testing.T) {
+	for _, c := range []struct{ mode, want string }{{"lsb", "lsb"}, {"cw", "cw"}, {"usb", "usb"}, {"data", ""}, {"am", ""}, {"fm", ""}, {"", ""}} {
+		row := rk(8, "K1A", "40m")
+		row.Mode = c.mode
+		g := newRig(bus.ActivityDX, row)
+		followRadio(g, 7074000)
+		g.r.Act(context.Background(), 8)
+		got := ""
+		for _, m := range g.pub.all() {
+			if strings.Contains(m, `"set_mode"`) {
+				got = m
+			}
 		}
-	}
-	g := newRig(bus.ActivityDX, rk(8, "K1A", "40m"))
-	followRadio(g, 7074000)
-	g.r.Act(context.Background(), 8)
-	if m := g.pub.all(); !strings.Contains(m[1], `"set_mode","value":"lsb"`) {
-		t.Errorf("40 m published %q", m)
+		if (c.want == "") != (got == "") || (c.want != "" && !strings.Contains(got, `"value":"`+c.want+`"`)) {
+			t.Errorf("mode %q published %q, want set_mode %q", c.mode, got, c.want)
+		}
 	}
 }
 

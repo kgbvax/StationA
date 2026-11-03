@@ -43,11 +43,11 @@ func newServer(t *testing.T) (*Server, *model.Model, *pub, *lg) {
 	t.Helper()
 	m := model.New(nil)
 	m.SetChase(bus.ChaseState{Activity: "dx", Problems: []string{"Club Log confirmations not loaded yet"}, Ranked: []bus.Ranked{
-		{RowID: 7, Call: "EA8XYZ", Band: "20m", Needed: true, Tag: "need"},
-		{RowID: 8, Call: "K1A", Band: "40m"},
+		{RowID: 7, Call: "EA8XYZ", Band: "20m", FreqHz: 14231500, Mode: "usb", Needed: true, Tag: "need",
+			WorkedBefore: &bus.WorkedBefore{QSOs: 1, Bands: []string{"40m", "15m"}}},
+		{RowID: 8, Call: "K1A", Band: "40m", FreqHz: 7074000, Mode: "lsb", WorkedBefore: &bus.WorkedBefore{QSOs: 2, Bands: []string{"40m"}, ThisBand: true}},
 		{RowID: 9, Band: "20m", Needed: true},
 	}})
-	m.SetCQFinder(bus.CQFinderState{Rows: []bus.Candidate{{RowID: 7, FreqHz: 14231500}, {RowID: 8, FreqHz: 7074000}}})
 	p := &pub{}
 	l := &lg{}
 	rad := &action.Radio{}
@@ -78,7 +78,7 @@ var csrf = map[string]string{"X-Chaseq": "1"}
 func TestListRendersRowsTagsAndProblems(t *testing.T) {
 	s, _, _, _ := newServer(t)
 	body := do(t, s.Handler(), "GET", "/list", nil).Body.String()
-	for _, want := range []string{"EA8XYZ", "14231.5", `class="badge need"`, "no call", "no freq", "Club Log confirmations not loaded yet", `class="row hi`} {
+	for _, want := range []string{"EA8XYZ", "14231.5", "wkd 40m 15m", `class="wk this"`, `class="badge need"`, "no call", "no freq", "Club Log confirmations not loaded yet", `class="row hi`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("list missing %q", want)
 		}
