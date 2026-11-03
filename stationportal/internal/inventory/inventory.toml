@@ -274,7 +274,7 @@ host      = "scmino"
 [[slot]]
 address   = "muehle/hf/chase"
 component = "chase-queue"
-device    = "logic slot — ranks the CQ stations bmrec hears (needed + priority)"
+device    = "logic slot — ranks the CQ stations bmrec hears and the needed DX-cluster spots (needed + priority)"
 link      = "none"
 host      = "scmino"
 

@@ -30,8 +30,13 @@ chase-queue implements the `hf/chase` logic slot (role `chase-queue`) of the sta
 
 ```json
 {"ts":"…","seq":42,"activity":"dx","ranked":[{"row_id":7,"call":"EA8XYZ","band":"20m","needed":true,"tag":"need"}],
- "undo":"EA8XYZ","problems":["Club Log confirmations not loaded yet"],
- "contest":{"id":1,"name":"UKEIDXSSB","start_date":"2026-11-01","qsos":212}}
+ "undo":"EA8XYZ","problems":["Club Log confirmations not loaded yet"]}
+```
+
+In a contest, `activity` is `contest`, `tag` is `mult`, and a `contest` block is added:
+
+```json
+{"activity":"contest","contest":{"id":1,"name":"UKEIDXSSB","start_date":"2026-11-01","qsos":212},"ranked":[…]}
 ```
 
 - `seq` echoes the candidates' `seq`. `ranked` is the list, in work order; a row bmrec has that is absent
@@ -42,8 +47,10 @@ chase-queue implements the `hf/chase` logic slot (role `chase-queue`) of the sta
 - Rows from the DX cluster (`[cluster]`, chase-queue's own telnet login) carry `source:"cluster"`, a
   **negative** `row_id` (no bmrec row; stable while the spot lasts) and
   `spot:{freq_hz, spotter, comment, at}` of the latest spot. Only **needed** cluster stations are listed (at
-  most 40), ranked by the same rules as the heard rows and mixed into the same order. A heard station that is
-  on the cluster leaves the list and its cluster row stands for it. Skimmer spots (unless `skimmer = true`)
+  most 40), ranked by the same rules as the heard rows and mixed into the same order. A heard station on
+  chase-queue's own cluster login leaves the list and its cluster row stands for it. A spot that only bmrec
+  relays (`spotted`, e.g. its own post, which chase-queue's login drops as the operator's) hides a heard station
+  that is not needed, never a needed one. Skimmer spots (unless `skimmer = true`)
   and the operator's own spots are dropped; a spot lasts 30 minutes. `skip`/`handled`/`undo` work on cluster
   rows by their `row_id`. A consumer that joins rows to bmrec's board by `row_id` must treat `source:"cluster"`
   rows as having no board row.
@@ -71,9 +78,9 @@ chase-queue implements the `hf/chase` logic slot (role `chase-queue`) of the sta
 | action | value | effect |
 |---|---|---|
 | `skip` | `{"row_id","band","call"}` | hide the station: contest until its call is confirmed, DX until 00:00 UTC |
-| `handled` | `{"row_id","band","call","how"}` | contest QSY/spot mark; no-op in DX |
+| `handled` | `{"row_id","band","call","how"}` | contest QSY/spot mark (`how` defaults to `qsy`); no-op in DX |
 | `undo` | `""` | reverse the last skip/handled of this activity |
-| `set_mode` | `"dx"` | leave contest mode |
+| `set_mode` | any (not read; send `"dx"`) | leave contest mode |
 | `switch_instance` | `{"instance"}` or `{"new":true,"definition_id","prefill_id","start_date"}` | contest mode on |
 | `delete_instance` | instance id | delete a stored instance (not the running one) |
 

@@ -1,10 +1,12 @@
 # CLAUDE.md — chase-queue
 
 chase-queue is the **chase queue** logic slot `muehle/hf/chase`. It reads the CQ stations bmrec hears
-(`muehle/hf/cqfinder/state`), knows the operator's history, and publishes one ordered list of what is
-needed. bmrec shows that list; other consumers (hf_console, horstreporter, Home Assistant) can read the
-same retained state. It has no device and runs on scmino. Contract: `docs/chase-queue-mqtt-api.md`.
-Requirements: `../docs/plans/2026-11-01-2252-feat-chase-queue-v1-plan.md`.
+(`muehle/hf/cqfinder/state`) and a DX cluster, knows the operator's history, and publishes one ordered
+list of what is needed. bmrec's HF CQ page (where the operator qualifies candidates) and chaseq-ui show that
+list; other consumers (hf_console, Home Assistant) can read the same retained state. It has no device and
+runs on scmino. Contract: `docs/chase-queue-mqtt-api.md`. **Target architecture of the domain** (roles,
+award model, the separate `station-log`, gaps to the code): `../docs/chasing-stations-architecture.md`.
+v1 requirements: `../docs/plans/2026-11-01-2252-feat-chase-queue-v1-plan.md`.
 
 ## What it decides
 
@@ -20,8 +22,9 @@ Requirements: `../docs/plans/2026-11-01-2252-feat-chase-queue-v1-plan.md`.
 - Both: each listed call carries `info` (QRZ.com callbook: name, QTH, locator, picture) and
   `worked_before` (QSO count, bands, modes, last QSO from the station log and stored contest logs).
   Enrichment never changes the ranking.
-- Both: a heard station spotted on the cluster (same station, same band, 30 min), and any station worked,
-  handled or skipped, is **not listed** as a heard row. Not-needed stations stay below the needed ones.
+- Both: a heard station spotted on chase-queue's own cluster login (same station, same band, 30 min) is replaced
+  by its cluster row; a spot only bmrec relays hides it only when it is not needed. Any station worked,
+  handled or skipped is **not listed** as a heard row. Not-needed stations stay below the needed ones.
 
 ## Layout
 

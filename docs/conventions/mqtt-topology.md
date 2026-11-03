@@ -73,6 +73,7 @@ one" (§9).
 | Go services on shari (spid-ercm-rotator-bridge, hf-mqtt-capture) | not recorded in the repo | defaults are `tcp://127.0.0.1:1883` but shari runs no broker; the live seed-once config must name another broker |
 | Shelly plugs, M5 Stamp PLC #1 | `192.168.1.178:1883` | on the station broker (PLC since 2026-10-03, plugs since 2026-10-18) |
 | M5 DualKey, hf_console tablet (setup default), winpc-power-bridge (bwpc) | `192.168.1.50:1883` | repo default; HA broker, mirrored both ways to the station broker |
+| chase-queue (scmino) | `tcp://127.0.0.1:1883` (the station broker, loopback) | slot `hf/chase`; reads `hf/cqfinder`; client ID `muehle-hf-chase` |
 | chaseq-ui (bwpc) | `192.168.1.178:1883` | consumer of `hf/chase`, `hf/cqfinder`, `hf/radio`; sends `/cmd` to `hf/chase` and `hf/radio`; account `hf`; client ID `muehle-chaseq-ui` |
 | M5 Stamp PLC #2 (pol-ctrl) | repo config `192.168.1.50`, inert until the next USB re-flash | verify on the device |
 | ant-switch ESP | not settled: `waveshare_relay-antswitch-bridge/esphome/station-at1.yaml` says `192.168.1.139`, `waveshare_relay-antswitch-bridge/docs/known-issues.md` says `192.168.1.50` | verify on the device |

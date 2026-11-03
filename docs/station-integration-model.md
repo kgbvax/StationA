@@ -317,7 +317,8 @@ entirely).
   `power/shack-pc`; offline = asleep; wake is Wake-on-LAN, not MQTT), `steering` (a
   logic slot that turns a logger bearing into rotator and antenna-direction intents,
   `hf/beam-steer`), `bandmap` (the operator-keyed station from the shack logger,
-  `hf/spots`; read-only, fronts software) and `discovery` (a consumer that renders
+  `hf/spots`; read-only, fronts software), `chase-queue` (a logic slot that ranks the stations
+  on the air by what is needed, `hf/chase`; see `chasing-stations-architecture.md`) and `discovery` (a consumer that renders
   `/meta` `expose` into a consumer's discovery format, `hf/discovery`). Passive:
   `ant/*`, `mast/*`, `preamp/*` (masthead LNA).
 - **Capability keys** are role-specific; each slot's block in §7 and its component's
@@ -817,6 +818,11 @@ source, `logger-spot-bridge` on `scmino`, role `bandmap`; read-only, no `/cmd`).
 `state: ts; device_online (a logger keyed something recently); selected (omitted when
 nothing is keyed)`.
 
+**`muehle/hf/chase`**: the chase queue (logic slot, `chase-queue` on `scmino`, role
+`chase-queue`). Reads bmrec's `hf/cqfinder` candidates and a DX cluster, publishes the
+retained ranked list; `/cmd` skip, handled, undo and the contest-instance actions. Contract:
+`chase-queue/docs/chase-queue-mqtt-api.md`; domain roles: `chasing-stations-architecture.md`.
+
 **`muehle/hf/discovery`**: HA discovery consumer (logic slot, `hadiscovery`; see §7.3, §9)
 ```
 subscribes: <site>/+/+/meta  (reads each slot's consumer-neutral `expose` block, §3.1)
@@ -1102,6 +1108,8 @@ muehle/host/scmino      # Raspberry Pi CM5, Debian 12 arm64 — runs most statio
 | M5 Stamp #2 firmware (`m5stamp-pol-ctrl`, ESPHome) | `uhf/pol-ctrl` | embedded (M5 Stamp PLC) |
 | Antenna switch firmware (`waveshare_relay-antswitch-bridge`, ESPHome) | `hf/ant-switch` | embedded (WaveShare ESP32-S3 relay board) |
 | Power sequencer (`powerseq`) | `hf/power-seq` | `scmino` |
+| Chase queue (`chase-queue`) | `hf/chase` (logic slot) | `scmino` |
+| Chase list window (`chaseq-ui`) | consumer of `hf/chase`, no slot; `/cmd` to `hf/chase` and `hf/radio` | `bwpc` |
 | HA discovery bridge (optional, `hadiscovery`) | `hf/discovery` (logic slot); consumer of `meta`/`state`/`status` | `scmino` |
 | VHF cam restreamer (`vhfcam-restream`, :8083) | `hf/vhfcam` (`/status` + `/state` only) | `scmino` |
 | Station broker (`mqtt-broker`, Mosquitto :1883, `muehle/#` mirror of the HA broker `.50`) | none | `scmino` |
@@ -1568,7 +1576,7 @@ Encoding decisions worth copying:
   cycle (`settling`). The role's other intents (`set_freq_hz`, `set_mode`, `set_drive`,
   `select_rx`, `set_band`) are direct intents. flexbridge implements `set_band`,
   `set_mode` (`cw`/`usb`/`lsb`), `select_rx` (`ant1`/`ant2`/`rx_a`), `set_mic_profile`
-  and the DVK actions, and rejects `set_freq_hz` and `set_drive` as unknown actions. `set_band` is the
+  and the DVK actions, and a non-canonical `set_freq` (integer Hz, VFO A's slice; used by chaseq-ui), and rejects `set_freq_hz` and `set_drive` as unknown actions. `set_band` is the
   band-stacking convenience (§4; §7.1 `muehle/hf/radio`): it changes the band and lets
   the radio pick the frequency, so `/state` stays frequency-derived rather than carrying
   a band setpoint.
