@@ -1,6 +1,7 @@
-// Package engine ranks the stations bmrec hears calling CQ for the active
-// activity: in a contest by multiplier value and the contest log, in DX
-// chasing by DXCC entities not yet confirmed on the band. It hides stations
+// Package engine ranks the stations bmrec hears calling CQ and the cluster
+// spots for the active goals: each enabled award (DXCC per band, a field
+// award such as WAS, the running contest's multipliers) says which slots a
+// station would fill (package award). It hides stations
 // spotted on the cluster (same station, same band, within 30 minutes),
 // handled or skipped; one already worked on the band stays, below the
 // unworked ones and not needed. It keeps the Skip, handled and Undo
@@ -17,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"chase-queue/internal/award"
 	"chase-queue/internal/bus"
 	"chase-queue/internal/calls"
 	"chase-queue/internal/contest"
@@ -59,8 +61,28 @@ type Config struct {
 	CTY *cty.DB
 	// Rank is the Club Log Most Wanted rank of an entity (1 = rarest).
 	Rank func(adif int) (int, bool)
-	Now  func() time.Time
+	// State gives a station's state from the callbook ("" = not known); it
+	// is asked only for a call a field award applies to and the log has no
+	// state for.
+	State func(call string) string
+	Now   func() time.Time
 }
+
+// Goal switches an award on or off and ranks it against the others. The
+// zero Priority takes the award's default.
+type Goal struct {
+	Award    string
+	Priority int
+	Enabled  bool
+}
+
+// Default priorities (higher ranks first): the running contest above DXCC,
+// DXCC above any other award a goal enables.
+const (
+	prioContest = 100
+	prioDXCC    = 10
+	prioOther   = 50
+)
 
 type skipMark struct{ trusted bool }
 
@@ -78,7 +100,6 @@ type Engine struct {
 	cfg Config
 
 	mu       sync.Mutex
-	activity string
 	seq      int64
 	candTS   time.Time
 	cands    []bus.Candidate
@@ -92,7 +113,13 @@ type Engine struct {
 	clSpots map[string]*clusterSpot
 	clNext  int64
 
-	// contest
+	// bmrec gate and buddies
+	gate        string // "" or "off", "trusted", "qualified"
+	qualSeen    bool   // some candidate row carries the qualified flag
+	unqualified int    // bmrec rows the gate kept off the list, at the last Compute
+	buddies     []Buddy
+
+	// contest: model is set while an instance runs (the contest goal)
 	contest store.Contest
 	model   *contest.Model
 	held    *contest.Held
@@ -101,19 +128,35 @@ type Engine struct {
 	handled map[string]string // call|band -> how
 	skipped map[string]skipMark
 
-	// DX chasing
+	// history
 	dxWorked  map[store.WorkedKey]bool
-	confirmed map[int]map[string]bool // ADIF -> bands
+	confirmed map[int]map[string]bool // Club Log: ADIF -> bands
 	confLoad  bool                    // confirmations have been loaded at least once
+	logEnt    []award.Entry           // the station-log view
+	logLoad   bool                    // the station-log view has been loaded at least once
 	dxSkips   map[string]time.Time    // call|band -> until
+
+	// awards and goals
+	awards  *award.Catalog
+	goalCfg map[string]Goal // configured goals by lower-case award code
+	dirty   bool            // the award indexes need a rebuild
+	static  []goalIndex     // the enabled catalog awards, by priority
 }
 
-// New returns an engine in DX mode with no history.
+// goalIndex is an enabled catalog award with its slots indexed.
+type goalIndex struct {
+	code string
+	prio int
+	ix   *award.Index
+}
+
+// New returns an engine with the built-in DXCC award as its only goal and no
+// history.
 func New(cfg Config) *Engine {
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
-	return &Engine{cfg: cfg, activity: bus.ActivityDX, skipRows: map[int64]bool{}, listed: map[int64]bus.Ranked{},
+	return &Engine{cfg: cfg, awards: award.NewCatalog(), goalCfg: map[string]Goal{}, dirty: true, skipRows: map[int64]bool{}, listed: map[int64]bus.Ranked{},
 		handled: map[string]string{}, skipped: map[string]skipMark{}, dxWorked: map[store.WorkedKey]bool{},
 		confirmed: map[int]map[string]bool{}, dxSkips: map[string]time.Time{}, clSpots: map[string]*clusterSpot{}}
 }
@@ -127,19 +170,106 @@ type clusterSpot struct {
 	freqHz      float64
 	spotter     string
 	comment     string
+	cluster     string
+	rbn         bool
 	first, last time.Time
+	human       time.Time // latest human spot; its freq, comment and spotter stand while it is within SpotHorizon
 }
 
-// ClusterSpot is one spot from chase-queue's own DX-cluster login.
+// ClusterSpot is one spot from one of chase-queue's own DX-cluster logins.
 type ClusterSpot struct {
 	Call, Band, Spotter, Comment string
 	FreqHz                       float64
 	At                           time.Time
+	// Cluster is the [[cluster]] name the spot came from; RBN marks a
+	// skimmer spot.
+	Cluster string
+	RBN     bool
+}
+
+// Buddy is a station the operator wants listed.
+type Buddy struct {
+	Call  string
+	Note  string
+	Boost int
+}
+
+// Bmrec gate values (config [bmrec] gate); the zero value is off.
+const (
+	GateOff       = "off"
+	GateTrusted   = "trusted"
+	GateQualified = "qualified"
+)
+
+// SetBmrecGate chooses which of bmrec's rows count as available stations:
+// "off" (all), "trusted" (a known callsign that is read back or typed by the
+// operator) or "qualified" (trusted and the row says qualified:true).
+func (e *Engine) SetBmrecGate(g string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.gate = g
+}
+
+// SetBuddies replaces the buddy list.
+func (e *Engine) SetBuddies(bs []Buddy) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.buddies = e.buddies[:0]
+	for _, b := range bs {
+		if b.Call = contest.NormalizeCall(b.Call); b.Call != "" {
+			e.buddies = append(e.buddies, b)
+		}
+	}
+}
+
+// buddyOfLocked finds the buddy a callsign belongs to: the same call, else the
+// same station under a portable form (calls.SameStation).
+func (e *Engine) buddyOfLocked(call string) (Buddy, bool) {
+	n := contest.NormalizeCall(call)
+	if n == "" {
+		return Buddy{}, false
+	}
+	for _, b := range e.buddies {
+		if b.Call == n {
+			return b, true
+		}
+	}
+	for _, b := range e.buddies {
+		if calls.SameStation(b.Call, n) {
+			return b, true
+		}
+	}
+	return Buddy{}, false
+}
+
+// GateProblem is what is wrong with the bmrec gate ("" = nothing): the
+// qualified gate is on and bmrec's rows carry no qualified flag.
+func (e *Engine) GateProblem() string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.gate == GateQualified && len(e.cands) > 0 && !e.qualSeen {
+		return "bmrec sends no qualified flag: no bmrec row passes the qualified gate"
+	}
+	return ""
+}
+
+// passesGate reports whether a bmrec row counts as an available station.
+func (e *Engine) passesGate(r bus.Candidate) bool {
+	switch e.gate {
+	case GateTrusted, GateQualified:
+	default:
+		return true
+	}
+	if strings.TrimSpace(r.Call) == "" || !(r.Trusted || r.CallSource == "confirmed" || r.CallSource == "owner") {
+		return false
+	}
+	return e.gate != GateQualified || (r.Qualified != nil && *r.Qualified)
 }
 
 // AddClusterSpot records a DX-cluster spot. The station is then spotted (a
-// heard row of it leaves the list) and, while needed, listed as a cluster
-// row for SpotHorizon after its latest spot.
+// heard row of it leaves the list) and, while needed or a buddy, listed as a
+// cluster row for SpotHorizon after its latest spot. Several clusters
+// spotting the same call on a band make one row: the freshest spot wins.
 func (e *Engine) AddClusterSpot(s ClusterSpot) {
 	call := contest.NormalizeCall(s.Call)
 	if call == "" || s.Band == "" {
@@ -154,7 +284,38 @@ func (e *Engine) AddClusterSpot(s ClusterSpot) {
 		cs = &clusterSpot{rowID: e.clNext, call: call, band: s.Band, first: s.At}
 		e.clSpots[k] = cs
 	}
-	cs.freqHz, cs.spotter, cs.comment, cs.last = s.FreqHz, s.Spotter, s.Comment, s.At
+	if s.RBN {
+		// a skimmer measures the TX frequency and carries no operating
+		// instructions: it only keeps a human spot's row alive
+		if !cs.human.IsZero() && s.At.Sub(cs.human) <= SpotHorizon {
+			if s.At.After(cs.last) {
+				cs.last = s.At
+			}
+			return
+		}
+		if s.At.Before(cs.last) {
+			return // an older spot of the same station on another cluster
+		}
+	} else {
+		if s.At.Before(cs.human) {
+			return // an older human spot of the same station on another cluster
+		}
+		cs.human = s.At
+	}
+	cs.freqHz, cs.spotter, cs.comment = s.FreqHz, s.Spotter, s.Comment
+	if s.At.After(cs.last) {
+		cs.last = s.At
+	}
+	cs.cluster, cs.rbn = s.Cluster, s.RBN
+}
+
+// tuneMode is the mode a heard station is tuned in: the band plan's, else the
+// sideband convention.
+func tuneMode(hz float64) string {
+	if m := mode.FromFreq(hz); m != "" {
+		return m
+	}
+	return mode.Sideband(hz)
 }
 
 func key(call, band string) string { return contest.NormalizeCall(call) + "|" + band }
@@ -170,6 +331,13 @@ func (e *Engine) SetCandidates(st bus.CQFinderState) bool {
 		return false
 	}
 	e.seq, e.candTS, e.cands, e.spots = st.Seq, st.TS, st.Rows, st.Spotted
+	e.qualSeen = false
+	for _, c := range st.Rows {
+		if c.Qualified != nil {
+			e.qualSeen = true
+			break
+		}
+	}
 	// row skips of rows that are gone are no longer needed
 	open := map[int64]bool{}
 	for _, c := range st.Rows {
@@ -188,7 +356,7 @@ func (e *Engine) SetCandidates(st bus.CQFinderState) bool {
 func (e *Engine) ActivateContest(c store.Contest, m *contest.Model, handled []store.ContestHandled, qsos []store.ContestQSO) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	e.activity, e.contest, e.model = bus.ActivityContest, c, m
+	e.contest, e.model = c, m
 	e.handled = map[string]string{}
 	for _, h := range handled {
 		e.handled[key(h.Call, h.Band)] = h.How
@@ -201,7 +369,7 @@ func (e *Engine) ActivateContest(c store.Contest, m *contest.Model, handled []st
 func (e *Engine) ActivateDX() {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	e.activity, e.model, e.contest = bus.ActivityDX, nil, store.Contest{}
+	e.model, e.contest = nil, store.Contest{}
 	e.skipRows, e.last = map[int64]bool{}, nil
 }
 
@@ -209,14 +377,40 @@ func (e *Engine) ActivateDX() {
 func (e *Engine) Contest() (store.Contest, bool) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	return e.contest, e.activity == bus.ActivityContest
+	return e.contest, e.model != nil
+}
+
+// activityLocked is the wire's activity: "contest" while a contest instance
+// runs, else "dx". It is derived; the goals decide what is needed.
+func (e *Engine) activityLocked() string {
+	if e.model != nil {
+		return bus.ActivityContest
+	}
+	return bus.ActivityDX
+}
+
+// SetAwards installs the award catalog and the configured goals. A goal that
+// names an unknown award is an error and changes nothing.
+func (e *Engine) SetAwards(cat *award.Catalog, goals []Goal) error {
+	cfg := map[string]Goal{}
+	for _, g := range goals {
+		k := strings.ToLower(strings.TrimSpace(g.Award))
+		if _, ok := cat.Get(k); !ok && k != award.CodeContest {
+			return errors.New("goal names an unknown award: " + g.Award)
+		}
+		cfg[k] = g
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.awards, e.goalCfg, e.dirty = cat, cfg, true
+	return nil
 }
 
 // SetContestQSOs replaces the contest log (after the writer stored a batch).
 func (e *Engine) SetContestQSOs(contestID int64, qsos []store.ContestQSO) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if e.activity == bus.ActivityContest && e.contest.ID == contestID {
+	if e.model != nil && e.contest.ID == contestID {
 		e.setQSOsLocked(qsos)
 	}
 }
@@ -230,7 +424,7 @@ func (e *Engine) setQSOsLocked(qs []store.ContestQSO) {
 }
 
 // SetDXWorked replaces the station log: every callsign worked on a band, any
-// mode, from Log4OM and Club Log.
+// mode, from station-log's view, or without it from Log4OM and Club Log.
 func (e *Engine) SetDXWorked(w map[store.WorkedKey]bool) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -259,7 +453,27 @@ func (e *Engine) SetConfirmations(cs []store.Confirmation) {
 		}
 		e.confirmed[c.DXCC][c.Band] = true
 	}
-	e.confLoad = true
+	e.confLoad, e.dirty = true, true
+}
+
+// SetLogConfirmations replaces the station-log view by the entities it has
+// confirmed on a band (no calls, states or modes). SetLogEntries is the full
+// form.
+func (e *Engine) SetLogConfirmations(cs []store.Confirmation) {
+	es := make([]award.Entry, 0, len(cs))
+	for _, c := range cs {
+		es = append(es, award.Entry{DXCC: c.DXCC, Band: c.Band, Confirmed: true})
+	}
+	e.SetLogEntries(es)
+}
+
+// SetLogEntries replaces the station-log view the awards read (its worked
+// rows). Club Log's matrix stays separate; either source loaded is enough to
+// value a DXCC slot, and a band confirmed in either counts.
+func (e *Engine) SetLogEntries(es []award.Entry) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.logEnt, e.logLoad, e.dirty = es, true, true
 }
 
 // SetDXSkips restores the DX skips still in force (at start).
@@ -299,27 +513,144 @@ func (e *Engine) spottedLocked(spots []bus.Spot, call, band string, now time.Tim
 	return false
 }
 
-// dxValue values a callsign for DX chasing: new when its entity is not
-// confirmed on the band, with two new slots when it is confirmed on no band
-// at all. Unknown until Club Log's confirmations are loaded, or when the
-// entity has no ADIF number (cty.csv missing).
-func (e *Engine) dxValueLocked(call, band string) contest.Valuation {
-	if e.cfg.CTY == nil || !e.confLoad {
-		return contest.Valuation{Class: contest.ClassUnknown}
+// valued is what the goals say about one station.
+type valued struct {
+	val    contest.Valuation
+	prio   int
+	awards int
+	needs  []award.Hit // the slots that are needed, by goal priority
+}
+
+// valueLocked evaluates the station for every active goal. A station is
+// needed when any enabled goal's slot is not yet satisfied; it is unknown,
+// never "not needed", while no goal can tell and none needs it. NewSlots and
+// the Most Wanted entity come from the first needed goal that has them.
+func (e *Engine) valueLocked(call, band, mode string) valued {
+	in := award.Input{Call: contest.NormalizeCall(call), Band: band, Mode: mode}
+	var ent cty.Entity
+	entOK := false
+	if e.cfg.CTY != nil {
+		if got, ok := e.cfg.CTY.DXCC(call); ok && got.ADIF != 0 {
+			ent, entOK = got, true
+			in.ADIF, in.Entity = got.ADIF, got.Primary
+		}
 	}
-	ent, ok := e.cfg.CTY.DXCC(call)
-	if !ok || ent.ADIF == 0 {
-		return contest.Valuation{Class: contest.ClassUnknown}
+	var out valued
+	unknown, first := false, true
+	for _, g := range e.goalsLocked() {
+		var hits []award.Hit
+		var cv contest.Valuation
+		if g.contest != nil {
+			hits, cv = g.contest.Evaluate(call, band)
+		} else {
+			d := g.ix.Definition()
+			st := in
+			if d.NeedsState() && entOK && d.AppliesToEntity(in.ADIF) && g.ix.StateOf(in.Call) == "" && e.cfg.State != nil {
+				st.State = e.cfg.State(in.Call)
+			}
+			if h, ok := g.ix.Evaluate(st); ok {
+				hits = []award.Hit{h}
+			}
+		}
+		needed, fresh := false, false
+		for _, h := range hits {
+			switch {
+			case h.Needed:
+				needed = true
+				fresh = fresh || h.Fresh
+				out.needs = append(out.needs, h)
+			case h.Status == award.Unknown:
+				unknown = true
+			}
+		}
+		if !needed {
+			continue
+		}
+		out.awards++
+		slots := 1
+		switch {
+		case g.contest != nil:
+			slots = cv.NewSlots
+		case fresh:
+			slots = 2
+		}
+		if first {
+			first, out.prio, out.val.NewSlots = false, g.prio, slots
+		}
+		if out.val.NewDXCC == nil {
+			switch {
+			case g.contest != nil && cv.NewDXCC != nil:
+				out.val.NewDXCC = cv.NewDXCC
+			case g.contest == nil && g.ix.Definition().Kind == award.KindDXCC && entOK:
+				out.val.NewDXCC = &ent
+			}
+		}
 	}
-	bands := e.confirmed[ent.ADIF]
-	if bands[band] {
-		return contest.Valuation{Class: contest.ClassNone}
+	switch {
+	case out.awards > 0:
+		out.val.Class = contest.ClassNew
+	case unknown:
+		out.val.Class = contest.ClassUnknown
 	}
-	v := contest.Valuation{Class: contest.ClassNew, NewSlots: 1, NewDXCC: &ent}
-	if len(bands) == 0 {
-		v.NewSlots = 2
+	return out
+}
+
+// activeGoal is an enabled award in the order of its priority; exactly one of
+// ix and contest is set.
+type activeGoal struct {
+	prio    int
+	ix      *award.Index
+	contest *award.Contest
+}
+
+// goalsLocked lists the enabled goals, highest priority first: the catalog
+// awards a goal switches on (DXCC is on unless a goal turns it off) and the
+// running contest.
+func (e *Engine) goalsLocked() []activeGoal {
+	if e.dirty {
+		e.rebuildLocked()
 	}
-	return v
+	out := make([]activeGoal, 0, len(e.static)+1)
+	for _, g := range e.static {
+		out = append(out, activeGoal{prio: g.prio, ix: g.ix})
+	}
+	if e.model != nil {
+		g := e.goalCfg[award.CodeContest]
+		if g.Award == "" || g.Enabled {
+			prio := g.Priority
+			if prio == 0 {
+				prio = prioContest
+			}
+			out = append(out, activeGoal{prio: prio, contest: &award.Contest{Model: e.model, Held: e.held}})
+		}
+	}
+	slices.SortStableFunc(out, func(a, b activeGoal) int { return b.prio - a.prio })
+	return out
+}
+
+// rebuildLocked indexes the log for each enabled catalog award.
+func (e *Engine) rebuildLocked() {
+	l := &award.Log{Loaded: e.logLoad, Entries: e.logEnt, ClubLoaded: e.confLoad, Club: e.confirmed}
+	e.static = e.static[:0]
+	for _, code := range e.awards.Codes() {
+		def, _ := e.awards.Get(code)
+		g, set := e.goalCfg[strings.ToLower(code)]
+		on, prio := set && g.Enabled, g.Priority
+		if !set && strings.EqualFold(code, award.CodeDXCC) {
+			on = true
+		}
+		if !on {
+			continue
+		}
+		if prio == 0 {
+			prio = prioOther
+			if strings.EqualFold(code, award.CodeDXCC) {
+				prio = prioDXCC
+			}
+		}
+		e.static = append(e.static, goalIndex{code: code, prio: prio, ix: def.Build(l)})
+	}
+	e.dirty = false
 }
 
 // Compute ranks the current candidates and returns the state to publish
@@ -338,12 +669,13 @@ func (e *Engine) Compute() bus.ChaseState {
 			delete(e.clSpots, k)
 		}
 	}
-	contestOn := e.activity == bus.ActivityContest && e.model != nil
-	value := func(c *contest.Candidate) {
-		if contestOn {
-			c.Val = e.model.Value(c.Call, c.Band, e.held)
-		} else {
-			c.Val = e.dxValueLocked(c.Call, c.Band)
+	contestOn := e.model != nil
+	evals := map[int64][]award.Hit{}
+	value := func(c *contest.Candidate, mode string) {
+		v := e.valueLocked(c.Call, c.Band, mode)
+		c.Val, c.Priority, c.Awards = v.val, v.prio, v.awards
+		if len(v.needs) > 0 {
+			evals[c.RowID] = v.needs
 		}
 		if c.Val.NewDXCC != nil && e.cfg.Rank != nil {
 			c.Rank, _ = e.cfg.Rank(c.Val.NewDXCC.ADIF)
@@ -360,17 +692,31 @@ func (e *Engine) Compute() bus.ChaseState {
 		return e.dxWorked[store.WorkedKey{Call: contest.NormalizeCall(call), Band: band}]
 	}
 	cands := make([]contest.Candidate, 0, len(e.cands)+len(e.clSpots))
+	e.unqualified = 0
+	buddyOf := map[int64]Buddy{}
+	twinOf := map[int64]string{} // heard row -> call|band of the own-cluster spot that may stand for it
 	for _, r := range e.cands {
+		if !e.passesGate(r) {
+			e.unqualified++
+			continue
+		}
 		c := contest.Candidate{RowID: r.RowID, Band: r.Band, FreqHz: r.FreqHz, Call: strings.ToUpper(strings.TrimSpace(r.Call)),
 			Trusted: r.Trusted, FirstSeen: r.FirstUTC, LastHeard: r.LastUTC, Likelihood: 0, Skipped: e.skipRows[r.RowID]}
 		if c.Call != "" {
-			// a heard station on our own cluster login leaves: its cluster row stands for it
-			// (a station worked on the band has no cluster row, so it stays)
+			if b, ok := e.buddyOfLocked(c.Call); ok {
+				c.Buddy, c.BuddyBoost = true, b.Boost
+				buddyOf[r.RowID] = b
+			}
+			// a heard station on our own cluster login leaves when its cluster row is
+			// listed and stands for it (a station worked on the band has no cluster
+			// row, so it stays); that is only known after ranking, see twinOf
 			onBand := workedOn(c.Call, c.Band)
 			if !onBand && e.spottedLocked(own, c.Call, c.Band, now) {
-				continue
+				twinOf[r.RowID] = key(c.Call, c.Band)
 			}
-			value(&c)
+			// the band plan's mode, not a sideband guess: a mode-sliced award
+			// values a heard CW or data station by its segment, or Unknown
+			value(&c, mode.FromFreq(r.FreqHz))
 			// a spot only bmrec has (its own post, which our login drops as the
 			// operator's, or another node) has no cluster row here: it hides a
 			// station that is not needed, never a needed one
@@ -384,14 +730,16 @@ func (e *Engine) Compute() bus.ChaseState {
 	for _, cs := range e.clSpots {
 		c := contest.Candidate{RowID: cs.rowID, Band: cs.band, FreqHz: cs.freqHz, Call: cs.call, Trusted: true,
 			FirstSeen: cs.first, LastHeard: cs.last}
-		value(&c)
+		if b, ok := e.buddyOfLocked(cs.call); ok {
+			c.Buddy, c.BuddyBoost = true, b.Boost
+			buddyOf[cs.rowID] = b
+		}
+		value(&c, mode.Derive(cs.freqHz, cs.comment))
 		cands = append(cands, c)
 		cluster[cs.rowID] = cs
 	}
 	v := contest.Verdicts{}
-	tag := bus.TagNeed
 	if contestOn {
-		tag = bus.TagMult
 		v.Worked = workedOn
 		v.Handled = func(call, band string) bool { _, ok := e.handled[key(call, band)]; return ok }
 		v.Skipped = func(c contest.Candidate) (bool, bool) {
@@ -406,30 +754,51 @@ func (e *Engine) Compute() bus.ChaseState {
 		}
 	}
 	res := contest.Order(cands, v)
-	st := bus.ChaseState{Seq: e.seq, Activity: e.activity, Ranked: make([]bus.Ranked, 0, len(res.Queue))}
+	st := bus.ChaseState{Seq: e.seq, Activity: e.activityLocked(), BmrecUnqualified: e.unqualified, Ranked: make([]bus.Ranked, 0, len(res.Queue))}
 	if contestOn {
 		st.Contest = &bus.ContestInfo{ID: e.contest.ID, Name: e.contest.Name, StartDate: e.contest.StartDate, QSOs: e.qsos,
 			Unsupported: e.model.Def.UnsupportedSlots()}
 	}
 	e.listed = map[int64]bus.Ranked{}
 	nCluster := 0
+	listedCluster := map[string]bool{}
 	for _, it := range res.Queue {
 		r := bus.Ranked{RowID: it.RowID, Call: it.Call, Band: it.Band, Needed: it.Tier == contest.TierNewMult, OnBand: it.Tier == contest.TierWorked,
-			FreqHz: int64(math.Round(it.FreqHz)), Source: bus.SourceBmrec, Mode: mode.Sideband(it.FreqHz)}
+			FreqHz: int64(math.Round(it.FreqHz)), Source: bus.SourceBmrec, Mode: tuneMode(it.FreqHz)}
+		b, isBuddy := buddyOf[it.RowID]
 		if cs := cluster[it.RowID]; cs != nil {
-			// only needed cluster stations are listed: the cluster is full of the rest
-			if !r.Needed || nCluster >= MaxClusterRows {
-				continue
+			// only needed cluster stations and buddies are listed: the cluster
+			// is full of the rest; buddies do not count against the cap
+			if !isBuddy {
+				if !r.Needed || nCluster >= MaxClusterRows {
+					continue
+				}
+				nCluster++
 			}
-			nCluster++
+			listedCluster[key(cs.call, cs.band)] = true
 			r.Source = bus.SourceCluster
+			r.ClusterName = cs.cluster
 			r.Mode = mode.Derive(cs.freqHz, cs.comment)
-			r.Spot = &bus.ClusterSpot{FreqHz: int64(cs.freqHz), Spotter: cs.spotter, Comment: cs.comment, At: cs.last}
+			r.Spot = &bus.ClusterSpot{FreqHz: int64(cs.freqHz), Spotter: cs.spotter, Comment: cs.comment, At: cs.last, RBN: cs.rbn}
 		}
+		r.Buddy, r.BuddyNote = isBuddy, b.Note
 		if r.Needed {
-			r.Tag = tag
+			r.Tag = bus.TagNeed
+			for _, h := range evals[it.RowID] {
+				r.Needs = append(r.Needs, bus.Need{Award: h.Award, Key: h.Key, Band: h.Band, Mode: h.Mode, Status: string(h.Status)})
+				if h.Award == award.CodeContest {
+					r.Tag = bus.TagMult
+				}
+			}
 		}
 		st.Ranked = append(st.Ranked, r)
+	}
+	// a heard row leaves only when the cluster row that stands for it is listed
+	st.Ranked = slices.DeleteFunc(st.Ranked, func(r bus.Ranked) bool {
+		k, twin := twinOf[r.RowID]
+		return twin && listedCluster[k]
+	})
+	for _, r := range st.Ranked {
 		e.listed[r.RowID] = r
 	}
 	if n := len(e.last); n > 0 {
@@ -448,11 +817,37 @@ func (e *Engine) SetCTY(db *cty.DB) {
 	e.cfg.CTY = db
 }
 
-// ConfirmationsLoaded reports whether Club Log's confirmations are known.
+// ConfirmationsLoaded reports whether any confirmations are known: Club
+// Log's or the station-log view's.
 func (e *Engine) ConfirmationsLoaded() bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	return e.confLoad
+	return e.confLoad || e.logLoad
+}
+
+// AwardProblems lists what leaves an enabled award unable to value stations
+// (every candidate would be Unknown): a field award without a loaded
+// station-log view, and, with dxcc true, DXCC without any confirmations.
+func (e *Engine) AwardProblems(dxcc bool) []string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.dirty {
+		e.rebuildLocked()
+	}
+	var out []string
+	for _, g := range e.static {
+		switch g.ix.Definition().Kind {
+		case award.KindField:
+			if !e.logLoad {
+				out = append(out, "Award "+g.code+" needs station-log: not configured or not loaded, every station stays unknown for it")
+			}
+		case award.KindDXCC:
+			if dxcc && !e.confLoad && !e.logLoad {
+				out = append(out, "DXCC confirmations not loaded yet")
+			}
+		}
+	}
+	return out
 }
 
 // Skip hides the station: in a contest until something new is known about
@@ -493,12 +888,12 @@ func (e *Engine) skip(t bus.Target) (func() error, error) {
 	if err != nil {
 		return nil, err
 	}
-	u := undo{act: e.activity, op: "skip", call: call, band: t.Band, rowID: t.RowID, contestID: e.contest.ID}
+	u := undo{act: e.activityLocked(), op: "skip", call: call, band: t.Band, rowID: t.RowID, contestID: e.contest.ID}
 	var persist func() error
 	switch {
 	case call == "":
 		e.skipRows[t.RowID] = true
-	case e.activity == bus.ActivityContest:
+	case e.model != nil:
 		e.skipped[key(call, t.Band)] = skipMark{trusted: e.trustedLocked(t.RowID)}
 	default:
 		until := NextUTCMidnight(e.cfg.Now())
@@ -527,7 +922,7 @@ func (e *Engine) Handled(t bus.Target) error {
 func (e *Engine) handled1(t bus.Target) (func() error, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if e.activity != bus.ActivityContest {
+	if e.model == nil {
 		return nil, nil
 	}
 	r, ok := e.listed[t.RowID]
@@ -544,7 +939,7 @@ func (e *Engine) handled1(t bus.Target) (func() error, error) {
 		}
 		// a candidate without a callsign that was tuned to: out of the list by row, like a skip
 		e.skipRows[t.RowID] = true
-		e.pushLocked(undo{act: e.activity, op: "skip", band: t.Band, rowID: t.RowID})
+		e.pushLocked(undo{act: e.activityLocked(), op: "skip", band: t.Band, rowID: t.RowID})
 		delete(e.listed, t.RowID)
 		return nil, nil
 	}
@@ -558,7 +953,7 @@ func (e *Engine) handled1(t bus.Target) (func() error, error) {
 		cid, now := e.contest.ID, e.cfg.Now()
 		persist = func() error { return e.cfg.Store.MarkContestHandled(cid, call, t.Band, how, now) }
 	}
-	e.pushLocked(undo{act: e.activity, op: "handled", call: call, band: t.Band, contestID: e.contest.ID})
+	e.pushLocked(undo{act: e.activityLocked(), op: "handled", call: call, band: t.Band, contestID: e.contest.ID})
 	delete(e.listed, t.RowID)
 	return persist, nil
 }

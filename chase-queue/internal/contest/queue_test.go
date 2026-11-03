@@ -116,3 +116,36 @@ func TestOrderWorkedTierBeforeCandidatesAfterUnworked(t *testing.T) {
 		t.Fatalf("got %v want %v", got, want)
 	}
 }
+
+func TestOrderBuddyTierJustBelowNeeded(t *testing.T) {
+	buddy := func(c Candidate, boost int) Candidate { c.Buddy, c.BuddyBoost = true, boost; return c }
+	cands := []Candidate{
+		{RowID: 1, Band: "20m", Call: "DL1AAA", FirstSeen: t0.Add(-9 * time.Minute)}, // plain
+		buddy(Candidate{RowID: 2, Band: "20m", Call: "DL2BBB", FirstSeen: t0}, 0),
+		newMult(3, "EA8A", 1, 200, 5),
+		buddy(Candidate{RowID: 4, Band: "20m", Call: "DL4DDD", FirstSeen: t0}, 9),
+		{RowID: 5, Band: "20m", Call: "DL5EEE", Val: Valuation{Class: ClassUnknown}, FirstSeen: t0.Add(-9 * time.Minute)},
+		buddy(Candidate{RowID: 6, Band: "20m", Call: "K1WRK", FirstSeen: t0}, 99), // worked: stays in the worked tier
+	}
+	r := Order(cands, Verdicts{Worked: func(c, _ string) bool { return c == "K1WRK" }})
+	if want := []int64{3, 4, 2, 5, 1, 6}; !eq(ids(r), want) {
+		t.Fatalf("got %v want %v", ids(r), want)
+	}
+	if r.Queue[1].Tier != TierBuddy || r.Queue[5].Tier != TierWorked {
+		t.Fatalf("%+v", r.Queue)
+	}
+}
+
+func TestOrderBuddyFirstWhenPrioritiesTie(t *testing.T) {
+	a, b, c := newMult(1, "EA8A", 3, 1, 5), newMult(2, "EA8B", 1, 900, 1), newMult(3, "EA8C", 1, 900, 1)
+	b.Buddy, c.Buddy, c.BuddyBoost = true, true, 4
+	// equal priority: boosted buddy, buddy, then the rest by their usual order
+	if got := ids(Order([]Candidate{a, b, c}, Verdicts{})); !eq(got, []int64{3, 2, 1}) {
+		t.Fatalf("ties: %v", got)
+	}
+	// a higher goal priority still wins over a buddy
+	a.Priority = 100
+	if got := ids(Order([]Candidate{a, b, c}, Verdicts{})); !eq(got, []int64{1, 3, 2}) {
+		t.Fatalf("priority: %v", got)
+	}
+}

@@ -423,3 +423,23 @@ func TestPortableHeardCallMatchesPlainWorkedCall(t *testing.T) {
 		t.Fatalf("%+v", r)
 	}
 }
+
+func TestLogConfirmationsValueDXWithoutClubLog(t *testing.T) {
+	e := newDX(t).e
+	e.SetCandidates(bus.CQFinderState{Seq: 1, Rows: []bus.Candidate{
+		{RowID: 1, Call: "EA8XYZ", Band: "20m", FreqHz: 14.2e6}, {RowID: 2, Call: "EA8XYZ", Band: "40m", FreqHz: 7.1e6}}})
+	if st := e.Compute(); st.Ranked[0].Needed {
+		t.Fatal("nothing is valued before any confirmation source loaded")
+	}
+	e.SetLogConfirmations([]store.Confirmation{{DXCC: 29, Band: "20m"}})
+	if !e.ConfirmationsLoaded() {
+		t.Fatal("the log view counts as loaded")
+	}
+	needed := map[int64]bool{}
+	for _, r := range e.Compute().Ranked {
+		needed[r.RowID] = r.Needed
+	}
+	if needed[1] || !needed[2] {
+		t.Fatalf("20m confirmed in the log, 40m open: %v", needed)
+	}
+}

@@ -266,21 +266,219 @@ func TestQRZPasswordHygiene(t *testing.T) {
 
 func TestClusterSpotFiltersAndProblem(t *testing.T) {
 	s := newSvc(t)
-	s.cfg.Cluster.Call = "DL9ET"
+	cc := config.ClusterConf{Name: "log4om", Address: "127.0.0.1:1", Call: "DL9ET"}
 	s.eng.SetConfirmations(nil)
 	at := time.Now()
-	s.onClusterSpot(cluster.Spot{Spotter: "DL1ABC-#", Call: "EA8AAA", Band: "20m", FreqHz: 14025000, At: at}) // skimmer
-	s.onClusterSpot(cluster.Spot{Spotter: "DL9ET", Call: "EA8BBB", Band: "20m", FreqHz: 14026000, At: at})    // own spot
-	s.onClusterSpot(cluster.Spot{Spotter: "SP5XYZ", Call: "EA8CCC", Band: "20m", FreqHz: 14027000, At: at})
+	s.onClusterSpot(cc, cluster.Spot{Spotter: "DL1ABC-#", Call: "EA8AAA", Band: "20m", FreqHz: 14025000, At: at}) // skimmer
+	s.onClusterSpot(cc, cluster.Spot{Spotter: "DL9ET", Call: "EA8BBB", Band: "20m", FreqHz: 14026000, At: at})    // own spot
+	s.onClusterSpot(cc, cluster.Spot{Spotter: "SP5XYZ", Call: "EA8CCC", Band: "20m", FreqHz: 14027000, At: at})
 	st := s.compute()
-	if len(st.Ranked) != 1 || st.Ranked[0].Call != "EA8CCC" || st.Ranked[0].Source != bus.SourceCluster {
+	if len(st.Ranked) != 1 || st.Ranked[0].Call != "EA8CCC" || st.Ranked[0].Source != bus.SourceCluster || st.Ranked[0].ClusterName != "log4om" {
 		t.Fatalf("%+v", st.Ranked)
 	}
-	s.dxc = &cluster.Client{Addr: "127.0.0.1:1", Call: "DL9ET", Now: func() time.Time { return time.Now().Add(-2 * time.Minute) }}
+	late := func() time.Time { return time.Now().Add(-2 * time.Minute) }
+	s.dxc = []*clusterLogin{{conf: cc, client: &cluster.Client{Addr: cc.Address, Call: cc.Call, Now: late}}}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	s.dxc.Run(ctx, nil) // records "disconnected since" two minutes ago, then stops
-	if !strings.Contains(strings.Join(s.compute().Problems, "|"), "DX cluster not connected") {
+	s.dxc[0].client.Run(ctx, nil) // records "disconnected since" two minutes ago, then stops
+	if !strings.Contains(strings.Join(s.compute().Problems, "|"), "DX cluster log4om not connected") {
 		t.Fatal("cluster problem not reported")
+	}
+}
+
+func TestSeveralClustersRBNAndProblems(t *testing.T) {
+	s := newSvc(t)
+	s.eng.SetConfirmations(nil)
+	human := config.ClusterConf{Name: "log4om", Address: "127.0.0.1:1", Call: "DL9ET"}
+	rbn := config.ClusterConf{Name: "rbn", Address: "127.0.0.1:2", Call: "DL9ET", Skimmer: true}
+	at := time.Now()
+	s.onClusterSpot(human, cluster.Spot{Spotter: "DL1ABC-#", Call: "EA8AAA", Band: "20m", FreqHz: 14025000, At: at}) // skimmer on a cluster without skimmer
+	s.onClusterSpot(rbn, cluster.Spot{Spotter: "DL1ABC-#", Call: "EA8AAA", Band: "20m", FreqHz: 14025000, At: at})
+	s.onClusterSpot(human, cluster.Spot{Spotter: "SP5XYZ", Call: "EA8CCC", Band: "20m", FreqHz: 14027000, At: at})
+	rows := map[string]bus.Ranked{}
+	for _, r := range s.compute().Ranked {
+		rows[r.Call] = r
+	}
+	if r := rows["EA8AAA"]; r.ClusterName != "rbn" || r.Spot == nil || !r.Spot.RBN {
+		t.Fatalf("%+v", r)
+	}
+	if r := rows["EA8CCC"]; r.ClusterName != "log4om" || r.Spot.RBN {
+		t.Fatalf("%+v", r)
+	}
+	late := func() time.Time { return time.Now().Add(-2 * time.Minute) }
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	for _, cc := range []config.ClusterConf{human, rbn} {
+		l := &clusterLogin{conf: cc, client: &cluster.Client{Addr: cc.Address, Call: cc.Call, Now: late}}
+		l.client.Run(ctx, nil)
+		s.dxc = append(s.dxc, l)
+	}
+	p := strings.Join(s.compute().Problems, "|")
+	if !strings.Contains(p, "DX cluster log4om not connected") || !strings.Contains(p, "DX cluster rbn not connected") {
+		t.Fatal(p)
+	}
+}
+
+func TestBmrecGateFromConfigAndProblem(t *testing.T) {
+	s := newSvc(t)
+	s.eng.SetConfirmations(nil)
+	trusted, plain := row(1, "EA8XYZ"), row(2, "EA8ABC")
+	trusted.Trusted, plain.Trusted = true, false
+	s.onCandidates(state(1, trusted, plain))
+	st := s.compute()
+	if len(st.Ranked) != 1 || st.Ranked[0].RowID != 1 || st.BmrecUnqualified != 1 {
+		t.Fatalf("default gate is trusted: %+v %d", st.Ranked, st.BmrecUnqualified)
+	}
+	s.eng.SetBmrecGate(config.GateQualified)
+	s.onCandidates(state(2, trusted, plain))
+	st = s.compute()
+	if len(st.Ranked) != 0 || st.BmrecUnqualified != 2 || !strings.Contains(strings.Join(st.Problems, "|"), "bmrec sends no qualified flag") {
+		t.Fatalf("%+v %d %v", st.Ranked, st.BmrecUnqualified, st.Problems)
+	}
+}
+
+func TestBuddiesFromConfig(t *testing.T) {
+	dir := t.TempDir()
+	cfg := config.Defaults()
+	cfg.DataDir = dir
+	cfg.Bmrec.Gate = config.GateOff
+	cfg.Buddies = []config.BuddyConf{{Call: "EA8XYZ", Note: "Pedro", Boost: 2}}
+	st, err := store.Open(filepath.Join(dir, "q.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	s := New(cfg, st, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	s.onCandidates(state(1, row(1, "EA8XYZ")))
+	got := s.compute().Ranked
+	if len(got) != 1 || !got[0].Buddy || got[0].BuddyNote != "Pedro" {
+		t.Fatalf("%+v", got)
+	}
+}
+
+// fakeStationLog serves /v1/worked from the given body; down makes it fail.
+func fakeStationLog(t *testing.T, body string, down *bool) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if *down {
+			http.Error(w, "down", http.StatusServiceUnavailable)
+			return
+		}
+		io.WriteString(w, body)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func svcWithStationLog(t *testing.T, url string) *Service {
+	t.Helper()
+	s := newSvc(t)
+	cfg := s.cfg
+	cfg.StationLog = config.StationLogConf{URL: url, OwnCall: "DL9ET", Station: "hf", Slot: "station-log", ReloadMinutes: 5}
+	cfg.Log4OM = config.Log4OMUDP{Listen: "127.0.0.1:0", AllowFrom: []string{"127.0.0.1"}}
+	s2 := New(cfg, s.st, s.log)
+	s2.eng.SetConfirmations(nil)
+	return s2
+}
+
+func TestStationLogViewFeedsWorkedAndConfirmed(t *testing.T) {
+	down := false
+	srv := fakeStationLog(t, `{"worked":[
+	 {"call":"EA8XYZ","band":"20m","mode_class":"cw","mode":"CW","at":"2025-05-01T10:00:00Z","confirmed":true,"dxcc":29},
+	 {"call":"K1ABC","band":"20m","mode_class":"phone","mode":"SSB","at":"2025-04-01T10:00:00Z"}]}`, &down)
+	s := svcWithStationLog(t, srv.URL)
+	if s.l4 != nil {
+		t.Fatal("the Log4OM listener must stay off when station-log owns the feed")
+	}
+	// the local log says K1ABC was never worked on 20m; the view must win once loaded
+	s.st.AddLogQSOs([]store.LogQSO{{Source: store.SourceLog4OM, Call: "W1AW", Band: "20m", Mode: "CW", At: time.Now()}})
+	s.onCandidates(state(1, row(1, "EA8XYZ"), row(2, "K1ABC"), row(3, "W1AW")))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go s.view.Run(ctx)
+	go s.syncLogView(ctx)
+	deadline := time.Now().Add(5 * time.Second)
+	var st bus.ChaseState
+	for time.Now().Before(deadline) {
+		st = s.compute()
+		if s.view.Loaded() && s.eng.ConfirmationsLoaded() && len(st.Ranked) == 3 && st.Ranked[2].OnBand {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	by := map[string]bus.Ranked{}
+	for _, r := range st.Ranked {
+		by[r.Call] = r
+	}
+	if r := by["EA8XYZ"]; r.Needed || r.Worked == nil || !r.Worked.ThisBand || r.Worked.QSOs != 1 {
+		t.Fatalf("EA8XYZ confirmed on 20m must be listed, not needed: %+v %+v", r, r.Worked)
+	}
+	if r := by["K1ABC"]; r.Worked == nil || !r.Worked.ThisBand {
+		t.Fatalf("K1ABC worked in the view: %+v", r)
+	}
+	if r := by["W1AW"]; r.Worked != nil || r.OnBand {
+		t.Fatalf("the local log is not used once the view loaded: %+v", r)
+	}
+	for _, p := range st.Problems {
+		if strings.Contains(p, "Log4OM") || strings.Contains(p, "station-log") {
+			t.Fatalf("unexpected problem %q", p)
+		}
+	}
+	// an event for a new QSO reaches the engine
+	s.view.Apply([]byte(`{"id":"5","action":"added","qso":{"own_call":"DL9ET","call":"W1AW","band":"20m","mode":"CW","mode_class":"cw","at":"2025-07-01T10:00:00Z","updated":"2025-07-01T10:00:01Z"}}`))
+	onBand := func() bool {
+		for _, r := range s.compute().Ranked {
+			if r.Call == "W1AW" && r.OnBand && r.Worked != nil {
+				return true
+			}
+		}
+		return false
+	}
+	for time.Now().Before(deadline) && !onBand() {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if !onBand() {
+		t.Fatal("event not applied")
+	}
+}
+
+func TestStationLogUnreachableFallsBackAndReports(t *testing.T) {
+	down := true
+	srv := fakeStationLog(t, `{"worked":[]}`, &down)
+	s := svcWithStationLog(t, srv.URL)
+	s.st.AddLogQSOs([]store.LogQSO{{Source: store.SourceLog4OM, Call: "W1AW", Band: "40m", Mode: "CW", At: time.Now()}})
+	if err := s.view.Load(context.Background()); err == nil {
+		t.Fatal("must fail while down")
+	}
+	s.onCandidates(state(1, row(1, "W1AW")))
+	st := s.compute()
+	if len(st.Ranked) != 1 || st.Ranked[0].Worked == nil || st.Ranked[0].Worked.Bands[0] != "40m" {
+		t.Fatalf("local log is the interim history: %+v", st.Ranked)
+	}
+	found := false
+	for _, p := range st.Problems {
+		found = found || strings.HasPrefix(p, "station-log not reachable")
+	}
+	if !found {
+		t.Fatalf("%v", st.Problems)
+	}
+	down = false
+	if err := s.view.Load(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range s.compute().Problems {
+		if strings.Contains(p, "station-log") {
+			t.Fatal(p)
+		}
+	}
+}
+
+func TestWithoutStationLogLog4OMStaysOn(t *testing.T) {
+	s := newSvc(t)
+	cfg := s.cfg
+	cfg.Log4OM = config.Log4OMUDP{Listen: "127.0.0.1:0", AllowFrom: []string{"127.0.0.1"}}
+	s2 := New(cfg, s.st, s.log)
+	if s2.view != nil || s2.l4 == nil {
+		t.Fatal("without [station_log] the Log4OM listener and local log stay")
 	}
 }

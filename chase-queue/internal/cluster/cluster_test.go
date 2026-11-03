@@ -19,7 +19,13 @@ func TestParse(t *testing.T) {
 	if !ok || !s.Skimmer() || s.Call != "EA8/DL2XX" || s.Band != "40m" {
 		t.Fatalf("%+v", s)
 	}
-	for _, l := range []string{"DX de K1ABC: 144300.0 W1AW FM 1200Z", "WWV de VE7CC <18>: SFI=150", "To ALL de DL1ABC: hi", ""} {
+	// 6 m, 2 m and 70 cm are in the band table now
+	for l, want := range map[string]string{"DX de K1ABC: 50313.0 W1AW FT8 1200Z": "6m", "DX de K1ABC: 144300.0 W1AW 1200Z": "2m", "DX de K1ABC: 432200.0 W1AW 1200Z": "70cm"} {
+		if v, ok := Parse(l, now); !ok || v.Band != want {
+			t.Errorf("%q: %+v %v", l, v, ok)
+		}
+	}
+	for _, l := range []string{"DX de K1ABC: 1296100.0 W1AW 1200Z", "DX de K1ABC: 10130.0 W1AW 1200Z", "WWV de VE7CC <18>: SFI=150", "To ALL de DL1ABC: hi", ""} {
 		if _, ok := Parse(l, now); ok {
 			t.Errorf("parsed %q", l)
 		}

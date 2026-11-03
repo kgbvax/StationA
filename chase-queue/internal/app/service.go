@@ -23,6 +23,7 @@ import (
 	sharedmqtt "codeberg.org/kgbvax/stationa/shared/mqtt"
 	"codeberg.org/kgbvax/stationa/shared/schema"
 
+	"chase-queue/internal/award"
 	"chase-queue/internal/bus"
 	"chase-queue/internal/callbook"
 	"chase-queue/internal/calls"
@@ -34,6 +35,7 @@ import (
 	"chase-queue/internal/dxlog"
 	"chase-queue/internal/engine"
 	"chase-queue/internal/log4om"
+	"chase-queue/internal/logview"
 	"chase-queue/internal/qrz"
 	"chase-queue/internal/store"
 )
@@ -54,16 +56,19 @@ type Service struct {
 	l4    *log4om.Listener
 	cl    *clublog.Confirmations
 	book  *callbook.Book  // nil without a QRZ login
-	dxc   *cluster.Client // nil without a cluster login
+	dxc   []*clusterLogin // the enabled [[cluster]] logins
+	view  *logview.View   // nil without [station_log]: Log4OM + local log then
 
 	jobs  chan func() // /cmd work
 	dirty chan struct{}
 
-	candMu    sync.Mutex // the newest candidate state; older ones are dropped, never queued
-	candRaw   []byte
-	candSig   chan struct{}
-	uploadSem chan struct{}
-	clientMu  sync.Mutex
+	candMu     sync.Mutex // the newest candidate state; older ones are dropped, never queued
+	candRaw    []byte
+	candSig    chan struct{}
+	uploadSem  chan struct{}
+	clientMu   sync.Mutex
+	awardCodes []string // the loaded award definitions, for /meta
+	awardErr   error    // the award definitions or goals are unusable: Run refuses to start
 
 	switchMu      sync.Mutex
 	mu            sync.Mutex // guards the fields below
@@ -79,9 +84,15 @@ type Service struct {
 	reloadPending atomic.Bool
 
 	client   pahomqtt.Client
-	topics   struct{ meta, state, status, cmd, finder, finderStatus string }
+	topics   struct{ meta, state, status, cmd, finder, finderStatus, logEvent string }
 	lastPub  []byte      // publisher goroutine only
 	forcePub atomic.Bool // set on (re)connect: publish even if unchanged
+}
+
+// clusterLogin is one DX-cluster connection with its configuration.
+type clusterLogin struct {
+	conf   config.ClusterConf
+	client *cluster.Client
 }
 
 // New builds a service on an open store.
@@ -94,7 +105,8 @@ func New(cfg config.Config, st *store.Store, log *slog.Logger) *Service {
 	}
 	s.cty.Store(db)
 	s.ranks = clublog.New("", st, log)
-	s.eng = engine.New(engine.Config{Store: st, CTY: db, Rank: s.ranks.Rank})
+	s.eng = engine.New(engine.Config{Store: st, CTY: db, Rank: s.ranks.Rank, State: s.callbookState})
+	s.awardErr = s.loadAwards()
 	site := cfg.MQTT.Site
 	s.topics.meta = schema.MetaTopic(site, cfg.Slot.Station, cfg.Slot.Slot)
 	s.topics.state = schema.StateTopic(site, cfg.Slot.Station, cfg.Slot.Slot)
@@ -113,12 +125,25 @@ func New(cfg config.Config, st *store.Store, log *slog.Logger) *Service {
 				return *p, true
 			}}, log)
 	}
-	if cfg.Log4OM.Listen != "" {
+	if cfg.StationLog.Enabled() {
+		s.view = logview.New(logview.Config{URL: cfg.StationLog.URL, Own: cfg.StationLog.OwnCall,
+			Reload: time.Duration(cfg.StationLog.ReloadMinutes) * time.Minute}, log)
+		s.topics.logEvent = schema.SiblingTopic(site, cfg.StationLog.Station, cfg.StationLog.Slot, "event")
+		if cfg.Log4OM.Listen != "" {
+			log.Warn("log4om.listen ignored: station-log owns the Log4OM feed (remove the [log4om] section)")
+		}
+	} else if cfg.Log4OM.Listen != "" {
 		s.l4 = log4om.New(cfg.Log4OM.Listen, config.Prefixes(cfg.Log4OM.AllowFrom), log)
 	}
-	if cfg.Cluster.Address != "" {
-		s.dxc = &cluster.Client{Addr: cfg.Cluster.Address, Call: cfg.Cluster.Call}
+	for _, cc := range cfg.Cluster.Active() {
+		s.dxc = append(s.dxc, &clusterLogin{conf: cc, client: &cluster.Client{Addr: cc.Address, Call: cc.Call}})
 	}
+	s.eng.SetBmrecGate(cfg.Bmrec.Gate)
+	buddies := make([]engine.Buddy, 0, len(cfg.Buddies))
+	for _, b := range cfg.Buddies {
+		buddies = append(buddies, engine.Buddy{Call: b.Call, Note: b.Note, Boost: b.Boost})
+	}
+	s.eng.SetBuddies(buddies)
 	if cfg.QRZ.Enabled() {
 		s.book = callbook.New(callbook.Config{
 			Looker:  &qrz.Client{User: cfg.QRZ.User, Password: cfg.QRZ.Password, Agent: "chase-queue"},
@@ -145,6 +170,9 @@ func (s *Service) poke() {
 
 // Run serves until ctx ends.
 func (s *Service) Run(ctx context.Context) error {
+	if s.awardErr != nil {
+		return s.awardErr
+	}
 	if err := os.MkdirAll(filepath.Join(s.cfg.DataDir, contestDirName), 0o750); err != nil {
 		return err
 	}
@@ -178,14 +206,18 @@ func (s *Service) Run(ctx context.Context) error {
 		})
 		spawn(func() { s.consumeLog4OM(ctx) })
 	}
+	if s.view != nil {
+		spawn(func() { s.view.Run(ctx) })
+		spawn(func() { s.syncLogView(ctx) })
+	}
 	if s.cl != nil {
 		spawn(func() { s.refreshConfirmations(ctx) })
 	}
 	if s.book != nil {
 		spawn(func() { s.book.Run(ctx) })
 	}
-	if s.dxc != nil {
-		spawn(func() { s.dxc.Run(ctx, s.onClusterSpot) })
+	for _, c := range s.dxc {
+		spawn(func() { c.client.Run(ctx, func(sp cluster.Spot) { s.onClusterSpot(c.conf, sp) }) })
 	}
 	spawn(func() { s.refreshCTY(ctx) })
 	spawn(func() { s.publisher(ctx) })
@@ -221,6 +253,37 @@ func (s *Service) Run(ctx context.Context) error {
 	return runErr
 }
 
+// loadAwards reads the award definitions once and hands them and the goals to
+// the engine.
+func (s *Service) loadAwards() error {
+	cat, err := award.LoadDir(s.cfg.AwardsDir())
+	if err != nil {
+		return err
+	}
+	goals := make([]engine.Goal, 0, len(s.cfg.Goals))
+	for _, g := range s.cfg.Goals {
+		goals = append(goals, engine.Goal{Award: g.Award, Priority: g.Priority, Enabled: g.IsEnabled()})
+	}
+	if err := s.eng.SetAwards(cat, goals); err != nil {
+		return err
+	}
+	s.awardCodes = append(cat.Codes(), award.CodeContest)
+	s.log.Info("awards loaded", "awards", cat.Codes(), "goals", len(goals), "dir", s.cfg.AwardsDir())
+	return nil
+}
+
+// callbookState is the callbook's state for a call, "" without a callbook
+// entry; a missing entry is looked up in the background.
+func (s *Service) callbookState(call string) string {
+	if s.book == nil {
+		return ""
+	}
+	if i := s.book.Info(call); i != nil {
+		return i.State
+	}
+	return ""
+}
+
 // loadHistory restores the worked log, confirmations and DX skips.
 func (s *Service) loadHistory() error {
 	w, err := s.st.WorkedSet()
@@ -238,6 +301,29 @@ func (s *Service) loadHistory() error {
 		s.eng.SetDXSkips(ks)
 	}
 	return nil
+}
+
+// syncLogView pushes the log view into the engine after it changed. An import
+// sends one event per QSO, so changes are coalesced for a moment.
+func (s *Service) syncLogView(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-s.view.Changes():
+		}
+		time.Sleep(200 * time.Millisecond)
+		select {
+		case <-s.view.Changes():
+		default:
+		}
+		if !s.view.Loaded() {
+			continue
+		}
+		s.eng.SetDXWorked(s.view.Worked())
+		s.eng.SetLogEntries(s.view.Entries())
+		s.poke()
+	}
 }
 
 func (s *Service) consumeLog4OM(ctx context.Context) {
@@ -369,13 +455,20 @@ func (s *Service) problems(st bus.ChaseState) []string {
 	if seen.IsZero() || s.now().Sub(seen) > 2*time.Minute {
 		out = append(out, "No candidates from bmrec")
 	}
+	if s.view != nil {
+		if p := s.view.Problem(); p != "" {
+			out = append(out, p)
+		}
+	}
 	if _, err := os.Stat(filepath.Join(s.cfg.DataDir, "cty.csv")); err != nil || s.cty.Load() == nil {
 		out = append(out, "cty.dat or cty.csv missing: entities cannot be told")
 	}
 	if st.Activity == bus.ActivityDX {
 		switch cl {
 		case "no token":
-			out = append(out, "Club Log: no token configured")
+			if s.view == nil || !s.view.Loaded() {
+				out = append(out, "Club Log: no token configured")
+			}
 		case "token rejected":
 			out = append(out, "Club Log rejected the token")
 		case "", "failed", "failed: rate limited":
@@ -387,6 +480,7 @@ func (s *Service) problems(st bus.ChaseState) []string {
 		l4Err := s.l4Err
 		s.mu.Unlock()
 		switch {
+		case s.view != nil: // station-log owns the feed
 		case s.l4 == nil:
 			out = append(out, "Log4OM feed not configured: worked stations are not tracked live")
 		case l4Err != "":
@@ -399,17 +493,23 @@ func (s *Service) problems(st bus.ChaseState) []string {
 	} else if st.Contest != nil && st.Contest.QSOs == 0 {
 		out = append(out, "No QSOs from DXLog yet")
 	}
+	// the DX branch reports the DXCC confirmations itself; in a contest the
+	// DXCC goal still values every station
+	out = append(out, s.eng.AwardProblems(st.Activity != bus.ActivityDX)...)
 	if !s.ranks.Loaded() {
 		out = append(out, "Club Log Most Wanted not loaded: no rarity order")
 	}
-	if s.dxc != nil {
-		if cs := s.dxc.State(); !cs.Connected && s.now().Sub(cs.Since) > time.Minute {
-			p := "DX cluster not connected"
+	for _, c := range s.dxc {
+		if cs := c.client.State(); !cs.Connected && s.now().Sub(cs.Since) > time.Minute {
+			p := "DX cluster " + c.conf.Name + " not connected"
 			if cs.LastError != "" {
 				p += ": " + cs.LastError
 			}
 			out = append(out, p)
 		}
+	}
+	if p := s.eng.GateProblem(); p != "" {
+		out = append(out, p)
 	}
 	if s.book != nil {
 		if p := s.book.Problem(); p != "" {
@@ -428,16 +528,18 @@ func (s *Service) compute() bus.ChaseState {
 	return st
 }
 
-// onClusterSpot takes one spot of the cluster login. Skimmer spots (unless
-// configured) and the operator's own spots are dropped.
-func (s *Service) onClusterSpot(sp cluster.Spot) {
-	if sp.Skimmer() && !s.cfg.Cluster.Skimmer {
+// onClusterSpot takes one spot of a cluster login. Skimmer spots (unless that
+// cluster is configured with skimmer = true) and the operator's own spots
+// (the login call of that cluster) are dropped.
+func (s *Service) onClusterSpot(cc config.ClusterConf, sp cluster.Spot) {
+	if sp.Skimmer() && !cc.Skimmer {
 		return
 	}
-	if calls.SameStation(strings.TrimSuffix(sp.Spotter, "-#"), s.cfg.Cluster.Call) {
+	if calls.SameStation(strings.TrimSuffix(sp.Spotter, "-#"), cc.Call) {
 		return
 	}
-	s.eng.AddClusterSpot(engine.ClusterSpot{Call: sp.Call, Band: sp.Band, Spotter: sp.Spotter, Comment: sp.Comment, FreqHz: sp.FreqHz, At: sp.At})
+	s.eng.AddClusterSpot(engine.ClusterSpot{Call: sp.Call, Band: sp.Band, Spotter: sp.Spotter, Comment: sp.Comment, FreqHz: sp.FreqHz, At: sp.At,
+		Cluster: cc.Name, RBN: sp.Skimmer()})
 	s.poke()
 }
 
@@ -456,9 +558,19 @@ func (s *Service) enrich(st *bus.ChaseState) {
 			}
 		}
 	}
-	worked, err := s.st.WorkedBefore(calls)
-	if err != nil {
-		s.log.Warn("reading worked-before failed", "err", err)
+	var worked map[string]*bus.WorkedBefore
+	if s.view != nil && s.view.Loaded() {
+		worked = map[string]*bus.WorkedBefore{}
+		for _, c := range calls {
+			if w := s.view.Summary(c); w != nil {
+				worked[c] = w
+			}
+		}
+	} else {
+		var err error
+		if worked, err = s.st.WorkedBefore(calls); err != nil {
+			s.log.Warn("reading worked-before failed", "err", err)
+		}
 	}
 	for i := range st.Ranked {
 		r := &st.Ranked[i]

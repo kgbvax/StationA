@@ -1,0 +1,25 @@
+# Worked All States as an award definition (copy into the awards directory,
+# default /var/lib/chase-queue/awards, then enable it with a [[goal]]).
+# `chase-queue -import-award-xml award_WAS.xml` makes such a file from a
+# Log4OM export. Each [[award.config]] is a named variant: it becomes an award
+# of its own, "WAS-20-CW", that a goal can name.
+
+[[award]]
+code  = "WAS"
+name  = "Worked All States"
+kind  = "field"
+field = "STATE"                 # the key: the station's state (log, else QRZ.com)
+rule  = "confirmed"             # or "worked"
+dxcc  = [6, 110, 291]           # Alaska, Hawaii, United States
+per_band = false                # one slot per state over all bands; true = a slot per band
+items = ["AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA", "HI", "ID", "IL", "IN", "IA", "KS", "KY", "LA", "ME", "MD", "MA", "MI", "MN", "MS", "MO", "MT", "NE", "NV", "NH", "NJ", "NM", "NY", "NC", "ND", "OH", "OK", "OR", "PA", "RI", "SC", "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY"]
+
+  [[award.config]]
+  name  = "20-CW"
+  bands = ["20m"]
+  modes = ["cw"]
+
+  [[award.config]]
+  name  = "40-phone"
+  bands = ["40m"]
+  modes = ["phone"]

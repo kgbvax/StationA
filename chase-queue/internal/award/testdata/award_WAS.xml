@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- synthetic, shaped after Log4OM's award_WAS.xml: header, items, configurations -->
+<AwardDefinition>
+  <AwardName>WAS</AwardName>
+  <AwardType>QSOFIELDS</AwardType>
+  <QsoField>State</QsoField>
+  <ConfirmationMethod>LOTW,QSL</ConfirmationMethod>
+  <AllowedDxcc>
+    <int>6</int>
+    <int>291</int>
+    <int>110</int>
+  </AllowedDxcc>
+  <Items>
+    <Item><Code>AL</Code><Name>Alabama</Name></Item>
+    <Item><Code>AK</Code><Name>Alaska</Name></Item>
+    <Item><Code>CA</Code><Name>California</Name></Item>
+    <Item><Code>NY</Code><Name>New York</Name></Item>
+  </Items>
+  <AwardConfigurations>
+    <AwardConfiguration>
+      <Name>20-CW</Name>
+      <Bands><string>20m</string></Bands>
+      <Modes><string>CW</string></Modes>
+    </AwardConfiguration>
+    <AwardConfiguration>
+      <Name>10-FT8</Name>
+      <Bands><string>10m</string></Bands>
+      <Modes><string>FT8</string><string>FT4</string></Modes>
+      <Continents><string>NA</string></Continents>
+    </AwardConfiguration>
+    <AwardConfiguration>
+      <Name>Mixed SSB</Name>
+      <Modes><string>SSB</string><string>USB</string></Modes>
+    </AwardConfiguration>
+  </AwardConfigurations>
+</AwardDefinition>

@@ -71,7 +71,10 @@ func (s *Service) SwitchDX() error {
 	s.actID.Store(0)
 	s.eng.ActivateDX()
 	// the contest's QSOs count as worked in DX from now on
-	if w, err := s.st.WorkedSet(); err == nil {
+	if s.view != nil && s.view.Loaded() {
+		// station-log is the history source: the local store gets no live QSOs
+		s.eng.SetDXWorked(s.view.Worked())
+	} else if w, err := s.st.WorkedSet(); err == nil {
 		s.eng.SetDXWorked(w)
 	} else {
 		s.log.Warn("reloading the worked set failed", "err", err)

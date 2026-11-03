@@ -7,11 +7,14 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -19,6 +22,7 @@ import (
 	"codeberg.org/kgbvax/stationa/shared/logging"
 
 	"chase-queue/internal/app"
+	"chase-queue/internal/award"
 	"chase-queue/internal/clublog"
 	"chase-queue/internal/config"
 	"chase-queue/internal/qrz"
@@ -31,7 +35,12 @@ func main() {
 	check := fs.Bool("check", false, "validate the config, print it redacted, exit")
 	probe := fs.Bool("clublog-probe", false, "fetch the Club Log matrix once and print how many cells carry each status value, then exit")
 	qrzLookup := fs.String("qrz-lookup", "", "look one callsign up on QRZ.com with the configured login, print the entry, exit")
+	importXML := fs.String("import-award-xml", "", "convert a Log4OM award XML export (QSOFIELDS) into a definition file on stdout, then exit; REFERENCE awards are deferred")
 	_ = fs.Parse(os.Args[1:])
+
+	if *importXML != "" {
+		os.Exit(importAwardXML(*importXML, os.Stdout, os.Stderr))
+	}
 
 	cfg, err := config.Load(flags)
 	if err != nil {
@@ -41,8 +50,17 @@ func main() {
 	if *check {
 		fmt.Printf("slot %s/%s/%s  broker %s  data %s  http %s\n", cfg.MQTT.Site, cfg.Slot.Station, cfg.Slot.Slot, cfg.MQTT.Broker, cfg.DataDir, cfg.HTTP.Listen)
 		fmt.Printf("dxlog %q  log4om %q  clublog call %q token set %v\n", cfg.Contest.Listen, cfg.Log4OM.Listen, cfg.ClubLog.Call, cfg.ClubLog.Token != "")
-		fmt.Printf("cluster %q  call %q  skimmer %v\n", cfg.Cluster.Address, cfg.Cluster.Call, cfg.Cluster.Skimmer)
+		for _, c := range cfg.Cluster {
+			fmt.Printf("cluster %q  address %q  call %q  skimmer %v  enabled %v\n", c.Name, c.Address, c.Call, c.Skimmer, c.IsEnabled())
+		}
+		fmt.Printf("bmrec gate %s  buddies %d\n", cfg.Bmrec.Gate, len(cfg.Buddies))
 		fmt.Printf("qrz user %q  password set %v  refresh %d days\n", cfg.QRZ.User, cfg.QRZ.Password != "", cfg.QRZ.RefreshDays)
+		cat, err := award.LoadDir(cfg.AwardsDir())
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "chase-queue: %v\n", err)
+			os.Exit(2)
+		}
+		fmt.Printf("awards dir %s  awards %v  goals %d\n", cfg.AwardsDir(), cat.Codes(), len(cfg.Goals))
 		fmt.Println("config check OK")
 		return
 	}
@@ -112,4 +130,41 @@ func newLogger(level string) *slog.Logger {
 	}
 	h := logging.NewHandler(os.Stderr, &slog.HandlerOptions{Level: lv})
 	return slog.New(h).With("component", "chase-queue")
+}
+
+// importAwardXML prints the definition file for a Log4OM award export; it
+// returns the exit code: 0 done, 1 unreadable or unusable, 3 a REFERENCE
+// award (deferred).
+func importAwardXML(path string, stdout, stderr io.Writer) int {
+	f, err := os.Open(path)
+	if err != nil {
+		fmt.Fprintf(stderr, "chase-queue: %v\n", err)
+		return 1
+	}
+	defer f.Close()
+	def, notes, err := award.ImportXML(f)
+	if errors.Is(err, award.ErrDeferred) {
+		fmt.Fprintf(stderr, "chase-queue: deferred: %v\n", err)
+		return 3
+	}
+	if err != nil {
+		fmt.Fprintf(stderr, "chase-queue: %v\n", err)
+		return 1
+	}
+	// the same checks the service makes at start
+	if err := award.NewCatalog().Add(def); err != nil {
+		fmt.Fprintf(stderr, "chase-queue: the imported award is not usable: %v\n", err)
+		return 1
+	}
+	out, err := award.EncodeTOML(def)
+	if err != nil {
+		fmt.Fprintf(stderr, "chase-queue: %v\n", err)
+		return 1
+	}
+	fmt.Fprintf(stdout, "# imported from %s; put it into the awards directory, then add a [[goal]]\n", filepath.Base(path))
+	for _, n := range notes {
+		fmt.Fprintf(stdout, "# note: %s\n", n)
+	}
+	_, _ = stdout.Write(out)
+	return 0
 }

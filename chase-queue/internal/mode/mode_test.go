@@ -8,7 +8,7 @@ func TestSideband(t *testing.T) {
 		want string
 	}{
 		{1_850_000, LSB}, {3_700_000, LSB}, {5_360_000, USB}, {7_100_000, LSB}, {9_999_000, LSB},
-		{10_100_000, USB}, {14_250_000, USB}, {28_500_000, USB}, {0, ""},
+		{10_100_000, USB}, {14_250_000, USB}, {28_500_000, USB}, {50_150_000, USB}, {144_300_000, ""}, {0, ""},
 	} {
 		if got := Sideband(c.hz); got != c.want {
 			t.Errorf("Sideband(%.0f) = %q, want %q", c.hz, got, c.want)
@@ -32,6 +32,7 @@ func TestFromFreq(t *testing.T) {
 		{"15 cw", 21_030_000, CW}, {"15 ft8", 21_074_000, Data}, {"15 ft4", 21_140_000, Data}, {"15 mixed", 21_125_000, ""}, {"15 phone", 21_300_000, USB},
 		{"12 cw", 24_900_000, CW}, {"12 ft8", 24_915_000, Data}, {"12 digital", 24_925_000, Data}, {"12 phone", 24_950_000, USB},
 		{"10 cw", 28_030_000, CW}, {"10 ft8", 28_074_000, Data}, {"10 digital", 28_120_000, Data}, {"10 beacons", 28_200_000, ""}, {"10 phone", 28_500_000, USB}, {"10 fm segments", 29_600_000, FM}, {"10 fm simplex", 29_150_000, FM}, {"10 low phone", 28_500_000, USB},
+		{"6m ft8", 50_313_000, Data}, {"6m plan not modelled", 50_150_000, ""}, {"2m ft8", 144_174_000, Data}, {"2m unknown", 145_500_000, ""}, {"70cm unknown", 432_200_000, ""},
 		{"out of band", 12_000_000, ""}, {"zero", 0, ""},
 	} {
 		if got := FromFreq(c.hz); got != c.want {
@@ -65,6 +66,9 @@ func TestDerive(t *testing.T) {
 		{"no keyword uses plan", 14_030_000, "tnx 5/9", CW},
 		{"word is not a substring", 14_250_000, "FT80X", USB},
 		{"unclear", 14_105_000, "cq", ""},
+		{"2m with a keyword", 145_500_000, "FM simplex", FM},
+		{"2m ssb has no rule", 144_300_000, "ssb", ""},
+		{"2m plain", 145_500_000, "tnx", ""},
 		{"no frequency", 0, "", ""},
 	} {
 		if got := Derive(c.hz, c.comment); got != c.want {

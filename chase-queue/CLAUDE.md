@@ -10,18 +10,39 @@ v1 requirements: `../docs/plans/2026-11-01-2252-feat-chase-queue-v1-plan.md`.
 
 ## What it decides
 
-- **Contest** (instance running): ranking from bmrec's former contest engine — new multipliers first
+**Awards and goals** (`internal/award`, 2026-11-03; roadmap item 3). What makes a station needed is no longer
+two hard-coded modes but the enabled **goals**: each is an award (definition: key + slice + rule) that says
+which slot the station would fill and whether the log has it. DXCC per band is the built-in award (below);
+a field award such as WAS comes from a TOML file in `<data_dir>/awards`; the running contest is the award
+`contest` (wrapping `internal/contest`). A row is needed when any enabled goal's slot is open; `needs[]` on the
+wire says which. Ranking in the needed tier: goal priority, number of awards, then NewSlots / Most Wanted /
+first seen. Slots that cannot be told stay `unknown` (own tier), never "not needed". The old `activity` is
+derived (`contest` while an instance runs); skip/handled keep their contest-vs-DX semantics keyed on that.
+Reference awards (SOTA/WWFF/POTA) are deferred and rejected. Format and rules: `docs/chase-queue-mqtt-api.md`.
+Behaviour change worth knowing: in a contest DXCC stays a goal (priority below the contest), so a station can be
+`need` (not `mult`); `[[goal]] award = "dxcc" enabled = false` gives the old contest-only ranking.
+
+- **Contest** award (instance running): ranking from bmrec's former contest engine — new multipliers first
   (more new slots, then Club Log Most Wanted rank, then district/zone), then unknown, unworked, no-call
   worked-on-this-band (dupes), no-call candidates. History: DXLog's UDP feed. Tag `mult` on new
   multipliers only.
-- **DX chasing** (no instance): needed when the DXCC entity is **not confirmed on the band**; an entity
+- **DXCC per band** (built-in award, default goal): needed when the DXCC entity is **not confirmed on the band**; an entity
   confirmed on no band ranks before one new on this band, rarest first. History: Club Log confirmations
-  (token API), Log4OM's ADIF UDP QSOs. Tag `need`. Until Club Log has loaded, nothing is tagged. A station
+  (token API), Log4OM's ADIF UDP QSOs. Tag `need` (`mult` only when the contest award needs it). Until Club Log has loaded, nothing is tagged. A station
   already worked on the row's band is **listed, not hidden**, `needed:false`, no tag, in its own tier
   after the unworked ones.
-- Both: with `[cluster]` set, chase-queue reads a DX cluster itself (telnet). Its spots hide the heard
-  stations they name, and **needed** spotted stations join `ranked` as `source:"cluster"` rows (negative
-  `row_id`, `spot` block, ≤ 40), ordered with the heard rows by the same rules.
+- Both: with `[[cluster]]` entries set (1..n; the old single `[cluster]` table loads as one named `cluster`),
+  chase-queue reads DX clusters itself (telnet, one reconnecting client each). Their spots hide the heard
+  stations they name, and **needed** spotted stations (and buddies) join `ranked` as `source:"cluster"` rows
+  (negative `row_id`, `cluster_name`, `spot` block with `rbn` for skimmer spots, ≤ 40 needed), ordered with the
+  heard rows by the same rules. The same call+band on several clusters is one row, the freshest spot wins.
+  Bands: 160-10 m, 6 m, 2 m, 70 cm (`internal/band`); VHF/UHF modes are unknown unless the comment says.
+- Both: `[bmrec] gate` (`off` | `trusted` default | `qualified`) decides which bmrec rows are stations; the rest
+  are counted in `/state.bmrec_unqualified`. `qualified` needs bmrec's optional `qualified` row field (spec in
+  the API doc, section 5); without it nothing passes and `bmrec sends no qualified flag` is a problem. `trusted`
+  hides call-less and only-inferred rows (set `off` for the old list).
+- Both: `[[buddy]]` (call, note, boost): `buddy:true` on the row, listed even when not needed (own tier just
+  below the needed block), first among needed rows of equal goal priority.
 - Both: each listed call carries `info` (QRZ.com callbook: name, QTH, locator, picture) and
   `worked_before` (QSO count, bands, modes, `this_band`, last QSO from the station log and stored contest
   logs; so far only QSOs since deployment, until `station-log`). Enrichment never changes the ranking.
@@ -37,12 +58,14 @@ v1 requirements: `../docs/plans/2026-11-01-2252-feat-chase-queue-v1-plan.md`.
 
 | Path | Role |
 |---|---|
-| `cmd/chase-queue` | main; `-check`, `-clublog-probe`, `-qrz-lookup` |
+| `cmd/chase-queue` | main; `-check`, `-clublog-probe`, `-qrz-lookup`, `-import-award-xml` |
+| `internal/award` | award definitions (TOML, catalog, built-in DXCC), slot evaluator, contest wrapper, Log4OM XML importer |
 | `internal/engine` | pure ranking + Skip/handled/Undo state; one mutex, no I/O |
 | `internal/app` | service: jobs worker, publisher, MQTT, local HTTP, contest manager |
 | `internal/bus` | wire types (the contract with bmrec) |
 | `internal/contest`, `cty`, `dxlog`, `clublog` | ported from bmrec (definition/prefill/value/queue, cty.dat+csv, DXLog XML, Most Wanted) plus the Club Log token client |
-| `internal/log4om`, `adif` | Log4OM ADIF_MESSAGE UDP listener and tolerant ADIF parser |
+| `internal/log4om`, `adif` | Log4OM ADIF_MESSAGE UDP listener (off when `[station_log]` is set) and tolerant ADIF parser |
+| `internal/logview` | station-log client: worked/confirmed view from `/v1/worked` + `<slot>/event` |
 | `internal/cluster` | DX-cluster telnet client (login, `DX de` parser, reconnect) |
 | `internal/qrz`, `callbook` | QRZ.com XML client; background lookup worker with memory + SQLite cache |
 | `internal/store` | SQLite (modernc, pure Go): contests, QSOs, log, confirmations, DX skips, callbook cache |
@@ -64,8 +87,38 @@ v1 requirements: `../docs/plans/2026-11-01-2252-feat-chase-queue-v1-plan.md`.
   Belgium/Germany/Åland rows): **1 = Confirmed, 2 = Worked, 3 = Verified**, so `clublog.confirmed_status`
   defaults to `[1,3]`. `chase-queue -clublog-probe` prints the counts per value if Club Log ever changes them.
   Band keys are metres, except `70`/`23`/`13` = cm. The committed fixture is synthetic.
-- **Worked** = a Log4OM QSO or a stored Club Log log QSO on that call and band, any mode, ever. **The Club
+- **Worked** = with `[station_log]`: a row of station-log's worked view on that call (normalized: `/P` etc.
+  dropped) and band, any mode, ever. Without it: a Log4OM QSO or a stored Club Log log QSO. **The Club
   Log log download is not implemented yet** (only the confirmation matrix); `store.ReplaceLogQSOs` is the seam.
+- **Log view (`internal/logview`)** = chase-queue's derived copy of station-log (`muehle/hf/station-log`, roadmap
+  item 2). Rows are station-log's `GET /v1/worked?own=<own_call>` (one per call+band+mode_class). Loaded at
+  start, on every MQTT (re)connect (events are not retained, the session is clean), and every
+  `reload_minutes`; kept current from `muehle/hf/station-log/event` (QoS 1, applied in the paho handler: memory
+  only, never a publish). `added`/`merged` fold into the row (latest `at`/mode, confirmed OR-ed, dxcc);
+  events dedupe by `id`+`updated`; events that arrive during a load are replayed on the new snapshot; events
+  of another `own_call` are ignored. `deleted` triggers a full reload (a row aggregates other QSOs). The
+  engine is fed (`SetDXWorked`, `SetLogEntries`: call, entity, state, band, mode class, confirmed) by `syncLogView`, coalesced, never on the publish path.
+  Station-log down: the last good view stays in use, `problems` gets `station-log not reachable: ...`, one Warn
+  per outage (`shared/logging.Streak`); before the first load the local log is the interim history.
+  `worked_before.qsos` from the view counts call+band+mode_class entries, not raw QSOs. Contest QSOs stored
+  from DXLog are no longer part of `worked_before`/DX-worked while the view is on (the contest tier itself
+  still uses the contest log); they reach station-log only by ADIF import.
+- **Confirmed (DXCC per band)** = Club Log's matrix (entity level) OR the log view's confirmed rows with a
+  `dxcc`. Either source loaded is enough to value DX stations; a band confirmed in either counts.
+  **Decision (2026-11-03): the Club Log client stays in chase-queue** — its matrix is entity-level, not a QSO
+  list, so it is not a station-log feeder. It becomes one only if the Club Log log download is built.
+- **Cutover to station-log** (roadmap item 2): 1) deploy station-log on scmino and import the Log4OM ADIF
+  export (`station-log -import-adif`); 2) point Log4OM's UDP ADIF_MESSAGE at station-log's `[log4om] listen`
+  (2341) instead of chase-queue's (2340); 3) add `[station_log]` to `/etc/chase-queue/config.toml` and restart —
+  `[log4om]` is then ignored with a Warn (remove it); `/meta.capabilities.history` reads `station-log`;
+  4) rollback = delete the `[station_log]` section and point Log4OM back at 2340.
+- **Field awards take the state from the log first** (the call's own QSO in the station-log view), else the
+  callbook (`info.state`); the engine asks the callbook only for a call a field award covers (entity in the
+  award's `dxcc`) and the log has no state for, so DXCC-only setups cause no extra QRZ lookups.
+- **Award definitions load once at start** (restart to change them). The Log4OM award XML schema is not
+  documented; `internal/award/importxml.go` looks fields up by name (AwardType, QsoField, AllowedDxcc, Items,
+  ConfirmationMethod, AwardConfigurations) and its tests use synthetic fixtures — check it against a real
+  export before relying on it.
 - **Callbook lookups never run on the publish path.** `callbook.Book.Info` answers from memory and queues a
   lookup; one worker asks QRZ (a portable form not found is retried under its home call) and pokes the
   publisher. A refused login backs off an hour and shows in `problems`. The QRZ XML login goes in the request
@@ -77,7 +130,7 @@ v1 requirements: `../docs/plans/2026-11-01-2252-feat-chase-queue-v1-plan.md`.
   Without them every station is "unknown" and nothing is listed as needed (first deploy, 2026-11-02).
 - **Ports:** UDP 12060 is taken by logger-spot-bridge on scmino, so DXLog needs a second broadcast target on
   `contest.listen` (default 12061); Log4OM needs its own outbound ADIF_MESSAGE connection to `log4om.listen`
-  (2340), Log4OM ≥ 2.42.
+  (2340), Log4OM ≥ 2.42 (only without `[station_log]`; station-log's own listener is 2341).
 
 ## Commands
 

@@ -19,10 +19,11 @@ const (
 )
 
 // Sideband is the phone sideband by the amateur rule: LSB below 10 MHz
-// except on 60 m, USB elsewhere. 0 (or less) Hz is unknown.
+// except on 60 m, USB elsewhere (6 m included). 0 (or less) Hz and anything
+// above 54 MHz (2 m, 70 cm: FM and SSB mix, no rule) is unknown.
 func Sideband(hz float64) string {
 	switch {
-	case hz <= 0:
+	case hz <= 0 || hz > 54_000_000:
 		return ""
 	case hz >= 5_300_000 && hz <= 5_410_000: // 60 m
 		return USB
@@ -106,6 +107,9 @@ var digiDials = []float64{
 	1_840_000, 3_573_000, 5_357_000, 7_074_000, 10_136_000, 14_074_000, 18_100_000, 21_074_000, 24_915_000, 28_074_000,
 	// FT4
 	3_575_000, 7_047_500, 10_140_000, 14_080_000, 18_104_000, 21_140_000, 24_919_000, 28_180_000,
+	// 6 m, 2 m, 70 cm FT8 and 6 m FT4; the VHF/UHF band plan has no segments here, so
+	// anything else there is "" (unknown) unless the comment names a mode
+	50_313_000, 50_318_000, 144_174_000, 432_174_000,
 }
 
 // FromFreq is the mode the band plan gives a frequency: "" when unclear.

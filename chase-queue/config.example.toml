@@ -27,11 +27,42 @@ listen = "127.0.0.1:8095"         # contest file upload and health, loopback onl
 # listen     = "0.0.0.0:12061"
 # allow_from = ["192.168.1.197"]   # the logging PC (IPs or CIDRs); required
 
-# Log4OM 2.42+: Settings > Software integration > Connections > UDP outbound,
+# station-log (muehle/hf/station-log) is the station's QSO record. With this section
+# chase-queue builds its worked/confirmed view from station-log's HTTP API
+# (GET /v1/worked, at start, on every MQTT reconnect and every reload_minutes) and keeps
+# it current from the <slot>/event messages. The Log4OM listener below is then
+# NOT started (station-log owns that feeder); Club Log's DXCC matrix stays here.
+# Leave the section out to keep the Log4OM listener + local log.
+# [station_log]
+# url            = "http://127.0.0.1:8096"   # default when the section is present
+# own_call       = "DL9ET"                   # active callsign; default cluster.call, then clublog.call
+# station        = "hf"                      # event topic: muehle/hf/station-log/event
+# slot           = "station-log"
+# reload_minutes = 5
+
+# Log4OM 2.42+ (only without [station_log]): Settings > Software integration > Connections > UDP outbound,
 # type ADIF_MESSAGE, target scmino:2340.
 # [log4om]
 # listen     = "0.0.0.0:2340"
 # allow_from = ["192.168.1.197"]
+
+# Awards and goals. An award is a definition file (*.toml) in this directory,
+# read once at start; DXCC per band is built in. See awards.example/was.toml
+# and `chase-queue -import-award-xml FILE` (Log4OM export -> definition).
+# A missing directory leaves only DXCC.
+# [awards]
+# dir = "/var/lib/chase-queue/awards"      # default <data_dir>/awards
+
+# Goals: which awards make a station needed. DXCC is a goal unless switched
+# off; the running contest (award "contest") is one while an instance runs;
+# any other award is a goal only when listed here. A higher priority ranks
+# first (defaults: contest 100, DXCC 10, other 50; 0 = default).
+# [[goal]]
+# award    = "WAS-20-CW"
+# priority = 50
+# [[goal]]
+# award   = "dxcc"
+# enabled = false                          # e.g. only the contest counts
 
 # Club Log confirmations (DX chasing). Create a personal API token under
 # Club Log > Settings > API and put it in the env file.
@@ -40,14 +71,40 @@ listen = "127.0.0.1:8095"         # contest file upload and health, loopback onl
 # confirmed_status = [1, 3]       # 1 Confirmed, 3 Verified (2 = Worked); checked against the web chart
 # refresh_minutes  = 45
 
-# DX cluster (telnet). Its spots hide the heard stations they name and list
-# the needed ones as cluster rows. Spots by this call (your own) are skipped.
-# The node runs on bwpc, which sleeps in powerseq standby: "DX cluster not
-# connected" in problems is expected then.
-[cluster]
+# DX clusters (telnet), one [[cluster]] per node. Their spots hide the heard
+# stations they name and list the needed ones as cluster rows; the same call on
+# the same band from several clusters is one row (the freshest spot). Spots by
+# the entry's call (your own) are skipped. A single old-style [cluster] table
+# still loads as one entry named "cluster".
+# The Log4OM node runs on bwpc, which sleeps in powerseq standby: "DX cluster
+# log4om not connected" in problems is expected then.
+[[cluster]]
+name    = "log4om"               # label on the wire (cluster_name) and in problems; unique
 address = "192.168.1.197:23"     # bwpc
 call    = "DL9ET"
-skimmer = false                  # keep CW/RTTY skimmer spots ("-#")
+skimmer = false                  # keep CW/RTTY skimmer (RBN) spots ("-#"); they get spot.rbn = true
+# enabled = true                 # false keeps the entry but does not connect
+# [[cluster]]
+# name    = "rbn"
+# address = "telnet.reversebeacon.net:7000"
+# call    = "DL9ET"
+# skimmer = true
+
+# Which of bmrec's open rows are available stations: "off" (all, also rows
+# without a call), "trusted" (a call read back by the answering station or typed
+# by you; default) or "qualified" (trusted and bmrec's qualified:true flag; needs
+# a bmrec that sends it, see docs/chase-queue-mqtt-api.md section 5).
+[bmrec]
+gate = "trusted"
+
+# Buddies: stations you want to see whenever they are on the air. A buddy is
+# listed even when no goal needs it (just below the needed block) and ranks first
+# among needed stations of the same goal priority; boost orders buddies among
+# themselves. Portable forms (/P, EA8/...) match.
+# [[buddy]]
+# call  = "DL1ABC"
+# note  = "Hans, club"
+# boost = 0
 
 # QRZ.com XML callbook: name, QTH, locator and picture of the stations on the
 # list. Locator and picture need a QRZ XML subscription; without one QRZ

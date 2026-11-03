@@ -18,14 +18,18 @@ type CQFinderState struct {
 
 // Candidate is one open CQ row of bmrec's board.
 type Candidate struct {
-	RowID      int64     `json:"row_id"`
-	Call       string    `json:"call,omitempty"` // "" = no callsign yet
-	CallSource string    `json:"call_source,omitempty"`
-	Trusted    bool      `json:"call_trusted"` // read back by the answering station or typed by the operator
-	Band       string    `json:"band"`
-	FreqHz     float64   `json:"freq_hz"`
-	FirstUTC   time.Time `json:"first_heard"`
-	LastUTC    time.Time `json:"last_heard"`
+	RowID      int64  `json:"row_id"`
+	Call       string `json:"call,omitempty"` // "" = no callsign yet
+	CallSource string `json:"call_source,omitempty"`
+	Trusted    bool   `json:"call_trusted"` // read back by the answering station or typed by the operator
+	// Qualified is bmrec's statement that the operator qualified the row as a
+	// CQ (or its confidence is high). A pointer: nil is a bmrec that does not
+	// send the field (older), false is a row it sends unqualified.
+	Qualified *bool     `json:"qualified,omitempty"`
+	Band      string    `json:"band"`
+	FreqHz    float64   `json:"freq_hz"`
+	FirstUTC  time.Time `json:"first_heard"`
+	LastUTC   time.Time `json:"last_heard"`
 }
 
 // Spot is a human DX-cluster spot or a spot the operator posted.
@@ -44,8 +48,8 @@ const (
 
 // Tags shown on a needed row.
 const (
-	TagMult = "mult"
-	TagNeed = "need"
+	TagMult = "mult" // the contest award needs the station
+	TagNeed = "need" // another award needs it
 )
 
 // ChaseState is chase-queue's retained <site>/hf/chase/state.
@@ -58,6 +62,9 @@ type ChaseState struct {
 	// Ranked lists the stations on the list, in work order. A row bmrec has
 	// that is absent here is not on the list (spotted, worked, skipped, ...).
 	Ranked []Ranked `json:"ranked"`
+	// BmrecUnqualified counts the bmrec rows the [bmrec] gate kept off the
+	// list; absent when none (or the gate is off). Not a problem by itself.
+	BmrecUnqualified int `json:"bmrec_unqualified,omitempty"`
 	// Undo names the last action Undo would reverse ("" = nothing).
 	Undo string `json:"undo,omitempty"`
 	// Problems are what keeps the ranking from being right, worst first.
@@ -71,6 +78,11 @@ type Ranked struct {
 	Band   string `json:"band"`
 	Needed bool   `json:"needed"`
 	Tag    string `json:"tag,omitempty"`
+	// Needs lists the award slots the station would fill, one per enabled
+	// goal slot that is not yet satisfied, by goal priority. Needed and Tag
+	// are the derived summary: Needed is true exactly when Needs is not
+	// empty. Absent on a row that is not needed.
+	Needs []Need `json:"needs,omitempty"`
 	// FreqHz is the station's frequency in Hz: the heard row's, or the latest
 	// spot's for a cluster row. Absent only when unknown.
 	FreqHz int64 `json:"freq_hz,omitempty"`
@@ -82,8 +94,16 @@ type Ranked struct {
 	// chase-queue's own DX-cluster login spotted (RowID is then negative and
 	// there is no bmrec row). Every row is self-contained: a consumer needs no
 	// other topic to show it.
-	Source string       `json:"source"`
-	Spot   *ClusterSpot `json:"spot,omitempty"` // with Source "cluster"
+	Source string `json:"source"`
+	// ClusterName names the [[cluster]] whose spot the row stands for (the
+	// freshest of several that spotted the station); with Source "cluster".
+	ClusterName string       `json:"cluster_name,omitempty"`
+	Spot        *ClusterSpot `json:"spot,omitempty"` // with Source "cluster"
+	// Buddy marks a station on the operator's buddy list. A buddy is listed
+	// even when no goal needs it (just below the needed block) and ranks
+	// first among equally prioritised needed stations.
+	Buddy     bool   `json:"buddy,omitempty"`
+	BuddyNote string `json:"buddy_note,omitempty"`
 	// Info is the callbook entry (QRZ.com); absent until looked up, when the
 	// call is not in the callbook, or with no QRZ login configured.
 	Info *CallInfo `json:"info,omitempty"`
@@ -95,6 +115,22 @@ type Ranked struct {
 	// row's band (the tier of the row); it decides Worked.ThisBand and is not
 	// published.
 	OnBand bool `json:"-"`
+}
+
+// Need is one award slot a ranked station would fill.
+type Need struct {
+	// Award is the award code (a definition's code, "dxcc", "contest").
+	Award string `json:"award"`
+	// Key is the slot's name: the entity's primary prefix, a state, a
+	// multiplier.
+	Key string `json:"key"`
+	// Band is the slot's band; absent when the award counts over all bands.
+	Band string `json:"band,omitempty"`
+	// Mode is the slot's mode class (cw, phone, data); absent when the award
+	// does not slice or filter by mode.
+	Mode string `json:"mode,omitempty"`
+	// Status is the slot's state in the log: unworked or worked-unconfirmed.
+	Status string `json:"status"`
 }
 
 // Ranked row sources.
@@ -109,6 +145,8 @@ type ClusterSpot struct {
 	Spotter string    `json:"spotter"`
 	Comment string    `json:"comment,omitempty"`
 	At      time.Time `json:"at"`
+	// RBN marks a skimmer spot (spotter ending in "-#").
+	RBN bool `json:"rbn,omitempty"`
 }
 
 // CallInfo is what the callbook says about a callsign. Street address,

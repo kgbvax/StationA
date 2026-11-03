@@ -64,3 +64,26 @@ func TestQRZPasswordNeedsUser(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestStationLogSection(t *testing.T) {
+	cfg, err := Load(write(t, "[cluster]\naddress = \"h:23\"\ncall = \"DL9ET\"\n"))
+	if err != nil || cfg.StationLog.Enabled() {
+		t.Fatalf("absent section must leave it off: %v %+v", err, cfg.StationLog)
+	}
+	cfg, err = Load(write(t, "[cluster]\naddress = \"h:23\"\ncall = \"DL9ET\"\n[station_log]\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s := cfg.StationLog; s.URL != "http://127.0.0.1:8096" || s.OwnCall != "DL9ET" || s.Slot != "station-log" || s.Station != "hf" || s.ReloadMinutes != 5 {
+		t.Fatalf("%+v", s)
+	}
+	cfg, err = Load(write(t, "[station_log]\nurl = \"http://scmino:8096\"\nown_call = \"DL1ABC\"\nreload_minutes = 2\n"))
+	if err != nil || cfg.StationLog.URL != "http://scmino:8096" || cfg.StationLog.OwnCall != "DL1ABC" || cfg.StationLog.ReloadMinutes != 2 {
+		t.Fatalf("%v %+v", err, cfg.StationLog)
+	}
+	for _, bad := range []string{"url = \"scmino:8096\"", "url = \"ftp://x/\"", "reload_minutes = -1"} {
+		if _, err := Load(write(t, "[station_log]\n"+bad+"\n")); err == nil {
+			t.Fatalf("%q accepted", bad)
+		}
+	}
+}

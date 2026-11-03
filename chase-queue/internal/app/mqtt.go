@@ -52,6 +52,12 @@ func (s *Service) connect(ctx context.Context) error {
 			p := append([]byte(nil), m.Payload()...)
 			sharedmqtt.Enqueue(s.jobs, func() { s.onCmd(p) })
 		})
+		if s.view != nil {
+			// events are not retained and the session is clean: whatever
+			// happened while we were away comes with a fresh load
+			c.Subscribe(s.topics.logEvent, 1, func(_ pahomqtt.Client, m pahomqtt.Message) { s.view.Apply(m.Payload()) })
+			s.view.Reload()
+		}
 		s.forcePub.Store(true)
 		s.poke() // republish the retained state after a broker restart
 	}
@@ -115,6 +121,10 @@ func (s *Service) publishState(b []byte) bool {
 }
 
 func (s *Service) metaPayload() ([]byte, error) {
+	history := "local" // Log4OM listener + the local log
+	if s.view != nil {
+		history = "station-log"
+	}
 	return json.Marshal(map[string]any{
 		"schema": "1.0",
 		"role":   "chase-queue",
@@ -124,6 +134,8 @@ func (s *Service) metaPayload() ([]byte, error) {
 			"activities": []string{bus.ActivityDX, bus.ActivityContest},
 			"actions":    []string{bus.CmdSkip, bus.CmdHandled, bus.CmdUndo, bus.CmdSetMode, bus.CmdSwitchInstance, bus.CmdDeleteInstance},
 			"input":      s.topics.finder,
+			"history":    history,
+			"awards":     s.awardCodes,
 		},
 	})
 }
