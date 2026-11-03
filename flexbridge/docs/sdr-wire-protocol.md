@@ -59,9 +59,9 @@ All runtime commands are fire-and-forget on the wire; confirmation comes through
 | Power ceiling: lower TUNE power | `transmit set tunepower=<L>` |
 | Power ceiling: radio-side ceiling | `transmit set max_power_level=<L>` (`100` = no ceiling) |
 
-There is deliberately **no** set_freq, set_mode, or power *setpoint* command. The bridge never tunes the radio except by band (hard safety boundary). The three `transmit set` commands are the one carve-out, and they exist only to enforce the `set_rf_power_limit` ceiling: they lower `rfpower`/`tunepower` that is above the ceiling, or set the radio's own `max_power_level`. They never raise output (`max_power_level=100` on lift removes a ceiling; it does not change the RF power slider).
+There was deliberately **no** set_freq, set_mode, or power *setpoint* command at first: the bridge tuned the radio only by band. `set_mode` (below) and `set_freq` (67d24cc, VFO A's slice, 1.8–54 MHz, for chaseq-ui's QSY; see `../CLAUDE.md`) have been added since. There is still no power setpoint. The three `transmit set` commands are the one carve-out, and they exist only to enforce the `set_rf_power_limit` ceiling: they lower `rfpower`/`tunepower` that is above the ceiling, or set the radio's own `max_power_level`. They never raise output (`max_power_level=100` on lift removes a ceiling; it does not change the RF power slider).
 
-Update 2026-10-23: `set_mode` exists since 130dc0f (`cw`/`usb`/`lsb` only, for the hf_console SSB/CW toggle on a re-tap of the active band). There is still no set_freq or set_power command. The liveness probe (`version`, see the keepalive item) is the only runtime write not in this table.
+Update 2026-10-23: `set_mode` exists since 130dc0f (`cw`/`usb`/`lsb` only, for the hf_console SSB/CW toggle on a re-tap of the active band). There is still no set_power command (`set_freq` was added later, 67d24cc). The liveness probe (`version`, see the keepalive item) is the only runtime write not in this table.
 
 Native **band-stacking** is the radio's per-band memory of the last-used frequency and mode. A `display pan s ... band=` change recalls that memory, so the radio, not the bridge, picks the new frequency. This memory recall is why the band-transition hold (below) must suppress the band-change transient.
 

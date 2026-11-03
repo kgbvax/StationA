@@ -920,3 +920,22 @@ changed the following; the contract has the normative wording.
 18. **A storm park still slewing at `rotate_timeout_s`** (the bridge waited for a lull)
     keeps its borrowed power until the rotator stops, for at most one more
     `rotate_timeout_s`; the brakeless boom is never cut mid-slew.
+
+## [decision] Chasing Stations — open items (2026-11-03)
+
+Target roles: `docs/chasing-stations-architecture.md`. Open items of the deployed v1
+(chase-queue, chaseq-ui), so a later session does not re-discover them:
+
+1. **The DX cluster stops while bwpc sleeps.** chase-queue reads Log4OM's internal
+   cluster on bwpc `:23`; in powerseq standby there are no cluster rows and no cluster
+   hiding (`chase-queue/config.example.toml` `[cluster]`).
+2. **chaseq-ui's DXLog script has not run live** (`chaseq-ui/dxlog/ChaseqCallsign.cs`).
+3. **bmrec reads chase-queue's `undo` as an object**, chase-queue publishes a string
+   (`chase-queue/internal/bus/bus.go`). The fix belongs to bmrec.
+4. **No logbook history before deployment.** Worked = Log4OM UDP QSOs since chase-queue
+   started; the Club Log log download is not built (`store.ReplaceLogQSOs` is unused).
+   Target: the separate `station-log` component with ADIF import.
+5. **Worked-hiding and `worked_before` use different QSO sets.** DX hiding reads only
+   the station log; `worked_before` also counts stored contest QSOs.
+6. **QSY mode comes from the frequency only** (chaseq-ui: LSB below 10 MHz, else USB):
+   a CW or digital spot is tuned as SSB until rows carry a mode.

@@ -25,13 +25,13 @@ listen = "127.0.0.1:8095"         # contest file upload and health, loopback onl
 # logger-spot-bridge on scmino: give DXLog a second target on this port.
 # [contest]
 # listen     = "0.0.0.0:12061"
-# allow_from = ["192.168.1.20"]   # the logging PC (IPs or CIDRs); required
+# allow_from = ["192.168.1.197"]   # the logging PC (IPs or CIDRs); required
 
 # Log4OM 2.42+: Settings > Software integration > Connections > UDP outbound,
 # type ADIF_MESSAGE, target scmino:2340.
 # [log4om]
 # listen     = "0.0.0.0:2340"
-# allow_from = ["192.168.1.20"]
+# allow_from = ["192.168.1.197"]
 
 # Club Log confirmations (DX chasing). Create a personal API token under
 # Club Log > Settings > API and put it in the env file.

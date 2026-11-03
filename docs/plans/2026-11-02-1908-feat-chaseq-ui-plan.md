@@ -10,6 +10,8 @@ execution: code
 
 # chaseq-ui - Plan
 
+> **Note (2026-11-03):** the domain roles are set in `../chasing-stations-architecture.md`. The MQTT password lives in `config.toml` only (05fc96b); the env var in KTD9 and U2 is gone.
+
 ## Goal Capsule
 
 - **Objective:** At the logging PC, the operator gets from chase-queue's ranked list onto a station in one keystroke: the radio is tuned to it and its callsign is waiting in the logger, with no retuning or typing by hand.
@@ -140,7 +142,7 @@ chase-queue (slot `muehle/hf/chase`, on scmino) already decides which of the uns
 - KTD6. **DXLog gets the callsign from a DXLog C# script that chaseq-ui ships.** The script opens a loopback UDP listener in `Initialize`, and on a datagram carrying a callsign sets the entry line's call on DXLog's UI thread (`main.Invoke`). chaseq-ui sends a one-line plain-text datagram. The operator installs the script into DXLog's scripts folder once. Fallback, only if the live check fails: the script focuses `txtCallSign` and sends keystrokes from inside DXLog. Chosen over a cluster-spot feed, which needs a manual double-click.
 - KTD7. **Actions run in a fixed order, the callsign waits for the tune, and each part is confirmed from the bus.** Order per Enter: tune (`set_freq`, then `set_mode`), wait until radio `/state.freq_hz` (or `rx_freq_hz` in split) is within 50 Hz of the target or 2 s pass, then Log4OM, DXLog, then `handled` in contest. Waiting keeps the loggers' band, dupe and worked-before checks on the new band and stops a logger that clears its entry line on QSY from erasing the call. The radio part is confirmed by that state, `handled`/Skip/Undo by the next chase `/state` within 5 s (the row gone, or back for Undo); otherwise the part is "not confirmed". Both `/cmd` paths are fire-and-forget, so this is the only way R12 can see a refused command. A failed part does not stop the next. Publishes go through `shared/mqtt.Enqueue`/`RunJobs`, never from a paho handler.
 - KTD8. **"Offline or stale" means `muehle/hf/chase/status` is `offline`, or no `/state` within 75 s.** chase-queue republishes every 30 s, so 75 s is two missed heartbeats plus margin. Governs R4.
-- KTD9. **Configuration and deploy follow winpc-power-bridge.** TOML `config.toml` next to the exe in `C:\Users\iotte\chaseq-ui\` (ports, broker, Log4OM and DXLog targets, filters file); password from the user env var `CHASEQ_UI_MQTT_PASSWORD`, TOML only as fallback; log file next to the config with 5 MB rotation, because a `-H=windowsgui` exe has no stderr. Filters persist in a small JSON file next to the config, not in TOML (seed-once config stays operator-owned). Deploy registers an at-logon scheduled task from XML (winpc) and adds qslotter's clean quit, SHA-256 check and health poll.
+- KTD9. **Configuration and deploy follow winpc-power-bridge.** TOML `config.toml` next to the exe in `C:\Users\iotte\chaseq-ui\` (ports, broker, Log4OM and DXLog targets, filters file); password in `config.toml` `[mqtt] password` (no environment variable, as qslotter; 05fc96b); log file next to the config with 5 MB rotation, because a `-H=windowsgui` exe has no stderr. Filters persist in a small JSON file next to the config, not in TOML (seed-once config stays operator-owned). Deploy registers an at-logon scheduled task from XML (winpc) and adds qslotter's clean quit, SHA-256 check and health poll.
 
 ### High-Level Technical Design
 
@@ -246,7 +248,7 @@ chaseq-ui/
 
 **Approach:**
 1. Module `codeberg.org/kgbvax/stationa/chaseq-ui`, `go 1.27.1`, `replace codeberg.org/kgbvax/stationa/shared => ../shared`; not added to `go.work` (KTD2).
-2. Config: broker, user, client ID `muehle-chaseq-ui`, site/slot prefixes, HTTP listen, Log4OM target, DXLog script target, log file, filters file; password from `CHASEQ_UI_MQTT_PASSWORD`.
+2. Config: broker, user, client ID `muehle-chaseq-ui`, site/slot prefixes, HTTP listen, Log4OM target, DXLog script target, log file, filters file; password from `config.toml`.
 3. Bus: subscribe `muehle/hf/chase/state`, `/status`, `muehle/hf/cqfinder/state` and `muehle/hf/radio/state` (frequency and split, for KTD3/KTD7); decode into local wire types mirroring `chase-queue/internal/bus/bus.go` (copied, not imported: `internal/` visibility); hand each message to the model through a channel, never doing work in the paho handler.
 4. Publishing helpers for `muehle/hf/radio/cmd` and `muehle/hf/chase/cmd` through `shared/mqtt` jobs.
 

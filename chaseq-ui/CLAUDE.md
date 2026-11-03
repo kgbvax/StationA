@@ -4,7 +4,8 @@ chaseq-ui is the operator's window onto chase-queue (`muehle/hf/chase`): a nativ
 PC bwpc showing the ranked list, with Enter/click = tune the FLEX and put the callsign into Log4OM and
 DXLog. It is **not a slot** (consumer + `/cmd` sender, like testui). It owns no ranking: chase-queue decides
 what is needed and in which order; chaseq-ui adds local view filters only. Plan:
-`../docs/plans/2026-11-02-1908-feat-chaseq-ui-plan.md`.
+`../docs/plans/2026-11-02-1908-feat-chaseq-ui-plan.md`. Domain roles and the target (self-contained rows, no
+`cqfinder` join, configurable loggers): `../docs/chasing-stations-architecture.md`.
 
 ## Build and test
 

@@ -10,6 +10,8 @@ execution: code
 
 # Chase Queue v1 - Plan
 
+> **Superseded in part (2026-11-03)** by `../chasing-stations-architecture.md`: the roles, the award model (contest = one award type, Log4OM award XML as the starting point), the separate `station-log` component, POTA (deferred, not "never") and the end of horstreporter's award engine are set there. This plan stays the record of what v1 built.
+
 ## Goal Capsule
 
 - **Objective:** The operator works more needed stations that nobody has spotted (contest multipliers and unworked contest stations; DXCC entities not yet confirmed on the band) from one ranked list on bmrec's HF CQ page, without reviewing stations that are already spotted or already worked.
@@ -123,25 +125,25 @@ flowchart TB
 
 - No LoTW, paper-QSL or eQSL source of its own in v1; such confirmations count once they reach Club Log.
 - No award criteria beyond DXCC entity per band in v1: no mode slots, buddies, Most Wanted cut-off, WAS or user-configurable goal list.
-- No POTA, now or later: activators spot themselves.
+- No POTA in v1 (deferred; it may come later, see `../chasing-stations-architecture.md` §2.4).
 - No modes other than SSB; bmrec hears only SSB.
-- No chase-queue view of cluster spots in v1, and no visualization other than bmrec's list.
+- No chase-queue view of cluster spots in v1, and no visualization other than bmrec's list. (Overtaken: chase-queue reads a cluster itself since f5b5056, and chaseq-ui is a second view.)
 
 <!-- ce-section: work-relationships -->
 ### How This Work Fits Together
 
 This plan covers chase-queue v1 and the bmrec list that consumes it. The areas below are the current understanding, not a committed roadmap.
 
-- A chase-queue view that merges DX-cluster spots with bmrec candidates into one ordered queue, shown as a horstreporter module or as chase-queue's own app. Depends on this plan's needed/priority answer. Still to decide which view comes first.
+- A chase-queue view that merges DX-cluster spots with bmrec candidates into one ordered queue, Built: needed cluster rows join chase-queue's list, and chaseq-ui shows it (2026-11-02).
 - Award chasing beyond DXCC (mode, buddies, Most Wanted cut-off, LoTW). Depends on this plan's chase-queue history; extends R8.
-- horstreporter's existing Chase Queue and award engine (`internal/awards`, Wavelog as log source). Shares the purpose of chase-queue. Still to decide whether chase-queue replaces it, uses it, or is used by it.
+- horstreporter's Chase Queue and award engine: **removed** (operator decision 2026-11-03). Award evaluation belongs to chase-queue.
 - Further activities beyond contests and DX chasing. Depends on R3's activity switch.
 
 ### Dependencies / Assumptions
 
 - The operator's Club Log log holds their confirmations (LoTW matches synced to Club Log); entities confirmed elsewhere but not in Club Log show as needed.
 - Log4OM 2 is configured to send each logged QSO over UDP to chase-queue.
-- bmrec and chase-queue share the station broker on scmino; the cluster spots reach chase-queue through bmrec's retained candidates.
+- bmrec and chase-queue share the station broker on scmino; the cluster spots reach chase-queue through bmrec's retained candidates. (Overtaken: chase-queue also has its own cluster login.)
 - The contest setup (definition upload, start, resume, delete) stays reachable from bmrec's HF CQ page, as today.
 
 ### Outstanding Questions
@@ -157,4 +159,3 @@ This plan covers chase-queue v1 and the bmrec list that consumes it. The areas b
 - bmrec contest engine to move: `bmrec:internal/contest` (queue.go tiers and ordering, engine.go hiding and the 30-minute spot horizon, value.go, definition.go, prefill.go), with `bmrec:internal/hf/cty`, `bmrec:internal/clublog/mostwanted.go` and `bmrec:internal/dxlog`.
 - bmrec list today: `bmrec:web/src/HFCQ.svelte`, `bmrec:web/src/lib/ContestCard.svelte`; behavior described in bmrec's README "Contest mode (multiplier queue)".
 - Earlier contest plan: `bmrec:docs/plans/2026-11-01-1642-feat-contest-mult-queue-plan.md` (on branch claude/contest-mult-queue; its hold, banner and announcement parts were removed in use).
-- horstreporter Chase Queue: `horstreporter:CONCEPTS.md` (Chase Queue, Award slot), `horstreporter:internal/awardcontract`.

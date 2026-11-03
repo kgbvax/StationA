@@ -44,7 +44,7 @@ created in-repo. There are no separate per-component remotes to push to.
 | icom9700-radio-bridge | `icom9700-radio-bridge/` | IC-9700 UHF radio bridge → `muehle/uhf/radio` (RS-BA1 LAN session for demand-driven RX audio capture; `park_radio` retune via the `rigctld-ic9700` unit on scmino; read-only serial CI-V telemetry supported but disabled on scmino (`serial.device` unset by design: the only CI-V adapter on scmino belongs to `rigctld-ic9700`); no remote TX) |
 | m5dial-hf-rotctrl | `m5dial-hf-rotctrl/` | M5Stack Dial firmware — HF rotator control head (analog meter face + knob; not a slot; consumer + /cmd stimulator) |
 | m5dualkey-hf-antctrl | `m5dualkey-hf-antctrl/` | M5Stack Chain DualKey firmware — Ultrabeam direction keys (A forward / B reverse / A+B bidirectional, LED shows `hf/ant-ctrl` direction; chained M5 Chain Key toggles DVK memory 2 on `hf/radio`; not a slot; consumer + /cmd stimulator) |
-| chase-queue | `chase-queue/` | Chase queue → `hf/chase` — ranks the CQ stations bmrec hears (`hf/cqfinder`) by what is needed: contest multipliers (DXLog feed), DXCC entities not confirmed on the band (Club Log, Log4OM feed); SQLite (first DB in the repo); runs on scmino |
+| chase-queue | `chase-queue/` | Chase queue → `hf/chase` — ranks the CQ stations bmrec hears (`hf/cqfinder`) and the needed DX-cluster spots (own telnet login to Log4OM's cluster on bwpc) by what is needed: contest multipliers (DXLog feed), DXCC entities not confirmed on the band (Club Log, Log4OM feed); QRZ.com enrichment; SQLite; runs on scmino. Target roles of the chasing domain: `docs/chasing-stations-architecture.md` |
 | chaseq-ui | `chaseq-ui/` | Native window on bwpc (glaze, qslotter stack; own Go module outside `go.work`, build with `GOWORK=off`) showing chase-queue's ranked list (`muehle/hf/chase`, frequencies joined from bmrec's `cqfinder`) with local band/needed-only filters; Enter/click tunes the FLEX (flexbridge `set_freq` + `set_mode`) and puts the callsign into Log4OM (Remote Control `SetCallsign`) and DXLog (`dxlog/ChaseqCallsign.cs` script), `handled` in contest; Skip/Undo go to chase-queue. Consumer + `/cmd` sender, not a slot |
 | logger-spot-bridge | `logger-spot-bridge/` | Shack-logger bridge (DXLog/Log4OM) → `hf/spots` — the operator-keyed station (call, position, beam bearing) |
 | oscarwatch-sattrack-bridge | `oscarwatch-sattrack-bridge/` | OscarWatch Satellite-link WebSocket bridge → `uhf/sat-track` — the satellite being tracked (name, NORAD, transponder, az/el, range, range rate, sunlit, derived sub-satellite point, radio-corrected up/downlink); read-only, runs on scmino |
@@ -87,7 +87,7 @@ workspace.
 | `muehle/hf/rotator` | wrc-rotator-bridge | Yaesu G-450DC via AF6SA WRC, websocket — on scmino since 2026-10-12 (GS-232 :7373 / PstRotator :12040 moved with it) |
 | `muehle/hf/tuner` | atr1k-tuner-bridge | ATR-1000 ATU, wifi (binary WebSocket) — bridge on scmino since 2026-10-12 |
 | `muehle/hf/spots` | logger-spot-bridge | DXLog/Log4OM broadcasts (LAN-wide UDP) → operator-keyed station feed (role `bandmap`; systemd service on scmino since 2026-10-18) |
-| `muehle/hf/chase` | chase-queue | logic slot — no device (runs on scmino); reads bmrec's `hf/cqfinder` candidates, publishes the ranked list; `/cmd` skip, handled, undo, set_mode, switch_instance |
+| `muehle/hf/chase` | chase-queue | logic slot — no device (runs on scmino); reads bmrec's `hf/cqfinder` candidates, reads the DX cluster, publishes the ranked list; `/cmd` skip, handled, undo, set_mode, switch_instance, delete_instance |
 | `muehle/hf/cqfinder` | bmrec (not in this repo) | the CQ finder's open rows and recent spots, retained; input of the chase queue |
 | `muehle/hf/beam-steer` | beamsteer | logic slot — no device (runs on scmino); logger PstRotator UDP :12050 (logger must target scmino) → `hf/rotator` + `hf/ant-ctrl` direction |
 | `muehle/hf/power-seq` | powerseq | logic slot — no device (runs on scmino since 2026-10-18); startup/shutdown sequencer |
@@ -174,6 +174,7 @@ All shared docs are in `docs/` in this repo:
 | Logging convention (slog, stderr, component/slot attrs) | `docs/conventions/logging.md` |
 | Logging/operating-layer integration model (draft companion to the integration model; `bandmap`/spots layer) | `docs/logging-integration-model.md` |
 | Station architecture diagram | `docs/architecture.svg` (source `docs/architecture.d2`) |
+| Chasing Stations domain architecture (target roles: clusters, bmrec, station-log, chase-queue, chaseq-ui) | `docs/chasing-stations-architecture.md` |
 | Feature plans | `docs/plans/` |
 
 All components live as subdirectories of this one repo, so the shared docs path

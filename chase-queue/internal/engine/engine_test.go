@@ -134,7 +134,8 @@ func TestContestNewMultFirstThenOthers(t *testing.T) {
 }
 
 func TestSpottedLeavesAtOnceAndAgesOut(t *testing.T) {
-	f := newContest(t)
+	// EA8 is a worked multiplier (not needed): a spot bmrec relays hides it
+	f := newContest(t, logq("EA8AAA", "20m"))
 	rows := []bus.Candidate{cand(1, "EA8XYZ", "20m", true), cand(2, "EA8/DL1ABC", "20m", true)}
 	want(t, f.rank(1, rows, bus.Spot{Call: "EA8XYZ", Band: "20m", At: f.now.Add(-time.Minute)}), 2)
 	want(t, f.rank(2, rows, bus.Spot{Call: "DL1ABC", Band: "20m", At: f.now}), 1, 2)
@@ -142,9 +143,29 @@ func TestSpottedLeavesAtOnceAndAgesOut(t *testing.T) {
 	want(t, f.rank(3, rows, bus.Spot{Call: "EA8XYZ", Band: "20m", At: f.now.Add(-31 * time.Minute)}), 1, 2)
 }
 
+func TestBmrecOnlySpotNeverHidesANeededStation(t *testing.T) {
+	f := newDX(t)
+	f.e.SetConfirmations([]store.Confirmation{{DXCC: 230, Band: "20m"}}) // DL confirmed on 20m
+	rows := []bus.Candidate{cand(1, "EA8XYZ", "20m", true), cand(2, "DL3CCC", "20m", true)}
+	spots := []bus.Spot{{Call: "EA8XYZ", Band: "20m", At: f.now, Source: "own"}, {Call: "DL3CCC", Band: "20m", At: f.now, Source: "cluster"}}
+	// no cluster row stands for EA8XYZ, so the needed heard row stays; DL3CCC is not needed and leaves
+	st := f.rank(1, rows, spots...)
+	want(t, st, 1)
+	if st.Ranked[0].Tag != bus.TagNeed {
+		t.Fatalf("%+v", st.Ranked[0])
+	}
+	// once our own cluster login has the spot, its cluster row replaces the heard row
+	f.e.AddClusterSpot(ClusterSpot{Call: "EA8XYZ", Band: "20m", FreqHz: 14025000, At: f.now})
+	st = f.e.Compute()
+	if len(st.Ranked) != 1 || st.Ranked[0].Source != bus.SourceCluster || st.Ranked[0].Call != "EA8XYZ" {
+		t.Fatalf("%+v", st.Ranked)
+	}
+}
+
 func TestRestartRebuildsSpotsFromState(t *testing.T) {
 	f := newDX(t)
 	f.e.SetConfirmations(nil)
+	f.e.SetConfirmations([]store.Confirmation{{DXCC: 29, Band: "20m"}}) // EA8 confirmed: not needed, so the spot hides it
 	st := f.rank(7, []bus.Candidate{cand(1, "EA8XYZ", "20m", true)}, bus.Spot{Call: "EA8XYZ", Band: "20m", At: f.now.Add(-10 * time.Minute), Source: "own"})
 	want(t, st)
 	if st.Seq != 7 {
