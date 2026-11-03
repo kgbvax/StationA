@@ -5,16 +5,78 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+
+	"chaseq-ui/internal/bus"
 )
 
 // Filters narrow what is shown. They never change chase-queue's ranking.
 type Filters struct {
 	Bands      []string `json:"bands,omitempty"` // empty = every band
 	NeededOnly bool     `json:"needed_only,omitempty"`
+	// Awards keeps the rows with a need for one of these award codes; empty
+	// = no award filter.
+	Awards []string `json:"awards,omitempty"`
+	// Source keeps one row source: "cluster" or "bmrec"; "" = both.
+	Source string `json:"source,omitempty"`
 }
 
 // Active reports whether any filter is set.
-func (f Filters) Active() bool { return len(f.Bands) > 0 || f.NeededOnly }
+func (f Filters) Active() bool {
+	return len(f.Bands) > 0 || f.NeededOnly || len(f.Awards) > 0 || f.Source != ""
+}
+
+// hasAward reports whether a row with these needs passes the award filter.
+func (f Filters) hasAward(needs []bus.Need) bool {
+	if len(f.Awards) == 0 {
+		return true
+	}
+	for _, n := range needs {
+		for _, a := range f.Awards {
+			if n.Award == a {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (f Filters) hasSource(cluster bool) bool {
+	switch f.Source {
+	case bus.SourceCluster:
+		return cluster
+	case bus.SourceBmrec:
+		return !cluster
+	}
+	return true
+}
+
+// ToggleAward returns f with the award code switched on or off.
+func (f Filters) ToggleAward(code string) Filters {
+	var out []string
+	found := false
+	for _, a := range f.Awards {
+		if a == code {
+			found = true
+			continue
+		}
+		out = append(out, a)
+	}
+	if !found {
+		out = append(out, code)
+	}
+	sort.Strings(out)
+	f.Awards = out
+	return f
+}
+
+// ToggleSource returns f showing only src, or both when src is already set.
+func (f Filters) ToggleSource(src string) Filters {
+	if f.Source == src {
+		src = ""
+	}
+	f.Source = src
+	return f
+}
 
 func (f Filters) hasBand(b string) bool {
 	if len(f.Bands) == 0 {

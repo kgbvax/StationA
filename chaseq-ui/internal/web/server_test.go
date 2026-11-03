@@ -88,6 +88,29 @@ func TestListRendersRowsTagsAndProblems(t *testing.T) {
 	}
 }
 
+func TestListShowsInfoNeedsBuddyEscaped(t *testing.T) {
+	s, m, _, _ := newServer(t)
+	m.SetChase(bus.ChaseState{Activity: "dx", Ranked: []bus.Ranked{
+		{RowID: 1, Call: "EA8XYZ", Band: "20m", FreqHz: 14205000,
+			Info:  &bus.Info{Name: "<script>alert(1)</script>", QTH: "Las Palmas", Country: "Canary Islands", Grid: "IL28gc"},
+			Needs: []bus.Need{{Award: "WAS", Key: "TX", Status: "unworked"}, {Award: "DXCC", Status: "confirmed", Band: "20m"}},
+			Buddy: true},
+		{RowID: 2, Call: "K1A", Band: "40m", FreqHz: 7074000},
+	}})
+	body := do(t, s.Handler(), "GET", "/list", nil).Body.String()
+	for _, want := range []string{"&lt;script&gt;", "Las Palmas", "Canary Islands", "IL28gc", ">WAS TX<", ">DXCC<", `class="need unworked"`, `class="buddy"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("list missing %q", want)
+		}
+	}
+	if strings.Contains(body, "<script>") {
+		t.Error("info rendered unescaped")
+	}
+	if strings.Count(body, `class="sub"`) != 1 || strings.Count(body, `class="buddy"`) != 1 {
+		t.Error("absent info/needs/buddy must render nothing")
+	}
+}
+
 func TestActRunsTheHighlightedRow(t *testing.T) {
 	s, _, p, l := newServer(t)
 	rec := do(t, s.Handler(), "POST", "/act", csrf)
@@ -235,5 +258,23 @@ func TestRapidFilterTogglesAreNotLost(t *testing.T) {
 	}
 	if got := m.Filters().Bands; len(got) != 4 {
 		t.Errorf("bands = %v, want all four toggles kept", got)
+	}
+}
+
+func TestAwardAndSourceFilterEndpoint(t *testing.T) {
+	s, _, _, _ := newServer(t)
+	h := s.Handler()
+	if rec := do(t, h, "POST", "/filters?award=dxcc&source=cluster", csrf); rec.Code != 204 {
+		t.Fatalf("code = %d", rec.Code)
+	}
+	if f := model.LoadFilters(s.FiltersPath); len(f.Awards) != 1 || f.Awards[0] != "dxcc" || f.Source != "cluster" {
+		t.Errorf("persisted = %+v", f)
+	}
+	body := do(t, h, "GET", "/list", nil).Body.String()
+	if !strings.Contains(body, "cluster only") || !strings.Contains(body, `data-award="dxcc"`) {
+		t.Errorf("summary or award chip missing:\n%s", body)
+	}
+	if rec := do(t, h, "POST", "/filters?source=bogus", csrf); rec.Code != 400 {
+		t.Errorf("bad source: code = %d", rec.Code)
 	}
 }

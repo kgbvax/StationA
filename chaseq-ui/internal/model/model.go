@@ -5,6 +5,7 @@ package model
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -17,24 +18,44 @@ const StaleAfter = 75 * time.Second
 
 // Row is one displayed station.
 type Row struct {
-	RowID       int64
-	Call        string
-	Band        string
-	FreqHz      int64  // 0 = unknown
-	Mode        string // canonical; "" = unknown
-	Needed      bool
-	Tag         string
-	Cluster     bool
+	RowID   int64
+	Call    string
+	Band    string
+	FreqHz  int64  // 0 = unknown
+	Mode    string // canonical; "" = unknown
+	Needed  bool
+	Tag     string
+	Cluster bool
+	// ClusterName names the DX cluster of a cluster row; RBN marks a
+	// skimmer spot.
+	ClusterName string
+	RBN         bool
 	Highlighted bool
 	// Worked: the call is in the log at all. WorkedThisBand: on this band (the
 	// row then comes with Needed false). WorkedOther: the other bands.
 	Worked         bool
 	WorkedThisBand bool
 	WorkedOther    []string
+	// Who is the compact QRZ line (name, place, grid); "" = nothing known.
+	Who   string
+	Needs []NeedTag
+	Buddy bool
+	// BuddyNote is the buddy-list note, the badge's hover text.
+	BuddyNote string
 }
 
+// NeedTag is one award need ready to show: Label is the tag text ("DXCC",
+// "WAS TX"), Title the hover detail, Status the CSS class.
+type NeedTag struct {
+	Label, Title, Status string
+}
+
+// MaxTuneHz is the FLEX-8400's top frequency; VHF/UHF rows (2 m, 70 cm) are
+// shown and sent to the logger but never tune the radio.
+const MaxTuneHz = 54_000_000
+
 // Tunable reports whether the radio can be tuned to this row.
-func (r Row) Tunable() bool { return r.FreqHz > 0 }
+func (r Row) Tunable() bool { return r.FreqHz > 0 && r.FreqHz <= MaxTuneHz }
 
 // View is everything the page renders.
 type View struct {
@@ -47,7 +68,11 @@ type View struct {
 	ContestName    string
 	Undo           string
 	Hidden         int // ranked rows removed by the filters
-	Filters        Filters
+	// Awards are the award codes among the needs of the listed rows (the
+	// unfiltered list, first seen = highest priority) plus any active filter
+	// code, so a filter whose award left the list can still be switched off.
+	Awards  []string
+	Filters Filters
 }
 
 // Model holds the inputs. Safe for concurrent use.
@@ -190,6 +215,7 @@ func (m *Model) Snapshot() View {
 	v := View{
 		Rows: rows, Highlight: m.highlight, Problems: m.chase.Problems,
 		Activity: m.chase.Activity, Undo: m.chase.Undo, Hidden: hidden, Filters: m.filters,
+		Awards: m.awardCodes(),
 	}
 	if m.chase.Contest != nil {
 		v.ContestName = m.chase.Contest.Name
@@ -256,14 +282,29 @@ func (m *Model) shown() ([]Row, int) {
 	var rows []Row
 	hidden := 0
 	for _, r := range m.chase.Ranked {
-		if !m.filters.hasBand(r.Band) || (m.filters.NeededOnly && !r.Needed) {
+		if !m.filters.hasBand(r.Band) || (m.filters.NeededOnly && !r.Needed) ||
+			!m.filters.hasAward(r.Needs) || !m.filters.hasSource(r.Source == bus.SourceCluster) {
 			hidden++
 			continue
 		}
 		row := Row{RowID: r.RowID, Call: r.Call, Band: r.Band, FreqHz: r.FreqHz, Mode: r.Mode,
 			Needed: r.Needed, Tag: r.Tag, Cluster: r.Source == bus.SourceCluster}
-		if row.FreqHz == 0 && row.Cluster && r.Spot != nil {
-			row.FreqHz = r.Spot.FreqHz
+		if row.Cluster {
+			row.ClusterName = r.ClusterName
+			if r.Spot != nil {
+				row.RBN = r.Spot.RBN
+				if row.FreqHz == 0 {
+					row.FreqHz = r.Spot.FreqHz
+				}
+			}
+		}
+		row.BuddyNote = r.BuddyNote
+		row.Who = whoLine(r.Info)
+		row.Buddy = r.Buddy
+		for _, n := range r.Needs {
+			if n.Award != "" {
+				row.Needs = append(row.Needs, needTag(n))
+			}
 		}
 		if w := r.WorkedBefore; w != nil {
 			row.Worked, row.WorkedThisBand = true, w.ThisBand
@@ -278,6 +319,28 @@ func (m *Model) shown() ([]Row, int) {
 	return rows, hidden
 }
 
+// awardCodes lists the award codes of the unfiltered list in first-seen order,
+// then the active filter codes not on it; callers hold mu.
+func (m *Model) awardCodes() []string {
+	seen := map[string]bool{}
+	var out []string
+	add := func(a string) {
+		if a != "" && !seen[a] {
+			seen[a] = true
+			out = append(out, a)
+		}
+	}
+	for _, r := range m.chase.Ranked {
+		for _, n := range r.Needs {
+			add(n.Award)
+		}
+	}
+	for _, a := range m.filters.Awards {
+		add(a)
+	}
+	return out
+}
+
 func (m *Model) indexOf(rows []Row, id int64) int {
 	for i, r := range rows {
 		if r.RowID == id {
@@ -285,4 +348,46 @@ func (m *Model) indexOf(rows []Row, id int64) int {
 		}
 	}
 	return -1
+}
+
+// whoLine joins the QRZ fields worth a glance: name, then QTH (state),
+// country, then grid. "" when info is absent or empty.
+func whoLine(i *bus.Info) string {
+	if i == nil {
+		return ""
+	}
+	place := i.QTH
+	if i.State != "" {
+		if place != "" {
+			place += " "
+		}
+		place += i.State
+	}
+	var parts []string
+	for _, p := range []string{i.Name, place, i.Country, i.Grid} {
+		if p = strings.TrimSpace(p); p != "" {
+			parts = append(parts, p)
+		}
+	}
+	return strings.Join(parts, " \u00b7 ")
+}
+
+func needTag(n bus.Need) NeedTag {
+	label := n.Award
+	if n.Key != "" {
+		label += " " + n.Key
+	}
+	title := label
+	for _, d := range []string{n.Band, n.Mode, n.Status} {
+		if d != "" {
+			title += ", " + d
+		}
+	}
+	status := n.Status
+	switch status {
+	case "unworked", "worked-unconfirmed", "confirmed":
+	default:
+		status = "unknown"
+	}
+	return NeedTag{Label: label, Title: title, Status: status}
 }

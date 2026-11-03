@@ -191,3 +191,60 @@ func TestCorruptFiltersFileMeansNoFilter(t *testing.T) {
 		t.Errorf("corrupt file gave %+v", f)
 	}
 }
+
+func needRow(id int64, source string, awards ...string) bus.Ranked {
+	r := bus.Ranked{RowID: id, Call: "C", Band: "20m", Needed: len(awards) > 0, Source: source}
+	for _, a := range awards {
+		r.Needs = append(r.Needs, bus.Need{Award: a, Key: "K", Status: "unworked"})
+	}
+	return r
+}
+
+func TestAwardAndSourceFilters(t *testing.T) {
+	m, _ := newModel()
+	m.SetChase(chase(needRow(1, "bmrec", "dxcc"), needRow(2, "cluster", "was", "dxcc"), needRow(3, "cluster", "was"), needRow(4, "bmrec")))
+	if v := m.Snapshot(); !eq(order(v), []int64{1, 2, 3, 4}) || len(v.Awards) != 2 || v.Awards[0] != "dxcc" || v.Awards[1] != "was" {
+		t.Fatalf("order=%v awards=%v", order(v), v.Awards)
+	}
+	m.UpdateFilters(func(f Filters) Filters { return f.ToggleAward("was") })
+	if v := m.Snapshot(); !eq(order(v), []int64{2, 3}) || v.Hidden != 2 {
+		t.Errorf("award was: order=%v hidden=%d", order(v), v.Hidden)
+	}
+	m.UpdateFilters(func(f Filters) Filters { return f.ToggleAward("dxcc") })
+	if v := m.Snapshot(); !eq(order(v), []int64{1, 2, 3}) {
+		t.Errorf("was+dxcc: order=%v", order(v))
+	}
+	m.UpdateFilters(func(f Filters) Filters { return f.ToggleSource("cluster") })
+	if v := m.Snapshot(); !eq(order(v), []int64{2, 3}) || v.Hidden != 2 {
+		t.Errorf("cluster: order=%v hidden=%d", order(v), v.Hidden)
+	}
+	if f := m.UpdateFilters(func(f Filters) Filters { return f.ToggleSource("cluster") }); f.Source != "" {
+		t.Errorf("second toggle keeps source %q", f.Source)
+	}
+	// An active award that left the list stays offered, to be switched off.
+	m.SetFilters(Filters{Awards: []string{"wwff"}})
+	m.SetChase(chase(needRow(1, "bmrec", "dxcc")))
+	v := m.Snapshot()
+	if len(v.Rows) != 0 || v.Hidden != 1 || len(v.Awards) != 2 || v.Awards[1] != "wwff" || !v.Filters.Active() {
+		t.Errorf("rows=%d hidden=%d awards=%v", len(v.Rows), v.Hidden, v.Awards)
+	}
+}
+
+func TestClusterRowShowsNameAndRBN(t *testing.T) {
+	m, _ := newModel()
+	r := needRow(-1, "cluster", "dxcc")
+	r.ClusterName, r.Spot, r.Buddy, r.BuddyNote = "dxc-eu", &bus.ClusterSpot{FreqHz: 14025000, RBN: true}, true, "Fritz"
+	m.SetChase(chase(r))
+	row := m.Snapshot().Rows[0]
+	if !row.Cluster || row.ClusterName != "dxc-eu" || !row.RBN || row.FreqHz != 14025000 || !row.Buddy || row.BuddyNote != "Fritz" {
+		t.Errorf("row = %+v", row)
+	}
+}
+
+func TestTunableStopsAtTheRadiosRange(t *testing.T) {
+	for hz, want := range map[int64]bool{0: false, 14_230_000: true, 50_313_000: true, 144_300_000: false, 432_200_000: false} {
+		if got := (Row{FreqHz: hz}).Tunable(); got != want {
+			t.Errorf("%d: %v", hz, got)
+		}
+	}
+}

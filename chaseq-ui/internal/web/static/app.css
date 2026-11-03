@@ -15,7 +15,7 @@ body { margin:0; background:var(--bg); color:var(--fg); font-size:16px; }
 .chip:focus-visible, .rows:focus-visible { outline:2px solid #7fb0ff; outline-offset:1px; }
 .summary { padding:.2rem .8rem; color:var(--dim); border-bottom:1px solid var(--line); }
 .rows { list-style:none; margin:0; padding:0; flex:1; overflow-y:auto; }
-.row { display:flex; align-items:center; gap:1rem; padding:.45rem .8rem; border-bottom:1px solid var(--line); cursor:pointer; }
+.row { display:flex; flex-wrap:wrap; align-items:center; gap:1rem; padding:.45rem .8rem; border-bottom:1px solid var(--line); cursor:pointer; }
 .row.hi { background:var(--hi); }
 .row.notune .freq { color:var(--warn); }
 .call { width:9rem; font-weight:600; font-size:1.1rem; }
@@ -27,6 +27,15 @@ body { margin:0; background:var(--bg); color:var(--fg); font-size:16px; }
 .wk.other { color:var(--dim); }
 .badge { border-radius:999px; padding:0 .55rem; font-size:.8rem; background:#2d4a3a; color:#9fe0bb; }
 .badge.mult { background:#4a3a2d; color:#f0c89a; }
+.buddy { border:1px solid #7fb0ff; color:#7fb0ff; padding:0 .4rem; font-size:.8rem; font-weight:600; text-transform:uppercase; }
+.sub { flex-basis:100%; display:flex; flex-wrap:wrap; gap:.4rem; align-items:center; margin-top:-.2rem; font-size:.85rem; color:var(--dim); }
+.who { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:100%; }
+.src { color:var(--dim); font-size:.75rem; max-width:7rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.rbn { border:1px solid var(--line); color:var(--dim); padding:0 .3rem; font-size:.7rem; font-weight:600; }
+.need { border:1px solid var(--line); padding:0 .35rem; font-size:.75rem; color:var(--fg); }
+.need.unworked { border-color:var(--warn); color:var(--warn); }
+.need.worked-unconfirmed { border-color:#5b86c9; color:#9fc0f0; }
+.need.confirmed { color:var(--dim); }
 .empty { padding:1rem .8rem; color:var(--dim); }
 .result { padding:.4rem .8rem; border-top:1px solid var(--line); min-height:2.2rem; display:flex; flex-wrap:wrap; gap:.8rem; }
 .part { color:var(--dim); }

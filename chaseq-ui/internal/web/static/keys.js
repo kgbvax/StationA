@@ -36,6 +36,8 @@
   function toggle(el) {
     const d = el.dataset;
     if (d.band) return post('/filters?band=' + encodeURIComponent(d.band));
+    if (d.award) return post('/filters?award=' + encodeURIComponent(d.award));
+    if (d.source) return post('/filters?source=' + encodeURIComponent(d.source));
     if (d.needed !== undefined) return post('/filters?needed=' + d.needed);
     if (d.clear) return post('/filters?clear=1');
   }

@@ -47,3 +47,39 @@ func TestTopicsAndResolve(t *testing.T) {
 		t.Errorf("Resolve = %q", got)
 	}
 }
+
+func TestSendersLegacyFallback(t *testing.T) {
+	c, _ := Load(write(t, "[loggers]\nlog4om_addr = \"10.0.0.5:2241\"\nlog4om_timeout = \"300ms\"\n"))
+	got := c.Loggers.Senders()
+	if len(got) != 1 || got[0].Kind != "log4om" || got[0].Addr != "10.0.0.5:2241" || got[0].Timeout != "300ms" || !got[0].On() {
+		t.Errorf("Senders = %+v", got)
+	}
+	if c, _ = Load(""); len(c.Loggers.Senders()) != 1 {
+		t.Errorf("defaults: Senders = %+v", c.Loggers.Senders())
+	}
+}
+
+func TestSendersListWinsOverLegacy(t *testing.T) {
+	c, _ := Load(write(t, `[loggers]
+log4om_addr = "10.0.0.5:2241"
+[[loggers.sender]]
+kind = "log4om"
+addr = "127.0.0.1:2241"
+timeout = "1s"
+[[loggers.sender]]
+kind = "log4om"
+addr = "127.0.0.1:2251"
+enabled = false
+`))
+	got := c.Loggers.Senders()
+	if len(got) != 2 || got[0].Addr != "127.0.0.1:2241" || !got[0].On() || got[1].On() {
+		t.Errorf("Senders = %+v", got)
+	}
+}
+
+func TestLegacyBadTimeoutFallsBackToDefault(t *testing.T) {
+	l := LoggersConfig{Log4OMAddr: "127.0.0.1:2241", Log4OMTimeout: "500"}
+	if s := l.Senders(); len(s) != 1 || s[0].Timeout != "" {
+		t.Fatalf("%+v", s)
+	}
+}

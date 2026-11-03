@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/BurntSushi/toml"
 )
@@ -44,10 +45,41 @@ type HTTPConfig struct {
 	Listen string `toml:"listen"`
 }
 
-// LoggersConfig names where the callsign is sent.
+// LoggersConfig names where the callsign is sent: the [[loggers.sender]]
+// entries, or, when there are none, the single Log4OM given by the legacy
+// log4om_* keys.
 type LoggersConfig struct {
-	Log4OMAddr   string `toml:"log4om_addr"`    // Remote Control Interface inbound UDP
-	Log4OMTimout string `toml:"log4om_timeout"` // reply wait, Go duration
+	Log4OMAddr    string         `toml:"log4om_addr"`    // legacy: Remote Control Interface inbound UDP
+	Log4OMTimeout string         `toml:"log4om_timeout"` // legacy: reply wait, Go duration
+	Sender        []SenderConfig `toml:"sender"`
+}
+
+// SenderConfig is one [[loggers.sender]] entry.
+type SenderConfig struct {
+	Kind    string `toml:"kind"`    // "log4om"
+	Addr    string `toml:"addr"`    // kind-specific address (log4om: inbound UDP host:port)
+	Timeout string `toml:"timeout"` // reply wait, Go duration; "" = the kind's default
+	Enabled *bool  `toml:"enabled"` // nil = enabled
+}
+
+// On reports whether the entry is enabled (the default).
+func (s SenderConfig) On() bool { return s.Enabled == nil || *s.Enabled }
+
+// Senders returns the configured logger senders. With no [[loggers.sender]]
+// the legacy log4om_addr/log4om_timeout pair stands for one Log4OM entry.
+func (l LoggersConfig) Senders() []SenderConfig {
+	if len(l.Sender) > 0 {
+		return l.Sender
+	}
+	if l.Log4OMAddr == "" {
+		return nil
+	}
+	// the legacy timeout was parsed leniently: a bad one meant the default
+	timeout := l.Log4OMTimeout
+	if _, err := time.ParseDuration(timeout); err != nil {
+		timeout = ""
+	}
+	return []SenderConfig{{Kind: "log4om", Addr: l.Log4OMAddr, Timeout: timeout}}
 }
 
 // LogConfig is file logging (the windowsgui exe has no stderr).
@@ -62,7 +94,7 @@ func Default() Config {
 		Topics: TopicsConfig{Site: "muehle", Station: "hf", Chase: "chase", Radio: "radio"},
 		HTTP:   HTTPConfig{Listen: "127.0.0.1:8480"},
 		Loggers: LoggersConfig{
-			Log4OMAddr: "127.0.0.1:2241", Log4OMTimout: "500ms",
+			Log4OMAddr: "127.0.0.1:2241", Log4OMTimeout: "500ms",
 		},
 		FiltersFile: "filters.json",
 	}

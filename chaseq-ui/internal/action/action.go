@@ -179,6 +179,9 @@ func (r *Runner) refusal() string {
 // tune sends set_freq then set_mode, and waits for the radio state.
 func (r *Runner) tune(ctx context.Context, row model.Row) Part {
 	if !row.Tunable() {
+		if row.FreqHz > model.MaxTuneHz {
+			return part("Radio", loggers.Skipped, "above the radio's range")
+		}
 		return part("Radio", loggers.Skipped, "no frequency")
 	}
 	if err := r.Pub.Publish(r.RadioCmd, bus.CmdPayload("set_freq", fmt.Sprint(row.FreqHz))); err != nil {

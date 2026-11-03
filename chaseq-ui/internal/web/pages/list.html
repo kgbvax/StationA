@@ -7,18 +7,25 @@
 <div class="filters" role="toolbar" aria-label="View filters">
   {{range .Bands}}<button type="button" class="chip{{if index $.Active .}} on{{end}}" data-band="{{.}}" aria-pressed="{{if index $.Active .}}true{{else}}false{{end}}">{{.}}</button>{{end}}
   <button type="button" class="chip{{if .View.Filters.NeededOnly}} on{{end}}" data-needed="{{if .View.Filters.NeededOnly}}0{{else}}1{{end}}" aria-pressed="{{if .View.Filters.NeededOnly}}true{{else}}false{{end}}">needed only</button>
+  {{range .View.Awards}}<button type="button" class="chip award{{if index $.ActiveAwards .}} on{{end}}" data-award="{{.}}" aria-pressed="{{if index $.ActiveAwards .}}true{{else}}false{{end}}" title="only stations needed for {{.}}">{{.}}</button>{{end}}
+  <button type="button" class="chip{{if eq .View.Filters.Source "cluster"}} on{{end}}" data-source="cluster" aria-pressed="{{if eq .View.Filters.Source "cluster"}}true{{else}}false{{end}}">cluster</button>
+  <button type="button" class="chip{{if eq .View.Filters.Source "bmrec"}} on{{end}}" data-source="bmrec" aria-pressed="{{if eq .View.Filters.Source "bmrec"}}true{{else}}false{{end}}">bmrec</button>
   {{if .View.Filters.Active}}<button type="button" class="chip clear" data-clear="1">clear</button>{{end}}
 </div>
-{{if .View.Filters.Active}}<div class="summary">Filter:{{range .View.Filters.Bands}} {{.}}{{end}}{{if .View.Filters.NeededOnly}} needed only{{end}}{{if .View.Hidden}} - {{.View.Hidden}} hidden by filter{{end}}</div>{{end}}
+{{if .View.Filters.Active}}<div class="summary">Filter:{{range .View.Filters.Bands}} {{.}}{{end}}{{range .View.Filters.Awards}} {{.}}{{end}}{{if .View.Filters.Source}} {{.View.Filters.Source}} only{{end}}{{if .View.Filters.NeededOnly}} needed only{{end}}{{if .View.Hidden}} - {{.View.Hidden}} hidden by filter{{end}}</div>{{end}}
 <ol id="rows" class="rows" tabindex="0" role="listbox" aria-label="Chase queue"{{range .View.Rows}}{{if .Highlighted}} aria-activedescendant="row-{{.RowID}}"{{end}}{{end}}>
 {{range .View.Rows}}
   <li class="row{{if .Highlighted}} hi{{end}}{{if not .Tunable}} notune{{end}}" id="row-{{.RowID}}" data-row="{{.RowID}}" role="option" aria-selected="{{.Highlighted}}">
     <span class="call">{{if .Call}}{{.Call}}{{else}}no call{{end}}</span>
     <span class="band">{{.Band}}</span>
-    <span class="freq">{{if .Tunable}}{{khz .FreqHz}}{{else}}no freq{{end}}</span>
+    <span class="freq">{{if gt .FreqHz 0}}{{khz .FreqHz}}{{else}}no freq{{end}}</span>
     <span class="mode">{{.Mode}}</span>
     <span class="wkd">{{if .WorkedThisBand}}<span class="wk this" title="worked on this band">worked {{.Band}}</span>{{else if .Worked}}<span class="wk other" title="worked before on other bands">wkd{{range .WorkedOther}} {{.}}{{end}}</span>{{end}}</span>
     {{if .Tag}}<span class="badge {{.Tag}}">{{.Tag}}</span>{{end}}
+    {{if .Cluster}}<span class="src" title="DX cluster{{if .ClusterName}}: {{.ClusterName}}{{end}}{{if .RBN}} (skimmer spot){{end}}">{{if .ClusterName}}{{.ClusterName}}{{else}}cluster{{end}}</span>{{end}}
+    {{if .RBN}}<span class="rbn" title="skimmer spot (RBN)">RBN</span>{{end}}
+    {{if .Buddy}}<span class="buddy" title="{{if .BuddyNote}}{{.BuddyNote}}{{else}}buddy{{end}}">buddy</span>{{end}}
+    {{if or .Who .Needs}}<span class="sub">{{if .Who}}<span class="who">{{.Who}}</span>{{end}}{{range .Needs}}<span class="need {{.Status}}" title="{{.Title}}">{{.Label}}</span>{{end}}</span>{{end}}
   </li>
 {{else}}
   <li class="empty">{{if .View.Hidden}}No stations match the filter - {{.View.Hidden}} hidden{{else}}No stations on the list{{end}}</li>

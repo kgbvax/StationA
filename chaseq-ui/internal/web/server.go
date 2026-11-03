@@ -13,10 +13,12 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	"chaseq-ui/internal/action"
+	"chaseq-ui/internal/bus"
 	"chaseq-ui/internal/loggers"
 	"chaseq-ui/internal/model"
 )
@@ -28,7 +30,7 @@ var pagesFS embed.FS
 var staticFS embed.FS
 
 // Bands are the filter buttons, low to high.
-var Bands = []string{"160m", "80m", "60m", "40m", "30m", "20m", "17m", "15m", "12m", "10m", "6m"}
+var Bands = []string{"160m", "80m", "60m", "40m", "30m", "20m", "17m", "15m", "12m", "10m", "6m", "2m", "70cm"}
 
 // Server is the HTTP side.
 type Server struct {
@@ -139,13 +141,18 @@ type pageData struct {
 	Bands  []string
 	Last   *action.Report
 	Active map[string]bool
+	// ActiveAwards marks the award codes in the filter.
+	ActiveAwards map[string]bool
 }
 
 func (s *Server) data() pageData {
 	v := s.Model.Snapshot()
-	d := pageData{View: v, Bands: Bands, Active: map[string]bool{}}
+	d := pageData{View: v, Bands: Bands, Active: map[string]bool{}, ActiveAwards: map[string]bool{}}
 	for _, b := range v.Filters.Bands {
 		d.Active[b] = true
+	}
+	for _, a := range v.Filters.Awards {
+		d.ActiveAwards[a] = true
 	}
 	s.mu.Lock()
 	d.Last = s.last
@@ -276,9 +283,24 @@ func (s *Server) filters(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	award, source := q.Get("award"), q.Get("source")
+	if len(award) > 32 || strings.ContainsAny(award, "<>\"'&") {
+		http.Error(w, "bad award", http.StatusBadRequest)
+		return
+	}
+	if source != "" && source != bus.SourceCluster && source != bus.SourceBmrec {
+		http.Error(w, "bad source", http.StatusBadRequest)
+		return
+	}
 	f := s.Model.UpdateFilters(func(f model.Filters) model.Filters {
 		if band != "" {
 			f = f.ToggleBand(band)
+		}
+		if award != "" {
+			f = f.ToggleAward(award)
+		}
+		if source != "" {
+			f = f.ToggleSource(source)
 		}
 		if n := q.Get("needed"); n != "" {
 			f.NeededOnly = n == "1"

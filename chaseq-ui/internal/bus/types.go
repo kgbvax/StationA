@@ -45,9 +45,37 @@ type Ranked struct {
 	Mode         string        `json:"mode,omitempty"` // canonical; "" = unknown
 	Needed       bool          `json:"needed"`
 	Tag          string        `json:"tag,omitempty"`
-	Source       string        `json:"source,omitempty"` // "bmrec" or "cluster"
+	Source       string        `json:"source,omitempty"`       // "bmrec" or "cluster"
+	ClusterName  string        `json:"cluster_name,omitempty"` // the [[cluster]] whose spot the row stands for
 	Spot         *ClusterSpot  `json:"spot,omitempty"`
 	WorkedBefore *WorkedBefore `json:"worked_before,omitempty"` // nil = never worked
+	Info         *Info         `json:"info,omitempty"`          // QRZ callbook entry; nil = not looked up
+	// Needs lists the award slots the station would fill, by goal priority;
+	// Buddy marks a station on the operator's buddy list (listed even when
+	// nothing needs it).
+	Needs     []Need `json:"needs,omitempty"`
+	Buddy     bool   `json:"buddy,omitempty"`
+	BuddyNote string `json:"buddy_note,omitempty"`
+}
+
+// Need is one award slot this station would fill.
+type Need struct {
+	Award  string `json:"award"`
+	Key    string `json:"key,omitempty"`
+	Band   string `json:"band,omitempty"`
+	Mode   string `json:"mode,omitempty"`
+	Status string `json:"status,omitempty"` // "unworked" | "worked-unconfirmed"
+}
+
+// Info is the QRZ callbook entry chase-queue attaches (the fields shown).
+type Info struct {
+	Name    string `json:"name,omitempty"`
+	QTH     string `json:"qth,omitempty"`
+	State   string `json:"state,omitempty"`
+	Country string `json:"country,omitempty"`
+	Grid    string `json:"grid,omitempty"`
+	CQZone  int    `json:"cq_zone,omitempty"`
+	ITUZone int    `json:"itu_zone,omitempty"`
 }
 
 // Row sources.
@@ -58,16 +86,20 @@ const (
 
 // ClusterSpot is the latest cluster spot of a cluster row.
 type ClusterSpot struct {
-	FreqHz int64 `json:"freq_hz"`
+	FreqHz  int64     `json:"freq_hz"`
+	Spotter string    `json:"spotter,omitempty"`
+	Comment string    `json:"comment,omitempty"`
+	At      time.Time `json:"at"`
+	RBN     bool      `json:"rbn,omitempty"` // skimmer spot (spotter ending in "-#")
 }
 
 // WorkedBefore is what the logs know about earlier QSOs with the call.
 type WorkedBefore struct {
-	QSOs     int      `json:"qsos"`
-	Bands    []string `json:"bands,omitempty"`
-	Modes    []string `json:"modes,omitempty"`
-	ThisBand bool     `json:"this_band"`
-	Last     string   `json:"last,omitempty"`
+	QSOs     int       `json:"qsos"`
+	Bands    []string  `json:"bands,omitempty"`
+	Modes    []string  `json:"modes,omitempty"`
+	ThisBand bool      `json:"this_band"`
+	Last     time.Time `json:"last"`
 }
 
 // RadioState is flexbridge's retained <site>/hf/radio/state (the fields

@@ -29,7 +29,7 @@ and publish retained `muehle/hf/chase/state`, and `…/chase/status`.
 | `internal/bus` | wire types copied from chase-queue (its `internal/bus` cannot be imported), decoders, MQTT session |
 | `internal/model` | pure list model: rows as sent (freq, mode, worked marks), filters (persisted JSON), highlight by `row_id`, staleness (75 s) |
 | `internal/action` | Enter/Skip/Undo runner; one action at a time; every part reports its own result |
-| `internal/loggers` | Log4OM Remote Control `SetCallsign` (UDP, reply on port+1); `Sender` is the seam for further loggers |
+| `internal/loggers` | Log4OM Remote Control `SetCallsign` (UDP, reply on port+1); `Sender` is the seam for further loggers; `Build` (registry.go) maps config `kind` to a constructor, unknown kind = start-up error |
 | `internal/web` | loopback pages, SSE (`/events`), write routes guarded by same-origin + `X-Chaseq` header |
 | `internal/desktop` | glaze window (the only package importing glaze) |
 
@@ -49,6 +49,18 @@ and publish retained `muehle/hf/chase/state`, and `…/chase/status`.
   chase-queue first. The Radio part also says "mode unchanged (data)" etc. for a mode flexbridge cannot set.
 - **Worked marks:** `worked_before.this_band` shows "worked <band>" (boxed; chase-queue sets `this_band` from the same verdict that lists the row last, so such rows
   arrive with `needed` false and the needed-only filter hides them); other bands show as "wkd 40m 15m"; never worked shows nothing.
+- **Logger senders are config:** `[[loggers.sender]]` entries `{kind, addr, timeout, enabled}` (only `kind = "log4om"` exists);
+  with none, the legacy `log4om_addr`/`log4om_timeout` stand for one Log4OM. A new logger = a `Sender` plus one entry in the
+  `constructors` map.
+- **Row enrichments, all optional:** `info` (QRZ: name, qth, state, country, grid shown as one line; zones decoded, not shown),
+  `needs[]` `{award, key, band, mode, status}` (tag "award key", class by status; status is `unworked` or `worked-unconfirmed`),
+  `buddy` + `buddy_note` (badge, note as hover), and on cluster rows `cluster_name` (compact label; "cluster" without it) and
+  `spot.rbn` (RBN marker). The wire types mirror chase-queue's `internal/bus/bus.go` field by field (`worked_before.last` is a
+  timestamp). Absent = nothing rendered; everything goes through html/template, never raw.
+- **Filters (local, `filters.json`):** bands, needed only, **award** (chips for the award codes among the needs of the
+  unfiltered list, first seen = highest priority; a row passes with a need for any selected code; an active code that left the
+  list stays as a chip so it can be switched off) and **source** (`cluster` / `bmrec`, click again for both). All count into
+  "N hidden by filter"; none changes chase-queue's ranking. `POST /filters?award=<code>&source=<cluster|bmrec>` toggle.
 - **Enter/`s`/`u` act from anywhere except a filter chip** (a focused chip swallows them); arrows only ever move the highlight. A held key is ignored (`e.repeat`). The page fragment is only swapped when it changed, so focus and scroll survive.
 - **Secrets:** MQTT password in `config.toml` `[mqtt] password` (no env vars, like qslotter);
   never logged (`Config.String` redacts).

@@ -78,14 +78,18 @@ func main() {
 			Radio:  radio.Set,
 		},
 	})
-	l4Timeout, _ := time.ParseDuration(cfg.Loggers.Log4OMTimout)
+	senders, err := buildSenders(cfg.Loggers)
+	if err != nil {
+		fatal(err)
+	}
+	for _, s := range senders {
+		log.Info("logger sender", "name", s.Name())
+	}
 	runner := &action.Runner{
 		Model: m, Radio: radio, Pub: sess,
 		ChaseCmd: cfg.ChaseCmd(), RadioCmd: cfg.RadioCmd(),
-		Loggers: []loggers.Sender{
-			loggers.NewLog4OM(cfg.Loggers.Log4OMAddr, l4Timeout),
-		},
-		Timing: action.DefaultTiming,
+		Loggers: senders,
+		Timing:  action.DefaultTiming,
 	}
 	srv, err = web.New(m, runner, filtersPath, stop)
 	if err != nil {
@@ -122,6 +126,27 @@ func main() {
 		<-ctx.Done()
 	}
 	log.Info("stopped")
+}
+
+// buildSenders turns the enabled [[loggers.sender]] entries (or the legacy
+// log4om_* keys) into loggers.Senders; a bad entry stops the start.
+func buildSenders(lc config.LoggersConfig) ([]loggers.Sender, error) {
+	var specs []loggers.Spec
+	for i, sc := range lc.Senders() {
+		if !sc.On() {
+			continue
+		}
+		var timeout time.Duration
+		if sc.Timeout != "" {
+			d, err := time.ParseDuration(sc.Timeout)
+			if err != nil {
+				return nil, fmt.Errorf("loggers.sender #%d: timeout %q: %w", i+1, sc.Timeout, err)
+			}
+			timeout = d
+		}
+		specs = append(specs, loggers.Spec{Kind: sc.Kind, Addr: sc.Addr, Timeout: timeout})
+	}
+	return loggers.Build(specs)
 }
 
 func flagSet(name string) bool {
