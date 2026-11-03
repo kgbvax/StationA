@@ -110,3 +110,32 @@ func TestWorkedViewAndStats(t *testing.T) {
 		t.Fatalf("%+v %v", st, err)
 	}
 }
+
+// Two log entries of one QSO with different locator precision must not make
+// every re-import look like a change (seen with a real Log4OM export).
+func TestMergeGridPrefersPreciseAndIsStable(t *testing.T) {
+	q := QSO{Grid: "LK08pw"}
+	if q.Merge(QSO{Grid: "LK08"}) || q.Grid != "LK08pw" {
+		t.Fatalf("shorter grid changed %q", q.Grid)
+	}
+	if !q.Merge(QSO{Grid: "LK08pw44"}) || q.Grid != "LK08pw44" {
+		t.Fatalf("longer grid not taken %q", q.Grid)
+	}
+	e := QSO{}
+	if !e.Merge(QSO{Grid: "KM64lo"}) || e.Merge(QSO{Grid: "KM65"}) || e.Grid != "KM64lo" {
+		t.Fatalf("grid %q", e.Grid)
+	}
+}
+
+func TestMergeSameSourceOnlyFillsOtherSourceCorrects(t *testing.T) {
+	q := QSO{Source: "log4om-file", CQZone: 4, State: "MI"}
+	if q.Merge(QSO{Source: "log4om-file", CQZone: 5, State: "OH"}) || q.CQZone != 4 || q.State != "MI" {
+		t.Fatalf("same source changed %+v", q)
+	}
+	if !q.Merge(QSO{Source: "log4om-file", ITUZone: 8}) || q.ITUZone != 8 {
+		t.Fatalf("gap not filled %+v", q)
+	}
+	if !q.Merge(QSO{Source: "other", CQZone: 5}) || q.CQZone != 5 {
+		t.Fatalf("other source did not correct %+v", q)
+	}
+}

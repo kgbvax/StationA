@@ -13,9 +13,9 @@ fed by files, `POST /import` and the optional Log4OM UDP feeder.
   (`cw` | `phone` | `data`) is derived from ADIF `MODE`/`SUBMODE`; SSB, USB and LSB are one class. A match
   **merges**, it never skips: later confirmations (`QSL_RCVD`, `LOTW_QSL_RCVD`, `EQSL_QSL_RCVD`, Y or V) and
   award references (`STATE`, `SOTA_REF`, `WWFF_REF`, `SIG`, `SIG_INFO`, `DXCC`, zones, grid) update the stored
-  QSO. Earliest time kept, flags only turn true, an empty value never overwrites, mode/frequency are only
+  QSO. Earliest time kept, flags only turn true, an empty value never overwrites, a same-source re-import only fills gaps (another source's value corrects; the longer grid wins), mode/frequency are only
   filled in, the source stays the first one's. `store.QSO.Merge` is the single place for these rules.
-- **Idempotent.** Importing the same file twice reports `added 0 merged 0` and publishes no event.
+- **Idempotent.** Importing the same file twice reports `added 0 merged 0` and publishes no event (checked with a real 4562-record Log4OM export).
 - **Own call** = `STATION_CALLSIGN`, else `OPERATOR`, else `default_own_call`; a record without one is invalid.
 - **Portable calls stay as logged** (`DL1ABC/P` and `DL1ABC` are two calls). Matching them up is the
   consumer's job (chase-queue has `calls.SameStation`).

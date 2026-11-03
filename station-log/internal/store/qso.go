@@ -109,8 +109,8 @@ func (q QSO) Validate() error {
 // Merge folds a later arrival of the same QSO into q and reports whether q
 // changed. Rules: the earliest time is kept; the flags only turn true;
 // an empty value never overwrites a known one; the award references,
-// entity, zones and grid are overwritten by a non-empty value (a later
-// export carries the corrected one); mode and frequency are only filled in;
+// entity and zones are overwritten by a non-empty value from ANOTHER source
+// (a same-source re-import only fills gaps), the grid by a more precise one; mode and frequency are only filled in;
 // the source stays the first one's.
 func (q *QSO) Merge(in QSO) bool {
 	old := *q
@@ -122,8 +122,12 @@ func (q *QSO) Merge(in QSO) bool {
 			*dst = v
 		}
 	}
+	// a re-import from the same source only fills gaps, so two entries of one QSO
+	// that disagree (zones, state) cannot flip the stored value on every import;
+	// another source's non-empty value is taken as the correction
+	over := in.Source != q.Source
 	set := func(dst *string, v string) {
-		if v != "" {
+		if v != "" && (over || *dst == "") {
 			*dst = v
 		}
 	}
@@ -133,18 +137,21 @@ func (q *QSO) Merge(in QSO) bool {
 		q.FreqHz = in.FreqHz
 	}
 	set(&q.State, in.State)
-	set(&q.Grid, in.Grid)
 	set(&q.SOTARef, in.SOTARef)
 	set(&q.WWFFRef, in.WWFFRef)
 	set(&q.Sig, in.Sig)
 	set(&q.SigInfo, in.SigInfo)
-	if in.DXCC != 0 {
+	// the more precise locator wins, whatever the source (LK08 vs LK08pw)
+	if len(in.Grid) > len(q.Grid) {
+		q.Grid = in.Grid
+	}
+	if in.DXCC != 0 && (over || q.DXCC == 0) {
 		q.DXCC = in.DXCC
 	}
-	if in.CQZone != 0 {
+	if in.CQZone != 0 && (over || q.CQZone == 0) {
 		q.CQZone = in.CQZone
 	}
-	if in.ITUZone != 0 {
+	if in.ITUZone != 0 && (over || q.ITUZone == 0) {
 		q.ITUZone = in.ITUZone
 	}
 	q.QSLRcvd = q.QSLRcvd || in.QSLRcvd

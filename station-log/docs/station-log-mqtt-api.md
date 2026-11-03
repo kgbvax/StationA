@@ -118,7 +118,8 @@ FREEDV DMR M17` (or a `USB`/`LSB` submode) -> `phone`; everything else -> `data`
 |---|---|
 | time | the earlier one is kept |
 | `qsl_rcvd`, `lotw_rcvd`, `eqsl_rcvd`, `club_log`, `confirmed` | only ever turn true |
-| `state`, `grid`, `sota_ref`, `wwff_ref`, `sig`, `sig_info`, `dxcc`, `cq_zone`, `itu_zone` | a non-empty incoming value overwrites; an empty one never does |
+| `state`, `sota_ref`, `wwff_ref`, `sig`, `sig_info`, `dxcc`, `cq_zone`, `itu_zone` | a non-empty value from **another source** overwrites (a correction); from the same source it only fills an empty field, so re-importing a file never churns (two log entries of one QSO may disagree). Fix a wrong value in the same source with `replace_source` |
+| `grid` | the more precise (longer) locator wins, whatever the source |
 | `mode`, `submode`, `freq_hz` | filled in only when the stored one is empty |
 | `source`, `created`, `own_call`, `call`, `band`, `mode_class` | unchanged |
 
