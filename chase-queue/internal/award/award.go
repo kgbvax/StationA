@@ -225,7 +225,14 @@ func (c *Catalog) Add(d Definition) error {
 		}
 		v := d
 		v.Configs = nil
-		v.Code = d.Code + "-" + n
+		switch {
+		case strings.EqualFold(n, d.Code):
+			continue // Log4OM's config named like the award is the award itself
+		case strings.HasPrefix(strings.ToUpper(n), strings.ToUpper(d.Code)+"-"):
+			v.Code = n // Log4OM names its configs WAS-10-CW: already prefixed
+		default:
+			v.Code = d.Code + "-" + n
+		}
 		v.Name = d.Name + " " + n
 		if len(cfg.Bands) > 0 {
 			v.Bands = cfg.Bands

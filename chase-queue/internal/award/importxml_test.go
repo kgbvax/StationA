@@ -106,3 +106,47 @@ func TestImportWorkedWhenNoConfirmation(t *testing.T) {
 		t.Fatalf("%+v %v", d, err)
 	}
 }
+
+// The real Log4OM export (2026-11-02): items carry the state in RC (Code is the
+// award code) and the CW / PHONE / DIGITAL split sits in EmissionType.
+func TestImportRealLog4OMWAS(t *testing.T) {
+	f, err := os.Open("testdata/award_WAS_log4om.xml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	def, _, err := ImportXML(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if def.Code != "WAS" || def.Field != "STATE" || len(def.DXCC) != 3 {
+		t.Fatalf("%+v", def)
+	}
+	seen := map[string]bool{}
+	for _, it := range def.Items {
+		seen[it] = true
+	}
+	for _, want := range []string{"AK", "AL", "HI", "NY", "WY"} {
+		if !seen[want] {
+			t.Errorf("item %s missing: %v", want, def.Items)
+		}
+	}
+	if len(def.Items) != 50 || len(seen) != 50 {
+		t.Fatalf("%d items, %d distinct: %v", len(def.Items), len(seen), def.Items)
+	}
+	if len(def.Configs) != 133 {
+		t.Fatalf("%d configs", len(def.Configs))
+	}
+	modes := map[string][]string{}
+	for _, c := range def.Configs {
+		modes[c.Name] = c.Modes
+	}
+	for name, want := range map[string]string{"WAS-10-CW": "cw", "WAS-10-PHONE": "phone", "WAS-10-FT8": "data", "WAS-10-DIGITAL": "data"} {
+		if got := modes[name]; len(got) != 1 || got[0] != want {
+			t.Errorf("%s modes = %v, want [%s]", name, got, want)
+		}
+	}
+	if m := modes["WAS"]; len(m) != 0 {
+		t.Errorf("plain WAS has modes %v", m)
+	}
+}

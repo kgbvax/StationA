@@ -109,7 +109,8 @@ func (n *node) findWithChild(name string) *node {
 }
 
 // list reads a value list: comma/semicolon/space separated text, or child
-// elements whose own text (or Code/Key/Value child) is the value.
+// elements whose own text (or RC/Key/Value/Code child: Log4OM keeps the item
+// key in RC, its Code is the award code) is the value.
 func (n *node) list() []string {
 	var out []string
 	add := func(s string) {
@@ -119,7 +120,7 @@ func (n *node) list() []string {
 	}
 	add(n.text)
 	for _, k := range n.kids {
-		if v := k.str("code", "key", "value", "item"); v != "" {
+		if v := k.str("rc", "key", "value", "item", "code"); v != "" {
 			out = append(out, v)
 			continue
 		}
@@ -198,7 +199,7 @@ func ImportXML(r io.Reader) (def Definition, notes []string, err error) {
 				}
 			}
 			var modes []string
-			for _, nm := range []string{"modes", "mode", "emissions", "emission"} {
+			for _, nm := range []string{"modes", "mode", "emissions", "emission", "emissiontype"} {
 				if m := c.child(nm); m != nil {
 					modes = append(modes, m.list()...)
 				}

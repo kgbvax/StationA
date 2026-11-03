@@ -100,3 +100,23 @@ func TestFileMayReplaceBuiltinDXCCOnce(t *testing.T) {
 		t.Fatal("a second dxcc is a duplicate")
 	}
 }
+
+func TestAddConfigNamesAlreadyPrefixed(t *testing.T) {
+	c := NewCatalog()
+	d := Definition{Code: "WAS", Kind: KindField, Rule: RuleConfirmed, Field: "STATE", Items: []string{"NY"},
+		Configs: []Config{{Name: "WAS"}, {Name: "WAS-10-CW", Bands: []string{"10m"}, Modes: []string{"cw"}}, {Name: "Mixed"}}}
+	if err := c.Add(d); err != nil {
+		t.Fatal(err)
+	}
+	for _, code := range []string{"WAS", "WAS-10-CW", "WAS-Mixed"} {
+		if _, ok := c.Get(code); !ok {
+			t.Errorf("%s missing", code)
+		}
+	}
+	if _, ok := c.Get("WAS-WAS"); ok {
+		t.Error("WAS-WAS must not exist")
+	}
+	if _, ok := c.Get("WAS-WAS-10-CW"); ok {
+		t.Error("WAS-WAS-10-CW must not exist")
+	}
+}

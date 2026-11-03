@@ -125,8 +125,9 @@ Stations" and `chase-queue/CLAUDE.md`.
 3. **Generic award model.** Built: `chase-queue/internal/award` (definition file in TOML, slot evaluator,
    built-in DXCC per band, field awards such as WAS, contest wrapper, Log4OM XML importer
    `-import-award-xml`), `[[goal]]` with priority, `needs[]` on the wire, chaseq-ui shows the award(s) per row
-   and has an award filter. **Left:** the XML importer is written against synthetic fixtures; check it against
-   the real `award_WAS.xml` before relying on it. Definitions load once at start (restart to change). No
+   and has an award filter. The XML importer is checked against the real `award_WAS.xml` (2026-11-04; two bugs found
+   and fixed: item keys are in `RC`, the CW/PHONE/DIGITAL split is in `EmissionType`); a real `dxcc.xml` is still
+   untested (the copy received was all zero bytes). **Left:** Definitions load once at start (restart to change). No
    catalog refresh (ideation #4). Only field awards (a `QsoField` with allowed values) and DXCC are
    covered; POTA, SOTA and WWFF are deferred and rejected.
 4. **bmrec qualification gate.** chase-queue side built: `[bmrec] gate` = `off` | `trusted` (default) |
