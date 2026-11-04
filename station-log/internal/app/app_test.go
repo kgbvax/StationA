@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -206,5 +207,68 @@ func TestLog4OMFeederMergesThroughStore(t *testing.T) {
 	}
 	if n, _ := s.st.Count(); n != 1 {
 		t.Fatal(n)
+	}
+}
+
+func TestWatchInState(t *testing.T) {
+	dir := t.TempDir()
+	p := dir + "/x.adi"
+	if err := os.WriteFile(p, []byte(adi), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-time.Minute)
+	_ = os.Chtimes(p, old, old)
+	cfg := config.Defaults()
+	cfg.DataDir = t.TempDir()
+	cfg.DefaultOwnCall = "DL9ET"
+	cfg.Watch.Dir = dir
+	st, err := store.Open(cfg.DBPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	s := New(cfg, st, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	s.watcher.Scan(context.Background())
+	got, err := s.BuildState()
+	if err != nil || got.Watch == nil || got.Watch.Dir != dir || got.Watch.Added != 1 || got.Watch.LastFile != "x.adi" || got.QSOCount != 1 {
+		t.Fatalf("%v %+v", err, got.Watch)
+	}
+}
+
+func TestWatchFirstScanWaitsForConnect(t *testing.T) {
+	dir := t.TempDir()
+	p := dir + "/x.adi"
+	if err := os.WriteFile(p, []byte(adi), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-time.Minute)
+	_ = os.Chtimes(p, old, old)
+	cfg := config.Defaults()
+	cfg.DataDir = t.TempDir()
+	cfg.DefaultOwnCall = "DL9ET"
+	cfg.Watch.Dir = dir
+	st, err := store.Open(cfg.DBPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	s := New(cfg, st, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go sharedmqtt.RunJobs(ctx, s.jobs)
+	go s.watcher.Run(ctx)
+	time.Sleep(150 * time.Millisecond)
+	if n, _ := st.Count(); n != 0 {
+		t.Fatal("the drop directory was scanned before the MQTT link was up")
+	}
+	f := newFake()
+	s.SetPublisher(f) // what connect does, then Run signals readiness
+	s.readyOnce.Do(func() { close(s.ready) })
+	msgs := f.wait(t, 1)
+	if msgs[0].topic != s.topics.event {
+		t.Fatalf("%s", msgs[0].topic)
+	}
+	if s.dropped.Load() != 0 {
+		t.Fatal("events were dropped")
 	}
 }

@@ -406,6 +406,25 @@ func (e *Engine) SetAwards(cat *award.Catalog, goals []Goal) error {
 	return nil
 }
 
+// ReplaceAwards swaps the catalog and goals of a running engine. Unlike
+// SetAwards it tolerates a goal whose award is gone from the new catalog: the
+// goal stays configured but matches nothing (rebuildLocked only walks the
+// catalog), and its award code is returned so the caller can report it.
+func (e *Engine) ReplaceAwards(cat *award.Catalog, goals []Goal) (missing []string) {
+	cfg := map[string]Goal{}
+	for _, g := range goals {
+		k := strings.ToLower(strings.TrimSpace(g.Award))
+		if _, ok := cat.Get(k); !ok && k != award.CodeContest {
+			missing = append(missing, g.Award)
+		}
+		cfg[k] = g
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.awards, e.goalCfg, e.dirty = cat, cfg, true
+	return missing
+}
+
 // SetContestQSOs replaces the contest log (after the writer stored a batch).
 func (e *Engine) SetContestQSOs(contestID int64, qsos []store.ContestQSO) {
 	e.mu.Lock()

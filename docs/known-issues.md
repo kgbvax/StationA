@@ -937,7 +937,8 @@ gate, logger senders); **merged to main and live since 2026-11-04**. Open items,
    (`chase-queue/internal/bus/bus.go`). The fix belongs to bmrec.
 4. ~~No logbook history before deployment~~ — resolved in code by `station-log` (ADIF import with duplicate
    merge, `GET /v1/worked`, events); chase-queue builds its log view from it. Live since the cutover on 2026-11-04 (item 11);
-   The gap between the first export and the cutover was closed by a fresh export on 2026-11-04. The Club Log **matrix** stays in chase-queue
+   The gap between the first export and the cutover was closed by a fresh export on 2026-11-04. station-log can also watch an ADIF drop directory (`[watch] dir`, merge, source `adif-drop`; built, off until
+   configured on scmino). The Club Log **matrix** stays in chase-queue
    (entity-level, not a QSO list); the Club Log log download is not built.
 5. **Worked in a contest means "dupe".** Stations worked on the band are listed last (needed false). With
    station-log the DX tier and `worked_before` read the log view (call+band+mode class, ever); in a contest the tier is
@@ -954,7 +955,7 @@ gate, logger senders); **merged to main and live since 2026-11-04**. Open items,
    bmrec-sourced row after qualifying (band conditions); `/state.bmrec_unqualified` counts the rest.
 8. **Log4OM award XML importer is tested on real WAS and DXCC exports** (fixed 2026-11-04: item key in `RC`,
    mode class in `EmissionType`; DXCC is built in, so its export imports nothing, exit code 4). Definitions
-   load at start.
+   reload within 30 s of a file change or on SIGHUP; a bad reload keeps the old catalog (shown in `problems`).
 9. **Merge-only import does not remove QSOs deleted in the logger.** `replace_source` (per-source snapshot
    replace) exists but is off by default; use it only with a full, valid export of that source.
 10. **POTA, SOTA and WWFF are deferred** (rejected as goals); station-log keeps their ADIF reference fields.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strconv"
 	"time"
 
@@ -125,6 +126,9 @@ func (s *Service) metaPayload() ([]byte, error) {
 	if s.view != nil {
 		history = "station-log"
 	}
+	s.awardMu.Lock()
+	awards := slices.Clone(s.awardCodes)
+	s.awardMu.Unlock()
 	return json.Marshal(map[string]any{
 		"schema": "1.0",
 		"role":   "chase-queue",
@@ -135,7 +139,7 @@ func (s *Service) metaPayload() ([]byte, error) {
 			"actions":    []string{bus.CmdSkip, bus.CmdHandled, bus.CmdUndo, bus.CmdSetMode, bus.CmdSwitchInstance, bus.CmdDeleteInstance},
 			"input":      s.topics.finder,
 			"history":    history,
-			"awards":     s.awardCodes,
+			"awards":     awards,
 		},
 	})
 }

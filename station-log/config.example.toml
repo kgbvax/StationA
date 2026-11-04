@@ -34,5 +34,14 @@ listen = "127.0.0.1:8096"         # POST /import and the read API
 # listen     = "0.0.0.0:2341"
 # allow_from = ["192.168.1.197"]
 
+# ADIF drop directory: every interval, each *.adi / *.adif file here (not
+# recursive) that was not imported yet (name + size + mtime) is merged like
+# POST /import, source below, never replace_source. A file written within the
+# last 5 s waits. Files are never deleted or moved. Off while dir is empty.
+# [watch]
+# dir              = "/var/lib/station-log/drop"   # must be readable by the service user
+# interval_seconds = 30
+# source           = "adif-drop"
+
 [log]
 level = "info"

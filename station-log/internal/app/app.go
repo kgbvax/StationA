@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -26,6 +27,7 @@ import (
 	"station-log/internal/importer"
 	"station-log/internal/log4om"
 	"station-log/internal/store"
+	"station-log/internal/watch"
 )
 
 // heartbeat is how often /state is re-evaluated, so an import done by the
@@ -57,6 +59,10 @@ type Service struct {
 	lastPub  []byte // publisher goroutine only
 	forcePub atomic.Bool
 
+	watcher   *watch.Watcher
+	ready     chan struct{} // closed once the MQTT link is up (first scan of the drop directory waits)
+	readyOnce sync.Once
+
 	topics struct{ meta, state, status, event string }
 }
 
@@ -69,7 +75,12 @@ func New(cfg config.Config, st *store.Store, log *slog.Logger) *Service {
 	s.topics.state = schema.StateTopic(site, station, slot)
 	s.topics.status = schema.StatusTopic(site, station, slot)
 	s.topics.event = schema.SiblingTopic(site, station, slot, "event")
+	s.ready = make(chan struct{})
 	s.imp = &importer.Importer{Store: st, Window: cfg.Window(), DefaultOwn: cfg.DefaultOwnCall, Sink: s.emit, Log: log}
+	if cfg.Watch.Dir != "" {
+		s.watcher = &watch.Watcher{Dir: cfg.Watch.Dir, Interval: time.Duration(cfg.Watch.IntervalSeconds) * time.Second,
+			Source: cfg.Watch.Source, Store: st, Importer: s.imp, Log: log, OnChange: s.poke, Ready: s.ready}
+	}
 	return s
 }
 
@@ -134,6 +145,7 @@ type State struct {
 	QSOCount   int                  `json:"qso_count"`
 	OwnCalls   []string             `json:"own_calls"`
 	LastImport *importer.LastImport `json:"last_import"`
+	Watch      *watch.Status        `json:"watch,omitempty"`
 	Problems   []string             `json:"problems"`
 }
 
@@ -150,6 +162,13 @@ func (s *Service) BuildState() (State, error) {
 	st := State{TS: s.now().UTC().Format(time.RFC3339), QSOCount: n, OwnCalls: own, Problems: []string{}}
 	if l, ok := s.imp.Last(); ok {
 		st.LastImport = &l
+	}
+	if s.watcher != nil {
+		w := s.watcher.Status()
+		st.Watch = &w
+		if w.Error != "" {
+			st.Problems = append(st.Problems, "ADIF drop directory: "+w.Error)
+		}
 	}
 	if d := s.dropped.Load(); d > 0 {
 		st.Problems = append(st.Problems, fmt.Sprintf("%d QSO events were not published (broker offline); consumers must reload from the read API", d))
@@ -226,6 +245,9 @@ func (s *Service) feeders() []string {
 	if s.cfg.Log4OM.Listen != "" {
 		out = append(out, "log4om")
 	}
+	if s.cfg.Watch.Dir != "" {
+		out = append(out, "adif-drop")
+	}
 	return out
 }
 
@@ -267,10 +289,18 @@ func (s *Service) Run(ctx context.Context) error {
 		})
 	}
 
+	if s.watcher != nil {
+		if _, err := os.Stat(s.cfg.Watch.Dir); err != nil {
+			s.log.Warn("ADIF drop directory does not exist (yet); watching anyway", "dir", s.cfg.Watch.Dir, "err", err)
+		}
+		spawn(func() { s.watcher.Run(ctx) })
+	}
+
 	var runErr error
 	if err := s.connect(ctx); err != nil {
 		runErr = err
 	} else {
+		s.readyOnce.Do(func() { close(s.ready) })
 		select {
 		case <-ctx.Done():
 		case runErr = <-errCh:

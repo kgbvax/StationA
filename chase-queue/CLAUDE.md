@@ -115,7 +115,7 @@ Behaviour change worth knowing: in a contest DXCC stays a goal (priority below t
 - **Field awards take the state from the log first** (the call's own QSO in the station-log view), else the
   callbook (`info.state`); the engine asks the callbook only for a call a field award covers (entity in the
   award's `dxcc`) and the log has no state for, so DXCC-only setups cause no extra QRZ lookups.
-- **Award definitions load once at start** (restart to change them). The Log4OM award XML schema is not
+- **Award definitions reload without a restart**: at start (a bad file or a goal naming an unknown award stops the start), then within 30 s of a change in `<data_dir>/awards` (poll of file names + mtimes + sizes) or on `SIGHUP` (handler registered at the start of `Run`; `systemctl kill -s HUP chase-queue`). A reload that fails keeps the previous catalog (a parse or validation failure is not re-read until a file changes; an I/O failure is retried at the next poll), logs one Warn per distinct failure and shows in `/state.problems`; a good one is swapped into the engine (`Engine.ReplaceAwards`, file I/O before the lock) and a state is published. A goal whose award vanished stays configured, matches nothing and gets a problem line. The Log4OM award XML schema is not
   documented; `internal/award/importxml.go` looks fields up by name (AwardType, QsoField, AllowedDxcc,
   AwardItems/AwardItem/RC, ConfirmationMethod, AwardConfigs/AwardConfig with Bands, Modes, EmissionType) and is
   tested on a real WAS export (`testdata/award_WAS_log4om.xml`, 50 states, 133 configs). A real DXCC export (`QsoField Dxcc`, 402 entities, no configs)

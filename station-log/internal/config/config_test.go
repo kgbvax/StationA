@@ -42,3 +42,18 @@ func TestValidate(t *testing.T) {
 		t.Error(err)
 	}
 }
+
+func TestWatchValidation(t *testing.T) {
+	c := Defaults()
+	if c.Watch.Dir != "" || c.Watch.IntervalSeconds != 30 || c.Watch.Source != "adif-drop" {
+		t.Fatalf("%+v", c.Watch)
+	}
+	c.Watch.Dir = "/does/not/exist/yet" // missing dir is not fatal
+	if err := c.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	c.Watch.IntervalSeconds = 0
+	if err := c.Validate(); err == nil {
+		t.Fatal("interval 0 must fail")
+	}
+}

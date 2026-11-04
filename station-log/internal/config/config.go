@@ -27,12 +27,13 @@ type Config struct {
 	// STATION_CALLSIGN nor OPERATOR.
 	DefaultOwnCall string `toml:"default_own_call"`
 	// DupWindow is the +- time window of the duplicate merge (default 5m).
-	DupWindow string     `toml:"dup_window"`
-	Slot      SlotConfig `toml:"slot"`
-	MQTT      MQTTConfig `toml:"mqtt"`
-	HTTP      HTTPConfig `toml:"http"`
-	Log4OM    Log4OMUDP  `toml:"log4om"`
-	Log       LogConfig  `toml:"log"`
+	DupWindow string      `toml:"dup_window"`
+	Slot      SlotConfig  `toml:"slot"`
+	MQTT      MQTTConfig  `toml:"mqtt"`
+	HTTP      HTTPConfig  `toml:"http"`
+	Log4OM    Log4OMUDP   `toml:"log4om"`
+	Watch     WatchConfig `toml:"watch"`
+	Log       LogConfig   `toml:"log"`
 }
 
 // SlotConfig is station-log's own slot under the site.
@@ -64,6 +65,13 @@ type Log4OMUDP struct {
 	AllowFrom []string `toml:"allow_from"`
 }
 
+// WatchConfig is the ADIF drop-directory feeder; off unless Dir is set.
+type WatchConfig struct {
+	Dir             string `toml:"dir"`
+	IntervalSeconds int    `toml:"interval_seconds"`
+	Source          string `toml:"source"`
+}
+
 // LogConfig controls logging.
 type LogConfig struct {
 	Level string `toml:"level"`
@@ -78,6 +86,7 @@ func Defaults() Config {
 		Slot:      SlotConfig{Station: "hf", Slot: "station-log"},
 		MQTT:      MQTTConfig{Broker: "tcp://127.0.0.1:1883", Site: "muehle"},
 		HTTP:      HTTPConfig{Listen: "127.0.0.1:8096"},
+		Watch:     WatchConfig{IntervalSeconds: 30, Source: "adif-drop"},
 		Log:       LogConfig{Level: "info"},
 	}
 }
@@ -161,6 +170,15 @@ func (c Config) Validate() error {
 		if err := checkAllow("log4om.allow_from", c.Log4OM.AllowFrom); err != nil {
 			return err
 		}
+	}
+	if c.Watch.Dir != "" {
+		if c.Watch.IntervalSeconds < 1 {
+			return errors.New("watch.interval_seconds must be at least 1")
+		}
+		if strings.TrimSpace(c.Watch.Source) == "" {
+			return errors.New("watch.source must not be empty")
+		}
+		// a directory that does not exist (yet) is only a warning at run time
 	}
 	return nil
 }

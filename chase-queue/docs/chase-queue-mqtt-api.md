@@ -123,8 +123,10 @@ In a contest, `activity` is `contest`, `tag` is `mult`, and a `contest` block is
 ### Awards and goals
 
 An **award** is a definition: a key, a slice and a confirmation rule. The service reads `*.toml` files from
-`[awards] dir` (default `<data_dir>/awards`) once at start; a bad file, a goal naming an unknown award or a
-`kind = "reference"` award stops the start with the reason. DXCC per band is built in (a file may replace it
+`[awards] dir` (default `<data_dir>/awards`) at start and again within 30 s of a change in that directory or on
+`SIGHUP`. At start, a bad file, a goal naming an unknown award or a `kind = "reference"` award stops the start with
+the reason. On a reload the same errors keep the previous catalog instead, log one Warn per distinct failure and
+appear in `problems`; a goal whose award was removed stays but matches nothing (also a problem line). DXCC per band is built in (a file may replace it
 once). A file holds `[[award]]` tables:
 
 | key | meaning |

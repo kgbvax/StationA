@@ -8,14 +8,18 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	pahomqtt "github.com/eclipse/paho.mqtt.golang"
@@ -69,6 +73,12 @@ type Service struct {
 	clientMu   sync.Mutex
 	awardCodes []string // the loaded award definitions, for /meta
 	awardErr   error    // the award definitions or goals are unusable: Run refuses to start
+
+	awardMu      sync.Mutex    // guards the award reload state below and awardCodes
+	awardSig     string        // directory signature (names, mtimes, sizes) of the last read
+	awardFail    string        // the reload error now shown in problems ("" = none)
+	awardMissing []string      // goals naming an award the catalog no longer has
+	awardPoll    time.Duration // poll interval; 0 = awardPollEvery (tests shorten it)
 
 	switchMu      sync.Mutex
 	mu            sync.Mutex // guards the fields below
@@ -173,6 +183,11 @@ func (s *Service) Run(ctx context.Context) error {
 	if s.awardErr != nil {
 		return s.awardErr
 	}
+	// Registered before anything else starts: a SIGHUP (reload request) during
+	// startup must be queued, never take the default action and kill the process.
+	hup := make(chan os.Signal, 1)
+	signal.Notify(hup, syscall.SIGHUP)
+	defer signal.Stop(hup)
 	if err := os.MkdirAll(filepath.Join(s.cfg.DataDir, contestDirName), 0o750); err != nil {
 		return err
 	}
@@ -221,6 +236,7 @@ func (s *Service) Run(ctx context.Context) error {
 	}
 	spawn(func() { s.refreshCTY(ctx) })
 	spawn(func() { s.publisher(ctx) })
+	spawn(func() { s.watchAwards(ctx, hup) })
 	spawn(func() { s.candidateWorker(ctx) })
 
 	srv := &http.Server{Addr: s.cfg.HTTP.Listen, Handler: s.handler(), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: time.Minute, WriteTimeout: time.Minute}
@@ -253,24 +269,141 @@ func (s *Service) Run(ctx context.Context) error {
 	return runErr
 }
 
-// loadAwards reads the award definitions once and hands them and the goals to
-// the engine.
+// loadAwards reads the award definitions at start and hands them and the goals
+// to the engine; a failure here stops the start (reloadAwards keeps running
+// services alive instead).
 func (s *Service) loadAwards() error {
+	sig := awardDirSig(s.cfg.AwardsDir())
 	cat, err := award.LoadDir(s.cfg.AwardsDir())
 	if err != nil {
 		return err
 	}
+	goals := s.awardGoals()
+	if err := s.eng.SetAwards(cat, goals); err != nil {
+		return err
+	}
+	s.awardMu.Lock()
+	s.awardCodes = append(cat.Codes(), award.CodeContest)
+	s.awardSig = sig
+	s.awardMu.Unlock()
+	s.log.Info("awards loaded", "awards", cat.Codes(), "goals", len(goals), "dir", s.cfg.AwardsDir())
+	return nil
+}
+
+// awardGoals converts the configured goals for the engine.
+func (s *Service) awardGoals() []engine.Goal {
 	goals := make([]engine.Goal, 0, len(s.cfg.Goals))
 	for _, g := range s.cfg.Goals {
 		goals = append(goals, engine.Goal{Award: g.Award, Priority: g.Priority, Enabled: g.IsEnabled()})
 	}
-	if err := s.eng.SetAwards(cat, goals); err != nil {
-		return err
-	}
-	s.awardCodes = append(cat.Codes(), award.CodeContest)
-	s.log.Info("awards loaded", "awards", cat.Codes(), "goals", len(goals), "dir", s.cfg.AwardsDir())
-	return nil
+	return goals
 }
+
+// awardDirSig summarizes the award directory: file names, mtimes and sizes of
+// the *.toml files. A missing directory is the empty signature.
+func awardDirSig(dir string) string {
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		return ""
+	}
+	var b strings.Builder
+	for _, e := range ents { // sorted by name
+		if e.IsDir() || !strings.HasSuffix(strings.ToLower(e.Name()), ".toml") {
+			continue
+		}
+		fi, err := e.Info()
+		if err != nil {
+			continue
+		}
+		fmt.Fprintf(&b, "%s|%d|%d\n", e.Name(), fi.ModTime().UnixNano(), fi.Size())
+	}
+	return b.String()
+}
+
+// reloadAwards re-reads the award definitions. Without force it does nothing
+// while the directory signature is unchanged. A definition set that does not
+// load keeps the previous catalog, warns once per distinct failure and shows in
+// problems; a good one is swapped into the engine and a fresh state published.
+// All file I/O happens before the engine's lock is taken. Reports whether the
+// catalog was swapped.
+func (s *Service) reloadAwards(force bool) bool {
+	dir := s.cfg.AwardsDir()
+	sig := awardDirSig(dir)
+	s.awardMu.Lock()
+	unchanged := sig == s.awardSig
+	s.awardMu.Unlock()
+	if unchanged && !force {
+		return false
+	}
+	cat, err := award.LoadDir(dir)
+	if err != nil {
+		s.awardMu.Lock()
+		var pe *fs.PathError
+		if !errors.As(err, &pe) {
+			// parse/validation failure: do not re-parse the same broken files
+			// every poll (a changed file changes the signature and retries)
+			s.awardSig = sig
+		} // an I/O error keeps the old signature: the next poll retries
+		fresh := s.awardFail != err.Error()
+		s.awardFail = err.Error()
+		s.awardMu.Unlock()
+		if fresh {
+			s.log.Warn("award definitions reload failed; keeping the previous catalog", "err", err, "dir", dir)
+		}
+		s.poke()
+		return false
+	}
+	missing := s.eng.ReplaceAwards(cat, s.awardGoals())
+	s.awardMu.Lock()
+	s.awardSig = sig
+	s.awardFail = ""
+	s.awardMissing = missing
+	s.awardCodes = append(cat.Codes(), award.CodeContest)
+	s.awardMu.Unlock()
+	s.log.Info("awards reloaded", "awards", cat.Codes(), "goals", len(s.cfg.Goals), "missing_goal_awards", missing, "dir", dir)
+	s.poke()
+	return true
+}
+
+// awardProblems are the reload failures for /state.problems.
+func (s *Service) awardProblems() []string {
+	s.awardMu.Lock()
+	defer s.awardMu.Unlock()
+	var out []string
+	if s.awardFail != "" {
+		out = append(out, "Award definitions reload failed, previous catalog kept: "+s.awardFail)
+	}
+	for _, m := range s.awardMissing {
+		out = append(out, "Goal names award "+m+" which is not in the award definitions: it matches nothing")
+	}
+	return out
+}
+
+// watchAwards reloads the award definitions when the directory changes (polled
+// every awardPoll, default awardPollEvery) and on a SIGHUP received on hup
+// (registered by Run), until ctx ends.
+func (s *Service) watchAwards(ctx context.Context, hup <-chan os.Signal) {
+	every := s.awardPoll
+	if every <= 0 {
+		every = awardPollEvery
+	}
+	t := time.NewTicker(every)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			s.reloadAwards(false)
+		case <-hup:
+			s.log.Info("SIGHUP: reloading award definitions")
+			s.reloadAwards(true)
+		}
+	}
+}
+
+// awardPollEvery is how often the award directory is checked for changes.
+const awardPollEvery = 30 * time.Second
 
 // callbookState is the callbook's state for a call, "" without a callbook
 // entry; a missing entry is looked up in the background.
@@ -496,6 +629,7 @@ func (s *Service) problems(st bus.ChaseState) []string {
 	// the DX branch reports the DXCC confirmations itself; in a contest the
 	// DXCC goal still values every station
 	out = append(out, s.eng.AwardProblems(st.Activity != bus.ActivityDX)...)
+	out = append(out, s.awardProblems()...)
 	if !s.ranks.Loaded() {
 		out = append(out, "Club Log Most Wanted not loaded: no rarity order")
 	}

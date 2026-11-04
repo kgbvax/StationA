@@ -38,6 +38,7 @@ fed by files, `POST /import` and the optional Log4OM UDP feeder.
 | `internal/store` | SQLite (modernc): `qsos`, settings; `Tx.Upsert` (find duplicate + merge), worked view, stats |
 | `internal/importer` | ADIF record -> QSO, one transaction per import, `Report`, replace_source, events to a `Sink` |
 | `internal/httpapi` | `POST /import`, `GET /healthz /v1/stats /v1/worked /v1/qsos`, `allow_from` guard |
+| `internal/watch` | ADIF drop-directory feeder (`[watch]`): lists `*.adi`/`*.adif`, imports unseen files (name+size+mtime in settings `watch_imported`) through the importer, `/state.watch` |
 | `internal/log4om` | ADIF_MESSAGE UDP listener (datagram text -> importer) |
 | `internal/app` | MQTT slot, jobs worker for events, state publisher, wiring |
 | `internal/config` | TOML + env (`STATION_LOG_MQTT_PASSWORD`) |
@@ -57,8 +58,17 @@ fed by files, `POST /import` and the optional Log4OM UDP feeder.
 - **Personal data.** The database lives under `/var/lib/station-log`, never in git. Test fixtures are
   synthetic (`internal/importer/testdata`); never commit a real log or a Log4OM export.
 - **Secrets env-only** (`STATION_LOG_MQTT_PASSWORD`), never in the TOML, logs, `/state` or `/meta`.
+- **The drop directory** (`[watch] dir`, off by default) never deletes or moves a file, skips one whose mtime is
+  younger than 5 s, merges (never `replace_source`) and keeps going after a bad file (one Warn per outage via
+  `shared/logging.Streak`, shown in `/state.watch.error` and `problems`). The first scan waits for the MQTT
+  link (events go through the same queue as POST /import). A failed file is not retried until its
+  name+size+mtime changes (`failed` counts files, not retries); its error stays in `watch.error` while it is
+  present, and a good file in the same pass does not mask it. The service user must be able to read
+  the directory (`ProtectSystem`/`ReadWritePaths` do not matter for reading; check `ProtectHome`). A missing
+  directory is a Warn, not fatal. Deploy only seeds `config.example.toml` once; an existing config needs the
+  section added by hand.
 - **Not done (roadmap item 2, later):** the Club Log confirmation matrix as a feeder (the `club_log` flag exists
-  and is set from `CLUBLOG_QSO_DOWNLOAD_STATUS=Y` in ADIF only), Log4OM full-ADIF file / ADIF POST feeder,
+  and is set from `CLUBLOG_QSO_DOWNLOAD_STATUS=Y` in ADIF only), an ADIF POST feeder from Log4OM itself,
   chase-queue's log view reading `/v1/worked` + events, stationportal inventory entry (add
   `stationportal/internal/inventory/inventory.toml` + `hf_console` host map when deployed).
 

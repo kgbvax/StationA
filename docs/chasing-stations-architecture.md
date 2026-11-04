@@ -125,7 +125,9 @@ Stations" and `chase-queue/CLAUDE.md`.
    chase-queue builds its log view from it (`[station_log]`, `internal/logview`: load at start, on reconnect and
    periodically; kept current from the events). **Left:** the Club Log confirmation matrix stays in
    chase-queue (decided: it is entity-level, not a QSO list, so it is no feeder unless a Club Log log download
-   is built); Log4OM full-ADIF file / ADIF POST feeder (ideation #2).
+   is built); the Log4OM full-ADIF file feeder is built
+   as the ADIF drop directory (`[watch]` in station-log, off until configured and Log4OM exports into it); an ADIF
+   POST feeder from Log4OM itself is not (ideation #2).
 3. **Generic award model.** Built: `chase-queue/internal/award` (definition file in TOML, slot evaluator,
    built-in DXCC per band, field awards such as WAS, contest wrapper, Log4OM XML importer
    `-import-award-xml`), `[[goal]]` with priority, `needs[]` on the wire, chaseq-ui shows the award(s) per row
@@ -133,7 +135,7 @@ Stations" and `chase-queue/CLAUDE.md`.
    and fixed: item keys are in `RC`, the CW/PHONE/DIGITAL split is in `EmissionType`); the real `dxcc.xml` is
    recognised as the built-in DXCC award (exit code 4, nothing imported). A need carries `atno: true` when the key (for DXCC the entity) is
    worked in no slice at all, so the window can tell an all-time new one from a new band slot; chaseq-ui shows an
-   ATNO chip. **Left:** Definitions load once at start (restart to change). No catalog refresh (ideation #4). Only field awards (a `QsoField` with allowed values) and DXCC are
+   ATNO chip. **Left:** Definitions reload within 30 s of a file change or on SIGHUP (a bad reload keeps the old catalog and shows in `problems`). No catalog refresh (ideation #4). Only field awards (a `QsoField` with allowed values) and DXCC are
    covered; POTA, SOTA and WWFF are deferred and rejected.
 4. **bmrec qualification gate.** Built and live (2026-11-04): `[bmrec] gate` = `off` | `trusted` (default) |
    `qualified`, rows kept out counted in `/state.bmrec_unqualified`. bmrec (commit 27fd301, on its `master`
@@ -158,7 +160,7 @@ Stations" and `chase-queue/CLAUDE.md`.
 | 1..n clusters, RBN optional | matches | `[[cluster]]` entries with a name each, one reconnecting telnet client per entry, RBN per entry, merge by call+band. Bands 160-10 m, 6 m, 2 m, 70 cm. Left: no second cluster configured live; the Log4OM cluster stops while bwpc sleeps (powerseq standby). |
 | Cluster spots = available stations | matches | Needed cluster spots (and buddies) become rows with `source:"cluster"` and `cluster_name`, at most 40; a spot also hides the heard row it names. |
 | Only qualified bmrec rows | matches | The gate (`off` / `trusted` / `qualified`) is live on `qualified`; bmrec sends `qualified` and `confident` (27fd301). First bmrec-sourced row after qualification not yet observed live (band conditions). |
-| station-log | matches (live) | Own module and slot with ADIF import, duplicate merge, `replace_source`, events and read API. chase-queue's log view reads it. Left: Club Log matrix feeder (stays in chase-queue by decision), Log4OM full-ADIF / ADIF POST feeder. |
+| station-log | matches (live) | Own module and slot with ADIF import, duplicate merge, `replace_source`, events and read API. chase-queue's log view reads it. Left: Club Log matrix feeder (stays in chase-queue by decision), ADIF POST feeder; the ADIF drop directory (`[watch]`) is built but not yet enabled live. |
 | Award definitions, Log4OM XML | matches | Definition files + built-in DXCC + XML importer, checked against real Log4OM WAS and DXCC exports. Definitions load at start only. |
 | Contest = one award type | matches | The contest is the award `contest` (priority 100) while an instance runs; `set_mode` / `switch_instance` remain as instance control, `activity` is derived. DXCC stays a goal in a contest unless a `[[goal]]` turns it off. |
 | Buddies | matches | `[[buddy]]`, see item 5. |

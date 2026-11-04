@@ -34,13 +34,18 @@ events:["added","merged","deleted"], dup_window:"5m", http_api:"127.0.0.1:8096",
 ```json
 {"ts":"2026-11-03T20:41:07Z","qso_count":5121,"own_calls":["DL9ET","DK0XYZ"],
  "last_import":{"at":"2026-11-03T20:40:55Z","source":"log4om-file","added":12,"merged":3},
+ "watch":{"dir":"/var/lib/station-log/drop","last_file":"log.adi","last_at":"2026-11-03T20:40:55Z","files":1,"failed":0,"added":12,"merged":3},
  "problems":[]}
 ```
 
 - `last_import` is `null` before the first import; it is the last import that held records (a UDP datagram
   counts). `merged` counts matches that changed the stored QSO.
+- `watch` is present only when the ADIF drop directory (`[watch] dir`) is configured: `dir`, `last_file` and
+  `last_at` (the last file tried), `files` / `failed` (file imports since start; a failing file counts once until it changes), `added` / `merged` (QSOs since
+  start), `error` (a failing file, invalid records or a missing directory; stays while the cause is present, omitted when none). Meta `feeders` then lists
+  `adif-drop`.
 - `problems` (worst first, `[]` when none): empty log; "N QSO events were not published (broker offline)";
-  a failed Log4OM listener.
+  a failed Log4OM listener; an ADIF drop directory error.
 - Republished when it changes (ignoring `ts`), on every (re)connect, and re-evaluated every 60 s (so a CLI
   import shows up).
 
