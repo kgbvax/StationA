@@ -925,7 +925,7 @@ changed the following; the contract has the normative wording.
 
 Target roles: `docs/chasing-stations-architecture.md`. The target is built on branch
 `claude/chasing-stations-architecture-b2ac20` (station-log, awards/goals, `needs[]`, buddies, clusters 1..n, bmrec
-gate, logger senders); **not merged or deployed yet**. Open items, so a later session does not re-discover them:
+gate, logger senders); **merged to main and live since 2026-11-04**. Open items, so a later session does not re-discover them:
 
 1. **The DX cluster stops while bwpc sleeps.** chase-queue reads Log4OM's internal
    cluster on bwpc `:23`; in powerseq standby there are no cluster rows and no cluster
@@ -947,10 +947,11 @@ gate, logger senders); **not merged or deployed yet**. Open items, so a later se
 6. **Row mode is derived, not read** (chase-queue `internal/mode`: sideband rule, comment keyword, IARU R1 band
    plan; unclear = no mode). Resolved on the backend and in chaseq-ui. Open: the band-plan table is simplified
    and untested live, and an older chase-queue leaves heard rows untunable and sets no mode.
-7. **bmrec `qualified` field pending (bmrec change, outside this repo).** chase-queue's `[bmrec] gate`
-   defaults to `trusted`; `qualified` needs bmrec to send `"qualified": true|false` on every `cqfinder` row
-   (spec: `chase-queue/docs/chase-queue-mqtt-api.md` section 5). Until then keep `trusted`; with `qualified`
-   and no field the list is empty and `/state.problems` says `bmrec sends no qualified flag`.
+7. **bmrec `qualified` field is live (2026-11-04).** bmrec 27fd301 (on bmrec `master` since e3fdca8) sends
+   `qualified` and `confident` on every `cqfinder` row; chase-queue on scmino runs `[bmrec] gate = "qualified"`
+   (backup `config.toml.bak-pre-gate-qualified`; rollback = `gate = "off"` + restart). The list shows only
+   rows the operator qualified on bmrec's page plus needed cluster spots. Not yet observed live: a
+   bmrec-sourced row after qualifying (band conditions); `/state.bmrec_unqualified` counts the rest.
 8. **Log4OM award XML importer is tested on real WAS and DXCC exports** (fixed 2026-11-04: item key in `RC`,
    mode class in `EmissionType`; DXCC is built in, so its export imports nothing, exit code 4). Definitions
    load at start.

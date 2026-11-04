@@ -1,9 +1,11 @@
 # Chasing Stations — domain architecture
 
-Status: **target architecture, 2026-11-03** (operator-directed). It supersedes the role and scope statements
+Status: **target architecture, 2026-11-03, implemented and live since 2026-11-04** (operator-directed; items 1-7
+of the roadmap are built, merged to `main` and deployed; the Log4OM cutover to station-log is done; bmrec sends
+`qualified` and chase-queue's gate is `qualified`). It supersedes the role and scope statements
 of `plans/2026-11-01-2252-feat-chase-queue-v1-plan.md` and `plans/2026-11-02-1908-feat-chaseq-ui-plan.md`
 where they conflict. Those plans stay the record of what v1 built. §5 lists the gaps between this target and
-the code of the 2026-11-03 implementation branch (`claude/chasing-stations-architecture-b2ac20`, built on `main` 1e3ea39; not yet merged or deployed).
+the code as built; the as-is column now matches the live system except where it says *left*.
 
 ## 1. Purpose
 
@@ -129,13 +131,15 @@ Stations" and `chase-queue/CLAUDE.md`.
    `-import-award-xml`), `[[goal]]` with priority, `needs[]` on the wire, chaseq-ui shows the award(s) per row
    and has an award filter. The XML importer is checked against the real `award_WAS.xml` (2026-11-04; two bugs found
    and fixed: item keys are in `RC`, the CW/PHONE/DIGITAL split is in `EmissionType`); the real `dxcc.xml` is
-   recognised as the built-in DXCC award (exit code 4, nothing imported). **Left:** Definitions load once at start (restart to change). No
-   catalog refresh (ideation #4). Only field awards (a `QsoField` with allowed values) and DXCC are
+   recognised as the built-in DXCC award (exit code 4, nothing imported). A need carries `atno: true` when the key (for DXCC the entity) is
+   worked in no slice at all, so the window can tell an all-time new one from a new band slot; chaseq-ui shows an
+   ATNO chip. **Left:** Definitions load once at start (restart to change). No catalog refresh (ideation #4). Only field awards (a `QsoField` with allowed values) and DXCC are
    covered; POTA, SOTA and WWFF are deferred and rejected.
-4. **bmrec qualification gate.** chase-queue side built: `[bmrec] gate` = `off` | `trusted` (default) |
-   `qualified`, rows kept out counted in `/state.bmrec_unqualified`. **Left, in bmrec (outside this repo):**
-   send `qualified` on every `cqfinder` row (spec: `chase-queue/docs/chase-queue-mqtt-api.md` section 5).
-   Until then the gate stays `trusted`.
+4. **bmrec qualification gate.** Built and live (2026-11-04): `[bmrec] gate` = `off` | `trusted` (default) |
+   `qualified`, rows kept out counted in `/state.bmrec_unqualified`. bmrec (commit 27fd301, on its `master`
+   since e3fdca8) sends `qualified` (the operator's own action on the HF CQ page) and `confident` on every
+   `cqfinder` row (spec: `chase-queue/docs/chase-queue-mqtt-api.md` section 5). chase-queue on scmino runs with
+   `gate = "qualified"`, so only rows the operator qualified, plus needed cluster spots, are listed.
 5. **Buddies.** Built: `[[buddy]]` (call, note, boost); `buddy:true` on the row, own tier below the needed
    block, first among needed rows of equal goal priority; chaseq-ui shows a badge and the note.
 6. **Clusters 1..n.** Built: `[[cluster]]` list with a name per source (`cluster_name` on the row), RBN
@@ -153,12 +157,12 @@ Stations" and `chase-queue/CLAUDE.md`.
 |---|---|---|
 | 1..n clusters, RBN optional | matches | `[[cluster]]` entries with a name each, one reconnecting telnet client per entry, RBN per entry, merge by call+band. Bands 160-10 m, 6 m, 2 m, 70 cm. Left: no second cluster configured live; the Log4OM cluster stops while bwpc sleeps (powerseq standby). |
 | Cluster spots = available stations | matches | Needed cluster spots (and buddies) become rows with `source:"cluster"` and `cluster_name`, at most 40; a spot also hides the heard row it names. |
-| Only qualified bmrec rows | partial | The gate exists (`off` / `trusted` / `qualified`). Default `trusted` (call read back or typed). `qualified` needs bmrec to send the field, which it does not yet (bmrec change pending). |
-| station-log | matches (not deployed) | Own module and slot with ADIF import, duplicate merge, `replace_source`, events and read API. chase-queue's log view reads it. Left: Club Log matrix feeder (stays in chase-queue by decision), Log4OM full-ADIF / ADIF POST feeder. |
-| Award definitions, Log4OM XML | partial | Definition files + built-in DXCC + XML importer. The importer is untested against a real Log4OM export. Definitions load at start only. |
+| Only qualified bmrec rows | matches | The gate (`off` / `trusted` / `qualified`) is live on `qualified`; bmrec sends `qualified` and `confident` (27fd301). First bmrec-sourced row after qualification not yet observed live (band conditions). |
+| station-log | matches (live) | Own module and slot with ADIF import, duplicate merge, `replace_source`, events and read API. chase-queue's log view reads it. Left: Club Log matrix feeder (stays in chase-queue by decision), Log4OM full-ADIF / ADIF POST feeder. |
+| Award definitions, Log4OM XML | matches | Definition files + built-in DXCC + XML importer, checked against real Log4OM WAS and DXCC exports. Definitions load at start only. |
 | Contest = one award type | matches | The contest is the award `contest` (priority 100) while an instance runs; `set_mode` / `switch_instance` remain as instance control, `activity` is derived. DXCC stays a goal in a contest unless a `[[goal]]` turns it off. |
 | Buddies | matches | `[[buddy]]`, see item 5. |
-| Needed for which award | matches | `needs[]` `{award, key, band, mode, status}` on every needed row; `needed` + `tag` are the derived summary. |
+| Needed for which award | matches | `needs[]` `{award, key, band, mode, status, atno?}` on every needed row; `needed` + `tag` are the derived summary. |
 | QRZ.com enrichment | matches | Display-only, cached; chaseq-ui shows `info` as one line. |
 | Self-contained rows / UI only displays | matches | `freq_hz`, `mode`, `source` on every row; chaseq-ui has no `cqfinder` subscription. |
 | Local filters | matches | Band, needed only, award. |
@@ -183,5 +187,5 @@ Defaults taken on 2026-11-03 so the implementation could proceed; change them he
   confident, false otherwise. Full spec: `chase-queue/docs/chase-queue-mqtt-api.md` section 5. Without the field,
   `gate = "qualified"` lists nothing and reports `bmrec sends no qualified flag`.
 - **Club Log matrix.** Stays in chase-queue: it is an entity-level matrix, not a QSO list.
-- **Still open.** Whether the real Log4OM award XML parses with the importer; whether the simplified IARU R1
-  band plan gives the right mode on the air; whether a second cluster (RBN) is wanted live.
+- **Still open.** Whether the simplified IARU R1 band plan gives the right mode on the air (the first live rows
+  looked right: KH8A 28033 CW, 21270 USB, 18101.9 data); whether a second cluster (RBN) is wanted live.
