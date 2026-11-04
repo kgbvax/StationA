@@ -936,8 +936,8 @@ gate, logger senders); **not merged or deployed yet**. Open items, so a later se
 3. **bmrec reads chase-queue's `undo` as an object**, chase-queue publishes a string
    (`chase-queue/internal/bus/bus.go`). The fix belongs to bmrec.
 4. ~~No logbook history before deployment~~ — resolved in code by `station-log` (ADIF import with duplicate
-   merge, `GET /v1/worked`, events); chase-queue builds its log view from it. Live only after the cutover below.
-   Until then worked = Log4OM UDP QSOs since chase-queue started. The Club Log **matrix** stays in chase-queue
+   merge, `GET /v1/worked`, events); chase-queue builds its log view from it. Live since the cutover on 2026-11-04 (item 11);
+   QSOs between the 2026-10-25 export and 2026-11-02 are missing until a fresh ADIF export is imported. The Club Log **matrix** stays in chase-queue
    (entity-level, not a QSO list); the Club Log log download is not built.
 5. **Worked in a contest means "dupe".** Stations worked on the band are listed last (needed false). With
    station-log the DX tier and `worked_before` read the log view (call+band+mode class, ever); in a contest the tier is
@@ -957,7 +957,7 @@ gate, logger senders); **not merged or deployed yet**. Open items, so a later se
 9. **Merge-only import does not remove QSOs deleted in the logger.** `replace_source` (per-source snapshot
    replace) exists but is off by default; use it only with a full, valid export of that source.
 10. **POTA, SOTA and WWFF are deferred** (rejected as goals); station-log keeps their ADIF reference fields.
-11. **Deploy order and cutover.** Deploy `station-log` (scmino, `station-log/deploy.sh`), then `chase-queue`,
+11. **Deploy order and cutover (done 2026-11-04, steps kept for a rollback or a rebuild).** Deploy `station-log` (scmino, `station-log/deploy.sh`), then `chase-queue`,
     then `chaseq-ui` (bwpc). Cutover: (1) import the Log4OM ADIF export
     (`station-log -import-adif FILE -source log4om-file`); (2) point Log4OM's UDP `ADIF_MESSAGE` at station-log
     (`scmino:2341`, `[log4om]` in its config) instead of chase-queue's `2340`; (3) add `[station_log]` to
