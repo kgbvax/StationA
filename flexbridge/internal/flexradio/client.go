@@ -283,7 +283,7 @@ type Commander interface {
 	SetMicProfile(name string) error                // profile mic load "<name>"
 	SetSliceMode(slice int, mode string) error      // slice set <idx> mode=<MODE>
 	SetSliceRxAnt(slice int, ant string) error      // slice set <idx> rxant=<PORT>
-	TuneSlice(slice int, freqHz int64) error        // slice tune <idx> <MHz>
+	TuneSlice(slice int, freqHz int64) error        // slice tune <idx> <MHz> autopan=1
 	SetRFPower(level int) error                     // transmit set rfpower=<n>
 	SetTunePower(level int) error                   // transmit set tunepower=<n>
 	SetMaxPowerLevel(level int) error               // transmit set max_power_level=<n>
@@ -339,10 +339,13 @@ func (c *Client) SetSliceMode(slice int, mode string) error {
 }
 
 // TuneSlice tunes slice index slice to freqHz (SmartSDR `slice tune <idx>
-// <MHz>`, the command a logger's spot click ends in). The result is observed
-// on the slice status stream (RF_frequency=).
+// <MHz> autopan=1`, the command a logger's spot click ends in). autopan=1 moves
+// the panadapter along: without it the radio refuses a tune outside the pan's
+// current span (seen live 2026-11-04: pan on 80 m, set_freq 14.074 MHz left
+// the slice where it was). The result is observed on the slice status stream
+// (RF_frequency=).
 func (c *Client) TuneSlice(slice int, freqHz int64) error {
-	return c.Send(context.Background(), fmt.Sprintf("slice tune %d %.6f", slice, float64(freqHz)/1e6))
+	return c.Send(context.Background(), fmt.Sprintf("slice tune %d %.6f autopan=1", slice, float64(freqHz)/1e6))
 }
 
 // SetSliceRxAnt selects the receive antenna port of slice index slice
