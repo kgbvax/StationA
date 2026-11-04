@@ -56,11 +56,12 @@ In a contest, `activity` is `contest`, `tag` is `mult`, and a `contest` block is
   award needs the station, `need` when another award does, absent on rows that are not needed. `undo` names what Undo would reverse (a callsign or `skip`).
 - **`needs`** (omitted when empty) says for which award a needed row is needed: one entry per slot of an
   enabled goal that the station would fill and that is not yet satisfied, goal priority first:
-  `{"award","key","band"?,"mode"?,"status"}`. `award` is the definition's code (`dxcc`, `WAS-20-CW`, `contest`);
+  `{"award","key","band"?,"mode"?,"status","atno"?}`. `award` is the definition's code (`dxcc`, `WAS-20-CW`, `contest`);
   `key` the slot's name (DXCC: the entity's primary prefix; WAS: the state; contest: the multiplier);
   `band` is absent when the award counts over all bands; `mode` (`cw`, `phone`, `data`) is present only when the
   award slices or filters by mode class; `status` is `unworked` or `worked-unconfirmed` (the slot as the log
-  holds it; a confirmed slot is not a need). `needed` is true exactly when `needs` is not empty; `tag` and
+  holds it; a confirmed slot is not a need); `atno: true` marks an all-time new one: the key (for DXCC the
+  entity) is worked in no slice at all, not even unconfirmed, so it is more than a new band slot. `needed` is true exactly when `needs` is not empty; `tag` and
   `needed` stay as the derived summary. A slot that cannot be told (the station's state or entity is not known,
   no log loaded) is never listed and never counts as "not needed": it keeps the station in the unknown tier.
   A row on the worked-on-this-band tier has no `needs`. 40 rows with 3 needs each are about 13 KB of `/state`.

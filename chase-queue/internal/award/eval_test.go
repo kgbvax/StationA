@@ -28,6 +28,16 @@ func TestDXCCPerBandSemantics(t *testing.T) {
 			t.Errorf("%+v: %+v ok=%v", tc.in, h, ok)
 		}
 	}
+	// ATNO: only an entity worked in no slice (not even unconfirmed) is an all-time new one
+	for _, tc := range []struct {
+		adif int
+		band string
+		atno bool
+	}{{29, "20m", false}, {230, "40m", false}, {230, "20m", false}, {281, "20m", true}} {
+		if h, _ := ix.Evaluate(in(tc.adif, tc.band)); h.ATNO != tc.atno {
+			t.Errorf("ATNO %d %s: got %v want %v", tc.adif, tc.band, h.ATNO, tc.atno)
+		}
+	}
 	// no entity (cty missing): unknown
 	if h, _ := ix.Evaluate(in(0, "20m")); h.Status != Unknown || h.Needed {
 		t.Fatalf("%+v", h)

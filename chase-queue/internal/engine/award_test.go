@@ -54,7 +54,7 @@ func TestNeedsDXCCDefaultGoal(t *testing.T) {
 	f.e.SetConfirmations(nil)
 	st := f.rank(1, []bus.Candidate{cand(1, "EA8XYZ", "20m", true)})
 	r := st.Ranked[0]
-	want := []bus.Need{{Award: "dxcc", Key: "EA8", Band: "20m", Status: "unworked"}}
+	want := []bus.Need{{Award: "dxcc", Key: "EA8", Band: "20m", Status: "unworked", ATNO: true}}
 	if !r.Needed || r.Tag != bus.TagNeed || fmt.Sprint(r.Needs) != fmt.Sprint(want) {
 		t.Fatalf("%+v", r)
 	}
@@ -91,7 +91,7 @@ func TestFieldAwardNeedsAndThreeValued(t *testing.T) {
 	// the call's state is known from the callbook
 	f.states(map[string]string{"K1ABC": "ny"})
 	st = f.rank(3, rows)
-	want := bus.Need{Award: "WAS-20-phone", Key: "NY", Band: "20m", Mode: "phone", Status: "unworked"}
+	want := bus.Need{Award: "WAS-20-phone", Key: "NY", Band: "20m", Mode: "phone", Status: "unworked", ATNO: true}
 	if r := st.Ranked[0]; !r.Needed || len(r.Needs) != 1 || r.Needs[0] != want || r.Tag != bus.TagNeed {
 		t.Fatalf("%+v", r)
 	}
@@ -301,7 +301,7 @@ func TestClusterRowCarriesModeClassNeed(t *testing.T) {
 	if len(st.Ranked) != 1 || st.Ranked[0].Source != bus.SourceCluster {
 		t.Fatalf("%+v", st.Ranked)
 	}
-	want := bus.Need{Award: "WAS-20-CW", Key: "NY", Band: "20m", Mode: "cw", Status: "unworked"}
+	want := bus.Need{Award: "WAS-20-CW", Key: "NY", Band: "20m", Mode: "cw", Status: "unworked", ATNO: true}
 	if n := st.Ranked[0].Needs; len(n) != 1 || n[0] != want {
 		t.Fatalf("%+v", n)
 	}

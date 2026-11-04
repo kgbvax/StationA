@@ -785,7 +785,7 @@ func (e *Engine) Compute() bus.ChaseState {
 		if r.Needed {
 			r.Tag = bus.TagNeed
 			for _, h := range evals[it.RowID] {
-				r.Needs = append(r.Needs, bus.Need{Award: h.Award, Key: h.Key, Band: h.Band, Mode: h.Mode, Status: string(h.Status)})
+				r.Needs = append(r.Needs, bus.Need{Award: h.Award, Key: h.Key, Band: h.Band, Mode: h.Mode, Status: string(h.Status), ATNO: h.ATNO})
 				if h.Award == award.CodeContest {
 					r.Tag = bus.TagMult
 				}

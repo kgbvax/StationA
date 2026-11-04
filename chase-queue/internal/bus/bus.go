@@ -131,6 +131,9 @@ type Need struct {
 	Mode string `json:"mode,omitempty"`
 	// Status is the slot's state in the log: unworked or worked-unconfirmed.
 	Status string `json:"status"`
+	// ATNO is set when the slot's key is worked in no slice at all (an
+	// all-time new one: a new entity, not only a new band).
+	ATNO bool `json:"atno,omitempty"`
 }
 
 // Ranked row sources.

@@ -36,6 +36,7 @@ body { margin:0; background:var(--bg); color:var(--fg); font-size:16px; }
 .need.unworked { border-color:var(--warn); color:var(--warn); }
 .need.worked-unconfirmed { border-color:#5b86c9; color:#9fc0f0; }
 .need.confirmed { color:var(--dim); }
+.need.atno { background:var(--warn); color:#111; font-weight:600; }
 .empty { padding:1rem .8rem; color:var(--dim); }
 .result { padding:.4rem .8rem; border-top:1px solid var(--line); min-height:2.2rem; display:flex; flex-wrap:wrap; gap:.8rem; }
 .part { color:var(--dim); }

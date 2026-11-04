@@ -48,6 +48,7 @@ type Row struct {
 // "WAS TX"), Title the hover detail, Status the CSS class.
 type NeedTag struct {
 	Label, Title, Status string
+	ATNO                 bool // an all-time new one: never worked in any slice
 }
 
 // MaxTuneHz is the FLEX-8400's top frequency; VHF/UHF rows (2 m, 70 cm) are
@@ -389,5 +390,8 @@ func needTag(n bus.Need) NeedTag {
 	default:
 		status = "unknown"
 	}
-	return NeedTag{Label: label, Title: title, Status: status}
+	if n.ATNO {
+		title += ", ATNO (never worked)"
+	}
+	return NeedTag{Label: label, Title: title, Status: status, ATNO: n.ATNO}
 }

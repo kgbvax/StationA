@@ -37,12 +37,13 @@ type Index struct {
 	loaded      bool
 	slots       map[slotKey]Status
 	everConfirm map[string]bool   // key confirmed in any slice
+	everWorked  map[string]bool   // key worked (confirmed or not) in any slice
 	callState   map[string]string // normalized call -> state, from the log
 }
 
 // Build indexes the log for the award.
 func (d Definition) Build(l *Log) *Index {
-	ix := &Index{def: d, slots: map[slotKey]Status{}, everConfirm: map[string]bool{}, callState: map[string]string{}}
+	ix := &Index{def: d, slots: map[slotKey]Status{}, everConfirm: map[string]bool{}, everWorked: map[string]bool{}, callState: map[string]string{}}
 	switch d.Kind {
 	case KindDXCC:
 		ix.loaded = l.Loaded || l.ClubLoaded
@@ -88,6 +89,7 @@ func (ix *Index) note(key, band, class string, confirmed bool) {
 	if ix.def.PerMode {
 		k.mode = class
 	}
+	ix.everWorked[key] = true
 	st := WorkedUnconfirmed
 	if confirmed {
 		st = Confirmed
@@ -156,6 +158,9 @@ type Hit struct {
 	Needed bool
 	// Fresh: the key is confirmed in no slice at all (a first for the award).
 	Fresh bool
+	// ATNO: the key is worked in no slice at all, not even unconfirmed (an
+	// all-time new one for the award, not just a new band or mode).
+	ATNO bool
 }
 
 // satisfied reports whether the status meets the rule.
@@ -241,6 +246,7 @@ func (ix *Index) Evaluate(in Input) (Hit, bool) {
 	}
 	h.Needed = !satisfied(d.Rule, st)
 	h.Fresh = h.Needed && !ix.everConfirm[key]
+	h.ATNO = h.Needed && !ix.everWorked[key]
 	return h, true
 }
 

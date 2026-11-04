@@ -25,7 +25,7 @@
     {{if .Cluster}}<span class="src" title="DX cluster{{if .ClusterName}}: {{.ClusterName}}{{end}}{{if .RBN}} (skimmer spot){{end}}">{{if .ClusterName}}{{.ClusterName}}{{else}}cluster{{end}}</span>{{end}}
     {{if .RBN}}<span class="rbn" title="skimmer spot (RBN)">RBN</span>{{end}}
     {{if .Buddy}}<span class="buddy" title="{{if .BuddyNote}}{{.BuddyNote}}{{else}}buddy{{end}}">buddy</span>{{end}}
-    {{if or .Who .Needs}}<span class="sub">{{if .Who}}<span class="who">{{.Who}}</span>{{end}}{{range .Needs}}<span class="need {{.Status}}" title="{{.Title}}">{{.Label}}</span>{{end}}</span>{{end}}
+    {{if or .Who .Needs}}<span class="sub">{{if .Who}}<span class="who">{{.Who}}</span>{{end}}{{range .Needs}}<span class="need {{.Status}}{{if .ATNO}} atno{{end}}" title="{{.Title}}">{{.Label}}{{if .ATNO}} ATNO{{end}}</span>{{end}}</span>{{end}}
   </li>
 {{else}}
   <li class="empty">{{if .View.Hidden}}No stations match the filter - {{.View.Hidden}} hidden{{else}}No stations on the list{{end}}</li>

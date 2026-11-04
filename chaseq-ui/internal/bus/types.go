@@ -65,6 +65,7 @@ type Need struct {
 	Band   string `json:"band,omitempty"`
 	Mode   string `json:"mode,omitempty"`
 	Status string `json:"status,omitempty"` // "unworked" | "worked-unconfirmed"
+	ATNO   bool   `json:"atno,omitempty"`   // the key is worked in no slice: an all-time new one
 }
 
 // Info is the QRZ callbook entry chase-queue attaches (the fields shown).
