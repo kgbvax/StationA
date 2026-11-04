@@ -937,7 +937,7 @@ gate, logger senders); **not merged or deployed yet**. Open items, so a later se
    (`chase-queue/internal/bus/bus.go`). The fix belongs to bmrec.
 4. ~~No logbook history before deployment~~ — resolved in code by `station-log` (ADIF import with duplicate
    merge, `GET /v1/worked`, events); chase-queue builds its log view from it. Live since the cutover on 2026-11-04 (item 11);
-   QSOs between the 2026-10-25 export and 2026-11-02 are missing until a fresh ADIF export is imported. The Club Log **matrix** stays in chase-queue
+   The gap between the first export and the cutover was closed by a fresh export on 2026-11-04. The Club Log **matrix** stays in chase-queue
    (entity-level, not a QSO list); the Club Log log download is not built.
 5. **Worked in a contest means "dupe".** Stations worked on the band are listed last (needed false). With
    station-log the DX tier and `worked_before` read the log view (call+band+mode class, ever); in a contest the tier is

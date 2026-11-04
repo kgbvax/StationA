@@ -106,9 +106,9 @@ stays display-only. A consumer never needs bmrec's `cqfinder` topic to tune a ro
 Status 2026-11-03: items 1 to 7 are built, merged to main and deployed (station-log, chase-queue, chaseq-ui).
 **Cutover done 2026-11-04:** Log4OM's UDP ADIF_MESSAGE goes to station-log (2341), chase-queue reads its history
 from station-log (`[station_log]`, own_call = DL9ET; its own `[log4om]` listener is off), the bmrec gate is `off`.
-**Gap:** QSOs logged between the last ADIF export (2026-10-25) and 2026-11-02 are in no log until a fresh
-export is imported (`curl --data-binary @export.adi 'http://127.0.0.1:8096/import?source=log4om-file'` on
-scmino; the duplicate merge absorbs the overlap). Rollback steps: `chase-queue/CLAUDE.md`.
+The gap between the first export (2026-10-25) and the cutover was closed by importing a fresh export on
+2026-11-04 (202 QSOs added, 54 merged; `curl --data-binary @export.adi
+'http://127.0.0.1:8096/import?source=log4om-file'` on scmino; the duplicate merge absorbs the overlap). Rollback steps: `chase-queue/CLAUDE.md`.
 Deploy order: **station-log, then chase-queue, then chaseq-ui** (an older chase-queue leaves rows untunable and
 sets no mode; chase-queue without station-log keeps its local log). Cutover steps: `known-issues.md` "Chasing
 Stations" and `chase-queue/CLAUDE.md`.
