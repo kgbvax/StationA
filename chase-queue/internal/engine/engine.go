@@ -941,9 +941,9 @@ func (e *Engine) Compute() bus.ChaseState {
 	for _, r := range st.Ranked {
 		k := r.Call + "|" + r.Band + "|" + r.Source
 		if v := e.seenListed[k]; v != nil {
-			v.Last, v.Needed = now, r.Needed
+			v.Last, v.Needed, v.Mode, v.FreqHz = now, r.Needed, r.Mode, r.FreqHz
 		} else {
-			e.seenListed[k] = &ListedSeen{Call: r.Call, Band: r.Band, Source: r.Source, First: now, Last: now, Needed: r.Needed}
+			e.seenListed[k] = &ListedSeen{Call: r.Call, Band: r.Band, Source: r.Source, First: now, Last: now, Needed: r.Needed, Mode: r.Mode, FreqHz: r.FreqHz}
 		}
 	}
 	if n := len(e.last); n > 0 {
@@ -982,6 +982,8 @@ type ListedSeen struct {
 	First  time.Time `json:"first_listed"`
 	Last   time.Time `json:"last_listed"`
 	Needed bool      `json:"needed"`
+	Mode   string    `json:"mode"`    // the mode chase-queue published for the row ("" = it sent none)
+	FreqHz int64     `json:"freq_hz"` // and its frequency
 }
 
 // Trace is the engine's answer to "why is this station not on the list".

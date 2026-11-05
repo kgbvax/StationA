@@ -284,3 +284,25 @@ func TestRankedCarriesWhenTheStationWasLastHeard(t *testing.T) {
 		t.Errorf("heard_at = %+v", st.Ranked)
 	}
 }
+
+func TestBmrecRowCarriesATuneMode(t *testing.T) {
+	f := newDX(t)
+	f.e.SetConfirmations(nil)
+	f.e.SetBmrecGate(GateQualified)
+	var rows []bus.Candidate
+	for i, hz := range []float64{14_221_800, 14_254_600, 7_158_000, 14_030_000, 14_080_000, 21_300_000, 3_750_000} {
+		c := cand(int64(i+1), "DL"+string(rune('A'+i))+"AAA", "20m", true)
+		c.FreqHz, c.Qualified = hz, boolp(true)
+		rows = append(rows, c)
+	}
+	st := f.rank(1, rows)
+	want := map[int64]string{1: "usb", 2: "usb", 3: "lsb", 4: "cw", 5: "data", 6: "usb", 7: "lsb"}
+	for _, r := range st.Ranked {
+		if r.Mode != want[r.RowID] {
+			t.Errorf("row %d at %d Hz: mode %q, want %q", r.RowID, r.FreqHz, r.Mode, want[r.RowID])
+		}
+	}
+	if len(st.Ranked) != len(rows) {
+		t.Errorf("ranked %d of %d rows", len(st.Ranked), len(rows))
+	}
+}
