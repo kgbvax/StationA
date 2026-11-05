@@ -9,7 +9,7 @@ A second line under the row shows the QRZ entry chase-queue attached (name, QTH,
 publishes award data, small tags ("DXCC", "WAS TX"; coloured by unworked / worked-unconfirmed / confirmed) and a "buddy" badge appear too. Cluster rows show the cluster's name and an RBN marker for skimmer spots.
 Award chips (one per award code among the listed needs) and cluster / bmrec chips narrow the list locally, saved with the band filter.
 "follow radio band" locks the band filter to the band the radio reports and follows its band changes (also from SmartSDR); band chips are inactive meanwhile, an unknown band keeps the last filter, off keeps the current band.
-Mode chips (cw / phone / data) filter by mode class; the default is phone only (usb, lsb, am, fm), "clear" returns to it, all three chips on shows everything. Rows with an empty or unknown mode are never hidden.
+Mode chips (cw / phone / data) filter by mode class: a click selects that class alone, shift-click adds or removes one, "all" shows everything; the default is phone only (usb, lsb, am, fm) and "clear" returns to it. Rows with an empty or unknown mode are never hidden.
 
 Build/test/layout: `CLAUDE.md`. Config: `config.example.toml`. Deploy: `./deploy.sh` (bwpc, on request).
 
