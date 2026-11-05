@@ -221,3 +221,14 @@ every MQTT reconnect and every `reload_minutes`, plus the QoS 1 events on `muehl
 `station-log not reachable: ...`, the last good view stays in use); Club token API
 (`/logs/{call}/dxcc-matrix`) and the public Most Wanted list; AD1C's country files (`country-files.com/bigcty/`, at start and daily); the QRZ.com XML callbook (`xmldata.qrz.com`,
 login `[qrz] user` + `CHASE_QUEUE_QRZ_PASSWORD`; entries cached in SQLite for `refresh_days`, not-found for a day).
+
+## Debugging: why is a station not on the list (`GET /debug/rows`)
+
+Loopback only (`[http] listen`, `127.0.0.1:8095`), read only, no credentials: `curl -s 'http://127.0.0.1:8095/debug/rows?call=DL1ABC'`
+on scmino. It recomputes the list and answers with the gate (`gate`, `bmrec_candidates`, `qualified_flag_seen`,
+`gate_kept_off`, `cluster_spots`) and one `rows[]` entry per candidate row: `source` (`bmrec` | `cluster`), `call`,
+`band`, `freq_hz`, `call_trusted`, `call_source`, `qualified`, `outcome` and `detail`. `outcome` is `listed`
+(with `needed`, `on_band`, `mode`), `gate` (kept off by `[bmrec] gate`; the detail names the rule: no callsign,
+not trusted, no qualified flag, not qualified), `hidden` (spotted by a bmrec-only spot while not needed, skipped,
+handled, or replaced by the cluster row of the same call and band) or `not listed` (a cluster row that is not
+needed and not a buddy, or beyond the cap). `?call=` keeps rows whose call contains the text.

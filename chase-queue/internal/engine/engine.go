@@ -11,6 +11,7 @@ package engine
 
 import (
 	"errors"
+	"fmt"
 	"math"
 	"regexp"
 	"slices"
@@ -114,9 +115,10 @@ type Engine struct {
 	clNext  int64
 
 	// bmrec gate and buddies
-	gate        string // "" or "off", "trusted", "qualified"
-	qualSeen    bool   // some candidate row carries the qualified flag
-	unqualified int    // bmrec rows the gate kept off the list, at the last Compute
+	gate        string     // "" or "off", "trusted", "qualified"
+	qualSeen    bool       // some candidate row carries the qualified flag
+	unqualified int        // bmrec rows the gate kept off the list, at the last Compute
+	trace       []RowTrace // why each candidate row is or is not listed, at the last Compute
 	buddies     []Buddy
 
 	// contest: model is set while an instance runs (the contest goal)
@@ -254,16 +256,30 @@ func (e *Engine) GateProblem() string {
 }
 
 // passesGate reports whether a bmrec row counts as an available station.
-func (e *Engine) passesGate(r bus.Candidate) bool {
+func (e *Engine) passesGate(r bus.Candidate) bool { return e.gateReason(r) == "" }
+
+// gateReason is why the [bmrec] gate keeps a row off the list ("" = it passes).
+func (e *Engine) gateReason(r bus.Candidate) string {
 	switch e.gate {
 	case GateTrusted, GateQualified:
 	default:
-		return true
+		return ""
 	}
-	if strings.TrimSpace(r.Call) == "" || !(r.Trusted || r.CallSource == "confirmed" || r.CallSource == "owner") {
-		return false
+	if strings.TrimSpace(r.Call) == "" {
+		return "no callsign yet"
 	}
-	return e.gate != GateQualified || (r.Qualified != nil && *r.Qualified)
+	if !(r.Trusted || r.CallSource == "confirmed" || r.CallSource == "owner") {
+		return "callsign not trusted (not read back by the station, not typed by the operator)"
+	}
+	if e.gate == GateQualified {
+		switch {
+		case r.Qualified == nil:
+			return "bmrec sent no qualified flag for this row"
+		case !*r.Qualified:
+			return "not qualified in bmrec"
+		}
+	}
+	return ""
 }
 
 // AddClusterSpot records a DX-cluster spot. The station is then spotted (a
@@ -712,11 +728,15 @@ func (e *Engine) Compute() bus.ChaseState {
 	}
 	cands := make([]contest.Candidate, 0, len(e.cands)+len(e.clSpots))
 	e.unqualified = 0
+	var trace []RowTrace
+	bmrecRow := map[int64]bus.Candidate{}
 	buddyOf := map[int64]Buddy{}
 	twinOf := map[int64]string{} // heard row -> call|band of the own-cluster spot that may stand for it
 	for _, r := range e.cands {
-		if !e.passesGate(r) {
+		bmrecRow[r.RowID] = r
+		if why := e.gateReason(r); why != "" {
 			e.unqualified++
+			trace = append(trace, bmrecTrace(r, "gate", why))
 			continue
 		}
 		c := contest.Candidate{RowID: r.RowID, Band: r.Band, FreqHz: r.FreqHz, Call: strings.ToUpper(strings.TrimSpace(r.Call)),
@@ -740,6 +760,7 @@ func (e *Engine) Compute() bus.ChaseState {
 			// operator's, or another node) has no cluster row here: it hides a
 			// station that is not needed, never a needed one
 			if c.Val.Class != contest.ClassNew && !onBand && e.spottedLocked(e.spots, c.Call, c.Band, now) {
+				trace = append(trace, bmrecTrace(r, "hidden", "spotted by a spot only bmrec has, and not needed for any award"))
 				continue
 			}
 		}
@@ -820,6 +841,44 @@ func (e *Engine) Compute() bus.ChaseState {
 	for _, r := range st.Ranked {
 		e.listed[r.RowID] = r
 	}
+	// the trace: what happened to every candidate that got as far as the ranking
+	inRanked := map[int64]bus.Ranked{}
+	for _, r := range st.Ranked {
+		inRanked[r.RowID] = r
+	}
+	for _, h := range res.Hidden {
+		if r, ok := bmrecRow[h.RowID]; ok {
+			trace = append(trace, bmrecTrace(r, "hidden", string(h.Reason)))
+		}
+	}
+	hidden := map[int64]bool{}
+	for _, h := range res.Hidden {
+		hidden[h.RowID] = true
+	}
+	for _, it := range res.Queue {
+		if hidden[it.RowID] {
+			continue
+		}
+		cs := cluster[it.RowID]
+		var t RowTrace
+		if cs != nil {
+			t = RowTrace{RowID: it.RowID, Source: bus.SourceCluster, Call: cs.call, Band: cs.band, FreqHz: float64(cs.freqHz)}
+		} else if r, ok := bmrecRow[it.RowID]; ok {
+			t = bmrecTrace(r, "", "")
+		} else {
+			continue
+		}
+		if lr, ok := inRanked[it.RowID]; ok {
+			t.Outcome = "listed"
+			t.Detail = fmt.Sprintf("needed=%t on_band=%t mode=%q", lr.Needed, lr.OnBand, lr.Mode)
+		} else if cs != nil {
+			t.Outcome, t.Detail = "not listed", "cluster rows are listed only when needed (or a buddy) and within the cap"
+		} else {
+			t.Outcome, t.Detail = "hidden", "replaced by the listed cluster row of the same call and band"
+		}
+		trace = append(trace, t)
+	}
+	e.trace = trace
 	if n := len(e.last); n > 0 {
 		st.Undo = e.last[n-1].call
 		if st.Undo == "" {
@@ -827,6 +886,45 @@ func (e *Engine) Compute() bus.ChaseState {
 		}
 	}
 	return st
+}
+
+// RowTrace says why one candidate row is, or is not, on the list.
+type RowTrace struct {
+	RowID      int64   `json:"row_id"`
+	Source     string  `json:"source"`
+	Call       string  `json:"call"`
+	Band       string  `json:"band"`
+	FreqHz     float64 `json:"freq_hz"`
+	Trusted    bool    `json:"call_trusted,omitempty"`
+	CallSource string  `json:"call_source,omitempty"`
+	Qualified  *bool   `json:"qualified,omitempty"`
+	Outcome    string  `json:"outcome"` // listed | gate | hidden | not listed
+	Detail     string  `json:"detail,omitempty"`
+}
+
+func bmrecTrace(r bus.Candidate, outcome, detail string) RowTrace {
+	return RowTrace{RowID: r.RowID, Source: bus.SourceBmrec, Call: r.Call, Band: r.Band, FreqHz: r.FreqHz,
+		Trusted: r.Trusted, CallSource: r.CallSource, Qualified: r.Qualified, Outcome: outcome, Detail: detail}
+}
+
+// Trace is the engine's answer to "why is this station not on the list".
+type Trace struct {
+	Gate          string     `json:"gate"`
+	Candidates    int        `json:"bmrec_candidates"`
+	QualifiedFlag bool       `json:"qualified_flag_seen"`
+	GateKept      int        `json:"gate_kept_off"`
+	ClusterSpots  int        `json:"cluster_spots"`
+	Rows          []RowTrace `json:"rows"`
+}
+
+// Trace recomputes the list and returns what happened to every candidate
+// row (bmrec rows and cluster spots) at that computation.
+func (e *Engine) Trace() Trace {
+	e.Compute()
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return Trace{Gate: e.gate, Candidates: len(e.cands), QualifiedFlag: e.qualSeen, GateKept: e.unqualified,
+		ClusterSpots: len(e.clSpots), Rows: append([]RowTrace(nil), e.trace...)}
 }
 
 // SetCTY replaces the country files (after a refresh).

@@ -183,3 +183,33 @@ func TestHeardRowStaysWhenItsClusterRowIsNotListed(t *testing.T) {
 		t.Fatalf("%+v", st.Ranked)
 	}
 }
+
+func TestTraceExplainsEveryRow(t *testing.T) {
+	f := newDX(t)
+	f.e.SetConfirmations(nil)
+	f.e.SetBmrecGate(GateQualified)
+	f.rank(1, gateRows())
+	tr := f.e.Trace()
+	if tr.Gate != GateQualified || tr.Candidates != 6 || !tr.QualifiedFlag || tr.GateKept != 5 {
+		t.Fatalf("header = %+v", tr)
+	}
+	byCall := map[string]RowTrace{}
+	for _, r := range tr.Rows {
+		byCall[r.Call+"#"+r.Outcome] = r
+	}
+	if r, ok := byCall["DL2BBB#listed"]; !ok || r.Source != bus.SourceBmrec {
+		t.Errorf("the qualified row must be traced as listed: %+v", tr.Rows)
+	}
+	if r, ok := byCall["DL3CCC#gate"]; !ok || r.Detail != "not qualified in bmrec" {
+		t.Errorf("an unqualified row says why: %+v", r)
+	}
+	if r, ok := byCall["DL1AAA#gate"]; !ok || r.Detail != "bmrec sent no qualified flag for this row" {
+		t.Errorf("a row without the flag says so: %+v", r)
+	}
+	if r, ok := byCall["DL4DDD#gate"]; !ok || !strings.Contains(r.Detail, "not trusted") {
+		t.Errorf("an untrusted call says so: %+v", r)
+	}
+	if len(tr.Rows) != 6 {
+		t.Errorf("one trace per candidate, got %d: %+v", len(tr.Rows), tr.Rows)
+	}
+}

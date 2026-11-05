@@ -144,3 +144,9 @@ ssh io@192.168.1.178 'journalctl -u chase-queue -f'
 
 Config: `/etc/chase-queue/config.toml` (0600, seed-once; see `config.example.toml`). Local end-to-end check:
 run a mosquitto on another port, point `[mqtt] broker` at it, publish a `cqfinder/state` and watch `chase/state`.
+
+## Debugging a missing station
+
+`curl -s 'http://127.0.0.1:8095/debug/rows?call=XX'` on scmino says, per candidate row, whether it is listed or
+which rule kept it off (gate, hidden, not listed) and shows the gate header (`qualified_flag_seen`, `gate_kept_off`).
+No broker credentials needed. Contract: `docs/chase-queue-mqtt-api.md`, "Debugging".

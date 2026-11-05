@@ -13,6 +13,21 @@ import (
 func (s *Service) handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, http.StatusOK, map[string]bool{"ok": true}) })
+	// /debug/rows[?call=XX]: why each candidate row (bmrec rows and cluster spots) is, or is not,
+	// on the ranked list. Loopback only, read only; for "why is my qualified station missing".
+	mux.HandleFunc("GET /debug/rows", func(w http.ResponseWriter, r *http.Request) {
+		t := s.eng.Trace()
+		if c := strings.ToUpper(strings.TrimSpace(r.URL.Query().Get("call"))); c != "" {
+			rows := t.Rows[:0:0]
+			for _, row := range t.Rows {
+				if strings.Contains(strings.ToUpper(row.Call), c) {
+					rows = append(rows, row)
+				}
+			}
+			t.Rows = rows
+		}
+		writeJSON(w, http.StatusOK, t)
+	})
 	mux.HandleFunc("GET /contest", func(w http.ResponseWriter, _ *http.Request) {
 		ov, err := s.Overview()
 		if err != nil {
