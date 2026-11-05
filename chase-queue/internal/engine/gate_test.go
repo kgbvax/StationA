@@ -213,3 +213,24 @@ func TestTraceExplainsEveryRow(t *testing.T) {
 		t.Errorf("one trace per candidate, got %d: %+v", len(tr.Rows), tr.Rows)
 	}
 }
+
+func TestTraceRemembersRowsListedEarlier(t *testing.T) {
+	f := newDX(t)
+	f.e.SetConfirmations(nil)
+	f.e.SetBmrecGate(GateQualified)
+	f.rank(1, gateRows())
+	f.rank(2, nil) // the qualified row closed: it is gone from bmrec's state
+	tr := f.e.Trace()
+	var found bool
+	for _, v := range tr.RecentlyListed {
+		found = found || (v.Call == "DL2BBB" && v.Source == bus.SourceBmrec)
+	}
+	if !found {
+		t.Fatalf("a row listed earlier stays in recently_listed: %+v", tr.RecentlyListed)
+	}
+	for _, r := range tr.Rows {
+		if r.Call == "DL2BBB" {
+			t.Errorf("the closed row is no longer a candidate: %+v", r)
+		}
+	}
+}

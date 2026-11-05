@@ -25,6 +25,13 @@ func (s *Service) handler() http.Handler {
 				}
 			}
 			t.Rows = rows
+			seen := t.RecentlyListed[:0:0]
+			for _, v := range t.RecentlyListed {
+				if strings.Contains(strings.ToUpper(v.Call), c) {
+					seen = append(seen, v)
+				}
+			}
+			t.RecentlyListed = seen
 		}
 		writeJSON(w, http.StatusOK, t)
 	})

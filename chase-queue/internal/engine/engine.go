@@ -115,10 +115,11 @@ type Engine struct {
 	clNext  int64
 
 	// bmrec gate and buddies
-	gate        string     // "" or "off", "trusted", "qualified"
-	qualSeen    bool       // some candidate row carries the qualified flag
-	unqualified int        // bmrec rows the gate kept off the list, at the last Compute
-	trace       []RowTrace // why each candidate row is or is not listed, at the last Compute
+	gate        string                 // "" or "off", "trusted", "qualified"
+	qualSeen    bool                   // some candidate row carries the qualified flag
+	unqualified int                    // bmrec rows the gate kept off the list, at the last Compute
+	trace       []RowTrace             // why each candidate row is or is not listed, at the last Compute
+	seenListed  map[string]*ListedSeen // rows listed in the last 24 h, by call|band|source
 	buddies     []Buddy
 
 	// contest: model is set while an instance runs (the contest goal)
@@ -879,6 +880,22 @@ func (e *Engine) Compute() bus.ChaseState {
 		trace = append(trace, t)
 	}
 	e.trace = trace
+	if e.seenListed == nil {
+		e.seenListed = map[string]*ListedSeen{}
+	}
+	for k, v := range e.seenListed {
+		if now.Sub(v.Last) > 24*time.Hour {
+			delete(e.seenListed, k)
+		}
+	}
+	for _, r := range st.Ranked {
+		k := r.Call + "|" + r.Band + "|" + r.Source
+		if v := e.seenListed[k]; v != nil {
+			v.Last, v.Needed = now, r.Needed
+		} else {
+			e.seenListed[k] = &ListedSeen{Call: r.Call, Band: r.Band, Source: r.Source, First: now, Last: now, Needed: r.Needed}
+		}
+	}
 	if n := len(e.last); n > 0 {
 		st.Undo = e.last[n-1].call
 		if st.Undo == "" {
@@ -907,14 +924,25 @@ func bmrecTrace(r bus.Candidate, outcome, detail string) RowTrace {
 		Trusted: r.Trusted, CallSource: r.CallSource, Qualified: r.Qualified, Outcome: outcome, Detail: detail}
 }
 
+// ListedSeen is a row the list carried at some point in the last 24 hours.
+type ListedSeen struct {
+	Call   string    `json:"call"`
+	Band   string    `json:"band"`
+	Source string    `json:"source"`
+	First  time.Time `json:"first_listed"`
+	Last   time.Time `json:"last_listed"`
+	Needed bool      `json:"needed"`
+}
+
 // Trace is the engine's answer to "why is this station not on the list".
 type Trace struct {
-	Gate          string     `json:"gate"`
-	Candidates    int        `json:"bmrec_candidates"`
-	QualifiedFlag bool       `json:"qualified_flag_seen"`
-	GateKept      int        `json:"gate_kept_off"`
-	ClusterSpots  int        `json:"cluster_spots"`
-	Rows          []RowTrace `json:"rows"`
+	Gate           string       `json:"gate"`
+	Candidates     int          `json:"bmrec_candidates"`
+	QualifiedFlag  bool         `json:"qualified_flag_seen"`
+	GateKept       int          `json:"gate_kept_off"`
+	ClusterSpots   int          `json:"cluster_spots"`
+	Rows           []RowTrace   `json:"rows"`
+	RecentlyListed []ListedSeen `json:"recently_listed"` // rows listed at any point in the last 24 h, newest first
 }
 
 // Trace recomputes the list and returns what happened to every candidate
@@ -924,7 +952,16 @@ func (e *Engine) Trace() Trace {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return Trace{Gate: e.gate, Candidates: len(e.cands), QualifiedFlag: e.qualSeen, GateKept: e.unqualified,
-		ClusterSpots: len(e.clSpots), Rows: append([]RowTrace(nil), e.trace...)}
+		ClusterSpots: len(e.clSpots), Rows: append([]RowTrace(nil), e.trace...), RecentlyListed: e.recentLocked()}
+}
+
+func (e *Engine) recentLocked() []ListedSeen {
+	out := make([]ListedSeen, 0, len(e.seenListed))
+	for _, v := range e.seenListed {
+		out = append(out, *v)
+	}
+	slices.SortFunc(out, func(a, b ListedSeen) int { return b.Last.Compare(a.Last) })
+	return out
 }
 
 // SetCTY replaces the country files (after a refresh).

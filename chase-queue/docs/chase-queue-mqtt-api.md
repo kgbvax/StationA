@@ -232,3 +232,8 @@ on scmino. It recomputes the list and answers with the gate (`gate`, `bmrec_cand
 not trusted, no qualified flag, not qualified), `hidden` (spotted by a bmrec-only spot while not needed, skipped,
 handled, or replaced by the cluster row of the same call and band) or `not listed` (a cluster row that is not
 needed and not a buddy, or beyond the cap). `?call=` keeps rows whose call contains the text.
+
+`recently_listed[]` (same endpoint, also filtered by `?call=`) names every row the list carried in the last 24 hours
+(`call`, `band`, `source`, `first_listed`, `last_listed`, `needed`), newest first, so a station that was listed and has
+since gone (a CQ row closes when the station goes quiet) can still be checked after the fact. It is kept in memory
+only: a restart empties it.
