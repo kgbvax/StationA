@@ -87,3 +87,17 @@ func TestStationLogSection(t *testing.T) {
 		}
 	}
 }
+
+func TestBmrecLingerKeepsItsDefaultWhenOnlyTheGateIsSet(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(p, []byte("[bmrec]\ngate = \"qualified\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(&Flags{ConfigPath: p})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Bmrec.Gate != GateQualified || cfg.Bmrec.LingerMinutes != 10 {
+		t.Errorf("bmrec = %+v, want gate qualified and linger 10", cfg.Bmrec)
+	}
+}
