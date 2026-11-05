@@ -60,15 +60,22 @@ or a factory reset, so read this once before starting.
    adb shell cmd package set-home-activity codeberg.kgbvax.hf_console/.MainActivity
    ```
 
-6. **Launch the app once** and confirm keyguard disabling, and set the screen
-   timeout to 1 h of no touch input (raw setting; survives reboots, and is not
-   limited by the Settings UI capping at 30 min). Without this the tablet
-   would either never sleep (old builds kept the screen on) or sleep after the
-   stock 30 s – 30 min timeout:
+6. **Launch the app once** and confirm keyguard disabling and the display
+   policy. The tablet's charger is plugged in behind the **TRX PSU plug**
+   (`muehle/power/psu-13v8`; powerseq switches it on at startup and off at
+   shutdown or idle shutdown, standby leaves it on — not the site mains,
+   which is never switched). The display follows it: the app sets
+   `stay_on_while_plugged_in` (any plug type) so the display stays on while
+   the station is on, and a 5 min screen-off timeout that only applies on
+   battery. The TB311FU wakes the display on every plug/unplug edge
+   (`mWakeUpWhenPluggedOrUnpluggedConfig=true` in `dumpsys power`), so
+   PSU-on wakes the console and PSU-off lets it sleep 5 min later. On
+   unswitched power the display would never sleep.
+   The app re-applies both settings on every start; edit `KioskPolicy`, not
+   the Settings UI, to change them.
 
    ```bash
    adb shell am start -n codeberg.kgbvax.hf_console/.MainActivity
-   adb shell settings put system screen_off_timeout 3600000
    adb logcat -s KioskPolicy Kiosk
    ```
 
@@ -78,6 +85,9 @@ or a factory reset, so read this once before starting.
    KioskPolicy: setKeyguardDisabled(true) -> true
    KioskPolicy: setLockTaskPackages(codeberg.kgbvax.hf_console) -> ok
    KioskPolicy: addPersistentPreferredActivity(ACTION_MAIN/CATEGORY_HOME -> MainActivity) -> ok
+   KioskPolicy: setLockTaskFeatures(0x1) -> ok
+   KioskPolicy: setGlobalSetting(STAY_ON_WHILE_PLUGGED_IN=7) -> ok
+   KioskPolicy: setSystemSetting(SCREEN_OFF_TIMEOUT=300000) -> ok
    Kiosk:       startLockTask() -> ok
    ```
 
@@ -89,8 +99,10 @@ or a factory reset, so read this once before starting.
 7. **Verify**: press the power button to lock the screen, press it again to
    wake. The console must be visible immediately, with no keyguard step. Also
    press the home gesture/button: the console must come back (it is now the
-   home activity). After 1 h without touch input the display turns off; a
-   power-button press wakes straight back into the console.
+   home activity). While the charger has power the display stays on; on
+   battery it turns off after 5 min without touch input, and a power-button
+   press wakes straight back into the console. Unplugging or plugging in the
+   charger wakes the display.
 
 The device now boots straight into the console, in lock task, keyguard off.
 
