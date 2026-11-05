@@ -139,16 +139,37 @@ func TestWavelogConfig(t *testing.T) {
 			t.Errorf("%q: %v, want %q", toml, err, want)
 		}
 	}
-	t.Setenv("STATION_LOG_WAVELOG_KEY", "k")
+	t.Setenv("STATION_LOG_WAVELOG_KEY", "wl2_k")
 	if _, err := load(t, "[wavelog]\ndirection = \"both\"\nurl = \"https://wl.example.org\""); err == nil || !strings.Contains(err.Error(), "profile") {
 		t.Errorf("profile required: %v", err)
 	}
 	c, err = load(t, "[wavelog]\ndirection = \"both\"\nurl = \"http://192.168.1.5\"\npush_since = \"2026-11-01\""+prof)
-	if err != nil || !c.Wavelog.Push() || !c.Wavelog.Pull() || c.Wavelog.Key != "k" || c.Wavelog.PushSinceTime().Day() != 1 {
+	if err != nil || !c.Wavelog.Push() || !c.Wavelog.Pull() || c.Wavelog.Key != "wl2_k" || c.Wavelog.PushSinceTime().Day() != 1 {
 		t.Fatalf("%+v %v", c.Wavelog, err)
 	}
 	if _, err := load(t, "[wavelog]\ndirection = \"pull\"\nurl = \"https://wl.example.org\"\ninterval_seconds = 10"+prof); err == nil || !strings.Contains(err.Error(), "interval_seconds") {
 		t.Errorf("interval: %v", err)
+	}
+	wl := "[wavelog]\ndirection = \"both\"\nurl = \"https://wl.example.org\"\n"
+	// a legacy v1 key, a non-numeric profile id and an oversized page are refused
+	t.Setenv("STATION_LOG_WAVELOG_KEY", "wlv1key")
+	if _, err := load(t, wl+prof); err == nil || !strings.Contains(err.Error(), "wl2_") || strings.Contains(err.Error(), "wlv1key") {
+		t.Errorf("v1 key: %v", err)
+	}
+	t.Setenv("STATION_LOG_WAVELOG_KEY", "wl2_k")
+	if _, err := load(t, wl+"[[wavelog.profile]]\nown_call = \"DL9ET\"\nstation_profile_id = \"home\"\n"); err == nil || !strings.Contains(err.Error(), "positive integer") {
+		t.Errorf("profile id: %v", err)
+	}
+	if _, err := load(t, wl+"pull_limit = 6000\n"+prof); err == nil || !strings.Contains(err.Error(), "5000") {
+		t.Errorf("pull_limit: %v", err)
+	}
+	// -wavelog-check needs only url and token, not direction or profiles
+	f := &Flags{ConfigPath: filepath.Join(t.TempDir(), "c.toml"), SkipWavelog: true}
+	if err := os.WriteFile(f.ConfigPath, []byte("[wavelog]\nurl = \"https://wl.example.org\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if c, err := Load(f); err != nil || c.WavelogEndpoint() != nil {
+		t.Errorf("check-mode load: %v %v", err, c.WavelogEndpoint())
 	}
 	// the key can never come from the TOML
 	c, _ = load(t, "[wavelog]\nkey = \"fromfile\"")

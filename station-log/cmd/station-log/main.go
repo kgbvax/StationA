@@ -29,12 +29,17 @@ func main() {
 	source := fs.String("source", "", "source tag of -import-adif (default \"adif\")")
 	replace := fs.Bool("replace-source", false, "with -import-adif: delete the source's QSOs that the file does not hold (needs -source)")
 	force := fs.Bool("force", false, "with -replace-source: allow deleting more than half of the source")
+	wlCheck := fs.Bool("wavelog-check", false, "with the token from STATION_LOG_WAVELOG_KEY: print the Wavelog token's scopes and station locations (id, callsign, name), exit")
 	_ = fs.Parse(os.Args[1:])
+	flags.SkipWavelog = *wlCheck // usable before [wavelog] direction/profiles are filled in
 
 	cfg, err := config.Load(flags)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "station-log: %v\n", err)
 		os.Exit(2)
+	}
+	if *wlCheck {
+		os.Exit(wavelogCheck(context.Background(), cfg, os.Stdout, os.Stderr))
 	}
 	if *check {
 		fmt.Printf("slot %s/%s/%s  broker %s  data %s  http %s\n", cfg.MQTT.Site, cfg.Slot.Station, cfg.Slot.Slot, cfg.MQTT.Broker, cfg.DataDir, cfg.HTTP.Listen)

@@ -137,7 +137,7 @@ func (s *Service) newSyncer() *wavelog.Syncer {
 	}
 	c := wavelog.Config{Pull: w.Pull(), Push: w.Push(), URLHost: u.Host, URL: w.URL,
 		Interval: time.Duration(w.IntervalSeconds) * time.Second, FullResync: time.Duration(w.FullResyncHours) * time.Hour,
-		Batch: w.BatchSize, PullLimit: w.PullLimit, PushSources: w.PushSources, PushSince: w.PushSinceTime(), Repush: w.RepushChanges}
+		Batch: w.BatchSize, PullLimit: w.PullLimit, PushSources: w.PushSources, PushSince: w.PushSinceTime()}
 	for _, p := range w.Profiles {
 		c.Profiles = append(c.Profiles, wavelog.Profile{OwnCall: strings.ToUpper(strings.TrimSpace(p.OwnCall)), StationID: strings.TrimSpace(p.StationProfileID)})
 	}
@@ -308,6 +308,7 @@ func (s *Service) BuildState() (State, error) {
 		if w.Error != "" {
 			st.Problems = append(st.Problems, "Wavelog: "+w.Error)
 		}
+		st.Problems = append(st.Problems, w.Problems...)
 		if w.PushFailed > 0 {
 			st.Problems = append(st.Problems, fmt.Sprintf("Wavelog: %d QSOs failed to push permanently", w.PushFailed))
 		}

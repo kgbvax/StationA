@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -122,7 +123,7 @@ func (w Working) Stale() time.Duration {
 }
 
 // Wavelog is the two-way sync with a Wavelog instance (off by default). The
-// API key is env-only (STATION_LOG_WAVELOG_KEY).
+// API v2 token (wl2_...) is env-only (STATION_LOG_WAVELOG_KEY).
 type Wavelog struct {
 	// Direction: "off" (default), "pull", "push" or "both".
 	Direction string `toml:"direction"`
@@ -136,8 +137,7 @@ type Wavelog struct {
 	PushSources []string `toml:"push_sources"`
 	// PushSince (RFC 3339 date or time): only QSOs at or after it are pushed.
 	// Empty = the time sync was first enabled, so history is not bulk-pushed.
-	PushSince     string `toml:"push_since"`
-	RepushChanges bool   `toml:"repush_changes"`
+	PushSince string `toml:"push_since"`
 	// CAFile is an extra CA bundle for a private CA.
 	CAFile   string           `toml:"ca_file"`
 	Key      string           `toml:"-"` // env only: STATION_LOG_WAVELOG_KEY
@@ -191,7 +191,7 @@ func Defaults() Config {
 		HTTP:      HTTPConfig{Listen: "127.0.0.1:8096"},
 		Watch:     WatchConfig{IntervalSeconds: 30, Source: "adif-drop"},
 		Working:   Working{StaleAfter: "10m", QRZ: WorkingQRZ{CacheDays: 30, NegativeMinutes: 10}},
-		Wavelog: Wavelog{Direction: "off", IntervalSeconds: 300, FullResyncHours: 24, BatchSize: 50, PullLimit: 500,
+		Wavelog: Wavelog{Direction: "off", IntervalSeconds: 300, FullResyncHours: 24, BatchSize: 50, PullLimit: 1000,
 			PushSources: []string{"log4om", "adif"}},
 		Log: LogConfig{Level: "info"},
 	}
@@ -201,6 +201,9 @@ func Defaults() Config {
 type Flags struct {
 	ConfigPath string
 	LogLevel   string
+	// SkipWavelog skips the [wavelog] validation (the -wavelog-check flag
+	// runs before direction and profiles are filled in).
+	SkipWavelog bool
 }
 
 // RegisterFlags wires the flags onto fs.
@@ -242,6 +245,9 @@ func Load(f *Flags) (Config, error) {
 	if f.LogLevel != "" {
 		cfg.Log.Level = strings.ToLower(f.LogLevel)
 	}
+	if f.SkipWavelog {
+		return cfg, cfg.validate(false)
+	}
 	return cfg, cfg.Validate()
 }
 
@@ -252,7 +258,9 @@ func (c Config) Window() time.Duration {
 }
 
 // Validate checks the configuration.
-func (c Config) Validate() error {
+func (c Config) Validate() error { return c.validate(true) }
+
+func (c Config) validate(wavelog bool) error {
 	if c.DataDir == "" {
 		return errors.New("data_dir is required")
 	}
@@ -295,7 +303,29 @@ func (c Config) Validate() error {
 	if err := c.validateWorking(); err != nil {
 		return err
 	}
+	if !wavelog {
+		return nil
+	}
 	return c.validateWavelog()
+}
+
+// WavelogEndpoint checks the URL and token only (what -wavelog-check needs).
+func (c Config) WavelogEndpoint() error {
+	w := c.Wavelog
+	u, err := url.Parse(w.URL)
+	if err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") {
+		return fmt.Errorf("wavelog.url %q: want an https:// base URL", w.URL)
+	}
+	if u.Scheme == "http" && !privateHost(u.Hostname()) {
+		return fmt.Errorf("wavelog.url %q: plain http is only allowed for loopback or private hosts (the API token travels in a request header)", w.URL)
+	}
+	if w.Key == "" {
+		return errors.New("wavelog needs STATION_LOG_WAVELOG_KEY in the environment (never in the TOML)")
+	}
+	if !strings.HasPrefix(w.Key, "wl2_") {
+		return errors.New("STATION_LOG_WAVELOG_KEY is not an API v2 token (they start with wl2_; legacy v1 keys are not accepted)")
+	}
+	return nil
 }
 
 func (c Config) validateWavelog() error {
@@ -307,15 +337,8 @@ func (c Config) validateWavelog() error {
 	default:
 		return fmt.Errorf("wavelog.direction %q: want off, pull, push or both", w.Direction)
 	}
-	u, err := url.Parse(w.URL)
-	if err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") {
-		return fmt.Errorf("wavelog.url %q: want an https:// base URL", w.URL)
-	}
-	if u.Scheme == "http" && !privateHost(u.Hostname()) {
-		return fmt.Errorf("wavelog.url %q: plain http is only allowed for loopback or private hosts (the API key travels in the request body)", w.URL)
-	}
-	if w.Key == "" {
-		return errors.New("wavelog needs STATION_LOG_WAVELOG_KEY in the environment (never in the TOML)")
+	if err := c.WavelogEndpoint(); err != nil {
+		return err
 	}
 	if len(w.Profiles) == 0 {
 		return errors.New("wavelog needs at least one [[wavelog.profile]] (own_call + station_profile_id)")
@@ -324,6 +347,9 @@ func (c Config) validateWavelog() error {
 	for i, p := range w.Profiles {
 		if strings.TrimSpace(p.OwnCall) == "" || strings.TrimSpace(p.StationProfileID) == "" {
 			return fmt.Errorf("wavelog.profile[%d]: own_call and station_profile_id are required", i)
+		}
+		if n, err := strconv.Atoi(strings.TrimSpace(p.StationProfileID)); err != nil || n < 1 {
+			return fmt.Errorf("wavelog.profile[%d]: station_profile_id %q must be a positive integer (see station-log -wavelog-check)", i, p.StationProfileID)
 		}
 		k := strings.ToUpper(strings.TrimSpace(p.OwnCall))
 		if seen[k] {
@@ -336,6 +362,9 @@ func (c Config) validateWavelog() error {
 	}
 	if w.FullResyncHours < 1 || w.BatchSize < 1 || w.PullLimit < 1 {
 		return errors.New("wavelog.full_resync_hours, batch_size and pull_limit must be at least 1")
+	}
+	if w.PullLimit > 5000 {
+		return errors.New("wavelog.pull_limit must be at most 5000 (the API's per_page maximum)")
 	}
 	if _, err := parseSince(w.PushSince); err != nil {
 		return fmt.Errorf("wavelog.push_since %q: want an RFC 3339 date or time", w.PushSince)
@@ -359,7 +388,7 @@ func (c Config) WavelogCheck() string {
 	if !w.Enabled() {
 		return "wavelog sync off"
 	}
-	return fmt.Sprintf("wavelog sync %s  url %s  key set  %d profile(s)  interval %ds  push_since %q",
+	return fmt.Sprintf("wavelog sync %s  url %s  token set  %d profile(s)  interval %ds  push_since %q",
 		w.Direction, w.URL, len(w.Profiles), w.IntervalSeconds, w.PushSince)
 }
 

@@ -90,14 +90,17 @@ the `/state` of the retired logger-spot-bridge slot `muehle/hf/spots`; the docum
 
 ## 3b. Wavelog sync (`/state.wavelog`, `/meta`)
 
-Optional (`[wavelog] direction` pull | push | both); absent from `/state` while off. All Wavelog API details
-are from memory and unverified against a real instance (see `CLAUDE.md`).
+Optional (`[wavelog] direction` pull | push | both); absent from `/state` while off. Uses the documented Wavelog
+REST API v2 (<https://docs.wavelog.org/developer/api-v2/>, Wavelog >= 3.1.0) with a `wl2_` token; token scopes
+`qso:read` (pull), `qso:write` (push), `station:read` (for `station-log -wavelog-check`). Real-instance behaviour is
+verified only up to the unauthenticated probe (status endpoint, `invalid_token` error shape) until the operator
+provides a token (see `CLAUDE.md`). A QSO is pushed once; Wavelog skips duplicates and runs its own LoTW/QRZ sync.
 
 `/state.wavelog`: `direction`, `url_host` (host only), `last_pull_at`, `last_push_at`, `cursor` (profile id -> last
 pulled Wavelog row id), `pulled_added`, `pulled_merged`, `pushed` (these three since start), `push_pending`,
-`push_failed` (QSOs given up after 5 attempts until they change), `skipped_no_profile` (pushable QSOs whose own
-call has no `[[wavelog.profile]]`), `last_full_resync_at`, `backoff_seconds`, `error`, `note` (one-off remark, e.g. cursors and push ledger reset after an instance URL change). While `error` is set,
-`/state.problems` carries `Wavelog: <reason>`; `push_failed > 0` adds a problem line.
+`push_failed` (QSOs Wavelog refused 5 times, until they change), `skipped_no_profile` (pushable QSOs whose own
+call has no `[[wavelog.profile]]`), `last_full_resync_at`, `backoff_seconds`, `error`, `problems` (profiles skipped because Wavelog refuses them for this token, e.g. 403 `forbidden`), `note` (one-off remark, e.g. cursors and push ledger reset after an instance URL change). While `error` is set,
+`/state.problems` carries `Wavelog: <reason>` (a missing token scope is named, e.g. `HTTP 403 insufficient_scope: token lacks scope qso:write`); each `wavelog.problems` entry is repeated there; `push_failed > 0` adds a problem line.
 
 `/meta.capabilities`: `feeders` gains `wavelog-pull` (pull on); `sync: ["wavelog"]` appears when push is on.
 No new topic or `/cmd`. Pulled QSOs publish `added`/`merged` events like any import (source `wavelog`).

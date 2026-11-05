@@ -1,23 +1,24 @@
 package wavelog
 
-// API assumptions encoded by these tests (FROM MEMORY, unverified against a
-// real Wavelog instance; check each one before enabling the sync):
+// What these tests encode: the documented Wavelog API v2
+// (https://docs.wavelog.org/developer/api-v2/, Wavelog >= 3.1.0), through the
+// httptest fake in fake_test.go (which cites the doc sections). Real-instance
+// behaviour is verified only up to the unauthenticated probe (status endpoint,
+// invalid_token error shape); everything behind a token is unverified until
+// the operator provides one.
 //
-//	(a) both endpoints live under /index.php/api/ and take the API key as the
-//	    "key" field of a JSON POST body (never in the URL);
-//	(b) get_contacts_adif request fields: key, station_id, fetchfromid, limit;
-//	(c) response fields: adif (ADIF text), lastfetchedid, exported_qsos; rows
-//	    come in increasing primary-key order and lastfetchedid is the highest
-//	    id returned (numbers may arrive as JSON numbers or strings);
-//	(d) /api/qso accepts {key, station_profile_id, type:"adif", string} and a
-//	    string with several records;
-//	(e) a duplicate is reported inside a 200 response body (status/adif_errors/
-//	    message text containing "Duplicate"), not as a non-200 code;
-//	(f) pulled ADIF carries STATION_CALLSIGN (optional), BAND, MODE/SUBMODE,
-//	    QSO_DATE, TIME_ON and the confirmation fields QSL_RCVD, LOTW_QSL_RCVD,
-//	    EQSL_QSL_RCVD;
-//	(g) /api/qso never updates an existing QSO;
-//	(h) the key needs read access for pull and read/write access for push.
+//	(a) auth is "Authorization: Bearer wl2_..." only; the token is in no URL,
+//	    body, log line, error text or /state;
+//	(b) pull: GET /api/v2/qso?format=adif&since_id&station_id&per_page, rows
+//	    ascending by id, data.adif/exported/lastfetchedid, meta.has_more, ADIF
+//	    frequency in MHz; the cursor is lastfetchedid, written only after the
+//	    page was imported; full resync = since_id 0;
+//	(c) push: POST /api/v2/qso {import_type:"adif", station_profile_id:N,
+//	    adif} -> data.parsed/imported/skipped/messages; skipped = duplicate =
+//	    success; 400 validation_error = a record problem (bisected);
+//	(d) errors: 401 / 403 insufficient_scope = auth (scope named), 429 honours
+//	    Retry-After, 404/405/5xx/HTML = endpoint errors without attempts;
+//	(e) a QSO is pushed once: no re-push for gained confirmations.
 //
 // The data is synthetic.
 
@@ -122,7 +123,7 @@ func TestPullPagingCursorAndIncremental(t *testing.T) {
 		t.Fatalf("cursor %q", v)
 	}
 	if got := ints(e.f.fetches); got != "0,2,4" {
-		t.Fatalf("fetchfromid sequence %s, want 0,2,4", got)
+		t.Fatalf("since_id sequence %s, want 0,2,4", got)
 	}
 	e.f.fetches = nil
 	e.f.addRow("1", rec("DK9ZZ", t0.Add(9*time.Hour)))
@@ -133,8 +134,8 @@ func TestPullPagingCursorAndIncremental(t *testing.T) {
 	if e.count() != 6 || ints(e.f.fetches) != "5" {
 		t.Fatalf("count %d fetches %v: incremental pull should start at the cursor", e.count(), e.f.fetches)
 	}
-	if qs, _ := e.st.ByCall("DK9ZZ", "DL9ET"); len(qs) != 1 || qs[0].Source != "wavelog" {
-		t.Fatalf("pulled QSO %+v", qs)
+	if qs, _ := e.st.ByCall("DK9ZZ", "DL9ET"); len(qs) != 1 || qs[0].Source != "wavelog" || qs[0].FreqHz != 14200000 {
+		t.Fatalf("pulled QSO %+v (ADIF FREQ is MHz)", qs)
 	}
 }
 
@@ -296,25 +297,29 @@ func TestBatchFallsBackToSingleRecords(t *testing.T) {
 	if err := e.cycle(); err != nil {
 		t.Fatal(err)
 	}
-	if len(e.f.posts) != 3 || e.s.Status().Pushed != 2 {
+	if len(e.f.posts) != 3 || e.s.Status().Pushed != 2 { // the pair is refused, then one request per record
 		t.Fatalf("posts %d status %+v", len(e.f.posts), e.s.Status())
 	}
 }
 
 func TestPermanentFailureStopsAfterFiveAttempts(t *testing.T) {
+	// a record that fails alone while a sibling was stored is the record's
+	// own failure; it gets 5 attempts across cycles, then push_failed
 	e := newEnv(t, false, true)
-	e.f.rejectAll = true
+	e.f.badCalls = map[string]bool{"BAD": true}
 	e.logQSO("DK1AA", t0, "DL9ET")
+	e.logQSO("BAD", t0.Add(time.Hour), "DL9ET")
 	for i := 0; i < 8; i++ {
 		if err := e.cycle(); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if len(e.f.posts) != 5 {
-		t.Fatalf("posts %d, want 5 attempts", len(e.f.posts))
+	// cycle 1: pair (refused), DK1AA, BAD; cycles 2-5: BAD alone
+	if len(e.f.posts) != 7 {
+		t.Fatalf("posts %d, want 7", len(e.f.posts))
 	}
-	if st := e.s.Status(); st.PushFailed != 1 || st.PushPending != 0 {
-		t.Fatalf("status %+v", st)
+	if st := e.s.Status(); st.PushFailed != 1 || st.PushPending != 0 || st.Pushed != 1 || e.attempts("2") != 5 {
+		t.Fatalf("status %+v attempts %d", st, e.attempts("2"))
 	}
 }
 
@@ -330,9 +335,12 @@ func TestAuthErrorBacksOffAndKeyNeverLeaks(t *testing.T) {
 	if st := e.s.Status(); st.BackoffSeconds < int(maxBackoff.Seconds()) || st.Error == "" {
 		t.Fatalf("status %+v", st)
 	}
-	for _, s := range []string{e.logb.String(), err.Error()} {
+	if ae.Status != 401 || ae.Code != "invalid_token" {
+		t.Fatalf("%+v", ae)
+	}
+	for _, s := range []string{e.logb.String(), err.Error(), strings.Join(e.f.reqs, "\n"), strings.Join(e.f.bodies, "\n")} {
 		if strings.Contains(s, "wrong") || strings.Contains(s, e.f.key) {
-			t.Fatalf("key in %q", s)
+			t.Fatalf("token in %q", s)
 		}
 	}
 	b, _ := json.Marshal(e.s.Status())
@@ -341,10 +349,17 @@ func TestAuthErrorBacksOffAndKeyNeverLeaks(t *testing.T) {
 	}
 }
 
-func TestKeyInEchoedBodyIsRedacted(t *testing.T) {
+func TestTokenInEchoedBodyIsRedacted(t *testing.T) {
 	c := &Client{Key: "secret-key-xyz"}
 	if s := c.snippet([]byte("error for secret-key-xyz here")); strings.Contains(s, "secret-key-xyz") {
 		t.Fatal(s)
+	}
+	f := newFake(t)
+	f.status, f.body = 400, `{"error":{"code":"validation_error","message":"bad value `+f.key+`"}}`
+	cl, _ := NewClient(f.srv.URL, f.key, "")
+	cl.MinGap = 0
+	if _, err := cl.PostADIF(context.Background(), "1", "<EOR>"); err == nil || strings.Contains(err.Error(), f.key) {
+		t.Fatalf("err %v", err)
 	}
 }
 
@@ -380,6 +395,7 @@ func TestOutageWarnsOnceAndBackoffDoublesAndResets(t *testing.T) {
 func TestRetryAfterHonoured(t *testing.T) {
 	e := newEnv(t, true, false)
 	e.f.status, e.f.retry = 429, "600"
+	e.f.body = `{"error":{"code":"rate_limited","message":"slow down","details":{"retry_after":5}}}`
 	err := e.cycle()
 	ae, ok := err.(*APIError)
 	if !ok || ae.RetryAfter != 10*time.Minute {
@@ -440,36 +456,25 @@ func (e *env) attempts(qsoID string) int {
 	return -1
 }
 
-func TestPullFailedStatusIsAnErrorNotSuccess(t *testing.T) {
-	e := newEnv(t, true, false)
-	e.f.addRow("1", rec("DK1AA", t0))
-	e.f.okBody = `{"status":"failed","reason":"Invalid API key"}`
-	err := e.cycle()
-	var ae *APIError
-	if !errors.As(err, &ae) || !ae.Auth {
-		t.Fatalf("err %v, want an auth APIError", err)
-	}
-	if st := e.s.Status(); !st.LastPullAt.IsZero() || !st.LastFullResync.IsZero() {
-		t.Fatalf("status %+v: nothing may be marked done", st)
-	}
-	if _, ok, _ := e.st.Setting("wavelog_full_1"); ok {
-		t.Fatal("full resync marked done after a failed pull")
-	}
-}
-
-func TestPullBodyWithoutAnyFieldIsAnError(t *testing.T) {
-	e := newEnv(t, true, false)
-	e.f.okBody = `{"hello":"world"}`
-	if err := e.cycle(); err == nil {
-		t.Fatal("a body with no adif/exported_qsos must be an error")
-	}
-	if _, ok, _ := e.st.Setting("wavelog_full_1"); ok || !e.s.Status().LastPullAt.IsZero() {
-		t.Fatal("pull marked done")
+func TestPullBadBodiesAreErrorsNotSuccess(t *testing.T) {
+	for _, body := range []string{`{"hello":"world"}`, `<html>login</html>`, `{"data":[]}`, `{"error":{}}`} {
+		e := newEnv(t, true, false)
+		e.f.addRow("1", rec("DK1AA", t0))
+		e.f.okBody = body
+		if err := e.cycle(); err == nil {
+			t.Fatalf("body %s: want an error", body)
+		}
+		if st := e.s.Status(); !st.LastPullAt.IsZero() || !st.LastFullResync.IsZero() {
+			t.Fatalf("status %+v: nothing may be marked done", st)
+		}
+		if _, ok, _ := e.st.Setting("wavelog_full_1"); ok {
+			t.Fatal("full resync marked done after a failed pull")
+		}
 	}
 }
 
-func TestPushBodyWithoutStatusOrWithFailedKeyIsEndpointError(t *testing.T) {
-	for _, body := range []string{`{}`, `{"status":"failed","reason":"Invalid API key"}`} {
+func TestPushBadBodiesAreEndpointErrors(t *testing.T) {
+	for _, body := range []string{`{}`, `{"data":{"parsed":"x"}}`, `<html>login</html>`, `{"data":{"imported":1}}`} {
 		e := newEnv(t, false, true)
 		e.f.okBody = body
 		e.logQSO("DK1AA", t0, "DL9ET")
@@ -488,7 +493,10 @@ func TestEndpointErrorsCountNoAttempts(t *testing.T) {
 	for _, tc := range []struct {
 		status int
 		body   string
-	}{{404, "not found"}, {405, "nope"}, {408, "timeout"}, {413, "too big"}, {400, "<html>Bad Request</html>"}} {
+	}{{404, "not found"}, {404, `{"error":{"code":"not_found","message":"Unknown resource"}}`},
+		{405, `{"error":{"code":"method_not_allowed","message":"nope"}}`}, {408, "timeout"}, {413, "too big"},
+		{400, "<html>Bad Request</html>"}, {400, `{"error":{"code":"invalid_json","message":"bad"}}`},
+		{500, `{"error":{"code":"internal_error","message":"boom"}}`}, {502, "<html>Bad Gateway</html>"}} {
 		e := newEnv(t, false, true)
 		e.f.status, e.f.body = tc.status, tc.body
 		e.logQSO("DK1AA", t0, "DL9ET")
@@ -511,51 +519,56 @@ func TestEndpointErrorsCountNoAttempts(t *testing.T) {
 	}
 }
 
-func TestJSONRecordRefusalIsPerQSOFailure(t *testing.T) {
+func TestValidationErrorIsPerQSOFailure(t *testing.T) {
 	e := newEnv(t, false, true)
-	e.f.status, e.f.body = 400, `{"status":"failed","reason":"Invalid band"}`
+	e.f.badCalls = map[string]bool{"BAD": true}
 	e.logQSO("DK1AA", t0, "DL9ET")
+	e.logQSO("BAD", t0.Add(time.Hour), "DL9ET")
 	for i := 0; i < 8; i++ {
 		if err := e.cycle(); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if st := e.s.Status(); st.PushFailed != 1 || e.attempts("1") != 5 {
-		t.Fatalf("status %+v attempts %d", st, e.attempts("1"))
+	if st := e.s.Status(); st.PushFailed != 1 || e.attempts("2") != 5 {
+		t.Fatalf("status %+v attempts %d", st, e.attempts("2"))
+	}
+	if msg, _ := e.st.PushError("2", "1"); !strings.Contains(msg, "invalid CALL BAD") {
+		t.Fatalf("reason %q", msg)
 	}
 }
 
 func TestExhaustedAttemptsResetAfter24hAndOnURLChange(t *testing.T) {
-	e := newEnv(t, false, true)
-	e.f.rejectAll = true
-	e.logQSO("DK1AA", t0, "DL9ET")
-	for i := 0; i < 6; i++ {
-		e.cycle()
+	// a record that fails alone next to a stored sibling: cycle 1 costs 3
+	// POSTs (pair, sibling, record), cycles 2-5 one each = 7, then it is exhausted
+	setup := func() *env {
+		e := newEnv(t, false, true)
+		e.f.badCalls = map[string]bool{"BAD": true}
+		e.logQSO("DK1AA", t0, "DL9ET")
+		e.logQSO("BAD", t0.Add(time.Hour), "DL9ET")
+		for i := 0; i < 6; i++ {
+			e.cycle()
+		}
+		if len(e.f.posts) != 7 || e.s.Status().PushFailed != 1 {
+			t.Fatalf("posts %d status %+v", len(e.f.posts), e.s.Status())
+		}
+		e.f.badCalls = nil
+		return e
 	}
-	if len(e.f.posts) != 5 || e.s.Status().PushFailed != 1 {
-		t.Fatalf("posts %d status %+v", len(e.f.posts), e.s.Status())
-	}
-	e.f.rejectAll = false
+	e := setup()
 	e.now = e.now.Add(23 * time.Hour)
 	e.cycle()
-	if len(e.f.posts) != 5 {
+	if len(e.f.posts) != 7 {
 		t.Fatal("reset before 24 h")
 	}
 	e.now = e.now.Add(2 * time.Hour)
-	if err := e.cycle(); err != nil || len(e.f.posts) != 6 || e.s.Status().PushFailed != 0 {
+	if err := e.cycle(); err != nil || len(e.f.posts) != 8 || e.s.Status().PushFailed != 0 {
 		t.Fatalf("err %v posts %d status %+v", err, len(e.f.posts), e.s.Status())
 	}
 
 	// profile map change resets too
-	e2 := newEnv(t, false, true)
-	e2.f.rejectAll = true
-	e2.logQSO("DK1AA", t0, "DL9ET")
-	for i := 0; i < 6; i++ {
-		e2.cycle()
-	}
-	e2.f.rejectAll = false
+	e2 := setup()
 	e2.restart().Cfg.Profiles = []Profile{{"DL9ET", "1"}, {"DL1XX", "7"}}
-	if err := e2.cycle(); err != nil || len(e2.f.posts) != 6 {
+	if err := e2.cycle(); err != nil || len(e2.f.posts) != 8 {
 		t.Fatalf("err %v posts %d", err, len(e2.f.posts))
 	}
 }
@@ -642,19 +655,18 @@ func TestUnreadablePushSinceReinitialisesToNow(t *testing.T) {
 func TestProfilesAreIndependent(t *testing.T) {
 	e := newEnv(t, true, true)
 	e.s.Cfg.Profiles = []Profile{{"DL9ET", "1"}, {"DL1XX", "2"}}
-	e.f.failStation = "1"
+	e.f.forbidStation = "1" // a per-profile refusal, not an endpoint failure
 	e.f.addRow("2", rec("DK2AA", t0))
 	e.logQSO("DK1AA", t0, "DL9ET")
 	e.logQSO("DK2BB", t0, "DL1XX")
-	err := e.cycle()
-	if err == nil {
-		t.Fatal("profile 1's pull failure must surface")
+	if err := e.cycle(); err != nil {
+		t.Fatalf("a refused profile must not fail the cycle: %v", err)
 	}
 	if e.count() != 3 {
 		t.Fatalf("count %d: profile 2 must still be pulled", e.count())
 	}
-	if len(e.f.posts) != 2 {
-		t.Fatalf("posts %d: both profiles' QSOs must be pushed", len(e.f.posts))
+	if len(e.f.posts) != 1 || e.s.Status().Pushed != 1 {
+		t.Fatalf("posts %d: profile 2's QSO must be pushed, profile 1 skipped", len(e.f.posts))
 	}
 	if !e.s.Status().LastPullAt.IsZero() {
 		t.Fatal("last_pull_at must not advance on a partial pull")
@@ -701,8 +713,554 @@ func TestRetryAfterHTTPDate(t *testing.T) {
 	// end to end through the client
 	e := newEnv(t, true, false)
 	e.f.status, e.f.retry = 429, time.Now().Add(10*time.Minute).UTC().Format(http.TimeFormat)
+	e.f.body = `{"error":{"code":"rate_limited","message":"slow","details":{"retry_after":1}}}`
 	var ae *APIError
 	if err := e.cycle(); !errors.As(err, &ae) || ae.RetryAfter < 9*time.Minute {
 		t.Fatalf("err %#v", err)
+	}
+}
+
+func (e *env) lastPost() string {
+	e.f.mu.Lock()
+	defer e.f.mu.Unlock()
+	return e.f.bodies[len(e.f.bodies)-1]
+}
+
+func TestRequestShapes(t *testing.T) {
+	e := newEnv(t, true, true)
+	e.s.Cfg.PullLimit = 1000
+	e.logQSO("DK1AA", t0, "DL9ET")
+	if err := e.cycle(); err != nil {
+		t.Fatal(err)
+	}
+	for i, a := range e.f.auths {
+		if a != "Bearer "+e.f.key {
+			t.Fatalf("request %d Authorization %q", i, a)
+		}
+	}
+	q := e.f.query(0)
+	if q.Get("format") != "adif" || q.Get("since_id") != "0" || q.Get("station_id") != "1" || q.Get("per_page") != "1000" {
+		t.Fatalf("pull query %v", q)
+	}
+	var body map[string]any
+	if err := json.Unmarshal([]byte(e.lastPost()), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body["import_type"] != "adif" || body["station_profile_id"] != float64(1) || !strings.Contains(body["adif"].(string), "<CALL:5>DK1AA") || len(body) != 3 {
+		t.Fatalf("push body %v", body)
+	}
+	for _, r := range e.f.reqs {
+		if strings.Contains(r, e.f.key) || strings.Contains(r, "key=") {
+			t.Fatalf("token in URL %q", r)
+		}
+	}
+	// a legacy (v1) path never gets called
+	for _, r := range e.f.reqs {
+		if !strings.Contains(r, "/index.php/api/v2/qso") {
+			t.Fatalf("unexpected request %q", r)
+		}
+	}
+}
+
+func TestHasMoreDrivesPagingNotCount(t *testing.T) {
+	e := newEnv(t, true, false)
+	e.f.addRow("1", rec("DK1AA", t0))
+	e.f.addRow("1", rec("DK2BB", t0.Add(time.Hour))) // exactly one full page (PullLimit 2)
+	if err := e.cycle(); err != nil {
+		t.Fatal(err)
+	}
+	if got := ints(e.f.fetches); got != "0" || e.count() != 2 {
+		t.Fatalf("fetches %s count %d: has_more=false must end the pull", got, e.count())
+	}
+}
+
+func TestEmptyPageNullADIF(t *testing.T) {
+	e := newEnv(t, true, false)
+	if err := e.cycle(); err != nil {
+		t.Fatal(err)
+	}
+	if e.count() != 0 || e.s.Status().LastPullAt.IsZero() {
+		t.Fatalf("count %d status %+v", e.count(), e.s.Status())
+	}
+	if v, _, _ := e.st.Setting("wavelog_cursor_1"); v != "" && v != "0" {
+		t.Fatalf("cursor %q", v)
+	}
+}
+
+func TestPullOnlySeesTheProfilesStation(t *testing.T) {
+	e := newEnv(t, true, false)
+	e.f.addRow("1", rec("DK1AA", t0))
+	e.f.addRow("9", rec("DK9XX", t0))
+	if err := e.cycle(); err != nil || e.count() != 1 {
+		t.Fatalf("err %v count %d", err, e.count())
+	}
+}
+
+func TestNoRepushWhenAPushedQSOGainsConfirmations(t *testing.T) {
+	e := newEnv(t, false, true)
+	e.logQSO("DK1AA", t0, "DL9ET")
+	if err := e.cycle(); err != nil {
+		t.Fatal(err)
+	}
+	// a second source confirms it (LoTW) and the QSO changes
+	e.logQSO("DK1AA", t0, "DL9ET", "LOTW_QSL_RCVD", "Y", "NAME", "Changed")
+	e.now = e.now.Add(time.Hour)
+	if err := e.cycle(); err != nil {
+		t.Fatal(err)
+	}
+	if len(e.f.posts) != 1 {
+		t.Fatalf("posts %d: a QSO is pushed once", len(e.f.posts))
+	}
+	if st := e.s.Status(); st.PushPending != 0 || st.Pushed != 1 {
+		t.Fatalf("status %+v", st)
+	}
+}
+
+func TestSkippedAndImportedMixInABatchIsSuccess(t *testing.T) {
+	e := newEnv(t, false, true)
+	e.logQSO("DK1AA", t0, "DL9ET")
+	e.logQSO("DK2BB", t0.Add(time.Hour), "DL9ET")
+	// Wavelog already has the first one (its own LoTW import, say)
+	e.f.addRow("1", rec("DK1AA", t0))
+	if err := e.cycle(); err != nil {
+		t.Fatal(err)
+	}
+	if len(e.f.posts) != 1 || e.s.Status().Pushed != 2 || e.s.Status().PushPending != 0 {
+		t.Fatalf("posts %d status %+v", len(e.f.posts), e.s.Status())
+	}
+}
+
+func TestBadRecordIsBisectedOthersGoThrough(t *testing.T) {
+	for _, partial := range []bool{false, true} {
+		e := newEnv(t, false, true)
+		if partial {
+			e.f.partialBad = map[string]bool{"BAD": true} // 201 with imported < parsed
+		} else {
+			e.f.badCalls = map[string]bool{"BAD": true} // 400 validation_error for the whole request
+		}
+		for i, c := range []string{"DK1AA", "DK2BB", "BAD", "DK4DD", "DK5EE"} {
+			e.logQSO(c, t0.Add(time.Duration(i)*time.Hour), "DL9ET")
+		}
+		if err := e.cycle(); err != nil {
+			t.Fatalf("partial=%v: %v", partial, err)
+		}
+		st := e.s.Status()
+		if st.Pushed != 4 || e.attempts("3") != 1 || st.PushPending != 1 { // the bad one stays pending until 5 attempts
+			t.Fatalf("partial=%v: status %+v bad attempts %d", partial, st, e.attempts("3"))
+		}
+		if n, _ := e.st.PushedCount("1"); n != 4 {
+			t.Fatalf("partial=%v: pushed %d", partial, n)
+		}
+		if msg, _ := e.st.PushError("3", "1"); msg == "" {
+			t.Fatalf("partial=%v: the bad record carries no reason", partial)
+		}
+		// the good ones are in the fake, the bad one is not
+		if len(e.f.rows) != 4 {
+			t.Fatalf("partial=%v: wavelog holds %d rows", partial, len(e.f.rows))
+		}
+	}
+}
+
+func TestInsufficientScopeNamesScopeAndKeepsOtherDirection(t *testing.T) {
+	// no qso:write: the pull still works, the push reports the scope
+	e := newEnv(t, true, true)
+	e.f.scopes = []string{"qso:read"}
+	e.f.addRow("1", rec("DK9ZZ", t0, "STATION_CALLSIGN", "DL9ET"))
+	e.logQSO("DK1AA", t0, "DL9ET")
+	err := e.cycle()
+	var ae *APIError
+	if !errors.As(err, &ae) || !ae.Auth || ae.Scope != "qso:write" {
+		t.Fatalf("err %v", err)
+	}
+	e.s.finish(err)
+	st := e.s.Status()
+	if !strings.Contains(st.Error, "qso:write") || st.BackoffSeconds < int(maxBackoff.Seconds()) {
+		t.Fatalf("status %+v", st)
+	}
+	if e.count() != 2 { // the pulled one plus the logged one
+		t.Fatalf("count %d: pull must not be blocked by a missing write scope", e.count())
+	}
+	if a := e.attempts("1"); a > 0 {
+		t.Fatalf("%d attempts counted for a scope problem", a)
+	}
+
+	// no qso:read: the push still goes out
+	e = newEnv(t, true, true)
+	e.f.scopes = []string{"qso:write"}
+	e.logQSO("DK1AA", t0, "DL9ET")
+	err = e.cycle()
+	if !errors.As(err, &ae) || ae.Scope != "qso:read" {
+		t.Fatalf("err %v", err)
+	}
+	if len(e.f.posts) != 1 || e.s.Status().Pushed != 1 {
+		t.Fatalf("posts %d: push must not be blocked by a missing read scope", len(e.f.posts))
+	}
+}
+
+func TestRateLimitedDetailsRetryAfterWithoutHeader(t *testing.T) {
+	e := newEnv(t, true, false)
+	e.f.status = 429
+	e.f.body = `{"error":{"code":"rate_limited","message":"slow down","details":{"retry_after":240}}}`
+	err := e.cycle()
+	var ae *APIError
+	if !errors.As(err, &ae) || ae.RetryAfter != 4*time.Minute || ae.Auth {
+		t.Fatalf("err %#v", err)
+	}
+	e.s.finish(err)
+	if e.s.Status().BackoffSeconds < 240 {
+		t.Fatalf("backoff %d", e.s.Status().BackoffSeconds)
+	}
+}
+
+func TestInvalidTokenShapeFromRealProbe(t *testing.T) {
+	// verbatim shape of the real instance's answer to an invalid token
+	e := newEnv(t, true, false)
+	e.f.status = 401
+	e.f.body = `{"error":{"code":"invalid_token","message":"Invalid or revoked API token"}}`
+	var ae *APIError
+	if err := e.cycle(); !errors.As(err, &ae) || !ae.Auth || ae.Code != "invalid_token" || ae.Scope != "" {
+		t.Fatalf("err %#v", err)
+	}
+}
+
+func TestClientTokenAndStations(t *testing.T) {
+	f := newFake(t)
+	cl, _ := NewClient(f.srv.URL, f.key, "")
+	cl.MinGap = 0
+	ti, err := cl.Token(context.Background())
+	if err != nil || len(ti.Scopes) != 3 || ti.Scopes[0] != "qso:read" {
+		t.Fatalf("%+v %v", ti, err)
+	}
+	sts, err := cl.Stations(context.Background())
+	if err != nil || len(sts) != 2 || sts[1].ID != "7" || sts[1].Callsign != "DL9ET/P" || sts[1].Name != "Portable" {
+		t.Fatalf("%+v %v", sts, err)
+	}
+	f.scopes = []string{"qso:read"}
+	var ae *APIError
+	if _, err := cl.Stations(context.Background()); !errors.As(err, &ae) || ae.Scope != "station:read" {
+		t.Fatalf("err %v", err)
+	}
+}
+
+func TestPostADIFRejectsNonNumericProfile(t *testing.T) {
+	f := newFake(t)
+	cl, _ := NewClient(f.srv.URL, f.key, "")
+	if _, err := cl.PostADIF(context.Background(), "home", "<EOR>"); err == nil || f.hits != 0 {
+		t.Fatalf("err %v hits %d", err, f.hits)
+	}
+}
+
+// requests counts the requests that reached the fake.
+func (e *env) requests() int {
+	e.f.mu.Lock()
+	defer e.f.mu.Unlock()
+	return e.f.hits
+}
+
+func TestProfileRefusalsAreSkippedNotTokenErrors(t *testing.T) {
+	for _, code := range []string{"forbidden", "insufficient_club_permission", "club_access_revoked"} {
+		e := newEnv(t, true, true)
+		e.s.Cfg.Profiles = []Profile{{"DL9ET", "1"}, {"DL1XX", "2"}}
+		e.f.forbidStation, e.f.forbidCode = "1", code
+		e.f.addRow("2", rec("DK2AA", t0))
+		e.logQSO("DK1AA", t0, "DL9ET")
+		e.logQSO("DK2BB", t0, "DL1XX")
+		err := e.cycle()
+		if err != nil {
+			t.Fatalf("%s: err %v", code, err)
+		}
+		if tokenDead(err) || isAuth(err) {
+			t.Fatalf("%s: a profile refusal is no token problem", code)
+		}
+		st := e.s.Status()
+		if len(st.Problems) != 1 || !strings.Contains(st.Problems[0], "DL9ET") || !strings.Contains(st.Problems[0], "station 1") ||
+			!strings.Contains(st.Problems[0], code) {
+			t.Fatalf("%s: problems %q", code, st.Problems)
+		}
+		if st.Error != "" || st.BackoffSeconds != 0 || e.count() != 3 || st.Pushed != 1 {
+			t.Fatalf("%s: status %+v count %d", code, st, e.count())
+		}
+		if a := e.attempts("1"); a > 0 {
+			t.Fatalf("%s: %d attempts counted for a refused profile", code, a)
+		}
+		// the first profile is refused once per cycle: its pull only, no push
+		if n := e.requests(); n > 5 { // 403 pull(1), pull(2), push(2), nothing else
+			t.Fatalf("%s: %d requests", code, n)
+		}
+		// access restored: the problem clears and the backlog goes out
+		e.f.forbidStation = ""
+		if err := e.cycle(); err != nil {
+			t.Fatal(err)
+		}
+		if st := e.s.Status(); len(st.Problems) != 0 || st.Pushed != 2 {
+			t.Fatalf("%s: after recovery %+v", code, st)
+		}
+	}
+}
+
+func TestDeadTokenIsNotAProfileProblem(t *testing.T) {
+	e := newEnv(t, true, true)
+	e.s.Cfg.Profiles = []Profile{{"DL9ET", "1"}, {"DL1XX", "2"}}
+	e.s.Client.Key = "wrong"
+	err := e.cycle()
+	if !tokenDead(err) || len(e.s.Status().Problems) != 0 {
+		t.Fatalf("err %v problems %q", err, e.s.Status().Problems)
+	}
+	if n := e.requests(); n != 1 {
+		t.Fatalf("%d requests after a dead token, want 1", n)
+	}
+	// a missing scope is not a dead token either
+	if tokenDead(&APIError{Auth: true, Scope: "qso:write"}) {
+		t.Fatal("insufficient_scope is not a dead token")
+	}
+}
+
+func TestEndpointErrorAbortsCycleAndKeepsLargestRetryAfter(t *testing.T) {
+	e := newEnv(t, true, true)
+	e.s.Cfg.Profiles = []Profile{{"DL9ET", "1"}, {"DL1XX", "2"}}
+	e.f.status, e.f.retry = 429, "600"
+	e.f.body = `{"error":{"code":"rate_limited","message":"slow down"}}`
+	e.logQSO("DK1AA", t0, "DL9ET")
+	err := e.cycle()
+	if err == nil {
+		t.Fatal("want an error")
+	}
+	if n := e.requests(); n != 1 {
+		t.Fatalf("%d requests after a 429 on the first pull, want 1", n)
+	}
+	e.s.finish(err)
+	if got := e.s.Status().BackoffSeconds; got < 600 {
+		t.Fatalf("backoff %d s < retry_after 600", got)
+	}
+	if !e.s.Status().LastPullAt.IsZero() {
+		t.Fatal("last_pull_at must not advance")
+	}
+	// the largest of several RetryAfters wins, whichever comes first
+	e2 := newEnv(t, false, false)
+	e2.s.finish(errors.Join(&APIError{RetryAfter: 2 * time.Minute}, &APIError{RetryAfter: 10 * time.Minute}, &APIError{RetryAfter: time.Minute}))
+	if got := e2.s.Status().BackoffSeconds; got < 600 {
+		t.Fatalf("joined backoff %d s, want >= 600", got)
+	}
+	for _, tc := range []struct {
+		status int
+		body   string
+	}{{500, "boom"}, {502, "<html>Bad Gateway</html>"}, {408, "timeout"}} {
+		e := newEnv(t, true, true)
+		e.s.Cfg.Profiles = []Profile{{"DL9ET", "1"}, {"DL1XX", "2"}}
+		e.f.status, e.f.body = tc.status, tc.body
+		if e.cycle() == nil || e.requests() != 1 {
+			t.Fatalf("%d: requests %d, want exactly 1", tc.status, e.requests())
+		}
+	}
+}
+
+func TestTransportErrorAbortsCycle(t *testing.T) {
+	e := newEnv(t, true, true)
+	e.s.Cfg.Profiles = []Profile{{"DL9ET", "1"}, {"DL1XX", "2"}}
+	e.f.srv.Close() // connection refused
+	if e.cycle() == nil {
+		t.Fatal("want an error")
+	}
+	if n := e.requests(); n != 0 {
+		t.Fatalf("%d requests reached the closed server", n)
+	}
+	if a := e.attempts("1"); a > 0 {
+		t.Fatalf("%d attempts counted for a transport error", a)
+	}
+}
+
+func TestSystemicRejectionBurnsNoAttemptsAndIsBounded(t *testing.T) {
+	e := newEnv(t, false, true)
+	e.s.Cfg.Batch = 20
+	e.f.rejectAll = true // every POST: 400 validation_error "Invalid band"
+	for i := 0; i < 20; i++ {
+		e.logQSO("DK"+itoa(i)+"AA", t0.Add(time.Duration(i)*time.Hour), "DL9ET")
+	}
+	err := e.cycle()
+	if err == nil || !strings.Contains(err.Error(), "Invalid band") {
+		t.Fatalf("err %v: want an endpoint/config error carrying the message", err)
+	}
+	if isAuth(err) {
+		t.Fatal("not an auth error")
+	}
+	if budget := 3*20 + 10; len(e.f.posts) > budget || len(e.f.posts) > 12 {
+		t.Fatalf("%d POSTs for an all-refusing endpoint", len(e.f.posts))
+	}
+	for i := 1; i <= 20; i++ {
+		if a := e.attempts(itoa(i)); a > 0 {
+			t.Fatalf("QSO %d burned %d attempts", i, a)
+		}
+	}
+	e.s.finish(err)
+	st := e.s.Status()
+	if st.PushFailed != 0 || st.PushPending != 20 || !strings.Contains(st.Error, "Invalid band") || st.BackoffSeconds == 0 {
+		t.Fatalf("status %+v", st)
+	}
+	// repeated cycles never condemn the backlog
+	for i := 0; i < 8; i++ {
+		e.cycle()
+	}
+	for i := 1; i <= 20; i++ {
+		if a := e.attempts(itoa(i)); a > 0 {
+			t.Fatalf("after retries QSO %d burned %d attempts", i, a)
+		}
+	}
+	// a lone record on a profile that never pushed anything is systemic too
+	e = newEnv(t, false, true)
+	e.f.rejectAll = true
+	e.logQSO("DK1AA", t0, "DL9ET")
+	if e.cycle() == nil || e.attempts("1") > 0 {
+		t.Fatalf("lone refusal without any success: attempts %d", e.attempts("1"))
+	}
+}
+
+func TestOnePoisonRecordAmongTwentyIsBoundedAndIsolated(t *testing.T) {
+	for _, pos := range []int{0, 7, 19} {
+		e := newEnv(t, false, true)
+		e.s.Cfg.Batch = 20
+		e.f.badCalls = map[string]bool{"BAD": true}
+		for i := 0; i < 20; i++ {
+			c := "DK" + itoa(i) + "AA"
+			if i == pos {
+				c = "BAD"
+			}
+			e.logQSO(c, t0.Add(time.Duration(i)*time.Hour), "DL9ET")
+		}
+		if err := e.cycle(); err != nil {
+			t.Fatalf("pos %d: %v", pos, err)
+		}
+		st := e.s.Status()
+		if st.Pushed != 19 || st.PushPending != 1 || len(e.f.rows) != 19 {
+			t.Fatalf("pos %d: status %+v rows %d", pos, st, len(e.f.rows))
+		}
+		failedAttempts := 0
+		for i := 1; i <= 20; i++ {
+			failedAttempts += max(0, e.attempts(itoa(i)))
+		}
+		if failedAttempts != 1 {
+			t.Fatalf("pos %d: %d attempts burned, want 1 (the poison record)", pos, failedAttempts)
+		}
+		// about 2*log2(20) + 2 requests, never more than the budget
+		if len(e.f.posts) > 14 {
+			t.Fatalf("pos %d: %d POSTs", pos, len(e.f.posts))
+		}
+	}
+}
+
+func TestPushBudgetStopsBisecting(t *testing.T) {
+	// every other record is poison: bisecting would need ~2n requests; the
+	// per-batch budget 3n+10 is never exceeded and no endpoint error is lost
+	e := newEnv(t, false, true)
+	e.s.Cfg.Batch = 8
+	e.f.badCalls = map[string]bool{}
+	for i := 0; i < 8; i++ {
+		c := "DK" + itoa(i) + "AA"
+		if i%2 == 1 {
+			c = "BAD" + itoa(i)
+			e.f.badCalls[c] = true
+		}
+		e.logQSO(c, t0.Add(time.Duration(i)*time.Hour), "DL9ET")
+	}
+	if err := e.cycle(); err != nil {
+		t.Fatal(err)
+	}
+	if len(e.f.posts) > 3*8+10 {
+		t.Fatalf("%d POSTs exceed the budget", len(e.f.posts))
+	}
+	if st := e.s.Status(); st.Pushed != 4 || st.PushPending != 4 {
+		t.Fatalf("status %+v", st)
+	}
+}
+
+func TestForbiddenAndNotFoundEnvelopes(t *testing.T) {
+	// 403 forbidden over the wire: classified per profile, message kept
+	e := newEnv(t, true, false)
+	e.f.status = 403
+	e.f.body = `{"error":{"code":"forbidden","message":"station 1 is not yours"}}`
+	_, err := e.s.Client.GetContacts(context.Background(), "1", 0, 10)
+	var ae *APIError
+	if !errors.As(err, &ae) || !ae.Profile || ae.Auth || tokenDead(err) || ae.Code != "forbidden" ||
+		!strings.Contains(ae.Msg, "station 1 is not yours") {
+		t.Fatalf("%#v", err)
+	}
+	// 404 not_found with a body: an endpoint error with the body text, no
+	// version hint, no attempt against any QSO, cycle aborted
+	e = newEnv(t, true, true)
+	e.s.Cfg.Profiles = []Profile{{"DL9ET", "1"}, {"DL1XX", "2"}}
+	e.f.status = 404
+	e.f.body = `{"error":{"code":"not_found","message":"Station location 1 does not exist"}}`
+	e.logQSO("DK1AA", t0, "DL9ET")
+	err = e.cycle()
+	if !errors.As(err, &ae) || ae.Status != 404 || ae.Auth || ae.Profile || ae.Record ||
+		!strings.Contains(ae.Msg, "Station location 1 does not exist") || strings.Contains(ae.Msg, "3.1.0") {
+		t.Fatalf("%#v", err)
+	}
+	if e.requests() != 1 || e.attempts("1") != 0 || len(e.s.Status().Problems) != 0 {
+		t.Fatalf("requests %d attempts %d", e.requests(), e.attempts("1"))
+	}
+}
+
+func TestHasMoreWithoutProgressTerminatesWithError(t *testing.T) {
+	for name, body := range map[string]string{
+		"lastfetchedid missing": `{"data":{"adif":"<EOH>\n","exported":1},"meta":{"has_more":true}}`,
+		"lastfetchedid zero":    `{"data":{"adif":null,"exported":0,"lastfetchedid":0},"meta":{"has_more":true}}`,
+	} {
+		e := newEnv(t, true, false)
+		e.f.okBody = body
+		err := e.cycle()
+		if err == nil || !strings.Contains(err.Error(), "did not advance") {
+			t.Fatalf("%s: err %v", name, err)
+		}
+		if n := e.requests(); n != 1 {
+			t.Fatalf("%s: %d requests, want 1", name, n)
+		}
+		if !e.s.Status().LastPullAt.IsZero() {
+			t.Fatalf("%s: a broken pull must not count as pulled", name)
+		}
+	}
+	// advances once, then repeats the same id for ever
+	e := newEnv(t, true, false)
+	e.f.okBody = `{"data":{"adif":null,"exported":0,"lastfetchedid":5},"meta":{"has_more":true}}`
+	err := e.cycle()
+	if err == nil || !strings.Contains(err.Error(), "did not advance past 5") || e.requests() != 2 {
+		t.Fatalf("err %v requests %d", err, e.requests())
+	}
+}
+
+// The budget is a guard against a bisect that would spend more requests than the
+// batch size justifies: with the budget cut to 3 requests, a batch with poison
+// records stops with an endpoint error after at most 3 POSTs and burns no attempt.
+func TestBatchBudgetGuardIsEnforced(t *testing.T) {
+	old := batchBudget
+	batchBudget = func(n int) int { return 3 }
+	defer func() { batchBudget = old }()
+	e := newEnv(t, false, true)
+	e.s.Cfg.Batch = 8
+	e.f.badCalls = map[string]bool{}
+	for i := 0; i < 8; i++ {
+		c := "DK" + itoa(i) + "AA"
+		if i%2 == 1 {
+			c = "BAD" + itoa(i)
+			e.f.badCalls[c] = true
+		}
+		e.logQSO(c, t0.Add(time.Duration(i)*time.Hour), "DL9ET")
+	}
+	_ = e.cycle()
+	if len(e.f.posts) > 3 {
+		t.Fatalf("%d POSTs exceed the budget of 3", len(e.f.posts))
+	}
+	if st := e.s.Status(); st.PushFailed != 0 {
+		t.Fatalf("an exhausted budget must burn no attempt: %+v", st)
+	}
+}
+
+// A server that echoes the bearer token in error.code must not leak it.
+func TestErrorCodeIsRedacted(t *testing.T) {
+	e := newEnv(t, true, false)
+	e.f.status = 400
+	e.f.body = `{"error":{"code":"` + e.s.Client.Key + `","message":"x"}}`
+	_, err := e.s.Client.GetContacts(context.Background(), "1", 0, 10)
+	if err == nil || strings.Contains(err.Error(), e.s.Client.Key) {
+		t.Fatalf("token reachable in error: %v", err)
 	}
 }

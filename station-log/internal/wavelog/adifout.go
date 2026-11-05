@@ -8,7 +8,8 @@ import (
 	"station-log/internal/store"
 )
 
-// BuildADIF renders a candidate for /api/qso: the raw record of its first
+// BuildADIF renders a candidate for POST /api/v2/qso (import_type adif; FREQ
+// in MHz, as the docs prescribe for ADIF payloads): the raw record of its first
 // non-Wavelog source (keeps RST, name, QTH, comments), overlaid with the
 // merged QSO values. A QSO without a raw record (imported before qso_raw
 // existed) goes out struct-only: lossy, but correct in what it carries.

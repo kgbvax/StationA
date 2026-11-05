@@ -47,7 +47,6 @@ type Config struct {
 	// PushSince: only QSOs at or after it are pushed; zero = the time the
 	// sync was first enabled (kept in settings), so history is not bulk-pushed.
 	PushSince time.Time
-	Repush    bool
 }
 
 // Status is /state.wavelog.
@@ -66,6 +65,10 @@ type Status struct {
 	LastFullResync   time.Time        `json:"last_full_resync_at,omitzero"`
 	BackoffSeconds   int              `json:"backoff_seconds"`
 	Error            string           `json:"error,omitempty"`
+	// Problems lists the profiles that are skipped because Wavelog refuses
+	// them for this token (403 forbidden, insufficient_club_permission,
+	// club_access_revoked); the other profiles keep syncing.
+	Problems []string `json:"problems,omitempty"`
 	// Note is a one-off remark, e.g. that a changed instance URL reset the
 	// cursors and the push ledger.
 	Note string `json:"note,omitempty"`
@@ -95,6 +98,7 @@ type Syncer struct {
 	backoff   time.Duration
 	pushSince time.Time
 	checked   bool // instance/profile hashes compared this process
+	profProb  map[string]string
 }
 
 // Kick asks for a push-only cycle soon (new QSOs from a logger).
@@ -133,6 +137,7 @@ func (s *Syncer) Status() Status {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	st := s.status
+	st.Problems = append([]string(nil), s.status.Problems...)
 	st.Cursor = map[string]int64{}
 	for k, v := range s.status.Cursor {
 		st.Cursor[k] = v
@@ -214,19 +219,21 @@ func (s *Syncer) finish(err error) time.Time {
 		return now.Add(s.Cfg.Interval)
 	}
 	s.failing = true
-	var ae *APIError
-	errors.As(err, &ae)
 	switch {
 	case s.backoff == 0:
 		s.backoff = minBackoff
 	default:
 		s.backoff = min(s.backoff*2, maxBackoff)
 	}
-	if ae != nil && ae.Auth {
-		s.backoff = maxBackoff
+	var retryAfter time.Duration
+	for _, ae := range apiErrors(err) {
+		if ae.Auth {
+			s.backoff = maxBackoff
+		}
+		retryAfter = max(retryAfter, ae.RetryAfter)
 	}
-	if ae != nil && ae.RetryAfter > s.backoff {
-		s.backoff = ae.RetryAfter
+	if retryAfter > s.backoff {
+		s.backoff = retryAfter
 	}
 	d := s.backoff + time.Duration(rand.Int63n(int64(s.backoff)/5+1))
 	if s.Log != nil {
@@ -241,9 +248,18 @@ func (s *Syncer) finish(err error) time.Time {
 }
 
 // Cycle runs one pass: per profile a pull (if asked and configured) and a
-// push, each independent of the other profiles' results. The errors of all
-// parts are joined (errors.As still finds an *APIError in the join). A panic
-// is recovered and returned as an error.
+// push. How an error is handled depends on what it is about:
+//   - a profile refusal (403 forbidden, insufficient_club_permission,
+//     club_access_revoked): that profile is skipped with a /state.wavelog
+//     problem naming it, the other profiles carry on, the cycle is not failed;
+//   - a missing scope: only that direction stops, the other one carries on;
+//   - anything else (dead token, 429, 5xx, transport, timeout, HTML, a
+//     response that makes no sense): the endpoint is the problem, so the rest
+//     of the cycle is abandoned at once instead of repeating the failure for
+//     every profile.
+//
+// The errors of the parts that ran are joined (errors.As still finds an
+// *APIError in the join). A panic is recovered and returned as an error.
 func (s *Syncer) Cycle(ctx context.Context, pull bool) (err error) {
 	s.init()
 	defer func() {
@@ -263,24 +279,46 @@ func (s *Syncer) Cycle(ctx context.Context, pull bool) (err error) {
 		}
 		since = t
 	}
-	pullFailed := false
+	pullFailed, abort := false, false
+	pullDenied, pushDenied := false, false // the token lacks one scope only
 	for _, p := range s.Cfg.Profiles {
-		var auth bool
-		if pull && s.Cfg.Pull {
-			if e := s.pull(ctx, p); e != nil {
-				errs, pullFailed = append(errs, e), true
-				auth = isAuth(e)
-			}
+		if abort {
+			break
 		}
-		if s.Cfg.Push && !auth {
-			if e := s.pushProfile(ctx, p, s.baseQuery(since)); e != nil {
+		skip := false // this profile is refused: no further requests for it
+		handle := func(e error, denied *bool) {
+			var ae *APIError
+			switch {
+			case errors.As(e, &ae) && ae.Profile:
+				skip = true
+				s.setProfileProblem(p, fmt.Sprintf("Wavelog profile %s (station %s) skipped: %s", p.OwnCall, p.StationID, ae.Msg))
+			case isAuth(e) && !tokenDead(e):
 				errs = append(errs, e)
-				auth = isAuth(e)
+				*denied = true
+			default:
+				errs = append(errs, e)
+				abort = true
 			}
 		}
-		if auth {
-			break // a rejected key fails the same way for every profile
+		if pull && s.Cfg.Pull {
+			if pullDenied {
+				pullFailed = true
+			} else if e := s.pull(ctx, p); e != nil {
+				pullFailed = true
+				handle(e, &pullDenied)
+			}
 		}
+		if s.Cfg.Push && !abort && !skip && !pushDenied {
+			if e := s.pushProfile(ctx, p, s.baseQuery(since)); e != nil {
+				handle(e, &pushDenied)
+			}
+		}
+		if !skip {
+			s.setProfileProblem(p, "")
+		}
+	}
+	if abort && pull && s.Cfg.Pull {
+		pullFailed = true // later profiles were not pulled
 	}
 	if pull && s.Cfg.Pull && !pullFailed {
 		s.update(func(st *Status) { st.LastPullAt = s.Now().UTC().Truncate(time.Second) })
@@ -296,9 +334,70 @@ func (s *Syncer) Cycle(ctx context.Context, pull bool) (err error) {
 	return errors.Join(errs...)
 }
 
+// setProfileProblem records (or, with "", clears) the refusal of one profile
+// and republishes the sorted list in the status.
+func (s *Syncer) setProfileProblem(p Profile, msg string) {
+	s.mu.Lock()
+	if s.profProb == nil {
+		s.profProb = map[string]string{}
+	}
+	if msg == "" {
+		delete(s.profProb, p.StationID)
+	} else {
+		s.profProb[p.StationID] = msg
+	}
+	var list []string
+	for _, m := range s.profProb {
+		list = append(list, m)
+	}
+	s.mu.Unlock()
+	sort.Strings(list)
+	s.update(func(st *Status) { st.Problems = list })
+}
+
+// apiErrors returns every *APIError in err, looking into joined errors.
+func apiErrors(err error) []*APIError {
+	var out []*APIError
+	var walk func(error)
+	walk = func(e error) {
+		if e == nil {
+			return
+		}
+		if ae, ok := e.(*APIError); ok {
+			out = append(out, ae)
+			return
+		}
+		switch u := e.(type) {
+		case interface{ Unwrap() []error }:
+			for _, x := range u.Unwrap() {
+				walk(x)
+			}
+		case interface{ Unwrap() error }:
+			walk(u.Unwrap())
+		}
+	}
+	walk(err)
+	return out
+}
+
 func isAuth(err error) bool {
-	var ae *APIError
-	return errors.As(err, &ae) && ae.Auth
+	for _, ae := range apiErrors(err) {
+		if ae.Auth {
+			return true
+		}
+	}
+	return false
+}
+
+// tokenDead: the token is invalid, expired or revoked (401), not just short
+// of one scope and not a per-profile refusal.
+func tokenDead(err error) bool {
+	for _, ae := range apiErrors(err) {
+		if ae.Auth && ae.Scope == "" {
+			return true
+		}
+	}
+	return false
 }
 
 // hashOf is a short stable digest of the given strings.
@@ -415,9 +514,9 @@ func (s *Syncer) pull(ctx context.Context, p Profile) error {
 			}
 			s.update(func(st *Status) { st.PulledAdded += rep.Added; st.PulledMerged += rep.Merged })
 		}
-		progressed := int64(page.LastFetchedID) > last
+		progressed := page.LastFetchedID > last
 		if progressed {
-			last = int64(page.LastFetchedID)
+			last = page.LastFetchedID
 		}
 		// the cursor moves only after the page was imported
 		if !full && progressed {
@@ -427,8 +526,13 @@ func (s *Syncer) pull(ctx context.Context, p Profile) error {
 		}
 		cur := last
 		s.update(func(st *Status) { st.Cursor[p.StationID] = max(cur, cursorOf(st, p)) })
-		if int(page.Exported) < s.Cfg.PullLimit || !progressed {
+		if !page.HasMore {
 			break
+		}
+		if !progressed {
+			// has_more=true but no new highest id: asking again would return
+			// the same page for ever
+			return &APIError{Status: 200, Msg: fmt.Sprintf("unexpected response: has_more=true but lastfetchedid did not advance past %d", last)}
 		}
 	}
 	if full {
@@ -480,7 +584,7 @@ func (s *Syncer) since() (time.Time, error) {
 
 func (s *Syncer) baseQuery(since time.Time) store.PushQuery {
 	return store.PushQuery{Since: since, Prefixes: s.Cfg.PushSources, ExcludeSource: Source,
-		MaxAttempts: maxAttempts, Repush: s.Cfg.Repush}
+		MaxAttempts: maxAttempts}
 }
 
 // pushProfile pushes one profile's candidates until none are left or a batch
@@ -489,6 +593,7 @@ func (s *Syncer) pushProfile(ctx context.Context, p Profile, base store.PushQuer
 	q := base
 	q.OwnCalls, q.ProfileID = []string{strings.ToUpper(p.OwnCall)}, p.StationID
 	seen := map[string]bool{} // a failed QSO is tried once per cycle
+	st := &pushState{}
 	for {
 		q.Limit = s.Cfg.Batch + len(seen)
 		all, err := s.Store.PushCandidates(q)
@@ -505,7 +610,7 @@ func (s *Syncer) pushProfile(ctx context.Context, p Profile, base store.PushQuer
 		if len(cands) == 0 {
 			return nil
 		}
-		n, err := s.pushBatch(ctx, p, cands)
+		n, err := s.pushGroup(ctx, p, cands, st)
 		if n > 0 {
 			s.update(func(st *Status) { st.LastPushAt = s.Now().UTC().Truncate(time.Second) })
 		}
@@ -548,66 +653,130 @@ func (s *Syncer) pushStatus(since time.Time) error {
 	return nil
 }
 
-// pushBatch sends one batch; it returns how many QSOs reached a final state
-// (pushed or counted as failed). A multi-record string is tried first; on any
-// doubt the records go one by one.
-func (s *Syncer) pushBatch(ctx context.Context, p Profile, cands []store.PushCandidate) (int, error) {
+// pushState is what one pushProfile run knows across its batches.
+type pushState struct {
+	ok int // POSTs that stored everything they carried
+}
+
+// failedLeaf is a record that failed alone, not yet charged an attempt.
+type failedLeaf struct {
+	c      store.PushCandidate
+	reason string
+}
+
+// pushGroup posts a batch as one ADIF import (QSO resource, "Import multiple
+// QSOs (ADIF)") and returns how many QSOs reached a final state, pushed or
+// counted as failed. Wavelog skips duplicates itself, so imported plus
+// skipped covering every record is a success; a skipped record is a QSO
+// Wavelog already has. Anything else about the records (a 400
+// validation_error, or fewer records stored than sent) splits the group in
+// two and tries each half, down to single records. Re-sending records that
+// were stored is harmless (they skip as duplicates).
+//
+// A record that fails alone is charged a failed attempt only when a sibling
+// was stored (in this batch or earlier in the run), which shows the endpoint,
+// token and profile work and this record is the problem. When nothing at all
+// is stored the refusal is systemic (a wrong profile, a rule rejecting every
+// record): the batch is abandoned with an endpoint error carrying the
+// message and no QSO is charged, so the backlog is not condemned. The same
+// goes for three identical single-record refusals before any success. A
+// single-record batch has no sibling; it counts as the record's own failure
+// only when the profile has pushed before. The requests of one batch are
+// capped at 3*len+10. Endpoint and auth errors abort without counting an
+// attempt.
+func (s *Syncer) pushGroup(ctx context.Context, p Profile, cands []store.PushCandidate, st *pushState) (int, error) {
+	budget := batchBudget(len(cands))
+	var leaves []failedLeaf
+	n, err := s.bisect(ctx, p, cands, st, &budget, &leaves)
+	if len(leaves) == 0 {
+		return n, err
+	}
+	proven := st.ok > 0
+	if !proven && len(cands) == 1 {
+		cnt, cerr := s.Store.PushedCount(p.StationID)
+		proven = cerr == nil && cnt > 0
+	}
+	if !proven {
+		if err != nil {
+			return n, err
+		}
+		return n, systemicErr(leaves[0].reason, len(leaves))
+	}
+	for _, l := range leaves {
+		reason := l.reason
+		if len(reason) > 200 {
+			reason = reason[:200]
+		}
+		if merr := s.Store.MarkFailed(l.c.QSO.ID, p.StationID, l.c.QSO.Fingerprint(), s.Client.redact(reason)); merr != nil {
+			return n, merr
+		}
+		n++
+	}
+	return n, err
+}
+
+func systemicErr(reason string, n int) *APIError {
+	return &APIError{Status: 400, Msg: fmt.Sprintf("Wavelog refuses every record sent (%d tried, none stored; not counted against the QSOs): %s", n, reason)}
+}
+
+// batchBudget bounds the requests one push batch may cost, bisecting included
+// (a variable so a test can pin the guard).
+var batchBudget = func(n int) int { return 3*n + 10 }
+
+func (s *Syncer) bisect(ctx context.Context, p Profile, cands []store.PushCandidate, st *pushState, budget *int, leaves *[]failedLeaf) (int, error) {
+	if *budget <= 0 {
+		return 0, &APIError{Msg: "Wavelog push stopped: request budget for this batch used up"}
+	}
+	*budget--
 	var text strings.Builder
 	for _, c := range cands {
 		text.WriteString(BuildADIF(c))
 	}
-	if len(cands) > 1 {
-		res, err := s.Client.PostQSO(ctx, p.StationID, text.String())
-		if err == nil && res.Status == "created" && res.AdifErrors == 0 {
-			for _, c := range cands {
-				if err := s.Store.MarkPushed(c.QSO.ID, p.StationID, c.QSO.Fingerprint(), ""); err != nil {
-					return 0, err
-				}
-			}
-			s.update(func(st *Status) { st.Pushed += len(cands) })
-			return len(cands), nil
-		}
+	res, err := s.Client.PostADIF(ctx, p.StationID, text.String())
+	var reason string
+	if err != nil {
 		var ae *APIError
-		if errors.As(err, &ae) && !ae.Record {
-			return 0, err // an endpoint problem: no record is to blame
+		if !errors.As(err, &ae) || !ae.Record {
+			return 0, err
+		}
+		reason = ae.Msg
+	} else if res.Imported+res.Skipped >= len(cands) {
+		note := ""
+		if res.Imported == 0 {
+			note = "duplicate"
+		}
+		for _, c := range cands {
+			if err := s.Store.MarkPushed(c.QSO.ID, p.StationID, c.QSO.Fingerprint(), note); err != nil {
+				return 0, err
+			}
+		}
+		st.ok++
+		s.update(func(x *Status) { x.Pushed += len(cands) })
+		return len(cands), nil
+	} else {
+		reason = strings.TrimSpace(fmt.Sprintf("Wavelog stored %d of %d records: %s", res.Imported+res.Skipped, len(cands), res.Text()))
+	}
+	if len(cands) == 1 {
+		*leaves = append(*leaves, failedLeaf{cands[0], reason})
+		if st.ok == 0 && len(*leaves) >= 3 && allSame(*leaves) {
+			return 0, systemicErr(reason, len(*leaves))
+		}
+		return 0, nil
+	}
+	mid := len(cands) / 2
+	a, err := s.bisect(ctx, p, cands[:mid], st, budget, leaves)
+	if err != nil {
+		return a, err
+	}
+	b, err := s.bisect(ctx, p, cands[mid:], st, budget, leaves)
+	return a + b, err
+}
+
+func allSame(l []failedLeaf) bool {
+	for _, x := range l {
+		if x.reason != l[0].reason {
+			return false
 		}
 	}
-	done := 0
-	for _, c := range cands {
-		res, err := s.Client.PostQSO(ctx, p.StationID, BuildADIF(c))
-		fp := c.QSO.Fingerprint()
-		var ae *APIError
-		if err != nil {
-			if errors.As(err, &ae) && ae.Record {
-				if e := s.Store.MarkFailed(c.QSO.ID, p.StationID, fp, ae.Msg); e != nil {
-					return done, e
-				}
-				done++
-				continue
-			}
-			return done, err
-		}
-		text := strings.ToLower(res.Text())
-		switch {
-		case res.Status == "created" && res.AdifErrors == 0:
-			err = s.Store.MarkPushed(c.QSO.ID, p.StationID, fp, "")
-			s.update(func(st *Status) { st.Pushed++ })
-		case strings.Contains(text, "duplicate"):
-			err = s.Store.MarkPushed(c.QSO.ID, p.StationID, fp, "duplicate")
-			s.update(func(st *Status) { st.Pushed++ })
-		case strings.Contains(text, "invalid api key") || strings.Contains(text, "invalid key"):
-			return done, &APIError{Msg: "API key rejected", Auth: true}
-		default:
-			msg := strings.TrimSpace(res.Status + " " + res.Text())
-			if len(msg) > 200 {
-				msg = msg[:200]
-			}
-			err = s.Store.MarkFailed(c.QSO.ID, p.StationID, fp, s.Client.redact(msg))
-		}
-		if err != nil {
-			return done, err
-		}
-		done++
-	}
-	return done, nil
+	return true
 }

@@ -74,24 +74,29 @@ listen = "127.0.0.1:8096"         # POST /import and the read API
 # cache_days       = 30
 # negative_minutes = 10
 
-# Two-way sync with a Wavelog instance (off by default). The API key is
-# STATION_LOG_WAVELOG_KEY in the 0600 env file, never here. The API details are
-# from memory and unverified: start with direction = "pull" against the real
-# instance and check the result before "push" or "both".
+# Two-way sync with a Wavelog instance (off by default) over the documented
+# REST API v2 (https://docs.wavelog.org/developer/api-v2/, needs Wavelog >=
+# 3.1.0). The API v2 token (wl2_...; legacy v1 keys are not accepted) is
+# STATION_LOG_WAVELOG_KEY in the 0600 env file, never here. Token scopes:
+# qso:read (pull), qso:write (push), station:read (only for the check below).
+# Find the station_profile_id of each own call with
+#   station-log -wavelog-check -config /etc/station-log/config.toml
+# (needs only url and the token). Real-instance behaviour is verified only up
+# to the unauthenticated probe so far; start with direction = "pull", check
+# the result, then "push" or "both".
 # [wavelog]
 # direction         = "off"                      # off | pull | push | both
-# url               = "https://wavelog.example"  # base URL without /index.php; plain http only for private hosts
+# url               = "https://log.dclnext.darc.de"  # base URL without /index.php; plain http only for private hosts
 # interval_seconds  = 300                        # >= 60
 # full_resync_hours = 24                         # full pull (catches confirmations on old rows)
 # batch_size        = 50                         # records per push request
-# pull_limit        = 500                        # records per pull page
+# pull_limit        = 1000                       # records per pull page (per_page, max 5000)
 # push_sources      = ["log4om", "adif"]         # source-name prefixes eligible for push
 # push_since        = ""                         # RFC 3339 date; empty = the time sync was first enabled (history is NOT bulk-pushed)
-# repush_changes    = false                      # re-push a QSO that gained fields (a real Wavelog probably rejects it as duplicate)
 # ca_file           = ""                         # extra CA bundle for a private CA
 # [[wavelog.profile]]
 # own_call           = "DL9ET"
-# station_profile_id = "1"
+# station_profile_id = "1"                     # integer id of the Wavelog station location
 
 [log]
 level = "info"

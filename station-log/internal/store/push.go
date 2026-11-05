@@ -29,8 +29,6 @@ type PushQuery struct {
 	// MaxAttempts: a failed QSO is skipped after this many attempts until its
 	// fingerprint changes.
 	MaxAttempts int
-	// Repush also selects pushed QSOs that changed since (fingerprint).
-	Repush bool
 	// Limit caps the result (0 = no cap).
 	Limit int
 }
@@ -86,11 +84,9 @@ func (s *Store) PushCandidates(pq PushQuery) ([]PushCandidate, error) {
 		}
 		where = append(where, "EXISTS (SELECT 1 FROM qso_sources x WHERE x.qso_id=q.id AND ("+strings.Join(ors, " OR ")+"))")
 	}
-	state := "p.qso_id IS NULL OR p.pushed_utc=''"
-	if pq.Repush {
-		state += " OR q.updated_utc > p.pushed_utc"
-	}
-	where = append(where, "("+state+")")
+	// pushed once: Wavelog skips duplicates and has its own LoTW/QRZ sync, so
+	// a QSO that gained confirmations or fields is not sent again
+	where = append(where, "(p.qso_id IS NULL OR p.pushed_utc='')")
 	rows, err := s.db.Query(`SELECT `+prefixed(qsoCols)+`, COALESCE(r.adif,''), COALESCE(p.pushed_utc,''), COALESCE(p.fingerprint,''),
 		COALESCE(p.attempts,0) FROM qsos q LEFT JOIN qso_raw r ON r.qso_id=q.id
 		LEFT JOIN wavelog_push p ON p.qso_id=q.id AND p.profile_id=?
@@ -112,9 +108,6 @@ func (s *Store) PushCandidates(pq PushQuery) ([]PushCandidate, error) {
 		c.Raw, pushedAt, c.Fingerprint, c.Attempts = extra.raw, extra.pushed, extra.fp, extra.attempts
 		c.Pushed = pushedAt != ""
 		if !c.Pushed && pq.MaxAttempts > 0 && c.Attempts >= pq.MaxAttempts && c.Fingerprint == q.Fingerprint() {
-			continue
-		}
-		if c.Pushed && c.Fingerprint == q.Fingerprint() {
 			continue
 		}
 		out = append(out, c)
