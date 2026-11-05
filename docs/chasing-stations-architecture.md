@@ -32,7 +32,7 @@ station's loggers in sync, are outside it.
 | **Loggers** (Log4OM primary; DXLog, N1MM, WSJT-X, …) | Where QSOs are logged. They are sources for `station-log` and targets of the call that chaseq-ui sends. No domain component depends on one specific logger. | the operator's logs |
 | **station-log** (new component) | The station's QSO record for this domain: a local log database. It takes QSOs in by **ADIF import with automatic duplicate merge** (v1), and later by feeders. It answers "worked / confirmed" for every consumer. How it is kept in sync with the loggers is **out of scope of this domain**. It also owns the working-station feed (`hf/station-log/working`) and the two-way Wavelog sync. | QSOs, confirmations, own callsigns |
 | **chase-queue** (`muehle/hf/chase`) | Takes in available stations (cluster spots + qualified bmrec rows), the log view from station-log, award definitions, buddies and QRZ.com data. Decides which stations are needed **for which award**, ranks them, and publishes one self-contained ranked list. It keeps the skip/undo state. | award evaluation, ranking, skip/undo |
-| **chaseq-ui** (bwpc) | Shows chase-queue's ranked list. Filters locally (band, needed-only, …). **Activate** a row = QSY the radio + put the call into the logger(s). Sends skip/undo to chase-queue. It does no joining, valuing or ranking of its own. | view filters |
+| **chaseq-ui** (bwpc) | Shows chase-queue's ranked list. Filters locally (band, mode class, needed-only, …). **Activate** a row = QSY the radio + put the call into the logger(s). Sends skip/undo to chase-queue. It does no joining, valuing or ranking of its own. | view filters |
 
 ### 2.1 Awards
 
@@ -174,7 +174,7 @@ Stations" and `chase-queue/CLAUDE.md`.
 | Needed for which award | matches | `needs[]` `{award, key, band, mode, status, atno?}` on every needed row; `needed` + `tag` are the derived summary. |
 | QRZ.com enrichment | matches | Display-only, cached; chaseq-ui shows `info` as one line. |
 | Self-contained rows / UI only displays | matches | `freq_hz`, `mode`, `source` on every row; chaseq-ui has no `cqfinder` subscription. |
-| Local filters | matches | Band, needed only, award. |
+| Local filters | matches | Band (optionally locked to the radio's band, following its changes), mode class (cw / phone / data; default phone only; rows without a known mode are never hidden), needed only, award, source. |
 | Activate = QSY + logger | partial | FLEX via flexbridge `set_freq` / `set_mode`; loggers are config (`[[loggers.sender]]`), only Log4OM exists. |
 | skip/undo from the UI | matches | `handled` is sent in contest only. |
 

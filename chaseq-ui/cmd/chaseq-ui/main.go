@@ -75,7 +75,17 @@ func main() {
 		Handlers: bus.Handlers{
 			Chase:  func(s bus.ChaseState) { m.SetChase(s); notify() },
 			Status: func(on bool) { m.SetStatus(on); notify() },
-			Radio:  radio.Set,
+			Radio: func(s bus.RadioState) {
+				radio.Set(s)
+				// A band lock follows the radio, whoever tuned it; re-render
+				// and save only when the band filter really changed.
+				if _, changed := m.SetRadioBand(s.ListenBand()); changed {
+					if err := m.SaveTo(filtersPath); err != nil {
+						log.Warn("saving filters", "err", err)
+					}
+					notify()
+				}
+			},
 		},
 	})
 	senders, err := buildSenders(cfg.Loggers)

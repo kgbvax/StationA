@@ -67,6 +67,7 @@ type rig struct {
 func newRig(activity string, rows ...bus.Ranked) *rig {
 	m := model.New(nil)
 	m.SetChase(bus.ChaseState{Activity: activity, Ranked: rows})
+	m.SetFilters(model.Filters{Modes: model.ModeClasses}) // default hides non-phone rows; actions are tested for every mode
 	p := &pub{}
 	rad := &Radio{}
 	l4 := &fakeLogger{name: "Log4OM", res: loggers.Result{Status: loggers.OK}}

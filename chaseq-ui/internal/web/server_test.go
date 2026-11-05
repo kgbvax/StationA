@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -276,5 +277,101 @@ func TestAwardAndSourceFilterEndpoint(t *testing.T) {
 	}
 	if rec := do(t, h, "POST", "/filters?source=bogus", csrf); rec.Code != 400 {
 		t.Errorf("bad source: code = %d", rec.Code)
+	}
+}
+
+func TestModeChipToggle(t *testing.T) {
+	s, m, _, _ := newServer(t)
+	h := s.Handler()
+	body := do(t, h, "GET", "/list", nil).Body.String()
+	for chip, pressed := range map[string]string{"phone": "true", "cw": "false", "data": "false"} {
+		if !strings.Contains(body, `data-mode="`+chip+`" aria-pressed="`+pressed+`"`) {
+			t.Errorf("mode chip %s must be aria-pressed=%s by default:\n%s", chip, pressed, body)
+		}
+	}
+	if rec := do(t, h, "POST", "/filters?mode=cw", csrf); rec.Code != 204 {
+		t.Fatalf("code = %d", rec.Code)
+	}
+	if got := m.Filters().ActiveModes(); len(got) != 2 {
+		t.Errorf("modes = %v", got)
+	}
+	if f := model.LoadFilters(s.FiltersPath); len(f.Modes) != 2 {
+		t.Errorf("persisted = %+v", f)
+	}
+	if rec := do(t, h, "POST", "/filters?mode=rtty", csrf); rec.Code != 400 {
+		t.Errorf("bad mode: code = %d", rec.Code)
+	}
+	do(t, h, "POST", "/filters?clear=1", csrf)
+	if f := m.Filters(); f.Active() || len(f.ActiveModes()) != 1 || f.ActiveModes()[0] != model.ModePhone {
+		t.Errorf("clear must restore phone only: %+v", f)
+	}
+}
+
+func TestBandLockToggleAndManualBandIgnored(t *testing.T) {
+	s, m, _, _ := newServer(t)
+	h := s.Handler()
+	m.SetRadioBand("20m")
+	if rec := do(t, h, "POST", "/filters?band=40m", csrf); rec.Code != 204 {
+		t.Fatalf("band unlocked: %d", rec.Code)
+	}
+	if rec := do(t, h, "POST", "/filters?lock=1", csrf); rec.Code != 204 {
+		t.Fatalf("lock: %d", rec.Code)
+	}
+	if f := m.Filters(); !f.LockBand || len(f.Bands) != 1 || f.Bands[0] != "20m" {
+		t.Fatalf("locked filters = %+v", f)
+	}
+	if rec := do(t, h, "POST", "/filters?band=40m", csrf); rec.Code != 409 {
+		t.Errorf("manual band while locked: %d", rec.Code)
+	}
+	if f := m.Filters(); len(f.Bands) != 1 || f.Bands[0] != "20m" {
+		t.Errorf("band changed while locked: %+v", f)
+	}
+	body := do(t, h, "GET", "/list", nil).Body.String()
+	if !strings.Contains(body, `data-lock="0"`) || !strings.Contains(body, `aria-disabled="true"`) {
+		t.Errorf("locked page wrong:\n%s", body)
+	}
+	if f := model.LoadFilters(s.FiltersPath); !f.LockBand {
+		t.Errorf("lock not persisted: %+v", f)
+	}
+	do(t, h, "POST", "/filters?clear=1", csrf)
+	if f := m.Filters(); !f.LockBand || len(f.Bands) != 1 {
+		t.Errorf("clear must keep the lock following the radio: %+v", f)
+	}
+	do(t, h, "POST", "/filters?lock=0", csrf)
+	if rec := do(t, h, "POST", "/filters?band=40m", csrf); rec.Code != 204 {
+		t.Errorf("band after unlock: %d", rec.Code)
+	}
+	if f := m.Filters(); f.LockBand || len(f.Bands) != 2 {
+		t.Errorf("after unlock = %+v", f)
+	}
+}
+
+// Every chip kind in the page must be handled by the focus restore in live.js
+// and by toggle() in keys.js: a chip that loses focus on re-render sends the
+// next Enter to /act, which tunes the radio.
+func TestEveryChipKindRestoresFocusAndToggles(t *testing.T) {
+	page, _ := pagesFS.ReadFile("pages/list.html")
+	live, _ := staticFS.ReadFile("static/live.js")
+	keys, _ := staticFS.ReadFile("static/keys.js")
+	kinds := map[string]bool{}
+	for _, b := range regexp.MustCompile(`<button[^>]*>`).FindAllString(string(page), -1) {
+		for _, m := range regexp.MustCompile(`data-([a-z]+)=`).FindAllStringSubmatch(b, -1) {
+			kinds[m[1]] = true
+		}
+	}
+	if len(kinds) < 7 {
+		t.Fatalf("found only %v", kinds)
+	}
+	km := regexp.MustCompile(`const KINDS = \[([^\]]*)\]`).FindStringSubmatch(string(live))
+	if km == nil {
+		t.Fatal("KINDS list missing in live.js")
+	}
+	for k := range kinds {
+		if !strings.Contains(km[1], "'"+k+"'") {
+			t.Errorf("live.js KINDS lacks chip kind %q", k)
+		}
+		if !strings.Contains(string(keys), "d."+k) {
+			t.Errorf("keys.js toggle() lacks chip kind %q", k)
+		}
 	}
 }

@@ -43,3 +43,4 @@ body { margin:0; background:var(--bg); color:var(--fg); font-size:16px; }
 .part[data-status="ok"] { color:var(--ok); }
 .part[data-status="failed"] { color:var(--bad); }
 .part[data-status="not confirmed"] { color:var(--warn); }
+.chip.locked { opacity:.45; cursor:not-allowed; }

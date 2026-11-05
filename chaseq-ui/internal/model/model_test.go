@@ -3,6 +3,8 @@ package model
 import (
 	"os"
 	"path/filepath"
+	"reflect"
+	"sync"
 	"testing"
 	"time"
 
@@ -246,5 +248,167 @@ func TestTunableStopsAtTheRadiosRange(t *testing.T) {
 		if got := (Row{FreqHz: hz}).Tunable(); got != want {
 			t.Errorf("%d: %v", hz, got)
 		}
+	}
+}
+
+func modeRow(id int64, mode string) bus.Ranked {
+	r := rk(id, "C", "20m", true)
+	r.Mode = mode
+	return r
+}
+
+func TestModeFilter(t *testing.T) {
+	m, _ := newModel()
+	m.SetChase(chase(modeRow(1, "usb"), modeRow(2, "cw"), modeRow(3, "data"), modeRow(4, "lsb"),
+		modeRow(5, "am"), modeRow(6, "fm"), modeRow(7, ""), modeRow(8, "rtty")))
+	// default (nothing persisted): phone only, unclassifiable rows stay
+	if v := m.Snapshot(); !eq(order(v), []int64{1, 4, 5, 6, 7, 8}) || v.Hidden != 2 || v.Filters.Active() {
+		t.Errorf("default: order=%v hidden=%d active=%v", order(v), v.Hidden, v.Filters.Active())
+	}
+	cases := []struct {
+		modes []string
+		want  []int64
+	}{
+		{[]string{ModeCW}, []int64{2, 7, 8}},
+		{[]string{ModeData}, []int64{3, 7, 8}},
+		{[]string{ModeCW, ModePhone}, []int64{1, 2, 4, 5, 6, 7, 8}},
+		{ModeClasses, []int64{1, 2, 3, 4, 5, 6, 7, 8}},
+	}
+	for _, c := range cases {
+		m.SetFilters(Filters{Modes: c.modes})
+		if v := m.Snapshot(); !eq(order(v), c.want) {
+			t.Errorf("%v: order=%v, want %v", c.modes, order(v), c.want)
+		}
+	}
+}
+
+func TestToggleModeAndActive(t *testing.T) {
+	f := Filters{}.ToggleMode(ModeCW)
+	if got := f.ActiveModes(); len(got) != 2 || !f.Active() {
+		t.Errorf("phone+cw: %v", got)
+	}
+	f = f.ToggleMode(ModeCW)
+	if f.Active() {
+		t.Errorf("back to phone only must be the default: %+v", f)
+	}
+	// switching off the last class shows everything, never nothing
+	f = Filters{}.ToggleMode(ModePhone)
+	if len(f.ActiveModes()) != 3 || !f.Active() {
+		t.Errorf("last class off: %v", f.ActiveModes())
+	}
+}
+
+func TestModesPersist(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "filters.json")
+	if g := LoadFilters(p); g.Active() || len(g.ActiveModes()) != 1 || g.ActiveModes()[0] != ModePhone {
+		t.Errorf("fresh start: %+v", g)
+	}
+	if err := SaveFilters(p, Filters{Modes: ModeClasses}); err != nil {
+		t.Fatal(err)
+	}
+	if g := LoadFilters(p); len(g.ActiveModes()) != 3 {
+		t.Errorf("all modes lost across restart: %+v", g)
+	}
+}
+
+func TestBandLockFollowsRadio(t *testing.T) {
+	m := New(nil)
+	m.SetFilters(Filters{Bands: []string{"40m", "80m"}})
+	if _, ch := m.SetRadioBand("20m"); ch {
+		t.Error("unlocked radio band must not change the filter")
+	}
+	if f := m.SetLock(true); !f.LockBand || len(f.Bands) != 1 || f.Bands[0] != "20m" {
+		t.Fatalf("lock on = %+v", f)
+	}
+	if _, ch := m.SetRadioBand("20m"); ch {
+		t.Error("same band must not report a change (render storm)")
+	}
+	if f, ch := m.SetRadioBand("15m"); !ch || f.Bands[0] != "15m" {
+		t.Errorf("follow = %+v %v", f, ch)
+	}
+	if f, ch := m.SetRadioBand(""); ch || f.Bands[0] != "15m" || len(f.Bands) != 1 {
+		t.Errorf("unknown must keep the last band: %+v %v", f, ch)
+	}
+	if f := m.Filters().ToggleBand("10m"); len(f.Bands) != 1 {
+		t.Errorf("manual toggle while locked: %+v", f)
+	}
+	if m.Filters().Active() {
+		t.Error("a locked band alone is not an active deviation")
+	}
+	f := m.SetLock(false)
+	if f.LockBand || len(f.Bands) != 1 || f.Bands[0] != "15m" {
+		t.Errorf("lock off keeps band: %+v", f)
+	}
+	if _, ch := m.SetRadioBand("10m"); ch {
+		t.Error("unlocked follow")
+	}
+	if f := m.Filters().ToggleBand("10m"); len(f.Bands) != 2 {
+		t.Errorf("chips work again: %+v", f)
+	}
+}
+
+func TestBandLockWithUnknownRadioKeepsFilter(t *testing.T) {
+	m := New(nil)
+	m.SetFilters(Filters{Bands: []string{"40m"}})
+	if f := m.SetLock(true); len(f.Bands) != 1 || f.Bands[0] != "40m" {
+		t.Errorf("lock with unknown radio must keep the filter: %+v", f)
+	}
+}
+
+func TestBandChangeAloneChangesView(t *testing.T) {
+	m := New(nil)
+	m.SetChase(bus.ChaseState{Ranked: []bus.Ranked{{RowID: 1, Band: "20m", Mode: "usb"}, {RowID: 2, Band: "40m", Mode: "usb"}}})
+	m.SetLock(true)
+	m.SetRadioBand("20m")
+	a := m.Snapshot()
+	m.SetRadioBand("40m")
+	b := m.Snapshot()
+	if len(a.Rows) != 1 || a.Rows[0].RowID != 1 || len(b.Rows) != 1 || b.Rows[0].RowID != 2 || b.Highlight != 2 {
+		t.Errorf("rows a=%v b=%v highlight=%d", a.Rows, b.Rows, b.Highlight)
+	}
+}
+
+func TestBandLockPersistsAndOldFilesLoad(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "f.json")
+	if err := SaveFilters(p, Filters{Bands: []string{"20m"}, LockBand: true}); err != nil {
+		t.Fatal(err)
+	}
+	if g := LoadFilters(p); !g.LockBand {
+		t.Errorf("lock lost: %+v", g)
+	}
+	old := filepath.Join(t.TempDir(), "old.json")
+	os.WriteFile(old, []byte(`{"bands":["20m"]}`), 0o600)
+	g := LoadFilters(old)
+	if g.LockBand || len(g.Bands) != 1 || len(g.ActiveModes()) != 1 || g.ActiveModes()[0] != ModePhone {
+		t.Errorf("old file: %+v modes=%v", g, g.ActiveModes())
+	}
+}
+
+// Two savers (the HTTP handler and the radio handler) must never leave a stale
+// snapshot or a failed rename behind: hammer SaveTo while the filters change.
+func TestConcurrentSaveLeavesNewestState(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "filters.json")
+	m := New(nil)
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			for j := 0; j < 40; j++ {
+				m.UpdateFilters(func(f Filters) Filters { return f.ToggleMode("cw") })
+				if err := m.SaveTo(path); err != nil {
+					t.Error(err)
+					return
+				}
+			}
+		}(i)
+	}
+	wg.Wait()
+	got := LoadFilters(path)
+	if want := m.Filters(); !reflect.DeepEqual(got.Modes, want.Modes) {
+		t.Fatalf("disk %v, model %v", got.Modes, want.Modes)
+	}
+	if left, _ := filepath.Glob(path + ".*.tmp"); len(left) != 0 {
+		t.Fatalf("temp files left behind: %v", left)
 	}
 }

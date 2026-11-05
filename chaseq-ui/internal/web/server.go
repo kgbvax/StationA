@@ -143,16 +143,23 @@ type pageData struct {
 	Active map[string]bool
 	// ActiveAwards marks the award codes in the filter.
 	ActiveAwards map[string]bool
+	// ModeClasses are the mode chips; ActiveModes marks the active ones.
+	ModeClasses []string
+	ActiveModes map[string]bool
 }
 
 func (s *Server) data() pageData {
 	v := s.Model.Snapshot()
-	d := pageData{View: v, Bands: Bands, Active: map[string]bool{}, ActiveAwards: map[string]bool{}}
+	d := pageData{View: v, Bands: Bands, Active: map[string]bool{}, ActiveAwards: map[string]bool{},
+		ModeClasses: model.ModeClasses, ActiveModes: map[string]bool{}}
 	for _, b := range v.Filters.Bands {
 		d.Active[b] = true
 	}
 	for _, a := range v.Filters.Awards {
 		d.ActiveAwards[a] = true
+	}
+	for _, c := range v.Filters.ActiveModes() {
+		d.ActiveModes[c] = true
 	}
 	s.mu.Lock()
 	d.Last = s.last
@@ -283,6 +290,11 @@ func (s *Server) filters(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	mode := q.Get("mode")
+	if mode != "" && mode != model.ModeCW && mode != model.ModePhone && mode != model.ModeData {
+		http.Error(w, "bad mode", http.StatusBadRequest)
+		return
+	}
 	award, source := q.Get("award"), q.Get("source")
 	if len(award) > 32 || strings.ContainsAny(award, "<>\"'&") {
 		http.Error(w, "bad award", http.StatusBadRequest)
@@ -290,6 +302,10 @@ func (s *Server) filters(w http.ResponseWriter, r *http.Request) {
 	}
 	if source != "" && source != bus.SourceCluster && source != bus.SourceBmrec {
 		http.Error(w, "bad source", http.StatusBadRequest)
+		return
+	}
+	if band != "" && s.Model.Filters().LockBand {
+		http.Error(w, "band filter is locked to the radio band", http.StatusConflict)
 		return
 	}
 	f := s.Model.UpdateFilters(func(f model.Filters) model.Filters {
@@ -302,15 +318,22 @@ func (s *Server) filters(w http.ResponseWriter, r *http.Request) {
 		if source != "" {
 			f = f.ToggleSource(source)
 		}
+		if mode != "" {
+			f = f.ToggleMode(mode)
+		}
 		if n := q.Get("needed"); n != "" {
 			f.NeededOnly = n == "1"
 		}
-		if q.Get("clear") == "1" {
-			f = model.Filters{}
-		}
 		return f
 	})
-	_ = model.SaveFilters(s.FiltersPath, f)
+	if q.Get("clear") == "1" {
+		f = s.Model.ClearFilters()
+	}
+	if l := q.Get("lock"); l != "" {
+		f = s.Model.SetLock(l == "1")
+	}
+	_ = f // the handler's snapshot; the file always gets the model's current state
+	_ = s.Model.SaveTo(s.FiltersPath)
 	s.Notify()
 	w.WriteHeader(http.StatusNoContent)
 }

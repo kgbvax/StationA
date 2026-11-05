@@ -35,7 +35,9 @@
 
   function toggle(el) {
     const d = el.dataset;
-    if (d.band) return post('/filters?band=' + encodeURIComponent(d.band));
+    if (d.lock !== undefined) return post('/filters?lock=' + d.lock);
+    if (d.band) return el.getAttribute('aria-disabled') === 'true' ? undefined : post('/filters?band=' + encodeURIComponent(d.band));
+    if (d.mode) return post('/filters?mode=' + encodeURIComponent(d.mode));
     if (d.award) return post('/filters?award=' + encodeURIComponent(d.award));
     if (d.source) return post('/filters?source=' + encodeURIComponent(d.source));
     if (d.needed !== undefined) return post('/filters?needed=' + d.needed);
@@ -44,7 +46,9 @@
 
   document.addEventListener('click', (e) => {
     const chip = e.target.closest('.chip');
-    if (chip) { toggle(chip); return; }
+    // Safari does not focus a clicked button; focus it so the re-render restores focus to the chip
+    // and a following Enter cannot reach /act (tuning the FLEX).
+    if (chip) { chip.focus(); toggle(chip); return; }
     const row = e.target.closest('.row');
     if (row) post('/act?row=' + row.dataset.row);
   });

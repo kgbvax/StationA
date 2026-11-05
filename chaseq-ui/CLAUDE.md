@@ -57,10 +57,22 @@ and publish retained `muehle/hf/chase/state`, and `…/chase/status`.
   `buddy` + `buddy_note` (badge, note as hover), and on cluster rows `cluster_name` (compact label; "cluster" without it) and
   `spot.rbn` (RBN marker). The wire types mirror chase-queue's `internal/bus/bus.go` field by field (`worked_before.last` is a
   timestamp). Absent = nothing rendered; everything goes through html/template, never raw.
+- **Mode filter (local, `filters.json`):** mode CLASSES `cw` (cw), `phone` (usb, lsb, am, fm), `data` (data); chips toggle like the
+  band chips, several at once. **Default = phone only** (nothing persisted, fresh start, and "clear"); all three chips on shows every
+  mode. Switching off the last chip shows all three (never an empty list). A row with an empty or unknown mode is never hidden
+  (it cannot be classified). `nil` `modes` in `filters.json` = default; an explicit list is saved. Hidden rows count into
+  "N hidden by filter". `POST /filters?mode=<cw|phone|data>` toggles. The highlight copes as with the band filter.
 - **Filters (local, `filters.json`):** bands, needed only, **award** (chips for the award codes among the needs of the
   unfiltered list, first seen = highest priority; a row passes with a need for any selected code; an active code that left the
   list stays as a chip so it can be switched off) and **source** (`cluster` / `bmrec`, click again for both). All count into
   "N hidden by filter"; none changes chase-queue's ranking. `POST /filters?award=<code>&source=<cluster|bmrec>` toggle.
+- **Band lock (`lock_band` in `filters.json`, chip "radio band"):** while on, the band filter is the single band the radio reports
+  (`radio/state` `band`, or `rx_band` while split; empty/`gen`/`unknown`/`device_online` false = unknown = keep the last filter, never
+  all) and follows every radio band change, whoever made it. Manual band chips are `aria-disabled` and `POST /filters?band=` is a 409.
+  Off keeps the band it had. `clear` keeps the lock. The follow re-renders and saves only when the band filter really changed
+  (`Model.SetRadioBand`). `POST /filters?lock=1|0`. Old files without it = off.
+- **Chip kinds live in one list:** `KINDS` in `static/live.js` (focus restore after every re-render, so a stray Enter never reaches
+  `/act`) and `toggle()` in `keys.js` must cover every `data-*` on a chip button in `list.html`; `TestEveryChipKindRestoresFocusAndToggles` enforces it.
 - **Enter/`s`/`u` act from anywhere except a filter chip** (a focused chip swallows them); arrows only ever move the highlight. A held key is ignored (`e.repeat`). The page fragment is only swapped when it changed, so focus and scroll survive.
 - **Secrets:** MQTT password in `config.toml` `[mqtt] password` (no env vars, like qslotter);
   never logged (`Config.String` redacts).

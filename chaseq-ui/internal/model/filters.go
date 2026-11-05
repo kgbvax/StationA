@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"sync"
 
 	"chaseq-ui/internal/bus"
 )
@@ -18,11 +19,93 @@ type Filters struct {
 	Awards []string `json:"awards,omitempty"`
 	// Source keeps one row source: "cluster" or "bmrec"; "" = both.
 	Source string `json:"source,omitempty"`
+	// Modes are the active mode classes (ModeCW, ModePhone, ModeData). nil =
+	// the default, phone only; an explicit list is persisted as such, so
+	// "all three" survives a restart. A toggle never leaves the list empty.
+	Modes []string `json:"modes,omitempty"`
+	// LockBand makes Bands follow the band the radio reports (a single band);
+	// the manual band chips are ignored meanwhile. Absent in old files = off.
+	LockBand bool `json:"lock_band,omitempty"`
 }
 
-// Active reports whether any filter is set.
+// Mode classes of the mode filter.
+const (
+	ModeCW    = "cw"
+	ModePhone = "phone"
+	ModeData  = "data"
+)
+
+// ModeClasses lists the classes in display order.
+var ModeClasses = []string{ModeCW, ModePhone, ModeData}
+
+// ModeClass maps a canonical mode to its class; "" = unknown (never hidden).
+func ModeClass(mode string) string {
+	switch mode {
+	case "cw":
+		return ModeCW
+	case "usb", "lsb", "am", "fm":
+		return ModePhone
+	case "data":
+		return ModeData
+	}
+	return ""
+}
+
+// ActiveModes returns the effective set of active classes (default: phone).
+func (f Filters) ActiveModes() []string {
+	if len(f.Modes) == 0 {
+		return []string{ModePhone}
+	}
+	return f.Modes
+}
+
+func (f Filters) modesDefault() bool {
+	m := f.ActiveModes()
+	return len(m) == 1 && m[0] == ModePhone
+}
+
+// hasMode reports whether a row with this canonical mode passes; a row whose
+// mode is empty or unknown always passes.
+func (f Filters) hasMode(mode string) bool {
+	c := ModeClass(mode)
+	if c == "" {
+		return true
+	}
+	for _, x := range f.ActiveModes() {
+		if x == c {
+			return true
+		}
+	}
+	return false
+}
+
+// ToggleMode returns f with a mode class switched on or off. Switching off
+// the last class shows all classes instead of nothing.
+func (f Filters) ToggleMode(class string) Filters {
+	var out []string
+	found := false
+	for _, c := range f.ActiveModes() {
+		if c == class {
+			found = true
+			continue
+		}
+		out = append(out, c)
+	}
+	if !found {
+		out = append(out, class)
+	}
+	if len(out) == 0 {
+		out = append(out, ModeClasses...)
+	}
+	sort.Strings(out)
+	f.Modes = out
+	return f
+}
+
+// Active reports whether any filter differs from the default (no band, award
+// or source filter, not needed-only, phone only).
 func (f Filters) Active() bool {
-	return len(f.Bands) > 0 || f.NeededOnly || len(f.Awards) > 0 || f.Source != ""
+	return (len(f.Bands) > 0 && !f.LockBand) || f.NeededOnly || len(f.Awards) > 0 || f.Source != "" || !f.modesDefault()
 }
 
 // hasAward reports whether a row with these needs passes the award filter.
@@ -92,6 +175,9 @@ func (f Filters) hasBand(b string) bool {
 
 // ToggleBand returns f with band switched on or off.
 func (f Filters) ToggleBand(band string) Filters {
+	if f.LockBand {
+		return f
+	}
 	var out []string
 	found := false
 	for _, b := range f.Bands {
@@ -125,8 +211,26 @@ func LoadFilters(path string) Filters {
 	return f
 }
 
+// saveMu serialises every write of the filters file: the HTTP handler and the
+// radio handler both save, and a stale snapshot must not overwrite a newer one.
+var saveMu sync.Mutex
+
 // SaveFilters writes f to path atomically.
 func SaveFilters(path string, f Filters) error {
+	saveMu.Lock()
+	defer saveMu.Unlock()
+	return writeFilters(path, f)
+}
+
+// SaveTo writes the model's CURRENT filters to path: the snapshot is taken
+// inside the save lock, so concurrent savers always leave the newest state on disk.
+func (m *Model) SaveTo(path string) error {
+	saveMu.Lock()
+	defer saveMu.Unlock()
+	return writeFilters(path, m.Filters())
+}
+
+func writeFilters(path string, f Filters) error {
 	if path == "" {
 		return nil
 	}
@@ -134,12 +238,30 @@ func SaveFilters(path string, f Filters) error {
 	if err != nil {
 		return err
 	}
-	tmp := path + ".tmp"
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	if err := os.WriteFile(tmp, b, 0o600); err != nil {
+	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*.tmp")
+	if err != nil {
 		return err
 	}
-	return os.Rename(tmp, path)
+	name := tmp.Name()
+	if _, err := tmp.Write(b); err != nil {
+		tmp.Close()
+		os.Remove(name)
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(name)
+		return err
+	}
+	if err := os.Chmod(name, 0o600); err != nil {
+		os.Remove(name)
+		return err
+	}
+	if err := os.Rename(name, path); err != nil {
+		os.Remove(name)
+		return err
+	}
+	return nil
 }

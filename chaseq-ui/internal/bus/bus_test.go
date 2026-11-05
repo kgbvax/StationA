@@ -102,3 +102,19 @@ func TestDecodeChaseClusterRowAsPublished(t *testing.T) {
 		t.Errorf("decoded = %+v", r)
 	}
 }
+
+func TestListenBand(t *testing.T) {
+	for _, c := range []struct {
+		s    RadioState
+		want string
+	}{
+		{RadioState{Band: "20m", DeviceOnline: true}, "20m"},
+		{RadioState{Band: "20m", Split: true, RxBand: "40m", DeviceOnline: true}, "40m"},
+		{RadioState{Band: "20m"}, ""},
+		{RadioState{Band: "gen", DeviceOnline: true}, ""},
+	} {
+		if got := c.s.ListenBand(); got != c.want {
+			t.Errorf("%+v = %q, want %q", c.s, got, c.want)
+		}
+	}
+}

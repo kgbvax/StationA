@@ -85,6 +85,7 @@ type Model struct {
 	lastChase time.Time
 	status    *bool // nil = unknown
 	filters   Filters
+	radioBand string // band the radio reports ("" = unknown)
 	highlight int64
 	version   uint64
 }
@@ -136,6 +137,7 @@ func (m *Model) SetFilters(f Filters) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.filters = f
+	m.follow()
 }
 
 // UpdateFilters changes the filters atomically and returns the result.
@@ -143,6 +145,58 @@ func (m *Model) UpdateFilters(f func(Filters) Filters) Filters {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.filters = f(m.filters)
+	return m.filters
+}
+
+func sameBands(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// follow sets the band filter to the radio band while locked and the band is
+// known; unknown keeps the last filter. Callers hold mu.
+func (m *Model) follow() {
+	if m.filters.LockBand && m.radioBand != "" {
+		m.filters.Bands = []string{m.radioBand}
+	}
+}
+
+// SetRadioBand takes the band the radio reports ("" = unknown or offline). It
+// reports whether the effective filters changed, so callers re-render and
+// save only then.
+func (m *Model) SetRadioBand(band string) (Filters, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.radioBand = band
+	before := m.filters.Bands
+	m.follow()
+	return m.filters, !sameBands(before, m.filters.Bands)
+}
+
+// SetLock switches the band lock. On: the filter becomes the radio band (kept
+// as is while that is unknown). Off: the current band filter stays.
+func (m *Model) SetLock(on bool) Filters {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.filters.LockBand = on
+	m.follow()
+	return m.filters
+}
+
+// ClearFilters resets every filter to the default; the band lock stays and
+// keeps following the radio.
+func (m *Model) ClearFilters() Filters {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.filters = Filters{LockBand: m.filters.LockBand}
+	m.follow()
 	return m.filters
 }
 
@@ -284,7 +338,7 @@ func (m *Model) shown() ([]Row, int) {
 	hidden := 0
 	for _, r := range m.chase.Ranked {
 		if !m.filters.hasBand(r.Band) || (m.filters.NeededOnly && !r.Needed) ||
-			!m.filters.hasAward(r.Needs) || !m.filters.hasSource(r.Source == bus.SourceCluster) {
+			!m.filters.hasAward(r.Needs) || !m.filters.hasMode(r.Mode) || !m.filters.hasSource(r.Source == bus.SourceCluster) {
 			hidden++
 			continue
 		}

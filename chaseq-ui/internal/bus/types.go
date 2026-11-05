@@ -110,6 +110,28 @@ type RadioState struct {
 	FreqHz   int64 `json:"freq_hz"`
 	Split    bool  `json:"split"`
 	RxFreqHz int64 `json:"rx_freq_hz"`
+	// Band follows the TX slice, RxBand is slice A's while split;
+	// DeviceOnline is the radio link (false = the snapshot is stale).
+	Band         string `json:"band"`
+	RxBand       string `json:"rx_band"`
+	DeviceOnline bool   `json:"device_online"`
+}
+
+// ListenBand is the band the operator listens on (slice A in split, the one
+// set_freq tunes); "" when unknown: no band reported, "gen"/"unknown", or the
+// radio link is down.
+func (r RadioState) ListenBand() string {
+	if !r.DeviceOnline {
+		return ""
+	}
+	b := r.Band
+	if r.Split && r.RxBand != "" {
+		b = r.RxBand
+	}
+	if b == "gen" || b == "unknown" {
+		return ""
+	}
+	return b
 }
 
 // Tuned is the frequency a set_freq lands on in /state: slice A in split,
