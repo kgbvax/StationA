@@ -5,12 +5,13 @@
 // The full setup screen only shows when broker credentials are missing, so an
 // already-provisioned tablet (creds stored) boots straight to the console and has
 // no way to reach these fields otherwise. This sheet is reachable from a gear in
-// the top bar and edits ONLY the overlay/cam keys — broker credentials are left
-// untouched.
+// the top bar and edits the overlay/cam keys plus the broker host (user and
+// password are left untouched; a changed host reconnects with the stored ones).
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../mqtt/mqtt_service.dart';
 import '../../store/credential_store.dart';
 import '../../dxspot/dxspot_service.dart';
 import '../../vhfcam/vhfcam_service.dart';
@@ -35,6 +36,8 @@ class _DxConfigDialog extends StatefulWidget {
 
 class _DxConfigDialogState extends State<_DxConfigDialog> {
   final _storage = CredentialStore();
+  final _broker = TextEditingController();
+  String _brokerStored = '';
   final _locator = TextEditingController();
   final _url = TextEditingController(text: 'https://horstreporter.kgbvax.net');
   final _callsign = TextEditingController();
@@ -43,7 +46,7 @@ class _DxConfigDialogState extends State<_DxConfigDialog> {
 
   @override
   void dispose() {
-    for (final c in [_locator, _url, _callsign, _camUrl]) {
+    for (final c in [_broker, _locator, _url, _callsign, _camUrl]) {
       c.dispose();
     }
     super.dispose();
@@ -59,6 +62,8 @@ class _DxConfigDialogState extends State<_DxConfigDialog> {
     final values = await _storage.readAll();
     if (!mounted) return;
     setState(() {
+      _brokerStored = values['mqtt_host'] ?? '';
+      _broker.text = _brokerStored;
       _locator.text = values['station_locator'] ?? '';
       _url.text = values['horstreporter_base_url'] ?? 'https://horstreporter.kgbvax.net';
       _callsign.text = values['station_callsign'] ?? '';
@@ -68,17 +73,37 @@ class _DxConfigDialogState extends State<_DxConfigDialog> {
   }
 
   Future<void> _save() async {
+    final broker = _broker.text.trim();
     final locator = _locator.text.trim().toUpperCase();
     final baseUrl = _url.text.trim();
     final callsign = _callsign.text.trim().toUpperCase();
     final camUrl = _camUrl.text.trim();
+    final stored = await _storage.readAll();
+    final brokerChanged = broker.isNotEmpty && broker != _brokerStored;
     await _storage.writeAll({
+      if (brokerChanged) 'mqtt_host': broker,
       'station_locator': locator,
       'horstreporter_base_url': baseUrl,
       'station_callsign': callsign,
       'vhfcam_base_url': camUrl,
     });
     if (!mounted) return;
+    final mqtt = context.read<MqttService>();
+    final user = stored['mqtt_user'];
+    final pass = stored['mqtt_password'];
+    final port = int.tryParse(stored['mqtt_port'] ?? '') ?? 1883;
+    if (brokerChanged && user != null && pass != null && pass.isNotEmpty) {
+      // Fire and forget: the connection indicator shows the outcome.
+      mqtt
+          .connect(
+            host: broker,
+            port: port,
+            username: user,
+            password: pass,
+            clientId: 'hf-console-${DateTime.now().millisecondsSinceEpoch}',
+          )
+          .catchError((_) {});
+    }
     final dx = context.read<DxSpotService>();
     dx.configure(baseUrl: baseUrl, locator: locator, callsign: callsign);
     dx.restart();
@@ -109,6 +134,8 @@ class _DxConfigDialogState extends State<_DxConfigDialog> {
                   const SizedBox(height: 12),
                   _schemeRow(),
                   const SizedBox(height: 16),
+                  _field('MQTT broker host', _broker, hint: 'e.g. 192.168.1.178 (scmino)'),
+                  const SizedBox(height: 12),
                   Text('The locator places the station on the maps and is the rotators\' aiming origin.',
                       style: AppTheme.body(11, color: AppTheme.txtMute)),
                   const SizedBox(height: 16),
