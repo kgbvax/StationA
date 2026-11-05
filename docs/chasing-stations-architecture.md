@@ -157,8 +157,8 @@ Stations" and `chase-queue/CLAUDE.md`.
    stops while bwpc sleeps.
 7. **chaseq-ui.** Built: configurable logger senders (`[[loggers.sender]]`, `Sender` seam; only `log4om`
    exists), `info` / `worked_before` / `needs` / `buddy` shown, filters for band, needed only and award.
-   **Left:** a second logger kind; filters beyond HF bands are not exposed (rows on 6 m and VHF/UHF arrive,
-   the UI band list is fixed).
+   Filters cover band (160 m to 70 cm, including 6 m and 2 m), mode class, needed only, award and source,
+   with a band lock that follows the radio. **Left:** a second logger kind.
 
 ## 5. Gaps: as-is (implementation branch) vs this target
 
