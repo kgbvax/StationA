@@ -130,7 +130,7 @@ Stations" and `chase-queue/CLAUDE.md`.
    `-import-adif FILE`, `POST /import` with optional `replace_source`, MQTT `/meta` `/state` and
    `…/event`, read API `GET /v1/worked /v1/qsos /v1/stats`, optional Log4OM `ADIF_MESSAGE` UDP feeder on 2341).
    chase-queue builds its log view from it (`[station_log]`, `internal/logview`: load at start, on reconnect and
-   periodically; kept current from the events). **Left:** the Club Log confirmation matrix stays in
+   periodically; kept current from the events). The Club Log confirmation matrix stays in
    chase-queue (decided: it is entity-level, not a QSO list, so it is no feeder unless a Club Log log download
    is built); the Log4OM full-ADIF file feeder is built
    as the ADIF drop directory (`[watch]` in station-log, off until configured and Log4OM exports into it); an ADIF
@@ -168,7 +168,7 @@ Stations" and `chase-queue/CLAUDE.md`.
 | 1..n clusters, RBN optional | matches | `[[cluster]]` entries with a name each, one reconnecting telnet client per entry, RBN per entry, merge by call+band. Bands 160-10 m, 6 m, 2 m, 70 cm. Second cluster `spothole` live (2026-11-05); the Log4OM cluster stops while bwpc sleeps (powerseq standby). |
 | Cluster spots = available stations | matches | Needed cluster spots (and buddies) become rows with `source:"cluster"` and `cluster_name`, at most 40; a spot also hides the heard row it names. |
 | Only qualified bmrec rows | matches | The gate (`off` / `trusted` / `qualified`) is live on `qualified`; bmrec sends `qualified` and `confident` (27fd301). First bmrec-sourced row after qualification not yet observed live (band conditions). |
-| station-log | matches (live) | Own module and slot with ADIF import, duplicate merge, `replace_source`, events and read API. chase-queue's log view reads it. Left: Club Log matrix feeder (stays in chase-queue by decision), ADIF POST feeder; the ADIF drop directory (`[watch]`) is built but not yet enabled live. |
+| station-log | matches (live) | Own module and slot with ADIF import, duplicate merge, `replace_source`, events and read API. chase-queue's log view reads it. The Club Log matrix stays in chase-queue (operator decision 2026-11-05: skip the move). Left: ADIF POST feeder; the ADIF drop directory (`[watch]`) is built but not yet enabled live. |
 | Award definitions, Log4OM XML | matches | Definition files + built-in DXCC + XML importer, checked against real Log4OM WAS and DXCC exports. Definitions load at start only. |
 | Contest = one award type | matches | The contest is the award `contest` (priority 100) while an instance runs; `set_mode` / `switch_instance` remain as instance control, `activity` is derived. DXCC stays a goal in a contest unless a `[[goal]]` turns it off. |
 | Buddies | matches | `[[buddy]]`, see item 5. |
