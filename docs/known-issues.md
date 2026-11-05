@@ -241,8 +241,8 @@ antennaselect (`internal/mqtt/client.go` Close), hadiscovery (`internal/mqtt/cli
 Close), ultrabridge (`internal/mqtt/client.go` Close).
 
 Update 2026-10-23: still open for flexbridge, acom1200s-pa-bridge, atr1k-tuner-bridge,
-shelly-power-bridge and wrc-rotator-bridge, and also for logger-spot-bridge (`hf/spots`),
-which sets only the will and then disconnects cleanly. These components now publish a
+shelly-power-bridge and wrc-rotator-bridge, and also (at the time) for logger-spot-bridge (`hf/spots`, since removed;
+station-log took over its feed), which set only the will and then disconnected cleanly. These components now publish a
 retained `offline` on a clean exit: spid-ercm-rotator-bridge, icom9700-radio-bridge,
 oscarwatch-sattrack-bridge, beamsteer, antmode and winpc-power-bridge, in addition to
 powerseq, antennaselect, hadiscovery and ultrabridge.
@@ -471,6 +471,12 @@ From PRD 02 §0.1. Candidate home: appendix of `docs/conventions/band-mode-refer
 
 PRD 00 §7 items later resolved in code, recorded so nobody re-opens them:
 
+- **Spots feed dead since the 2026-10-12 moves (logger-spot-bridge, `hf/spots`).** RESOLVED by removal
+  (2026-11-05): the component and slot are gone; `station-log` publishes the same document as the retained
+  sibling `muehle/hf/station-log/working` and listens on the loggers' old UDP ports. History kept: on 2026-10-12
+  the loggers were found sending to loopback on bwpc, the feed was repointed to shari:2249 before the bridge moved to
+  scmino (2026-10-18), and Log4OM was likely still wrong. Whether the loggers now reach scmino is the open
+  item "Working-station feed: logger targets on bwpc" at the end of this file.
 - **Radio state heartbeat starvation (PRD 00 §7.5, §6).** FIXED: flexbridge now
   republishes `/state` every 5 s while the radio link is live
   (`flexbridge/internal/bridge/bridge.go`, `DefaultStateHeartbeat = 5 * time.Second`,
@@ -966,3 +972,23 @@ gate, logger senders); **merged to main and live since 2026-11-04**. Open items,
     `/etc/chase-queue/config.toml` and restart (`[log4om]` is then ignored with a Warn; remove it);
     (4) rollback = delete `[station_log]` and point Log4OM back at 2340. Then update the stationportal and the
     hf_console host map if anything moved (both already list `station-log`).
+
+## [decision] Working-station feed: logger targets on bwpc (2026-11-05)
+
+station-log took over the retired logger-spot-bridge's feed (`muehle/hf/station-log/working`, replaces
+`muehle/hf/spots`) and its UDP ports. The feed is only live if the loggers on bwpc (192.168.1.197) send to
+scmino (192.168.1.178), and the repo does not record the current settings:
+
+- **DXLog**: N1MM-style broadcast with `lookupinfo` on, target the LAN broadcast or `scmino:12060` (not
+  `127.0.0.1`). chase-queue's contest feed needs its own second target (`contest.listen`, 12061).
+- **Log4OM**: UDP outbound service type `CALLSIGN` to `scmino:2249` (bare call). The `ADIF_MESSAGE` outbound
+  stays on `scmino:2341`; never reuse 2249 for it.
+- **Check** on scmino: `sudo tcpdump -ni any -A 'udp port 12060 or udp port 2249'` while typing a call, then
+  `mosquitto_sub -h 192.168.1.178 -u hf -P "$MQTT_PASSWORD" -t 'muehle/hf/station-log/working' -v`.
+- **Cutover**: stop `logger-spot-bridge` first (it holds both ports), enable the `[working]` listeners in
+  `/etc/station-log/config.toml` (seed-once: add by hand), put `STATION_LOG_QRZ_PASSWORD` in the env file, restart
+  station-log. Then remove the unit, `/opt`, `/etc`, `/var/lib` and the service user of logger-spot-bridge on scmino
+  and clear the retained `muehle/hf/spots/{meta,state,status}` (empty retained publishes; the HA mirror on
+  192.168.1.50 holds a copy too). Redeploy stationportal and hf_console web; the tablet APK must read
+  `station-log/working` before the old service is stopped, or the marker disappears until it is updated.
+- No Log4OM clear signal: the console marker ages out (dim 5 min, hidden 15 min).

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hf_console/store/bus_store.dart';
+import 'package:hf_console/store/station_hosts.dart';
 import 'package:hf_console/store/station_schematic.dart';
 import 'package:hf_console/store/wiring.dart';
 import 'package:hf_console/ui/theme.dart';
@@ -10,6 +11,12 @@ import 'package:hf_console/ui/widgets/station_schematic.dart';
 import '../../support/fixtures.dart';
 import '../../support/station_fixtures.dart';
 import '../../support/test_harness.dart';
+
+final _scminoTotal = slotHosts.values
+    .where((h) => h.host == 'scmino')
+    .map((h) => h.component)
+    .toSet()
+    .length;
 
 Future<BusStore> _pump(WidgetTester tester, StationScenario scenario,
     {Size pane = const Size(747, 770), BusStore? store}) async {
@@ -32,7 +39,7 @@ void main() {
     for (final t in [
       'FLEX-8400', '14.074.000', 'DATA', 'RX', 'ACOM', 'OPER', 'ATR-1000', 'INLINE', '13.8 V', 'AUTO',
       'Ultrabeam', '20 m Forward', '212°', '145.212.500', 'IDLE', '200°', 'AWAKE',
-      '14/14', '1/1', 'TRX ON', 'PA ON', 'ARMED', 'NO PASS',
+      '$_scminoTotal/$_scminoTotal', '1/1', 'TRX ON', 'PA ON', 'ARMED', 'NO PASS',
     ]) {
       expect(find.text(t), findsOneWidget, reason: t);
     }
@@ -80,7 +87,7 @@ void main() {
     expect(find.text('OFFLINE'), findsOneWidget); // RCU-06, bridge down
     expect(find.text('NO LINK'), findsOneWidget); // GS-500, device lost
     expect(find.text('no data'), findsOneWidget); // Ultrabeam sub-line
-    expect(find.text('13/14'), findsOneWidget);
+    expect(find.text('${_scminoTotal - 1}/$_scminoTotal'), findsOneWidget);
   });
 
   testWidgets('standby: antenna side unpowered, PC asleep', (tester) async {

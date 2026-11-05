@@ -1,14 +1,14 @@
-// selected_spot.dart — the operator-keyed station from muehle/hf/spots.
+// selected_spot.dart — the operator-keyed station from muehle/hf/station-log/working.
 //
-// logger-spot-bridge (shack PC) publishes the station the operator has keyed
+// station-log (scmino; it took over from logger-spot-bridge) publishes the station the operator has keyed
 // in the logging software (DXLog `lookupinfo` / Log4OM outbound CALLSIGN) as
-// the retained /state `selected` record: callsign, RF context, map position
+// the `selected` record of the retained working document: callsign, RF context, map position
 // and the beam answer (azimuth + distance_km). This model parses that record
 // out of the BusStore snapshot; nothing here talks MQTT.
 //
 // Terminology (user's ask): this is NOT a spot — a call entered by hand must
-// behave exactly like one picked from a spot list. The `spots` slot name is
-// historical from the logging-integration draft (role `bandmap` at `…/spots`).
+// behave exactly like one picked from a spot list. The feed is a side topic of
+// station-log (`…/station-log/working`), not a slot; BusStore.workingState.
 //
 // The bridge resolves position and bearing; the console only renders (and
 // ages out: dim after 5 min, gone after 15 min — see selectedStaleness).
@@ -73,7 +73,7 @@ class SelectedSpot {
     required this.tsMs,
   });
 
-  /// Parses the `selected` value of the `muehle/hf/spots` /state snapshot.
+  /// Parses the `selected` value of the `muehle/hf/station-log/working` document.
   /// Returns null when absent, not a map, or carrying no callsign (the
   /// bridge's clear signal is `selected` omitted; an empty call is rejected
   /// here as well, so a half-written state can never render a bare pin).

@@ -129,7 +129,7 @@ Behaviour change worth knowing: in a contest DXCC stays a goal (priority below t
   `cty.csv` into `data_dir`; a download that does not parse or does not resolve DL1ABC to 230 never replaces
   the old files. New files apply at once in DX mode; a running contest keeps its model until re-activated.
   Without them every station is "unknown" and nothing is listed as needed (first deploy, 2026-11-02).
-- **Ports:** UDP 12060 is taken by logger-spot-bridge on scmino, so DXLog needs a second broadcast target on
+- **Ports:** UDP 12060 is taken by station-log's working-station feed on scmino, so DXLog needs a second broadcast target on
   `contest.listen` (default 12061); Log4OM needs its own outbound ADIF_MESSAGE connection to `log4om.listen`
   (2340), Log4OM ≥ 2.42 (only without `[station_log]`; station-log's own listener is 2341).
 

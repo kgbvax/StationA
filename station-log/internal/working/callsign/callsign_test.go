@@ -1,4 +1,4 @@
-package log4om
+package callsign
 
 import "testing"
 

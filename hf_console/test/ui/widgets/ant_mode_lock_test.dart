@@ -174,7 +174,7 @@ void main() {
         ..setAntMode('maintenance');
       final now = DateTime.now().toUtc().toIso8601String();
       store.apply(
-          'muehle/hf/spots/state',
+          BusStore.workingTopic,
           jsonEncode({
             'ts': now,
             'device_online': true,

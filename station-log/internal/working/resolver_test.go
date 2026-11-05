@@ -1,14 +1,13 @@
-package bridge
+package working
 
 import (
 	"context"
-	"encoding/json"
 	"testing"
 
-	"logger-spot-bridge/internal/geo"
-	"logger-spot-bridge/internal/log4om"
-	"logger-spot-bridge/internal/n1mm"
-	"logger-spot-bridge/internal/qrz"
+	"station-log/internal/working/callsign"
+	"station-log/internal/working/geo"
+	"station-log/internal/working/n1mm"
+	"station-log/internal/working/qrz"
 )
 
 func stationResolver() Resolver {
@@ -90,9 +89,9 @@ func TestFromN1MMEmptyCallClears(t *testing.T) {
 	}
 }
 
-func TestFromLog4OM(t *testing.T) {
+func TestFromCallsign(t *testing.T) {
 	r := stationResolver()
-	sel := r.FromLog4OM(log4om.Callsign{
+	sel := r.FromCallsign(callsign.Callsign{
 		Call: "OK2XYZ", FreqHz: 7074000, Mode: "CW", Locator: "JO70",
 	}, "log4om")
 	if sel == nil {
@@ -108,81 +107,8 @@ func TestFromLog4OM(t *testing.T) {
 		t.Fatalf("inverse problem did not run: %+v", sel)
 	}
 
-	if sel := r.FromLog4OM(log4om.Callsign{Call: ""}, "log4om"); sel != nil {
+	if sel := r.FromCallsign(callsign.Callsign{Call: ""}, "log4om"); sel != nil {
 		t.Fatal("empty log4om call should clear")
-	}
-}
-
-func TestSlotBridgePublishSemantics(t *testing.T) {
-	b := New(Meta{Schema: "1.0", Role: "bandmap"})
-
-	r := stationResolver()
-	sel1 := r.FromN1MM(n1mmDXLog("VK9XY"), "dxlog")
-	p1, changed, err := b.SetSelected(sel1, true)
-	if err != nil || !changed || p1 == nil {
-		t.Fatalf("first publish: changed=%t err=%v", changed, err)
-	}
-
-	// Every selection datagram is an event: even the identical selection
-	// object republishes (fresh ts), and so does a re-key of the same call.
-	// The console re-brightens off the fresh ts — do not dedup this path.
-	if _, changed, _ := b.SetSelected(sel1, true); !changed {
-		t.Fatal("selection path deduped — datagrams must stay events")
-	}
-	sel2 := r.FromN1MM(n1mmDXLog("VK9XY"), "dxlog")
-	if _, changed, _ := b.SetSelected(sel2, true); !changed {
-		t.Fatal("re-keyed same call did not republish")
-	}
-
-	// Clearing (the empty-call datagram) publishes too.
-	p3, changed, _ := b.SetSelected(nil, true)
-	if !changed || p3 == nil {
-		t.Fatal("clear did not publish")
-	}
-
-	// The LIVENESS path is the deduped one: an unchanged (cleared, online)
-	// pair publishes nothing; the flip does.
-	if _, changed, _ := b.SetDeviceOnline(true, nil); changed {
-		t.Fatal("unchanged liveness snapshot republished")
-	}
-	if _, changed, _ := b.SetDeviceOnline(false, nil); !changed {
-		t.Fatal("liveness flip did not publish")
-	}
-	if _, changed, _ := b.SetDeviceOnline(false, nil); changed {
-		t.Fatal("repeat liveness snapshot republished")
-	}
-}
-
-func TestLastJSONRoundTrip(t *testing.T) {
-	b := New(Meta{Schema: "1.0", Role: "bandmap"})
-	if b.LastJSON() != "" {
-		t.Fatal("LastJSON before first publish should be empty")
-	}
-	r := stationResolver()
-	sel := r.FromN1MM(n1mmDXLog("VK9XY"), "dxlog")
-	b.SetSelected(sel, true)
-
-	var st State
-	if err := json.Unmarshal([]byte(b.LastJSON()), &st); err != nil {
-		t.Fatalf("LastJSON is not a State document: %v", err)
-	}
-	if st.Selected == nil || st.Selected.Call != "VK9XY" || !st.DeviceOnline {
-		t.Fatalf("round-trip mismatch: %+v", st)
-	}
-}
-
-func TestMetaPayload(t *testing.T) {
-	b := New(Meta{Schema: "1.0", Role: "bandmap", Host: "shack-pc"})
-	data, err := b.MetaPayload()
-	if err != nil {
-		t.Fatal(err)
-	}
-	var m Meta
-	if err := json.Unmarshal(data, &m); err != nil {
-		t.Fatal(err)
-	}
-	if m.Role != "bandmap" || m.Host != "shack-pc" {
-		t.Fatalf("meta mismatch: %+v", m)
 	}
 }
 
@@ -208,7 +134,7 @@ func TestEnrichFillsMissingPosition(t *testing.T) {
 	}}
 	r.QRZ = lk
 
-	sel := r.FromLog4OM(log4om.Callsign{Call: "VK9XY"}, "log4om")
+	sel := r.FromCallsign(callsign.Callsign{Call: "VK9XY"}, "log4om")
 	sel, err := r.Enrich(context.Background(), sel)
 	if err != nil {
 		t.Fatalf("enrich: %v", err)
@@ -239,7 +165,7 @@ func TestEnrichFromCoordinatesWithoutGrid(t *testing.T) {
 	r := stationResolver()
 	r.QRZ = &fakeLookup{rec: qrz.Record{Call: "VK9XY", Lat: -16.92, Lon: 145.77}}
 
-	sel := r.FromLog4OM(log4om.Callsign{Call: "VK9XY"}, "log4om")
+	sel := r.FromCallsign(callsign.Callsign{Call: "VK9XY"}, "log4om")
 	sel, _ = r.Enrich(context.Background(), sel)
 	if sel.Locator != "" {
 		t.Errorf("locator = %q, want empty (no grid in the record)", sel.Locator)
@@ -301,7 +227,7 @@ func TestEnrichKeepsLoggerPositionFillsIdentity(t *testing.T) {
 func TestEnrichNilLookupAndNilSelection(t *testing.T) {
 	r := stationResolver() // QRZ nil → disabled
 
-	sel := r.FromLog4OM(log4om.Callsign{Call: "VK9XY"}, "log4om")
+	sel := r.FromCallsign(callsign.Callsign{Call: "VK9XY"}, "log4om")
 	got, err := r.Enrich(context.Background(), sel)
 	if err != nil || got != sel {
 		t.Fatalf("disabled enrich changed behavior: %+v, %v", got, err)
@@ -317,7 +243,7 @@ func TestEnrichLookupErrorLeavesSelectionUnchanged(t *testing.T) {
 	r := stationResolver()
 	r.QRZ = &fakeLookup{err: qrz.ErrNotFound}
 
-	sel := r.FromLog4OM(log4om.Callsign{Call: "XX9XX"}, "log4om")
+	sel := r.FromCallsign(callsign.Callsign{Call: "XX9XX"}, "log4om")
 	before := *sel
 	got, err := r.Enrich(context.Background(), sel)
 	if err == nil {
@@ -335,7 +261,7 @@ func TestEnrichWithoutStationLocator(t *testing.T) {
 	lk := &fakeLookup{rec: qrz.Record{Call: "VK9XY", Grid: "QH42wp", Country: "Australia"}}
 	r.QRZ = lk
 
-	sel := r.FromLog4OM(log4om.Callsign{Call: "VK9XY"}, "log4om")
+	sel := r.FromCallsign(callsign.Callsign{Call: "VK9XY"}, "log4om")
 	sel, err := r.Enrich(context.Background(), sel)
 	if err != nil {
 		t.Fatalf("enrich: %v", err)
@@ -346,4 +272,59 @@ func TestEnrichWithoutStationLocator(t *testing.T) {
 	if sel.Azimuth != 0 || sel.DistanceKm != 0 {
 		t.Errorf("beam answer computed without a station: az=%v dist=%v", sel.Azimuth, sel.DistanceKm)
 	}
+}
+
+// A call worked before gives the pin from station-log's own store; QRZ
+// still supplies the identity and never moves the position.
+func TestEnrichUsesOwnStoreGridBeforeQRZ(t *testing.T) {
+	r := stationResolver()
+	r.Grid = func(call string) (string, bool) {
+		if call == "VK9XY" {
+			return "QH42", true
+		}
+		return "", false
+	}
+	lk := &fakeLookup{rec: qrz.Record{Call: "VK9XY", Grid: "PM95", Country: "Australia", Name: "Fred Nerk"}}
+	r.QRZ = lk
+
+	sel := r.FromCallsign(callsign.Callsign{Call: "VK9XY"}, "log4om")
+	sel, err := r.Enrich(context.Background(), sel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sel.Locator != "QH42" || sel.Azimuth <= 0 {
+		t.Fatalf("own-store grid not used: %+v", sel)
+	}
+	if sel.Name != "Fred Nerk" || sel.Country != "Australia" {
+		t.Errorf("identity not filled from QRZ: %+v", sel)
+	}
+
+	// Own store alone (no QRZ) still places the call.
+	r.QRZ = nil
+	sel = r.FromCallsign(callsign.Callsign{Call: "VK9XY"}, "log4om")
+	if sel, _ = r.Enrich(context.Background(), sel); sel.Locator != "QH42" {
+		t.Fatalf("own-store grid without QRZ: %+v", sel)
+	}
+
+	// An unknown call stays call-only.
+	sel = r.FromCallsign(callsign.Callsign{Call: "XX9XX"}, "log4om")
+	if sel, _ = r.Enrich(context.Background(), sel); sel.Lat != 0 || sel.Locator != "" {
+		t.Fatalf("unknown call got a position: %+v", sel)
+	}
+}
+
+// A logger-placed record never asks the store.
+func TestEnrichOwnStoreSkippedWhenPlaced(t *testing.T) {
+	r := stationResolver()
+	asked := false
+	r.Grid = func(string) (string, bool) { asked = true; return "QH42", true }
+	sel := r.FromN1MM(n1mmDXLog("VK9XY"), "dxlog")
+	r.Enrich(context.Background(), sel)
+	if asked {
+		t.Fatal("own store consulted for a logger-placed record")
+	}
+}
+
+func n1mmDXLogNoPos() n1mm.LookupInfo {
+	return n1mm.LookupInfo{Call: "AB1CDE", FreqTx10: 1402476, Mode: "CW"}
 }

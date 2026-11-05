@@ -25,9 +25,12 @@ envelope. Derived from `internal/app`, `internal/store` and `internal/httpapi`.
 | `muehle/hf/station-log/meta` | yes | 1 | `{schema:"1.0", role:"log-store", host, device:{name:"Station log"}, capabilities}` |
 | `muehle/hf/station-log/state` | yes | 1 | §3 |
 | `muehle/hf/station-log/event` | **no** | 1 | §4 |
+| `muehle/hf/station-log/working` | yes | 1 | §3a (only with `[working]` listeners) |
 
 `capabilities`: `{imports:["adif"], feeders:["log4om"]|[], event:"muehle/hf/station-log/event",
-events:["added","merged","deleted"], dup_window:"5m", http_api:"127.0.0.1:8096", api:[…]}`. There is no `/cmd`.
+events:["added","merged","deleted"], dup_window:"5m", http_api:"127.0.0.1:8096", api:[…]}`. With the working
+feed on, `feeders` also lists `logger-udp` and `capabilities.working` is `"muehle/hf/station-log/working"`.
+There is no `/cmd`.
 
 ## 3. `/state` (retained)
 
@@ -44,10 +47,60 @@ events:["added","merged","deleted"], dup_window:"5m", http_api:"127.0.0.1:8096",
   `last_at` (the last file tried), `files` / `failed` (file imports since start; a failing file counts once until it changes), `added` / `merged` (QSOs since
   start), `error` (a failing file, invalid records or a missing directory; stays while the cause is present, omitted when none). Meta `feeders` then lists
   `adif-drop`.
+- `working` is present only when the working feed is on: `{listening:["dxlog","log4om"], online, qrz, rejected}`
+  (`listening` = listeners that bound, `online` = a logger was heard within `stale_after`, `qrz` = QRZ lookup
+  configured, `rejected` = datagrams from hosts outside `allow_from`, omitted when 0; each source is logged once). A listener that failed to bind retries with backoff and returns to `listening` once bound. It never carries the keyed call, so typing does not republish `/state`.
 - `problems` (worst first, `[]` when none): empty log; "N QSO events were not published (broker offline)";
-  a failed Log4OM listener; an ADIF drop directory error.
+  a failed Log4OM listener; an ADIF drop directory error; a working-station listener that could not bind;
+  QRZ rejecting the credentials.
 - Republished when it changes (ignoring `ts`), on every (re)connect, and re-evaluated every 60 s (so a CLI
   import shows up).
+
+## 3a. Working station `muehle/hf/station-log/working` (retained, QoS 1)
+
+The station the operator has keyed in the shack logger, resolved for the console's map and beam. It replaces
+the `/state` of the retired logger-spot-bridge slot `muehle/hf/spots`; the document is the same.
+
+```json
+{"ts":"2026-11-05T14:03:12Z","device_online":true,
+ "selected":{"call":"VK9XY","freq_hz":14023000,"band":"20m","mode":"cw","locator":"QH93","lat":-11.53,"lng":151.19,
+  "azimuth":62.4,"distance_km":15420.3,"country_prefix":"VK9","wpx_prefix":"VK9","name":"Fred Nerk",
+  "country":"Australia","qth":"Cairns","source":"dxlog","ts":"2026-11-05T14:03:12Z"}}
+```
+
+- `selected` is omitted when the entry was cleared (or nothing was keyed since start). Fields other than
+  `call`, `source` and `ts` are omitted when unknown: `freq_hz`, `band` (`20m`, `gen` for the HF gap, none
+  outside), `mode` (canonical `cw|usb|lsb|am|fm|data`, `USB-D`/`LSB-D`/`FM-D` keep their carrier), `locator`,
+  `lat`/`lng` (0,0 means none), `azimuth`/`distance_km`, `country_prefix`/`wpx_prefix`, `name`/`country`/`qth`.
+  `source` is the listener name; `selected.ts` is when the datagram arrived.
+- **Every datagram republishes** with a fresh `ts` and `selected.ts` (no dedup: the console re-brightens its
+  marker off it). An empty `lookupinfo` call clears; `contactinfo` and `RadioInfo` are not a clear and not a
+  selection. Log4OM's CALLSIGN carries no clear signal; the console ages the marker out by `selected.ts`.
+- `device_online` is the logger layer of the two-layer liveness: a datagram was heard within `stale_after`
+  (false from start until the first one). The bridge layer is station-log's `<slot>/status` (the LWT);
+  consumers AND both. A flip republishes the document with the selection kept.
+- Position order: the logger's locator; else DXLog azimuth+distance placed from `station_locator`; else
+  coordinates give azimuth and distance. A bare call (Log4OM) is placed from the grid of a QSO with that call in
+  station-log's own store, then from QRZ. QRZ also fills `name`/`country`/`qth` for every call; it never moves a
+  logger-given position. A QRZ failure never blocks publication (call and RF context only).
+- Published by the working feed's own worker only (separate from the QSO event worker). On every (re)connect the last document is replayed; with nothing seen yet
+  `{ts, device_online:false}` replaces a stale retained one of the previous run.
+- Feeders (config `[working]`): UDP `kind="n1mm"` (DXLog/N1MM `lookupinfo`, default port 12060) and
+  `kind="log4om"` (Log4OM outbound CALLSIGN = the bare call, default port 2249). `allow_from` is mandatory.
+
+## 3b. Wavelog sync (`/state.wavelog`, `/meta`)
+
+Optional (`[wavelog] direction` pull | push | both); absent from `/state` while off. All Wavelog API details
+are from memory and unverified against a real instance (see `CLAUDE.md`).
+
+`/state.wavelog`: `direction`, `url_host` (host only), `last_pull_at`, `last_push_at`, `cursor` (profile id -> last
+pulled Wavelog row id), `pulled_added`, `pulled_merged`, `pushed` (these three since start), `push_pending`,
+`push_failed` (QSOs given up after 5 attempts until they change), `skipped_no_profile` (pushable QSOs whose own
+call has no `[[wavelog.profile]]`), `last_full_resync_at`, `backoff_seconds`, `error`, `note` (one-off remark, e.g. cursors and push ledger reset after an instance URL change). While `error` is set,
+`/state.problems` carries `Wavelog: <reason>`; `push_failed > 0` adds a problem line.
+
+`/meta.capabilities`: `feeders` gains `wavelog-pull` (pull on); `sync: ["wavelog"]` appears when push is on.
+No new topic or `/cmd`. Pulled QSOs publish `added`/`merged` events like any import (source `wavelog`).
 
 ## 4. Event `muehle/hf/station-log/event` (not retained, QoS 1)
 

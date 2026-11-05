@@ -44,7 +44,7 @@ shutdown 2 h after the last activity. 2026-10-22: the `ant-mode` role and `hf/an
 slot (storm/maintenance lock, §4, §7.1), the lock tier above the arbitration ladder and
 `source: lock` (§5). 2026-10-23: §7 brought up to the deployed state (hosts, power
 slots, antenna-select ladder, radio, PA and IC-9700 contracts); roles `steering`,
-`bandmap` and `discovery` listed in §4; `hf/beam-steer` and `hf/spots` added to §7.1.
+`bandmap` and `discovery` listed in §4; `hf/beam-steer` and `hf/spots` added to §7.1. (`hf/spots` was later retired: its working-station feed is now the retained sibling `hf/station-log/working`, see §7.1.)
 
 The guiding idea: the live configuration is the documentation. A component, once
 connected, describes itself to a well-known address: who it is, what it can do, and what
@@ -123,7 +123,7 @@ Two rules make this enforceable:
   axis prefix instead of a numeric suffix, §7.2.)
   Deployed deviation (owner to settle): logic, power and software-source slots are
   named for their function: `antenna-select` (role `reconciler`), `power-seq`
-  (`sequencer`), `beam-steer` (`steering`), `spots` (`bandmap`), `psu-13v8` / `antennas` /
+  (`sequencer`), `beam-steer` (`steering`), `psu-13v8` / `antennas` /
   `shack-pc-mains` (`power`), `shack-pc` (`pc-power`). `/meta.role` always carries the
   canonical role.
 - **`site`, `station`, `slot`, `location`, and `host` are deployment configuration,
@@ -317,7 +317,7 @@ entirely).
   `power/shack-pc`; offline = asleep; wake is Wake-on-LAN, not MQTT), `steering` (a
   logic slot that turns a logger bearing into rotator and antenna-direction intents,
   `hf/beam-steer`), `bandmap` (the operator-keyed station from the shack logger,
-  `hf/spots`; read-only, fronts software), `chase-queue` (a logic slot that ranks the stations
+  now the retained sibling `hf/station-log/working`; read-only, fronts software), `chase-queue` (a logic slot that ranks the stations
   on the air by what is needed, `hf/chase`; see `chasing-stations-architecture.md`), `log-store` (a logic
   slot holding the station's QSO record, `hf/station-log`) and `discovery` (a consumer that renders
   `/meta` `expose` into a consumer's discovery format, `hf/discovery`). Passive:
@@ -814,10 +814,12 @@ the Ultrabeam 180° when the station is behind the beam, else rotate to the near
 with the toggle off, requests pass straight through to the rotator. Stands down while
 `hf/ant-mode` is locked.
 
-**`muehle/hf/spots`**: the operator-keyed station from DXLog/Log4OM (a software
-source, `logger-spot-bridge` on `scmino`, role `bandmap`; read-only, no `/cmd`).
-`state: ts; device_online (a logger keyed something recently); selected (omitted when
-nothing is keyed)`.
+**`muehle/hf/station-log/working`**: the operator-keyed station from DXLog/Log4OM (a software
+source, `station-log` on `scmino`, role `bandmap`; read-only, no `/cmd`). It is a retained
+sibling topic of the `station-log` slot, not a slot of its own; it replaced the retired
+`logger-spot-bridge` slot `muehle/hf/spots`. Document: `ts; device_online (a logger keyed
+something recently); selected (omitted when nothing is keyed)`. Bridge liveness is the
+`station-log` `/status`; consumers AND both layers.
 
 **`muehle/hf/chase`**: the chase queue (logic slot, `chase-queue` on `scmino`, role
 `chase-queue`). Reads bmrec's `hf/cqfinder` candidates and a DX cluster, publishes the
@@ -1110,7 +1112,7 @@ muehle/host/scmino      # Raspberry Pi CM5, Debian 12 arm64 — runs most statio
 | HF antenna-select reconciler | `hf/antenna-select` | `scmino` |
 | Antenna mode (`antmode`) | `hf/ant-mode` | `scmino` |
 | Beam steering (`beamsteer`, PstRotator UDP :12050) | `hf/beam-steer` | `scmino` |
-| Logger spot bridge (`logger-spot-bridge`) | `hf/spots` | `scmino` |
+| Working-station feed (in `station-log`) | `hf/station-log/working` | `scmino` |
 | Bus capture (`hf-mqtt-capture`) | subscriber of `muehle/hf/#`, no slot | `shari` |
 | Shelly power bridge (`shelly-power-bridge`) | `power/psu-13v8`, `power/antennas`, `power/shack-pc-mains` | `scmino` |
 | Shack-PC power agent (`winpc-power-bridge`) | `power/shack-pc` | `bwpc` |

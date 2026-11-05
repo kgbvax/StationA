@@ -279,8 +279,8 @@ antennaselect/internal/mqtt/client.go:194, powerseq (since 76b4cb6, 2026-10-18),
 beamsteer, winpc-power-bridge, hf-mqtt-capture, vhfcam-restream, stationportal, plus
 flexbridge/acom1200s-pa-bridge/atr1k-tuner-bridge/wrc-rotator-bridge through the paho
 default; `SetCleanSession(false)`: ultrabridge, hadiscovery, shelly-power-bridge, testui,
-spid-ercm-rotator-bridge, icom9700-radio-bridge, oscarwatch-sattrack-bridge,
-logger-spot-bridge). The station-integration-model §8 now documents the
+spid-ercm-rotator-bridge, icom9700-radio-bridge, oscarwatch-sattrack-bridge;
+the retired logger-spot-bridge was in this list too). The station-integration-model §8 now documents the
 persistent-session/QoS-0-`/cmd` rules that came out of the 2026-09-03 offline-replay
 incident, but the per-component session-flag choice is still not settled.
 

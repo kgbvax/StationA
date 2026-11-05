@@ -1,6 +1,7 @@
 import 'package:clock/clock.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hf_console/store/bus_store.dart';
+import 'package:hf_console/store/station_hosts.dart';
 import 'package:hf_console/store/station_schematic.dart';
 
 import '../support/fixtures.dart';
@@ -11,6 +12,10 @@ BusStore _store(StationScenario scenario) {
   s.seedScenario(scenario);
   return s;
 }
+
+/// Distinct bridge components that [slotHosts] places on [host].
+int _componentsOn(String host) =>
+    slotHosts.values.where((h) => h.host == host).map((h) => h.component).toSet().length;
 
 void main() {
   group('quality', () {
@@ -197,8 +202,10 @@ void main() {
     test('counts bridges per host, one per component', () {
       final m = StationSchematicModel(_store(StationScenario.running));
       final sc = m.hostHealth('scmino');
-      expect(sc.total, 14);
-      expect(sc.up, 14);
+      expect(sc.total, _componentsOn('scmino'));
+      expect(sc.up, _componentsOn('scmino'));
+      expect(sc.components, containsPair('chase-queue', true));
+      expect(sc.components, containsPair('station-log', true));
       final sh = m.hostHealth('shari');
       expect((sh.up, sh.total), (1, 1));
     });
@@ -206,7 +213,7 @@ void main() {
     test('a down bridge lowers its host count', () {
       final m = StationSchematicModel(_store(StationScenario.faults));
       final sc = m.hostHealth('scmino');
-      expect(sc.up, 13);
+      expect(sc.up, _componentsOn('scmino') - 1);
       expect(sc.components['ultrabridge'], isFalse);
     });
 

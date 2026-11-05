@@ -39,6 +39,10 @@ func main() {
 	if *check {
 		fmt.Printf("slot %s/%s/%s  broker %s  data %s  http %s\n", cfg.MQTT.Site, cfg.Slot.Station, cfg.Slot.Slot, cfg.MQTT.Broker, cfg.DataDir, cfg.HTTP.Listen)
 		fmt.Printf("default own call %q  dup window %s  log4om %q\n", cfg.DefaultOwnCall, cfg.DupWindow, cfg.Log4OM.Listen)
+		for _, l := range cfg.WorkingCheck() {
+			fmt.Println(l)
+		}
+		fmt.Println(cfg.WavelogCheck())
 		fmt.Println("config check OK")
 		return
 	}

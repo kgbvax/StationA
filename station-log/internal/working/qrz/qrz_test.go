@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -273,5 +274,30 @@ func TestServiceAuthFailureNotCached(t *testing.T) {
 	}
 	if _, err := svc.Lookup(ctx, "DL1ABC"); err != nil {
 		t.Fatalf("retry after credential fix: %v", err)
+	}
+}
+
+func TestTransportErrorNeverCarriesThePassword(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := "http://" + ln.Addr().String() + "/"
+	ln.Close() // closed port: connection refused
+	c := New("dl9et", "s3cret-pw")
+	c.base = base
+	_, err = c.Lookup(context.Background(), "DL1ABC")
+	if err == nil {
+		t.Fatal("expected a transport error")
+	}
+	// first lookup has no session: login runs and fails
+	for _, bad := range []string{"s3cret-pw", "password=", "username=", base} {
+		if strings.Contains(err.Error(), bad) {
+			t.Fatalf("error leaks %q: %v", bad, err)
+		}
+	}
+	var ue *url.Error
+	if errors.As(err, &ue) {
+		t.Fatalf("a *url.Error (with the URL) is still in the chain: %v", err)
 	}
 }

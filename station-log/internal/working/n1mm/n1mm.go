@@ -17,7 +17,7 @@
 // Units: N1MM-family Freq/txfreq are 10 Hz units (DXLog example 352376 =
 // 3523.76 kHz; N1MM's doc: "exported in units of 10 Hz"). Fields this package
 // returns stay raw; converting to Hz / canonical band+mode is the caller's job
-// (internal/canon), so the decoder tests stay table-driven over the wire data.
+// (internal/working), so the decoder tests stay table-driven over the wire data.
 package n1mm
 
 import (

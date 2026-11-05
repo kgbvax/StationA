@@ -11,8 +11,8 @@ import 'package:hf_console/ui/widgets/mercator_map_panel.dart';
 import '../../support/fake_mqtt_service.dart';
 import '../../support/test_harness.dart';
 
-// The selected-station marker: muehle/hf/spots /state carries the station the
-// operator keyed in the shack logger (logger-spot-bridge); the maps render a
+// The selected-station marker: muehle/hf/station-log/working carries the station the
+// operator keyed in the shack logger (station-log); the maps render a
 // pin + callsign (Mercator) / pin or bearing ray + callsign + chip (compass).
 // These tests drive the same path the MQTT service uses — BusStore.apply.
 
@@ -22,7 +22,7 @@ void _applySelected(BusStore store, Map<String, dynamic>? selected) {
     'device_online': true,
     if (selected != null) 'selected': selected,
   };
-  store.apply('muehle/hf/spots/state', jsonEncode(state), false);
+  store.apply(BusStore.workingTopic, jsonEncode(state), false);
 }
 
 void _bringRotorOnline(BusStore store) {

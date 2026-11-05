@@ -19,6 +19,7 @@ import (
 	"station-log/internal/importer"
 	"station-log/internal/log4om"
 	"station-log/internal/store"
+	"station-log/internal/working"
 )
 
 type msg struct {
@@ -78,6 +79,7 @@ func setup(t *testing.T) (*Service, *fakePub, context.Context) {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	go sharedmqtt.RunJobs(ctx, s.jobs)
+	go sharedmqtt.RunJobs(ctx, s.wjobs)
 	return s, f, ctx
 }
 
@@ -270,5 +272,168 @@ func TestWatchFirstScanWaitsForConnect(t *testing.T) {
 	}
 	if s.dropped.Load() != 0 {
 		t.Fatal("events were dropped")
+	}
+}
+
+func setupWorking(t *testing.T, listen string) (*Service, *fakePub, context.Context) {
+	t.Helper()
+	cfg := config.Defaults()
+	cfg.DataDir = t.TempDir()
+	cfg.DefaultOwnCall = "DL9ET"
+	cfg.Working.StationLocator = "JO32WE"
+	cfg.Working.Listeners = []config.WorkingListener{{Name: "log4om", Kind: "log4om", Listen: listen, AllowFrom: []string{"127.0.0.1"}}}
+	st, err := store.Open(cfg.DBPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	s := New(cfg, st, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	f := newFake()
+	s.SetPublisher(f)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go sharedmqtt.RunJobs(ctx, s.jobs)
+	go sharedmqtt.RunJobs(ctx, s.wjobs)
+	return s, f, ctx
+}
+
+func TestWorkingTopicRetainedFromJobsWorker(t *testing.T) {
+	s, f, ctx := setupWorking(t, "127.0.0.1:0")
+	meta, _ := s.metaPayload()
+	var m struct {
+		Caps map[string]any `json:"capabilities"`
+	}
+	if err := json.Unmarshal(meta, &m); err != nil || m.Caps["working"] != "muehle/hf/station-log/working" ||
+		!strings.Contains(string(meta), "logger-udp") {
+		t.Fatalf("%v %s", err, meta)
+	}
+
+	s.feed.Birth()
+	msgs := f.wait(t, 1)
+	if msgs[0].topic != "muehle/hf/station-log/working" || !msgs[0].retained || msgs[0].qos != 1 ||
+		!strings.Contains(string(msgs[0].payload), `"device_online":false`) {
+		t.Fatalf("%+v %s", msgs[0], msgs[0].payload)
+	}
+
+	// a stored QSO's grid places the bare Log4OM call (own store before QRZ)
+	post(s, `<CALL:6>VK9XY <QSO_DATE:8>20261101<TIME_ON:6>101500<BAND:3>20m<MODE:2>CW<GRIDSQUARE:4>QH42<EOR>`)
+	f.wait(t, 1) // the QSO event
+	s.feed.Handle(ctx, "log4om", "log4om", []byte("VK9XY"))
+	msgs = f.wait(t, 1)
+	var w working.State
+	last := msgs[len(msgs)-1]
+	if last.topic != "muehle/hf/station-log/working" || json.Unmarshal(last.payload, &w) != nil ||
+		w.Selected == nil || w.Selected.Locator != "QH42" || w.Selected.Azimuth <= 0 || !w.DeviceOnline {
+		t.Fatalf("%+v %s", last, last.payload)
+	}
+
+	st, _ := s.BuildState()
+	if st.Working == nil || !st.Working.Online || len(st.Working.Listening) != 1 {
+		t.Fatalf("%+v", st.Working)
+	}
+	b, _ := json.Marshal(st)
+	if strings.Contains(string(b), "VK9XY") {
+		t.Fatal("the keyed call leaked into /state (would churn it)")
+	}
+}
+
+func TestWorkingListenerBindFailureIsAProblemNotFatal(t *testing.T) {
+	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pc.Close()
+	s, _, ctx := setupWorking(t, pc.LocalAddr().String())
+	var wg sync.WaitGroup
+	s.runWorking(ctx, func(f func()) { wg.Add(1); go func() { defer wg.Done(); f() }() })
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		st, _ := s.BuildState()
+		if strings.Contains(strings.Join(st.Problems, "|"), "working-station listener log4om failed") {
+			if len(st.Working.Listening) != 0 {
+				t.Fatalf("%+v", st.Working)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("no problem reported: %+v", st.Problems)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestWavelogStateAndMeta(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.DataDir = t.TempDir()
+	cfg.DefaultOwnCall = "DL9ET"
+	cfg.Wavelog = config.Wavelog{Direction: "both", URL: "https://wl.example.org", Key: "k-not-real", IntervalSeconds: 300,
+		FullResyncHours: 24, BatchSize: 50, PullLimit: 500, PushSources: []string{"log4om"},
+		Profiles: []config.WavelogProfile{{OwnCall: "DL9ET", StationProfileID: "1"}}}
+	st, err := store.Open(cfg.DBPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	s := New(cfg, st, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	state, err := s.BuildState()
+	if err != nil || state.Wavelog == nil || state.Wavelog.Direction != "both" || state.Wavelog.URLHost != "wl.example.org" {
+		t.Fatalf("%+v %v", state.Wavelog, err)
+	}
+	b, _ := json.Marshal(state)
+	meta, _ := s.metaPayload()
+	if strings.Contains(string(b), "k-not-real") || strings.Contains(string(meta), "k-not-real") {
+		t.Fatal("key leaked")
+	}
+	if !strings.Contains(string(meta), "wavelog-pull") || !strings.Contains(string(meta), `"sync":["wavelog"]`) {
+		t.Fatalf("%s", meta)
+	}
+}
+
+// A full QSO event queue (big import, stalled publisher) must not take the
+// working update with it: the feed has its own queue and worker.
+func TestWorkingUpdateSurvivesFullQSOQueue(t *testing.T) {
+	s, f, ctx := setupWorking(t, "127.0.0.1:0")
+	// stop the QSO worker's effect: nothing drains s.jobs from here on
+	for len(s.jobs) < cap(s.jobs) {
+		s.jobs <- func() {}
+	}
+	s.feed.Handle(ctx, "log4om", "log4om", []byte("VK9XY"))
+	msgs := f.wait(t, 1)
+	if msgs[len(msgs)-1].topic != "muehle/hf/station-log/working" {
+		t.Fatalf("%+v", msgs)
+	}
+}
+
+func TestWorkingListenerRetriesBindAndClearsProblem(t *testing.T) {
+	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := pc.LocalAddr().String()
+	s, _, ctx := setupWorking(t, addr)
+	s.wlisten[0].MinBackoff, s.wlisten[0].MaxBackoff = 10*time.Millisecond, 20*time.Millisecond
+	var wg sync.WaitGroup
+	s.runWorking(ctx, func(f func()) { wg.Add(1); go func() { defer wg.Done(); f() }() })
+	waitFor := func(want bool) {
+		t.Helper()
+		deadline := time.Now().Add(3 * time.Second)
+		for {
+			st, _ := s.BuildState()
+			got := strings.Contains(strings.Join(st.Problems, "|"), "working-station listener log4om failed")
+			if got == want {
+				return
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("problem present=%v, want %v: %+v", got, want, st.Problems)
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	waitFor(true)
+	pc.Close() // port released
+	waitFor(false)
+	st, _ := s.BuildState()
+	if len(st.Working.Listening) != 1 {
+		t.Fatalf("%+v", st.Working)
 	}
 }

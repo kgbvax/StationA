@@ -103,6 +103,11 @@ scmino: {
     class: logic
   }
 
+  stationlog: {
+    label: "station-log\n(QSO record; working-station feed,\nUDP 12060 / 2249; Wavelog sync)"
+    class: logic
+  }
+
   testui: {
     label: "testui\n(MQTT relay + schema-aware\nbrowser UI; /cmd stimulator)"
     class: ui
@@ -173,6 +178,8 @@ scmino.antennaselect -> bus: "cmd → hf/ant-switch;\nfollow → hf/ant-ctrl, hf
 scmino.powerseq <-> bus: "orchestrates\npower/shack-pc-mains, power/psu-13v8,\nhf/switch, power/antennas, hf/pa-arm\n(+ WOL / power/shack-pc sleep)\n→ hf/power-seq"
 scmino.beamsteer <-> bus: "hf/beam-steer;\ncmd → hf/rotator, hf/ant-ctrl"
 scmino.antmode <-> bus: "hf/ant-mode (lock read by bridges,\nantennaselect, beamsteer, powerseq);\nborrows power/antennas"
+scmino.stationlog -> bus: "hf/station-log (+ /working, /event)"
+bwpc.loggers -> scmino.stationlog: "DXLog lookupinfo UDP :12060\nLog4OM CALLSIGN UDP :2249"
 scmino.testui <-> bus: "subscribe muehle/#\npublish /cmd"
 scmino.hfweb <-> bus: "WebSocket → MQTT\n(browser clients)"
 scmino.portal <- bus: "subscribe muehle/#\n(passive)"
@@ -217,10 +224,6 @@ bridges: {
   }
   satbridge: {
     label: "oscarwatch-sattrack-bridge\nOscarWatch Satellite link (websocket)\nread-only"
-    class: bridge
-  }
-  spots: {
-    label: "logger-spot-bridge\nDXLog/Log4OM (UDP broadcasts)\noperator-keyed station feed"
     class: bridge
   }
 }
@@ -308,7 +311,6 @@ bridges.atr1k -> bus: "muehle/hf/tuner"
 bridges.shelly -> bus: "muehle/power/psu-13v8\nmuehle/power/antennas\nmuehle/power/shack-pc-mains"
 bridges.icom9700 -> bus: "muehle/uhf/radio"
 bridges.satbridge -> bus: "muehle/uhf/sat-track"
-bridges.spots -> bus: "muehle/hf/spots"
 shari.spid -> bus: "muehle/uhf/az-rotator\nmuehle/uhf/el-rotator"
 bwpc.winpc -> bus: "muehle/power/shack-pc"
 firmware.antswitch -> bus: "muehle/hf/ant-switch"
@@ -337,7 +339,6 @@ bridges.icom9700 -> scmino.rigctld: "park_radio"
 shari.spid -> devices.spidaz: "serial (Rot1Prog)"
 shari.spid -> devices.gs500: "serial (GS-232B)"
 bridges.satbridge -> bwpc.oscarwatch: "ws://192.168.1.197:7373/"
-bridges.spots -> bwpc.loggers: "UDP broadcasts (listen)"
 bwpc.winpc -> devices.bwpchw: "sleep (S3)"
 scmino.powerseq -> devices.bwpchw: "Wake-on-LAN"
 

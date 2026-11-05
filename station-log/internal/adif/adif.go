@@ -5,6 +5,7 @@
 package adif
 
 import (
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -75,4 +76,23 @@ func indexFold(s, sub string) int {
 		}
 	}
 	return -1
+}
+
+// Format writes one record as ADIF text ending in <EOR>, fields sorted by
+// name, lengths in bytes (what Parse reads back). Empty values are left out.
+func Format(r Record) string {
+	names := make([]string, 0, len(r))
+	for k, v := range r {
+		if v != "" {
+			names = append(names, k)
+		}
+	}
+	sort.Strings(names)
+	var b strings.Builder
+	for _, k := range names {
+		v := r[k]
+		b.WriteString("<" + k + ":" + strconv.Itoa(len(v)) + ">" + v + " ")
+	}
+	b.WriteString("<EOR>\n")
+	return b.String()
 }

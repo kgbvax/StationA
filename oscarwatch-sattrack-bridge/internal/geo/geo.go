@@ -9,7 +9,7 @@
 // added; satellite ECEF → geodetic. LookAngles is the inverse (used by the
 // tests to build ground truth, and handy for sanity checks).
 //
-// Also carries the Maidenhead decoder (a copy of logger-spot-bridge's — Go's
+// Also carries the Maidenhead decoder (a copy of the former logger-spot-bridge's — Go's
 // internal/ rule forbids importing it across modules). Pure math, no I/O.
 package geo
 

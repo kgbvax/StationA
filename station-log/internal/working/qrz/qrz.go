@@ -3,7 +3,7 @@
 // Package qrz resolves callsigns to position and identity via the QRZ.com
 // XML API (xmldata.qrz.com), with a session-key login and a persistent disk
 // cache. It exists because Log4OM's outbound CALLSIGN datagram is the bare
-// callsign (see internal/log4om) — the bridge resolves the operator-keyed
+// callsign (see internal/working/callsign) — the bridge resolves the operator-keyed
 // call here instead of relying on the logger to know where the station is.
 //
 // Wire contract (https://www.qrz.com/docs/xml/current_spec.html): login with
@@ -208,14 +208,24 @@ func (c *Client) setSession(key string) {
 	c.mu.Unlock()
 }
 
+// stripURL unwraps a *url.Error to its cause. The request URL carries the
+// password (login) or the session key, and *url.Error quotes it in Error().
+func stripURL(err error) error {
+	var ue *url.Error
+	if errors.As(err, &ue) {
+		return ue.Err
+	}
+	return err
+}
+
 func (c *Client) get(ctx context.Context, params string) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+params, nil)
 	if err != nil {
-		return nil, fmt.Errorf("qrz: build request: %w", err)
+		return nil, fmt.Errorf("qrz: build request: %w", stripURL(err))
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("qrz: %w", err)
+		return nil, fmt.Errorf("qrz: %w", stripURL(err))
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {

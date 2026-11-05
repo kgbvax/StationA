@@ -4,8 +4,10 @@ station-log is the station's **QSO record** (logic slot `muehle/hf/station-log`,
 SQLite log that takes QSOs in by **ADIF import with automatic duplicate merge** and answers "worked /
 confirmed" for every consumer (first: chase-queue, which builds its log view from it). It has no device and
 runs on scmino. Target architecture and where it sits: `../docs/chasing-stations-architecture.md` (§2.2).
-Contract: `docs/station-log-mqtt-api.md`. How it is kept in sync with the loggers is **out of scope**; it is
-fed by files, `POST /import` and the optional Log4OM UDP feeder.
+Contract: `docs/station-log-mqtt-api.md`. How it is kept in sync with the loggers is **out of scope**; an optional two-way Wavelog sync exists (below); it is
+fed by files, `POST /import` and the optional Log4OM UDP feeder. It also publishes the **currently working
+station** (the call keyed in DXLog/Log4OM, resolved to a map position and beam bearing) on the retained sibling
+topic `muehle/hf/station-log/working`; this absorbed logger-spot-bridge (slot `muehle/hf/spots`).
 
 ## What it decides
 
@@ -40,6 +42,8 @@ fed by files, `POST /import` and the optional Log4OM UDP feeder.
 | `internal/httpapi` | `POST /import`, `GET /healthz /v1/stats /v1/worked /v1/qsos`, `allow_from` guard |
 | `internal/watch` | ADIF drop-directory feeder (`[watch]`): lists `*.adi`/`*.adif`, imports unseen files (name+size+mtime in settings `watch_imported`) through the importer, `/state.watch` |
 | `internal/log4om` | ADIF_MESSAGE UDP listener (datagram text -> importer) |
+| `internal/working` | working-station feed: `Feed` (liveness, jobs-worker publishing), `Resolver`, UDP `Listener`, `CanonicalMode`/`NormalizeBand`; subpackages `n1mm` (DXLog lookupinfo), `callsign` (Log4OM CALLSIGN), `geo`, `qrz` (+ disk cache), copied from logger-spot-bridge |
+| `internal/wavelog` | Wavelog two-way sync (`[wavelog]`, off by default): `Client` (JSON POST, key in body), `Syncer` (pull cursor, push ledger, backoff, Streak), `BuildADIF` |
 | `internal/app` | MQTT slot, jobs worker for events, state publisher, wiring |
 | `internal/config` | TOML + env (`STATION_LOG_MQTT_PASSWORD`) |
 
@@ -67,6 +71,52 @@ fed by files, `POST /import` and the optional Log4OM UDP feeder.
   the directory (`ProtectSystem`/`ReadWritePaths` do not matter for reading; check `ProtectHome`). A missing
   directory is a Warn, not fatal. Deploy only seeds `config.example.toml` once; an existing config needs the
   section added by hand.
+- **Working-station feed** (`[working]`, off without a `[[working.listener]]`; contract `docs/station-log-mqtt-api.md`
+  §3a). Behaviour kept from logger-spot-bridge: every datagram republishes with a fresh ts (no dedup on the
+  selection path); an empty `lookupinfo` call clears, `contactinfo` is not a clear; a QRZ failure or stall
+  never blocks publication (bounded to 3x the request timeout, runs on the feed's own worker); DXLog az+dist beats
+  a QRZ position; (0,0) is the no-coordinates sentinel; `device_online` is false until the first datagram and
+  drops after `stale_after`. Handlers (UDP, paho) only decode and enqueue; the feed has its OWN queue + `RunJobs` worker (`wjobs`), separate from the QSO event worker, so a big import or a QRZ stall cannot starve the other. The
+  document lives on its own topic so keystrokes never churn `/state`; `/state.working` has no call in it. A
+  listener that cannot bind or read is a `/state` problem and not fatal; it retries with capped backoff (1 s..30 s, one Warn per outage) and the problem clears on success; datagrams from hosts outside `allow_from` are Warned once per source and counted in `/state.working.rejected`; `allow_from` is mandatory. Default ports
+  keep the old loggers' settings valid (DXLog 12060, Log4OM CALLSIGN 2249); stop logger-spot-bridge first
+  (EADDRINUSE). A bare call is placed from `qsos.grid` of that call before QRZ is asked. Secret:
+  `STATION_LOG_QRZ_PASSWORD` (env file, never TOML/log; it rides in the QRZ request URL, so the qrz package unwraps `*url.Error` from every error); cache `<data_dir>/qrz-cache.json`. No Log4OM clear
+  signal exists: the console ages the marker out by `selected.ts`. Band uses `internal/band` (so 30 m/6 m/VHF
+  have names, 60 m is 5.06-5.45 MHz) plus `gen` for the HF gap; modes are the console's canonical six, not
+  `mode_class`.
+- **Wavelog sync** (`[wavelog] direction = off|pull|push|both`; contract `docs/station-log-mqtt-api.md` §3b). **The
+  Wavelog API details (endpoints `/index.php/api/get_contacts_adif` and `/index.php/api/qso`, JSON field names
+  `key`/`station_id`/`fetchfromid`/`limit`/`adif`/`lastfetchedid`/`exported_qsos`, `station_profile_id`/`type`/`string`,
+  duplicate reported inside a 200 body, `/api/qso` never updating a QSO) are from memory and unverified against a
+  real instance.** `internal/wavelog/sync_test.go` lists every assumption; run a pull-only first against the real
+  instance and check before enabling push. Rules: one goroutine, never inside the importer lock or an HTTP handler
+  (a Wavelog outage cannot block imports); first cycle waits for the MQTT link. **Pull** per `[[wavelog.profile]]`
+  (`own_call` -> `station_profile_id`, also the default own call for ADIF without `STATION_CALLSIGN`) goes through the
+  importer with source `wavelog`, never `replace_source`; the cursor (settings `wavelog_cursor_<profile>`) moves only
+  after a page was imported; a full pull from id 0 runs at first enable and every `full_resync_hours` (confirmations
+  arrive on old rows). **Push** takes candidates from a store query (not events; a Kick after logger events only wakes
+  the loop, debounced 10 s): own call has a profile, QSO time >= `push_since` (default = first-enable time, kept in
+  settings `wavelog_push_since`, so history is not bulk-pushed), a source matches `push_sources`, **no `wavelog` row in
+  `qso_sources`** (structural loop guard: pulled or merged-with-Wavelog QSOs are never pushed), no `wavelog_push` row.
+  The ledger holds a fingerprint; `repush_changes` re-pushes a changed QSO but a real Wavelog probably refuses it as
+  duplicate. Batches of `batch_size` records, falling back to one request per record; a "Duplicate" answer counts as
+  pushed; a refused record is retried up to 5 times, then `push_failed` until its fingerprint changes; 401/403 or an
+  invalid key backs off 15 min at once. `qso_raw` keeps the first non-Wavelog ADIF record of a QSO so a push keeps
+  RST/name/comment; a QSO imported before v3 has none and goes out struct-only (re-import the original file to fill
+  it). `store.WeakSources` (`wavelog`): its DXCC/zones/state/references only fill gaps, flags still OR in. Deletes are
+  not propagated either way. Backoff 30 s doubling to 15 min with jitter, `Retry-After` honoured, one Warn per
+  outage (`logging.Streak`), `/state.problems`. Secret `STATION_LOG_WAVELOG_KEY` (env only; response text echoed into
+  errors is truncated and key-redacted); https required except for loopback/private hosts; redirects not followed.
+  Failure handling: a 200 body with `status` failed/error, or a pull body with neither `adif` nor `exported_qsos`, or a
+  push body without `status`, is an error (never a successful pull: `last_pull_at` and the full-resync mark advance only
+  on success). Only a non-2xx whose JSON body carries a `status` (Wavelog's per-record refusal) counts an attempt
+  against a QSO; every other non-2xx (404/405/408/413, HTML 400, ...) is an endpoint error: backoff, no attempt.
+  `Retry-After` accepts seconds or an HTTP date. Pull and push run per profile independently (errors are joined for
+  `/state`); a logger kick is skipped while backing off. QSOs at 5 attempts get new ones after 24 h
+  (`wavelog_attempts_reset_at`) or when the profile map changes (`wavelog_profiles_hash`). `wavelog_url_hash` ties
+  cursors, full-resync marks and the push ledger to the instance URL: a changed URL resets them with a Warn and
+  `/state.wavelog.note`. An unreadable `wavelog_push_since` is re-initialised to now with a Warn, never to zero.
 - **Not done (roadmap item 2, later):** the Club Log confirmation matrix as a feeder (the `club_log` flag exists
   and is set from `CLUBLOG_QSO_DOWNLOAD_STATUS=Y` in ADIF only), an ADIF POST feeder from Log4OM itself,
   chase-queue's log view reading `/v1/worked` + events, stationportal inventory entry (add
@@ -83,4 +133,5 @@ ssh io@192.168.1.178 'journalctl -u station-log -f'
 ```
 
 Config: `/etc/station-log/config.toml` (0600, seed-once; see `config.example.toml`). Port 8096 (HTTP) and, if
-enabled, UDP 2341 (Log4OM; chase-queue's own listener uses 2340).
+enabled, UDP 2341 (Log4OM; chase-queue's own listener uses 2340) and the `[working]` listeners (12060 DXLog, 2249
+Log4OM CALLSIGN; chase-queue's contest feed needs DXLog's second target on 12061).

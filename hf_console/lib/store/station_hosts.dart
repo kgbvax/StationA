@@ -36,7 +36,6 @@ const slotHosts = <String, SlotHost>{
   'muehle/hf/ant-mode': SlotHost('antmode', 'scmino'),
   'muehle/hf/power-seq': SlotHost('powerseq', 'scmino'),
   'muehle/hf/discovery': SlotHost('hadiscovery', 'scmino'),
-  'muehle/hf/spots': SlotHost('logger-spot-bridge', 'scmino'),
   'muehle/hf/chase': SlotHost('chase-queue', 'scmino'),
   'muehle/hf/station-log': SlotHost('station-log', 'scmino'),
   'muehle/uhf/radio': SlotHost('icom9700-radio-bridge', 'scmino'),

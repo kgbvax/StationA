@@ -45,8 +45,9 @@ subscribing to each other's state, never by calling one another.
 - **PA safety and remote-on** — the M5 Stamp PLC (m5stamp-hf-ctrl) drives the
   PA/TRX remote-on relays and the fail-safe-open PA arm relay, which closes only
   while every interlock gate is clear.
-- **Logger spot feed** — logger-spot-bridge publishes the operator-keyed
-  station from DXLog/Log4OM on `hf/spots`.
+- **Working-station feed** — station-log publishes the operator-keyed
+  station from DXLog/Log4OM on `hf/station-log/working` (it replaced the retired
+  logger-spot-bridge / `hf/spots`) and syncs the log with Wavelog both ways.
 - **UHF satellite operation** — az/el rotators (rotctld/PstRotator), the
   OscarWatch tracking feed, IC-9700 RX audio (serial CI-V telemetry supported, disabled on scmino), X-Quad
   polarization.
@@ -94,7 +95,6 @@ routing among them is `ant-switch` (actuator) driven by `antenna-select` (policy
 | `hf/pa` | acom1200s-pa-bridge | ACOM 1200S PA bridge (operate/standby, band; `power` is telemetry only) | Serial (USB) |
 | `hf/rotator` | wrc-rotator-bridge | HF rotator (Yaesu G-450DC via AF6SA WRC) | WebSocket |
 | `hf/tuner` | atr1k-tuner-bridge | ATR-1000 ATU bridge (in-line / bypass, tune) | Wi-Fi (binary WebSocket) |
-| `hf/spots` | logger-spot-bridge | operator-keyed station feed from the shack logger (call, position, beam bearing) | LAN UDP (DXLog / Log4OM) |
 | `hf/beam-steer` | beamsteer | smart rotation: logger PstRotator UDP emulator → rotator + Ultrabeam direction (logic) | UDP :12050 |
 | `hf/ant-mode` | antmode | antenna mode: storm / maintenance lock for the Ultrabeam and HF rotator (logic) | — |
 | `hf/power-seq` | powerseq | startup / shutdown sequencer, idle standby and shutdown (logic) | — |

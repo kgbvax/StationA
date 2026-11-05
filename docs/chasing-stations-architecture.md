@@ -30,7 +30,7 @@ station's loggers in sync, are outside it.
 | **DX clusters** (1..n) | Sources of human spots. RBN skimmer spots are optional per cluster. **Now: one cluster, Log4OM NG's internal cluster** (telnet relay on bwpc `192.168.1.197:23`). | — |
 | **bmrec** (outside this repo) | Detects stations calling CQ and lets the operator **qualify** candidates on its HF CQ page. Only qualified rows (or rows with high confidence) are available stations. bmrec's page stays: it is the qualification tool, not a second chase view. | detection, qualification |
 | **Loggers** (Log4OM primary; DXLog, N1MM, WSJT-X, …) | Where QSOs are logged. They are sources for `station-log` and targets of the call that chaseq-ui sends. No domain component depends on one specific logger. | the operator's logs |
-| **station-log** (new component) | The station's QSO record for this domain: a local log database. It takes QSOs in by **ADIF import with automatic duplicate merge** (v1), and later by feeders. It answers "worked / confirmed" for every consumer. How it is kept in sync with the loggers is **out of scope of this domain**. | QSOs, confirmations, own callsigns |
+| **station-log** (new component) | The station's QSO record for this domain: a local log database. It takes QSOs in by **ADIF import with automatic duplicate merge** (v1), and later by feeders. It answers "worked / confirmed" for every consumer. How it is kept in sync with the loggers is **out of scope of this domain**. It also owns the working-station feed (`hf/station-log/working`) and the two-way Wavelog sync. | QSOs, confirmations, own callsigns |
 | **chase-queue** (`muehle/hf/chase`) | Takes in available stations (cluster spots + qualified bmrec rows), the log view from station-log, award definitions, buddies and QRZ.com data. Decides which stations are needed **for which award**, ranks them, and publishes one self-contained ranked list. It keeps the skip/undo state. | award evaluation, ranking, skip/undo |
 | **chaseq-ui** (bwpc) | Shows chase-queue's ranked list. Filters locally (band, needed-only, …). **Activate** a row = QSY the radio + put the call into the logger(s). Sends skip/undo to chase-queue. It does no joining, valuing or ranking of its own. | view filters |
 
@@ -70,6 +70,13 @@ source) applies to **station-log**, not to chase-queue.
 - **Feeders** (later, outside the domain's decision logic): Log4OM `ADIF_MESSAGE` UDP and the Club Log
   confirmation matrix move here from chase-queue, and Log4OM full ADIF file / ADIF POST (ideation #2) can follow.
   Each feeder is an import path into the same store.
+- **Working-station feed (added 2026-11-05).** station-log also owns the "currently working station" feed that
+  the retired logger-spot-bridge (`muehle/hf/spots`) carried: the station keyed in DXLog (N1MM `lookupinfo`, UDP
+  12060) or Log4OM (`CALLSIGN`, UDP 2249), resolved to position and beam bearing, published as the retained
+  sibling topic `muehle/hf/station-log/working` (`{ts, device_online, selected?}`). It is a consumer-facing feed
+  for hf_console, not an input to the chase queue's decisions.
+- **Wavelog sync (added 2026-11-05).** station-log syncs the log with Wavelog in both directions; the local store
+  stays the ground truth and the sync merges through the same duplicate-merge path as an ADIF import.
 - Slot `muehle/hf/station-log`, role `log-store` (fixed 2026-11-03). HTTP on `127.0.0.1:8096`; contract in
   `station-log/docs/station-log-mqtt-api.md`.
 

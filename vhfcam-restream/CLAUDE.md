@@ -123,7 +123,7 @@ load ~+0.8; keep the HD profile clean — 1080p software x264 is not budgeted).
 - paho conventions apply: handlers Enqueue (never publish inline),
   ctx-aware connect via `shared/mqtt`.
 - Later phases (planned, not built): phase 2 = Go-rendered overlay PNG piped
-  to ffmpeg for a minimap + worked-station (from `muehle/hf/spots`) + sat
+  to ffmpeg for a minimap + worked-station (from `muehle/hf/station-log/working`) + sat
   subpoint via SGP4; phase 3 = RX/TX audio via an ALSA line tap (hardware).
 
 ## Sinks

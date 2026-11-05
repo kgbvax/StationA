@@ -25,3 +25,11 @@ func TestParseInvalidUTF8Header(t *testing.T) {
 		t.Fatal("cut-off tail not reported")
 	}
 }
+
+func TestFormatRoundTrip(t *testing.T) {
+	in := Record{"CALL": "DL1AB", "COMMENT": "héllo <x>", "EMPTY": ""}
+	out := Parse(Format(in))
+	if len(out) != 1 || out[0]["CALL"] != "DL1AB" || out[0]["COMMENT"] != "héllo <x>" || len(out[0]) != 2 {
+		t.Fatalf("%v", out)
+	}
+}

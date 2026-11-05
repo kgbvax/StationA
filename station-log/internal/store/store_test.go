@@ -139,3 +139,78 @@ func TestMergeSameSourceOnlyFillsOtherSourceCorrects(t *testing.T) {
 		t.Fatalf("other source did not correct %+v", q)
 	}
 }
+
+func TestGridForCall(t *testing.T) {
+	s := open(t)
+	t0 := time.Date(2026, 11, 1, 10, 0, 0, 0, time.UTC)
+	a := q("K1ABC", t0)
+	a.Grid = "FN42"
+	s.Upsert(a, time.Minute)
+	b := q("K1ABC", t0.Add(time.Hour))
+	b.Grid = "FN42AB"
+	s.Upsert(b, time.Minute)
+	s.Upsert(q("W2XYZ", t0), time.Minute)
+	if g, err := s.GridForCall(" k1abc "); err != nil || g != "FN42AB" {
+		t.Fatalf("%q %v", g, err)
+	}
+	if g, err := s.GridForCall("W2XYZ"); err != nil || g != "" {
+		t.Fatalf("no grid: %q %v", g, err)
+	}
+	if g, err := s.GridForCall("NOBODY"); err != nil || g != "" {
+		t.Fatalf("unknown: %q %v", g, err)
+	}
+}
+
+func TestWeakSourceFillsButNeverOverwrites(t *testing.T) {
+	s := open(t)
+	a := q("K1ABC", t0)
+	a.DXCC, a.State, a.CQZone = 291, "MA", 5
+	if _, err := s.Upsert(a, 5*time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	in := q("K1ABC", t0)
+	in.Source, in.DXCC, in.State, in.CQZone, in.ITUZone, in.LoTWRcvd, in.Grid = "wavelog", 110, "NY", 4, 8, true, "FN42aa"
+	r, err := s.Upsert(in, 5*time.Minute)
+	if err != nil || r.Action != ActionMerged {
+		t.Fatalf("%+v %v", r, err)
+	}
+	g := r.QSO
+	if g.DXCC != 291 || g.State != "MA" || g.CQZone != 5 {
+		t.Fatalf("wavelog overwrote logger values: %+v", g)
+	}
+	if g.ITUZone != 8 || !g.LoTWRcvd || g.Grid != "FN42aa" {
+		t.Fatalf("gaps, flags and a longer grid still count: %+v", g)
+	}
+	// a logger value still corrects a wavelog-first QSO
+	b := q("K2XYZ", t0)
+	b.Source, b.DXCC = "wavelog", 110
+	s.Upsert(b, 5*time.Minute)
+	c := q("K2XYZ", t0)
+	c.DXCC = 291
+	r, _ = s.Upsert(c, 5*time.Minute)
+	if r.QSO.DXCC != 291 {
+		t.Fatalf("%+v", r.QSO)
+	}
+}
+
+func TestPushLedgerCascadesOnDelete(t *testing.T) {
+	s := open(t)
+	r, _ := s.Upsert(q("K1ABC", t0), 5*time.Minute)
+	if err := s.MarkPushed(r.QSO.ID, "1", "fp", ""); err != nil {
+		t.Fatal(err)
+	}
+	tx, _ := s.Begin()
+	tx.SaveRaw(r.QSO.ID, "t", "<CALL:5>K1ABC<EOR>")
+	if _, err := tx.Delete(r.QSO.ID); err != nil {
+		t.Fatal(err)
+	}
+	tx.Commit()
+	if n, _ := s.PushedCount("1"); n != 0 {
+		t.Fatalf("ledger rows left: %d", n)
+	}
+	var raw int
+	s.db.QueryRow(`SELECT COUNT(*) FROM qso_raw`).Scan(&raw)
+	if raw != 0 {
+		t.Fatal("raw left")
+	}
+}

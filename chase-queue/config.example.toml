@@ -22,7 +22,7 @@ user   = "hf"                     # the scmino broker requires a login; password
 listen = "127.0.0.1:8095"         # contest file upload and health, loopback only
 
 # DXLog.net's UDP QSO broadcast, for contests. 12060 is taken by
-# logger-spot-bridge on scmino: give DXLog a second target on this port.
+# station-log on scmino (its working-station feed): give DXLog a second target on this port.
 # [contest]
 # listen     = "0.0.0.0:12061"
 # allow_from = ["192.168.1.197"]   # the logging PC (IPs or CIDRs); required

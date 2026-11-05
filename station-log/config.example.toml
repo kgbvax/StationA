@@ -43,5 +43,55 @@ listen = "127.0.0.1:8096"         # POST /import and the read API
 # interval_seconds = 30
 # source           = "adif-drop"
 
+# Currently working station (replaces logger-spot-bridge / slot hf/spots): the
+# station keyed in the shack logger, resolved to a map position and beam
+# bearing, retained on muehle/hf/station-log/working (same document the old
+# hf/spots /state carried). Off while there is no [[working.listener]].
+# Seed-once: an existing config needs this section added by hand. Every
+# listener needs allow_from (the ports are LAN-facing). A listener that cannot
+# bind (port still held by the old bridge) is a /state problem, not fatal.
+# [working]
+# station_locator = "JO32WE"   # the shack QTH the loggers use: DXLog az+dist -> pin
+# stale_after     = "10m"      # UDP silence after which device_online drops
+#
+# [[working.listener]]         # DXLog / N1MM: Options > Broadcast, lookupinfo
+# name       = "dxlog"
+# kind       = "n1mm"
+# listen     = "0.0.0.0:12060"
+# allow_from = ["192.168.1.197"]
+#
+# [[working.listener]]         # Log4OM: Connections > UDP outbound, type CALLSIGN (the bare call)
+# name       = "log4om"
+# kind       = "log4om"
+# listen     = "0.0.0.0:2249"
+# allow_from = ["192.168.1.197"]
+#
+# QRZ.com name/country/city for every keyed call and a position when the
+# logger and the own log (qsos.grid of a worked call) have none. Password:
+# STATION_LOG_QRZ_PASSWORD in the 0600 env file. Cache: <data_dir>/qrz-cache.json.
+# [working.qrz]
+# user             = "DL9ET"
+# cache_days       = 30
+# negative_minutes = 10
+
+# Two-way sync with a Wavelog instance (off by default). The API key is
+# STATION_LOG_WAVELOG_KEY in the 0600 env file, never here. The API details are
+# from memory and unverified: start with direction = "pull" against the real
+# instance and check the result before "push" or "both".
+# [wavelog]
+# direction         = "off"                      # off | pull | push | both
+# url               = "https://wavelog.example"  # base URL without /index.php; plain http only for private hosts
+# interval_seconds  = 300                        # >= 60
+# full_resync_hours = 24                         # full pull (catches confirmations on old rows)
+# batch_size        = 50                         # records per push request
+# pull_limit        = 500                        # records per pull page
+# push_sources      = ["log4om", "adif"]         # source-name prefixes eligible for push
+# push_since        = ""                         # RFC 3339 date; empty = the time sync was first enabled (history is NOT bulk-pushed)
+# repush_changes    = false                      # re-push a QSO that gained fields (a real Wavelog probably rejects it as duplicate)
+# ca_file           = ""                         # extra CA bundle for a private CA
+# [[wavelog.profile]]
+# own_call           = "DL9ET"
+# station_profile_id = "1"
+
 [log]
 level = "info"

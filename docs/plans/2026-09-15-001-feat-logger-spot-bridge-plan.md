@@ -1,3 +1,5 @@
+> Superseded: logger-spot-bridge removed, see station-log.
+
 # feat(logger-spot-bridge): operator's selected station on the console maps
 
 **Date:** 2026-09-15 · **Status:** implemented on branch `feat/logger-spot-bridge`

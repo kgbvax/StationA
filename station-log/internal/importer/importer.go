@@ -57,6 +57,9 @@ type Options struct {
 	// file does not mention (matched or added); a QSO other sources also
 	// contributed to stays.
 	ReplaceSource bool
+	// DefaultOwn overrides the importer's default own call for this import
+	// (a Wavelog station profile whose ADIF lacks STATION_CALLSIGN).
+	DefaultOwn string
 	// Force lets ReplaceSource delete more than half of the source.
 	Force bool
 }
@@ -110,6 +113,10 @@ func (im *Importer) Import(ctx context.Context, text string, opt Options) (Repor
 	if im.Now == nil {
 		im.Now = time.Now
 	}
+	defOwn := im.DefaultOwn
+	if opt.DefaultOwn != "" {
+		defOwn = opt.DefaultOwn
+	}
 	recs, truncated := adif.ParseChecked(text)
 	rep := Report{Records: len(recs), Errors: []string{}}
 	tx, err := im.Store.Begin()
@@ -125,7 +132,7 @@ func (im *Importer) Import(ctx context.Context, text string, opt Options) (Repor
 				return rep, err
 			}
 		}
-		q, err := FromRecord(r, im.DefaultOwn, opt.Source)
+		q, err := FromRecord(r, defOwn, opt.Source)
 		if err != nil {
 			rep.SkippedInvalid++
 			if len(rep.Errors) < maxErrors {
@@ -139,6 +146,13 @@ func (im *Importer) Import(ctx context.Context, text string, opt Options) (Repor
 			return rep, fmt.Errorf("record %d: %w", i+1, err)
 		}
 		touched[res.QSO.ID] = true
+		if !store.WeakSources[opt.Source] {
+			// kept for a later push to Wavelog; the first record of a QSO wins
+			if err := tx.SaveRaw(res.QSO.ID, opt.Source, adif.Format(r)); err != nil {
+				tx.Rollback()
+				return rep, err
+			}
+		}
 		switch res.Action {
 		case store.ActionAdded:
 			rep.Added++

@@ -161,10 +161,10 @@ class _CompassBody extends StatelessWidget {
         : 'forward';
 
     // The station the operator keyed in the shack logger (DXLog/Log4OM),
-    // published by logger-spot-bridge on muehle/hf/spots. Rendered as a pin
+    // published by station-log on muehle/hf/station-log/working. Rendered as a pin
     // (coordinates) or a bearing ray (azimuth only) plus a bottom-left
     // read-out chip — the "is turning the beam worth it" aid.
-    final selected = SelectedSpot.fromSelected(store.stateValue('muehle/hf/spots', 'selected'));
+    final selected = SelectedSpot.fromSelected(store.workingSelected);
     final nowMs = DateTime.now().millisecondsSinceEpoch;
     final selectedAge = selected?.ageSecondsAt(nowMs) ?? 0;
     final selectedLive = selected != null && stalenessFor(selectedAge) != SelectedStaleness.expired;

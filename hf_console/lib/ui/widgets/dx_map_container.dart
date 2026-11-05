@@ -129,7 +129,7 @@ class _DxMapContainerState extends State<DxMapContainer> {
     // selection not expired), the dragon parks on the chip's top edge instead
     // of its corner so the two don't collide.
     final chipVisible = _projection == DxProjection.azimuth &&
-        selectedChipVisible(store.stateValue('muehle/hf/spots', 'selected'),
+        selectedChipVisible(store.workingSelected,
             DateTime.now().millisecondsSinceEpoch);
     return Stack(
       fit: StackFit.expand,

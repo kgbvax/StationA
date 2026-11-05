@@ -63,8 +63,36 @@ func (s *Store) migrate() error {
 			return err
 		}
 	}
+	if version < 3 {
+		if _, err := s.db.Exec(schemaV3); err != nil {
+			return err
+		}
+		if _, err := s.db.Exec(`PRAGMA user_version=3`); err != nil {
+			return err
+		}
+	}
 	return nil
 }
+
+// v3: the first non-Wavelog ADIF record of a QSO (so a push to Wavelog keeps
+// RST, name, QTH and comments that the QSO struct does not hold) and the
+// ledger of what was pushed to Wavelog, per QSO and station profile.
+const schemaV3 = `
+CREATE TABLE IF NOT EXISTS qso_raw (
+    qso_id INTEGER PRIMARY KEY,
+    source TEXT NOT NULL,
+    adif   TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS wavelog_push (
+    qso_id      INTEGER NOT NULL,
+    profile_id  TEXT NOT NULL,
+    fingerprint TEXT NOT NULL DEFAULT '',
+    pushed_utc  TEXT NOT NULL DEFAULT '',
+    attempts    INTEGER NOT NULL DEFAULT 0,
+    last_error  TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (qso_id, profile_id)
+);
+`
 
 // v2: every source that contributed to a QSO (stored it or merged into it),
 // so replace_source removes a QSO only when the replaced source is the sole

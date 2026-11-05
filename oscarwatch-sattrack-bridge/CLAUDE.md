@@ -9,7 +9,7 @@ radio-corrected uplink/downlink frequencies and canonical modes. It also holds t
 **sub-satellite point** (lat/lng/alt), which the bridge derives from the look angle and
 the station QTH. Read-only: no `/cmd`.
 
-The slot is the sat-ops analogue of `muehle/hf/spots`. Consumers:
+The slot is the sat-ops analogue of the working-station feed (`muehle/hf/station-log/working`; formerly `muehle/hf/spots`). Consumers:
 - vhfcam-restream overlay (since 2026-10-07): burns `sat_name` + `range_km` and the
   radio-corrected `downlink_hz`/`uplink_hz` (as FREQ) into the data bar while
   `tracking`; recordings are named after the downlink.
@@ -41,7 +41,7 @@ Flags:
   - It tolerates unknown fields, and a `noradId` sent as a number.
 - `internal/geo`: WGS84 math.
   - `SubPoint` (look angle → geodetic) and `LookAngles` (its inverse).
-  - A Maidenhead decoder copied from logger-spot-bridge; `internal/` can't be imported
+  - A Maidenhead decoder copied from the since-removed logger-spot-bridge (station-log carries its own copy); `internal/` can't be imported
     across modules.
 - `internal/bridge`:
   - `Build(Input, observer, now) State`: the entire mapping, including canonical-mode
@@ -106,7 +106,7 @@ Flags:
    build as shari), which is replacing shari. deploy.sh seeds the station broker
    `tcp://192.168.1.178:1883` (user `hf`; the deploy-time seed was the HA broker `.50`, since superseded).
    - The env file's password was copied host-to-host from shari's
-     `logger-spot-bridge.env` (same `hf` account), never through a terminal.
+     the old logger-spot-bridge's `logger-spot-bridge.env` (same `hf` account), never through a terminal.
    - At deploy time OscarWatch was not listening: the dial to BWPC:7373 timed out,
      because Windows drops packets rather than refusing them. The slot therefore sat at
      `device_online:false`, retrying.

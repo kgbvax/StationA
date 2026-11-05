@@ -45,7 +45,8 @@ extension StationFixtures on BusStore {
     });
     _logic('muehle/hf/power-seq', {'phase': 'running', 'step': '', 'fault': ''});
     _logic('muehle/hf/discovery', {});
-    _logic('muehle/hf/spots', {});
+    _logic('muehle/hf/chase', {});
+    _logic('muehle/hf/station-log', {});
     applyStatus('muehle/uhf/radio', 'online');
     applyState('muehle/uhf/radio', {
       'device_online': false, 'session_state': 'idle', 'freq_hz': 145212500, 'mode': 'fm',

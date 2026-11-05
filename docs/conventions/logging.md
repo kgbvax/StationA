@@ -128,7 +128,7 @@ on the device, not to journald.
 ssh io@192.168.1.178 journalctl -u flexbridge -u ultrabridge -u acom1200s-pa-bridge \
   -u atr1k-tuner-bridge -u wrc-rotator-bridge -u shelly-power-bridge \
   -u antenna-select -u antmode -u beamsteer -u hadiscovery -u powerseq \
-  -u icom9700-radio-bridge -u rigctld-ic9700 -u logger-spot-bridge \
+  -u icom9700-radio-bridge -u rigctld-ic9700 -u station-log \
   -u oscarwatch-sattrack-bridge -u vhfcam-restream -u stationportal \
   -u testui -u hf-console-web -p warning -S -1h
 

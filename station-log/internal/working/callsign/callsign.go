@@ -1,4 +1,4 @@
-// Package log4om decodes Log4OM's outbound UDP datagrams.
+// Package callsign decodes Log4OM's outbound UDP datagrams.
 //
 // Log4OM v2's software-integration "connections" screen offers three outbound
 // service types (advanced guide, "Outbound services description"): ADIF
@@ -15,7 +15,7 @@
 // takes the plain-text path first and keeps an XML probe as a robustness
 // fallback for other/older shapes. Unmatched datagrams log their raw content
 // at debug so any future format drift is visible.
-package log4om
+package callsign
 
 import (
 	"bytes"
@@ -25,7 +25,7 @@ import (
 	"strconv"
 	"strings"
 
-	"logger-spot-bridge/internal/canon"
+	"station-log/internal/band"
 )
 
 // normalizeFreq decides the unit of a frequency value. The N1MM-compatible
@@ -35,11 +35,16 @@ import (
 // Hz; a value outside every band whose ×10 lands inside one is a 10 Hz-unit
 // count. Everything else is taken verbatim (the band field stays empty and
 // the console shows no band).
+func inBand(hz int64) bool {
+	_, ok := band.Of(float64(hz))
+	return ok
+}
+
 func normalizeFreq(n int64) int64 {
-	if canon.BandFor(n) != "" {
+	if inBand(n) {
 		return n
 	}
-	if canon.BandFor(n*10) != "" {
+	if inBand(n * 10) {
 		return n * 10
 	}
 	return n

@@ -1,8 +1,11 @@
 package store
 
 import (
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
+	"fmt"
 	"strconv"
 	"time"
 )
@@ -51,6 +54,20 @@ type QSO struct {
 	Source    string    `json:"source"`
 	Created   time.Time `json:"created"`
 	Updated   time.Time `json:"updated"`
+}
+
+// WeakSources are sources whose entity, zone, state and reference values only
+// fill gaps and never overwrite another source's (their confirmation flags and
+// a more precise grid still count).
+var WeakSources = map[string]bool{"wavelog": true}
+
+// Fingerprint hashes the fields a Merge can change, to tell whether a pushed
+// QSO gained something since.
+func (q QSO) Fingerprint() string {
+	h := sha256.Sum256([]byte(fmt.Sprintf("%v|%d|%s|%s|%s|%d|%s|%d|%d|%s|%s|%s|%s|%s|%t|%t|%t|%t",
+		q.At.UTC().Unix(), q.FreqHz, q.Mode, q.Submode, q.Grid, q.DXCC, q.State, q.CQZone, q.ITUZone,
+		q.SOTARef, q.WWFFRef, q.Sig, q.SigInfo, q.Band, q.QSLRcvd, q.LoTWRcvd, q.EQSLRcvd, q.ClubLog)))
+	return hex.EncodeToString(h[:])
 }
 
 // Event is what a write did to one QSO, for the event topic.
@@ -125,7 +142,9 @@ func (q *QSO) Merge(in QSO) bool {
 	// a re-import from the same source only fills gaps, so two entries of one QSO
 	// that disagree (zones, state) cannot flip the stored value on every import;
 	// another source's non-empty value is taken as the correction
-	over := in.Source != q.Source
+	// a weak source (Wavelog derives entity and zones from its own cty file)
+	// never corrects what a logger stored, it only fills gaps and adds flags
+	over := in.Source != q.Source && !WeakSources[in.Source]
 	set := func(dst *string, v string) {
 		if v != "" && (over || *dst == "") {
 			*dst = v
@@ -309,8 +328,10 @@ func (t *Tx) Delete(id string) (QSO, error) {
 	if _, err := t.tx.Exec(`DELETE FROM qsos WHERE id=?`, id); err != nil {
 		return QSO{}, err
 	}
-	if _, err := t.tx.Exec(`DELETE FROM qso_sources WHERE qso_id=?`, id); err != nil {
-		return QSO{}, err
+	for _, tbl := range []string{"qso_sources", "qso_raw", "wavelog_push"} {
+		if _, err := t.tx.Exec(`DELETE FROM `+tbl+` WHERE qso_id=?`, id); err != nil {
+			return QSO{}, err
+		}
 	}
 	return q, nil
 }

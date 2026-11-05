@@ -10,7 +10,7 @@ and `cmd/oscarwatch-sattrack-bridge/main.go`.
 
 The slot answers "which satellite is the station tracking, and where is it": the
 satellite OscarWatch has focused, its transponder, the live look angle from the
-station, and the sub-satellite point. It is the sat-ops analogue of `muehle/hf/spots`.
+station, and the sub-satellite point. It is the sat-ops analogue of the working-station feed `muehle/hf/station-log/working`.
 It is **read-only** (no `/cmd`).
 
 ---

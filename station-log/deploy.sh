@@ -42,6 +42,8 @@ trap 'rm -f "$SEED_ENV" "$UNIT_FILE"' EXIT
 {
   echo "# station-log EnvironmentFile (read by the systemd unit). Keep 0600."
   if [[ -n "$MQTT_PASSWORD" ]]; then echo "STATION_LOG_MQTT_PASSWORD='"$(esc "$MQTT_PASSWORD")"'"; else echo "# STATION_LOG_MQTT_PASSWORD=\"...\""; fi
+  echo "# STATION_LOG_WAVELOG_KEY=\"...\"   # only with [wavelog] direction != off; add by hand"
+  echo "# STATION_LOG_QRZ_PASSWORD=\"...\"   # only with [working.qrz] user (QRZ XML subscription); add by hand"
 } > "$SEED_ENV"
 
 echo ">> Building ${BINARY} for linux/arm64..."

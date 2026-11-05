@@ -152,7 +152,7 @@ This plan covers chase-queue v1 and the bmrec list that consumes it. The areas b
 
 - Club Log's matrix status values for "confirmed" are undocumented; verify them against the Club Log web chart with `-clublog-probe` before trusting DX ranking.
 - Downloading the Club Log log (callsigns worked, as opposed to entity confirmations) is not built yet; worked callsigns come from Log4OM until it is.
-- DXLog's broadcast needs a second target port, because logger-spot-bridge already binds UDP 12060 on scmino.
+- DXLog's broadcast needs a second target port, because station-log (which took over logger-spot-bridge's working-station feed) binds UDP 12060 on scmino.
 
 ### Sources / Research
 

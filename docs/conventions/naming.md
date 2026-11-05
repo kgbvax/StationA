@@ -51,7 +51,6 @@ A bridge that fronts one specific piece of hardware is named
 | Icom CI-V / RS-BA1 rigs (IC-9700 today, receive-only: RS-BA1 LAN session for RX audio only + read-only serial CI-V telemetry; the same protocol family covers other RS-BA1 Icoms) | `icom9700` | `icom9700-radio-bridge` |
 | OscarWatch satellite tracker (software source — its Satellite-link WebSocket) | `oscarwatch` | `oscarwatch-sattrack-bridge` |
 | SPID Rot1Prog az + ERC-M (GS-232B) el, one compound sat-ops mount | `spid-ercm` (compound devtag covering both fronted device families) | `spid-ercm-rotator-bridge` |
-| Shack logger UDP broadcasts (DXLog / Log4OM; N1MM-family `lookupinfo`) — software source | `logger` | `logger-spot-bridge` (slot `hf/spots`, /meta role `bandmap`) |
 | Windows shack PC (sleep/wake agent) | `winpc` | `winpc-power-bridge` (slot `power/shack-pc`, /meta role `pc-power`) |
 
 > **Software sources.** A bridge that fronts an application rather than hardware takes
@@ -160,5 +159,4 @@ number) per the rule above.
 | _(new)_ `icom9700-radio-bridge` | `icom9700-radio-bridge` | device (convention; Icom CI-V/RS-BA1 family; fronts `muehle/uhf/radio`; `ICOM9700_` env prefix is a recorded deviation, see the deviation notes under "Device bridges" above) |
 | _(new)_ `oscarwatch-sattrack-bridge` | `oscarwatch-sattrack-bridge` | software source (convention; OscarWatch Satellite link; fronts `muehle/uhf/sat-track`) |
 | _(new)_ `spid-ercm-rotator-bridge` | `spid-ercm-rotator-bridge` | device (fronts `uhf/az-rotator` + `uhf/el-rotator`) |
-| _(new)_ `logger-spot-bridge` | `logger-spot-bridge` | software source (fronts `hf/spots`) |
 | _(new)_ `winpc-power-bridge` | `winpc-power-bridge` | device agent on bwpc (fronts `power/shack-pc`; Task Scheduler, no systemd) |

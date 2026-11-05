@@ -102,7 +102,7 @@ void main() {
       store.setSatRotator('muehle/uhf/az-rotator', axis: 'az', pos: 175, target: 90);
       final now = DateTime.now().toUtc().toIso8601String();
       store.apply(
-          'muehle/hf/spots/state',
+          BusStore.workingTopic,
           jsonEncode({
             'ts': now,
             'device_online': true,

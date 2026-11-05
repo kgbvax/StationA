@@ -53,9 +53,10 @@ exact shape the station bus already handles.
   are deferred; their `/cmd` topics already exist, so they are a clean later add (§11). Loggers reach
   the UHF mount today directly through `spid-ercm-rotator-bridge`'s own listeners (§7). The
   HF rotator bearing path is already realized outside the log slot by `beamsteer` (§7).
-- **First adapter built:** `logger-spot-bridge` (DXLog/Log4OM UDP → `muehle/hf/spots`
-  `/state.selected`, §3). **Next (proposed):** WSJT-X/JTDX ingest and Wavelog/Log4OM
-  outbound. The neutral schema is kept general enough for contest-logger QSO logs
+- **First adapter built:** the working-station feed (DXLog/Log4OM UDP → retained
+  `muehle/hf/station-log/working`, §3), first as `logger-spot-bridge` (`muehle/hf/spots`), now
+  absorbed by `station-log`. **Realized since:** two-way Wavelog sync in `station-log`.
+  **Next (proposed):** WSJT-X/JTDX ingest. The neutral schema is kept general enough for contest-logger QSO logs
   (N1MM/DXLog), which come next.
 
 ---
@@ -80,9 +81,9 @@ This is the sanctioned "`position` reappears when operators share a station" cas
 `scmino` — because the ingest adapter runs next to the app it fronts (§8). That per-PC
 placement is *why* the slot is position-scoped.
 
-Exception in practice: `logger-spot-bridge` (`muehle/hf/spots`) runs on `scmino` and
-receives the loggers' UDP over the LAN (DXLog's subnet broadcast; Log4OM's CALLSIGN datagrams,
-whose outbound target must be the bridge host's port 2249, `scmino:2249` per `logger-spot-bridge/deploy.sh`) instead of a localhost port on
+Exception in practice: `station-log` (working-station feed, `muehle/hf/station-log/working`) runs on `scmino` and
+receives the loggers' UDP over the LAN (DXLog's N1MM `lookupinfo` on port 12060; Log4OM's CALLSIGN datagrams,
+whose outbound target must be `scmino:2249`) instead of a localhost port on
 the operator PC. The per-PC rule still applies to adapters that listen on a localhost port
 (e.g. the proposed WSJT-X bridge, §8).
 
@@ -93,11 +94,13 @@ Slots per operator seat:
 | `…/log` | `qso-log` | QSO event source + retained rollup (incl. running score) |
 | `…/spots` | `bandmap` | operator-keyed station (retained `/state.selected`, realized) + DX-spot event source `…/spots/event` (proposed, lower priority) |
 
-**Realized so far:** `muehle/hf/spots` (role `bandmap`, `logger-spot-bridge`; live since
-2026-09-15, on `scmino` since 2026-10-18) publishes the standard retained `/meta` and
-`/status` plus a retained `/state` `{ts, device_online, selected?}` (the station keyed in
-DXLog/Log4OM, resolved to position and beam bearing); no `/event` stream and no `/cmd`.
-Contract: `../logger-spot-bridge/docs/logger-spot-bridge-mqtt-api.md`.
+**Realized so far:** the operator-keyed station (role `bandmap`) is published by `station-log` as the
+retained sibling topic `muehle/hf/station-log/working`, a document `{ts, device_online, selected?}`
+(the station keyed in DXLog/Log4OM, resolved to position and beam bearing); no `/event` stream and no
+`/cmd`. It is not a slot of its own: liveness is station-log's `/status` plus `device_online` in the
+document. It replaced the retired `logger-spot-bridge` (slot `muehle/hf/spots`, live 2026-09-15 to
+2026-11), which was removed from the repo; its git history remains. Contract:
+`../station-log/docs/station-log-mqtt-api.md`.
 
 Consumers of all logs use a wildcard (`muehle/+/log/event` collapsed, or
 `muehle/+/+/log/event` with explicit positions). Recommend per-deployment consistency in
@@ -144,7 +147,7 @@ Proposed additions to core §4:
 
 - **Roles:** `qso-log` (a running log application's QSO event + rollup source),
   `bandmap` (the operator-keyed station as retained `/state.selected`, realized by
-  `logger-spot-bridge` and already listed in core §4; a DX-spot event source
+  `station-log` (`…/station-log/working`; core §4 still lists the role); a DX-spot event source
   `…/spots/event`, proposed). Future: `scoreboard` (a derived aggregator that
   merges multiple positions' score — §11).
 - **Capability keys:** `actions` (the QSO actions a source emits: `add`, `replace`,
@@ -291,7 +294,7 @@ future sources.
 
 Adapters are edge translators, exactly analogous to device bridges (core §3, "adapters live
 at the edge"), except the "device" is a software app on a socket and the adapter **runs on
-the operator's PC next to the app it fronts** (the realized `logger-spot-bridge` is the
+the operator's PC next to the app it fronts** (the realized `station-log` working feed is the
 exception, §3):
 
 - **Ingest adapters** own the position's `qso-log` slot and translate an app's native
@@ -310,14 +313,14 @@ bus. This turns the O(N²) point-to-point UDP mesh into O(N) hub-and-spoke, kill
 IP/port inventory (the bus address is fixed and self-describing), and adds
 reliability / late-join / fan-out — **with no change to the apps**.
 
-**Host/adapter placement** (proposed additions to the core §7.3 hosts-and-adapters table, which already lists `logger-spot-bridge`; the earlier placeholder row `Logging | subscriber, no slot | shari` was removed from §7.3 on 2026-10-23):
+**Host/adapter placement** (proposed additions to the core §7.3 hosts-and-adapters table, which lists `station-log`; the earlier placeholder row `Logging | subscriber, no slot | shari` was removed from §7.3 on 2026-10-23):
 
 | Adapter / service | Fronts | Host |
 |---|---|---|
 | WSJT-X log bridge (`wsjtx-log-bridge`) | `muehle/<station>/log` (`qso-log`) | operator PC (e.g. `bwpc`) |
 | Wavelog consumer (`wavelog-consumer`) | consumer of `…/log/event`, no slot | `scmino` |
 | Log4OM consumer (`log4om-consumer`) | consumer of `…/log/event`, no slot | `scmino` |
-| Logger spot bridge (`logger-spot-bridge`, realized) | `muehle/<station>/spots` (`bandmap`) | `scmino` |
+| Working-station feed (in `station-log`, realized) | `muehle/hf/station-log/working` (`bandmap`) | `scmino` |
 
 ---
 

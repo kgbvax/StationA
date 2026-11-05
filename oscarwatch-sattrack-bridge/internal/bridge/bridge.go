@@ -5,7 +5,7 @@
 // idle tracker off the wire.
 //
 // The slot answers "which satellite is the station tracking, and where is it"
-// — the sat-ops analogue of muehle/hf/spots. It is read-only (no /cmd).
+// — the sat-ops analogue of the working-station feed (muehle/hf/station-log/working). It is read-only (no /cmd).
 package bridge
 
 import (

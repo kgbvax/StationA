@@ -272,14 +272,14 @@ Seeded _hf() {
     ],
   });
   final now = DateTime.now().toUtc().toIso8601String();
-  s.store.applyState('muehle/hf/spots', {
+  s.store.apply(BusStore.workingTopic, {
     'ts': now,
     'device_online': true,
     'selected': {
       'call': 'JA1XYZ', 'name': 'Taro', 'band': '20m', 'mode': 'cw', 'lat': 35.6, 'lng': 139.7,
       'azimuth': 37.0, 'distance_km': 9050.0, 'source': 'dxlog', 'ts': now,
     },
-  });
+  }, true);
   return s;
 }
 

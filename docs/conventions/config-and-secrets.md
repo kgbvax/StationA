@@ -60,7 +60,7 @@ hadiscovery, hf-mqtt-capture, stationportal, testui and vhfcam-restream.
 `-debug` or `-check` in a few), and `applyEnv` applies `<PREFIX>_MQTT_*` environment
 overrides, so the precedence is **explicit flag > environment > config-file value >
 built-in default**. Used by flexbridge, acom1200s-pa-bridge, atr1k-tuner-bridge,
-icom9700-radio-bridge, logger-spot-bridge, oscarwatch-sattrack-bridge, powerseq,
+icom9700-radio-bridge, oscarwatch-sattrack-bridge, powerseq,
 shelly-power-bridge, spid-ercm-rotator-bridge, winpc-power-bridge and
 wrc-rotator-bridge.
 
@@ -109,8 +109,8 @@ SERVICE_MQTT_PASSWORD=s3cr3t
 The application reads `SERVICE_MQTT_PASSWORD` and overrides the config value.
 Used by acom1200s-pa-bridge, atr1k-tuner-bridge, flexbridge
 (`FLEXBRIDGE_MQTT_PASSWORD`), icom9700-radio-bridge (`ICOM9700_MQTT_PASSWORD`,
-`ICOM9700_CIV_PASSWORD`), logger-spot-bridge (`LOGGER_SPOT_BRIDGE_MQTT_PASSWORD`;
-`LOGGER_SPOT_BRIDGE_QRZ_PASSWORD` is env-only), oscarwatch-sattrack-bridge, powerseq,
+`ICOM9700_CIV_PASSWORD`), station-log (`STATION_LOG_MQTT_PASSWORD`;
+`STATION_LOG_QRZ_PASSWORD` and `STATION_LOG_WAVELOG_KEY` are env-only), oscarwatch-sattrack-bridge, powerseq,
 shelly-power-bridge, spid-ercm-rotator-bridge, stationportal, testui and
 wrc-rotator-bridge. spid-ercm-rotator-bridge and icom9700-radio-bridge reject a
 `password` key in the TOML; the others accept it as a fallback, and the env var wins
