@@ -102,6 +102,20 @@ func (f Filters) ToggleMode(class string) Filters {
 	return f
 }
 
+// OnlyMode returns f showing just one mode class; "all" shows every class.
+func (f Filters) OnlyMode(class string) Filters {
+	if class == "all" {
+		f.Modes = append([]string(nil), ModeClasses...)
+		sort.Strings(f.Modes)
+		return f
+	}
+	f.Modes = []string{class}
+	return f
+}
+
+// AllModes reports whether every mode class is active.
+func (f Filters) AllModes() bool { return len(f.ActiveModes()) == len(ModeClasses) }
+
 // Active reports whether any filter differs from the default (no band, award
 // or source filter, not needed-only, phone only).
 func (f Filters) Active() bool {

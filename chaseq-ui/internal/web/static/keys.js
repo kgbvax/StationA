@@ -19,7 +19,7 @@
       const list = chips(), i = list.indexOf(document.activeElement);
       if (e.key === 'ArrowRight') { list[Math.min(i + 1, list.length - 1)].focus(); e.preventDefault(); }
       else if (e.key === 'ArrowLeft') { list[Math.max(i - 1, 0)].focus(); e.preventDefault(); }
-      else if (e.key === ' ' || e.key === 'Enter') { toggle(document.activeElement); e.preventDefault(); }
+      else if (e.key === ' ' || e.key === 'Enter') { toggle(document.activeElement, e.shiftKey); e.preventDefault(); }
       else if (e.key === 'Escape') { document.getElementById('rows').focus(); e.preventDefault(); }
       return;
     }
@@ -33,11 +33,11 @@
     }
   });
 
-  function toggle(el) {
+  function toggle(el, add) {
     const d = el.dataset;
     if (d.lock !== undefined) return post('/filters?lock=' + d.lock);
     if (d.band) return el.getAttribute('aria-disabled') === 'true' ? undefined : post('/filters?band=' + encodeURIComponent(d.band));
-    if (d.mode) return post('/filters?mode=' + encodeURIComponent(d.mode));
+    if (d.mode) return post('/filters?mode=' + encodeURIComponent(d.mode) + (add ? '' : '&only=1'));
     if (d.award) return post('/filters?award=' + encodeURIComponent(d.award));
     if (d.source) return post('/filters?source=' + encodeURIComponent(d.source));
     if (d.needed !== undefined) return post('/filters?needed=' + d.needed);
@@ -48,7 +48,7 @@
     const chip = e.target.closest('.chip');
     // Safari does not focus a clicked button; focus it so the re-render restores focus to the chip
     // and a following Enter cannot reach /act (tuning the FLEX).
-    if (chip) { chip.focus(); toggle(chip); return; }
+    if (chip) { chip.focus(); toggle(chip, e.shiftKey || e.ctrlKey || e.metaKey); return; }
     const row = e.target.closest('.row');
     if (row) post('/act?row=' + row.dataset.row);
   });

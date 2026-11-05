@@ -12,7 +12,8 @@
   </div>
   <div class="group g-mode" role="group" aria-label="Mode">
     <span class="glabel">Mode</span>
-    {{range .ModeClasses}}<button type="button" class="chip modeclass{{if index $.ActiveModes .}} on{{end}}" data-mode="{{.}}" aria-pressed="{{if index $.ActiveModes .}}true{{else}}false{{end}}" title="mode class {{.}}">{{.}}</button>{{end}}
+    <button type="button" class="chip modeclass{{if .AllModes}} on{{end}}" data-mode="all" aria-pressed="{{if .AllModes}}true{{else}}false{{end}}" title="show every mode">all</button>
+    {{range .ModeClasses}}<button type="button" class="chip modeclass{{if and (index $.ActiveModes .) (not $.AllModes)}} on{{end}}" data-mode="{{.}}" aria-pressed="{{if and (index $.ActiveModes .) (not $.AllModes)}}true{{else}}false{{end}}" title="click: only {{.}}; shift-click: add or remove {{.}}">{{.}}</button>{{end}}
   </div>
   <div class="group g-need" role="group" aria-label="Needed">
     <span class="glabel">Needed</span>

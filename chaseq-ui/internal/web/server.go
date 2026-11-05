@@ -146,6 +146,7 @@ type pageData struct {
 	// ModeClasses are the mode chips; ActiveModes marks the active ones.
 	ModeClasses []string
 	ActiveModes map[string]bool
+	AllModes    bool
 }
 
 func (s *Server) data() pageData {
@@ -158,6 +159,7 @@ func (s *Server) data() pageData {
 	for _, a := range v.Filters.Awards {
 		d.ActiveAwards[a] = true
 	}
+	d.AllModes = v.Filters.AllModes()
 	for _, c := range v.Filters.ActiveModes() {
 		d.ActiveModes[c] = true
 	}
@@ -291,7 +293,7 @@ func (s *Server) filters(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	mode := q.Get("mode")
-	if mode != "" && mode != model.ModeCW && mode != model.ModePhone && mode != model.ModeData {
+	if mode != "" && mode != model.ModeCW && mode != model.ModePhone && mode != model.ModeData && mode != "all" {
 		http.Error(w, "bad mode", http.StatusBadRequest)
 		return
 	}
@@ -319,7 +321,13 @@ func (s *Server) filters(w http.ResponseWriter, r *http.Request) {
 			f = f.ToggleSource(source)
 		}
 		if mode != "" {
-			f = f.ToggleMode(mode)
+			// A plain click selects that class alone ("all" = every class);
+			// without only=1 (shift-click) the class is added or removed.
+			if q.Get("only") == "1" || mode == "all" {
+				f = f.OnlyMode(mode)
+			} else {
+				f = f.ToggleMode(mode)
+			}
 		}
 		if n := q.Get("needed"); n != "" {
 			f.NeededOnly = n == "1"

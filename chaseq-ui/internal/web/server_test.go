@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -373,5 +374,34 @@ func TestEveryChipKindRestoresFocusAndToggles(t *testing.T) {
 		if !strings.Contains(string(keys), "d."+k) {
 			t.Errorf("keys.js toggle() lacks chip kind %q", k)
 		}
+	}
+}
+
+func TestModeChipOnlyAndAll(t *testing.T) {
+	s, m, _, _ := newServer(t)
+	h := s.Handler()
+	for _, tc := range []struct {
+		url  string
+		want []string
+	}{
+		{"/filters?mode=cw&only=1", []string{"cw"}},     // plain click: that class alone
+		{"/filters?mode=data&only=1", []string{"data"}}, // replaces, does not add
+		{"/filters?mode=cw", []string{"cw", "data"}},    // shift-click adds
+		{"/filters?mode=all", []string{"cw", "data", "phone"}},
+		{"/filters?mode=phone&only=1", []string{"phone"}}, // from all: just phone
+	} {
+		if rec := do(t, h, "POST", tc.url, csrf); rec.Code != 204 {
+			t.Fatalf("%s: code = %d", tc.url, rec.Code)
+		}
+		got := append([]string(nil), m.Filters().ActiveModes()...)
+		sort.Strings(got)
+		if strings.Join(got, ",") != strings.Join(tc.want, ",") {
+			t.Errorf("%s: modes = %v, want %v", tc.url, got, tc.want)
+		}
+	}
+	do(t, h, "POST", "/filters?mode=all", csrf)
+	body := do(t, h, "GET", "/list", nil).Body.String()
+	if !strings.Contains(body, `data-mode="all" aria-pressed="true"`) || !strings.Contains(body, `data-mode="phone" aria-pressed="false"`) {
+		t.Errorf("with every class on only the all chip is pressed:\n%s", body)
 	}
 }

@@ -57,11 +57,11 @@ and publish retained `muehle/hf/chase/state`, and `…/chase/status`.
   `buddy` + `buddy_note` (badge, note as hover), and on cluster rows `cluster_name` (compact label; "cluster" without it) and
   `spot.rbn` (RBN marker). The wire types mirror chase-queue's `internal/bus/bus.go` field by field (`worked_before.last` is a
   timestamp). Absent = nothing rendered; everything goes through html/template, never raw.
-- **Mode filter (local, `filters.json`):** mode CLASSES `cw` (cw), `phone` (usb, lsb, am, fm), `data` (data); chips toggle like the
-  band chips, several at once. **Default = phone only** (nothing persisted, fresh start, and "clear"); all three chips on shows every
+- **Mode filter (local, `filters.json`):** mode CLASSES `cw` (cw), `phone` (usb, lsb, am, fm), `data` (data); a plain click on a chip selects THAT class alone, shift/ctrl-click (shift+Enter on the keyboard) adds or
+  removes it, the `all` chip shows every class. **Default = phone only** (nothing persisted, fresh start, and "clear"); all three chips on shows every
   mode. Switching off the last chip shows all three (never an empty list). A row with an empty or unknown mode is never hidden
   (it cannot be classified). `nil` `modes` in `filters.json` = default; an explicit list is saved. Hidden rows count into
-  "N hidden by filter". `POST /filters?mode=<cw|phone|data>` toggles. The highlight copes as with the band filter.
+  "N hidden by filter". `POST /filters?mode=<cw|phone|data>&only=1` selects one, without `only` it toggles, `mode=all` selects all. The highlight copes as with the band filter.
 - **Filters (local, `filters.json`):** bands, needed only, **award** (chips for the award codes among the needs of the
   unfiltered list, first seen = highest priority; a row passes with a need for any selected code; an active code that left the
   list stays as a chip so it can be switched off) and **source** (`cluster` / `bmrec`, click again for both). All count into
