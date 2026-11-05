@@ -158,7 +158,7 @@ Stations" and `chase-queue/CLAUDE.md`.
 7. **chaseq-ui.** Built: configurable logger senders (`[[loggers.sender]]`, `Sender` seam; only `log4om`
    exists), `info` / `worked_before` / `needs` / `buddy` shown, filters for band, needed only and award.
    Filters cover band (160 m to 70 cm, including 6 m and 2 m), mode class, needed only, award and source,
-   with a band lock that follows the radio. **Left:** a second logger kind.
+   with a band lock that follows the radio. A second logger kind is dropped (decided 2026-11-05: there is no second logger on the station; the `Sender` seam stays for later).
 
 ## 5. Gaps: as-is (implementation branch) vs this target
 
