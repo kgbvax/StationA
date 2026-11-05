@@ -166,7 +166,7 @@ name     = "lenovo-tab"
 addr     = "192.168.1.115 (DHCP)"
 hardware = "Lenovo Tab TB311FU"
 os       = "Android 16"
-role     = "Station tablet — hf_console APK"
+role     = "Station tablet — hf_console APK; charger behind power/psu-13v8 (display on while the station is on)"
 
 # ---------------------------------------------------------------------------
 # Slots: bus address -> owning component + physical device.

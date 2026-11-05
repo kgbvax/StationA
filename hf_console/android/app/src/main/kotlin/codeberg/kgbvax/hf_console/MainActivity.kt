@@ -52,9 +52,10 @@ class MainActivity : FlutterActivity() {
         kiosk = KioskPolicy(this)
         super.onCreate(savedInstanceState)
 
-        // No FLAG_KEEP_SCREEN_ON: the display should sleep after the system
-        // screen-off timeout (1 h, set at provisioning — see PROVISIONING.md).
-        // Keyguard is disabled, so waking goes straight back to the console.
+        // No FLAG_KEEP_SCREEN_ON: the display follows the charger, which hangs
+        // off the TRX PSU plug (power/psu-13v8) — on while powered, the system
+        // screen-off timeout on battery (both set by KioskPolicy). Keyguard is
+        // disabled, so waking goes straight back to the console.
 
         if (kiosk.isDeviceOwner()) {
             kiosk.enable()
