@@ -5,12 +5,15 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.os.BatteryManager
 import android.os.Build
+import android.provider.Settings
 import android.util.Log
 
 /**
  * Single wrapper around [DevicePolicyManager] for kiosk mode: keyguard off,
- * this app as the persistent HOME activity, and lock-task whitelisted.
+ * this app as the persistent HOME activity, lock-task whitelisted, and the
+ * display following the charger (on the TRX PSU plug, `power/psu-13v8`).
  *
  * All calls degrade gracefully when the app is not device owner (development
  * machine, unprovisioned device): every entry point checks [isDeviceOwner]
@@ -49,6 +52,26 @@ class KioskPolicy(private val context: Context) {
             DevicePolicyManager.LOCK_TASK_FEATURE_GLOBAL_ACTIONS or
             DevicePolicyManager.LOCK_TASK_FEATURE_NOTIFICATIONS or
             DevicePolicyManager.LOCK_TASK_FEATURE_SYSTEM_INFO
+
+    /**
+     * The tablet's charger hangs off the TRX PSU plug (`muehle/power/psu-13v8`,
+     * on from powerseq startup until shutdown or idle shutdown), so the
+     * display follows the station: it stays
+     * on while any supply is connected, and the system wakes it on every
+     * plug/unplug edge (`config_unplugTurnsOnScreen` is true on the
+     * TB311FU). Any plug type counts — the charger may enumerate as AC or USB.
+     */
+    private val stayOnPlugTypes: Int =
+        BatteryManager.BATTERY_PLUGGED_AC or
+            BatteryManager.BATTERY_PLUGGED_USB or
+            BatteryManager.BATTERY_PLUGGED_WIRELESS
+
+    /**
+     * Screen-off timeout, which only takes effect on battery (station off):
+     * the unplug edge at PSU-off wakes the display, and this lets it sleep
+     * again soon after.
+     */
+    private val batteryScreenOffTimeoutMs: Int = 5 * 60 * 1000
 
     fun isDeviceOwner(): Boolean =
         dpm.isDeviceOwnerApp(context.packageName)
@@ -116,6 +139,26 @@ class KioskPolicy(private val context: Context) {
         } else {
             Log.i(TAG, "setLockTaskFeatures: skipped — requires API 28")
         }
+
+        policyCall("setGlobalSetting(STAY_ON_WHILE_PLUGGED_IN=$stayOnPlugTypes)") {
+            dpm.setGlobalSetting(
+                admin,
+                Settings.Global.STAY_ON_WHILE_PLUGGED_IN,
+                stayOnPlugTypes.toString()
+            )
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            policyCall("setSystemSetting(SCREEN_OFF_TIMEOUT=$batteryScreenOffTimeoutMs)") {
+                dpm.setSystemSetting(
+                    admin,
+                    Settings.System.SCREEN_OFF_TIMEOUT,
+                    batteryScreenOffTimeoutMs.toString()
+                )
+            }
+        } else {
+            Log.i(TAG, "setSystemSetting(SCREEN_OFF_TIMEOUT): skipped — requires API 28")
+        }
     }
 
     /**
@@ -146,6 +189,12 @@ class KioskPolicy(private val context: Context) {
             policyCall("setLockTaskFeatures(all)") {
                 dpm.setLockTaskFeatures(admin, allLockTaskFeatures)
             }
+        }
+
+        // Stock: the display sleeps on the timeout even while charging. The
+        // short battery timeout stays; the Settings UI can change it again.
+        policyCall("setGlobalSetting(STAY_ON_WHILE_PLUGGED_IN=0)") {
+            dpm.setGlobalSetting(admin, Settings.Global.STAY_ON_WHILE_PLUGGED_IN, "0")
         }
     }
 
