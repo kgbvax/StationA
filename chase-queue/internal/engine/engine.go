@@ -10,6 +10,7 @@
 package engine
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"math"
@@ -115,10 +116,12 @@ type Engine struct {
 	clNext  int64
 
 	// bmrec gate and buddies
-	gate        string                 // "" or "off", "trusted", "qualified"
-	qualSeen    bool                   // some candidate row carries the qualified flag
-	unqualified int                    // bmrec rows the gate kept off the list, at the last Compute
-	trace       []RowTrace             // why each candidate row is or is not listed, at the last Compute
+	gate        string        // "" or "off", "trusted", "qualified"
+	qualSeen    bool          // some candidate row carries the qualified flag
+	unqualified int           // bmrec rows the gate kept off the list, at the last Compute
+	trace       []RowTrace    // why each candidate row is or is not listed, at the last Compute
+	linger      time.Duration // how long a gate-passing bmrec row stays listed after bmrec closed it
+	lingered    map[int64]lingerEntry
 	seenListed  map[string]*ListedSeen // rows listed in the last 24 h, by call|band|source
 	buddies     []Buddy
 
@@ -211,6 +214,21 @@ func (e *Engine) SetBmrecGate(g string) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.gate = g
+}
+
+// SetBmrecLinger keeps a bmrec row that passed the gate on the list for d after
+// bmrec stopped offering it (0 = off). A CQ station that goes quiet for a few
+// minutes closes its bmrec row, but it is still there to be worked.
+func (e *Engine) SetBmrecLinger(d time.Duration) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.linger = d
+	e.dirty = true
+}
+
+type lingerEntry struct {
+	row  bus.Candidate
+	seen time.Time
 }
 
 // SetBuddies replaces the buddy list.
@@ -733,7 +751,35 @@ func (e *Engine) Compute() bus.ChaseState {
 	bmrecRow := map[int64]bus.Candidate{}
 	buddyOf := map[int64]Buddy{}
 	twinOf := map[int64]string{} // heard row -> call|band of the own-cluster spot that may stand for it
-	for _, r := range e.cands {
+	rows := e.cands
+	lingering := map[int64]bool{}
+	if e.linger > 0 {
+		if e.lingered == nil {
+			e.lingered = map[int64]lingerEntry{}
+		}
+		current := map[int64]bool{}
+		for _, r := range e.cands {
+			current[r.RowID] = true
+			if e.gateReason(r) == "" {
+				e.lingered[r.RowID] = lingerEntry{row: r, seen: now}
+			}
+		}
+		rows = slices.Clone(e.cands)
+		for id, le := range e.lingered {
+			switch {
+			case current[id]:
+			case now.Sub(le.seen) > e.linger:
+				delete(e.lingered, id)
+			default:
+				rows = append(rows, le.row)
+				lingering[id] = true
+			}
+		}
+		slices.SortStableFunc(rows, func(a, b bus.Candidate) int { return cmp.Compare(a.RowID, b.RowID) })
+	} else if len(e.lingered) > 0 {
+		e.lingered = nil
+	}
+	for _, r := range rows {
 		bmrecRow[r.RowID] = r
 		if why := e.gateReason(r); why != "" {
 			e.unqualified++
@@ -872,6 +918,9 @@ func (e *Engine) Compute() bus.ChaseState {
 		if lr, ok := inRanked[it.RowID]; ok {
 			t.Outcome = "listed"
 			t.Detail = fmt.Sprintf("needed=%t on_band=%t mode=%q", lr.Needed, lr.OnBand, lr.Mode)
+			if lingering[it.RowID] {
+				t.Detail += "; bmrec closed this row, kept listed (bmrec.linger_minutes)"
+			}
 		} else if cs != nil {
 			t.Outcome, t.Detail = "not listed", "cluster rows are listed only when needed (or a buddy) and within the cap"
 		} else {

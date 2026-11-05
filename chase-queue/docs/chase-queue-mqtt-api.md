@@ -237,3 +237,10 @@ needed and not a buddy, or beyond the cap). `?call=` keeps rows whose call conta
 (`call`, `band`, `source`, `first_listed`, `last_listed`, `needed`), newest first, so a station that was listed and has
 since gone (a CQ row closes when the station goes quiet) can still be checked after the fact. It is kept in memory
 only: a restart empties it.
+
+## bmrec row linger (`[bmrec] linger_minutes`)
+
+bmrec closes a CQ row when it has not heard the station for a few minutes, and a closed row leaves bmrec's
+`cqfinder` state. A row that passed the `[bmrec] gate` stays on the list for `linger_minutes` (default 10, 0 = off,
+max 120) after bmrec last offered it, with the same `row_id`; `/debug/rows` says "bmrec closed this row, kept listed"
+in its detail. A skip, a handled mark or a worked QSO still removes it at once. Rows that failed the gate never linger.

@@ -149,6 +149,7 @@ func New(cfg config.Config, st *store.Store, log *slog.Logger) *Service {
 		s.dxc = append(s.dxc, &clusterLogin{conf: cc, client: &cluster.Client{Addr: cc.Address, Call: cc.Call}})
 	}
 	s.eng.SetBmrecGate(cfg.Bmrec.Gate)
+	s.eng.SetBmrecLinger(time.Duration(cfg.Bmrec.LingerMinutes) * time.Minute)
 	buddies := make([]engine.Buddy, 0, len(cfg.Buddies))
 	for _, b := range cfg.Buddies {
 		buddies = append(buddies, engine.Buddy{Call: b.Call, Note: b.Note, Boost: b.Boost})

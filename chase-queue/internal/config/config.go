@@ -288,6 +288,10 @@ type BmrecConf struct {
 	// "trusted" (a callsign that is read back or typed by the operator;
 	// the default) or "qualified" (trusted and the row's qualified flag).
 	Gate string `toml:"gate"`
+	// LingerMinutes keeps a bmrec row that passed the gate on the list this many
+	// minutes after bmrec closed it (a CQ station going quiet for a few minutes
+	// closes its row, but it is still there to be worked). 0 = off; default 10.
+	LingerMinutes int `toml:"linger_minutes"`
 }
 
 // BuddyConf is a [[buddy]]: a station to be told about whenever it is on the
@@ -315,7 +319,7 @@ func Defaults() Config {
 		Finder:  FinderSlot{Station: "hf", Slot: "cqfinder"},
 		MQTT:    MQTTConfig{Broker: "tcp://127.0.0.1:1883", Site: "muehle"},
 		HTTP:    HTTPConfig{Listen: "127.0.0.1:8095"},
-		Bmrec:   BmrecConf{Gate: GateTrusted},
+		Bmrec:   BmrecConf{Gate: GateTrusted, LingerMinutes: 10},
 		ClubLog: ClubLogConf{Confirmed: []int{1, 3}, RefreshMinutes: 45},
 		QRZ:     QRZConf{RefreshDays: 30},
 		Log:     LogConfig{Level: "info"},
@@ -457,6 +461,9 @@ func (c Config) Validate() error {
 	case GateOff, GateTrusted, GateQualified:
 	default:
 		return fmt.Errorf("bmrec.gate %q: want off, trusted or qualified", c.Bmrec.Gate)
+	}
+	if c.Bmrec.LingerMinutes < 0 || c.Bmrec.LingerMinutes > 120 {
+		return fmt.Errorf("bmrec.linger_minutes %d: want 0 (off) to 120", c.Bmrec.LingerMinutes)
 	}
 	names := map[string]bool{}
 	for i, cl := range c.Cluster {

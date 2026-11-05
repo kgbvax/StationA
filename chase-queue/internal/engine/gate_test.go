@@ -234,3 +234,41 @@ func TestTraceRemembersRowsListedEarlier(t *testing.T) {
 		}
 	}
 }
+
+func TestBmrecRowLingersAfterBmrecClosesIt(t *testing.T) {
+	f := newDX(t)
+	f.e.SetConfirmations(nil)
+	f.e.SetBmrecGate(GateQualified)
+	f.e.SetBmrecLinger(10 * time.Minute)
+	qualified := cand(2, "DL2BBB", "20m", true)
+	qualified.Qualified = boolp(true)
+	unqualified := cand(3, "DL3CCC", "20m", true)
+	unqualified.Qualified = boolp(false)
+	if got := ids(f.rank(1, []bus.Candidate{qualified, unqualified})); !slices.Equal(got, []int64{2}) {
+		t.Fatalf("before the close: %v", got)
+	}
+	// bmrec closes both rows: only the one that passed the gate stays, for the linger time
+	f.now = f.now.Add(3 * time.Minute)
+	if got := ids(f.rank(2, nil)); !slices.Equal(got, []int64{2}) {
+		t.Errorf("a gate-passing row stays listed after bmrec closed it: %v", got)
+	}
+	if tr := f.e.Trace(); len(tr.Rows) != 1 || !strings.Contains(tr.Rows[0].Detail, "kept listed") {
+		t.Errorf("the trace says it is kept: %+v", tr.Rows)
+	}
+	f.now = f.now.Add(8 * time.Minute) // 11 min after the last time bmrec offered it
+	if got := ids(f.rank(3, nil)); len(got) != 0 {
+		t.Errorf("gone after the linger time: %v", got)
+	}
+}
+
+func TestLingerOffDropsAClosedRowAtOnce(t *testing.T) {
+	f := newDX(t)
+	f.e.SetConfirmations(nil)
+	f.e.SetBmrecGate(GateQualified)
+	qualified := cand(2, "DL2BBB", "20m", true)
+	qualified.Qualified = boolp(true)
+	f.rank(1, []bus.Candidate{qualified})
+	if got := ids(f.rank(2, nil)); len(got) != 0 {
+		t.Errorf("no linger configured: %v", got)
+	}
+}

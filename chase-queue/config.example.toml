@@ -19,7 +19,13 @@ site   = "muehle"
 user   = "hf"                     # the scmino broker requires a login; password: CHASE_QUEUE_MQTT_PASSWORD
 
 [http]
-listen = "127.0.0.1:8095"         # contest file upload and health, loopback only
+listen = "127.0.0.1:8095"         # contest file upload, health and /debug/rows, loopback only
+
+# Which of bmrec's rows count, and how long one stays after bmrec closed it.
+# [bmrec]
+# gate           = "qualified"    # off | trusted (default) | qualified (the operator's own action on bmrec's CQ page)
+# linger_minutes = 10             # keep a gate-passing row listed this long after bmrec closed it (a CQ station
+#                                 # that goes quiet for a few minutes closes its row); 0 = off
 
 # DXLog.net's UDP QSO broadcast, for contests. 12060 is taken by
 # station-log on scmino (its working-station feed): give DXLog a second target on this port.

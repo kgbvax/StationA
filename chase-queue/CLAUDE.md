@@ -150,3 +150,9 @@ run a mosquitto on another port, point `[mqtt] broker` at it, publish a `cqfinde
 `curl -s 'http://127.0.0.1:8095/debug/rows?call=XX'` on scmino says, per candidate row, whether it is listed or
 which rule kept it off (gate, hidden, not listed) and shows the gate header (`qualified_flag_seen`, `gate_kept_off`).
 No broker credentials needed. Contract: `docs/chase-queue-mqtt-api.md`, "Debugging".
+
+## bmrec row linger
+
+`[bmrec] linger_minutes` (default 10, 0 = off): a gate-passing bmrec row stays listed that long after bmrec closed it
+(`Engine.SetBmrecLinger`, `lingered` map, same `row_id`), because bmrec closes a row 3 minutes after it last heard the
+station. In-memory only; a restart drops it. Trace: `/debug/rows`.
