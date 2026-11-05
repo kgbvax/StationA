@@ -851,7 +851,7 @@ func (e *Engine) Compute() bus.ChaseState {
 	listedCluster := map[string]bool{}
 	for _, it := range res.Queue {
 		r := bus.Ranked{RowID: it.RowID, Call: it.Call, Band: it.Band, Needed: it.Tier == contest.TierNewMult, OnBand: it.Tier == contest.TierWorked,
-			FreqHz: int64(math.Round(it.FreqHz)), Source: bus.SourceBmrec, Mode: tuneMode(it.FreqHz)}
+			FreqHz: int64(math.Round(it.FreqHz)), Source: bus.SourceBmrec, Mode: tuneMode(it.FreqHz), HeardAt: it.LastHeard}
 		b, isBuddy := buddyOf[it.RowID]
 		if cs := cluster[it.RowID]; cs != nil {
 			// only needed cluster stations and buddies are listed: the cluster
@@ -865,6 +865,7 @@ func (e *Engine) Compute() bus.ChaseState {
 			listedCluster[key(cs.call, cs.band)] = true
 			r.Source = bus.SourceCluster
 			r.ClusterName = cs.cluster
+			r.HeardAt = cs.last
 			r.Mode = mode.Derive(cs.freqHz, cs.comment)
 			r.Spot = &bus.ClusterSpot{FreqHz: int64(cs.freqHz), Spotter: cs.spotter, Comment: cs.comment, At: cs.last, RBN: cs.rbn}
 		}

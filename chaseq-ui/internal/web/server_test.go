@@ -46,7 +46,8 @@ func newServer(t *testing.T) (*Server, *model.Model, *pub, *lg) {
 	m := model.New(nil)
 	m.SetChase(bus.ChaseState{Activity: "dx", Problems: []string{"Club Log confirmations not loaded yet"}, Ranked: []bus.Ranked{
 		{RowID: 7, Call: "EA8XYZ", Band: "20m", FreqHz: 14231500, Mode: "usb", Needed: true, Tag: "need",
-			WorkedBefore: &bus.WorkedBefore{QSOs: 1, Bands: []string{"40m", "15m"}}},
+			HeardAt:      time.Now().Add(-7 * time.Minute),
+			WorkedBefore: &bus.WorkedBefore{QSOs: 1, Bands: []string{"40m", "15m"}, Last: time.Date(2026, 10, 12, 18, 0, 0, 0, time.UTC), LastBand: "40m"}},
 		{RowID: 8, Call: "K1A", Band: "40m", FreqHz: 7074000, Mode: "lsb", WorkedBefore: &bus.WorkedBefore{QSOs: 2, Bands: []string{"40m"}, ThisBand: true}},
 		{RowID: 9, Band: "20m", Needed: true},
 	}})
@@ -80,7 +81,7 @@ var csrf = map[string]string{"X-Chaseq": "1"}
 func TestListRendersRowsTagsAndProblems(t *testing.T) {
 	s, _, _, _ := newServer(t)
 	body := do(t, s.Handler(), "GET", "/list", nil).Body.String()
-	for _, want := range []string{"EA8XYZ", "14231.5", "wkd 40m 15m", `class="wk this"`, `class="badge need"`, "no call", "no freq", "Club Log confirmations not loaded yet", `class="row hi`} {
+	for _, want := range []string{"EA8XYZ", "14231.5", "last worked 12 Oct 40m", "new band", "7 min", "worked before", `class="badge need"`, "no call", "no freq", "Club Log confirmations not loaded yet", `class="row hi`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("list missing %q", want)
 		}
@@ -403,5 +404,16 @@ func TestModeChipOnlyAndAll(t *testing.T) {
 	body := do(t, h, "GET", "/list", nil).Body.String()
 	if !strings.Contains(body, `data-mode="all" aria-pressed="true"`) || !strings.Contains(body, `data-mode="phone" aria-pressed="false"`) {
 		t.Errorf("with every class on only the all chip is pressed:\n%s", body)
+	}
+}
+
+func TestRowShowsAgeNotSidebandAndNewBandHint(t *testing.T) {
+	s, _, _, _ := newServer(t)
+	body := do(t, s.Handler(), "GET", "/list", nil).Body.String()
+	if strings.Contains(body, ">usb<") || strings.Contains(body, ">lsb<") || strings.Contains(body, ">USB<") {
+		t.Errorf("usb/lsb are not shown as a label:\n%s", body)
+	}
+	if !strings.Contains(body, "this callsign, not its DXCC entity") {
+		t.Errorf("the worked hover must say it is the callsign:\n%s", body)
 	}
 }

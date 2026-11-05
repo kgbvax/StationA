@@ -95,6 +95,9 @@ type Ranked struct {
 	// there is no bmrec row). Every row is self-contained: a consumer needs no
 	// other topic to show it.
 	Source string `json:"source"`
+	// HeardAt is when the station was last heard (a bmrec row, also after bmrec
+	// closed it and the row lingers) or last spotted (a cluster row); absent when unknown.
+	HeardAt time.Time `json:"heard_at,omitzero"`
 	// ClusterName names the [[cluster]] whose spot the row stands for (the
 	// freshest of several that spotted the station); with Source "cluster".
 	ClusterName string       `json:"cluster_name,omitempty"`
@@ -177,6 +180,8 @@ type WorkedBefore struct {
 	Modes    []string  `json:"modes,omitempty"` // as logged, upper case
 	ThisBand bool      `json:"this_band"`       // worked on the row's band
 	Last     time.Time `json:"last"`
+	// LastBand is the band of that latest QSO ("" when unknown).
+	LastBand string `json:"last_band,omitempty"`
 }
 
 // ContestInfo describes the running contest instance.

@@ -97,7 +97,7 @@ func (s *Store) WorkedBefore(calls []string) (map[string]*bus.WorkedBefore, erro
 			w.Modes = append(w.Modes, m)
 		}
 		if t.After(w.Last) {
-			w.Last = t
+			w.Last, w.LastBand = t, b
 		}
 	}
 	for _, w := range out {

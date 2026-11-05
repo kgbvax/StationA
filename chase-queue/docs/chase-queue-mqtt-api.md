@@ -244,3 +244,10 @@ bmrec closes a CQ row when it has not heard the station for a few minutes, and a
 `cqfinder` state. A row that passed the `[bmrec] gate` stays on the list for `linger_minutes` (default 10, 0 = off,
 max 120) after bmrec last offered it, with the same `row_id`; `/debug/rows` says "bmrec closed this row, kept listed"
 in its detail. A skip, a handled mark or a worked QSO still removes it at once. Rows that failed the gate never linger.
+
+## `heard_at` and `worked_before.last_band`
+
+Every ranked row carries `heard_at` (RFC 3339, absent when unknown): when the station was last heard (a bmrec row; it
+keeps its old time while the row lingers after bmrec closed it) or last spotted (a cluster row), so a consumer can show
+how old the row is. `worked_before.last_band` is the band of `worked_before.last`, the latest QSO with that callsign
+(the callsign, not its DXCC entity); `this_band` says whether that callsign was also worked on the row's band.

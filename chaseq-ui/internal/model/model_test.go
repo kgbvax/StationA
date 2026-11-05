@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -410,5 +411,27 @@ func TestConcurrentSaveLeavesNewestState(t *testing.T) {
 	}
 	if left, _ := filepath.Glob(path + ".*.tmp"); len(left) != 0 {
 		t.Fatalf("temp files left behind: %v", left)
+	}
+}
+
+func TestAgeTextAndWorkedLast(t *testing.T) {
+	now := time.Date(2026, 11, 5, 18, 0, 0, 0, time.UTC)
+	for _, c := range []struct {
+		ago  time.Duration
+		want string
+	}{{0, "now"}, {40 * time.Second, "now"}, {7*time.Minute + 5*time.Second, "7 min"}, {119 * time.Minute, "119 min"}, {3 * time.Hour, "3 h"}} {
+		if got := ageText(now, now.Add(-c.ago)); got != c.want {
+			t.Errorf("age %v = %q, want %q", c.ago, got, c.want)
+		}
+	}
+	if ageText(now, time.Time{}) != "" {
+		t.Error("an unknown time has no age")
+	}
+	short, title := workedLast(now, "F8CHM", &bus.WorkedBefore{Last: time.Date(2026, 10, 12, 9, 0, 0, 0, time.UTC), LastBand: "40m"})
+	if short != "12 Oct 40m" || !strings.Contains(title, "new band") || !strings.Contains(title, "F8CHM") {
+		t.Errorf("short %q title %q", short, title)
+	}
+	if short, _ = workedLast(now, "F8CHM", &bus.WorkedBefore{Last: time.Date(2025, 3, 2, 0, 0, 0, 0, time.UTC), ThisBand: true}); short != "2 Mar 2025" {
+		t.Errorf("another year shows the year: %q", short)
 	}
 }

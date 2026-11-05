@@ -36,8 +36,9 @@
     <span class="call">{{if .Call}}{{.Call}}{{else}}no call{{end}}</span>
     <span class="band">{{.Band}}</span>
     <span class="freq">{{if gt .FreqHz 0}}{{khz .FreqHz}}{{else}}no freq{{end}}</span>
-    <span class="mode">{{.Mode}}</span>
-    <span class="wkd">{{if .WorkedThisBand}}<span class="wk this" title="worked on this band">worked {{.Band}}</span>{{else if .Worked}}<span class="wk other" title="worked before on other bands">wkd{{range .WorkedOther}} {{.}}{{end}}</span>{{end}}</span>
+    <span class="age" title="since the station was last heard or spotted">{{.AgeText}}</span>
+    <span class="mode">{{.ModeLabel}}</span>
+    <span class="wkd">{{if .Worked}}{{if .WorkedLast}}<span class="wk {{if .NewBand}}newband{{else}}sameband{{end}}" title="{{.WorkedTitle}}">last worked {{.WorkedLast}}</span> <span class="bandnote{{if .NewBand}} new{{end}}" title="{{.WorkedTitle}}">{{if .NewBand}}new band{{else}}this band{{end}}</span>{{else}}<span class="wk other" title="This callsign is in the log; the log gave no date.">worked before</span>{{end}}{{end}}</span>
     {{if .Tag}}<span class="badge {{.Tag}}">{{.Tag}}</span>{{end}}
     {{if .Cluster}}<span class="src" title="DX cluster{{if .ClusterName}}: {{.ClusterName}}{{end}}{{if .RBN}} (skimmer spot){{end}}">{{if .ClusterName}}{{.ClusterName}}{{else}}cluster{{end}}</span>{{end}}
     {{if .RBN}}<span class="rbn" title="skimmer spot (RBN)">RBN</span>{{end}}

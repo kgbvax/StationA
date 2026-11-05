@@ -42,6 +42,17 @@ type Row struct {
 	Buddy bool
 	// BuddyNote is the buddy-list note, the badge's hover text.
 	BuddyNote string
+	// AgeText is how long ago the station was last heard or spotted ("now",
+	// "7 min", "2 h"); "" = unknown. ModeLabel is the mode as shown: empty for
+	// usb and lsb, which say nothing the frequency does not.
+	AgeText   string
+	ModeLabel string
+	// WorkedLast is "12 Oct 40m": when and on which band this CALLSIGN (not its
+	// DXCC entity) was last logged; WorkedTitle spells it out. NewBand: worked
+	// before, but never on this row's band.
+	WorkedLast  string
+	WorkedTitle string
+	NewBand     bool
 }
 
 // NeedTag is one award need ready to show: Label is the tag text ("DXCC",
@@ -361,8 +372,14 @@ func (m *Model) shown() ([]Row, int) {
 				row.Needs = append(row.Needs, needTag(n))
 			}
 		}
+		row.AgeText = ageText(m.now(), r.HeardAt)
+		if r.Mode != "usb" && r.Mode != "lsb" {
+			row.ModeLabel = r.Mode
+		}
 		if w := r.WorkedBefore; w != nil {
 			row.Worked, row.WorkedThisBand = true, w.ThisBand
+			row.NewBand = !w.ThisBand
+			row.WorkedLast, row.WorkedTitle = workedLast(m.now(), r.Call, w)
 			for _, b := range w.Bands {
 				if b != r.Band {
 					row.WorkedOther = append(row.WorkedOther, b)
@@ -372,6 +389,46 @@ func (m *Model) shown() ([]Row, int) {
 		rows = append(rows, row)
 	}
 	return rows, hidden
+}
+
+// ageText says how long ago t was: "now" under a minute, "7 min", then hours.
+func ageText(now, t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	d := now.Sub(t)
+	switch {
+	case d < time.Minute:
+		return "now"
+	case d < 2*time.Hour:
+		return fmt.Sprintf("%d min", int(d/time.Minute))
+	default:
+		return fmt.Sprintf("%d h", int(d/time.Hour))
+	}
+}
+
+// workedLast is the short "12 Oct 40m" and the hover text of a callsign's last
+// QSO; both "" when the log gave no time.
+func workedLast(now time.Time, call string, w *bus.WorkedBefore) (string, string) {
+	if w.Last.IsZero() {
+		return "", ""
+	}
+	date := w.Last.UTC().Format("2 Jan")
+	if w.Last.UTC().Year() != now.UTC().Year() {
+		date = w.Last.UTC().Format("2 Jan 2006")
+	}
+	short, long := date, "was last logged on "+w.Last.UTC().Format("2 Jan 2006")
+	if w.LastBand != "" {
+		short += " " + w.LastBand
+		long += " on " + w.LastBand
+	}
+	title := call + " (this callsign, not its DXCC entity) " + long
+	if w.ThisBand {
+		title += "; also worked on this row's band"
+	} else {
+		title += "; never worked on this row's band: a new band for it"
+	}
+	return short, title
 }
 
 // awardCodes lists the award codes of the unfiltered list in first-seen order,

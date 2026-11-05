@@ -272,3 +272,15 @@ func TestLingerOffDropsAClosedRowAtOnce(t *testing.T) {
 		t.Errorf("no linger configured: %v", got)
 	}
 }
+
+func TestRankedCarriesWhenTheStationWasLastHeard(t *testing.T) {
+	f := newDX(t)
+	f.e.SetConfirmations(nil)
+	c := cand(2, "DL2BBB", "20m", true)
+	heard := f.now.Add(-4 * time.Minute)
+	c.LastUTC = heard
+	st := f.rank(1, []bus.Candidate{c})
+	if len(st.Ranked) != 1 || !st.Ranked[0].HeardAt.Equal(heard) {
+		t.Errorf("heard_at = %+v", st.Ranked)
+	}
+}

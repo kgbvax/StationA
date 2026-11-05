@@ -33,10 +33,12 @@ body { margin:0; background:var(--bg); color:var(--fg); font-size:16px; }
 .call { width:9rem; font-weight:600; font-size:1.1rem; }
 .band { width:3.5rem; color:var(--dim); }
 .freq { width:7rem; font-variant-numeric:tabular-nums; }
-.mode { width:3rem; color:var(--dim); text-transform:uppercase; font-size:.85rem; }
+.mode { min-width:2rem; color:var(--dim); text-transform:uppercase; font-size:.85rem; }
 .wkd { min-width:7rem; font-size:.85rem; }
-.wk.this { color:var(--warn); border:1px solid var(--warn); padding:0 .4rem; font-weight:600; }
-.wk.other { color:var(--dim); }
+.wk { color:var(--dim); }
+.bandnote { color:var(--dim); font-size:.8rem; margin-left:.3rem; }
+.bandnote.new { color:var(--warn); border:1px solid var(--warn); padding:0 .35rem; font-weight:600; }
+.age { width:3.6rem; color:var(--dim); font-variant-numeric:tabular-nums; }
 .badge { border-radius:999px; padding:0 .55rem; font-size:.8rem; background:#2d4a3a; color:#9fe0bb; }
 .badge.mult { background:#4a3a2d; color:#f0c89a; }
 .buddy { border:1px solid #7fb0ff; color:#7fb0ff; padding:0 .4rem; font-size:.8rem; font-weight:600; text-transform:uppercase; }

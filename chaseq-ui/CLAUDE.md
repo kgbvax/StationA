@@ -47,8 +47,13 @@ and publish retained `muehle/hf/chase/state`, and `…/chase/status`.
   A row without `freq_hz` shows "no freq" and cannot be tuned; against an older chase-queue only cluster rows
   (`spot.freq_hz`) are tunable, and no mode is set at all (the Radio part says "mode unchanged"): deploy
   chase-queue first. The Radio part also says "mode unchanged (data)" etc. for a mode flexbridge cannot set.
-- **Worked marks:** `worked_before.this_band` shows "worked <band>" (boxed; chase-queue sets `this_band` from the same verdict that lists the row last, so such rows
-  arrive with `needed` false and the needed-only filter hides them); other bands show as "wkd 40m 15m"; never worked shows nothing.
+- **Worked marks:** a station worked before shows "last worked 12 Oct 40m" (date and band of the latest QSO with that
+  CALLSIGN, not its DXCC entity; the hover says so; the year is added when it is not this one) and a flag: "new band"
+  (amber, never worked on the row's band) or "this band". `worked_before.last_band` carries the band; without a date the row says
+  "worked before". Never worked shows nothing.
+- **Age and mode label:** each row shows how long ago the station was last heard or spotted (`heard_at`: "now", "7 min", "2 h";
+  a lingering bmrec row keeps its old time, so its age keeps growing); the server notifies every 30 s so ages move without a bus
+  message. The mode column shows cw, data, am and fm but not usb/lsb (the frequency says it).
 - **Logger senders are config:** `[[loggers.sender]]` entries `{kind, addr, timeout, enabled}` (only `kind = "log4om"` exists);
   with none, the legacy `log4om_addr`/`log4om_timeout` stand for one Log4OM. A new logger = a `Sender` plus one entry in the
   `constructors` map.

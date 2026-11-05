@@ -412,7 +412,7 @@ func (v *View) Summary(call string) *bus.WorkedBefore {
 			w.Modes = append(w.Modes, r.mode)
 		}
 		if r.at.After(w.Last) {
-			w.Last = r.at
+			w.Last, w.LastBand = r.at, k.band
 		}
 	}
 	slices.SortFunc(w.Bands, func(a, b string) int { return bandIndex(a) - bandIndex(b) })

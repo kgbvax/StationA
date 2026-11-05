@@ -351,6 +351,19 @@ func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
 	srv := &http.Server{Handler: s.Handler(), ReadHeaderTimeout: 5 * time.Second,
 		// Open SSE streams end with ctx instead of holding Shutdown up.
 		BaseContext: func(net.Listener) context.Context { return ctx }}
+	// ages ("7 min") move on without any bus message: refresh the page twice a minute
+	go func() {
+		t := time.NewTicker(30 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				s.Notify()
+			}
+		}
+	}()
 	go func() {
 		<-ctx.Done()
 		sh, c := context.WithTimeout(context.Background(), time.Second)

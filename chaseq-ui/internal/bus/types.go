@@ -47,6 +47,7 @@ type Ranked struct {
 	Tag          string        `json:"tag,omitempty"`
 	Source       string        `json:"source,omitempty"`       // "bmrec" or "cluster"
 	ClusterName  string        `json:"cluster_name,omitempty"` // the [[cluster]] whose spot the row stands for
+	HeardAt      time.Time     `json:"heard_at,omitzero"`      // last heard (bmrec) or last spotted (cluster)
 	Spot         *ClusterSpot  `json:"spot,omitempty"`
 	WorkedBefore *WorkedBefore `json:"worked_before,omitempty"` // nil = never worked
 	Info         *Info         `json:"info,omitempty"`          // QRZ callbook entry; nil = not looked up
@@ -101,6 +102,7 @@ type WorkedBefore struct {
 	Modes    []string  `json:"modes,omitempty"`
 	ThisBand bool      `json:"this_band"`
 	Last     time.Time `json:"last"`
+	LastBand string    `json:"last_band,omitempty"` // band of that latest QSO with this callsign
 }
 
 // RadioState is flexbridge's retained <site>/hf/radio/state (the fields

@@ -3,8 +3,9 @@
 The chase-queue list in a window on the shack PC. Arrow keys move the highlight (nothing is tuned);
 **Enter or a click** tunes the FLEX to the station and puts its callsign into Log4OM; `s` Skip,
 `u` Undo; `f` focuses the band / mode / award / source / needed-only filters (Left/Right, Space, Esc back to the list).
-Each row shows frequency, mode and a worked mark: a boxed "worked 20m" = already worked on this band (listed, not
-needed), "wkd 40m 15m" = worked on other bands only, nothing = never worked. Frequency and mode come from chase-queue's row.
+Each row shows frequency, how long ago the station was heard or spotted ("7 min"), the mode (not usb/lsb) and, for a station
+worked before, "last worked 12 Oct 40m" (the latest QSO with that callsign, not its DXCC entity) with a "new band" or "this band" flag.
+Never worked shows nothing. Frequency and mode come from chase-queue's row.
 A second line under the row shows the QRZ entry chase-queue attached (name, QTH, country, grid; nothing when it has none). Once chase-queue
 publishes award data, small tags ("DXCC", "WAS TX"; coloured by unworked / worked-unconfirmed / confirmed) and a "buddy" badge appear too. Cluster rows show the cluster's name and an RBN marker for skimmer spots.
 Award chips (one per award code among the listed needs) and cluster / bmrec chips narrow the list locally, saved with the band filter.
