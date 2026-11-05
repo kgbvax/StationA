@@ -153,7 +153,8 @@ Stations" and `chase-queue/CLAUDE.md`.
    block, first among needed rows of equal goal priority; chaseq-ui shows a badge and the note.
 6. **Clusters 1..n.** Built: `[[cluster]]` list with a name per source (`cluster_name` on the row), RBN
    per entry (`skimmer`), the same call and band on several clusters is one row; band table extended by 6 m,
-   2 m and 70 cm. **Left:** a second cluster is not configured live, and the Log4OM cluster on bwpc still
+   2 m and 70 cm. A second cluster is live since 2026-11-05 (`spothole`, `spothole.app:7300`, login DL9ET, mostly POTA/WWFF/SOTA
+   spots; only DXCC-needed ones become rows while the field awards stay deferred). **Left:** the Log4OM cluster on bwpc still
    stops while bwpc sleeps.
 7. **chaseq-ui.** Built: configurable logger senders (`[[loggers.sender]]`, `Sender` seam; only `log4om`
    exists), `info` / `worked_before` / `needs` / `buddy` shown, filters for band, needed only and award.
@@ -164,7 +165,7 @@ Stations" and `chase-queue/CLAUDE.md`.
 
 | Target | Status | As-is |
 |---|---|---|
-| 1..n clusters, RBN optional | matches | `[[cluster]]` entries with a name each, one reconnecting telnet client per entry, RBN per entry, merge by call+band. Bands 160-10 m, 6 m, 2 m, 70 cm. Left: no second cluster configured live; the Log4OM cluster stops while bwpc sleeps (powerseq standby). |
+| 1..n clusters, RBN optional | matches | `[[cluster]]` entries with a name each, one reconnecting telnet client per entry, RBN per entry, merge by call+band. Bands 160-10 m, 6 m, 2 m, 70 cm. Second cluster `spothole` live (2026-11-05); the Log4OM cluster stops while bwpc sleeps (powerseq standby). |
 | Cluster spots = available stations | matches | Needed cluster spots (and buddies) become rows with `source:"cluster"` and `cluster_name`, at most 40; a spot also hides the heard row it names. |
 | Only qualified bmrec rows | matches | The gate (`off` / `trusted` / `qualified`) is live on `qualified`; bmrec sends `qualified` and `confident` (27fd301). First bmrec-sourced row after qualification not yet observed live (band conditions). |
 | station-log | matches (live) | Own module and slot with ADIF import, duplicate merge, `replace_source`, events and read API. chase-queue's log view reads it. Left: Club Log matrix feeder (stays in chase-queue by decision), ADIF POST feeder; the ADIF drop directory (`[watch]`) is built but not yet enabled live. |
@@ -197,4 +198,4 @@ Defaults taken on 2026-11-03 so the implementation could proceed; change them he
   `gate = "qualified"` lists nothing and reports `bmrec sends no qualified flag`.
 - **Club Log matrix.** Stays in chase-queue: it is an entity-level matrix, not a QSO list.
 - **Still open.** Whether the simplified IARU R1 band plan gives the right mode on the air (the first live rows
-  looked right: KH8A 28033 CW, 21270 USB, 18101.9 data); whether a second cluster (RBN) is wanted live.
+  looked right: KH8A 28033 CW, 21270 USB, 18101.9 data); an RBN cluster is not configured (the second cluster is spothole).
