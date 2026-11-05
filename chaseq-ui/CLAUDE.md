@@ -66,7 +66,7 @@ and publish retained `muehle/hf/chase/state`, and `…/chase/status`.
   unfiltered list, first seen = highest priority; a row passes with a need for any selected code; an active code that left the
   list stays as a chip so it can be switched off) and **source** (`cluster` / `bmrec`, click again for both). All count into
   "N hidden by filter"; none changes chase-queue's ranking. `POST /filters?award=<code>&source=<cluster|bmrec>` toggle.
-- **Band lock (`lock_band` in `filters.json`, chip "radio band"):** while on, the band filter is the single band the radio reports
+- **Band lock (`lock_band` in `filters.json`, chip "follow radio band"):** while on, the band filter is the single band the radio reports
   (`radio/state` `band`, or `rx_band` while split; empty/`gen`/`unknown`/`device_online` false = unknown = keep the last filter, never
   all) and follows every radio band change, whoever made it. Manual band chips are `aria-disabled` and `POST /filters?band=` is a 409.
   Off keeps the band it had. `clear` keeps the lock. The follow re-renders and saves only when the band filter really changed
