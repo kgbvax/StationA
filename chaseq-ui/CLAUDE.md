@@ -71,6 +71,13 @@ and publish retained `muehle/hf/chase/state`, and `…/chase/status`.
   all) and follows every radio band change, whoever made it. Manual band chips are `aria-disabled` and `POST /filters?band=` is a 409.
   Off keeps the band it had. `clear` keeps the lock. The follow re-renders and saves only when the band filter really changed
   (`Model.SetRadioBand`). `POST /filters?lock=1|0`. Old files without it = off.
+- **Filter toolbar = four groups, one question each:** Band (with the "follow radio band" lock), Mode, Needed (needed only + award chips),
+  Source (cluster / bmrec); `clear` and "N hidden by filter" sit at the right end. Group and chip classes must not reuse a row-cell
+  class (`.mode`, `.need`, `.band`, `.src` style the list rows): groups are `g-band`, `g-mode`, `g-need`, `g-source`, `g-end`, mode chips `modeclass`.
+- **App icon:** `assets/icon.svg` (ranked list, amber top entry, signal arcs) is the source; `assets/icon.ico`/`icon.png` and
+  `internal/desktop/icon.png` (embedded) and `internal/web/static/icon.svg` (favicon) are renderings of it. On Windows the window gets
+  it at runtime (`icon_windows.go`, WM_SETICON from the embedded PNG). The exe file itself has no icon resource (needs `go-winres`
+  to make a `.syso`; not run here).
 - **Chip kinds live in one list:** `KINDS` in `static/live.js` (focus restore after every re-render, so a stray Enter never reaches
   `/act`) and `toggle()` in `keys.js` must cover every `data-*` on a chip button in `list.html`; `TestEveryChipKindRestoresFocusAndToggles` enforces it.
 - **Enter/`s`/`u` act from anywhere except a filter chip** (a focused chip swallows them); arrows only ever move the highlight. A held key is ignored (`e.repeat`). The page fragment is only swapped when it changed, so focus and scroll survive.

@@ -24,6 +24,7 @@ func Window(ctx context.Context, url, title string, width, height int) error {
 	}
 	defer w.Destroy()
 	w.SetTitle(title)
+	setWindowIcon(w.Window())
 	w.SetSize(width, height, glaze.HintNone)
 	w.Navigate(url)
 	done := make(chan struct{})

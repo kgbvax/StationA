@@ -5,16 +5,30 @@
 {{if .View.Offline}}<div class="status offline" role="alert">{{.View.Offline}}</div>{{end}}
 {{range .View.Problems}}<div class="status problem">{{.}}</div>{{end}}
 <div class="filters" role="toolbar" aria-label="View filters">
-  {{range .Bands}}<button type="button" class="chip{{if index $.Active .}} on{{end}}{{if $.View.Filters.LockBand}} locked{{end}}" data-band="{{.}}" aria-pressed="{{if index $.Active .}}true{{else}}false{{end}}"{{if $.View.Filters.LockBand}} aria-disabled="true"{{end}}>{{.}}</button>{{end}}
-  <button type="button" class="chip lock{{if .View.Filters.LockBand}} on{{end}}" data-lock="{{if .View.Filters.LockBand}}0{{else}}1{{end}}" aria-pressed="{{if .View.Filters.LockBand}}true{{else}}false{{end}}" title="On: the band filter follows the band your radio is on (also when you change band in SmartSDR); the band chips are locked. Off: pick bands yourself.">follow radio band</button>
-  {{range .ModeClasses}}<button type="button" class="chip modeclass{{if index $.ActiveModes .}} on{{end}}" data-mode="{{.}}" aria-pressed="{{if index $.ActiveModes .}}true{{else}}false{{end}}" title="mode class {{.}}">{{.}}</button>{{end}}
-  <button type="button" class="chip{{if .View.Filters.NeededOnly}} on{{end}}" data-needed="{{if .View.Filters.NeededOnly}}0{{else}}1{{end}}" aria-pressed="{{if .View.Filters.NeededOnly}}true{{else}}false{{end}}">needed only</button>
-  {{range .View.Awards}}<button type="button" class="chip award{{if index $.ActiveAwards .}} on{{end}}" data-award="{{.}}" aria-pressed="{{if index $.ActiveAwards .}}true{{else}}false{{end}}" title="only stations needed for {{.}}">{{.}}</button>{{end}}
-  <button type="button" class="chip{{if eq .View.Filters.Source "cluster"}} on{{end}}" data-source="cluster" aria-pressed="{{if eq .View.Filters.Source "cluster"}}true{{else}}false{{end}}">cluster</button>
-  <button type="button" class="chip{{if eq .View.Filters.Source "bmrec"}} on{{end}}" data-source="bmrec" aria-pressed="{{if eq .View.Filters.Source "bmrec"}}true{{else}}false{{end}}">bmrec</button>
-  {{if .View.Filters.Active}}<button type="button" class="chip clear" data-clear="1">clear</button>{{end}}
+  <div class="group g-band" role="group" aria-label="Band">
+    <span class="glabel">Band</span>
+    {{range .Bands}}<button type="button" class="chip{{if index $.Active .}} on{{end}}{{if $.View.Filters.LockBand}} locked{{end}}" data-band="{{.}}" aria-pressed="{{if index $.Active .}}true{{else}}false{{end}}"{{if $.View.Filters.LockBand}} aria-disabled="true"{{end}}>{{.}}</button>{{end}}
+    <button type="button" class="chip lock{{if .View.Filters.LockBand}} on{{end}}" data-lock="{{if .View.Filters.LockBand}}0{{else}}1{{end}}" aria-pressed="{{if .View.Filters.LockBand}}true{{else}}false{{end}}" title="On: the band filter follows the band your radio is on (also when you change band in SmartSDR); the band chips are locked. Off: pick bands yourself.">follow radio band</button>
+  </div>
+  <div class="group g-mode" role="group" aria-label="Mode">
+    <span class="glabel">Mode</span>
+    {{range .ModeClasses}}<button type="button" class="chip modeclass{{if index $.ActiveModes .}} on{{end}}" data-mode="{{.}}" aria-pressed="{{if index $.ActiveModes .}}true{{else}}false{{end}}" title="mode class {{.}}">{{.}}</button>{{end}}
+  </div>
+  <div class="group g-need" role="group" aria-label="Needed">
+    <span class="glabel">Needed</span>
+    <button type="button" class="chip{{if .View.Filters.NeededOnly}} on{{end}}" data-needed="{{if .View.Filters.NeededOnly}}0{{else}}1{{end}}" aria-pressed="{{if .View.Filters.NeededOnly}}true{{else}}false{{end}}" title="Hide stations you have worked on this band">needed only</button>
+    {{range .View.Awards}}<button type="button" class="chip award{{if index $.ActiveAwards .}} on{{end}}" data-award="{{.}}" aria-pressed="{{if index $.ActiveAwards .}}true{{else}}false{{end}}" title="only stations needed for {{.}}">{{.}}</button>{{end}}
+  </div>
+  <div class="group g-source" role="group" aria-label="Source">
+    <span class="glabel">Source</span>
+    <button type="button" class="chip{{if eq .View.Filters.Source "cluster"}} on{{end}}" data-source="cluster" aria-pressed="{{if eq .View.Filters.Source "cluster"}}true{{else}}false{{end}}">cluster</button>
+    <button type="button" class="chip{{if eq .View.Filters.Source "bmrec"}} on{{end}}" data-source="bmrec" aria-pressed="{{if eq .View.Filters.Source "bmrec"}}true{{else}}false{{end}}">bmrec</button>
+  </div>
+  {{if or .View.Filters.Active .View.Hidden}}<div class="group g-end">
+    {{if .View.Hidden}}<span class="hiddencount">{{.View.Hidden}} hidden by filter</span>{{end}}
+    {{if .View.Filters.Active}}<button type="button" class="chip clear" data-clear="1" title="Back to the default view: phone only, all bands">clear</button>{{end}}
+  </div>{{end}}
 </div>
-{{if .View.Filters.Active}}<div class="summary">Filter:{{range .View.Filters.Bands}} {{.}}{{end}}{{range .View.Filters.Awards}} {{.}}{{end}}{{if .View.Filters.Source}} {{.View.Filters.Source}} only{{end}}{{if .View.Filters.NeededOnly}} needed only{{end}} modes:{{range .View.Filters.ActiveModes}} {{.}}{{end}}{{if .View.Hidden}} - {{.View.Hidden}} hidden by filter{{end}}</div>{{end}}
 <ol id="rows" class="rows" tabindex="0" role="listbox" aria-label="Chase queue"{{range .View.Rows}}{{if .Highlighted}} aria-activedescendant="row-{{.RowID}}"{{end}}{{end}}>
 {{range .View.Rows}}
   <li class="row{{if .Highlighted}} hi{{end}}{{if not .Tunable}} notune{{end}}" id="row-{{.RowID}}" data-row="{{.RowID}}" role="option" aria-selected="{{.Highlighted}}">

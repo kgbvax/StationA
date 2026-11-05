@@ -272,8 +272,8 @@ func TestAwardAndSourceFilterEndpoint(t *testing.T) {
 		t.Errorf("persisted = %+v", f)
 	}
 	body := do(t, h, "GET", "/list", nil).Body.String()
-	if !strings.Contains(body, "cluster only") || !strings.Contains(body, `data-award="dxcc"`) {
-		t.Errorf("summary or award chip missing:\n%s", body)
+	if !strings.Contains(body, `data-source="cluster" aria-pressed="true"`) || !strings.Contains(body, `data-award="dxcc"`) {
+		t.Errorf("source chip not pressed or award chip missing:\n%s", body)
 	}
 	if rec := do(t, h, "POST", "/filters?source=bogus", csrf); rec.Code != 400 {
 		t.Errorf("bad source: code = %d", rec.Code)
