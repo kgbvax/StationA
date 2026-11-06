@@ -76,7 +76,7 @@ can be built and run day to day.
 | [antennaselect](antennaselect/) | Antenna-selection reconciler | `muehle/hf/antenna-select` | logic slot |
 | [acom1200s-pa-bridge](acom1200s-pa-bridge/) | ACOM 1200S PA bridge (operate/standby, band; power state read-only) | `muehle/hf/pa` | Serial (USB, Prolific) |
 | [wrc-rotator-bridge](wrc-rotator-bridge/) | HF rotator bridge (Yaesu G-450DC via AF6SA WRC) | `muehle/hf/rotator` | WebSocket (AF6SA WRC) |
-| [atr1k-tuner-bridge](atr1k-tuner-bridge/) | ATR-1000 ATU bridge | `muehle/hf/tuner` | wifi (binary WebSocket) |
+| [tgxl-tuner-bridge](tgxl-tuner-bridge/) | Tuner Genius XL bridge | `muehle/hf/tuner` | ethernet (TCP API) |
 | [shelly-power-bridge](shelly-power-bridge/) | Shelly smart-plug bridge (13.8 V PSU, antenna power, shack PC mains) | `muehle/power/psu-13v8`, `muehle/power/antennas`, `muehle/power/shack-pc-mains` | wifi (Shelly MQTT, Gen1 + Gen2+) |
 | [m5stamp-hf-ctrl](m5stamp-hf-ctrl/) | M5 Stamp PLC firmware (PA/TRX remote-on + arm relay) | `muehle/hf/switch`, `muehle/hf/pa-arm` | wifi (embedded) |
 | [powerseq](powerseq/) | Station startup/shutdown sequencer | `muehle/hf/power-seq` | logic slot |
@@ -142,7 +142,7 @@ muehle/
     power-seq/       ← powerseq          (startup/shutdown sequencer)
     pa/              ← acom1200s-pa-bridge (ACOM 1200S - operate/standby + band; power read-only, powered via switch)
     rotator/         ← wrc-rotator-bridge   (Yaesu G-450DC via AF6SA WRC, websocket)
-    tuner/           ← atr1k-tuner-bridge (ATR-1000 ATU, wifi)
+    tuner/           ← tgxl-tuner-bridge (Tuner Genius XL, ethernet)
     discovery/       ← hadiscovery      (HA discovery consumer - reads /meta.expose)
     chase/           ← chase-queue (ranked CQ stations: needed + priority)
     beam-steer/      ← beamsteer        (smart rotation - PstRotator UDP emulator)

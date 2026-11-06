@@ -156,7 +156,7 @@ be skipped without editing `deploy.sh` (it would need `${VAR-default}`).
 
 ## EnvironmentFile for secrets (default for most bridges)
 
-Most services (acom1200s-pa-bridge, atr1k-tuner-bridge, flexbridge,
+Most services (acom1200s-pa-bridge, tgxl-tuner-bridge, flexbridge,
 icom9700-radio-bridge, oscarwatch-sattrack-bridge, powerseq,
 shelly-power-bridge, spid-ercm-rotator-bridge, stationportal, testui,
 wrc-rotator-bridge) keep the MQTT password out of the TOML, in a systemd

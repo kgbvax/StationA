@@ -10,7 +10,7 @@
 //   hf/ant-ctrl     /cmd              commanded moves, seen before ultrabridge's 2 s poll
 //   hf/antenna-select /status + /state  reconciler target (a port move is pending)
 //   hf/pa           /status + /state  ACOM liveness + fault
-//   hf/tuner        /status + /state  ATR-1000 tune cycle (settling)
+//   hf/tuner        /status + /state  TGXL autotune cycle (settling)
 //
 // Gates come in two classes (model §6: a slow arm permit ANDed with the fast
 // hardware key line — not a fast software gate):
@@ -34,7 +34,7 @@
 // `armed` reports the readback.
 //
 // Producers that publish change-only (ultrabridge, ant-switch, antennaselect,
-// ACOM, ATR) get no age window — their liveness is the two-layer rule: the
+// ACOM, TGXL) get no age window — their liveness is the two-layer rule: the
 // /status LWT AND /state.device_online. Only flexbridge heartbeats (5 s), so
 // only the radio feed has a 10 s freshness window. Every input resets to the
 // closed side when the pa-arm connection (or WiFi) drops, and on each
@@ -538,7 +538,7 @@ inline Eval evaluate(unsigned long now) {
     }
     else if (pa.fault != "none") hazard("pa fault", true);
 
-    // ATU tune cycle (the tuner is optional: only a live, tuning ATR blocks)
+    // ATU tune cycle (the tuner is optional: only a live, tuning TGXL blocks)
     if (tuner.statusOnline && tuner.deviceOnline && tuner.settling) hazard("tuner tuning", false);
 
     // station still following a change

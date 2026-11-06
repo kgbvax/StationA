@@ -4,7 +4,6 @@ use (
 	./acom1200s-pa-bridge
 	./antennaselect
 	./antmode
-	./atr1k-tuner-bridge
 	./beamsteer
 	./chase-queue
 	./flexbridge
@@ -19,6 +18,7 @@ use (
 	./station-log
 	./stationportal
 	./testui
+	./tgxl-tuner-bridge
 	./ultrabridge
 	./vhfcam-restream
 	./winpc-power-bridge

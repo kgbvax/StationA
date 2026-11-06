@@ -7,7 +7,7 @@ startup; log-and-retry at runtime; LWT on `/status`; error detail in the retaine
 `/state`), but the *logging* was not. As of 2026-09-03 the modules split three ways:
 
 - `log/slog` text → stderr: flexbridge, acom1200s-pa-bridge, wrc-rotator-bridge,
-  atr1k-tuner-bridge, shelly-power-bridge, powerseq
+  tgxl-tuner-bridge, shelly-power-bridge, powerseq
 - std `log` with `[prefix]` strings: ultrabridge, antennaselect, hadiscovery, testui
 - no logging package: pelcobridge2 (TUI app — engine events went to the on-screen log
   pane only, invisible to the journal)
@@ -80,7 +80,7 @@ error filter; a module that logs its errors at `Info` breaks it.
 The converse also holds: a reconnect loop against a device that is simply off must not
 flood the filter with one `Warn` per backoff cycle. Use `logging.Streak` (shared/logging):
 the first failure of an outage logs at `Warn`, repeats at `Info` with a `repeat` count,
-and `Reset()` after a run that proved healthy re-arms the `Warn` (acom, atr1k and
+and `Reset()` after a run that proved healthy re-arms the `Warn` (acom, tgxl and
 flexbridge reset on their existing "run lasted ≥ 1 min" backoff test). Routine,
 self-healing steps inside a run (e.g. re-sending a telemetry-enable) are `Info`.
 
@@ -105,8 +105,8 @@ moved to `<file>.1` at start above 5 MB); see
 
 ### 5. The `Logger{Infof,Warnf,Errorf,Debugf}` bridge interface
 
-`flexbridge` (mirrored by atr1k, acom, wrc, shelly, powerseq) passes a minimal
-interface into bridge/device code (shelly's and atr1k's tuner-package variants have no
+`flexbridge` (mirrored by tgxl, acom, wrc, shelly, powerseq) passes a minimal
+interface into bridge/device code (shelly's and tgxl's tuner-package variants have no
 `Errorf`). Keep it, with two constraints:
 
 - Its adapter wraps the service's slog logger (so `component`/`slot` attrs are already
@@ -126,7 +126,7 @@ on the device, not to journald.
 ```bash
 # scmino: errors and warnings only, last hour
 ssh io@192.168.1.178 journalctl -u flexbridge -u ultrabridge -u acom1200s-pa-bridge \
-  -u atr1k-tuner-bridge -u wrc-rotator-bridge -u shelly-power-bridge \
+  -u tgxl-tuner-bridge -u wrc-rotator-bridge -u shelly-power-bridge \
   -u antenna-select -u antmode -u beamsteer -u hadiscovery -u powerseq \
   -u icom9700-radio-bridge -u rigctld-ic9700 -u station-log \
   -u oscarwatch-sattrack-bridge -u vhfcam-restream -u stationportal \
@@ -149,7 +149,7 @@ ssh io@192.168.1.139 "sudo grep 'error' /var/log/hf-mqtt-capture/\$(date -u +%Y-
   per slot with `slot` attr (§2). **Done 2026-10-10:** journald priority prefix via
   `shared/logging.NewHandler` (62e9e48, every Linux Go service except hf-console-web,
   whose webbridge still uses std `log`) and `logging.Streak` one-Warn-per-outage
-  (625f46d, in the flexbridge/atr1k/acom reconnect loops; the antenna-mode refusal paths
+  (625f46d, in the flexbridge/tgxl/acom reconnect loops; the antenna-mode refusal paths
   in wrc-rotator-bridge, ultrabridge, antmode and beamsteer adopted it 2026-10-22).
 - **Open: flexbridge** — publishes `device_online` but no `/state.error`; see
   `docs/station-integration-model.md` §3 for the error-field contract it must adopt.

@@ -247,7 +247,7 @@ Current migration: idle shutdown (`shutdown_minutes`, env `SHUTDOWN_MINUTES`
 default 120, + `[[idle_shutdown]]` = the live `[[shutdown]]` + bwpc sleep).
 Add future migrations to that script as their own idempotent block.
 
-The unit is hardened like atr1k-tuner-bridge (network-only):
+The unit is hardened like tgxl-tuner-bridge (network-only):
 `ProtectSystem=strict`, `PrivateDevices=true` (no serial devices),
 `RestrictAddressFamilies=AF_INET AF_INET6`, `MemoryMax=256M`, `TasksMax=64`.
 Its only writable path is `StateDirectory=powerseq` (`/var/lib/powerseq`,

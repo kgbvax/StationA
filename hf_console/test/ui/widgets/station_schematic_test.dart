@@ -37,7 +37,7 @@ void main() {
   testWidgets('a running station shows its live readings', (tester) async {
     await _pump(tester, StationScenario.running);
     for (final t in [
-      'FLEX-8400', '14.074.000', 'DATA', 'RX', 'ACOM', 'OPER', 'ATR-1000', 'INLINE', '13.8 V', 'AUTO',
+      'FLEX-8400', '14.074.000', 'DATA', 'RX', 'ACOM', 'OPER', 'TGXL', 'INLINE', '13.8 V', 'AUTO',
       'Ultrabeam', '20 m Forward', '212°', '145.212.500', 'IDLE', '200°', 'AWAKE',
       '$_scminoTotal/$_scminoTotal', '1/1', 'TRX ON', 'PA ON', 'ARMED', 'NO PASS',
     ]) {

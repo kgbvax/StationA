@@ -55,7 +55,7 @@ void main() {
       await tester.pumpWidget(TestHarness(store: store, mqtt: mqtt, child: const TunerPanel()));
       await tester.pumpAndSettle();
 
-      expect(find.text('TUNING…'), findsNWidgets(2));
+      expect(find.text('TUNING…'), findsOneWidget);
       final mem = tester.widget<ElevatedButton>(find.widgetWithText(ElevatedButton, 'TUNING…').first);
       expect(mem.onPressed, isNull);
 

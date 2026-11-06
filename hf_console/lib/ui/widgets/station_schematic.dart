@@ -634,7 +634,7 @@ Widget _acom(StationSchematicModel m, List<_Hit> hits) {
 Widget _atr(StationSchematicModel m, List<_Hit> hits) {
   const a = 'muehle/hf/tuner';
   const r = Rect.fromLTWH(342, 336, 116, 100);
-  hits.add(const _Hit(a, 'ATR-1000', r));
+  hits.add(const _Hit(a, 'TGXL', r));
   final q = m.quality(a);
   final inline = m.value<bool>(a, 'inline');
   final settling = m.value<bool>(a, 'settling') == true;
@@ -646,7 +646,7 @@ Widget _atr(StationSchematicModel m, List<_Hit> hits) {
     sev: m.severity(a),
     attention: settling,
     rows: (w) => [
-      _title(w, 17, 'ATR-1000'),
+      _title(w, 17, 'TGXL'),
       _big(
         w,
         41,
@@ -1255,7 +1255,7 @@ class _SchematicPainter extends CustomPainter {
     _wire(c, const [Offset(250, 258), Offset(250, 276)], _Medium.power, live: s.psu);
     _wire(c, const [Offset(24, 276), Offset(505, 276)], _Medium.power, live: s.psu);
     _wire(c, const [Offset(100, 276), Offset(100, 336)], _Medium.power, live: s.psu); // FLEX
-    _wire(c, const [Offset(400, 276), Offset(400, 336)], _Medium.power, live: s.psu); // ATR-1000
+    _wire(c, const [Offset(400, 276), Offset(400, 336)], _Medium.power, live: s.psu); // TGXL
     _wire(c, [const Offset(505, 276), Offset(505, _sel.dy - _selR)], _Medium.power, live: s.psu); // switch
     _wire(c, const [Offset(24, 276), Offset(24, 640), Offset(40, 640)], _Medium.power, live: s.psu); // IC-9700
     _wire(c, const [Offset(24, 512), Offset(40, 512)], _Medium.power, live: s.psu); // PLC #1
@@ -1554,7 +1554,7 @@ const _slotNames = {
   'muehle/power/shack-pc-mains': 'PC mains plug',
   'muehle/hf/radio': 'FLEX-8400',
   'muehle/hf/pa': 'ACOM 1200S',
-  'muehle/hf/tuner': 'ATR-1000',
+  'muehle/hf/tuner': 'TGXL',
   'muehle/hf/ant-switch': 'Antenna switch',
   'muehle/hf/ant-ctrl': 'Ultrabeam RCU-06',
   'muehle/hf/rotator': 'G-450 rotator',
@@ -1621,7 +1621,7 @@ _Details _details(StationSchematicModel m, String id) {
         },
         null,
       ),
-      ('Feeds', 'FLEX, ATR-1000, antenna switch, PLC #1, IC-9700', null),
+      ('Feeds', 'FLEX, TGXL, antenna switch, PLC #1, IC-9700', null),
       ...d.rows,
     ]);
   }

@@ -261,7 +261,7 @@ ant-switch keeps its last state until its LWT fires.
 
 **Not gated (deliberately):** PA band vs radio band and ATU in-line state —
 antennaselect sends `set_band`/`set_inline` once and never re-sends, so a gate
-would deadlock after a PA or ATR power cycle; the ACOM's own drive-frequency
+would deadlock after a PA or tuner power cycle; the ACOM's own drive-frequency
 check faults on a band mismatch (→ `pa fault`). Also not gated: rotator motion
 (no RF hazard) and `muehle/power/psu-13v8` (R4.9 — the PLC runs from it).
 

@@ -92,7 +92,7 @@ towns are not in the dataset.
 
 On tablets the Station page's left pane is `StationSchematic` instead of a map (phones keep the power card + faults
 column). One fixed 760×790 sheet, scaled to the pane: hosts on the LAN, the power path (house mains → the three Shelly
-plugs → the 13.8 V TRX PSU bus feeding FLEX, ATR-1000, antenna switch, PLC #1 and IC-9700; the antenna plug feeding the
+plugs → the 13.8 V TRX PSU bus feeding FLEX, TGXL, antenna switch, PLC #1 and IC-9700; the antenna plug feeding the
 G-450, RCU-06 and the UHF rotators), the HF RF chain into the antenna switch (wiper on the selected port) and the UHF
 chain. Read-only: a tap opens a details popover (bridge, host, liveness, every /state field); commands stay in the
 panels. Drawn in the console's own idiom — powered lines green, selected RF path cyan, carrier red.
@@ -231,7 +231,7 @@ The machine-readable source of truth is `cmdRetain` in `lib/store/wiring.dart`; 
 - `uhf/radio` actions carry no `value` — the action name is the whole intent (receive-only posture, 2026-09; the per-VFO string-value deviation is gone with the removed tuning actions)
 - `pa-arm.set_enabled`: value is a **string** `"true"` / `"false"`
 - `tuner.set_inline`: value is a real JSON **bool**
-- `tuner.tune`: value is a **string** `"mem"` / `"full"`
+- `tuner.tune`: value is a **string** `"auto"` (legacy `"mem"` / `"full"` accepted by the bridge)
 
 ## Build
 

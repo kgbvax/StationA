@@ -167,7 +167,7 @@ PSU_SHELLY_ID=<gen1-or-gen2-id> \
   ANTENNAS_SHELLY_ID=<gen2-id> PC_SHELLY_ID=<gen2-id> ./deploy.sh   # placeholder ids are refused at seed time
 ```
 
-The unit is hardened like atr1k-tuner-bridge (network-only):
+The unit is hardened like tgxl-tuner-bridge (network-only):
 `ProtectSystem=strict`, `PrivateDevices=true` (no serial devices),
 `RestrictAddressFamilies=AF_INET AF_INET6` (covers the outbound MQTT),
 `MemoryMax=256M`, `TasksMax=64`. There is no udev rule and no `DeviceAllow` —

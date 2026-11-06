@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 #
-# Deploy atr1k-tuner-bridge (the ATR-1000 ATU bridge, binary `atr1k-tuner-bridge`)
+# Deploy tgxl-tuner-bridge (the Tuner Genius XL bridge, binary `tgxl-tuner-bridge`)
 # to a Raspberry Pi and install it as a hardened systemd service.
 #
-# atr1k-tuner-bridge bridges the ATR-1000 ATU (BTR-1000 / N7DDC family) to MQTT on
+# tgxl-tuner-bridge bridges the FlexRadio Tuner Genius XL (1x3) to MQTT on
 # the station three-plane topics (muehle/hf/tuner/{meta,state,status,cmd}). It
-# dials the ATU over its binary WebSocket (default ws://192.168.1.20:60001),
-# publishes SWR / forward power / L-C relay state, and subscribes to /cmd
-# (set_inline, tune). It is network-only — no serial devices — so the unit runs
+# dials the TGXL over its TCP API (default 192.168.1.145:9010),
+# publishes SWR / forward power / relay state, and subscribes to /cmd
+# (set_inline, set_operate, set_antenna, tune). It is network-only — no serial devices — so the unit runs
 # under the strictest sandbox (PrivateDevices=true) with only AF_INET/AF_INET6
-# for the outbound WS+MQTT.
+# for the outbound TCP+MQTT.
 #
 # Usage:
 #   ./deploy.sh                       # deploy to default host "scmino"
@@ -18,27 +18,27 @@
 # Configurable via environment variables (with defaults):
 #   SSH_HOST        SSH target            (default: 192.168.1.178, scmino)
 #   SSH_USER        SSH user              (default: io)  [used only if SSH_HOST has no user@]
-#   SERVICE_NAME    systemd service name  (default: atr1k-tuner-bridge)
-#   SERVICE_USER    system user to run as (default: atr1k-tuner-bridge)
-#   INSTALL_DIR     remote install dir    (default: /opt/atr1k-tuner-bridge)
-#   BINARY          binary name           (default: atr1k-tuner-bridge)
+#   SERVICE_NAME    systemd service name  (default: tgxl-tuner-bridge)
+#   SERVICE_USER    system user to run as (default: tgxl-tuner-bridge)
+#   INSTALL_DIR     remote install dir    (default: /opt/tgxl-tuner-bridge)
+#   BINARY          binary name           (default: tgxl-tuner-bridge)
 #
-#   TUNER_URL       tuner.url value       (default: ws://192.168.1.20:60001)
+#   TUNER_ADDRESS   tuner.address value   (default: 192.168.1.145:9010)
 #   LOCATION        location value        (default: bauwagen)  [published in /meta]
 #   HOST_NAME       host value            (default: scmino)     [published in /meta]
-#   DEVICE_MODEL    device.model value    (default: ATR-1000)
-#   DEVICE_LINK     device.link value     (default: wifi)
+#   DEVICE_MODEL    device.model value    (default: Tuner Genius XL)
+#   DEVICE_LINK     device.link value     (default: ethernet)
 #   LOG_LEVEL       log.level value       (default: info)
 #   MQTT_BROKER     mqtt.broker value     (default: tcp://192.168.1.178:1883, the scmino station broker)
 #   MQTT_SITE       mqtt.site             (default: muehle)
 #   MQTT_STATION    mqtt.station           (default: hf)
 #   MQTT_SLOT       mqtt.slot             (default: tuner)
 #   MQTT_USER       mqtt.user             (default: hf)
-#   MQTT_PASSWORD   ATR1K_TUNER_BRIDGE_MQTT_PASSWORD (default: empty -> set on device)
+#   MQTT_PASSWORD   TGXL_TUNER_BRIDGE_MQTT_PASSWORD (default: empty -> set on device)
 #
 # Configuration lives in a 0600 TOML file on the target
-# (/etc/atr1k-tuner-bridge/config.toml); the MQTT password is NOT in the TOML — it
-# is loaded from an EnvironmentFile (/etc/atr1k-tuner-bridge/atr1k-tuner-bridge.env,
+# (/etc/tgxl-tuner-bridge/config.toml); the MQTT password is NOT in the TOML — it
+# is loaded from an EnvironmentFile (/etc/tgxl-tuner-bridge/tgxl-tuner-bridge.env,
 # 0600) so it never appears in the unit file or process command line. Both files
 # are SEEDED ONCE on first deploy from the variables above; subsequent deploys
 # leave the on-device files untouched so the Pi owns its own settings. To change
@@ -50,20 +50,20 @@ set -euo pipefail
 # --- configuration ----------------------------------------------------------
 SSH_HOST="${SSH_HOST:-192.168.1.178}"
 SSH_USER="${SSH_USER:-io}"
-SERVICE_NAME="${SERVICE_NAME:-atr1k-tuner-bridge}"
-SERVICE_USER="${SERVICE_USER:-atr1k-tuner-bridge}"
-INSTALL_DIR="${INSTALL_DIR:-/opt/atr1k-tuner-bridge}"
-CONFIG_DIR="${CONFIG_DIR:-/etc/atr1k-tuner-bridge}"
+SERVICE_NAME="${SERVICE_NAME:-tgxl-tuner-bridge}"
+SERVICE_USER="${SERVICE_USER:-tgxl-tuner-bridge}"
+INSTALL_DIR="${INSTALL_DIR:-/opt/tgxl-tuner-bridge}"
+CONFIG_DIR="${CONFIG_DIR:-/etc/tgxl-tuner-bridge}"
 CONFIG_FILE="${CONFIG_FILE:-${CONFIG_DIR}/config.toml}"
-ENV_FILE="${ENV_FILE:-${CONFIG_DIR}/atr1k-tuner-bridge.env}"
-BINARY="${BINARY:-atr1k-tuner-bridge}"
-PKG="./cmd/atr1k-tuner-bridge"
+ENV_FILE="${ENV_FILE:-${CONFIG_DIR}/tgxl-tuner-bridge.env}"
+BINARY="${BINARY:-tgxl-tuner-bridge}"
+PKG="./cmd/tgxl-tuner-bridge"
 
-TUNER_URL="${TUNER_URL:-ws://192.168.1.20:60001}"
+TUNER_ADDRESS="${TUNER_ADDRESS:-192.168.1.145:9010}"
 LOCATION="${LOCATION:-bauwagen}"
 HOST_NAME="${HOST_NAME:-scmino}"
-DEVICE_MODEL="${DEVICE_MODEL:-ATR-1000}"
-DEVICE_LINK="${DEVICE_LINK:-wifi}"
+DEVICE_MODEL="${DEVICE_MODEL:-Tuner Genius XL}"
+DEVICE_LINK="${DEVICE_LINK:-ethernet}"
 LOG_LEVEL="${LOG_LEVEL:-info}"
 MQTT_BROKER="${MQTT_BROKER:-tcp://192.168.1.178:1883}"
 MQTT_SITE="${MQTT_SITE:-muehle}"
@@ -101,15 +101,15 @@ SEED_CONFIG="$(umask 077; mktemp)"
 SEED_ENV="$(umask 077; mktemp)"
 trap 'rm -f "$SEED_CONFIG" "$SEED_ENV" "${UNIT_FILE:-}"' EXIT
 {
-  echo "# atr1k-tuner-bridge configuration. Sensitive values are NOT here — the MQTT"
-  echo "# password lives in the EnvironmentFile (atr1k-tuner-bridge.env). Keep both 0600."
+  echo "# tgxl-tuner-bridge configuration. Sensitive values are NOT here — the MQTT"
+  echo "# password lives in the EnvironmentFile (tgxl-tuner-bridge.env). Keep both 0600."
   echo "# Seeded by deploy.sh on first deploy; edit here to change settings."
   echo ""
   echo "host = \"$(toml_escape "$HOST_NAME")\""
   echo ""
   echo "[tuner]"
-  echo "# ATR-1000 binary WebSocket endpoint."
-  echo "url = \"$(toml_escape "$TUNER_URL")\""
+  echo "# Tuner Genius XL TCP endpoint (host:port, API port 9010)."
+  echo "address = \"$(toml_escape "$TUNER_ADDRESS")\""
   echo ""
   echo "[device]"
   echo "# Identity published in /meta. link reflects the transport to the ATU."
@@ -126,7 +126,7 @@ trap 'rm -f "$SEED_CONFIG" "$SEED_ENV" "${UNIT_FILE:-}"' EXIT
   echo "# Home Assistant discovery is rendered by the standalone hadiscovery consumer"
   echo "# from this bridge's expose block in /meta (model §9) — no embedded discovery."
   echo "user             = \"$(toml_escape "$MQTT_USER")\""
-  echo "# password is loaded from ATR1K_TUNER_BRIDGE_MQTT_PASSWORD in the EnvironmentFile, not here."
+  echo "# password is loaded from TGXL_TUNER_BRIDGE_MQTT_PASSWORD in the EnvironmentFile, not here."
   echo "password         = \"\""
   echo ""
   echo "[log]"
@@ -134,12 +134,12 @@ trap 'rm -f "$SEED_CONFIG" "$SEED_ENV" "${UNIT_FILE:-}"' EXIT
 } > "$SEED_CONFIG"
 
 {
-  echo "# atr1k-tuner-bridge EnvironmentFile (read by the systemd unit). Keep 0600."
+  echo "# tgxl-tuner-bridge EnvironmentFile (read by the systemd unit). Keep 0600."
   echo "# Seeded by deploy.sh on first deploy; edit here to change the password."
   if [[ -n "$MQTT_PASSWORD" ]]; then
-    echo "ATR1K_TUNER_BRIDGE_MQTT_PASSWORD=\"$(toml_escape "$MQTT_PASSWORD")\""
+    echo "TGXL_TUNER_BRIDGE_MQTT_PASSWORD=\"$(toml_escape "$MQTT_PASSWORD")\""
   else
-    echo "# ATR1K_TUNER_BRIDGE_MQTT_PASSWORD=\"...\"   # set on the device (copy from another hf service config)"
+    echo "# TGXL_TUNER_BRIDGE_MQTT_PASSWORD=\"...\"   # set on the device (copy from another hf service config)"
   fi
 } > "$SEED_ENV"
 
@@ -154,7 +154,7 @@ echo "   built $OUT"
 UNIT_FILE="$(mktemp)"
 cat > "$UNIT_FILE" <<EOF
 [Unit]
-Description=ATR-1000 ATU to MQTT bridge (atr1k-tuner-bridge)
+Description=FlexRadio Tuner Genius XL to MQTT bridge (tgxl-tuner-bridge)
 After=network-online.target
 Wants=network-online.target
 
@@ -169,12 +169,12 @@ RestartSec=5
 # Run as a dedicated unprivileged user.
 User=${SERVICE_USER}
 Group=${SERVICE_USER}
-# systemd owns /etc/atr1k-tuner-bridge (created 0755, owned by the service user).
+# systemd owns /etc/tgxl-tuner-bridge (created 0755, owned by the service user).
 ConfigurationDirectory=${SERVICE_NAME}
 StateDirectory=${SERVICE_NAME}
 
-# Hardening. atr1k-tuner-bridge is network-only: it dials the ATU over a
-# WebSocket and talks to the MQTT broker. No serial devices, no disk writes,
+# Hardening. tgxl-tuner-bridge is network-only: it dials the TGXL over a
+# TCP socket and talks to the MQTT broker. No serial devices, no disk writes,
 # no elevated capabilities. PrivateDevices is therefore safe (unlike the serial
 # bridges), and RestrictAddressFamilies covers the outbound connections.
 NoNewPrivileges=true
@@ -245,7 +245,7 @@ if [ -e "$ENV_FILE" ]; then
 else
   sudo install -o "$SERVICE_USER" -g "$SERVICE_USER" -m 0600 "$SEED_ENV" "$ENV_FILE"
   echo "   seeded env file at $ENV_FILE (0600, owner $SERVICE_USER)."
-  echo "   !! Set ATR1K_TUNER_BRIDGE_MQTT_PASSWORD in $ENV_FILE before relying on the bridge."
+  echo "   !! Set TGXL_TUNER_BRIDGE_MQTT_PASSWORD in $ENV_FILE before relying on the bridge."
 fi
 sudo systemctl stop "${SERVICE_NAME}.service" 2>/dev/null || true
 sudo mv "/tmp/${BINARY}.new" "${INSTALL_DIR}/${BINARY}"
@@ -259,8 +259,8 @@ sudo systemctl --no-pager --full status "${SERVICE_NAME}.service" || true
 REMOTE
 
 echo ""
-echo ">> Done. atr1k-tuner-bridge deployed to ${SSH_TARGET} as systemd service '${SERVICE_NAME}'."
+echo ">> Done. tgxl-tuner-bridge deployed to ${SSH_TARGET} as systemd service '${SERVICE_NAME}'."
 echo "   Logs:    ssh ${SSH_TARGET} 'journalctl -u ${SERVICE_NAME} -f'"
 echo "   Config:  ${CONFIG_FILE}"
-echo "   Secret:  ${ENV_FILE}  (set ATR1K_TUNER_BRIDGE_MQTT_PASSWORD if not seeded)"
+echo "   Secret:  ${ENV_FILE}  (set TGXL_TUNER_BRIDGE_MQTT_PASSWORD if not seeded)"
 echo "   Topics:  muehle/hf/tuner/{meta,state,status,cmd}"

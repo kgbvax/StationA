@@ -34,13 +34,13 @@ class TunerPanel extends StatelessWidget {
       );
     }
 
-    void tune(String mode) {
+    void tune() {
       // A second tune queued against a settling tuner just competes with the
       // in-flight one — hold taps while it works.
       if (!online || settling) return;
       mqtt.publish(
         cmdTopic('hf/tuner'),
-        tunerTunePayload(mode),
+        tunerTunePayload('auto'),
         retain: cmdRetain['muehle/hf/tuner']!,
       );
     }
@@ -54,7 +54,7 @@ class TunerPanel extends StatelessWidget {
             title: 'Tuner',
             trailing: StatusPill(
               slots: const ['muehle/hf/tuner'],
-              label: 'ATR-1000',
+              label: 'TGXL',
               suffix: suffix.isEmpty ? null : suffix,
               suffixColor: suffixColor,
               stickySuffix: true, // FAULT survives a dead link
@@ -70,15 +70,9 @@ class TunerPanel extends StatelessWidget {
               )),
               const SizedBox(width: 8),
               Expanded(child: ElevatedButton(
-                onPressed: online && !settling ? () => tune('mem') : null,
+                onPressed: online && !settling ? tune : null,
                 style: AppTheme.actionButton(),
-                child: Text(settling ? 'TUNING…' : 'TUNE MEM'),
-              )),
-              const SizedBox(width: 8),
-              Expanded(child: ElevatedButton(
-                onPressed: online && !settling ? () => tune('full') : null,
-                style: AppTheme.actionButton(),
-                child: Text(settling ? 'TUNING…' : 'TUNE FULL'),
+                child: Text(settling ? 'TUNING…' : 'TUNE'),
               )),
             ],
           ),

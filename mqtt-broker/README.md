@@ -159,7 +159,7 @@ in place where they diverge.
 
 **Go services on scmino** → `tcp://127.0.0.1:1883` (broker is co-located):
 `flexbridge`, `ultrabridge`, `acom1200s-pa-bridge`, `wrc-rotator-bridge`,
-`atr1k-tuner-bridge`, `powerseq`, `antennaselect`, `antmode`, `beamsteer`,
+`tgxl-tuner-bridge`, `powerseq`, `antennaselect`, `antmode`, `beamsteer`,
 `hadiscovery`, `station-log`, `icom9700-radio-bridge`, … (the root
 `CLAUDE.md` host list). `shelly-power-bridge` uses the broker
 (`tcp://192.168.1.178:1883`). Edit `/etc/<service>/config.toml` `mqtt.broker` (or the matching

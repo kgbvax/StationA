@@ -218,7 +218,7 @@ From PRD 00 §4.6:
 > first. Keying on `/status` alone caused real failures (§6). The contract: on a clean
 > shutdown, a component must publish retained `offline` to its own `/status` itself.
 > The last-will covers only an abnormal disconnect. Known defect: the flexbridge,
-> acom1200s, atr1k, shelly, and wrc bridges omit that self-publish today. A stopped
+> acom1200s, tgxl, shelly, and wrc bridges omit that self-publish today. A stopped
 > service can then leave a retained `online` on the bus. The powerseq, antennaselect,
 > hadiscovery, and ultrabridge components do publish `offline` on a clean shutdown.
 > Consumers must not trust `/status` alone for anything safety-relevant.
@@ -233,14 +233,14 @@ From PRD 02 §5.3 (actual behavior, not the ideal):
 > retained `online` persists.)
 
 Code-check verdict (2026-09-03): **still open.** flexbridge, acom1200s-pa-bridge,
-atr1k-tuner-bridge, shelly-power-bridge, and wrc-rotator-bridge have no `offline`
+tgxl-tuner-bridge, shelly-power-bridge, and wrc-rotator-bridge have no `offline`
 self-publish in their shutdown path (their `internal/mqtt` layers do not publish
 `"offline"` to `/status`; `shared/mqtt` provides none either). The compliant set is
 unchanged: powerseq (`internal/mqtt/client.go` Close publishes offline),
 antennaselect (`internal/mqtt/client.go` Close), hadiscovery (`internal/mqtt/client.go`
 Close), ultrabridge (`internal/mqtt/client.go` Close).
 
-Update 2026-10-23: still open for flexbridge, acom1200s-pa-bridge, atr1k-tuner-bridge,
+Update 2026-10-23: still open for flexbridge, acom1200s-pa-bridge, tgxl-tuner-bridge,
 shelly-power-bridge and wrc-rotator-bridge, and also (at the time) for logger-spot-bridge (`hf/spots`, since removed;
 station-log took over its feed), which set only the will and then disconnected cleanly. These components now publish a
 retained `offline` on a clean exit: spid-ercm-rotator-bridge, icom9700-radio-bridge,
@@ -411,7 +411,7 @@ From PRD 02 §0.1. Candidate home: appendix of `docs/conventions/band-mode-refer
   here an ACOM 1200S, up to 1200 W.
 - **ATU / antenna tuner**: an impedance-matching network placed in the feed line ("in
   line") or bypassed. Needed when an antenna is not resonant on the operating band —
-  here an ATR-1000.
+  here a Tuner Genius XL.
 - **SWR (standing-wave ratio)**: a measure of feed-line impedance match. 1.0 is perfect,
   ≥ 3.0 is dangerous (reflected power heats the PA).
 - **Rotator**: a motor that turns a mast-mounted directional antenna. Azimuth (az) is the
@@ -992,3 +992,22 @@ scmino (192.168.1.178), and the repo does not record the current settings:
   192.168.1.50 holds a copy too). Redeploy stationportal and hf_console web; the tablet APK must read
   `station-log/working` before the old service is stopped, or the marker disappears until it is updated.
 - No Log4OM clear signal: the console marker ages out (dim 5 min, hidden 15 min).
+
+## Tuner Genius XL replaces the ATR-1000 (2026-11-06)
+
+`tgxl-tuner-bridge` took over `muehle/hf/tuner` from `atr1k-tuner-bridge` (removed).
+
+- **Tune hazard (decision, no gate):** `tune` → TGXL `autotune` keys the FLEX over the LAN. The
+  station has no PGXL, so nothing puts the ACOM 1200S into standby, and the bridge does not check
+  `hf/pa` / `hf/pa-arm`. The operator must have the PA in standby before tuning.
+- **Units unverified live:** `fwd` (dBm) and `swr` (API says "dB", treated as return loss) are
+  converted from the vendor PDF only. Verify with a known carrier before relying on them
+  (`printf 'C1|info\nC2|status\n' | nc 192.168.1.145 9010`).
+- **flexbridge overlap:** unknown whether a TGXL tune also shows as `tuning` in flexbridge's
+  `sub atu` status (which `hf/radio/state.tuning` and PLC #1 gate on); PLC #1 also gates on the
+  tuner's own `settling`.
+- **Antenna routing undecided:** the bridge exposes the TGXL ANT1–3 selection (`antenna`,
+  `set_antenna`) but nothing drives it; `antennaselect [tuner_follow]` still only toggles
+  `set_inline` for the fan-dipole bands.
+- **Old APKs:** an hf_console APK from before this change still sends `tune` `"mem"`/`"full"`; the
+  bridge accepts both as `auto`. Its button label says ATR-1000/TUNE MEM until the APK is rebuilt.

@@ -30,7 +30,7 @@ const slotHosts = <String, SlotHost>{
   'muehle/hf/ant-ctrl': SlotHost('ultrabridge', 'scmino'),
   'muehle/hf/pa': SlotHost('acom1200s-pa-bridge', 'scmino'),
   'muehle/hf/rotator': SlotHost('wrc-rotator-bridge', 'scmino'),
-  'muehle/hf/tuner': SlotHost('atr1k-tuner-bridge', 'scmino'),
+  'muehle/hf/tuner': SlotHost('tgxl-tuner-bridge', 'scmino'),
   'muehle/hf/antenna-select': SlotHost('antennaselect', 'scmino'),
   'muehle/hf/beam-steer': SlotHost('beamsteer', 'scmino'),
   'muehle/hf/ant-mode': SlotHost('antmode', 'scmino'),

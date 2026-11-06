@@ -72,7 +72,7 @@ audit.
   values come off the bus (topics allow arbitrary UTF-8); every `innerHTML` interpolation
   of them goes through `escapeHtml` (rail, head, chips, ticker, edit-state) or is built
   with `textContent`/DOM (bar widget). A crafted topic must not execute script.
-- **`value_key` convention** — `atr1k-tuner-bridge` historically keyed `set_inline` under
+- **`value_key` convention** — the tuner bridge (formerly `atr1k-tuner-bridge`) historically keyed `set_inline` under
   `inline` and `tune` under `mode`; now fixed (both `value`). Do not code to the old
   shape. See memory `cmd-payload-value-key-convention`.
 

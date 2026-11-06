@@ -214,7 +214,7 @@ SERIAL_USB_VENDORS="0403 067b" ./deploy.sh
 
 The unit uses a **new hardening combination** (plan KTD3): serial access
 forbids `PrivateDevices`, so it takes ultrabridge's `SupplementaryGroups=dialout`
-+ `DeviceAllow=char-tty{USB,ACM} rw` + udev rules, atr1k's remaining hardening
++ `DeviceAllow=char-tty{USB,ACM} rw` + udev rules, tgxl-tuner-bridge's remaining hardening
 with `MemoryMax=256M`/`TasksMax=64`, and wrc's
 `RestrictAddressFamilies=AF_INET AF_INET6` for the inbound TCP/UDP listeners.
 `deploy.sh` generates **one udev rule per USB vendor** from

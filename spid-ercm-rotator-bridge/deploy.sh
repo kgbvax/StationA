@@ -11,7 +11,7 @@
 # PstRotator UDP listener (:12041) fed from the same dispatch core. The unit
 # therefore needs a NEW hardening combination (plan KTD3): serial access forbids
 # PrivateDevices, so it takes ultrabridge's SupplementaryGroups=dialout +
-# DeviceAllow + udev rules, atr1k's remaining hardening with MemoryMax/TasksMax,
+# DeviceAllow + udev rules, tgxl-tuner-bridge's remaining hardening with MemoryMax/TasksMax,
 # and wrc's RestrictAddressFamilies for the inbound TCP/UDP listeners.
 #
 # Usage:
@@ -292,7 +292,7 @@ StateDirectory=${SERVICE_NAME}
 
 # Hardening (plan KTD3 — a new combination): serial access forbids
 # PrivateDevices (unlike the network-only bridges), so the unit takes
-# ultrabridge's serial grants, atr1k's remaining hardening with
+# ultrabridge's serial grants, tgxl-tuner-bridge's remaining hardening with
 # MemoryMax/TasksMax, and wrc's RestrictAddressFamilies — the bridge both
 # opens /dev/ttyUSB* and LISTENS on TCP :${ROTCTLD_PORT} + UDP :${PSTROTATOR_PORT}.
 SupplementaryGroups=${SERIAL_GROUP}

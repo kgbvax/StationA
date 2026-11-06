@@ -156,7 +156,7 @@ else
       /etc/acom1200s-pa-bridge/acom1200s-pa-bridge.env \
       /etc/flexbridge/flexbridge.env \
       /etc/hadiscovery/hadiscovery.env \
-      /etc/atr1k-tuner-bridge/atr1k-tuner-bridge.env ; do
+      /etc/tgxl-tuner-bridge/tgxl-tuner-bridge.env ; do
       sudo test -r "$f" || continue
       v=$(sudo grep -hE '^[A-Z0-9_]*MQTT_PASSWORD=' "$f" 2>/dev/null | head -1 | sed -E 's/^[^=]*=//; s/^"(.*)"$/\1/')
       [ -n "$v" ] && pw="$v" && break

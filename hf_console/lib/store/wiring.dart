@@ -358,7 +358,8 @@ String paSetBandPayload(String band) => cmdPayload('set_band', band);
 // tuner.set_inline value is a real JSON bool.
 String tunerInlinePayload(bool inline) => cmdPayload('set_inline', inline);
 
-// tuner.tune value is a **string** "mem" / "full".
+// tuner.tune value is a **string**: "auto" (TGXL; the ATR-era "mem"/"full" are
+// still accepted by the bridge as aliases).
 String tunerTunePayload(String mode) => cmdPayload('tune', mode);
 
 // --- Antenna select / switch -------------------------------------------------

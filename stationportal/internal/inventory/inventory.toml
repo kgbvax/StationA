@@ -65,10 +65,10 @@ note  = "M5 Stamp PLC #2 — ESPHome web server (digest auth)"
 
 [[link]]
 group = "Devices"
-name  = "ATR-1000 tuner"
-url   = "ws://192.168.1.111:60001"
-host  = "atr1000"
-note  = "Binary WebSocket used by atr1k-tuner-bridge (no browser UI)"
+name  = "Tuner Genius XL"
+url   = "tcp://192.168.1.145:9010"
+host  = "tgxl"
+note  = "Line-based TCP API used by tgxl-tuner-bridge (no browser UI; configured with the TGXL Windows utility)"
 
 [[link]]
 group = "Infrastructure"
@@ -259,9 +259,9 @@ host      = "scmino"
 
 [[slot]]
 address   = "muehle/hf/tuner"
-component = "atr1k-tuner-bridge"
-device    = "ATR-1000 ATU"
-link      = "wifi, binary WebSocket (192.168.1.111)"
+component = "tgxl-tuner-bridge"
+device    = "FlexRadio Tuner Genius XL (1x3)"
+link      = "ethernet, TCP API (192.168.1.145:9010)"
 host      = "scmino"
 
 [[slot]]
@@ -394,11 +394,11 @@ ports = "7373/tcp, 12040/udp"
 slots = ["muehle/hf/rotator"]
 
 [[software]]
-name  = "atr1k-tuner-bridge"
-path  = "atr1k-tuner-bridge/"
+name  = "tgxl-tuner-bridge"
+path  = "tgxl-tuner-bridge/"
 kind  = "bridge"
 host  = "scmino"
-unit  = "atr1k-tuner-bridge"
+unit  = "tgxl-tuner-bridge"
 slots = ["muehle/hf/tuner"]
 
 [[software]]

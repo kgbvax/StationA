@@ -162,7 +162,7 @@ static const int BAND_EDGES_COUNT = sizeof(BAND_EDGES) / sizeof(BAND_EDGES[0]);
 #define PA_ARM_MQTT_BUFFER_SIZE 8192
 // PubSubClient handles ONE inbound packet per loop() call. On (re)subscribe the
 // broker replays ~14 retained arm inputs at once, and while keyed the ACOM and
-// ATR bridges publish per meter frame; drain up to this many per main-loop pass
+// tuner bridges publish per meter frame; drain up to this many per main-loop pass
 // so radio/state never queues behind telemetry.
 #define MQTT_DRAIN_MAX 16
 #define MQTT_KEEPALIVE_S 30

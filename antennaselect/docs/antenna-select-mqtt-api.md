@@ -293,7 +293,7 @@ logged once (deduped here); harmless.
 
 ### 7.2 Tuner in-line follow — `tuner.set_inline ← band_policy` (model §7.1 soft binding)
 
-The reconciler also engages the **ATU** (ATR-1000, slot `hf/tuner`) in-line for the
+The reconciler also engages the **ATU** (Tuner Genius XL, slot `hf/tuner`) in-line for the
 non-resonant bands, and bypasses it otherwise — so leaving a non-resonant band drops the
 ATU out of line. This closes the model §10 residual (30/60/80/160 m on the fan-dipole were
 routed to a non-resonant antenna with the ATU *assumed* but never driven).
@@ -312,7 +312,7 @@ sequencing already withholds a port change during TX, so the ATU is not re-keyed
   `true` = ATU in line, `false` = bypass.
 
 Gated by `[tuner_follow].enabled` (default `true` in the deploy seed; `false` in the built-in
-defaults). The `set_inline` vocabulary matches atr1k-tuner-bridge's `/cmd` contract.
+defaults). The `set_inline` vocabulary matches tgxl-tuner-bridge's `/cmd` contract.
 
 ---
 

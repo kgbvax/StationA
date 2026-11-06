@@ -1,8 +1,8 @@
-// Command atr1k-tuner-bridge bridges the ATR-1000 ATU (BTR-1000 / N7DDC family)
-// to MQTT using the station integration model (slot muehle/hf/tuner). It reads
-// the tuner's binary WebSocket status stream, publishes a canonical tuner state
-// snapshot, and dispatches /cmd intent (set_inline, tune) back to the tuner. See
-// README.md and docs/atr1k-tuner-bridge-mqtt-api.md for details.
+// Command tgxl-tuner-bridge bridges a FlexRadio Tuner Genius XL (1x3) to MQTT
+// using the station integration model (slot muehle/hf/tuner). It polls the
+// tuner's TCP API, publishes a canonical tuner state snapshot, and dispatches
+// /cmd intent (set_inline, set_operate, set_antenna, tune) back to the tuner. See
+// README.md and docs/tgxl-tuner-bridge-mqtt-api.md for details.
 package main
 
 import (
@@ -21,32 +21,32 @@ import (
 	sharedmqtt "codeberg.org/kgbvax/stationa/shared/mqtt"
 	schema "codeberg.org/kgbvax/stationa/shared/schema"
 
-	"atr1k-tuner-bridge/internal/bridge"
-	"atr1k-tuner-bridge/internal/config"
-	"atr1k-tuner-bridge/internal/tuner"
+	"tgxl-tuner-bridge/internal/bridge"
+	"tgxl-tuner-bridge/internal/config"
+	"tgxl-tuner-bridge/internal/tgxl"
 )
 
 func main() {
-	fs := flag.NewFlagSet("atr1k-tuner-bridge", flag.ExitOnError)
+	fs := flag.NewFlagSet("tgxl-tuner-bridge", flag.ExitOnError)
 	flags := config.RegisterFlags(fs)
 	_ = fs.Parse(os.Args[1:])
 
 	cfg, err := config.Load(flags)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "atr1k-tuner-bridge: load config: %v\n", err)
+		fmt.Fprintf(os.Stderr, "tgxl-tuner-bridge: load config: %v\n", err)
 		os.Exit(2)
 	}
 	if err := cfg.Validate(); err != nil {
-		fmt.Fprintf(os.Stderr, "atr1k-tuner-bridge: %v\n", err)
+		fmt.Fprintf(os.Stderr, "tgxl-tuner-bridge: %v\n", err)
 		os.Exit(2)
 	}
 
 	// Logging convention §2: constant component attr on the root logger (also the
 	// slog default, which device adapters log through) and the slot address.
-	logger := newLogger(cfg.Log.Level).With("component", "atr1k-tuner-bridge",
+	logger := newLogger(cfg.Log.Level).With("component", "tgxl-tuner-bridge",
 		"slot", cfg.MQTT.Site+"/"+cfg.MQTT.Station+"/"+cfg.MQTT.Slot)
 	slog.SetDefault(logger)
-	logger.Info("atr1k-tuner-bridge starting", "tuner", cfg.Tuner.URL)
+	logger.Info("tgxl-tuner-bridge starting", "tuner", cfg.Tuner.Address)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
@@ -55,13 +55,13 @@ func main() {
 		// A SIGTERM/SIGINT cancels the root context; that's a clean shutdown,
 		// not a failure — exit 0 so `systemctl stop` doesn't report FAILURE.
 		if logging.CleanStop(ctx, err) {
-			logger.Info("atr1k-tuner-bridge stopped")
+			logger.Info("tgxl-tuner-bridge stopped")
 			return
 		}
-		logger.Error("atr1k-tuner-bridge exited", "err", err)
+		logger.Error("tgxl-tuner-bridge exited", "err", err)
 		os.Exit(1)
 	}
-	logger.Info("atr1k-tuner-bridge stopped")
+	logger.Info("tgxl-tuner-bridge stopped")
 }
 
 func run(ctx context.Context, cfg config.Config, debug bool, log *slog.Logger) error {
@@ -72,7 +72,9 @@ func run(ctx context.Context, cfg config.Config, debug bool, log *slog.Logger) e
 	// paho client exists; bridge.New only needs the Publisher interface.
 	pub := &bridge.PahoPublisher{}
 
-	dev := tuner.New(cfg.Tuner.URL, debug, adapter)
+	poll, _ := cfg.PollDuration() // validated in main
+	txPoll, _ := cfg.TxPollDuration()
+	dev := tgxl.New(cfg.Tuner.Address, cfg.Tuner.AuthCode, poll, txPoll, debug, adapter)
 
 	b := bridge.New(bridge.Config{
 		Site:        cfg.MQTT.Site,
@@ -84,11 +86,12 @@ func run(ctx context.Context, cfg config.Config, debug bool, log *slog.Logger) e
 		DeviceLink:  cfg.Device.Link,
 		Commander:   dev, // the tuner is the /cmd executor
 	}, pub, adapter)
+	dev.SetInfoHandler(b.SetDeviceInfo)
 
 	// Wire the /cmd dispatch used by the OnConnect subscription callback.
 	// Commands are funneled through a bounded channel to a single worker
 	// goroutine, so the paho message handler never blocks (a set_inline/tune
-	// writes to the ATR WebSocket) and commands serialize — no two commands
+	// writes to the TGXL) and commands serialize — no two commands
 	// interleave on the wire. See the stationa memory on paho handlers: never
 	// do blocking work in the message callback.
 	cmdCh := make(chan []byte, 8)
@@ -113,16 +116,15 @@ func run(ctx context.Context, cfg config.Config, debug bool, log *slog.Logger) e
 	}
 
 	// 1. Connect MQTT with LWT and a /cmd subscription.
-	mqttClient, err := connectMQTT(ctx, cfg, b, log)
+	mqttClient, err := connectMQTT(ctx, cfg, b, pub, log)
 	if err != nil {
 		return fmt.Errorf("mqtt connect: %w", err)
 	}
 	defer mqttClient.Disconnect(500)
-	pub.Client = mqttClient
 	log.Info("MQTT connected", "broker", cfg.MQTT.Broker)
 
-	// 2. Run the ATR-1000 WebSocket connection loop until ctx is cancelled.
-	return wsLoop(ctx, cfg, b, dev, log)
+	// 2. Run the TGXL connection loop until ctx is cancelled.
+	return devLoop(ctx, cfg, b, dev, log)
 }
 
 // cmdHandler is set by run() so the paho /cmd subscription callback (wired in
@@ -136,7 +138,7 @@ var cmdHandler = func(payload []byte) {}
 // Connect is ctx-aware: paho's Connect()/Wait() blocks ignoring our context, so
 // without this a SIGTERM while the broker is unreachable (or auth is failing)
 // can't interrupt the connect and systemd must SIGKILL after TimeoutStopSec.
-func connectMQTT(ctx context.Context, cfg config.Config, b *bridge.Bridge, log *slog.Logger) (pahomqtt.Client, error) {
+func connectMQTT(ctx context.Context, cfg config.Config, b *bridge.Bridge, pub *bridge.PahoPublisher, log *slog.Logger) (pahomqtt.Client, error) {
 	opts := pahomqtt.NewClientOptions()
 	opts.AddBroker(cfg.MQTT.Broker)
 	clientID := cfg.MQTT.ClientID
@@ -164,15 +166,14 @@ func connectMQTT(ctx context.Context, cfg config.Config, b *bridge.Bridge, log *
 		log.Info("MQTT (re)connected, published online LWT")
 		// /cmd is not retained; resubscribe on every reconnect.
 		if tok := c.Subscribe(cmd, 1, func(_ pahomqtt.Client, m pahomqtt.Message) {
-			// Runs in paho's goroutine; the bridge only touches the ATR via the
-			// Commander (tuner.Device), which guards all writes under its mutex.
+			// Runs in paho's goroutine; it only enqueues onto cmdCh (never blocks).
 			cmdHandler(m.Payload())
 		}); tok.Wait() && tok.Error() != nil {
 			log.Warn("subscribe cmd failed", "err", tok.Error())
 		}
 		// Re-publish the retained birth certificate on reconnect so a fresh
 		// broker (or a late subscriber) sees current identity/capabilities.
-		publishMetaOnReconnect(c, cfg)
+		b.PublishMeta()
 		// Re-land the retained /state too (review S2): the broker may have
 		// flushed it, and the bridge's change-only dedup would otherwise never
 		// restore it while the tuner sits steady. No-ops before first telemetry.
@@ -183,6 +184,7 @@ func connectMQTT(ctx context.Context, cfg config.Config, b *bridge.Bridge, log *
 	}
 
 	client := pahomqtt.NewClient(opts)
+	pub.Client = client // set before Connect so OnConnect publishes are safe
 	// Context-aware connect: paho's Connect().Wait() blocks ignoring ctx, so a
 	// SIGTERM while the broker is unreachable (or auth is failing) can't
 	// interrupt it and systemd must SIGKILL after TimeoutStopSec. sharedmqtt.Connect
@@ -194,30 +196,13 @@ func connectMQTT(ctx context.Context, cfg config.Config, b *bridge.Bridge, log *
 	return client, nil
 }
 
-// publishMetaOnReconnect re-publishes the retained /meta birth certificate on
-// every (re)connect so the broker repopulates it after a flush. It builds a
-// one-shot bridge bound to the live paho client just for PublishMeta.
-func publishMetaOnReconnect(c pahomqtt.Client, cfg config.Config) {
-	pub := &bridge.PahoPublisher{Client: c}
-	b := bridge.New(bridge.Config{
-		Site:        cfg.MQTT.Site,
-		Station:     cfg.MQTT.Station,
-		Slot:        cfg.MQTT.Slot,
-		Location:    cfg.MQTT.Location,
-		Host:        cfg.Host,
-		DeviceModel: cfg.Device.Model,
-		DeviceLink:  cfg.Device.Link,
-	}, pub, &slogAdapter{slog.Default()})
-	b.PublishMeta()
-}
-
-// wsLoop dials the ATR-1000, runs the status read loop, and restarts on failure
+// devLoop dials the TGXL, runs the poll/read loop, and restarts on failure
 // with exponential backoff until ctx is cancelled.
-func wsLoop(ctx context.Context, cfg config.Config, b *bridge.Bridge, dev *tuner.Device, log *slog.Logger) error {
+func devLoop(ctx context.Context, cfg config.Config, b *bridge.Bridge, dev *tgxl.Device, log *slog.Logger) error {
 	const maxBackoff = 60 * time.Second
 	const healthyRun = time.Minute // a run that lived this long was a healthy link
 	backoff := 2 * time.Second
-	var lost logging.Streak // one Warn per outage, not per retry (ATR powered off)
+	var lost logging.Streak // one Warn per outage, not per retry (TGXL powered off)
 
 	for {
 		if ctx.Err() != nil {
@@ -225,15 +210,25 @@ func wsLoop(ctx context.Context, cfg config.Config, b *bridge.Bridge, dev *tuner
 		}
 
 		start := time.Now()
-		runErr := dev.Run(ctx, b.HandleTelemetry)
+		var runErr error
+		if cfg.Tuner.Address == "" {
+			var addr string
+			addr, runErr = tgxl.Discover(ctx, 15*time.Second)
+			if runErr == nil {
+				dev.SetAddr(addr)
+			}
+		}
+		if runErr == nil {
+			runErr = dev.Run(ctx, b.HandleTelemetry)
+		}
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
 		if time.Since(start) >= healthyRun {
 			lost.Reset()
 		}
-		lost.Fail(log, "ATR run ended", "err", runErr)
-		b.SetDeviceOnline(false, fmt.Sprintf("atr1k: %v", runErr))
+		lost.Fail(log, "TGXL run ended", "err", runErr)
+		b.SetDeviceOnline(false, fmt.Sprintf("tgxl: %v", runErr))
 		if !sleepCtx(ctx, backoff) {
 			return ctx.Err()
 		}

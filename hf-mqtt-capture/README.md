@@ -22,7 +22,7 @@ The deploy script cross-compiles for Linux arm64, copies the binary to shari, an
 installs a systemd unit. The MQTT password is seeded into `/etc/hf-mqtt-capture/config.toml`
 (0600) from an existing station service env file on the target; subsequent deploys leave the
 config untouched. deploy.sh looks for the acom1200s-pa-bridge, flexbridge, hadiscovery and
-atr1k-tuner-bridge env files. Those services run on scmino since 2026-10-12, so on shari the
+tgxl-tuner-bridge env files. Those services run on scmino since 2026-10-12, so on shari the
 pull works only if their old env files remain; otherwise set the password on the device.
 
 ## Inspect captured traffic

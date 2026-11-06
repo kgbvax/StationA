@@ -612,14 +612,19 @@ state:        selected {off|port1..port6}; settled
 intent:       select {off|port1..port6}
 ```
 
-**`muehle/hf/tuner`**: ATR-1000 (BTR-1000 / N7DDC design), wifi (binary WebSocket)
+**`muehle/hf/tuner`**: FlexRadio Tuner Genius XL (1x3), ethernet (TCP API :9010); replaced the ATR-1000 (2026-11)
 ```
-capabilities: inline true; tune_modes [mem, full]
-state:        inline (bool); swr (float, ratio); fwd (W, forward power);
-              l_uh (inductance µH, diagnostic); c_pf (capacitance pF, diagnostic);
-              settling (bool); fault (string, omitempty); device_online (bool)
-intent:       set_inline {true|false}; tune {full|mem}
+capabilities: inline true; tune_modes [auto]; antennas 3
+state:        inline (bool, operate and not bypassed); operate (bool); antenna (1..3);
+              swr (float, ratio); fwd (W, forward power); ptt (bool);
+              settling (bool); fault (string, omitempty); message (string, omitempty);
+              relay_c1/relay_l/relay_c2 (0-255, diagnostic); device_online (bool)
+intent:       set_inline {true|false}; set_operate {true|false}; set_antenna {1..3};
+              tune {auto} (legacy mem|full accepted as aliases)
 ```
+`tune` makes the TGXL key the FLEX over the LAN and, with no PGXL in the station, nothing puts the ACOM into standby:
+the operator must have the PA in standby (no bridge-side gate; `docs/known-issues.md`).
+`inline` never uses STANDBY (standby disconnects all antennas).
 The ATU is engaged in-line only when its served resource is the resolved antenna AND the
 band is non-resonant (e.g. 30/60/80/160 m on the fan-dipole); it is bypassed otherwise. The
 `set_inline` intent is driven by `antenna-select` (see the soft binding below), gated on
@@ -1213,7 +1218,7 @@ Four topic suffixes per slot (one per plane, plus liveness):
      retained `/cmd` at QoS 1, which is an open deviation from this rule. The other
      `/cmd` consumers use a clean session instead (explicitly in `antennaselect`,
      `beamsteer`, `antmode`, `powerseq` and `winpc-power-bridge`; by paho's default in
-     `flexbridge`, `acom1200s-pa-bridge`, `wrc-rotator-bridge` and `atr1k-tuner-bridge`;
+     `flexbridge`, `acom1200s-pa-bridge`, `wrc-rotator-bridge` and `tgxl-tuner-bridge`;
      forced by PubSubClient on the M5 Stamp PLC #1), which closes the same path. A retained steady-state input
      whose queued backlog must not replay gets the same treatment: `ultrabridge`
      subscribes `hf/ant-mode/state` at QoS 0 under its persistent session. A QoS-0

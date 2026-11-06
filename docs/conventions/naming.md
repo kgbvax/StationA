@@ -40,7 +40,7 @@ A bridge that fronts one specific piece of hardware is named
 | Flex SmartSDR (6000/8000 series, same API) | `flex` | `flex-radio-bridge` |
 | Ultrabeam beam family (same RCU control) | `ultrabeam` | `ultrabeam-ant-ctrl-bridge` |
 | ACOM serial amps (shared protocol) | `acom` | `acom-pa-bridge` |
-| ATR-1000 / BTR-1000 / N7DDC ATU (shared binary WS) | `atr1k` | `atr1k-tuner-bridge` |
+| FlexRadio Tuner Genius XL (TCP API) | `tgxl` | `tgxl-tuner-bridge` |
 | AF6SA WRC controller | `wrc` | `wrc-rotator-bridge` |
 | Pelco-D protocol | `pelcod` | `pelcod-rotator-bridge` |
 | WaveShare relay-board family (ESPHome-managed relay expanders, e.g. PCA9554) | `waveshare_relay` | `waveshare_relay-antswitch-bridge` |
@@ -96,12 +96,12 @@ A bridge that fronts one specific piece of hardware is named
 ### Derived names (must follow)
 
 - **Env-overload prefix** — the dir name uppercased, hyphens → underscores:
-  `atr1k-tuner-bridge` → `ATR1K_TUNER_BRIDGE_*`
-  (e.g. `ATR1K_TUNER_BRIDGE_MQTT_PASSWORD`). The systemd `EnvironmentFile` matches.
+  `tgxl-tuner-bridge` → `TGXL_TUNER_BRIDGE_*`
+  (e.g. `TGXL_TUNER_BRIDGE_MQTT_PASSWORD`). The systemd `EnvironmentFile` matches.
 - **systemd service, install dir, service user** — all equal the dir name
-  (`atr1k-tuner-bridge`, `/opt/atr1k-tuner-bridge`, user `atr1k-tuner-bridge`).
-- **Go module / binary** — equal the dir name (`module atr1k-tuner-bridge`,
-  binary `atr1k-tuner-bridge`). Internal package dirs stay hyphen-free (`internal/tuner`,
+  (`tgxl-tuner-bridge`, `/opt/tgxl-tuner-bridge`, user `tgxl-tuner-bridge`).
+- **Go module / binary** — equal the dir name (`module tgxl-tuner-bridge`,
+  binary `tgxl-tuner-bridge`). Internal package dirs stay hyphen-free (`internal/tuner`,
   `internal/bridge`) per Go convention.
 
 ---
@@ -135,7 +135,7 @@ A bridge that fronts one specific piece of hardware is named
 place — renaming touches live systemd units, install dirs, deploy paths, and every doc
 reference, so it is a deliberate, separate migration. `acombridge`, `wrcrotorbridge` and
 `antswitchbridge` were renamed in 2026-07. New bridges adopt the convention starting with
-`atr1k-tuner-bridge`. When the legacy rename happens, use the **family tag** (not the model
+`tgxl-tuner-bridge`. When the legacy rename happens, use the **family tag** (not the model
 number) per the rule above.
 
 | Current | Convention-compliant (target) | Kind |
@@ -146,7 +146,7 @@ number) per the rule above.
 | _(renamed 2026-07-14)_ `wrcrotorbridge` | `wrc-rotator-bridge` | device (fronts the WRC controller) |
 | `antennaselect` | — | logic slot (exception) |
 | `hadiscovery` | — | logic slot (exception) |
-| _(new)_ `atr1k-tuner-bridge` | `atr1k-tuner-bridge` | device (convention; ATR-1000 / N7DDC family) |
+| _(new)_ `tgxl-tuner-bridge` | `tgxl-tuner-bridge` | device (convention; ATR-1000 / N7DDC family) |
 | _(renamed)_ `antswitchbridge` | `waveshare_relay-antswitch-bridge` | device (formerly contract-first exception; **renamed 2026-07** to follow the family-tag pattern; `_` in `waveshare_relay` is a recorded deviation, see the deviation notes under "Device bridges" above) |
 | _(new)_ `shelly-power-bridge` | `shelly-power-bridge` | device (convention; Shelly family; fronts `power/psu-13v8` + `power/antennas` + `power/shack-pc-mains`) |
 | _(new)_ `m5stamp-hf-ctrl` | `m5stamp-hf-ctrl` | embedded firmware (M5Stamp family; fronts `hf/pa-arm` + `hf/switch`) |

@@ -205,7 +205,7 @@ else
       /etc/acom1200s-pa-bridge/acom1200s-pa-bridge.env \
       /etc/flexbridge/flexbridge.env \
       /etc/hadiscovery/hadiscovery.env \
-      /etc/atr1k-tuner-bridge/atr1k-tuner-bridge.env ; do
+      /etc/tgxl-tuner-bridge/tgxl-tuner-bridge.env ; do
       # These env files are 0600 owned by their service users; test readability via
       # sudo (not `[ -r ]`, which runs as the deploying user and skips every file).
       sudo test -r "$f" || continue

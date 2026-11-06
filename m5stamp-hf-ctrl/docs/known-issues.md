@@ -320,12 +320,12 @@ failed subscribe disconnects and redials.
 
 The arm formula used to ignore everything a band change or an Ultrabeam move
 does: ultrabridge motion, ant-switch relay travel (`settled`), the reconciler's
-pending move, the ACOM fault, the ATR tune cycle. `src/arm.h` now gates on all
+pending move, the ACOM fault, the tuner tune cycle. `src/arm.h` now gates on all
 of them, split into hazard gates (open at once, even keyed) and readiness gates
 (block closing; open only in RX — model §6 "arm permit, not a fast software
 gate"). Deliberately NOT gated: PA band vs radio band and ATU in-line state —
 antennaselect sends set_band / set_inline once and never re-sends, so either
-gate would deadlock after a PA or ATR power cycle. Residuals: change-only
+gate would deadlock after a PA or tuner power cycle. Residuals: change-only
 producers (ultrabridge, ant-switch) have no age window, only their LWT; the
 Ultrabeam port is the compile-time `ULTRABEAM_PORT` (port4) until O14 is
 confirmed on site; a retract latch lives in RAM and is lost on PLC reboot.

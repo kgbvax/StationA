@@ -8,7 +8,7 @@
 // once so no module hand-concatenates them.
 //
 // CmdPayload encodes the /cmd convention: the argument rides under the `value`
-// key (NOT under a key named after the action). atr1k-tuner-bridge got this
+// key (NOT under a key named after the action). the (former) atr1k-tuner-bridge got this
 // wrong live; centralizing it here makes the convention structural.
 package schema
 

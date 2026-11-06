@@ -29,7 +29,7 @@ created in-repo. There are no separate per-component remotes to push to.
 | ultrabridge | `ultrabridge/` | Ultrabeam RCU-06 controller (tunes one antenna) |
 | acom1200s-pa-bridge | `acom1200s-pa-bridge/` | ACOM 1200S PA bridge |
 | wrc-rotator-bridge | `wrc-rotator-bridge/` | HF rotator bridge (Yaesu G-450DC via AF6SA WRC, websocket) |
-| atr1k-tuner-bridge | `atr1k-tuner-bridge/` | ATR-1000 ATU bridge (in-line/bypass + tune, binary WebSocket) |
+| tgxl-tuner-bridge | `tgxl-tuner-bridge/` | FlexRadio Tuner Genius XL (1x3) bridge (operate/bypass, antenna, autotune; TCP API :9010) — replaced atr1k-tuner-bridge |
 | waveshare_relay-antswitch-bridge | `waveshare_relay-antswitch-bridge/` | 1:6 antenna switch bridge (ESPHome, WaveShare relay-board family) |
 | shelly-power-bridge | `shelly-power-bridge/` | Shelly smart-plug bridge → `power/psu-13v8` + `power/antennas` + `power/shack-pc-mains` (supply layer; the site master mains is out of scope — HA-owned Athom plug that also powers the Pis/network) |
 | m5stamp-hf-ctrl | `m5stamp-hf-ctrl/` | M5 Stamp PLC #1 firmware → `hf/pa-arm` + `hf/switch` (PA/TRX remote-on + arm) |
@@ -85,7 +85,7 @@ workspace.
 | `muehle/hf/antenna-select` | antennaselect | logic slot — no device (runs on scmino) |
 | `muehle/hf/pa` | acom1200s-pa-bridge | ACOM 1200S, serial (`set_power`/RTS removed; `power` is telemetry only) — on scmino since 2026-10-12 (Prolific adapter re-plugged there) |
 | `muehle/hf/rotator` | wrc-rotator-bridge | Yaesu G-450DC via AF6SA WRC, websocket — on scmino since 2026-10-12 (GS-232 :7373 / PstRotator :12040 moved with it) |
-| `muehle/hf/tuner` | atr1k-tuner-bridge | ATR-1000 ATU, wifi (binary WebSocket) — bridge on scmino since 2026-10-12 |
+| `muehle/hf/tuner` | tgxl-tuner-bridge | FlexRadio Tuner Genius XL (1x3, `192.168.1.145`), ethernet (TCP API :9010) — bridge on scmino (replaced the ATR-1000 / atr1k-tuner-bridge) |
 | `muehle/hf/chase` | chase-queue | logic slot — no device (runs on scmino); reads bmrec's `hf/cqfinder` candidates (gate: trusted by default, qualified once bmrec sends the flag) and 1..n DX clusters, evaluates the active awards (goals), publishes the ranked list with `needs[]`; `/cmd` skip, handled, undo, set_mode, switch_instance |
 | `muehle/hf/station-log` | station-log | logic slot — no device (runs on scmino); the station's QSO record, role `log-store`: ADIF import with duplicate merge, retained `/state`, non-retained `/event` per added/merged/deleted QSO, retained sibling `muehle/hf/station-log/working` (the operator-keyed station from DXLog/Log4OM; replaced the retired `hf/spots`), two-way Wavelog sync, read API `127.0.0.1:8096`; no `/cmd` |
 | `muehle/hf/cqfinder` | bmrec (not in this repo) | the CQ finder's open rows and recent spots, retained; input of the chase queue |
@@ -118,7 +118,7 @@ test fixtures and the portal `[[resource]]` Ultrabeam note still say port 3), `a
 
 Most services run on **scmino** (`192.168.1.178`, Raspberry Pi CM5, `ssh io@`): flexbridge,
 ultrabridge (:8080, RCU-06 FTDI cable on scmino's USB), acom1200s-pa-bridge,
-wrc-rotator-bridge, atr1k-tuner-bridge, antenna-select, beamsteer, antmode, hadiscovery,
+wrc-rotator-bridge, tgxl-tuner-bridge, antenna-select, beamsteer, antmode, hadiscovery,
 powerseq, shelly-power-bridge, station-log (:8096; also the working-station feed on UDP 12060/2249) + chase-queue (deploy station-log first), icom9700-radio-bridge + rigctld-ic9700,
 oscarwatch-sattrack-bridge, vhfcam-restream (:8083), the hf_console web channel
 `hf-console-web` (:8091), testui (:8090), the landing page stationportal (:80) and the
@@ -238,7 +238,7 @@ All components follow these shared conventions:
 7. **Canonical mode names** — `cw`, `usb`, `lsb`, `am`, `fm`, `data`
    (see `docs/conventions/band-mode-reference.md`)
 8. **Bridge naming** — device bridges are `<devtag>-<function>-bridge` where
-   `<devtag>` is the device family/control interface (e.g. `atr1k-tuner-bridge`)
+   `<devtag>` is the device family/control interface (e.g. `tgxl-tuner-bridge`)
    (see `docs/conventions/naming.md`)
 9. **Shared module for cross-cutting plumbing** — the paho connect / background
    job-queue (`shared/mqtt`) and topic helpers + `/cmd` `value`-key convention

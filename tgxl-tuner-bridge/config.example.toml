@@ -1,0 +1,54 @@
+# config.example.toml — configuration for tgxl-tuner-bridge (FlexRadio Tuner Genius XL → MQTT bridge).
+# Default location: /etc/tgxl-tuner-bridge/config.toml
+# Override with: tgxl-tuner-bridge -config /path/to/config.toml
+#
+# All values shown are the built-in defaults used when this file is absent.
+# Only include the keys you want to change.
+#
+# The MQTT password is NOT kept here — it is loaded from the
+# TGXL_TUNER_BRIDGE_MQTT_PASSWORD environment variable (systemd EnvironmentFile
+# /etc/tgxl-tuner-bridge/tgxl-tuner-bridge.env, 0600), so it never appears in the
+# TOML, the unit file, or the process command line.
+# See ../docs/conventions/config-and-secrets.md.
+
+# host is the compute node this adapter runs on (published in /meta, model §8.1).
+host = "scmino"
+
+[tuner]
+# Tuner Genius XL TCP API (port 9010). Leave empty to find the tuner from its
+# UDP 9010 discovery broadcast.
+address       = "192.168.1.145:9010"
+# Only needed when connecting from outside the TGXL's own LAN (banner says AUTH).
+# auth_code   = ""
+# How often `status` is polled (>= 50ms).
+poll_interval = "250ms"
+# Faster `status` interval while PTT (pttA/pttB) is asserted (>= 10ms).
+tx_poll_interval = "50ms"
+
+[device]
+# Identity published in /meta. link reflects the transport to the tuner.
+model = "Tuner Genius XL"
+link  = "ethernet"
+
+[mqtt]
+broker           = "tcp://127.0.0.1:1883"
+# client_id defaults to "<site>-<station>-<slot>" (model §8) when empty.
+client_id        = ""
+# Station-model slot addressing: <site>/<station>/<slot>/{meta,state,status,cmd}
+site             = "muehle"
+station          = "hf"
+slot             = "tuner"
+location         = "bauwagen"   # physical location label, published in /meta
+user             = "hf"
+# password is loaded from TGXL_TUNER_BRIDGE_MQTT_PASSWORD (EnvironmentFile), not here.
+password         = ""
+
+[log]
+# debug | info | warn | error
+level = "info"
+
+# --- env overrides (systemd EnvironmentFile) ---------------------------------
+#   TGXL_TUNER_BRIDGE_MQTT_BROKER      TGXL_TUNER_BRIDGE_MQTT_CLIENT_ID
+#   TGXL_TUNER_BRIDGE_MQTT_USER        TGXL_TUNER_BRIDGE_MQTT_PASSWORD   (EnvironmentFile)
+#   TGXL_TUNER_BRIDGE_MQTT_SITE        TGXL_TUNER_BRIDGE_MQTT_STATION    TGXL_TUNER_BRIDGE_MQTT_SLOT
+#   TGXL_TUNER_BRIDGE_TUNER_ADDRESS    TGXL_TUNER_BRIDGE_TUNER_AUTH_CODE

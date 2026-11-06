@@ -721,12 +721,12 @@ function buildActionRow(addr, a, meta) {
   const label = document.createElement('label'); label.textContent = a.name || a.key;
   row.appendChild(label);
 
-  // An action with a value_key takes a typed argument (e.g. atr1k `tune` is an
+  // An action with a value_key takes a typed argument (e.g. tgxl `tune` is an
   // enum of mem|full). Render an input for it and send the typed value; an
   // action WITHOUT a value_key is a pure button (retract/stop/fwd/rev) and sends
   // no value. Sending null for a valued action used to arrive as
   // {"action":"tune","value":null} → the bridge unmarshals null to "" and drops
-  // it as "unknown mode" — the live "atr not following" bug.
+  // it as "unknown mode" — the live "tuner not following" bug.
   const hasKey = cmd.value_key && cmd.value_key !== '';
   let input = null;
   let options = [];
@@ -759,7 +759,7 @@ function buildActionRow(addr, a, meta) {
   send.onclick = () => {
     let val = null;
     if (hasKey) {
-      // 'bool' (atr1k set_inline) is a real JSON boolean by receiver contract;
+      // 'bool' (tgxl set_inline) is a real JSON boolean by receiver contract;
       // cmdValue owns that decision (see cmd_payload.mjs).
       if (cmd.value_type === 'bool') val = cmdValue(cmd, input.value);
       else val = coerce(input.value, cmd.value_type || 'string');

@@ -20,8 +20,8 @@ fallback registry and the rationale.
 | wrc-rotator-bridge | rotator | `set_az` | `az` | float | `{"action":"set_az","az":180}` |
 | wrc-rotator-bridge | rotator | `stop`/`fwd`/`rev` | — (button) | — | `{"action":"stop"}` |
 | ant-switch-bridge | ant-switch | **(empty)** | `select` | string | `{"select":"port2"}` (retained) |
-| atr1k-tuner-bridge | tuner | `set_inline` | `value` | bool | `{"action":"set_inline","value":true}` |
-| atr1k-tuner-bridge | tuner | `tune` | `value` | enum(mem\|full) | `{"action":"tune","value":"mem"}` |
+| tgxl-tuner-bridge | tuner | `set_inline` | `value` | bool | `{"action":"set_inline","value":true}` |
+| tgxl-tuner-bridge | tuner | `tune` | `value` | enum(auto) | `{"action":"tune","value":"auto"}` |
 | antennaselect | reconciler | **(empty)** | `request` | string | `{"request":"port2"}` (operator hold) |
 | hadiscovery | discovery | — | — | — | passive consumer, no /cmd |
 | pelcobridge | (none) | — | — | — | no MQTT surface |
@@ -40,14 +40,14 @@ hide commands for flexbridge (radio) and drive antennaselect via the registry fa
 ## /status
 
 Universal: plain retained string `online`/`offline` (paho LWT). Tracks bridge process
-liveness. Device liveness is a separate `/state.device_online` bool (acom, wrc, atr1k,
+liveness. Device liveness is a separate `/state.device_online` bool (acom, wrc, tuner,
 ultra) — the two can diverge (bridge up, device down).
 
 ## Retained /cmd
 
 Varies. ant-switch-bridge `/cmd` is retained (idempotent position). ultrabridge
 frequency/band/direction retained; retract one-shot (bridge clears after exec).
-wrcrotor `set_az`, atr1k `set_inline`/`tune`, acom1200s-pa-bridge `set_band`/`set_power`,
+wrcrotor `set_az`, tuner `set_inline`/`tune`, acom1200s-pa-bridge `set_band`/`set_power`,
 antennaselect `request` are NOT retained. The UI exposes a "retain" checkbox defaulting **off**.
 
 ## UI command-builder rules
@@ -68,6 +68,6 @@ antennaselect `request` are NOT retained. The UI exposes a "retain" checkbox def
 
 ## Historical note
 
-atr1k-tuner-bridge originally keyed `set_inline` under `inline` and `tune` under `mode`
+the former atr1k-tuner-bridge (now tgxl-tuner-bridge) originally keyed `set_inline` under `inline` and `tune` under `mode`
 (the live bug recorded in memory `cmd-payload-value-key-convention`). It is now fixed
 (both use `value`). Do not code to the old shape.

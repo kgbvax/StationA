@@ -1,6 +1,6 @@
 # build artifacts
 /dist/
-/atr1k-tuner-bridge
+/tgxl-tuner-bridge
 
 # editor swap files
 *.swp

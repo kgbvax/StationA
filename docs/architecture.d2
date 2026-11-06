@@ -210,8 +210,8 @@ bridges: {
     label: "wrc-rotator-bridge\nYaesu G-450DC via AF6SA WRC\n(websocket)"
     class: bridge
   }
-  atr1k: {
-    label: "atr1k-tuner-bridge\nATR-1000 ATU (binary websocket)\nin-line/bypass + tune"
+  tgxl: {
+    label: "tgxl-tuner-bridge\nTuner Genius XL (TCP API)\noperate/bypass + antenna + autotune"
     class: bridge
   }
   shelly: {
@@ -268,7 +268,7 @@ devices: {
   ultrabeam: { label: "Ultrabeam RCU-06\n(USB-serial)"; class: device }
   acom: { label: "ACOM 1200S\n(serial)"; class: device }
   wrcdev: { label: "AF6SA WRC\n(websocket)"; class: device }
-  atr: { label: "ATR-1000\n(binary websocket)"; class: device }
+  tgxlhw: { label: "Tuner Genius XL\n(TCP :9010)"; class: device }
   switchhw: { label: "WaveShare 1:6\nrelay board"; class: device }
   shellyhw: { label: "Shelly plugs ×3\n(13.8 V TRX PSU, antenna power,\nshack PC mains)"; class: device }
   plc1hw: { label: "M5 Stamp PLC #1"; class: device }
@@ -307,7 +307,7 @@ bridges.flexbridge -> bus: "muehle/hf/radio"
 bridges.ultrabridge -> bus: "muehle/hf/ant-ctrl"
 bridges.acom1200s -> bus: "muehle/hf/pa"
 bridges.wrc -> bus: "muehle/hf/rotator"
-bridges.atr1k -> bus: "muehle/hf/tuner"
+bridges.tgxl -> bus: "muehle/hf/tuner"
 bridges.shelly -> bus: "muehle/power/psu-13v8\nmuehle/power/antennas\nmuehle/power/shack-pc-mains"
 bridges.icom9700 -> bus: "muehle/uhf/radio"
 bridges.satbridge -> bus: "muehle/uhf/sat-track"
@@ -327,7 +327,7 @@ bridges.flexbridge -> devices.flex: "SmartSDR TCP"
 bridges.ultrabridge -> devices.ultrabeam: "USB-serial (by-id,\nEIO reopen)"
 bridges.acom1200s -> devices.acom: "serial"
 bridges.wrc -> devices.wrcdev: "websocket"
-bridges.atr1k -> devices.atr: "binary websocket"
+bridges.tgxl -> devices.tgxlhw: "TCP API"
 firmware.antswitch -> devices.switchhw: "relay GPIO"
 bridges.shelly -> devices.shellyhw: "native MQTT (same broker)\nGen2+: <id>/status/switch:0 + <id>/rpc\nGen1: shellies/<id>/relay/0 (+ /command)"
 firmware.plc1 -> devices.plc1hw: "same firmware, two slots"
@@ -347,13 +347,13 @@ scmino.powerseq -> devices.bwpchw: "Wake-on-LAN"
 devices.switchhw -> antennas: "selects 1:6"
 antennas.ant1 -> rfchain: ""
 rfchain: {
-  label: "RF chain\nantenna → switch → ATR-1000\n→ ACOM 1200S → FLEX-8400"
+  label: "RF chain\nantenna → switch → TGXL\n→ ACOM 1200S → FLEX-8400"
   style.fill: whitesmoke
   style.stroke: gray
   style.fill-pattern: dots
   shape: rectangle
 }
-rfchain -> devices.atr: ""
+rfchain -> devices.tgxlhw: ""
 rfchain -> devices.acom: ""
 rfchain -> devices.flex: ""
 

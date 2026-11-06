@@ -94,7 +94,7 @@ routing among them is `ant-switch` (actuator) driven by `antenna-select` (policy
 | `hf/antenna-select` | antennaselect | antenna-selection reconciler (logic) | — |
 | `hf/pa` | acom1200s-pa-bridge | ACOM 1200S PA bridge (operate/standby, band; `power` is telemetry only) | Serial (USB) |
 | `hf/rotator` | wrc-rotator-bridge | HF rotator (Yaesu G-450DC via AF6SA WRC) | WebSocket |
-| `hf/tuner` | atr1k-tuner-bridge | ATR-1000 ATU bridge (in-line / bypass, tune) | Wi-Fi (binary WebSocket) |
+| `hf/tuner` | tgxl-tuner-bridge | Tuner Genius XL bridge (operate / bypass, antenna, autotune) | Ethernet (TCP API) |
 | `hf/beam-steer` | beamsteer | smart rotation: logger PstRotator UDP emulator → rotator + Ultrabeam direction (logic) | UDP :12050 |
 | `hf/ant-mode` | antmode | antenna mode: storm / maintenance lock for the Ultrabeam and HF rotator (logic) | — |
 | `hf/power-seq` | powerseq | startup / shutdown sequencer, idle standby and shutdown (logic) | — |
@@ -128,7 +128,7 @@ pelcobridge2, an interactive Pelco-D/P pan/tilt TUI on the shack PC — was
 retired 2026-10-10, not in use; UHF az/el is `spid-ercm-rotator-bridge`.)
 
 > **Bridge naming:** device-specific bridges follow `<devtag>-<function>-bridge`
-> (e.g. `atr1k-tuner-bridge`); the `<devtag>` is the device *family / control
+> (e.g. `tgxl-tuner-bridge`); the `<devtag>` is the device *family / control
 > interface*, not the model number, so swapping a box within a family changes
 > nothing. Two bridges, `flexbridge` and `ultrabridge`, predate the convention;
 > their rename (to `flex-radio-bridge` / `ultrabeam-ant-ctrl-bridge`) is a

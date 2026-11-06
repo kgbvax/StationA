@@ -59,7 +59,7 @@ hadiscovery, hf-mqtt-capture, stationportal, testui and vhfcam-restream.
 `github.com/BurntSushi/toml`). The only flags are `-config` and `-log.level` (plus
 `-debug` or `-check` in a few), and `applyEnv` applies `<PREFIX>_MQTT_*` environment
 overrides, so the precedence is **explicit flag > environment > config-file value >
-built-in default**. Used by flexbridge, acom1200s-pa-bridge, atr1k-tuner-bridge,
+built-in default**. Used by flexbridge, acom1200s-pa-bridge, tgxl-tuner-bridge,
 icom9700-radio-bridge, oscarwatch-sattrack-bridge, powerseq,
 shelly-power-bridge, spid-ercm-rotator-bridge, winpc-power-bridge and
 wrc-rotator-bridge.
@@ -74,7 +74,7 @@ wrc-rotator-bridge.
 `Load` preserves `fs.ErrNotExist` so the caller can tell "no file" from "bad file"
 with `errors.Is(err, fs.ErrNotExist)`.
 
-Not every component implements this yet: acom1200s-pa-bridge, atr1k-tuner-bridge,
+Not every component implements this yet: acom1200s-pa-bridge, tgxl-tuner-bridge,
 flexbridge, hf-mqtt-capture, powerseq, shelly-power-bridge, stationportal and
 wrc-rotator-bridge run on defaults when the file is missing even if `-config` was set
 explicitly (only another read error or a parse error is fatal).
@@ -107,7 +107,7 @@ SERVICE_MQTT_PASSWORD=s3cr3t
 ```
 
 The application reads `SERVICE_MQTT_PASSWORD` and overrides the config value.
-Used by acom1200s-pa-bridge, atr1k-tuner-bridge, flexbridge
+Used by acom1200s-pa-bridge, tgxl-tuner-bridge, flexbridge
 (`FLEXBRIDGE_MQTT_PASSWORD`), icom9700-radio-bridge (`ICOM9700_MQTT_PASSWORD`,
 `ICOM9700_CIV_PASSWORD`), station-log (`STATION_LOG_MQTT_PASSWORD`;
 `STATION_LOG_QRZ_PASSWORD` and `STATION_LOG_WAVELOG_KEY` are env-only), oscarwatch-sattrack-bridge, powerseq,

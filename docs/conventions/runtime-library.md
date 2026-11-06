@@ -237,8 +237,8 @@ them away reproduces the incidents:
    a live interoperability failure that motivated centralizing the envelope in the library.
    Adoption is partial: `shared/schema.CmdPayload` (string value) is decoded by
    acom1200s-pa-bridge, flexbridge, shelly-power-bridge and winpc-power-bridge.
-   atr1k-tuner-bridge, beamsteer and antmode decode `value` as raw JSON
-   (typed per action: atr1k `set_inline` a bool and `tune` a string, beamsteer `aim` a
+   tgxl-tuner-bridge, beamsteer and antmode decode `value` as raw JSON
+   (typed per action: tuner `set_inline` a bool and `tune` a string, beamsteer `aim` a
    number or numeric string, antmode `set_ant_mode` a string; antmode also reads `ts`).
    ultrabridge (value + freq_hz + ts), spid-ercm-rotator-bridge (value + ts) and powerseq
    keep local structs, and icom9700-radio-bridge takes action-only payloads. Some slots
@@ -258,7 +258,7 @@ persistent session". The deployed code disagrees with itself: the reconciler (an
 session does not replay retained messages for existing subscriptions; a stateless
 reconciler would wake with empty inputs and never resolve), while the antenna-controller
 bridge, the discovery renderer and the power-plug bridge explicitly set it **false**, and
-the HF radio/PA/tuner/rotator bridges (flexbridge, acom1200s-pa-bridge, atr1k-tuner-bridge,
+the HF radio/PA/tuner/rotator bridges (flexbridge, acom1200s-pa-bridge, tgxl-tuner-bridge,
 wrc-rotator-bridge) leave the paho default, which is clean session = true (paho v1.5.1
 `NewClientOptions`); the UHF az/el rotator bridge (spid-ercm-rotator-bridge) sets it false
 explicitly.
@@ -277,7 +277,7 @@ testui).
 Code-check verdict: still open — the split persists in code (clean session = true:
 antennaselect/internal/mqtt/client.go:194, powerseq (since 76b4cb6, 2026-10-18), antmode,
 beamsteer, winpc-power-bridge, hf-mqtt-capture, vhfcam-restream, stationportal, plus
-flexbridge/acom1200s-pa-bridge/atr1k-tuner-bridge/wrc-rotator-bridge through the paho
+flexbridge/acom1200s-pa-bridge/tgxl-tuner-bridge/wrc-rotator-bridge through the paho
 default; `SetCleanSession(false)`: ultrabridge, hadiscovery, shelly-power-bridge, testui,
 spid-ercm-rotator-bridge, icom9700-radio-bridge, oscarwatch-sattrack-bridge;
 the retired logger-spot-bridge was in this list too). The station-integration-model §8 now documents the
