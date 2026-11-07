@@ -1,6 +1,6 @@
 # stationa
 
-**stationa** is an experiment in **amateur-radio station integration**: the protocols
+**stationa** is an experiment in amateur-radio station integration: the protocols
 and topologies that are meant to let a pile of unrelated, vendor-locked boxes behave as one
 coherent station. The main artifact is the [station integration model](docs/station-integration-model.md):
 a strict, versioned grammar for how a station's components describe themselves and
@@ -11,19 +11,19 @@ what a conformant adapter looks like.
 ## The problem
 
 A modern ham station is often a collection of devices that were not designed to talk to
-each other: a radio on one TCP API, an amplifier on a serial line, a rotator on a websocket, an
-antenna switch on wifi, a smart-plug on MQTT, a PLC relay board on some vendor firmware.
-Each speaks its own protocol, each is updated on its own schedule, and the "integration"
-is often pairwise glue that breaks easily: a script per device, a dashboard
+each other. The radio is on one TCP API, the amplifier on a serial line, the rotator on a
+websocket, the antenna switch on wifi, a smart-plug on MQTT, a PLC relay board on some
+vendor firmware. Each speaks its own protocol and is updated on its own schedule. The
+"integration" is often pairwise glue that breaks easily: a script per device, a dashboard
 hard-coded to today's IP addresses, a mental model that lives in one operator's head. It
-tends to go stale as the devices change, and it transfers poorly: rebuild the station, or
+tends to go stale as the devices change. It also transfers poorly: rebuild the station, or
 hand it to another operator, and most of the glue is of little use.
 
 ## The approach
 
 The [integration model](docs/station-integration-model.md) treats every component
 (device bridge, logic service, or passive consumer) as a small control loop with
-**three separate planes that never share a path**:
+three separate planes, each on its own MQTT topic and never mixed:
 
 - **Identity & capability** (`/meta`) - who I am, what I can do. Static, published on connect.
 - **State** (`/state`) - what is currently true about me. Live, retained.
@@ -37,7 +37,7 @@ The principles below follow from these planes (the model has the full argument):
   that can fall out of date. Things are referenced by canonical role and name, never by IP
   address or UDP port.
 - **Change is constant; avoid tight coupling.** Components publish state to their own
-  address and receive intent at their own address. Consumers react to **state**, never to
+  address and receive intent at their own address. Consumers react to state, never to
   the fact that a command was sent. Consumers only know the address, so the box behind it
   can be swapped without changes downstream.
 - **Integration can be cheap when the core is strict.** The canonical vocabulary and slot
@@ -45,10 +45,10 @@ The principles below follow from these planes (the model has the full argument):
   easy to replace. A GenAI-written adapter has a strict target to translate into, which
   helps keep many cheap adapters consistent with each other.
 
-The model is transport-bound to MQTT and address-structured as `<site>/<station>/<slot>`
+The model uses MQTT as its transport and structures addresses as `<site>/<station>/<slot>`
 (e.g. `muehle/hf/radio`), with site-wide infrastructure at `<site>/power/<slot>` (e.g.
-`muehle/power/psu-13v8`). Antennas are passive resources and do not get a slot;
-routing among them is done by an actuator (`ant-switch`) driven by a policy reconciler
+`muehle/power/psu-13v8`). Antennas are passive resources and do not get a slot. An
+actuator (`ant-switch`) routes among them, driven by a policy reconciler
 (`antenna-select`).
 
 ```
@@ -60,11 +60,11 @@ routing among them is done by an actuator (`ant-switch`) driven by a policy reco
 
 ## The example station: Mühle Bauwagen (DL9ET)
 
-The components in this repo are the Mühle station: an HF + UHF shack run from two
-Raspberry Pis, `scmino` (a CM5 that hosts the station Mosquitto and almost every service)
-and `shari` (the sat-ops rotator bridge and the bus recorder), plus the Windows shack PC
-(`bwpc`, a sleep agent) and several embedded nodes (ESPHome, M5 Stamp PLCs, M5Stack control
-heads). They are **examples** of conformant adapters, each a thin bridge between one
+The components in this repo are the Mühle station, an HF + UHF shack. Two Raspberry Pis
+run it: `scmino` (a CM5 that hosts the station Mosquitto and almost every service) and
+`shari` (the sat-ops rotator bridge and the bus recorder). The Windows shack PC (`bwpc`, a
+sleep agent) and several embedded nodes (ESPHome, M5 Stamp PLCs, M5Stack control heads)
+are also part of it. The components are examples of conformant adapters, each a thin bridge between one
 vendor's protocol and the canonical model. Together they show, for one station, that the model
 can be built and run day to day.
 
@@ -83,7 +83,8 @@ can be built and run day to day.
 | [hadiscovery](hadiscovery/) | Home Assistant discovery consumer | `muehle/hf/discovery` | logic slot (reads `/meta`) |
 | [oscarwatch-sattrack-bridge](oscarwatch-sattrack-bridge/) | Satellite-tracking source (OscarWatch Satellite link) | `muehle/uhf/sat-track` | WebSocket (OscarWatch, read-only) |
 | [winpc-power-bridge](winpc-power-bridge/) | Shack-PC sleep agent (Windows, runs on `bwpc`; `sleep` is refused while the operator uses the PC) | `muehle/power/shack-pc` | ethernet (offline = asleep) |
-| [chase-queue](chase-queue/) | Chase queue: ranks the CQ stations bmrec hears by what is needed (contest multipliers, DXCC entities not confirmed on the band) | `muehle/hf/chase` | logic slot (DXLog/Log4OM UDP, Club Log) |
+| [chase-queue](chase-queue/) | Chase queue: ranks the stations on the air (bmrec CQ rows, DX-cluster spots, buddies) by what the active awards need (contest multipliers, DXCC entities not confirmed on the band) | `muehle/hf/chase` | logic slot (`hf/cqfinder`, DX clusters, Club Log, QRZ.com) |
+| [station-log](station-log/) | Station QSO record (ADIF import with duplicate merge, read API :8096), the working-station feed `hf/station-log/working`, and the two-way Wavelog sync | `muehle/hf/station-log` | logic slot (DXLog/Log4OM UDP, ADIF) |
 | [beamsteer](beamsteer/) | Smart rotation: emulates PstRotator for the contest logger; flips the Ultrabeam 180° or rotates to the cheaper lobe | `muehle/hf/beam-steer` | logic slot (PstRotator UDP :12050) |
 | [antmode](antmode/) | Antenna-mode lock (normal/storm/maintenance) for the Ultrabeam and the HF rotator; polls NINA/DWD | `muehle/hf/ant-mode` | logic slot |
 | [icom9700-radio-bridge](icom9700-radio-bridge/) | IC-9700 UHF radio bridge (demand-driven RX audio capture; `park_radio` retune via rigctld-ic9700; read-only serial CI-V telemetry supported but disabled on scmino; no remote TX) | `muehle/uhf/radio` | LAN (RS-BA1, audio); CI-V via rigctld-ic9700 (park only) |
@@ -109,16 +110,22 @@ Consumers, control heads and infrastructure that are not slots:
 | [m5dualkey-hf-antctrl](m5dualkey-hf-antctrl/) | M5Stack Chain DualKey firmware: Ultrabeam direction keys (a chained Chain Key toggles DVK memory 2 on `hf/radio`) | embedded |
 | [mqtt-broker](mqtt-broker/) | Station Mosquitto config and deploy, mirrored to the HA broker (see the broker note below) | scmino |
 | [hf-mqtt-capture](hf-mqtt-capture/) | Passive recorder of the HF bus (`muehle/hf/#`) to hourly log files | shari |
+| [chaseq-ui](chaseq-ui/) | Native chase-list window: shows `hf/chase`, tunes the FLEX and puts the callsign into the logger; Skip/Undo go to chase-queue | bwpc |
 
-The **power-distribution layer** shows how the model's slots fit together: `shelly-power-bridge`
-(site-level `muehle/power/psu-13v8`, `…/antennas`, `…/shack-pc-mains`) owns the 13.8 V DC
-rail, the antenna power plug and the shack-PC mains plug; `winpc-power-bridge`
-(`muehle/power/shack-pc`) puts the shack PC to sleep; the site master mains is a Home
-Assistant-owned plug outside StationA; the M5 Stamp PLC owns the PA/TRX remote-on relays
-(`hf/switch`) and the fail-safe-open PA arm relay (`hf/pa-arm`); and `powerseq` runs the
-startup/shutdown of the whole chain in order, with delays and confirmations. Optionally
-`powerseq` also runs idle standby: antenna power off and the shack PC asleep while the
-station is inactive, then Wake-on-LAN and antenna power on at wake. It can also run a full
+The **power-distribution layer** shows how the model's slots fit together:
+
+- `shelly-power-bridge` (site-level `muehle/power/psu-13v8`, `…/antennas`, `…/shack-pc-mains`)
+  owns the 13.8 V DC rail, the antenna power plug and the shack-PC mains plug.
+- `winpc-power-bridge` (`muehle/power/shack-pc`) puts the shack PC to sleep.
+- The site master mains is a Home Assistant-owned plug outside StationA.
+- The M5 Stamp PLC owns the PA/TRX remote-on relays (`hf/switch`) and the fail-safe-open
+  PA arm relay (`hf/pa-arm`).
+- `powerseq` runs the startup/shutdown of the whole chain in order, with delays and
+  confirmations.
+
+Optionally `powerseq` also runs idle standby. While the station is inactive, it switches
+antenna power off and puts the shack PC to sleep. At wake it sends Wake-on-LAN and switches
+antenna power on. It can also run a full
 idle shutdown a configurable time after the last activity (`[idle] shutdown_minutes`, 120
 in the example config). The ACOM PA bridge only observes the amplifier's power state: its
 `set_power`/RTS wake-line is retired, and PA power-on comes from `hf/switch` (model §7.1).
@@ -145,6 +152,7 @@ muehle/
     tuner/           ← tgxl-tuner-bridge (Tuner Genius XL, ethernet)
     discovery/       ← hadiscovery      (HA discovery consumer - reads /meta.expose)
     chase/           ← chase-queue (ranked CQ stations: needed + priority)
+    station-log/     ← station-log      (QSO record; working-station feed at station-log/working)
     beam-steer/      ← beamsteer        (smart rotation - PstRotator UDP emulator)
     ant-mode/        ← antmode          (antenna-mode lock: normal/storm/maintenance)
     vhfcam/          ← vhfcam-restream  (VHF cam restreamer - minimal /status + /state)
@@ -186,28 +194,35 @@ Everything below is implementation detail about how the example station is packa
 
 This is one git repo. The Go components form a single
 [Go workspace](https://go.dev/ref/mod#workspaces) (`go.work`); each keeps its own `go.mod`
-and imports shared code from a `codeberg.org/kgbvax/stationa/shared` module
-(`shared/mqtt`: context-aware paho connect + background job queue; `shared/schema`:
-topic helpers + the `/cmd` `value`-key convention; `shared/logging`: the slog/journald
-root handler; `shared/pstrotator`: the PstRotator UDP listener; `shared/antmode`: the
-`hf/ant-mode` lock parser). Each module's `go.mod` carries a `replace … => ../shared` so it
-builds standalone; `go build $(go list -m -f '{{.Dir}}/...')` at the repo root builds them
+and imports shared code from a `codeberg.org/kgbvax/stationa/shared` module:
+
+- `shared/mqtt`: context-aware paho connect + background job queue
+- `shared/schema`: topic helpers + the `/cmd` `value`-key convention
+- `shared/logging`: the slog/journald root handler
+- `shared/pstrotator`: the PstRotator UDP listener
+- `shared/antmode`: the `hf/ant-mode` lock parser
+
+Each module's `go.mod` carries a `replace … => ../shared` so it
+builds standalone. `go build $(go list -m -f '{{.Dir}}/...')` at the repo root builds them
 all (a plain `./...` does not work there, because the root is not a module). Non-Go
 components (ESPHome YAML, PlatformIO firmware, the Flutter console `hf_console` with its own
 small Go web bridge, and the Mosquitto config in `mqtt-broker/`) live alongside as plain
-subdirectories and are not in `go.work`. Bridges import `shared/` but never another
+subdirectories and are not in `go.work`. Two Go modules also sit outside `go.work`:
+`chaseq-ui` (glaze, needs Go 1.27.1) and `hf_console/webbridge`. Build them from their own
+directory with `GOWORK=off go build ./...`, which is what their deploy scripts do.
+Bridges import `shared/` but never another
 bridge's `internal/` (Go's `internal/` rule enforces this across separate modules).
 
 **MQTT broker:** the station Mosquitto runs on scmino (`192.168.1.178:1883`, persistent
 store; `mqtt-broker/`) and is the broker every station client connects to. It is bridged to
-the Home Assistant broker at `192.168.1.50:1883` as a `muehle/#` mirror, which is how Home
-Assistant sees the bus. `docs/conventions/mqtt-topology.md` describes the topology; the
+the Home Assistant broker at `192.168.1.50:1883` as a `muehle/#` mirror. That mirror is how
+Home Assistant sees the bus. `docs/conventions/mqtt-topology.md` describes the topology; the
 scmino broker is authoritative for `muehle/#`.
 
 **scmino** (Raspberry Pi CM5, `192.168.1.178`, user `io`): the station broker and almost
 every Go service, as hardened systemd units. **shari** (Raspberry Pi, `192.168.1.139`,
-same user): `spid-ercm-rotator-bridge` and `hf-mqtt-capture`. `winpc-power-bridge` runs on
-the Windows shack PC `bwpc` (`192.168.1.197`).
+same user): `spid-ercm-rotator-bridge` and `hf-mqtt-capture`. `winpc-power-bridge` and
+`chaseq-ui` run on the Windows shack PC `bwpc` (`192.168.1.197`).
 
 ```bash
 ssh io@192.168.1.178                 # scmino
@@ -223,17 +238,19 @@ sudo systemctl status flexbridge ultrabridge
    [config and secrets](docs/conventions/config-and-secrets.md).
 3. Copy `deploy.sh` from an existing service and update the variables.
 4. Write `CLAUDE.md` using the station-model shared-conventions section.
-5. Write `docs/<component>-mqtt-api.md` using the
+5. Write `<component>/docs/<component>-mqtt-api.md` using the
    [MQTT schema template](docs/templates/mqtt-schema.md).
 6. Set up the root logger per [logging](docs/conventions/logging.md) §1.
 7. Add the slot to the model's site instantiation (`docs/station-integration-model.md` §7,
-   including the §7.3 host table) and to the table and bus diagram above; add the project
+   including the §7.3 host table) and to the table and bus diagram above. Add the project
    and slot rows to the root `CLAUDE.md`.
 8. Add the slot (`[[slot]]`) and component (`[[software]]`) to
-   `stationportal/internal/inventory/inventory.toml` and redeploy the portal; add the slot
+   `stationportal/internal/inventory/inventory.toml` and redeploy the portal. Add the slot
    to `hf_console/lib/store/station_hosts.dart` (and, if the console uses it, `wiring.dart`
-   `expectedSlots`/`cmdRetain`). `go test` / `flutter test` fail on a missing or stale
-   entry.
+   `expectedSlots`/`cmdRetain`). `go test` / `flutter test` fail when the two registries
+   disagree (a stale host, a component missing from `[[software]]`, a `slotHosts` slot the
+   inventory does not list), but not when a new slot is missing from both, so add both
+   entries by hand.
 
 ## License
 

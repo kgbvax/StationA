@@ -1,50 +1,63 @@
 # Station Integration Model: Reference
 
 Version 0.10 (draft). This defines the *shape* the configuration takes and, from 0.4, its
-transport binding. Resolved in 0.2: hierarchy and tune-routing confirmed; band policy
-completed; rotators, the polarization controller, and PA-arm hardware pinned down;
-compute hosts added as a first-class node kind. In 0.3: the `station` node reduced to a
-structural grouping with a single inferred `activity` flag. In 0.4: MQTT fixed as the
-transport binding, and the design invariants (one-way dependency, optional consumers,
-UI-agnostic operator surface) written down. In 0.5: worked on-the-wire payloads for the
-`radio` slot added as Appendix A, and band capability declared by name against the
-canonical table rather than as per-device ranges. In 0.6: multi-receiver model added
-(active TX receiver at fixed `radio/state`, per-receiver sub-topics for `receivers > 1`);
-mode normalization responsibility assigned to adapters; host assignments confirmed (shari);
-meter data deferred to §12; Appendix A corrected (`drive_pct` → `drive`; `rx_input` flagged
-as requiring adapter work). In 0.7: the generic/concrete boundary made explicit, with canonical
-role `ant-ctrl` introduced and the `ultrabeam-ctrl` slot renamed (a device name had leaked
-into an address, violating §2's own rule); the liveness contradiction resolved (`online`
-removed from the §3 state template; optional `device_online`/`error` state fields defined);
-`/meta` fields made normative, including `host`; a resource→controller map added so
-band-follow needs no antenna names in code; adapter conformance checklist added (§8.1);
-the HA-discovery deviation in current bridges recorded against §9. In 0.8: a
-power-distribution layer added, with canonical roles `power`, `switch`, `sequencer` (§4); a
-site-level `power` path analogous to `host` (§2, §7.3); the compound-device pattern made
-explicit (§3); PA remote-on moved off the PA slot (`set_power`/RTS removed) onto the power
-layer; `pa-arm` realized by an M5 Stamp PLC (closing §11.3); and a `power-seq` sequencer
-owning the ordered, delay-and-confirmation startup/shutdown. In 0.9: the
-sat-ops rotator mount added, with `uhf/az-rotator` (SPID) and `uhf/el-rotator`
-(GS-500 via ERC-M) as two per-axis slots, each on its own serial link, from one
-compound bridge (`spid-ercm-rotator-bridge` on shari), free motion with no arming gate and the
-posture's exposure review recorded in `known-issues.md`; the stale PSTRotator
-host attributions corrected (shack-pc fronts pelcobridge2, the PTS-303Z/3050DZ
-pan/tilt head). 2026-09-23: antenna-select tier 0, the operator `manual` stand-down,
-outranks idle (§5). In 0.10: the `sat-track` role added (§4) with the
-`uhf/sat-track` slot (§7.2) for the satellite the station is tracking, fronted from
-OscarWatch's Satellite-link WebSocket by `oscarwatch-sattrack-bridge` on the new host
-`scmino` (§7.3). 2026-10-10: the `uhf/rotator` slot (pelcobridge2, the
-PTS-303Z/3050DZ pan/tilt head on shack-pc) retired, as it was not in use; UHF az/el is the
-sat-ops mount (`uhf/az-rotator` / `uhf/el-rotator`). Also 2026-10-10: `power/antennas`
-and the `pc-power` role with `power/shack-pc` (`winpc-power-bridge` on bwpc) added;
-sequencer idle standby. 2026-10-09 to 2026-10-18: most bridges and logic slots moved
-from shari to scmino (§7.3). 2026-10-18: `power/master` removed (the site master mains
-is HA-owned and out of scope), `power/shack-pc-mains` added. 2026-10-19: sequencer idle
-shutdown 2 h after the last activity. 2026-10-22: the `ant-mode` role and `hf/ant-mode`
-slot (storm/maintenance lock, §4, §7.1), the lock tier above the arbitration ladder and
-`source: lock` (§5). 2026-10-23: §7 brought up to the deployed state (hosts, power
-slots, antenna-select ladder, radio, PA and IC-9700 contracts); roles `steering`,
-`bandmap` and `discovery` listed in §4; `hf/beam-steer` and `hf/spots` added to §7.1. (`hf/spots` was later retired: its working-station feed is now the retained sibling `hf/station-log/working`, see §7.1.)
+transport binding.
+
+Changes by version:
+
+- 0.2: hierarchy and tune-routing confirmed; band policy completed; rotators, the
+  polarization controller, and PA-arm hardware pinned down; compute hosts added as a
+  first-class node kind.
+- 0.3: the `station` node reduced to a structural grouping with a single inferred
+  `activity` flag.
+- 0.4: MQTT fixed as the transport binding, and the design invariants (one-way
+  dependency, optional consumers, UI-agnostic operator surface) written down.
+- 0.5: worked on-the-wire payloads for the `radio` slot added as Appendix A, and band
+  capability declared by name against the canonical table rather than as per-device ranges.
+- 0.6: multi-receiver model added (active TX receiver at fixed `radio/state`,
+  per-receiver sub-topics for `receivers > 1`); mode normalization responsibility assigned
+  to adapters; host assignments confirmed (shari); meter data deferred to §12; Appendix A
+  corrected (`drive_pct` → `drive`; `rx_input` flagged as requiring adapter work).
+- 0.7: the generic/concrete boundary made explicit, with canonical role `ant-ctrl`
+  introduced and the `ultrabeam-ctrl` slot renamed (a device name had leaked into an
+  address, violating §2's own rule). The liveness contradiction resolved (`online` removed
+  from the §3 state template; optional `device_online`/`error` state fields defined).
+  `/meta` fields made normative, including `host`. A resource→controller map added so
+  band-follow needs no antenna names in code. Adapter conformance checklist added (§8.1).
+  The HA-discovery deviation in current bridges recorded against §9.
+- 0.8: a power-distribution layer added, with canonical roles `power`, `switch`,
+  `sequencer` (§4). A site-level `power` path analogous to `host` (§2, §7.3). The
+  compound-device pattern made explicit (§3). PA remote-on moved off the PA slot
+  (`set_power`/RTS removed) onto the power layer. `pa-arm` realized by an M5 Stamp PLC
+  (closing §11.3). A `power-seq` sequencer owning the ordered, delay-and-confirmation
+  startup/shutdown.
+- 0.9: the sat-ops rotator mount added, with `uhf/az-rotator` (SPID) and
+  `uhf/el-rotator` (GS-500 via ERC-M) as two per-axis slots, each on its own serial link,
+  from one compound bridge (`spid-ercm-rotator-bridge` on shari). Free motion with no
+  arming gate; the posture's exposure review recorded in `known-issues.md`. The stale
+  PSTRotator host attributions corrected (shack-pc fronts pelcobridge2, the
+  PTS-303Z/3050DZ pan/tilt head).
+- 2026-09-23: antenna-select tier 0, the operator `manual` stand-down, outranks idle
+  (§5).
+- 0.10: the `sat-track` role added (§4) with the `uhf/sat-track` slot (§7.2) for the
+  satellite the station is tracking. `oscarwatch-sattrack-bridge` on the new host `scmino`
+  (§7.3) fronts it from OscarWatch's Satellite-link WebSocket.
+- 2026-10-10: the `uhf/rotator` slot (pelcobridge2, the PTS-303Z/3050DZ pan/tilt head
+  on shack-pc) retired, as it was not in use; UHF az/el is the sat-ops mount
+  (`uhf/az-rotator` / `uhf/el-rotator`). Also `power/antennas` and the `pc-power` role
+  with `power/shack-pc` (`winpc-power-bridge` on bwpc) added; sequencer idle standby.
+- 2026-10-09 to 2026-10-18: most bridges and logic slots moved from shari to scmino
+  (§7.3).
+- 2026-10-18: `power/master` removed (the site master mains is HA-owned and out of
+  scope), `power/shack-pc-mains` added.
+- 2026-10-19: sequencer idle shutdown 2 h after the last activity.
+- 2026-10-22: the `ant-mode` role and `hf/ant-mode` slot (storm/maintenance lock, §4,
+  §7.1), the lock tier above the arbitration ladder and `source: lock` (§5).
+- 2026-10-23: §7 brought up to the deployed state (hosts, power slots, antenna-select
+  ladder, radio, PA and IC-9700 contracts); roles `steering`, `bandmap` and `discovery`
+  listed in §4; `hf/beam-steer` and `hf/spots` added to §7.1. `hf/spots` was later
+  retired: its working-station feed is now the retained sibling `hf/station-log/working`,
+  see §7.1.
 
 The guiding idea: the live configuration is the documentation. A component, once
 connected, describes itself to a well-known address: who it is, what it can do, and what
@@ -58,7 +71,7 @@ GenAI-written adapter has a strict target to translate into.
 ## 1. Principles, as three planes
 
 The three original goals can be met by one architecture when every component is
-treated as a small control loop with three separate planes that never share a path.
+treated as a small control loop with three separate planes, each on its own MQTT topic and never mixed.
 
 - **Identity and capability**: who I am, what I can do. Static, published on connect.
 - **State**: what is currently true about me. Live, retained.
@@ -96,10 +109,11 @@ site / station / position / <slot>
 - **station**: a transmitting entity (`hf`, `uhf`). This is the unit of contention in
   a multi-multi setup: one transmitter per band, shared-resource claims. The station
   node is a structural grouping, not a stateful component: membership is everything
-  under its path, and it carries only an inferred `activity` flag (derived by the
-  antenna-select reconciler from radio VFO/frequency changes, transmits, operator
-  holds and live station holds of receive-only consumers such as bmrec; published as `activity` / `last_activity` on `hf/antenna-select/state`, since
-  the station node itself has no topic).
+  under its path. It carries only an inferred `activity` flag. The antenna-select
+  reconciler derives the flag from radio VFO/frequency changes, transmits, operator holds
+  and live station holds of receive-only consumers such as bmrec. The station node itself
+  has no topic, so the flag is published as `activity` / `last_activity` on
+  `hf/antenna-select/state`.
 - **position**: an operator seat. A single-op shack has only one, and it is left out of
   the address; it appears again only when two operators share a station.
 - **slot**: a role at that position (`radio`, `pa`, `ant-switch`, ...).
@@ -135,12 +149,12 @@ Two rules make this enforceable:
 transmitting station. Two non-station paths exist under the site:
 
 - `site/host/<name>`: compute nodes (§7.3).
-- `site/power/<name>`: power-distribution infrastructure that feeds *across* stations
-  (a shared 13.8 V PSU that powers both the HF and UHF radios,
-  the tuner, controllers, relay boards; antenna power; the shack PC mains; and the shack
-  PC's own sleep/wake agent, `power/shack-pc`, role `pc-power`, downstream of its mains
-  plug). These are shared upstream resources, so they do
-  not live under `hf/` or `uhf/`; like `host`, they are addressed at site level. A
+- `site/power/<name>`: power-distribution infrastructure that feeds *across* stations.
+  This covers a shared 13.8 V PSU that powers both the HF and UHF radios, the tuner,
+  controllers and relay boards; antenna power; the shack PC mains; and the shack PC's own
+  sleep/wake agent (`power/shack-pc`, role `pc-power`, downstream of its mains plug).
+  These are shared upstream resources, so they do not live under `hf/` or `uhf/`. Like
+  `host`, they are addressed at site level. A
   station-scoped consumer (a sequencer, an operator) commands them like any other slot.
 
 ---
@@ -281,8 +295,8 @@ entirely).
   on `/state`: `band` is never a stored value, always derived. The PA (`hf/pa`) has no
   frequency on the bus: its `band` is the amplifier's own band selection (`band_source`),
   set via `set_band`. A radio *may* accept a `set_band` `/cmd` input for
-  native band-stacking (the radio restores its own persisted per-band frequency and the
-  bridge republishes that `freq_hz` with `band` derived from it), but the canonical tuning
+  native band-stacking: the radio restores its own persisted per-band frequency, and the
+  bridge republishes that `freq_hz` with `band` derived from it. The canonical tuning
   intent is still `set_freq_hz`: commanders set a frequency and the band is derived from
   it. This is meant to avoid the class of bug where band and frequency disagree
   because two things set them independently.
@@ -299,29 +313,38 @@ entirely).
   `FDV`, `RTTY-U`, …). **Normalization is the adapter's responsibility**: consumers see
   only the canonical names above. Adapters must publish a canonical mode or omit the
   field; they must never publish a raw firmware mode string.
-- **Roles:** `radio`, `pa`, `tuner`, `ant-switch`, `ant-ctrl` (controller that tunes or
-  steers a passive antenna resource - the antenna itself remains a passive resource),
-  `rotator`, `pol-ctrl`, `preamp` (function; may be a slot or a declared capability),
-  `bias-feed` (likewise), `reconciler`, `host`, and the power-control roles:
-  `power` (a supply switch: smart plug / contactor cutting mains or DC to a bank; one
-  on/off, declares `feeds`), `switch` (a generic multi-channel relay switch of
-  non-exclusive booleans; each channel declares its `kind`: `remote_on`, `enable`, or
-  `spare`; distinct from `ant-switch`, the exclusive 1-of-N selector), `pa-arm` (the
-  PA-enable arm relay; safety, heartbeat-driven, fail-safe-open), and `sequencer` (a
-  logic slot that runs an ordered, delay- and confirmation-based startup/shutdown over
-  other slots' `/cmd`), `sat-track` (the satellite a tracker application is
-  following: identity, look angle, derived sub-satellite point; read-only, fronts
-  software, not hardware), `ant-mode` (a logic slot owning the station antenna mode
-  `normal | storm | maintenance`; its `/state.lock` is read by the enforcing bridges,
-  §7.1), `pc-power` (a computer's own sleep/wake agent, e.g. the shack PC at
-  `power/shack-pc`; offline = asleep; wake is Wake-on-LAN, not MQTT), `steering` (a
-  logic slot that turns a logger bearing into rotator and antenna-direction intents,
-  `hf/beam-steer`), `bandmap` (the operator-keyed station from the shack logger,
-  now the retained sibling `hf/station-log/working`; read-only, fronts software), `chase-queue` (a logic slot that ranks the stations
-  on the air by what is needed, `hf/chase`; see `chasing-stations-architecture.md`), `log-store` (a logic
-  slot holding the station's QSO record, `hf/station-log`) and `discovery` (a consumer that renders
-  `/meta` `expose` into a consumer's discovery format, `hf/discovery`). Passive:
-  `ant/*`, `mast/*`, `preamp/*` (masthead LNA).
+- **Roles:**
+  - `radio`, `pa`, `tuner`, `ant-switch`.
+  - `ant-ctrl`: controller that tunes or steers a passive antenna resource (the antenna
+    itself remains a passive resource).
+  - `rotator`, `pol-ctrl`.
+  - `preamp` (function; may be a slot or a declared capability), `bias-feed` (likewise).
+  - `reconciler`, `host`.
+  - Power control:
+    - `power`: a supply switch (smart plug / contactor cutting mains or DC to a bank); one
+      on/off, declares `feeds`.
+    - `switch`: a generic multi-channel relay switch of non-exclusive booleans; each
+      channel declares its `kind`: `remote_on`, `enable`, or `spare`. Distinct from
+      `ant-switch`, the exclusive 1-of-N selector.
+    - `pa-arm`: the PA-enable arm relay; safety, heartbeat-driven, fail-safe-open.
+    - `sequencer`: a logic slot that runs an ordered, delay- and confirmation-based
+      startup/shutdown over other slots' `/cmd`.
+  - `sat-track`: the satellite a tracker application is following (identity, look angle,
+    derived sub-satellite point); read-only, fronts software, not hardware.
+  - `ant-mode`: a logic slot owning the station antenna mode
+    `normal | storm | maintenance`; the enforcing bridges read its `/state.lock` (§7.1).
+  - `pc-power`: a computer's own sleep/wake agent, e.g. the shack PC at `power/shack-pc`;
+    offline = asleep; wake is Wake-on-LAN, not MQTT.
+  - `steering`: a logic slot that turns a logger bearing into rotator and
+    antenna-direction intents (`hf/beam-steer`).
+  - `bandmap`: the operator-keyed station from the shack logger, now the retained sibling
+    `hf/station-log/working`; read-only, fronts software.
+  - `chase-queue`: a logic slot that ranks the stations on the air by what is needed
+    (`hf/chase`; see `chasing-stations-architecture.md`).
+  - `log-store`: a logic slot holding the station's QSO record (`hf/station-log`).
+  - `discovery`: a consumer that renders `/meta` `expose` into a consumer's discovery
+    format (`hf/discovery`).
+  - Passive: `ant/*`, `mast/*`, `preamp/*` (masthead LNA).
 - **Capability keys** are role-specific; each slot's block in §7 and its component's
   `*-mqtt-api.md` are authoritative. Examples: `bands`, `modes`, `receivers`,
   `diversity`, `amp_key`, `tune`, `bias_t`, `band_source`, `rf_sample`, `alc_out`,
@@ -367,8 +390,8 @@ controller slot that tunes or steers it (the Ultrabeam has an `ant-ctrl`; the fa
 dipole has none). The reconciler's config binds a resource to its controller slot
 (antennaselect: `[band_follow] resource = "ultrabeam", slot = "ant-ctrl"`, one binding
 today; the PA band-follow and the ATU in-line follow are separate bindings,
-`[pa_follow]` and `[tuner_follow]`), and band/frequency-follow is emitted to whatever
-slot the binding names; `/meta` `capabilities.follows` publishes the bindings. This
+`[pa_follow]` and `[tuner_follow]`). Band/frequency-follow is emitted to whatever slot
+the binding names, and `/meta` `capabilities.follows` publishes the bindings. This
 keeps follow logic generic, since which antenna follows the radio is set only in site
 configuration.
 
@@ -473,10 +496,10 @@ topic is published.
 
 The upstream supplies feed across both stations, so they sit at site level
 (`site/power/<name>`, §2), not under `hf/` or `uhf/`. All three are Shelly smart plugs,
-formerly operated only through Home Assistant; brought onto the canonical bus by one
-`shelly-power-bridge` on `scmino` (since 2026-10-18; a compound bridge, i.e. one process
-with three slots: `psu-13v8`, `antennas`, `shack-pc-mains`). HA is
-thereafter one writer of these topics and no longer the control path (§9).
+formerly operated only through Home Assistant. Since 2026-10-18 one `shelly-power-bridge`
+on `scmino` brings them onto the canonical bus. It is a compound bridge, i.e. one process
+with three slots: `psu-13v8`, `antennas`, `shack-pc-mains`. HA is now one writer of these
+topics and no longer the control path (§9).
 
 The site **master mains** is not a slot: it is an Athom ESPHome plug owned by Home
 Assistant, and it also powers the Pis and the network, so StationA never switches it
@@ -561,24 +584,27 @@ radio's tuned `freq_hz` with `band` derived from it, so band and frequency can n
 disagree. Only the FLEX-8400's regular bands (`160m` to `6m`) are supported; XVTR bands
 are out of scope.
 DVK (Digital Voice Keyer) is a SmartSDR v4+ / SmartSDR+ feature: 12 voice memories keyed
-to TX on playback. flexbridge is otherwise read-only; `set_band`, `set_mode` (`cw`/`usb`/
-`lsb` only: the caller picks the sideband; added 2026-10-23, wire command not yet
-confirmed live), `select_rx` (receive antenna, `slice set <idx> rxant=`; added
-2026-10-30, confirmed live on the FLEX-8400; never touches `txant`), DVK, and mic
-profiles are its only `/cmd` surfaces: DVK exposed as
-one-shot actions (`dvk_play_N` buttons + `dvk_stop`), `set_band` as a writable `band`
-setpoint (a select), `set_mic_profile` as a writable `mic_profile` setpoint, `select_rx` as a writable
-`rx_input` setpoint over `rx_inputs`; `set_mode`
-is `/cmd`-only (not in `expose`, where `mode` stays read-only) and applies to the TX
-slice (else the active one). All are observed on `/state`: `freq_hz`/`band`/`mode` for
-`set_band`, `mode` for `set_mode`, `rx_input` for `select_rx`, `dvk_status`/`dvk_id` for DVK, `mic_profile`/
+to TX on playback. flexbridge is otherwise read-only. Its only `/cmd` surfaces are:
+
+- `set_band`, exposed as a writable `band` setpoint (a select).
+- `set_mode` (`cw`/`usb`/`lsb` only: the caller picks the sideband; added 2026-10-23, wire
+  command not yet confirmed live). It is `/cmd`-only (not in `expose`, where `mode` stays
+  read-only) and applies to the TX slice (else the active one).
+- `select_rx` (receive antenna, `slice set <idx> rxant=`; added 2026-10-30, confirmed live
+  on the FLEX-8400; never touches `txant`), exposed as a writable `rx_input` setpoint over
+  `rx_inputs`.
+- DVK, exposed as one-shot actions (`dvk_play_N` buttons + `dvk_stop`).
+- Mic profiles: `set_mic_profile`, exposed as a writable `mic_profile` setpoint.
+
+All are observed on `/state`: `freq_hz`/`band`/`mode` for `set_band`, `mode` for
+`set_mode`, `rx_input` for `select_rx`, `dvk_status`/`dvk_id` for DVK, `mic_profile`/
 `mic_profiles` for mic profiles. Voice modes only; the radio refuses DVK in cw/data.
 Mic profiles use SmartSDR's **native** `profile mic load "<name>"`; the radio is the
 single source of truth and the bridge keeps no preset layer. `set_mic_profile` loads a profile.
 There is **no save** (`profile mic save` is obsolete on SmartSDR v4+, returning malformed;
 profile creation uses a file-transfer mechanism out of scope). The available profile list is
 queried via the one-shot `profile mic info` command (sent once in the handshake) and
-published on `/state.mic_profiles` (a `/state`-only dynamic field, not in `expose.fields`);
+published on `/state.mic_profiles` (a `/state`-only dynamic field, not in `expose.fields`).
 SmartSDR does not report an active mic profile, so `/state.mic_profile` is tracked
 client-side as the name most recently loaded via `set_mic_profile` (best-effort, empty until
 the first load via the bus).
@@ -622,14 +648,15 @@ state:        inline (bool, operate and not bypassed); operate (bool); antenna (
 intent:       set_inline {true|false}; set_operate {true|false}; set_antenna {1..3};
               tune {auto} (legacy mem|full accepted as aliases)
 ```
-`tune` makes the TGXL key the FLEX over the LAN and, with no PGXL in the station, nothing puts the ACOM into standby:
-the operator must have the PA in standby (no bridge-side gate; `docs/known-issues.md`).
+`tune` makes the TGXL key the FLEX over the LAN. With no PGXL in the station, nothing puts
+the ACOM into standby, so the operator must have the PA in standby (there is no
+bridge-side gate; `docs/known-issues.md`).
 `inline` never uses STANDBY (standby disconnects all antennas).
 The ATU is engaged in-line only when its served resource is the resolved antenna AND the
 band is non-resonant (e.g. 30/60/80/160 m on the fan-dipole); it is bypassed otherwise. The
 `set_inline` intent is driven by `antenna-select` (see the soft binding below), gated on
 radio online + a known band, and engages only while the tuner's resource is the resolved
-target; the reconciler's cold-switch sequencing already withholds a port change during
+target. The reconciler's cold-switch sequencing already withholds a port change during
 TX, so the ATU is not re-keyed mid-TX.
 
 **`muehle/hf/rotator`**: Yaesu G-450DC. Control path: AF6SA WRC, with bridge software
@@ -674,11 +701,11 @@ state:        enabled bool; armed bool; device_online bool; block string (omitem
               #   m5stamp-hf-ctrl/docs/m5stamp-hf-ctrl-mqtt-api.md §4
 intent:       set_enabled {true|false}         # /cmd retained (steady-state permit)
 ```
-Arm decision is the embedded firmware's: it subscribes `hf/radio` (`/status` + `/state`:
-`device_online`, `tuning`, `tx` and `freq_hz`, from which it derives the band) plus
-`/status` + `/state` of `hf/ant-switch`, `hf/ant-ctrl`, `hf/antenna-select`, `hf/pa`
-and `hf/tuner`, and `hf/ant-ctrl/cmd`, and computes `armed`; `armed` is never commanded
-directly (§6 software-arm-permit AND hardware key). Heartbeat is own liveness plus
+The embedded firmware makes the arm decision. It subscribes `hf/radio` (`/status` +
+`/state`: `device_online`, `tuning`, `tx` and `freq_hz`, from which it derives the band),
+`/status` + `/state` of `hf/ant-switch`, `hf/ant-ctrl`, `hf/antenna-select`, `hf/pa` and
+`hf/tuner`, and `hf/ant-ctrl/cmd`, and computes `armed`. `armed` is never commanded
+directly (§6 software-arm-permit AND hardware key). The heartbeat is own liveness plus
 radio reachability: radio offline ⇒ `armed` false; loss of 13.8 V ⇒ relay drops open
 (fail-safe). An operator/sequencer only sets the `enabled` permit.
 
@@ -736,10 +763,10 @@ mid-way (`starting`/`stopping`/`entering_standby`/`waking`) comes back as `idle`
 `fault` "<step>: interrupted by a powerseq restart (<phase>)" and is not re-run. A
 missing or corrupt state file gives `idle`. A restart never emits a `/cmd`.
 
-This sequence is **config-driven** in `powerseq` (the `[[startup]]` / `[[shutdown]]` /
-`[[standby]]` / `[[wake]]` / `[[idle_shutdown]]` step lists in its TOML, each step `cmd` / `wait_status` /
-`wait_state` / `delay` / `wol`); the
-text above is the default shipped in `config.example.toml`. The
+This sequence is **config-driven** in `powerseq`: the `[[startup]]` / `[[shutdown]]` /
+`[[standby]]` / `[[wake]]` / `[[idle_shutdown]]` step lists in its TOML, each step `cmd` /
+`wait_status` / `wait_state` / `delay` / `wol`. The text above is the default shipped in
+`config.example.toml`. The
 subscribed topics and the `/meta` `controls`/`watches` are derived from the configured
 sequence, so a different setup can define a different sequence without a Go change.
 
@@ -784,7 +811,7 @@ Storm and maintenance ground the antenna, retract the Ultrabeam and park the HF 
 (storm: boom broadside to the DWD wind direction, parked once; maintenance: a preset
 azimuth for lowering the mast). **The lock is enforced in the bridges, not here**:
 `hf/rotator` and `hf/ant-ctrl` read `/state.lock` (via `shared/antmode`), refuse motion on
-every inbound path (MQTT, GS-232, PstRotator, HTTP) and execute the park themselves; a
+every inbound path (MQTT, GS-232, PstRotator, HTTP) and execute the park themselves. A
 locked snapshot stays enforced while antmode is offline. `hf/ant-ctrl/state.retract_seq`
 names the lock `seq` whose retract finished (the persisted `retracted` latch may be left
 from an earlier lock). antmode's `retracting` step leaves only on `hf/ant-ctrl` live,
@@ -792,13 +819,13 @@ from an earlier lock). antmode's `retracting` step leaves only on `hf/ant-ctrl` 
 or on the retract timeout (the fallback for an unpowered RCU-06 or an older bridge). The
 park itself (wrc-rotator-bridge) and the retract latch (ultrabridge) are persisted
 under each bridge's `state_dir`, so a bridge restart neither repeats a finished park
-nor forgets the retract. A DWD wind warning (level 1
-"Windböen" and up) enters storm automatically only while the station is unmanned
-(powerseq not `starting`/`running`/`waking`, after a 60 s dwell; an `idle` that follows
-a manned phase without `stopping` (an aborted or killed sequence, which powerseq
-reports as `idle` with a `fault`, or a lost state file) stays manned while `hf/radio` is
-live, until 30 min after the later of that `idle` and the last TX) and
-`auto_enter` is on (off for the observe-only rollout); otherwise it is a suggestion.
+nor forgets the retract. A DWD wind warning (level 1 "Windböen" and up) enters storm
+automatically only while the station is unmanned and `auto_enter` is on (off for the
+observe-only rollout); otherwise it is a suggestion. Unmanned means powerseq is not
+`starting`/`running`/`waking`, after a 60 s dwell. An `idle` that follows a manned phase
+without `stopping` (an aborted or killed sequence, which powerseq reports as `idle` with
+a `fault`, or a lost state file) stays manned while `hf/radio` is live, until 30 min
+after the later of that `idle` and the last TX.
 `power_hold` tells `hf/power-seq` to hold its idle logic (no standby, wake or idle
 shutdown; watch changes re-baseline): while antenna power is borrowed for a park, for
 the whole maintenance, and in storm until the park is done or failed. Operator
@@ -815,8 +842,8 @@ state:      enabled; inputs; lock (omitempty); pending (omitempty); last
 intent:     enable | disable (retained) | aim <bearing> (not retained)
 ```
 Turns a logger bearing into the cheapest way to put an Ultrabeam lobe on the station: flip
-the Ultrabeam 180° when the station is behind the beam, else rotate to the nearer lobe;
-with the toggle off, requests pass straight through to the rotator. Stands down while
+the Ultrabeam 180° when the station is behind the beam, else rotate to the nearer lobe.
+With the toggle off, requests pass straight through to the rotator. Stands down while
 `hf/ant-mode` is locked.
 
 **`muehle/hf/station-log/working`**: the operator-keyed station from DXLog/Log4OM (a software
@@ -835,8 +862,9 @@ self-contained (`freq_hz`, `mode`, `source`, `needs[]`); what is needed comes fr
 **`muehle/hf/station-log`**: the station's QSO record (logic slot, `station-log` on `scmino`, role
 `log-store`). Takes QSOs in by ADIF import with automatic duplicate merge (and an optional Log4OM
 `ADIF_MESSAGE` UDP feeder); no `/cmd`, subscribes to nothing.
-`state: ts; qso_count; own_calls; last_import; problems`; a non-retained, QoS 1 `…/event` per added, merged or
-deleted QSO; the whole log is read over HTTP (`127.0.0.1:8096`, `GET /v1/worked`), not over MQTT. Consumer:
+`state: ts; qso_count; own_calls; last_import; problems`. A non-retained, QoS 1 `…/event`
+is published per added, merged or deleted QSO. The whole log is read over HTTP
+(`127.0.0.1:8096`, `GET /v1/worked`), not over MQTT. Consumer:
 chase-queue. Contract: `station-log/docs/station-log-mqtt-api.md`.
 
 **`muehle/hf/discovery`**: HA discovery consumer (logic slot, `hadiscovery`; see §7.3, §9)
@@ -856,10 +884,10 @@ are a self-hosted M5 Stamp PLC and `ant-switch` is an ESPHome board. The Shelly 
 bridge and the `power-seq` sequencer run on `scmino` (since 2026-10-18); the logic slots `chase` and
 `station-log` (no device) run there too. See §7.3. The PA
 bridge talks to the ACOM 1200S over USB-serial (Prolific, 9600 8N1) for telemetry,
-`/cmd set_band` band-walk commands (sent by the antenna-select PA band-follow, on in the
-seeded config (`[pa_follow] enabled = true`; off in the built-in defaults), or by an
-operator) and `set_mode`. There is no CAT band-data cable in this
-adapter; the amp auto-bands by sensing the RF drive (`band_source: rf_sense`), so
+`/cmd set_band` band-walk commands and `set_mode`. The `set_band` commands come from the
+antenna-select PA band-follow (on in the seeded config, `[pa_follow] enabled = true`; off
+in the built-in defaults) or from an operator. There is no CAT band-data cable in this
+adapter. The amp auto-bands by sensing the RF drive (`band_source: rf_sense`), so
 band-follow is hardware RF-sense by default: the `pa.set_band ← radio.band` soft
 binding below is an optional software override / pre-position path.
 
@@ -905,8 +933,8 @@ sits in it (the arm relay ANDs with the hardware key line), fail-safe-open.
 
 ### 7.2 Station `uhf`
 
-Leaner than `hf`: most of the HF machinery is absent, and the model works correctly
-with those parts left out.
+The `uhf` station is leaner than `hf`: most of the HF machinery is absent, and the model
+works correctly with those parts left out.
 
 **`muehle/uhf/radio`**: Icom IC-9700, **receive-only** since the 2026-09 pivot. The
 RS-BA1 LAN session (control :50001) carries the demand-driven :50003 **RX audio
@@ -914,10 +942,10 @@ stream** only. The CI-V data stream is not opened, and **no LAN CI-V commands ex
 Telemetry is read over the radio's dedicated **serial CI-V** port (read-only)
 and broadcast on change. Fronted by **icom9700-radio-bridge** (host `scmino` since
 2026-10-18). On scmino `serial.device` is unset by design: the only IC-9700 CI-V
-adapter there belongs to `rigctld-ic9700` for `park_radio`, so the serial telemetry
-monitor and `power_on` are disabled until a second CI-V port is added (that also needs
+adapter there belongs to `rigctld-ic9700` for `park_radio`. The serial telemetry monitor
+and `power_on` are therefore disabled until a second CI-V port is added. That also needs
 a unit change: the unit's `PrivateDevices=true` gives the service a private `/dev`
-without real ttys, so its `DeviceAllow` lines alone do not expose one).
+without real ttys, so its `DeviceAllow` lines alone do not expose one.
 ```
 capabilities: bands [2m,70cm,23cm]; modes [cw,usb,lsb,am,fm,data];
               park {freq_hz, mode} (only when park.rigctld_addr is configured)
@@ -943,7 +971,7 @@ serial CI-V and must re-pass the exposure review.
 `park_radio` turns satellite mode off, then split off, then sets frequency, then mode,
 and reads split, frequency and mode back (an error on mismatch). It goes through the
 loopback-only hamlib rigctld `rigctld-ic9700` on scmino:4532
-(`icom9700-radio-bridge/rigctld-scmino/`); the bridge opens no serial port for it, and
+(`icom9700-radio-bridge/rigctld-scmino/`). The bridge opens no serial port for it, and
 it is rejected when `park.rigctld_addr` is empty.
 The field-for-field wire contract for this slot is
 `icom9700-radio-bridge/docs/mqtt-api.md`; where that document and this model's generic
@@ -956,14 +984,14 @@ session, and disconnects after an idle timeout (the audio demand itself is TTL-b
 so a dead consumer releases it). Telemetry `/state` fields come from the serial
 monitor, not the LAN session: the measured fields are **omitted** (never zeroed, never
 frozen) while the monitor is off or the radio does not answer, whatever the
-capture-session state; `radio_responding` is present whenever the monitor is on. `ts`,
+capture-session state. `radio_responding` is present whenever the monitor is on. `ts`,
 `session_state`, `audio_demand`, `monitor` and `device_online` are always present;
 `error` is present on fault. Contention policy: never steal. A refused connect
 surfaces as an observed fact in `/state.error`, and whether the radio distinguishes
 refusal from eviction is pinned at the bench.
 
 **`device_online` override for this slot.** Here `device_online` means **CAPTURE
-session liveness** (redefined 2026-09), not the generic device-reachability of §3: it
+session liveness** (redefined 2026-09), not the generic device-reachability of §3. It
 reads `true` only while the audio-capture session is live, and a **healthy idle reads
 `false`** (network-standby reachability is not reported). `session_state` is the
 idle-vs-fault discriminator: `idle` with `/status` online is a healthy parked slot, not
@@ -1020,8 +1048,8 @@ intent:       goto {degrees under value}; stop;
 
 **Two-layer liveness across two slots:** each slot's `/state.device_online` is
 its **own serial link** (a dead elevation port takes only `el-rotator`
-offline, never `az-rotator`), while `/status` is the shared bridge process
-(one LWT per slot, so process death flips both with no stale-online gap).
+offline, never `az-rotator`). `/status` is the shared bridge process (one LWT per slot,
+so process death flips both with no stale-online gap).
 
 Motion is **free with no arming gate** (deliberately unlike the retired
 `uhf/rotator`'s manual-arming TUI): any connected client (rotctld, PstRotator, GS-232B,
@@ -1031,15 +1059,19 @@ plan's KTD4 register). The slots publish **read-only** `expose` blocks, so
 hadiscovery renders state but no HA motion widgets; the motion authority lives
 on `/cmd` and the protocol listeners.
 
-Beyond the bus, the same bridge runs the protocol endpoints on `shari`: a
-rotctld-compatible TCP server (`:4534`, the pelcobridge2-proven hamlib
-dialect, for gpredict-class and terrestrial az-only clients), a PstRotator
-native UDP listener (`:12041`) and a GS-232B TCP server (`:4533`, the PstRotator/N1MM
-path: a networked PstRotator connects as a GS-232 TCP client), all fed from the same
-dispatch core. Dispatch is by axis only (az → SPID, el → GS-500; a wire message that structurally
-omits one axis leaves that axis parked; `stop` from any path halts both axes;
-targets outside the configured travel limits are refused on every path before
-any serial write). The ports are deliberately distinct from the other rotator
+Beyond the bus, the same bridge runs three protocol endpoints on `shari`, all fed from
+the same dispatch core:
+
+- a rotctld-compatible TCP server (`:4534`, the pelcobridge2-proven hamlib dialect, for
+  gpredict-class and terrestrial az-only clients)
+- a PstRotator native UDP listener (`:12041`)
+- a GS-232B TCP server (`:4533`, the PstRotator/N1MM path: a networked PstRotator connects
+  as a GS-232 TCP client)
+
+Dispatch is by axis only (az → SPID, el → GS-500). A wire message that structurally omits
+one axis leaves that axis parked, and `stop` from any path halts both axes. Targets
+outside the configured travel limits are refused on every path before any serial write.
+The ports are deliberately distinct from the other rotator
 systems (wrc-rotator-bridge on scmino: GS-232 `:7373`, PstRotator `:12040`) so a
 client pointed at "the rotator" cannot silently reach the wrong antenna system.
 `:4533` (the hamlib rotctld default, once the retired pelcobridge2's on shack-pc) is
@@ -1142,7 +1174,7 @@ co-located.
 ## 8. Transport binding (MQTT)
 
 MQTT, plain JSON, no Sparkplug. Sparkplug's birth/death certificates, capability
-announcement, and state/command split are already specified above, so adopting its wire
+announcement, and state/command split are already specified above. Adopting its wire
 format would add protobuf and sequence-number costs for machinery we already have, and
 its opaque payloads and fixed namespace conflict with "configuration is documentation."
 This binding takes two ideas from Sparkplug (a retained birth certificate, death via Last
@@ -1180,19 +1212,19 @@ Four topic suffixes per slot (one per plane, plus liveness):
   produces the same physical outcome as the original, and "re-applying" means the
   single retained value, never a replay of history.
 
-  Three rules bound the re-delivery paths this exception opens (all three were
-  motivated live on 2026-09-03, when a bridge came back after ~18 h offline and the
-  broker delivered both its queued history and the retained value, physically
-  re-driving the antenna). They apply to **one-shot command topics** (topics whose
+  Three rules bound the re-delivery paths this exception opens. All three were motivated
+  live on 2026-09-03: a bridge came back after ~18 h offline, and the broker delivered
+  both its queued history and the retained value, which physically re-drove the antenna.
+  They apply to **one-shot command topics** (topics whose
   payloads are momentary intents, not desired steady state). A topic holding a
   *desired steady state* (a power `set_power`, an arm permit, an idempotent mode) is
-  governed by the exception's own precondition above and by rule 2 only: its retained
+  governed by the exception's own precondition above and by rule 2 only. Its retained
   value is *supposed to* survive and be re-applied on reconnect, so rules 1 and 3
   must not be applied to it. One guard: a `/cmd` topic is **never** that case.
   Even where its payload resembles desired state (the `muehle/uhf/radio`
   `audio_on` demand, for instance, is TTL-bounded and refreshed by its consumer),
   re-applying it after a bridge restart is the consumer's own refresh decision,
-  not the broker's replay; one-shot `/cmd` topics stay under rules 1–3.
+  not the broker's replay. One-shot `/cmd` topics stay under rules 1–3.
 
   1. **One-shot commands clear the retained topic.** After the consumer has acted on
      a one-shot command (executed *or* rejected), it publishes an empty payload to
@@ -1200,9 +1232,9 @@ Four topic suffixes per slot (one per plane, plus liveness):
      restart. Re-applying a one-shot command after a restart is not the actuator's
      job; the arbiter that owns the command stream re-resolves (§5). A steady-state
      intent topic does the opposite: its retained value is the latest writer's
-     intent *by design* (every writer, whether HA, a reconciler or an operator, publishes
+     intent *by design*. Every writer (HA, a reconciler or an operator) publishes
      retained so the topic always tracks the current intent, and the consumer
-     re-applies it on its own restart).
+     re-applies it on its own restart.
   2. **A `/cmd` consumer under a persistent session subscribes the command topic at
      QoS 0.** With `CleanSession=false` and a QoS-1 subscription the broker queues
      every `/cmd` published while the consumer is offline and replays the whole
@@ -1216,10 +1248,11 @@ Four topic suffixes per slot (one per plane, plus liveness):
      ESPHome `uhf/pol-ctrl` node follow it. The ESPHome ant-switch
      (`waveshare_relay-antswitch-bridge`, `clean_session: false`) still subscribes its
      retained `/cmd` at QoS 1, which is an open deviation from this rule. The other
-     `/cmd` consumers use a clean session instead (explicitly in `antennaselect`,
-     `beamsteer`, `antmode`, `powerseq` and `winpc-power-bridge`; by paho's default in
-     `flexbridge`, `acom1200s-pa-bridge`, `wrc-rotator-bridge` and `tgxl-tuner-bridge`;
-     forced by PubSubClient on the M5 Stamp PLC #1), which closes the same path. A retained steady-state input
+     `/cmd` consumers use a clean session instead, which closes the same path: explicitly
+     in `antennaselect`, `beamsteer`, `antmode`, `powerseq` and `winpc-power-bridge`; by
+     paho's default in `flexbridge`, `acom1200s-pa-bridge`, `wrc-rotator-bridge` and
+     `tgxl-tuner-bridge`; forced by PubSubClient on the M5 Stamp PLC #1. A retained
+     steady-state input
      whose queued backlog must not replay gets the same treatment: `ultrabridge`
      subscribes `hf/ant-mode/state` at QoS 0 under its persistent session. A QoS-0
      `/cmd` subscription is also permitted under a clean session.)
@@ -1336,9 +1369,9 @@ discovery code behind it). That embedded discovery is now **gated off**
 (`publish_ha_discovery = false`, default false), so by default they no longer publish
 it. ultrabridge also subscribed `homeassistant/status` to re-announce, and still
 subscribes it unconditionally: on HA birth it re-publishes its retained `/state`, and it
-publishes discovery again only with the gate on. The invariant stands; the target is a
+publishes discovery again only with the gate on. The invariant stands. The target is a
 standalone HA-discovery consumer that reads `/meta` + `/state` and emits discovery for
-every slot, at which point the embedded code is deleted.
+every slot; once that consumer exists, the embedded code is deleted.
 
 **Resolution in progress:** the standalone consumer is `hadiscovery` (`muehle/hf/discovery`),
 a passive service that reads the consumer-neutral `expose` block (§3.1, Appendix C) from
@@ -1354,16 +1387,15 @@ absent), the canonical planes are unaffected and the station runs identically.
 
 ## 10. Trade-offs and known weak points
 
-The known limits of the current design are listed below.
-
 - **The reconciler is a coordination single point.** If it dies, soft bindings stop
   updating; the station degrades to manual and retained state goes stale. This is
-  acceptable *only because* safety is hardware and fail-safe, but it also means band-follow
-  (Ultrabeam frequency, PA band, tuner in-line) and antenna selection all stop together.
+  acceptable *only because* safety is hardware and fail-safe. It also means that
+  band-follow (Ultrabeam frequency, PA band, tuner in-line) and antenna selection all stop
+  together.
   The pa-arm interlock runs in the M5 Stamp PLC #1 firmware and keeps running; with the
   reconciler offline it skips its antenna-move-pending gate. Mitigated: systemd
-  `Restart=on-failure` (5 s) restarts it, and hf_console reports `hf/antenna-select` in
-  its faults bar when it is offline or silent, greys out AUTO/MANUAL and drives the
+  `Restart=on-failure` (5 s) restarts it. When it is offline or silent, hf_console
+  reports `hf/antenna-select` in its faults bar, greys out AUTO/MANUAL and drives the
   switch directly, so the operator can see that they are on manual.
 - **Retained state can be acted on while stale.** Mitigated by `online`/last-will and
   heartbeats, but any consumer that acts on retained state must check liveness first.
@@ -1376,10 +1408,10 @@ The known limits of the current design are listed below.
   flexbridge's no-information band values (`""`, `unknown`: reconnect, 0 Hz) hold the
   last selection, with no PA or tuner follow, instead of reaching the fallback
   (2026-10-10); only a known-but-unmatched band (e.g. 160 m, `gen`) falls back.
-  Configured as `band_policy.fallback` in the `antenna-select` reconciler. The ATU is
-  engaged in-line for the non-resonant bands by the `tuner.set_inline ← band_policy` soft
-  binding (§7.1), driven by the `antenna-select` `[tuner_follow]` block against the
-  `hf/tuner` slot (the former "tuner is assumed but never driven" residual is closed).
+  Configured as `band_policy.fallback` in the `antenna-select` reconciler. The
+  `tuner.set_inline ← band_policy` soft binding (§7.1) engages the ATU in-line for the
+  non-resonant bands. The `antenna-select` `[tuner_follow]` block drives it against the
+  `hf/tuner` slot, which closes the former "tuner is assumed but never driven" residual.
 - **Hosts are now single points too.** `scmino` runs the station broker (bridged to the
   HA broker `.50`). `scmino` also fronts the HF radio, PA, tuner, rotator and Ultrabeam,
   the IC-9700, the Shelly power plugs and the logger and OscarWatch feeds, and it hosts
@@ -1391,7 +1423,7 @@ The known limits of the current design are listed below.
   `uhf/sat-track`; the UHF pan/tilt head (`pelcobridge2`) was retired 2026-10-10. The
   scmino broker mirrors `muehle/#` to the HA broker (`192.168.1.50`). A host loss takes
   its whole cluster offline at once (correctly, via last-will, but simultaneously). The
-  station depends on host liveness, which is worth monitoring; the reconciler running on
+  station depends on host liveness, which is worth monitoring. The reconciler running on
   `scmino` adds to that host's coordination single point (see §11).
 - **GenAI-authored adapters vary in quality.** The strict core limits the damage a bad
   adapter can do, but such an adapter can still publish plausible-but-wrong state and drive correct
@@ -1412,12 +1444,19 @@ The known limits of the current design are listed below.
 
 ## 11. Open items to confirm
 
-All seven v0.1 items are resolved and folded in (hierarchy confirmed as stations; 23 cm
-out of scope, superseded 2026-09-15: 23 cm is in the IC-9700 slot's band set
-(receive-only since the 2026-09 pivot: RX audio capture and read-only telemetry), see
-§7.2 and the band/mode reference; UHF polarization and preamps operator-only; devices identified; `pa-arm`
-an embedded M5 Stamp PLC; band policy set; tune routing through the automation). Residuals
-surfaced by those answers:
+All seven v0.1 items are resolved and folded in:
+
+- hierarchy confirmed as stations
+- 23 cm out of scope, superseded 2026-09-15: 23 cm is in the IC-9700 slot's band set
+  (receive-only since the 2026-09 pivot: RX audio capture and read-only telemetry), see
+  §7.2 and the band/mode reference
+- UHF polarization and preamps operator-only
+- devices identified
+- `pa-arm` an embedded M5 Stamp PLC
+- band policy set
+- tune routing through the automation
+
+Residuals surfaced by those answers:
 
 1. ~~**160 m antenna.**~~ Resolved: no dedicated 160 m antenna. Unmatched bands (incl.
    160 m) fall back to the fan-dipole via the ATU (`band_policy.fallback` in
@@ -1554,12 +1593,12 @@ online
 (Band-stacking: the radio restores the last-used frequency/mode for `20m`; `band` stays
 derived from `freq_hz` on `/state`. A direct `set_freq_hz` is the model's canonical tuning
 intent; flexbridge exposes `set_band` as the operator-facing convenience. `set_mic_profile`
-drives SmartSDR's native mic profile load; the available list is queried via
-`profile mic info` and observed on `/state.mic_profiles`, and the active name is tracked
-client-side on `/state.mic_profile` since SmartSDR reports no active mic profile. There is no
+drives SmartSDR's native mic profile load. The available list is queried via
+`profile mic info` and observed on `/state.mic_profiles`. SmartSDR reports no active mic
+profile, so the active name is tracked client-side on `/state.mic_profile`. There is no
 save: `profile mic save` is obsolete on SmartSDR v4+. `set_mode` (`cw`/`usb`/`lsb`
 only) sends `slice set <idx> mode=<MODE>` to the slice `/state` reports (TX, else
-active); hf_console sends it when the operator re-taps the active band (CW → USB above
+active). hf_console sends it when the operator re-taps the active band (CW → USB above
 10 MHz, LSB below; any other mode → CW). The wire command is not yet confirmed live on
 the FLEX-8400. DVK: `dvk_play_<N>` (1–12), `dvk_play` + `value`, `dvk_stop` [+ `value`].)
 
@@ -1589,8 +1628,9 @@ Encoding decisions worth copying:
   gates open the arm relay while `hf/radio` reports `tuning` or `hf/tuner` reports a tune
   cycle (`settling`). The role's other intents (`set_freq_hz`, `set_mode`, `set_drive`,
   `select_rx`, `set_band`) are direct intents. flexbridge implements `set_band`,
-  `set_mode` (`cw`/`usb`/`lsb`), `select_rx` (`ant1`/`ant2`/`rx_a`), `set_mic_profile`
-  and the DVK actions, and a non-canonical `set_freq` (integer Hz, VFO A's slice; used by chaseq-ui), and rejects `set_freq_hz` and `set_drive` as unknown actions. `set_band` is the
+  `set_mode` (`cw`/`usb`/`lsb`), `select_rx` (`ant1`/`ant2`/`rx_a`), `set_mic_profile`,
+  the DVK actions and a non-canonical `set_freq` (integer Hz, VFO A's slice; used by
+  chaseq-ui). It rejects `set_freq_hz` and `set_drive` as unknown actions. `set_band` is the
   band-stacking convenience (§4; §7.1 `muehle/hf/radio`): it changes the band and lets
   the radio pick the frequency, so `/state` stays frequency-derived rather than carrying
   a band setpoint.
@@ -1598,7 +1638,7 @@ Encoding decisions worth copying:
 ### The same role, receive-only variant: `muehle/uhf/radio` (IC-9700)
 
 The UHF station's `radio` slot instantiates the role **receive-only** (2026-09 pivot):
-no TX state, arm/PTT intent or free tuning; the one retune is `park_radio`,
+no TX state, arm/PTT intent or free tuning. The one retune is `park_radio`,
 which sets a fixed park frequency/mode (satellite mode and split off first) through
 rigctld on scmino. The LAN session carries the demand-driven RX audio stream only,
 and telemetry comes from the read-only serial CI-V monitor (on change, omitted while
@@ -1640,9 +1680,9 @@ above differ, that document wins for this slot.
 ```
 `capabilities.park` is present only when `park.rigctld_addr` is configured (values
 illustrative; the console sends `park_radio` only when it is advertised). The bridge
-currently publishes `host` as the radio's LAN name and no `link`, its `expose` names the
-device `radio`, and its mode `options_ref` is `capabilities.modes`, which consumers do not
-resolve; these are bridge-side deviations from the example above.
+currently deviates from the example above in three ways: it publishes `host` as the
+radio's LAN name and no `link`, its `expose` names the device `radio`, and its mode
+`options_ref` is `capabilities.modes`, which consumers do not resolve.
 
 `muehle/uhf/radio/state`: retained, monitor on and the radio answering
 ```json
