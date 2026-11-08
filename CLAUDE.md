@@ -163,6 +163,7 @@ All shared docs are in `docs/` in this repo:
 | Document | Path |
 |----------|------|
 | Station integration model | `docs/station-integration-model.md` |
+| Domains: StationA vs opsotter | `docs/domains.md` |
 | Config and secrets convention | `docs/conventions/config-and-secrets.md` |
 | Deployment convention | `docs/conventions/deployment.md` |
 | Bridge-naming convention | `docs/conventions/naming.md` |
