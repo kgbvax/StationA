@@ -83,7 +83,7 @@ can be built and run day to day.
 | [hadiscovery](hadiscovery/) | Home Assistant discovery consumer | `muehle/hf/discovery` | logic slot (reads `/meta`) |
 | [oscarwatch-sattrack-bridge](oscarwatch-sattrack-bridge/) | Satellite-tracking source (OscarWatch Satellite link) | `muehle/uhf/sat-track` | WebSocket (OscarWatch, read-only) |
 | [winpc-power-bridge](winpc-power-bridge/) | Shack-PC sleep agent (Windows, runs on `bwpc`; `sleep` is refused while the operator uses the PC) | `muehle/power/shack-pc` | ethernet (offline = asleep) |
-| [chase-queue](chase-queue/) | Chase queue: ranks the stations on the air (bmrec CQ rows, DX-cluster spots, buddies) by what the active awards need (contest multipliers, DXCC entities not confirmed on the band) | `muehle/hf/chase` | logic slot (`hf/cqfinder`, DX clusters, Club Log, QRZ.com) |
+| chase-queue (opsotter `operating/chase-queue/`, not in this repo) | Chase queue: ranks the stations on the air (bmrec CQ rows, DX-cluster spots, buddies) by what the active awards need (contest multipliers, DXCC entities not confirmed on the band) | `muehle/hf/chase` | logic slot (`hf/cqfinder`, DX clusters, Club Log, QRZ.com) |
 | [station-log](station-log/) | Station QSO record (ADIF import with duplicate merge, read API :8096), the working-station feed `hf/station-log/working`, and the two-way Wavelog sync | `muehle/hf/station-log` | logic slot (DXLog/Log4OM UDP, ADIF) |
 | [beamsteer](beamsteer/) | Smart rotation: emulates PstRotator for the contest logger; flips the Ultrabeam 180° or rotates to the cheaper lobe | `muehle/hf/beam-steer` | logic slot (PstRotator UDP :12050) |
 | [antmode](antmode/) | Antenna-mode lock (normal/storm/maintenance) for the Ultrabeam and the HF rotator; polls NINA/DWD | `muehle/hf/ant-mode` | logic slot |
@@ -110,7 +110,7 @@ Consumers, control heads and infrastructure that are not slots:
 | [m5dualkey-hf-antctrl](m5dualkey-hf-antctrl/) | M5Stack Chain DualKey firmware: Ultrabeam direction keys (a chained Chain Key toggles DVK memory 2 on `hf/radio`) | embedded |
 | [mqtt-broker](mqtt-broker/) | Station Mosquitto config and deploy, mirrored to the HA broker (see the broker note below) | scmino |
 | [hf-mqtt-capture](hf-mqtt-capture/) | Passive recorder of the HF bus (`muehle/hf/#`) to hourly log files | shari |
-| [chaseq-ui](chaseq-ui/) | Native chase-list window: shows `hf/chase`, tunes the FLEX and puts the callsign into the logger; Skip/Undo go to chase-queue | bwpc |
+| chaseq-ui (opsotter `operating/chaseq-ui/`, not in this repo) | Native chase-list window: shows `hf/chase`, tunes the FLEX and puts the callsign into the logger; Skip/Undo go to chase-queue | bwpc |
 
 The **power-distribution layer** shows how the model's slots fit together:
 
@@ -151,7 +151,7 @@ muehle/
     rotator/         ← wrc-rotator-bridge   (Yaesu G-450DC via AF6SA WRC, websocket)
     tuner/           ← tgxl-tuner-bridge (Tuner Genius XL, ethernet)
     discovery/       ← hadiscovery      (HA discovery consumer - reads /meta.expose)
-    chase/           ← chase-queue (ranked CQ stations: needed + priority)
+    chase/           ← chase-queue, in opsotter (ranked CQ stations: needed + priority)
     station-log/     ← station-log      (QSO record; working-station feed at station-log/working)
     beam-steer/      ← beamsteer        (smart rotation - PstRotator UDP emulator)
     ant-mode/        ← antmode          (antenna-mode lock: normal/storm/maintenance)
@@ -207,9 +207,10 @@ builds standalone. `go build $(go list -m -f '{{.Dir}}/...')` at the repo root b
 all (a plain `./...` does not work there, because the root is not a module). Non-Go
 components (ESPHome YAML, PlatformIO firmware, the Flutter console `hf_console` with its own
 small Go web bridge, and the Mosquitto config in `mqtt-broker/`) live alongside as plain
-subdirectories and are not in `go.work`. Two Go modules also sit outside `go.work`:
-`chaseq-ui` (glaze, needs Go 1.27.1) and `hf_console/webbridge`. Build them from their own
-directory with `GOWORK=off go build ./...`, which is what their deploy scripts do.
+subdirectories and are not in `go.work`. One Go module also sits outside `go.work`:
+`hf_console/webbridge`. Build it from its own directory with `GOWORK=off go build ./...`,
+which is what its deploy script does. chase-queue and chaseq-ui moved to opsotter
+(`operating/`) on 2026-11-13.
 Bridges import `shared/` but never another
 bridge's `internal/` (Go's `internal/` rule enforces this across separate modules).
 
@@ -222,7 +223,7 @@ scmino broker is authoritative for `muehle/#`.
 **scmino** (Raspberry Pi CM5, `192.168.1.178`, user `io`): the station broker and almost
 every Go service, as hardened systemd units. **shari** (Raspberry Pi, `192.168.1.139`,
 same user): `spid-ercm-rotator-bridge` and `hf-mqtt-capture`. `winpc-power-bridge` and
-`chaseq-ui` run on the Windows shack PC `bwpc` (`192.168.1.197`).
+`chaseq-ui` (from opsotter) run on the Windows shack PC `bwpc` (`192.168.1.197`).
 
 ```bash
 ssh io@192.168.1.178                 # scmino

@@ -44,9 +44,9 @@ created in-repo. There are no separate per-component remotes to push to.
 | icom9700-radio-bridge | `icom9700-radio-bridge/` | IC-9700 UHF radio bridge → `muehle/uhf/radio` (RS-BA1 LAN session for demand-driven RX audio capture; `park_radio` retune via the `rigctld-ic9700` unit on scmino; read-only serial CI-V telemetry supported but disabled on scmino (`serial.device` unset by design: the only CI-V adapter on scmino belongs to `rigctld-ic9700`); no remote TX) |
 | m5dial-hf-rotctrl | `m5dial-hf-rotctrl/` | M5Stack Dial firmware — HF rotator control head (analog meter face + knob; not a slot; consumer + /cmd stimulator) |
 | m5dualkey-hf-antctrl | `m5dualkey-hf-antctrl/` | M5Stack Chain DualKey firmware — Ultrabeam direction keys (A forward / B reverse / A+B bidirectional, LED shows `hf/ant-ctrl` direction; chained M5 Chain Key toggles DVK memory 2 on `hf/radio`; not a slot; consumer + /cmd stimulator) |
-| chase-queue | `chase-queue/` | Chase queue → `hf/chase` — ranks the available stations (qualified bmrec CQ rows from `hf/cqfinder`, needed DX-cluster spots from 1..n clusters, buddies) by the active awards (goals: DXCC per band, field awards from definition files, the running contest), publishes one self-contained ranked list (`freq_hz`, `mode`, `source`, `needs[]`); worked/confirmed view from station-log, Club Log matrix, QRZ.com enrichment; SQLite; runs on scmino |
+| chase-queue | opsotter `operating/chase-queue/` (not in this repo) | Chase queue → `hf/chase`: ranks the available stations (bmrec CQ rows, DX-cluster spots, buddies) by the active awards and publishes one self-contained ranked list. Moved to opsotter on 2026-11-13; it reads its history from the opsotter log database, not from station-log. Read its `CLAUDE.md` there |
 | station-log | `station-log/` | Station QSO record → `hf/station-log` (role `log-store`) — local SQLite log, ADIF import with automatic duplicate merge (`replace_source` snapshot option), read API `:8096`, optional Log4OM ADIF_MESSAGE UDP feeder; **also the currently-working-station feed** (retained `muehle/hf/station-log/working`, same `{ts, device_online, selected?}` document the retired logger-spot-bridge `hf/spots` carried; DXLog N1MM lookupinfo UDP 12060, Log4OM CALLSIGN UDP 2249) **and the two-way Wavelog sync**; answers worked/confirmed for chase-queue; runs on scmino; personal data, DB never in git |
-| chaseq-ui | `chaseq-ui/` | Native window on bwpc (glaze, qslotter stack; own Go module outside `go.work`, build with `GOWORK=off`) showing chase-queue's self-contained ranked list (`muehle/hf/chase`; no `cqfinder` join) with local band / needed-only / award filters; Enter/click tunes the FLEX (flexbridge `set_freq` + the row's `set_mode`) and puts the callsign into the configured logger(s) (`[[loggers.sender]]`, Log4OM today), `handled` in contest; Skip/Undo go to chase-queue. Consumer + `/cmd` sender, not a slot |
+| chaseq-ui | opsotter `operating/chaseq-ui/` (not in this repo) | Native chase-list window on bwpc: shows `muehle/hf/chase`, tunes the FLEX (flexbridge `set_freq` + `set_mode`) and puts the callsign into the logger(s). Moved to opsotter on 2026-11-13 |
 | oscarwatch-sattrack-bridge | `oscarwatch-sattrack-bridge/` | OscarWatch Satellite-link WebSocket bridge → `uhf/sat-track` — the satellite being tracked (name, NORAD, transponder, az/el, range, range rate, sunlit, derived sub-satellite point, radio-corrected up/downlink); read-only, runs on scmino |
 | testui | `testui/` | MQTT relay + schema-aware browser UI for the bus (not a slot; passive consumer + /cmd stimulator) |
 | hf_console | `hf_console/` | Flutter station console: Android APK on the shack tablet, iPhone IPA, and web channel `hf-console-web` on scmino :8091 (Go `webbridge/` WebSocket→MQTT TCP relay). Not a slot; consumer + /cmd stimulator |
@@ -86,7 +86,7 @@ workspace.
 | `muehle/hf/pa` | acom1200s-pa-bridge | ACOM 1200S, serial (`set_power`/RTS removed; `power` is telemetry only) — on scmino since 2026-10-12 (Prolific adapter re-plugged there) |
 | `muehle/hf/rotator` | wrc-rotator-bridge | Yaesu G-450DC via AF6SA WRC, websocket — on scmino since 2026-10-12 (GS-232 :7373 / PstRotator :12040 moved with it) |
 | `muehle/hf/tuner` | tgxl-tuner-bridge | FlexRadio Tuner Genius XL (1x3, `192.168.1.145`), ethernet (TCP API :9010) — bridge on scmino (replaced the ATR-1000 / atr1k-tuner-bridge) |
-| `muehle/hf/chase` | chase-queue | logic slot — no device (runs on scmino); reads bmrec's `hf/cqfinder` candidates (gate: trusted by default, qualified once bmrec sends the flag) and 1..n DX clusters, evaluates the active awards (goals), publishes the ranked list with `needs[]`; `/cmd` skip, handled, undo, set_mode, switch_instance |
+| `muehle/hf/chase` | chase-queue (opsotter, not in this repo) | logic slot — no device (runs on scmino); reads bmrec's `hf/cqfinder` candidates (gate: trusted by default, qualified once bmrec sends the flag) and 1..n DX clusters, evaluates the active awards (goals), publishes the ranked list with `needs[]`; `/cmd` skip, handled, undo, set_mode, switch_instance |
 | `muehle/hf/station-log` | station-log | logic slot — no device (runs on scmino); the station's QSO record, role `log-store`: ADIF import with duplicate merge, retained `/state`, non-retained `/event` per added/merged/deleted QSO, retained sibling `muehle/hf/station-log/working` (the operator-keyed station from DXLog/Log4OM; replaced the retired `hf/spots`), two-way Wavelog sync, read API `127.0.0.1:8096`; no `/cmd` |
 | `muehle/hf/cqfinder` | bmrec (not in this repo) | the CQ finder's open rows and recent spots, retained; input of the chase queue |
 | `muehle/hf/beam-steer` | beamsteer | logic slot — no device (runs on scmino); logger PstRotator UDP :12050 (logger must target scmino) → `hf/rotator` + `hf/ant-ctrl` direction |
@@ -119,12 +119,12 @@ test fixtures and the portal `[[resource]]` Ultrabeam note still say port 3), `a
 Most services run on **scmino** (`192.168.1.178`, Raspberry Pi CM5, `ssh io@`): flexbridge,
 ultrabridge (:8080, RCU-06 FTDI cable on scmino's USB), acom1200s-pa-bridge,
 wrc-rotator-bridge, tgxl-tuner-bridge, antenna-select, beamsteer, antmode, hadiscovery,
-powerseq, shelly-power-bridge, station-log (:8096; also the working-station feed on UDP 12060/2249) + chase-queue (deploy station-log first), icom9700-radio-bridge + rigctld-ic9700,
+powerseq, shelly-power-bridge, station-log (:8096; also the working-station feed on UDP 12060/2249), chase-queue (from opsotter), icom9700-radio-bridge + rigctld-ic9700,
 oscarwatch-sattrack-bridge, vhfcam-restream (:8083), the hf_console web channel
 `hf-console-web` (:8091), testui (:8090), the landing page stationportal (:80) and the
 station Mosquitto mirror. **shari** (`192.168.1.139`, Raspberry Pi 4) runs only
 spid-ercm-rotator-bridge and hf-mqtt-capture (plus HamClock and SvxLink, which are not repo
-components). winpc-power-bridge and chaseq-ui run on the Windows shack PC bwpc (`192.168.1.197`). chaseq-ui is the one Go component outside `go.work` (glaze needs Go 1.27.1): build it with `GOWORK=off`.
+components). winpc-power-bridge and chaseq-ui (from opsotter) run on the Windows shack PC bwpc (`192.168.1.197`).
 
 ```bash
 # SSH in
@@ -175,7 +175,7 @@ All shared docs are in `docs/` in this repo:
 | Logging convention (slog, stderr, component/slot attrs) | `docs/conventions/logging.md` |
 | Logging/operating-layer integration model (draft companion to the integration model; `bandmap`/spots layer) | `docs/logging-integration-model.md` |
 | Station architecture diagram | `docs/architecture.svg` (source `docs/architecture.d2`) |
-| Chasing Stations domain architecture (target roles: clusters, bmrec, station-log, chase-queue, chaseq-ui) | `docs/chasing-stations-architecture.md` |
+| Chasing Stations domain architecture (target roles: clusters, bmrec, station-log, chase-queue, chaseq-ui) | opsotter `operating/docs/chasing-stations-architecture.md` (moved 2026-11-13) |
 | Feature plans | `docs/plans/` |
 
 All components live as subdirectories of this one repo, so the shared docs path

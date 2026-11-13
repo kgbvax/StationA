@@ -271,7 +271,7 @@ Consumers build their own bandmap from the event stream. `source` ∈ `rbn|clust
 |---|---|---|
 | Log / update / delete contact | `…/log/event` + `…/log/state` rollup | ingest → bus → outbound logbook |
 | QSY / radio state | **existing** `muehle/hf/radio/state` (freq_hz/band/mode/tx) | bus → logger (read) |
-| Command radio (QSY) | **existing** `muehle/hf/radio/cmd` | loggers: deferred (observe-only, §11). Realized outside the log slot by `chaseq-ui` (flexbridge `set_freq` + `set_mode`, see `chasing-stations-architecture.md`) |
+| Command radio (QSY) | **existing** `muehle/hf/radio/cmd` | loggers: deferred (observe-only, §11). Realized outside the log slot by `chaseq-ui` (flexbridge `set_freq` + `set_mode`, see opsotter `operating/docs/chasing-stations-architecture.md`) |
 | Control rotator | **existing** `muehle/hf/rotator/cmd` (+ `muehle/hf/ant-ctrl/cmd`), `muehle/uhf/az-rotator/cmd` + `muehle/uhf/el-rotator/cmd` | HF: realized outside the log slot by `beamsteer` (logger PstRotator UDP :12050 → `hf/rotator` `set_az` / `hf/ant-ctrl` direction); UHF: no bus path — loggers/trackers talk to `spid-ercm-rotator-bridge` directly (rotctld TCP :4534 / PstRotator UDP :12041 / GS-232B TCP :4533, the PstRotator/N1MM path) |
 | Publish score | `…/log/state.score` (retained) | ingest → bus → scoreboard |
 | Spots / bandmap | `…/spots/event` (not retained) | cluster ↔ bus ↔ loggers |
@@ -281,7 +281,7 @@ QSY and rotator need **no new topics** — they reuse existing station slots. Th
 *reads* `radio/state`; the logger QSY write path is deferred (chaseq-ui's QSY is the one realized write path).
 
 The persistent QSO record for the chasing domain is the `station-log` component, realized as slot
-`muehle/hf/station-log` (role `log-store`, `station-log/`; `chasing-stations-architecture.md` §2.2). It owns a
+`muehle/hf/station-log` (role `log-store`, `station-log/`; opsotter `operating/docs/chasing-stations-architecture.md` §2.2). It owns a
 local log database fed by ADIF import with automatic duplicate merge and, optionally, Log4OM's `ADIF_MESSAGE`
 UDP. It publishes its own non-retained, QoS 1 `…/station-log/event` (added / merged / deleted, stable `id`) in the
 spirit of §4/§6.1, with its own envelope (`station-log/docs/station-log-mqtt-api.md`); it does not yet consume

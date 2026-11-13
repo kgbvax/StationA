@@ -340,7 +340,7 @@ entirely).
   - `bandmap`: the operator-keyed station from the shack logger, now the retained sibling
     `hf/station-log/working`; read-only, fronts software.
   - `chase-queue`: a logic slot that ranks the stations on the air by what is needed
-    (`hf/chase`; see `chasing-stations-architecture.md`).
+    (`hf/chase`; see opsotter `operating/docs/chasing-stations-architecture.md`).
   - `log-store`: a logic slot holding the station's QSO record (`hf/station-log`).
   - `discovery`: a consumer that renders `/meta` `expose` into a consumer's discovery
     format (`hf/discovery`).
@@ -856,7 +856,7 @@ something recently); selected (omitted when nothing is keyed)`. Bridge liveness 
 **`muehle/hf/chase`**: the chase queue (logic slot, `chase-queue` on `scmino`, role
 `chase-queue`). Reads bmrec's `hf/cqfinder` candidates and a DX cluster, publishes the
 retained ranked list; `/cmd` skip, handled, undo and the contest-instance actions. Contract:
-`chase-queue/docs/chase-queue-mqtt-api.md`; domain roles: `chasing-stations-architecture.md`. Rows are
+opsotter `operating/chase-queue/docs/chase-queue-mqtt-api.md`; domain roles: opsotter `operating/docs/chasing-stations-architecture.md`. Rows are
 self-contained (`freq_hz`, `mode`, `source`, `needs[]`); what is needed comes from the enabled awards (goals).
 
 **`muehle/hf/station-log`**: the station's QSO record (logic slot, `station-log` on `scmino`, role

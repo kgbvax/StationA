@@ -5,7 +5,6 @@ use (
 	./antennaselect
 	./antmode
 	./beamsteer
-	./chase-queue
 	./flexbridge
 	./hadiscovery
 	./hf-mqtt-capture
