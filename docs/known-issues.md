@@ -477,6 +477,8 @@ PRD 00 §7 items later resolved in code, recorded so nobody re-opens them:
   the loggers were found sending to loopback on bwpc, the feed was repointed to shari:2249 before the bridge moved to
   scmino (2026-10-18), and Log4OM was likely still wrong. Whether the loggers now reach scmino is the open
   item "Working-station feed: logger targets on bwpc" at the end of this file.
+  2026-11-13: station-log retired. opsotter `operating/working-station` (unit `working-station` on scmino) now
+  publishes the same retained document on `muehle/hf/station-log/working` and listens on UDP 12060 and 2249.
 - **Radio state heartbeat starvation (PRD 00 §7.5, §6).** FIXED: flexbridge now
   republishes `/state` every 5 s while the radio link is live
   (`flexbridge/internal/bridge/bridge.go`, `DefaultStateHeartbeat = 5 * time.Second`,
@@ -946,11 +948,16 @@ gate, logger senders); **merged to main and live since 2026-11-04**. Open items,
    The gap between the first export and the cutover was closed by a fresh export on 2026-11-04. station-log can also watch an ADIF drop directory (`[watch] dir`, merge, source `adif-drop`; built, off until
    configured on scmino). The Club Log **matrix** stays in chase-queue
    (entity-level, not a QSO list); the Club Log log download is not built.
+   2026-11-13: station-log retired. The QSO record is now the opsotter log database (`records/logdb`, CouchDB
+   on scmino, fed from Log4OM by `logdb watch` on bwpc). chase-queue reads its worked/confirmed view from there.
+   The station-log API (`GET /v1/worked`), its events and the ADIF drop directory no longer exist.
 5. **Worked in a contest means "dupe".** Stations worked on the band are listed last (needed false). With
    station-log the DX tier and `worked_before` read the log view (call+band+mode class, ever); in a contest the tier is
    the running contest log under its DOUBLE_QSO rule, so `worked_before.bands` can name the band while
    `this_band` is false. `this_band` follows the tier, so it never contradicts `needed`. Contest QSOs from DXLog
    are not part of `worked_before` while the log view is on; they reach station-log only by ADIF import.
+   2026-11-13: station-log retired. The log view now comes from the opsotter log database. The station-log ADIF
+   import no longer exists.
 6. **Row mode is derived, not read** (chase-queue `internal/mode`: sideband rule, comment keyword, IARU R1 band
    plan; unclear = no mode). Resolved on the backend and in chaseq-ui. Open: the band-plan table is simplified
    and untested live, and an older chase-queue leaves heard rows untunable and sets no mode.
@@ -964,7 +971,9 @@ gate, logger senders); **merged to main and live since 2026-11-04**. Open items,
    reload within 30 s of a file change or on SIGHUP; a bad reload keeps the old catalog (shown in `problems`).
 9. **Merge-only import does not remove QSOs deleted in the logger.** `replace_source` (per-source snapshot
    replace) exists but is off by default; use it only with a full, valid export of that source.
+   2026-11-13: obsolete. This was the station-log import, which is retired.
 10. **POTA, SOTA and WWFF are deferred** (rejected as goals); station-log keeps their ADIF reference fields.
+    2026-11-13: station-log retired. The note on its ADIF reference fields is history.
 11. **Deploy order and cutover (done 2026-11-04, steps kept for a rollback or a rebuild).** Deploy `station-log` (scmino, `station-log/deploy.sh`), then `chase-queue`,
     then `chaseq-ui` (bwpc). Cutover: (1) import the Log4OM ADIF export
     (`station-log -import-adif FILE -source log4om-file`); (2) point Log4OM's UDP `ADIF_MESSAGE` at station-log
@@ -972,6 +981,9 @@ gate, logger senders); **merged to main and live since 2026-11-04**. Open items,
     `/etc/chase-queue/config.toml` and restart (`[log4om]` is then ignored with a Warn; remove it);
     (4) rollback = delete `[station_log]` and point Log4OM back at 2340. Then update the stationportal and the
     hf_console host map if anything moved (both already list `station-log`).
+    2026-11-13: history only. station-log is retired and its directory is deleted (b493898), so these steps
+    cannot be used for a rollback. On scmino the unit is stopped and disabled, and its database is archived in
+    `/var/backups/opsotter/station-log-final/`. The unit and its directories are removed on or after 2026-11-20.
 
 ## [decision] Working-station feed: logger targets on bwpc (2026-11-05)
 
@@ -979,10 +991,15 @@ station-log took over the retired logger-spot-bridge's feed (`muehle/hf/station-
 `muehle/hf/spots`) and its UDP ports. The feed is only live if the loggers on bwpc (192.168.1.197) send to
 scmino (192.168.1.178), and the repo does not record the current settings:
 
+> **2026-11-13:** station-log retired. The feed moved to opsotter `operating/working-station` (unit
+> `working-station` on scmino). It listens on the same UDP ports 12060 and 2249 and publishes the same
+> document on `muehle/hf/station-log/working`. The logger targets below still apply. The cutover steps
+> below are history. Contract: opsotter `operating/working-station/docs/working-station-mqtt-api.md`.
+
 - **DXLog**: N1MM-style broadcast with `lookupinfo` on, target the LAN broadcast or `scmino:12060` (not
   `127.0.0.1`). chase-queue's contest feed needs its own second target (`contest.listen`, 12061).
-- **Log4OM**: UDP outbound service type `CALLSIGN` to `scmino:2249` (bare call). The `ADIF_MESSAGE` outbound
-  stays on `scmino:2341`; never reuse 2249 for it.
+- **Log4OM**: UDP outbound service type `CALLSIGN` to `scmino:2249` (bare call). Never send `ADIF_MESSAGE`
+  to 2249. station-log listened for it on `scmino:2341` until 2026-11-13.
 - **Check** on scmino: `sudo tcpdump -ni any -A 'udp port 12060 or udp port 2249'` while typing a call, then
   `mosquitto_sub -h 192.168.1.178 -u hf -P "$MQTT_PASSWORD" -t 'muehle/hf/station-log/working' -v`.
 - **Cutover**: stop `logger-spot-bridge` first (it holds both ports), enable the `[working]` listeners in

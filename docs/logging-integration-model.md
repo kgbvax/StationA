@@ -54,8 +54,9 @@ exact shape the station bus already handles.
   the UHF mount today directly through `spid-ercm-rotator-bridge`'s own listeners (§7). The
   HF rotator bearing path is already realized outside the log slot by `beamsteer` (§7).
 - **First adapter built:** the working-station feed (DXLog/Log4OM UDP → retained
-  `muehle/hf/station-log/working`, §3), first as `logger-spot-bridge` (`muehle/hf/spots`), now
-  absorbed by `station-log`. **Realized since:** two-way Wavelog sync in `station-log`.
+  `muehle/hf/station-log/working`, §3), first as `logger-spot-bridge` (`muehle/hf/spots`), then
+  absorbed by `station-log`, now opsotter `working-station` (since 2026-11-13). A two-way Wavelog
+  sync ran in `station-log` until it was retired on 2026-11-13.
   **Next (proposed):** WSJT-X/JTDX ingest. The neutral schema is kept general enough for contest-logger QSO logs
   (N1MM/DXLog), which come next.
 
@@ -81,7 +82,7 @@ This is the sanctioned "`position` reappears when operators share a station" cas
 `scmino` — because the ingest adapter runs next to the app it fronts (§8). That per-PC
 placement is *why* the slot is position-scoped.
 
-Exception in practice: `station-log` (working-station feed, `muehle/hf/station-log/working`) runs on `scmino` and
+Exception in practice: opsotter `working-station` (working-station feed, `muehle/hf/station-log/working`) runs on `scmino` and
 receives the loggers' UDP over the LAN (DXLog's N1MM `lookupinfo` on port 12060; Log4OM's CALLSIGN datagrams,
 whose outbound target must be `scmino:2249`) instead of a localhost port on
 the operator PC. The per-PC rule still applies to adapters that listen on a localhost port
@@ -94,13 +95,14 @@ Slots per operator seat:
 | `…/log` | `qso-log` | QSO event source + retained rollup (incl. running score) |
 | `…/spots` | `bandmap` | operator-keyed station (retained `/state.selected`, realized) + DX-spot event source `…/spots/event` (proposed, lower priority) |
 
-**Realized so far:** the operator-keyed station (role `bandmap`) is published by `station-log` as the
-retained sibling topic `muehle/hf/station-log/working`, a document `{ts, device_online, selected?}`
+**Realized so far:** the operator-keyed station (role `bandmap`) is published by opsotter `working-station`
+as the retained sibling topic `muehle/hf/station-log/working`, a document `{ts, device_online, selected?}`
 (the station keyed in DXLog/Log4OM, resolved to position and beam bearing); no `/event` stream and no
-`/cmd`. It is not a slot of its own: liveness is station-log's `/status` plus `device_online` in the
+`/cmd`. It is not a slot of its own: liveness is the `muehle/hf/station-log` `/status` plus `device_online` in the
 document. It replaced the retired `logger-spot-bridge` (slot `muehle/hf/spots`, live 2026-09-15 to
-2026-11), which was removed from the repo; its git history remains. Contract:
-`../station-log/docs/station-log-mqtt-api.md`.
+2026-11), which was removed from the repo; its git history remains. `station-log` published it
+until it was retired on 2026-11-13. Contract:
+opsotter `operating/working-station/docs/working-station-mqtt-api.md`.
 
 Consumers of all logs use a wildcard (`muehle/+/log/event` collapsed, or
 `muehle/+/+/log/event` with explicit positions). Recommend per-deployment consistency in
@@ -147,7 +149,7 @@ Proposed additions to core §4:
 
 - **Roles:** `qso-log` (a running log application's QSO event + rollup source),
   `bandmap` (the operator-keyed station as retained `/state.selected`, realized by
-  `station-log` (`…/station-log/working`; core §4 still lists the role); a DX-spot event source
+  opsotter `working-station` (`…/station-log/working`; core §4 lists the role); a DX-spot event source
   `…/spots/event`, proposed). Future: `scoreboard` (a derived aggregator that
   merges multiple positions' score — §11).
 - **Capability keys:** `actions` (the QSO actions a source emits: `add`, `replace`,
@@ -280,13 +282,13 @@ Consumers build their own bandmap from the event stream. `source` ∈ `rbn|clust
 QSY and rotator need **no new topics** — they reuse existing station slots. This pass only
 *reads* `radio/state`; the logger QSY write path is deferred (chaseq-ui's QSY is the one realized write path).
 
-The persistent QSO record for the chasing domain is the `station-log` component, realized as slot
-`muehle/hf/station-log` (role `log-store`, `station-log/`; opsotter `operating/docs/chasing-stations-architecture.md` §2.2). It owns a
-local log database fed by ADIF import with automatic duplicate merge and, optionally, Log4OM's `ADIF_MESSAGE`
-UDP. It publishes its own non-retained, QoS 1 `…/station-log/event` (added / merged / deleted, stable `id`) in the
-spirit of §4/§6.1, with its own envelope (`station-log/docs/station-log-mqtt-api.md`); it does not yet consume
-`…/log/event`. Keeping the loggers in sync with it is out of scope. The ingest adapters here remain possible
-future sources.
+The persistent QSO record for the chasing domain is the opsotter log database (`records/logdb`, CouchDB on
+`scmino`), fed from Log4OM by `logdb watch` on `bwpc`. chase-queue reads its worked and confirmed view from
+there since 2026-11-13. The ingest adapters here remain possible future sources.
+
+2026-11-13: `station-log` retired. Until then it held the QSO record as slot `muehle/hf/station-log` (role
+`log-store`), with its own non-retained `…/station-log/event`, an HTTP API, a Log4OM `ADIF_MESSAGE` feeder and
+an ADIF drop directory. None of these exist any more. The slot address now carries opsotter `working-station`.
 
 ---
 
@@ -294,7 +296,7 @@ future sources.
 
 Adapters are edge translators, exactly analogous to device bridges (core §3, "adapters live
 at the edge"), except the "device" is a software app on a socket and the adapter **runs on
-the operator's PC next to the app it fronts** (the realized `station-log` working feed is the
+the operator's PC next to the app it fronts** (the realized working-station feed, opsotter `working-station`, is the
 exception, §3):
 
 - **Ingest adapters** own the position's `qso-log` slot and translate an app's native
@@ -313,14 +315,14 @@ bus. This turns the O(N²) point-to-point UDP mesh into O(N) hub-and-spoke, kill
 IP/port inventory (the bus address is fixed and self-describing), and adds
 reliability / late-join / fan-out — **with no change to the apps**.
 
-**Host/adapter placement** (proposed additions to the core §7.3 hosts-and-adapters table, which lists `station-log`; the earlier placeholder row `Logging | subscriber, no slot | shari` was removed from §7.3 on 2026-10-23):
+**Host/adapter placement** (proposed additions to the core §7.3 hosts-and-adapters table, which lists the working-station feed; the earlier placeholder row `Logging | subscriber, no slot | shari` was removed from §7.3 on 2026-10-23):
 
 | Adapter / service | Fronts | Host |
 |---|---|---|
 | WSJT-X log bridge (`wsjtx-log-bridge`) | `muehle/<station>/log` (`qso-log`) | operator PC (e.g. `bwpc`) |
 | Wavelog consumer (`wavelog-consumer`) | consumer of `…/log/event`, no slot | `scmino` |
 | Log4OM consumer (`log4om-consumer`) | consumer of `…/log/event`, no slot | `scmino` |
-| Working-station feed (in `station-log`, realized) | `muehle/hf/station-log/working` (`bandmap`) | `scmino` |
+| Working-station feed (opsotter `working-station`, realized) | `muehle/hf/station-log/working` (`bandmap`) | `scmino` |
 
 ---
 

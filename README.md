@@ -84,7 +84,7 @@ can be built and run day to day.
 | [oscarwatch-sattrack-bridge](oscarwatch-sattrack-bridge/) | Satellite-tracking source (OscarWatch Satellite link) | `muehle/uhf/sat-track` | WebSocket (OscarWatch, read-only) |
 | [winpc-power-bridge](winpc-power-bridge/) | Shack-PC sleep agent (Windows, runs on `bwpc`; `sleep` is refused while the operator uses the PC) | `muehle/power/shack-pc` | ethernet (offline = asleep) |
 | chase-queue (opsotter `operating/chase-queue/`, not in this repo) | Chase queue: ranks the stations on the air (bmrec CQ rows, DX-cluster spots, buddies) by what the active awards need (contest multipliers, DXCC entities not confirmed on the band) | `muehle/hf/chase` | logic slot (`hf/cqfinder`, DX clusters, Club Log, QRZ.com) |
-| [station-log](station-log/) | Station QSO record (ADIF import with duplicate merge, read API :8096), the working-station feed `hf/station-log/working`, and the two-way Wavelog sync | `muehle/hf/station-log` | logic slot (DXLog/Log4OM UDP, ADIF) |
+| working-station (opsotter `operating/working-station/`, not in this repo) | Working-station feed `hf/station-log/working`: the call keyed in DXLog or Log4OM, QRZ.com for a bare call. It took over this feed from station-log (retired 2026-11-13). The QSO record is now the opsotter log database | `muehle/hf/station-log` | logic slot (DXLog/Log4OM UDP) |
 | [beamsteer](beamsteer/) | Smart rotation: emulates PstRotator for the contest logger; flips the Ultrabeam 180° or rotates to the cheaper lobe | `muehle/hf/beam-steer` | logic slot (PstRotator UDP :12050) |
 | [antmode](antmode/) | Antenna-mode lock (normal/storm/maintenance) for the Ultrabeam and the HF rotator; polls NINA/DWD | `muehle/hf/ant-mode` | logic slot |
 | [icom9700-radio-bridge](icom9700-radio-bridge/) | IC-9700 UHF radio bridge (demand-driven RX audio capture; `park_radio` retune via rigctld-ic9700; read-only serial CI-V telemetry supported but disabled on scmino; no remote TX) | `muehle/uhf/radio` | LAN (RS-BA1, audio); CI-V via rigctld-ic9700 (park only) |
@@ -152,7 +152,7 @@ muehle/
     tuner/           ← tgxl-tuner-bridge (Tuner Genius XL, ethernet)
     discovery/       ← hadiscovery      (HA discovery consumer - reads /meta.expose)
     chase/           ← chase-queue, in opsotter (ranked CQ stations: needed + priority)
-    station-log/     ← station-log      (QSO record; working-station feed at station-log/working)
+    station-log/     ← working-station, in opsotter (working-station feed at station-log/working)
     beam-steer/      ← beamsteer        (smart rotation - PstRotator UDP emulator)
     ant-mode/        ← antmode          (antenna-mode lock: normal/storm/maintenance)
     vhfcam/          ← vhfcam-restream  (VHF cam restreamer - minimal /status + /state)
@@ -210,7 +210,8 @@ small Go web bridge, and the Mosquitto config in `mqtt-broker/`) live alongside 
 subdirectories and are not in `go.work`. One Go module also sits outside `go.work`:
 `hf_console/webbridge`. Build it from its own directory with `GOWORK=off go build ./...`,
 which is what its deploy script does. chase-queue and chaseq-ui moved to opsotter
-(`operating/`) on 2026-11-13.
+(`operating/`) on 2026-11-13. station-log is retired. Its working-station feed moved to
+opsotter `operating/working-station/` on 2026-11-13.
 Bridges import `shared/` but never another
 bridge's `internal/` (Go's `internal/` rule enforces this across separate modules).
 

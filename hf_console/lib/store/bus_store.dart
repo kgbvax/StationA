@@ -174,9 +174,10 @@ class BusStore extends ChangeNotifier {
   }
 
   /// Topic of the currently-working-station document (retained, published by
-  /// station-log as a sibling of its slot planes). It is a side value, not a
-  /// slot: it has no /status of its own (liveness = station-log's /status AND
-  /// the document's `device_online`), so it never enters [slots] or [offlineList].
+  /// working-station (opsotter) as a sibling of its slot planes). It is a side
+  /// value, not a slot: it has no /status of its own (liveness = the
+  /// muehle/hf/station-log slot's /status AND the document's `device_online`),
+  /// so it never enters [slots] or [offlineList].
   static const workingTopic = 'muehle/hf/station-log/working';
 
   Map<String, dynamic>? _workingState;

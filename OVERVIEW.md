@@ -45,9 +45,11 @@ subscribing to each other's state, never by calling one another.
 - **PA safety and remote-on** — the M5 Stamp PLC (m5stamp-hf-ctrl) drives the
   PA/TRX remote-on relays and the fail-safe-open PA arm relay, which closes only
   while every interlock gate is clear.
-- **Working-station feed** — station-log publishes the operator-keyed
-  station from DXLog/Log4OM on `hf/station-log/working` (it replaced the retired
-  logger-spot-bridge / `hf/spots`) and syncs the log with Wavelog both ways.
+- **Working-station feed** — working-station (opsotter) publishes the
+  operator-keyed station from DXLog/Log4OM on `hf/station-log/working` (it
+  replaced the retired logger-spot-bridge / `hf/spots`). It took over this feed
+  from station-log, which was retired on 2026-11-13. The QSO record is now the
+  opsotter log database.
 - **UHF satellite operation** — az/el rotators (rotctld/PstRotator), the
   OscarWatch tracking feed, IC-9700 RX audio (serial CI-V telemetry supported, disabled on scmino), X-Quad
   polarization.

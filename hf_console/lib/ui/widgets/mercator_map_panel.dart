@@ -172,7 +172,7 @@ class _MercatorMapPanelState extends State<MercatorMapPanel> {
     final qthLng = dx.centerLng;
 
     // The station the operator keyed in the shack logger (muehle/hf/station-log/working,
-    // published by station-log). Pin + callsign when the bridge
+    // published by working-station (opsotter)). Pin + callsign when the bridge
     // resolved coordinates; nothing here needs the azimuth.
     final selected = SelectedSpot.fromSelected(store.workingSelected);
     final nowMs = DateTime.now().millisecondsSinceEpoch;
