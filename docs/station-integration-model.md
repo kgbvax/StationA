@@ -58,6 +58,9 @@ Changes by version:
   listed in §4; `hf/beam-steer` and `hf/spots` added to §7.1. `hf/spots` was later
   retired: its working-station feed is now the retained sibling `hf/station-log/working`,
   see §7.1.
+- 2026-11-13: `station-log` retired. The QSO record is the opsotter log database
+  (`records/logdb`). Role `log-store` has no implementation here any more (§4). The
+  `hf/station-log` slot is now opsotter `working-station`, role `bandmap` (§7.1, §7.3).
 
 The guiding idea: the live configuration is the documentation. A component, once
 connected, describes itself to a well-known address: who it is, what it can do, and what
@@ -337,11 +340,14 @@ entirely).
     offline = asleep; wake is Wake-on-LAN, not MQTT.
   - `steering`: a logic slot that turns a logger bearing into rotator and
     antenna-direction intents (`hf/beam-steer`).
-  - `bandmap`: the operator-keyed station from the shack logger, now the retained sibling
-    `hf/station-log/working`; read-only, fronts software.
+  - `bandmap`: the operator-keyed station from the shack logger, the retained sibling
+    `hf/station-log/working` of the `hf/station-log` slot (opsotter `working-station`);
+    read-only, fronts software.
   - `chase-queue`: a logic slot that ranks the stations on the air by what is needed
     (`hf/chase`; see opsotter `operating/docs/chasing-stations-architecture.md`).
-  - `log-store`: a logic slot holding the station's QSO record (`hf/station-log`).
+  - `log-store`: retired 2026-11-13 with `station-log`. It was a logic slot holding the
+    station's QSO record (`hf/station-log`). The QSO record is now the opsotter log
+    database (`records/logdb`, CouchDB on `scmino`).
   - `discovery`: a consumer that renders `/meta` `expose` into a consumer's discovery
     format (`hf/discovery`).
   - Passive: `ant/*`, `mast/*`, `preamp/*` (masthead LNA).
@@ -847,25 +853,27 @@ With the toggle off, requests pass straight through to the rotator. Stands down 
 `hf/ant-mode` is locked.
 
 **`muehle/hf/station-log/working`**: the operator-keyed station from DXLog/Log4OM (a software
-source, `station-log` on `scmino`, role `bandmap`; read-only, no `/cmd`). It is a retained
-sibling topic of the `station-log` slot, not a slot of its own; it replaced the retired
+source, opsotter `working-station` on `scmino`, role `bandmap`; read-only, no `/cmd`). It is a retained
+sibling topic of the `hf/station-log` slot, not a slot of its own; it replaced the retired
 `logger-spot-bridge` slot `muehle/hf/spots`. Document: `ts; device_online (a logger keyed
 something recently); selected (omitted when nothing is keyed)`. Bridge liveness is the
-`station-log` `/status`; consumers AND both layers.
+`hf/station-log` `/status`; consumers AND both layers. Consumers: hf_console (map pin,
+compass) and qslotter's contact tracker. beamsteer does not read it.
+
+**`muehle/hf/station-log`**: the working-station slot (logic slot, opsotter `working-station` on
+`scmino`, role `bandmap`, device name "Working station"). No `/cmd`, subscribes to nothing.
+Listens on UDP 12060 (DXLog lookupinfo) and 2249 (Log4OM CALLSIGN) and asks QRZ.com for a
+bare call. `state: ts; working {listening, online, qrz, rejected}; problems`. Contract:
+opsotter `operating/working-station/docs/working-station-mqtt-api.md`. The address is the one of
+the retired `station-log` (2026-11-13), which held the QSO record under role `log-store`. The QSO
+record is now the opsotter log database (`records/logdb`). chase-queue reads its worked and
+confirmed view from there.
 
 **`muehle/hf/chase`**: the chase queue (logic slot, `chase-queue` on `scmino`, role
 `chase-queue`). Reads bmrec's `hf/cqfinder` candidates and a DX cluster, publishes the
 retained ranked list; `/cmd` skip, handled, undo and the contest-instance actions. Contract:
 opsotter `operating/chase-queue/docs/chase-queue-mqtt-api.md`; domain roles: opsotter `operating/docs/chasing-stations-architecture.md`. Rows are
 self-contained (`freq_hz`, `mode`, `source`, `needs[]`); what is needed comes from the enabled awards (goals).
-
-**`muehle/hf/station-log`**: the station's QSO record (logic slot, `station-log` on `scmino`, role
-`log-store`). Takes QSOs in by ADIF import with automatic duplicate merge (and an optional Log4OM
-`ADIF_MESSAGE` UDP feeder); no `/cmd`, subscribes to nothing.
-`state: ts; qso_count; own_calls; last_import; problems`. A non-retained, QoS 1 `…/event`
-is published per added, merged or deleted QSO. The whole log is read over HTTP
-(`127.0.0.1:8096`, `GET /v1/worked`), not over MQTT. Consumer:
-chase-queue. Contract: `station-log/docs/station-log-mqtt-api.md`.
 
 **`muehle/hf/discovery`**: HA discovery consumer (logic slot, `hadiscovery`; see §7.3, §9)
 ```
@@ -882,7 +890,7 @@ open, see `docs/known-issues.md`), `ant/fan-dipole` 80/40 (port 6),
 `rotator` and `pa` since 2026-10-12, and `ant-ctrl` since 2026-10-09; `pa-arm` + `switch`
 are a self-hosted M5 Stamp PLC and `ant-switch` is an ESPHome board. The Shelly power
 bridge and the `power-seq` sequencer run on `scmino` (since 2026-10-18); the logic slots `chase` and
-`station-log` (no device) run there too. See §7.3. The PA
+`station-log` (opsotter `working-station`, no device) run there too. See §7.3. The PA
 bridge talks to the ACOM 1200S over USB-serial (Prolific, 9600 8N1) for telemetry,
 `/cmd set_band` band-walk commands and `set_mode`. The `set_band` commands come from the
 antenna-select PA band-follow (on in the seeded config, `[pa_follow] enabled = true`; off
@@ -1149,7 +1157,7 @@ muehle/host/scmino      # Raspberry Pi CM5, Debian 12 arm64 — runs most statio
 | HF antenna-select reconciler | `hf/antenna-select` | `scmino` |
 | Antenna mode (`antmode`) | `hf/ant-mode` | `scmino` |
 | Beam steering (`beamsteer`, PstRotator UDP :12050) | `hf/beam-steer` | `scmino` |
-| Working-station feed (in `station-log`) | `hf/station-log/working` | `scmino` |
+| Working-station feed (opsotter `working-station`, UDP :12060 / :2249) | `hf/station-log`, `hf/station-log/working` | `scmino` |
 | Bus capture (`hf-mqtt-capture`) | subscriber of `muehle/hf/#`, no slot | `shari` |
 | Shelly power bridge (`shelly-power-bridge`) | `power/psu-13v8`, `power/antennas`, `power/shack-pc-mains` | `scmino` |
 | Shack-PC power agent (`winpc-power-bridge`) | `power/shack-pc` | `bwpc` |

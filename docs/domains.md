@@ -66,7 +66,7 @@ station is free to ignore.
 | Rotators | `wrc-rotator-bridge`, `spid-ercm-rotator-bridge` |
 | Power and interlocks | `shelly-power-bridge`, `winpc-power-bridge`, `m5stamp-hf-ctrl`, `m5stamp-pol-ctrl`, `powerseq`, `antennaselect`, `antmode` |
 | Station firmware heads | `m5dial-hf-rotctrl`, `m5dualkey-hf-antctrl` |
-| Logic that acts on operator intent | `beamsteer` (consumes the working station from `station-log/working`, decides the moves) |
+| Logic that acts on operator intent | `beamsteer` (takes the bearing from the logger over PstRotator UDP, decides the moves) |
 | Infrastructure | `mqtt-broker`, `shared`, `hadiscovery`, `stationportal`, `testui`, `hf-mqtt-capture` |
 | Station camera | `vhfcam-restream` |
 | Station UI | `hf_console` (a client of both domains; stays here for now) |
@@ -78,8 +78,8 @@ Components that live in this repository today are marked (here).
 
 | Domain | Components |
 |---|---|
-| Records | `station-log` (here; the QSO record, slot `hf/station-log`), `qslotter` (QSL cards, Clublog, QRZ) |
-| Operating | `chase-queue` (here; slot `hf/chase`), `chaseq-ui` (here; consumer, outside `go.work`), `wkdb4`, `dxlens`, `horstreporter` |
+| Records | log database (`records/logdb`, CouchDB on scmino, the QSO record), `qslotter` (QSL cards, Clublog, QRZ) |
+| Operating | `chase-queue` (slot `hf/chase`), `chaseq-ui` (consumer), `working-station` (the working-station feed `hf/station-log/working`), `wkdb4`, `dxlens`, `horstreporter` |
 | Monitoring and capture | `bmrec` (recording, transcription, CQ finder; feeds qualified rows to chase-queue) |
 | Propagation and environment | `oscarwatch-sattrack-bridge` (here; slot `uhf/sat-track`, read-only) |
 
@@ -88,8 +88,12 @@ Components that live in this repository today are marked (here).
 domain is described in opsotter `operating/docs/chasing-stations-architecture.md`; this page only places
 it on the map.
 
-Four opsotter components still live in this repository. They are already
-decoupled by the bus contract, so moving them is possible but not urgent. See
+2026-11-13: `station-log` is retired. The QSO record is now the opsotter log
+database (`records/logdb`). The working-station feed moved to opsotter
+`operating/working-station` and keeps the topic `muehle/hf/station-log/working`.
+
+One opsotter component still lives in this repository. It is already
+decoupled by the bus contract, so moving it is possible but not urgent. See
 below for what a move costs.
 
 ## Cost of separate repositories

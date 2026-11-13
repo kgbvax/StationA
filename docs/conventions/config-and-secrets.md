@@ -109,8 +109,7 @@ SERVICE_MQTT_PASSWORD=s3cr3t
 The application reads `SERVICE_MQTT_PASSWORD` and overrides the config value.
 Used by acom1200s-pa-bridge, tgxl-tuner-bridge, flexbridge
 (`FLEXBRIDGE_MQTT_PASSWORD`), icom9700-radio-bridge (`ICOM9700_MQTT_PASSWORD`,
-`ICOM9700_CIV_PASSWORD`), station-log (`STATION_LOG_MQTT_PASSWORD`;
-`STATION_LOG_QRZ_PASSWORD` and `STATION_LOG_WAVELOG_KEY` are env-only), oscarwatch-sattrack-bridge, powerseq,
+`ICOM9700_CIV_PASSWORD`), oscarwatch-sattrack-bridge, powerseq,
 shelly-power-bridge, spid-ercm-rotator-bridge, stationportal, testui and
 wrc-rotator-bridge. spid-ercm-rotator-bridge and icom9700-radio-bridge reject a
 `password` key in the TOML; the others accept it as a fallback, and the env var wins

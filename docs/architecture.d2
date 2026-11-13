@@ -103,8 +103,8 @@ scmino: {
     class: logic
   }
 
-  stationlog: {
-    label: "station-log\n(QSO record; working-station feed,\nUDP 12060 / 2249; Wavelog sync)"
+  workingstation: {
+    label: "working-station (opsotter)\n(working-station feed,\nUDP 12060 / 2249, QRZ.com)"
     class: logic
   }
 
@@ -178,8 +178,8 @@ scmino.antennaselect -> bus: "cmd → hf/ant-switch;\nfollow → hf/ant-ctrl, hf
 scmino.powerseq <-> bus: "orchestrates\npower/shack-pc-mains, power/psu-13v8,\nhf/switch, power/antennas, hf/pa-arm\n(+ WOL / power/shack-pc sleep)\n→ hf/power-seq"
 scmino.beamsteer <-> bus: "hf/beam-steer;\ncmd → hf/rotator, hf/ant-ctrl"
 scmino.antmode <-> bus: "hf/ant-mode (lock read by bridges,\nantennaselect, beamsteer, powerseq);\nborrows power/antennas"
-scmino.stationlog -> bus: "hf/station-log (+ /working, /event)"
-bwpc.loggers -> scmino.stationlog: "DXLog lookupinfo UDP :12060\nLog4OM CALLSIGN UDP :2249"
+scmino.workingstation -> bus: "hf/station-log (+ /working)"
+bwpc.loggers -> scmino.workingstation: "DXLog lookupinfo UDP :12060\nLog4OM CALLSIGN UDP :2249"
 scmino.testui <-> bus: "subscribe muehle/#\npublish /cmd"
 scmino.hfweb <-> bus: "WebSocket → MQTT\n(browser clients)"
 scmino.portal <- bus: "subscribe muehle/#\n(passive)"

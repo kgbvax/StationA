@@ -161,7 +161,7 @@ class _CompassBody extends StatelessWidget {
         : 'forward';
 
     // The station the operator keyed in the shack logger (DXLog/Log4OM),
-    // published by station-log on muehle/hf/station-log/working. Rendered as a pin
+    // published by working-station (opsotter) on muehle/hf/station-log/working. Rendered as a pin
     // (coordinates) or a bearing ray (azimuth only) plus a bottom-left
     // read-out chip — the "is turning the beam worth it" aid.
     final selected = SelectedSpot.fromSelected(store.workingSelected);
