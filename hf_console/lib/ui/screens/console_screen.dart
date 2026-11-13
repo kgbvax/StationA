@@ -148,10 +148,14 @@ class LinkStatusBanner extends StatelessWidget {
 /// has legitimate uses (60 m cross-band, a second slice for monitoring), so
 /// nothing is blocked here; the fix is split-off in SmartSDR or the logger.
 ///
-/// The strip flashes — a slow fade between full and dim, never a hard
-/// on/off — so a cross-band split is hard to overlook mid-contest. Honors
-/// reduce-motion (solid strip). The fade repeats forever, so widget tests
-/// must freeze it (TestHarness does) or use plain `pump`s.
+/// The strip flashes: a smooth swing between a solid amber bar with dark
+/// text and the dim amber tint with amber text, never a hard on/off and never
+/// invisible, so a cross-band split is hard to overlook mid-contest. A solid
+/// amber edge top and bottom stays put through the swing. It flashes even
+/// under reduce-motion: the swing is a color change in place, nothing moves,
+/// and Chrome can report reduce-motion while macOS has it off (seen
+/// 2026-11-13), which held the warning still. The swing repeats forever, so
+/// widget tests must use plain `pump`s and dispose the strip.
 class SplitBandBanner extends StatefulWidget {
   const SplitBandBanner({super.key});
 
@@ -178,16 +182,39 @@ class SplitBandBanner extends StatefulWidget {
 class _SplitBandBannerState extends State<SplitBandBanner> with SingleTickerProviderStateMixin {
   late final AnimationController _flash = AnimationController(
     vsync: this,
-    duration: const Duration(milliseconds: 900),
+    duration: const Duration(milliseconds: 600),
   );
 
-  /// Bottom of the fade; the strip never goes fully invisible.
-  static const _minOpacity = 0.25;
+  /// Background alpha at the dim end of the swing; the full end is solid.
+  static const _dimAlpha = 0.18;
 
   @override
   void dispose() {
     _flash.dispose();
     super.dispose();
+  }
+
+  Widget _strip(SplitState split, double t) {
+    final amber = AppTheme.amber;
+    final dim = AppTheme.blend(amber, _dimAlpha);
+    return Container(
+      key: const ValueKey('split-band-banner'),
+      decoration: BoxDecoration(
+        color: Color.lerp(dim, amber, t),
+        border: Border.symmetric(horizontal: BorderSide(color: amber, width: 2)),
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+      child: Text(
+        SplitBandBanner.text(split),
+        textAlign: TextAlign.center,
+        style: AppTheme.mono(
+          15,
+          color: Color.lerp(amber, AppTheme.activeButtonText, t),
+          weight: FontWeight.w800,
+          letterSpacing: 0.14,
+        ),
+      ),
+    );
   }
 
   @override
@@ -197,30 +224,12 @@ class _SplitBandBannerState extends State<SplitBandBanner> with SingleTickerProv
       _flash.stop();
       return const SizedBox.shrink();
     }
-    final flashing = !MediaQuery.disableAnimationsOf(context);
-    if (flashing) {
-      if (!_flash.isAnimating) _flash.repeat(reverse: true);
-    } else {
-      _flash.stop();
-      _flash.value = 1.0;
-    }
-    final strip = Container(
-      key: const ValueKey('split-band-banner'),
-      color: AppTheme.blend(AppTheme.amber, 0.18),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      child: Text(
-        SplitBandBanner.text(split),
-        textAlign: TextAlign.center,
-        style: AppTheme.mono(13, color: AppTheme.amber, weight: FontWeight.w700, letterSpacing: 0.14),
-      ),
-    );
-    if (!flashing) return strip;
-    return FadeTransition(
+    if (!_flash.isAnimating) _flash.repeat(reverse: true);
+    final swing = CurvedAnimation(parent: _flash, curve: Curves.easeInOut);
+    return AnimatedBuilder(
       key: const ValueKey('split-band-flash'),
-      opacity: Tween<double>(begin: _minOpacity, end: 1.0)
-          .chain(CurveTween(curve: Curves.easeInOut))
-          .animate(_flash),
-      child: strip,
+      animation: swing,
+      builder: (context, _) => _strip(split, swing.value),
     );
   }
 }
