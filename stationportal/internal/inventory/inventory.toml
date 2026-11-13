@@ -419,10 +419,10 @@ slots = ["muehle/power/shack-pc"]
 
 [[software]]
 name = "chaseq-ui"
-path = "chaseq-ui/"
+path = "../opsotter/operating/chaseq-ui"
 kind = "ui"
 host = "bwpc"
-note = "Task Scheduler at logon; chase-queue list window, Enter = QSY (frequency + mode) + callsign into the configured logger(s) (Log4OM)"
+note = "opsotter repo; Task Scheduler at logon; chase-queue list window, Enter = QSY (frequency + mode) + callsign into the configured logger(s) (Log4OM)"
 
 [[software]]
 name  = "icom9700-radio-bridge"
@@ -462,12 +462,12 @@ slots = ["muehle/uhf/sat-track"]
 
 [[software]]
 name  = "chase-queue"
-path  = "chase-queue/"
+path  = "../opsotter/operating/chase-queue"
 kind  = "logic"
 host  = "scmino"
 unit  = "chase-queue"
-ports = "127.0.0.1:8095, 12061/udp (DXLog contest feed), 2340/udp (Log4OM, only without [station_log])"
-note  = "Ranks the qualified CQ stations bmrec hears and the DX cluster (bwpc :23/tcp) spots by the active awards (goals: DXCC per band, field awards, the running contest); worked/confirmed view from station-log; Club Log matrix; QRZ.com callbook"
+ports = "127.0.0.1:8095, 12061/udp (DXLog contest feed), 2340/udp (Log4OM, only without [logdb])"
+note  = "opsotter repo; ranks the qualified CQ stations bmrec hears and the DX cluster (bwpc :23/tcp) spots by the active awards (goals: DXCC per band, field awards, the running contest); worked/confirmed view from the opsotter log database (CouchDB on scmino, read only); Club Log matrix; QRZ.com callbook"
 slots = ["muehle/hf/chase"]
 
 [[software]]
@@ -477,7 +477,7 @@ kind  = "logic"
 host  = "scmino"
 unit  = "station-log"
 ports = "127.0.0.1:8096 (import + read API), 2341/udp (Log4OM ADIF_MESSAGE, optional), 12060/udp (DXLog lookupinfo), 2249/udp (Log4OM CALLSIGN)"
-note  = "QSO record: ADIF import with automatic duplicate merge, answers worked/confirmed (SQLite in /var/lib/station-log); also the working-station feed (retained muehle/hf/station-log/working from DXLog/Log4OM UDP, replaced logger-spot-bridge) and the two-way Wavelog sync; deploy before chase-queue"
+note  = "QSO record: ADIF import with automatic duplicate merge, answers worked/confirmed (SQLite in /var/lib/station-log); also the working-station feed (retained muehle/hf/station-log/working from DXLog/Log4OM UDP, replaced logger-spot-bridge) and the two-way Wavelog sync; to be retired by the opsotter log database (chase-queue no longer reads it)"
 slots = ["muehle/hf/station-log"]
 
 [[software]]

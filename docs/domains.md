@@ -85,7 +85,7 @@ Components that live in this repository today are marked (here).
 
 `logger-spot-bridge` no longer exists as a directory: `station-log` absorbed it
 (the working-station feed is now `muehle/hf/station-log/working`). The chase
-domain is described in `chasing-stations-architecture.md`; this page only places
+domain is described in opsotter `operating/docs/chasing-stations-architecture.md`; this page only places
 it on the map.
 
 Four opsotter components still live in this repository. They are already

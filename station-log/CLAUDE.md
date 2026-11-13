@@ -3,7 +3,7 @@
 station-log is the station's **QSO record** (logic slot `muehle/hf/station-log`, role `log-store`): a local
 SQLite log that takes QSOs in by **ADIF import with automatic duplicate merge** and answers "worked /
 confirmed" for every consumer (first: chase-queue, which builds its log view from it). It has no device and
-runs on scmino. Target architecture and where it sits: `../docs/chasing-stations-architecture.md` (§2.2).
+runs on scmino. Target architecture and where it sits: opsotter `operating/docs/chasing-stations-architecture.md` (§2.2). chase-queue no longer reads station-log: since 2026-11-13 it reads the opsotter log database, which is to retire station-log.
 Contract: `docs/station-log-mqtt-api.md`. How it is kept in sync with the loggers is **out of scope**; an optional two-way Wavelog sync exists (below); it is
 fed by files, `POST /import` and the optional Log4OM UDP feeder. It also publishes the **currently working
 station** (the call keyed in DXLog/Log4OM, resolved to a map position and beam bearing) on the retained sibling

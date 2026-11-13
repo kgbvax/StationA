@@ -929,18 +929,18 @@ changed the following; the contract has the normative wording.
 
 ## [decision] Chasing Stations — open items (2026-11-03)
 
-Target roles: `docs/chasing-stations-architecture.md`. The target is built on branch
+Target roles: opsotter `operating/docs/chasing-stations-architecture.md` (moved 2026-11-13; chase-queue and chaseq-ui are in opsotter `operating/` now). The target is built on branch
 `claude/chasing-stations-architecture-b2ac20` (station-log, awards/goals, `needs[]`, buddies, clusters 1..n, bmrec
 gate, logger senders); **merged to main and live since 2026-11-04**. Open items, so a later session does not re-discover them:
 
 1. **The DX cluster stops while bwpc sleeps.** chase-queue reads Log4OM's internal
    cluster on bwpc `:23`; in powerseq standby there are no cluster rows and no cluster
-   hiding (`chase-queue/config.example.toml` `[[cluster]]`). A second `[[cluster]]` (e.g. RBN) would
+   hiding (opsotter `operating/chase-queue/config.example.toml` `[[cluster]]`). A second `[[cluster]]` (e.g. RBN) would
    not depend on bwpc; none is configured.
 2. ~~chaseq-ui's DXLog script has not run live~~ — moot: the script and the DXLog sender were
    removed (2026-11-03); Enter puts the call into Log4OM only (loggers are `[[loggers.sender]]` config).
 3. **bmrec reads chase-queue's `undo` as an object**, chase-queue publishes a string
-   (`chase-queue/internal/bus/bus.go`). The fix belongs to bmrec.
+   (opsotter `operating/chase-queue/internal/bus/bus.go`). The fix belongs to bmrec.
 4. ~~No logbook history before deployment~~ — resolved in code by `station-log` (ADIF import with duplicate
    merge, `GET /v1/worked`, events); chase-queue builds its log view from it. Live since the cutover on 2026-11-04 (item 11);
    The gap between the first export and the cutover was closed by a fresh export on 2026-11-04. station-log can also watch an ADIF drop directory (`[watch] dir`, merge, source `adif-drop`; built, off until
