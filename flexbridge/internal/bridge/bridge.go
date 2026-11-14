@@ -419,6 +419,61 @@ func (b *Bridge) HandleReply(r flexradio.Reply) {
 		return
 	}
 	b.log.Infof("radio accepted command: cmd=%q", r.Command)
+	b.applyAcceptedSliceCmd(r.Command)
+}
+
+// applyAcceptedSliceCmd applies an accepted slice command to the bridge's own
+// slice model, as FlexLib does. SmartSDR does not send the slice status of a
+// change back to the client that commanded it: other clients see the new
+// frequency, the commanding client does not. Without this, a set_freq moved the
+// radio but /state kept the old frequency (live 2026-11-14 16:38: flexbridge
+// tuned slice 0 to 14.280 MHz, /state stayed on 14.226 MHz until another
+// client's `sub slice all` dump), and every consumer of /state, antennaselect
+// included, believed the radio had not moved. A later status frame for the
+// slice (from the radio or another client's change) overrides this.
+//
+// Handled: `slice tune <idx> <MHz> …` (→ RF_frequency) and
+// `slice set <idx> k=v …` (fields as the radio reports them). Only a tracked
+// slice is updated, so an accepted command cannot create a phantom slice.
+func (b *Bridge) applyAcceptedSliceCmd(cmd string) {
+	words := strings.Fields(cmd)
+	if len(words) < 4 || words[0] != "slice" {
+		return
+	}
+	idx, err := strconv.Atoi(words[2])
+	if err != nil {
+		return
+	}
+	var fields []string
+	switch words[1] {
+	case "tune":
+		if _, err := strconv.ParseFloat(words[3], 64); err != nil {
+			return
+		}
+		fields = []string{"RF_frequency=" + words[3]}
+	case "set":
+		for _, w := range words[3:] {
+			if strings.Contains(w, "=") {
+				fields = append(fields, w)
+			}
+		}
+	default:
+		return
+	}
+	if len(fields) == 0 {
+		return
+	}
+	b.mu.RLock()
+	_, tracked := b.slices[idx]
+	b.mu.RUnlock()
+	if !tracked {
+		return
+	}
+	f, err := flexradio.ParseFrame("S0|slice " + strconv.Itoa(idx) + " " + strings.Join(fields, " "))
+	if err != nil {
+		return
+	}
+	b.handleSlice(f)
 }
 
 // bestEffortCmds are handshake commands a radio may legitimately refuse.

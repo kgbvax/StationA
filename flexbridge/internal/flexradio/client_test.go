@@ -462,7 +462,9 @@ func TestParseReply(t *testing.T) {
 		{"R7|0|", Reply{Seq: 7}},
 		{"R7|0|0|v3.4.1.10", Reply{Seq: 7, Message: "0|v3.4.1.10"}},
 		{"R12|50000016|", Reply{Seq: 12, Code: 0x50000016}},
-		{"R3|5000002D|Unable to tune", Reply{Seq: 3, Code: 0x5000002D, Message: "Unable to tune"}},
+		// Recorded from the FLEX-8400 (SmartSDR 4.3.16), 2026-11-14.
+		{"R1|500000A3|Invalid subscription object name", Reply{Seq: 1, Code: 0x500000A3, Message: "Invalid subscription object name"}},
+		{"R1|0|SmartSDR-MB=4.3.16.42034#PSoC-MBTRX=1.0.9.0", Reply{Seq: 1, Message: "SmartSDR-MB=4.3.16.42034#PSoC-MBTRX=1.0.9.0"}},
 	} {
 		f, err := ParseFrame(tc.line)
 		if err != nil {

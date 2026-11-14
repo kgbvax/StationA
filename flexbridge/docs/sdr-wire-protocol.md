@@ -61,6 +61,15 @@ All runtime commands are fire-and-forget on the wire; confirmation comes through
 
 There was deliberately **no** set_freq, set_mode, or power *setpoint* command at first: the bridge tuned the radio only by band. `set_mode` (below) and `set_freq` (67d24cc, VFO A's slice, 1.8–54 MHz, for chaseq-ui's QSY; see `../CLAUDE.md`) have been added since. There is still no power setpoint. The three `transmit set` commands are the one carve-out, and they exist only to enforce the `set_rf_power_limit` ceiling: they lower `rfpower`/`tunepower` that is above the ceiling, or set the radio's own `max_power_level`. They never raise output (`max_power_level=100` on lift removes a ceiling; it does not change the RF power slider).
 
+Update 2026-11-14: **the radio does not echo a client's own change.** A client that sends
+`slice tune` gets `R<seq>|0|` and no slice status for the move. Other clients get the status
+(recorded on the FLEX-8400, SmartSDR 4.3.16: flexbridge tuned to 14.280 MHz at 16:38:32, its
+`/state` stayed on 14.226 MHz until a second client's `sub slice all` dump at 16:39:46). The
+bridge therefore applies an accepted `slice tune`/`slice set` to its own slice model.
+Commands carry a fresh seq each, and the bridge logs every refused reply as a Warn. Also
+recorded: `sub interlock all` is answered `R…|500000A3|Invalid subscription object name`,
+and interlock status still arrives.
+
 Update 2026-10-23: `set_mode` exists since 130dc0f (`cw`/`usb`/`lsb` only, for the hf_console SSB/CW toggle on a re-tap of the active band). There is still no set_power command (`set_freq` was added later, 67d24cc). The liveness probe (`version`, see the keepalive item) is the only runtime write not in this table.
 
 Native **band-stacking** is the radio's per-band memory of the last-used frequency and mode. A `display pan s ... band=` change recalls that memory, so the radio, not the bridge, picks the new frequency. This memory recall is why the band-transition hold (below) must suppress the band-change transient.

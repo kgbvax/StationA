@@ -86,6 +86,10 @@ The TCP read loop (`Client.Run`) is the only radio-event feed: it calls
 the `/state` snapshot every 5 s while `device_online` is true; every other `/state` publish
 is change-gated.
 
+Every command goes out as `C<seq>|<cmd>` with its own seq. The radio answers
+`R<seq>|<hex code>|<message>`; `Client.Run` maps the reply back to the command and hands it
+to `Bridge.HandleReply`, which logs a refused command as a Warn with the code and message.
+
 A further path drives the radio: the paho `/cmd` subscription. Its handler must not call the
 bridge inline (a band-change or DVK command is a blocking TCP write), so it funnels payloads
 through a bounded channel to a single `sharedmqtt.RunJobs` worker that calls
@@ -155,9 +159,12 @@ one-shot intent only (not retained — a stale command must not re-fire on resta
 - `set_mode` + `value` (`cw`/`usb`/`lsb` only) — `slice set <idx> mode=<MODE>` on the TX
   slice, else the active one; confirm on `/state.mode`. Not yet confirmed live on the
   FLEX-8400 (130dc0f).
-- `set_freq` + `value` (integer Hz, 1.8–54 MHz) — `slice tune <idx> <MHz>` on `rxInputSlice`
-  (the TX slice, slice A in split); confirm on `/state.freq_hz` (`rx_freq_hz` in split). Used by
-  chaseq-ui. Not yet confirmed live on the FLEX-8400.
+- `set_freq` + `value` (integer Hz, 1.8–54 MHz) — `slice tune <idx> <MHz> autopan=1` on
+  `rxInputSlice` (the TX slice, slice A in split); confirm on `/state.freq_hz` (`rx_freq_hz` in
+  split). Used by chaseq-ui and logotter. The radio does **not** send the slice status of a tune
+  back to the client that sent it, so the bridge applies an accepted `slice tune`/`slice set`
+  (reply code 0) to its own slice model (`applyAcceptedSliceCmd`, as FlexLib does). Before
+  this, the radio tuned but `/state` stayed on the old frequency (2026-11-14).
 - `select_rx` + `value` (`ant1`/`ant2`/`rx_a`) — `slice set <idx> rxant=<PORT>` on the
   slice `rx_input` reports (the active slice; slice A in split, the slice the operator
   listens on). A port missing from that slice's reported `ant_list` is dropped. Confirm on
