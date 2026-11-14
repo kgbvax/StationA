@@ -386,6 +386,7 @@ func (e *Engine) Goto(b float64) {
 		t := math.Round(b)
 		if e.sendRotate(t) {
 			last.RotateTo, last.Reason = &t, "smart rotation off: plain rotation"
+			e.log.Info("smart rotation", "bearing", b, "rotate_to", t, "reason", last.Reason)
 		} else {
 			last.Reason = "smart rotation off: rotate cmd failed"
 		}
