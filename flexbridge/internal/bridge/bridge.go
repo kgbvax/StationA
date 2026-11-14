@@ -398,6 +398,35 @@ func (b *Bridge) HandleStatus(f flexradio.Frame) {
 	}
 }
 
+// HandleReply logs the radio's reply to a command the bridge sent. A refused
+// command is a Warn with the radio's code and message: before this, `Send`
+// dropped every reply, so a tune the radio refused left no trace in the log
+// (2026-11-14: set_freq logged, radio never moved). Accepted commands are
+// logged at Info, except the handshake subscriptions, which are not operator
+// intent. Called from the radio read loop; it must not block.
+func (b *Bridge) HandleReply(r flexradio.Reply) {
+	if !r.OK() {
+		if bestEffortCmds[r.Command] {
+			// Optional capabilities: a v3 or unlicensed radio refuses them on
+			// every connect, which is expected, not a fault.
+			b.log.Infof("radio refused optional command: cmd=%q code=0x%08X msg=%q", r.Command, r.Code, r.Message)
+			return
+		}
+		b.log.Warnf("radio refused command: cmd=%q code=0x%08X msg=%q", r.Command, r.Code, r.Message)
+		return
+	}
+	if r.Command == "" || bestEffortCmds[r.Command] || strings.HasPrefix(r.Command, "sub ") {
+		return
+	}
+	b.log.Infof("radio accepted command: cmd=%q", r.Command)
+}
+
+// bestEffortCmds are handshake commands a radio may legitimately refuse.
+var bestEffortCmds = map[string]bool{
+	"sub dvk all":      true,
+	"profile mic info": true,
+}
+
 // handleProfile tracks mic profiles from "profile" status frames. SmartSDR does
 // not broadcast profiles via subscriptions; the bridge queries the list by
 // sending `profile mic info` (in the handshake and after a save), and the radio

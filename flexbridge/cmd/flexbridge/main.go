@@ -306,6 +306,10 @@ func runOnce(ctx context.Context, cfg config.Config, host string, b *bridge.Brid
 		}
 	})
 
+	// Replies to the commands the bridge sends: a refused command is logged
+	// with the radio's error code instead of vanishing.
+	client.SetReplyHandler(b.HandleReply)
+
 	info, err := client.Handshake(cctx)
 	if err != nil {
 		return fmt.Errorf("handshake: %w", err)

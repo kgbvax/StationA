@@ -59,8 +59,48 @@ type Client struct {
 
 	mu      sync.Mutex
 	closed  bool
-	handle  int        // command handle counter (we always use 1)
 	writeMu sync.Mutex // serializes command writes (send) against concurrent Senders
+
+	// Command sequence numbers. Every command goes out as C<seq>|<cmd> with a
+	// fresh seq; the radio echoes it in R<seq>|<code>|<message>, so a reply
+	// maps back to the command that caused it. pending holds the commands
+	// still waiting for a reply (seqMu, not writeMu: the read loop takes it).
+	seqMu        sync.Mutex
+	seq          int
+	pending      map[int]string
+	replyHandler func(Reply)
+}
+
+// maxPending bounds the pending-command map. The radio replies to every
+// command, so the map stays near empty; the bound only guards against a radio
+// that stops replying while commands keep coming.
+const maxPending = 256
+
+// Reply is the radio's answer to one command: R<seq>|<code>|<message>. Code 0
+// means the radio accepted the command; any other code is a SmartSDR error
+// (hex on the wire, e.g. 0x50000016) and Message may carry its text.
+type Reply struct {
+	Seq     int
+	Code    uint32
+	Message string
+	Command string // the command sent with Seq; "" if the client did not send it
+}
+
+// OK reports whether the radio accepted the command.
+func (r Reply) OK() bool { return r.Code == 0 }
+
+// parseReply decodes a reply frame (Handle = seq, Body = "<hex code>|<message>").
+func parseReply(f Frame) (Reply, error) {
+	seq, err := strconv.Atoi(f.Handle)
+	if err != nil {
+		return Reply{}, fmt.Errorf("flexradio: reply seq %q: %w", f.Handle, err)
+	}
+	codeStr, msg, _ := strings.Cut(f.Body, "|")
+	code, err := strconv.ParseUint(strings.TrimSpace(codeStr), 16, 32)
+	if err != nil {
+		return Reply{}, fmt.Errorf("flexradio: reply code %q: %w", codeStr, err)
+	}
+	return Reply{Seq: seq, Code: uint32(code), Message: strings.TrimSpace(msg)}, nil
 }
 
 // Dial connects to the radio at host:4992.
@@ -76,7 +116,6 @@ func Dial(ctx context.Context, host string) (*Client, error) {
 		conn:    conn,
 		rd:      bufio.NewReader(conn),
 		handler: func(Frame) {},
-		handle:  1,
 	}
 	c.defaults()
 	return c, nil
@@ -89,7 +128,6 @@ func newClientFromConn(conn net.Conn) *Client {
 		conn:    conn,
 		rd:      bufio.NewReader(conn),
 		handler: func(Frame) {},
-		handle:  1,
 	}
 	c.defaults()
 	return c
@@ -104,6 +142,13 @@ func (c *Client) defaults() {
 	if c.probeTimeout <= 0 {
 		c.probeTimeout = DefaultProbeTimeout
 	}
+}
+
+// SetReplyHandler installs the handler for command replies (see Reply). It
+// receives every reply the read loop sees, except the replies Handshake
+// consumes itself. Must be called before Handshake. It must not block.
+func (c *Client) SetReplyHandler(h func(Reply)) {
+	c.replyHandler = h
 }
 
 // SetHandler installs the status handler. Must be called before Run.
@@ -158,30 +203,27 @@ func (c *Client) Handshake(ctx context.Context) (RadioInfo, error) {
 	// DVK (SmartSDR v4+, SmartSDR+ license). Subscribe best-effort: a v3 radio
 	// or an unlicensed radio may reject `sub dvk all`, and that must not break
 	// the handshake — DVK is an optional capability. Sent fire-and-forget
-	// *after* the awaited commands so its reply is consumed by Run (as a dropped
-	// FrameReply) rather than misattributed to a following sendAwaitReply. On a
+	// *after* the awaited commands; its reply reaches the reply handler through
+	// Run (a refusal is logged there). On a
 	// v4 radio the DVK status stream then flows through HandleStatus("dvk").
-	_ = c.send(ctx, "sub dvk all")
+	_, _ = c.send(ctx, "sub dvk all")
 	// Mic-profile list: SmartSDR does not broadcast profiles via `sub radio all`;
 	// the list is obtained by sending the one-shot `profile mic info` command
 	// (undocumented, from FlexLib). Fire-and-forget like `sub dvk all`; the radio
 	// replies with a `profile mic list=…` status frame handled in
 	// HandleStatus("profile"). Best-effort — an older radio that rejects it just
 	// leaves mic_profiles empty (the feature degrades gracefully).
-	_ = c.send(ctx, "profile mic info")
+	_, _ = c.send(ctx, "profile mic info")
 	return info, nil
 }
 
-// sendAwaitReply writes a C1|<cmd> command and reads lines until the matching
-// R1|<seq>|... reply arrives. Any interleaved asynchronous status frames
-// (S|...) are dispatched to the handler so none are lost during the
-// handshake. Returns the reply body (the part after "R1|<seq>|").
-//
-// Sequence numbers: SmartSDR replies echo a per-command sequence number in
-// the second field. We always use sequence 0 (we send one command at a time
-// during the handshake), so we match the first R1| reply we see.
+// sendAwaitReply writes a C<seq>|<cmd> command and reads lines until the
+// R<seq>|... reply with the same seq arrives. Interleaved status frames (S|...)
+// go to the handler and other replies to the reply handler, so none are lost
+// during the handshake. Returns the reply body ("<code>|<message>").
 func (c *Client) sendAwaitReply(ctx context.Context, cmd string) (string, error) {
-	if err := c.send(ctx, cmd); err != nil {
+	seq, err := c.send(ctx, cmd)
+	if err != nil {
 		return "", err
 	}
 
@@ -206,8 +248,11 @@ func (c *Client) sendAwaitReply(ctx context.Context, cmd string) (string, error)
 		}
 		switch frame.Kind {
 		case FrameReply:
-			// R1|<seq>|<body>. We sent C1|..., so the matching reply is R1|...
-			return frame.Body, nil
+			if frame.Handle == strconv.Itoa(seq) {
+				c.takePending(seq)
+				return frame.Body, nil
+			}
+			c.dispatchReply(frame)
 		case FrameStatus:
 			// Dispatch interleaved status so it isn't lost.
 			c.handler(frame)
@@ -215,31 +260,74 @@ func (c *Client) sendAwaitReply(ctx context.Context, cmd string) (string, error)
 	}
 }
 
-// send writes a C1|... command. It does NOT wait for the R1 reply; replies
-// are surfaced through Run as FrameReply (or consumed by sendAwaitReply).
-// writeMu serializes writes so concurrent Senders (e.g. the /cmd worker) do
-// not interleave on the wire; reads in Run use a separate bufio.Reader and are
-// independent of this lock.
-func (c *Client) send(ctx context.Context, cmd string) error {
+// send writes a C<seq>|... command with a fresh seq and records it as pending.
+// It does NOT wait for the reply; replies are surfaced through Run to the
+// reply handler (or consumed by sendAwaitReply). writeMu serializes writes so
+// concurrent Senders (e.g. the /cmd worker) do not interleave on the wire;
+// reads in Run use a separate bufio.Reader and are independent of this lock.
+func (c *Client) send(ctx context.Context, cmd string) (int, error) {
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
+	seq := c.nextSeq(cmd)
 	deadline, ok := ctx.Deadline()
 	if !ok {
 		deadline = time.Now().Add(5 * time.Second)
 	}
 	_ = c.conn.SetWriteDeadline(deadline)
 	defer c.conn.SetWriteDeadline(time.Time{})
-	_, err := fmt.Fprintf(c.conn, "C%d|%s\n", c.handle, cmd)
-	return err
+	if _, err := fmt.Fprintf(c.conn, "C%d|%s\n", seq, cmd); err != nil {
+		c.takePending(seq)
+		return 0, err
+	}
+	return seq, nil
+}
+
+// nextSeq allocates the next command seq and records cmd as pending.
+func (c *Client) nextSeq(cmd string) int {
+	c.seqMu.Lock()
+	defer c.seqMu.Unlock()
+	c.seq++
+	if c.pending == nil || len(c.pending) >= maxPending {
+		c.pending = make(map[int]string)
+	}
+	c.pending[c.seq] = cmd
+	return c.seq
+}
+
+// takePending removes and returns the command recorded for seq.
+func (c *Client) takePending(seq int) string {
+	c.seqMu.Lock()
+	defer c.seqMu.Unlock()
+	cmd := c.pending[seq]
+	delete(c.pending, seq)
+	return cmd
+}
+
+// dispatchReply matches a reply frame to its command and hands it to the
+// reply handler. Replies to the liveness probe are dropped: they carry no
+// information beyond "the wire is alive", which Run already noted.
+func (c *Client) dispatchReply(f Frame) {
+	r, err := parseReply(f)
+	if err != nil {
+		return
+	}
+	r.Command = c.takePending(r.Seq)
+	if r.Command == probeCmd && r.OK() {
+		return
+	}
+	if c.replyHandler != nil {
+		c.replyHandler(r)
+	}
 }
 
 // Send writes a SmartSDR command to the radio without waiting for the reply
-// (fire-and-forget). The reply, if any, is delivered through Run as a
-// FrameReply (the bridge handler drops FrameReply); callers that need
-// confirmation observe the radio's async status stream instead — the stationa
-// fire-and-observe plane discipline. Safe to call concurrently with Run.
+// (fire-and-forget). Run delivers the reply to the reply handler, which logs a
+// refused command; callers that need confirmation observe the radio's async
+// status stream — the stationa fire-and-observe plane discipline. Safe to call
+// concurrently with Run.
 func (c *Client) Send(ctx context.Context, cmd string) error {
-	return c.send(ctx, cmd)
+	_, err := c.send(ctx, cmd)
+	return err
 }
 
 // Commander is the radio control surface the bridge drives from /cmd. *Client
@@ -395,7 +483,7 @@ func (c *Client) Run(ctx context.Context) error {
 					// Idle gap reached: elicit proof of life. Silence alone is
 					// not death (on-change-only stream); the eliciting write is
 					// what makes the NEXT silence meaningful.
-					if perr := c.send(ctx, probeCmd); perr != nil {
+					if _, perr := c.send(ctx, probeCmd); perr != nil {
 						return fmt.Errorf("radio probe write: %w", perr)
 					}
 					probing = true
@@ -414,6 +502,10 @@ func (c *Client) Run(ctx context.Context) error {
 		frame, err := ParseFrame(line)
 		if err != nil {
 			continue // malformed line; skip
+		}
+		if frame.Kind == FrameReply {
+			c.dispatchReply(frame)
+			continue
 		}
 		c.handler(frame)
 	}

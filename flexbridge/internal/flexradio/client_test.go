@@ -39,12 +39,14 @@ func TestHandshake_SendsExpectedCommands(t *testing.T) {
 			mu.Lock()
 			gotCmds = append(gotCmds, line)
 			mu.Unlock()
-			reply := "R1|0|OK\n"
+			// Echo the command's seq, as SmartSDR does: C<seq>|cmd -> R<seq>|...
+			seq := strings.TrimPrefix(line[:strings.IndexByte(line, '|')], "C")
+			reply := "R" + seq + "|0|OK\n"
 			if strings.Contains(line, "|version") {
-				reply = "R1|0|0|v3.4.1.10\n"
+				reply = "R" + seq + "|0|0|v3.4.1.10\n"
 			}
 			if strings.Contains(line, "|info") {
-				reply = "R1|0|model=\"FLEX-8400\",chassis_serial=\"test-1234\"\n"
+				reply = "R" + seq + "|0|model=\"FLEX-8400\",chassis_serial=\"test-1234\"\n"
 			}
 			if _, err := io.WriteString(radioConn, reply); err != nil {
 				return
@@ -176,8 +178,8 @@ func TestSend_DVK(t *testing.T) {
 	}
 	select {
 	case got := <-cmds:
-		if got != "C1|dvk playback_stop id=3" {
-			t.Errorf("DVKStop sent %q, want C1|dvk playback_stop id=3", got)
+		if got != "C2|dvk playback_stop id=3" {
+			t.Errorf("DVKStop sent %q, want C2|dvk playback_stop id=3", got)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("DVKStop: no command sent")
@@ -377,8 +379,8 @@ func TestSend_PowerCeilingCommands(t *testing.T) {
 		want string
 	}{
 		{func() error { return client.SetRFPower(40) }, "C1|transmit set rfpower=40"},
-		{func() error { return client.SetTunePower(10) }, "C1|transmit set tunepower=10"},
-		{func() error { return client.SetMaxPowerLevel(100) }, "C1|transmit set max_power_level=100"},
+		{func() error { return client.SetTunePower(10) }, "C2|transmit set tunepower=10"},
+		{func() error { return client.SetMaxPowerLevel(100) }, "C3|transmit set max_power_level=100"},
 	} {
 		if err := tc.send(); err != nil {
 			t.Fatalf("%s: %v", tc.want, err)
@@ -390,6 +392,88 @@ func TestSend_PowerCeilingCommands(t *testing.T) {
 			}
 		case <-time.After(2 * time.Second):
 			t.Fatalf("%s: no command sent", tc.want)
+		}
+	}
+}
+
+// TestRun_DeliversCommandReplies pins the reply plumbing: every command gets
+// its own seq, the radio's R<seq>|<code>|<message> reply maps back to that
+// command, and a refusal reaches the reply handler with its code. Before this,
+// Send dropped every reply, so a refused `slice tune` left no trace.
+func TestRun_DeliversCommandReplies(t *testing.T) {
+	clientConn, radioConn := net.Pipe()
+	client := newClientFromConn(clientConn)
+	defer client.Close()
+
+	replies := make(chan Reply, 4)
+	client.SetReplyHandler(func(r Reply) { replies <- r })
+
+	// The fake radio refuses the tune and accepts the mode change, echoing
+	// each command's seq. The error code and text are illustrative, not a
+	// recorded FLEX-8400 reply.
+	go func() {
+		defer radioConn.Close()
+		sc := bufio.NewScanner(radioConn)
+		for sc.Scan() {
+			line := sc.Text()
+			seq := strings.TrimPrefix(line[:strings.IndexByte(line, '|')], "C")
+			reply := "R" + seq + "|0|\n"
+			if strings.Contains(line, "slice tune") {
+				reply = "R" + seq + "|50000016|Slice not owned by client\n"
+			}
+			if _, err := io.WriteString(radioConn, reply); err != nil {
+				return
+			}
+		}
+	}()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = client.Run(ctx) }()
+
+	if err := client.TuneSlice(0, 21_108_300); err != nil {
+		t.Fatalf("TuneSlice: %v", err)
+	}
+	if err := client.SetSliceMode(0, "USB"); err != nil {
+		t.Fatalf("SetSliceMode: %v", err)
+	}
+
+	want := []Reply{
+		{Seq: 1, Code: 0x50000016, Message: "Slice not owned by client", Command: "slice tune 0 21.108300 autopan=1"},
+		{Seq: 2, Code: 0, Message: "", Command: "slice set 0 mode=USB"},
+	}
+	for _, w := range want {
+		select {
+		case got := <-replies:
+			if got != w {
+				t.Errorf("reply = %+v, want %+v", got, w)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatalf("no reply delivered for %q", w.Command)
+		}
+	}
+}
+
+func TestParseReply(t *testing.T) {
+	for _, tc := range []struct {
+		line string
+		want Reply
+	}{
+		{"R7|0|", Reply{Seq: 7}},
+		{"R7|0|0|v3.4.1.10", Reply{Seq: 7, Message: "0|v3.4.1.10"}},
+		{"R12|50000016|", Reply{Seq: 12, Code: 0x50000016}},
+		{"R3|5000002D|Unable to tune", Reply{Seq: 3, Code: 0x5000002D, Message: "Unable to tune"}},
+	} {
+		f, err := ParseFrame(tc.line)
+		if err != nil {
+			t.Fatalf("ParseFrame(%q): %v", tc.line, err)
+		}
+		got, err := parseReply(f)
+		if err != nil {
+			t.Fatalf("parseReply(%q): %v", tc.line, err)
+		}
+		if got != tc.want {
+			t.Errorf("parseReply(%q) = %+v, want %+v", tc.line, got, tc.want)
 		}
 	}
 }
