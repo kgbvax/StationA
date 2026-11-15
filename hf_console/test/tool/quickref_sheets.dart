@@ -26,6 +26,7 @@ import 'package:hf_console/ui/widgets/power_panel.dart';
 import 'package:hf_console/ui/widgets/station_schematic.dart';
 import 'package:hf_console/ui/widgets/status_pill.dart';
 import 'package:hf_console/ui/widgets/trx_panel.dart';
+import 'package:hf_console/ui/widgets/tuner_panel.dart';
 import 'package:hf_console/ui/widgets/uhf_radio_panel.dart';
 import 'package:hf_console/ui/widgets/ultrabeam_panel.dart';
 import 'package:hf_console/vhfcam/radio_status.dart';
@@ -271,6 +272,13 @@ Seeded _hf() {
       {'id': 2, 'name': 'QRZ?', 'duration_ms': 1300},
     ],
   });
+  // In-line tuner at a healthy SWR: plain TGXL pill, no BYPASS/TUNING suffix.
+  s.store.applyState('muehle/hf/tuner', {
+    ...?s.store.slots['muehle/hf/tuner']?.state,
+    'inline': true,
+    'settling': false,
+    'swr': 1.2,
+  });
   final now = DateTime.now().toUtc().toIso8601String();
   s.store.apply(BusStore.workingTopic, {
     'ts': now,
@@ -367,6 +375,8 @@ final quickrefSheets = <Sheet>[
           UnionAnchor([ButtonAnchor('80m', inside: TrxPanel), ButtonAnchor('10m', inside: TrxPanel)])),
       Callout('Voice keyer (DVK)', 'Double-tap: pick memory + repeat time. Hold 0.7 s: auto-repeat [n] countdown; TX pauses it, tap resumes, hold exits',
           UnionAnchor([ButtonAnchor('CQ contest', inside: DvkPanel), ButtonAnchor('STOP', inside: DvkPanel)])),
+      Callout('TUNE', 'TGXL keys the FLEX over the LAN; put the ACOM in standby first, nothing checks',
+          ButtonAnchor('TUNE', inside: TunerPanel)),
       Callout('RX ANT', 'Tap: ANT 1 ↔ RX A on the slice you hear; amber = set in SmartSDR',
           ButtonAnchor('ANT 1', inside: TrxPanel)),
       Callout('MIC profiles', 'Hold to rebind; MIC line shows only console-loaded profiles', typeAnchor(MicProfileRow)),
