@@ -188,7 +188,18 @@ class _AppRootState extends State<_AppRoot> with WidgetsBindingObserver {
             ),
             home: _ready
                 ? (_showConsole
-                    ? const Scaffold(body: ConsoleScreen())
+                    // Top inset only: in kiosk lock-task mode the status bar
+                    // stays visible (LOCK_TASK_FEATURE_SYSTEM_INFO) and its
+                    // window takes every touch in the top strip (59 px on
+                    // the shack tablet), which swallowed taps on the tab row.
+                    ? const Scaffold(
+                        body: SafeArea(
+                          left: false,
+                          right: false,
+                          bottom: false,
+                          child: ConsoleScreen(),
+                        ),
+                      )
                     : Scaffold(
                         body: Builder(
                           builder: (context) {

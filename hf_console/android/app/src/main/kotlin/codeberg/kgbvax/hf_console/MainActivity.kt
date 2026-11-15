@@ -1,6 +1,11 @@
 package codeberg.kgbvax.hf_console
 
 import android.app.AlertDialog
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.os.BatteryManager
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -9,8 +14,11 @@ import android.text.Editable
 import android.text.TextWatcher
 import android.util.Log
 import android.view.MotionEvent
+import android.view.WindowManager
 import android.widget.EditText
 import io.flutter.embedding.android.FlutterActivity
+import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.plugin.common.MethodChannel
 
 /**
  * Kiosk entry point. When the app is device owner (see PROVISIONING.md),
@@ -52,13 +60,17 @@ class MainActivity : FlutterActivity() {
         kiosk = KioskPolicy(this)
         super.onCreate(savedInstanceState)
 
-        // No FLAG_KEEP_SCREEN_ON: the display follows the charger, which hangs
-        // off the TRX PSU plug (power/psu-13v8) — on while powered, the system
-        // screen-off timeout on battery (both set by KioskPolicy). Keyguard is
-        // disabled, so waking goes straight back to the console.
+        // The display follows the charger, which hangs off the TRX PSU plug
+        // (power/psu-13v8). KioskPolicy's STAY_ON_WHILE_PLUGGED_IN only stops
+        // the screen from turning off: after the screen-off timeout Android
+        // still dims it. FLAG_KEEP_SCREEN_ON while plugged (chargerReceiver)
+        // keeps it bright; on battery the flag is cleared and the 5 min
+        // timeout applies. Keyguard is disabled, so waking goes straight back
+        // to the console.
 
         if (kiosk.isDeviceOwner()) {
             kiosk.enable()
+            kioskActive = true
             try {
                 startLockTask()
                 Log.i(TAG, "startLockTask() -> ok")
@@ -68,6 +80,83 @@ class MainActivity : FlutterActivity() {
         } else {
             Log.i(TAG, "not device owner — kiosk mode off")
         }
+    }
+
+    /**
+     * Sticky ACTION_BATTERY_CHANGED: delivered once on registration with the
+     * current plug state, then on every change. Kiosk only, like the
+     * stay-on policy it completes.
+     */
+    private val chargerReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            val plugged = intent.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0) != 0
+            setKeepScreenOn(kioskActive && plugged)
+        }
+    }
+    private var chargerReceiverRegistered = false
+    private var keepScreenOn: Boolean? = null
+    /** True from kiosk.enable() in onCreate until the escape hatch or quit. */
+    private var kioskActive = false
+
+    private fun setKeepScreenOn(on: Boolean) {
+        if (keepScreenOn == on) return
+        keepScreenOn = on
+        if (on) {
+            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        } else {
+            window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+        Log.i(TAG, "FLAG_KEEP_SCREEN_ON=$on (charger ${if (on) "connected" else "disconnected"})")
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (kioskActive && !chargerReceiverRegistered) {
+            registerReceiver(chargerReceiver, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+            chargerReceiverRegistered = true
+        }
+    }
+
+    override fun onPause() {
+        if (chargerReceiverRegistered) {
+            unregisterReceiver(chargerReceiver)
+            chargerReceiverRegistered = false
+        }
+        super.onPause()
+    }
+
+    /**
+     * `hf_console/app` channel. `quit` (settings dialog, QUIT APP) leaves kiosk
+     * mode without the device-owner release step, then closes the task. As the
+     * persistent HOME activity a bare finish() would relaunch at once, so
+     * [KioskPolicy.disable] clears the HOME preference first. The next app
+     * start re-applies kiosk mode in onCreate.
+     */
+    override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
+        super.configureFlutterEngine(flutterEngine)
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, APP_CHANNEL)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "quit" -> {
+                        result.success(null)
+                        uiHandler.post { quitApp() }
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+    }
+
+    private fun quitApp() {
+        Log.i(TAG, "quit requested from the settings dialog")
+        try {
+            stopLockTask()
+        } catch (e: Exception) {
+            Log.w(TAG, "stopLockTask() -> failed: $e")
+        }
+        kiosk.disable()
+        kioskActive = false
+        setKeepScreenOn(false)
+        finishAndRemoveTask()
     }
 
     override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
@@ -140,6 +229,8 @@ class MainActivity : FlutterActivity() {
             Log.w(TAG, "stopLockTask() -> failed: $e")
         }
         kiosk.disable()
+        kioskActive = false
+        setKeepScreenOn(false)
         exitDialogShowing = false
         promptReleaseDeviceOwner()
     }
@@ -179,5 +270,6 @@ class MainActivity : FlutterActivity() {
     companion object {
         private const val TAG = "Kiosk"
         private const val RELEASE_WORD = "RELEASE"
+        private const val APP_CHANNEL = "hf_console/app"
     }
 }
