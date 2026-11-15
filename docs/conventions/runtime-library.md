@@ -206,6 +206,16 @@ Code-check verdict: partially fixed — shared/mqtt/mqtt.go `Enqueue` now logs
 its retained cmd armed to re-fire on reconnect); still open: no drop counter, no
 rate limiting on the log line.
 
+## [fixed] Clean stop left retained /status at "online"
+
+A clean MQTT DISCONNECT suppresses the broker's will, so a bridge that only called
+`Disconnect` on SIGTERM left its retained `/status` at "online" after a normal stop
+(reported by opsotter, 2026-11-15). acom1200s-pa-bridge, flexbridge, shelly-power-bridge,
+tgxl-tuner-bridge and wrc-rotator-bridge were affected. shared/mqtt.go `DisconnectOffline`
+now publishes retained "offline" (QoS 1, 2 s bound) and then disconnects. Every bridge must
+use it, or an equivalent publish, in its shutdown path in place of a bare `Disconnect`.
+Test: shared/mqtt/mqtt_test.go TestDisconnectOffline*.
+
 ## [defect] Missing automated tests for two headline behaviors
 
 PRD evidence: the reference's test coverage was minimal; the context-cancel-during-connect

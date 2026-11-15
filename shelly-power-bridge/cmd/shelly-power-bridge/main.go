@@ -248,7 +248,7 @@ func runSlot(ctx context.Context, cfg config.Config, sc config.SlotConfig, log *
 	if err := sharedmqtt.Connect(ctx, client); err != nil {
 		return fmt.Errorf("mqtt connect slot %s: %w", slotBase, err)
 	}
-	defer client.Disconnect(500)
+	defer sharedmqtt.DisconnectOffline(client, avail, 500)
 
 	<-ctx.Done()
 	return ctx.Err()

@@ -20,6 +20,7 @@ package mqtt
 import (
 	"context"
 	"log/slog"
+	"time"
 
 	pahomqtt "github.com/eclipse/paho.mqtt.golang"
 )
@@ -47,6 +48,33 @@ func Connect(ctx context.Context, client pahomqtt.Client) error {
 		return ctx.Err()
 	}
 	return nil
+}
+
+// offlinePublishTimeout bounds the explicit "offline" publish in
+// DisconnectOffline, so a dead broker link cannot stall shutdown.
+const offlinePublishTimeout = 2 * time.Second
+
+// DisconnectOffline is the clean-shutdown counterpart of the LWT. A clean MQTT
+// DISCONNECT suppresses the broker's will message, so a bridge that only calls
+// Disconnect leaves its retained /status at "online" after a normal stop (the
+// defect opsotter reported). This publishes retained "offline" (QoS 1) on
+// statusTopic, waits for the ack for at most 2 s, then disconnects with
+// quiesceMs. A client that is not connected skips the publish: the broker
+// already fired (or will fire) the will, and a publish would only block. Safe
+// on a nil client. Bridges call it from their shutdown path in place of a bare
+// Disconnect.
+func DisconnectOffline(client pahomqtt.Client, statusTopic string, quiesceMs uint) {
+	if client == nil {
+		return
+	}
+	if client.IsConnectionOpen() {
+		tok := client.Publish(statusTopic, 1, true, []byte("offline"))
+		if !tok.WaitTimeout(offlinePublishTimeout) || tok.Error() != nil {
+			slog.Warn("[mqtt] publish offline before disconnect failed",
+				"topic", statusTopic, "err", tok.Error())
+		}
+	}
+	client.Disconnect(quiesceMs)
 }
 
 // Enqueue runs f on the jobs worker; non-blocking: if the worker is saturated it

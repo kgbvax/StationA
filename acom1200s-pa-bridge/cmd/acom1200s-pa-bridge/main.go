@@ -121,7 +121,7 @@ func run(ctx context.Context, cfg config.Config, debug bool, log *slog.Logger) e
 	if err != nil {
 		return fmt.Errorf("mqtt connect: %w", err)
 	}
-	defer mqttClient.Disconnect(500)
+	defer sharedmqtt.DisconnectOffline(mqttClient, availabilityTopic(cfg), 500)
 	pub.Client = mqttClient
 	log.Info("MQTT connected", "broker", cfg.MQTT.Broker)
 
