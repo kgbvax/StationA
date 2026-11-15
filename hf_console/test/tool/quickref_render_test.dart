@@ -33,7 +33,6 @@ void main() {
       sheets.add({
         'id': sheet.id,
         'title': sheet.title,
-        'purpose': sheet.purpose,
         'width': tabletLogicalSize.width,
         'height': tabletLogicalSize.height,
         'image': 'data:image/png;base64,${base64Encode(File(png).readAsBytesSync())}',

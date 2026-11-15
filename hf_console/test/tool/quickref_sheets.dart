@@ -162,7 +162,6 @@ class Seeded {
 class Sheet {
   final String id;
   final String title;
-  final String purpose;
 
   /// The console page tab to open ('Station', 'HF', 'UHF', 'CAM').
   final String page;
@@ -174,7 +173,6 @@ class Sheet {
   const Sheet({
     required this.id,
     required this.title,
-    required this.purpose,
     required this.page,
     required this.seed,
     this.after,
@@ -331,7 +329,6 @@ final quickrefSheets = <Sheet>[
   Sheet(
     id: 'overview',
     title: 'Overview',
-    purpose: 'Find your way: pages, settings, link and fault status.',
     page: 'Station',
     seed: () {
       final s = Seeded(BusStore()..seedScenario(StationScenario.faults), _spots('Station'), VhfcamService());
@@ -356,7 +353,6 @@ final quickrefSheets = <Sheet>[
   Sheet(
     id: 'hf',
     title: 'HF page',
-    purpose: 'Aim the beam, pick the antenna, drive PA, tuner and FLEX.',
     page: 'HF',
     seed: _hf,
     callouts: [
@@ -385,7 +381,6 @@ final quickrefSheets = <Sheet>[
   Sheet(
     id: 'station',
     title: 'Station page',
-    purpose: 'Power the station up and down, set the antenna mode; see what runs where.',
     page: 'Station',
     seed: () => _running('Station'),
     callouts: [
@@ -407,7 +402,6 @@ final quickrefSheets = <Sheet>[
   Sheet(
     id: 'uhf',
     title: 'UHF page',
-    purpose: 'Point the satellite antennas, watch the IC-9700, set polarisation.',
     page: 'UHF',
     seed: () => _uhf('UHF'),
     callouts: [
@@ -430,7 +424,6 @@ final quickrefSheets = <Sheet>[
   Sheet(
     id: 'cam',
     title: 'CAM page',
-    purpose: 'Watch the antennas, record the stream, control IC-9700 audio.',
     page: 'CAM',
     seed: _cam,
     callouts: [],
