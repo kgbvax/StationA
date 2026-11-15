@@ -64,6 +64,11 @@ class VhfcamService extends ChangeNotifier {
   bool serverOnline = false;
   bool streamLive = false;
 
+  /// A still camera frame (JPEG/PNG bytes) that the feed panel shows in place
+  /// of the HLS player. Set only by [seedStatus]: the quick-reference render
+  /// seeds a frame grabbed from the real stream (docs/quickref/build.sh).
+  Uint8List? stillFrame;
+
   Timer? _timer;
   bool _ticking = false;
   int _failures = 0;
@@ -156,10 +161,11 @@ class VhfcamService extends ChangeNotifier {
   /// Seeds the status the way a successful poll would, without a server
   /// round-trip. Widget tests only — the poll loop never runs under test.
   @visibleForTesting
-  void seedStatus({required bool online, bool stream = false, RadioStatus? status}) {
+  void seedStatus({required bool online, bool stream = false, RadioStatus? status, Uint8List? still}) {
     serverOnline = online;
     streamLive = stream;
     _status = status;
+    stillFrame = still;
     _failures = 0;
     notifyListeners();
   }

@@ -4,6 +4,9 @@
 // platform HLS stack); the state machine around it is — the panel must render
 // honest offline states and the controls must gate on server reachability.
 
+import 'dart:convert';
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
@@ -39,7 +42,21 @@ Widget _wrap(Widget child, {required VhfcamService vhfcam, BusStore? store}) {
   );
 }
 
+// 1x1 transparent PNG.
+final _png = Uint8List.fromList(base64Decode(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII='));
+
 void main() {
+  testWidgets('feed panel: a seeded still frame shows as the live picture', (tester) async {
+    final svc = VhfcamService()..seedStatus(online: true, still: _png);
+
+    await tester.pumpWidget(_wrap(const CamFeedPanel(), vhfcam: svc));
+
+    expect(find.byType(Image), findsOneWidget);
+    expect(find.text('● LIVE'), findsOneWidget);
+    expect(find.text('CAMERA STREAM STOPPED'), findsNothing);
+  });
+
   testWidgets('feed panel: server offline renders honest state with retry, bus readouts dashed', (tester) async {
     final svc = VhfcamService()..seedStatus(online: false);
 

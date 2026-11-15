@@ -6,7 +6,9 @@
 // fails `flutter test` when a call-out no longer finds its control.
 
 import 'dart:convert';
+import 'dart:io';
 import 'dart:math' as math;
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -16,6 +18,7 @@ import 'package:hf_console/store/bus_store.dart';
 import 'package:hf_console/ui/screens/console_screen.dart';
 import 'package:hf_console/ui/widgets/ant_mode_panel.dart';
 import 'package:hf_console/ui/widgets/antenna_panel.dart';
+import 'package:hf_console/ui/widgets/cam_feed_panel.dart';
 import 'package:hf_console/ui/widgets/compass_panel.dart';
 import 'package:hf_console/ui/widgets/dvk_panel.dart';
 import 'package:hf_console/ui/widgets/faults_bar.dart';
@@ -305,10 +308,21 @@ Seeded _uhf(String page) {
   return s;
 }
 
+/// A real frame of the antenna cam, grabbed from the live HLS stream by
+/// docs/quickref/build.sh ($QUICKREF_CAM_FRAME). Without it the sheet shows
+/// the CAMERA STREAM STOPPED state instead of a picture.
+Uint8List? _camFrame() {
+  final path = Platform.environment['QUICKREF_CAM_FRAME'];
+  if (path == null || path.isEmpty) return null;
+  final f = File(path);
+  return f.existsSync() && f.lengthSync() > 0 ? f.readAsBytesSync() : null;
+}
+
 Seeded _cam() {
   final s = _uhf('CAM');
   s.vhfcam.seedStatus(
     online: true,
+    still: _camFrame(),
     status: const RadioStatus(
       bridgeOnline: true, sessionHeld: true, radioReady: true, audioStream: true, hint: '',
       // RADIO stays amber here: radio_responding needs the serial monitor.
@@ -426,6 +440,13 @@ final quickrefSheets = <Sheet>[
     title: 'CAM page',
     page: 'CAM',
     seed: _cam,
+    // Decode the cam frame outside fake async, or the capture shows an empty feed.
+    after: (tester, s) async {
+      final frame = s.vhfcam.stillFrame;
+      if (frame == null) return;
+      final ctx = tester.element(find.byType(CamFeedPanel));
+      await tester.runAsync(() => precacheImage(MemoryImage(frame), ctx));
+    },
     callouts: [],
   ),
 ];
