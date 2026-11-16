@@ -155,7 +155,7 @@ VFO knob), the bridge collapses the split (`collapseSplit`: `slice set <A> tx=1`
 `slice remove <split slice>`). `set_band` in split collapses first and changes the band on
 slice A's pan. A band change of the TX slice keeps the split (warn only). Config
 `[split] allow_cross_band = true` turns the collapse off. The accepted `tx=1` and `slice remove`
-replies update the slice model (`applyAcceptedSliceCmd`). Not yet confirmed live.
+replies update the slice model (`applyAcceptedSliceCmd`). Confirmed live on the FLEX-8400 2026-11-16.
 
 **flexbridge is read-only except for band changes, slice mode, receive antenna, DVK, mic profiles, and the power ceiling.** `/cmd` carries
 one-shot intent only (not retained — a stale command must not re-fire on restart):
