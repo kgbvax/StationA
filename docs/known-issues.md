@@ -102,6 +102,15 @@ deployed build**; set it to 1 and reflash for contest operation. The reference s
 the active slice) so the monitoring workflow — TX stays on slice A, slice B browses another
 band — never trips it.
 
+Amended 2026-11-16: a **band change of slice A while split** is no longer warn-only. The
+operator asked for this. flexbridge collapses the split: slice A takes the TX flag on the new
+band and the split slice is removed (`slice set <A> tx=1`, `slice remove <B>`). This covers a
+logger spot click, `set_freq`, the VFO knob, and `set_band` (which collapses first and then
+changes the band on slice A's panadapter). A band change of the TX slice keeps the split and
+only warns, so the 60 m cross-band DX setup (tune the TX slice to 40 m) still works. flexbridge
+`[split] allow_cross_band = true` turns the collapse off. Live behavior is not yet confirmed
+(the radio must accept `slice remove` from the bridge's non-GUI client).
+
 ## [decision] `device_online` publication form: explicit vs omitted-when-true (PRD §6.3)
 
 The integration model says the field is "omitted when true". The deployed bridges publish `device_online: true` explicitly. Consumers must treat both forms as the same (absence = true) — that consumer rule is normative. A reconstruction must pick a producer convention (PRD recommendation: mandate the explicit boolean for all device slots, and update the model).

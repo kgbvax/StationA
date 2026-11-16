@@ -56,6 +56,9 @@ type Bridge struct {
 	tuStatus    flexradio.ATUStatus
 	state       radioState
 	bandTx      *bandTransition // nil when no band transition is in progress
+	splitRx     int             // slice A index while split (valid only while state.split)
+	splitTx     int             // TX slice index while split (valid only while state.split)
+	collapse    *splitCollapse  // split collapse planned by updateActiveSliceState, sent by handleSlice
 	limitKnown  bool            // a set_rf_power_limit arrived this process (state.rfPowerLimit is authoritative)
 
 	discoDone bool
@@ -247,6 +250,10 @@ type Config struct {
 	// PowerLimitMechanism is how set_rf_power_limit is enforced:
 	// clamp (default) | native | both — see powerlimit.go.
 	PowerLimitMechanism string
+	// AllowCrossBandSplit keeps a split alive when slice A changes band. The
+	// default (false) collapses it: slice A takes the TX flag and the split
+	// slice is removed, so RX and TX never end up on two bands by accident.
+	AllowCrossBandSplit bool
 }
 
 // Logger is the minimal logging surface the bridge uses. Errorf is for
@@ -437,11 +444,18 @@ func (b *Bridge) HandleReply(r flexradio.Reply) {
 // slice is updated, so an accepted command cannot create a phantom slice.
 func (b *Bridge) applyAcceptedSliceCmd(cmd string) {
 	words := strings.Fields(cmd)
-	if len(words) < 4 || words[0] != "slice" {
+	if len(words) < 3 || words[0] != "slice" {
 		return
 	}
 	idx, err := strconv.Atoi(words[2])
 	if err != nil {
+		return
+	}
+	if words[1] == "remove" {
+		b.applySliceRemoved(idx)
+		return
+	}
+	if len(words) < 4 {
 		return
 	}
 	var fields []string
@@ -470,6 +484,39 @@ func (b *Bridge) applyAcceptedSliceCmd(cmd string) {
 		return
 	}
 	f, err := flexradio.ParseFrame("S0|slice " + strconv.Itoa(idx) + " " + strings.Join(fields, " "))
+	if err != nil {
+		return
+	}
+	if f.Fields["tx"] == "1" {
+		// One TX slice per radio: the radio clears the flag on the old TX
+		// slice, but, as above, does not tell the commanding client.
+		b.clearOtherTX(idx)
+	}
+	b.handleSlice(f)
+}
+
+// clearOtherTX drops the TX flag from every tracked slice except idx.
+func (b *Bridge) clearOtherTX(idx int) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for i, s := range b.slices {
+		if i != idx && s.TX {
+			s.TX = false
+			b.slices[i] = s
+		}
+	}
+}
+
+// applySliceRemoved applies an accepted `slice remove <idx>` to the slice
+// model, the same way a radio removal frame does (handleSlice).
+func (b *Bridge) applySliceRemoved(idx int) {
+	b.mu.RLock()
+	_, tracked := b.slices[idx]
+	b.mu.RUnlock()
+	if !tracked {
+		return
+	}
+	f, err := flexradio.ParseFrame("S0|slice " + strconv.Itoa(idx) + " in_use=0")
 	if err != nil {
 		return
 	}
@@ -698,12 +745,41 @@ func (b *Bridge) handleSlice(f flexradio.Frame) {
 	}
 	changed := b.updateActiveSliceState()
 	snap := b.state
+	collapse, cmd := b.collapse, b.commander
+	b.collapse = nil
 	b.mu.Unlock()
 
 	if changed {
 		b.log.Debugf("slice update idx=%d raw=%q -> freq_hz=%d band=%q mode=%q tx=%v",
 			idx, raw, snap.freqHz, snap.band, snap.mode, snap.txing)
 		b.publishStateSnapshot(snap)
+	}
+	if collapse != nil && cmd != nil {
+		b.log.Warnf("split band change: slice %d (A) moved %s -> %s while slice %d transmits on %s; collapsing split",
+			collapse.rx, collapse.fromBand, collapse.toBand, collapse.tx, collapse.txBand)
+		b.collapseSplit(cmd, collapse.rx, collapse.tx)
+	}
+}
+
+// splitCollapse is a split that slice A left by changing band: rx is slice A,
+// tx the split (TX) slice.
+type splitCollapse struct {
+	rx, tx                   int
+	fromBand, toBand, txBand string
+}
+
+// collapseSplit ends a split: slice A (rx) takes the TX flag, then the split
+// slice (tx) is removed — what SmartSDR's own SPLIT button does when it is
+// switched off. TX moves first so the radio is never left without a TX slice.
+// Fire-and-forget like every Commander call; the accepted replies update the
+// bridge's slice model (applyAcceptedSliceCmd), the refused ones are Warns.
+func (b *Bridge) collapseSplit(cmd Commander, rx, tx int) {
+	if err := cmd.SetSliceTX(rx); err != nil {
+		b.log.Warnf("split collapse: tx to slice %d: %v", rx, err)
+		return
+	}
+	if err := cmd.RemoveSlice(tx); err != nil {
+		b.log.Warnf("split collapse: remove slice %d: %v", tx, err)
 	}
 }
 
@@ -860,6 +936,19 @@ func (b *Bridge) updateActiveSliceState() bool {
 		newRxBand = b.sliceBand[rx.Index]
 		// gen/unknown/empty is "no information", never a mismatch.
 		newCross = isHamBand(newRxBand) && isHamBand(newBand) && newRxBand != newBand
+		// Band change while split: slice A (the slice the logger's spot click
+		// and set_freq tune) moved to another band and the split slice stayed
+		// on the old one. Unless cross-band split is allowed, plan a collapse:
+		// slice A takes TX and the split slice goes. Only slice A moving
+		// triggers it, so a cross-band split built by tuning the TX slice
+		// (60 m cross-band DX) stays.
+		if newCross && !b.cfg.AllowCrossBandSplit && b.state.split &&
+			b.splitRx == rx.Index && b.splitTx == active.Index &&
+			newRxBand != b.state.rxBand {
+			b.collapse = &splitCollapse{rx: rx.Index, tx: active.Index,
+				fromBand: b.state.rxBand, toBand: newRxBand, txBand: newBand}
+		}
+		b.splitRx, b.splitTx = rx.Index, active.Index
 	}
 
 	var newRxInput string
@@ -1121,10 +1210,23 @@ func (b *Bridge) HandleCommand(payload []byte) {
 		}
 		b.mu.RLock()
 		handle, hasPan := b.targetPanHandle()
+		rx, tx, split := b.splitSlices()
+		if split && !b.cfg.AllowCrossBandSplit {
+			// Band change while split: slice A goes to the new band with the
+			// TX flag, the split slice is removed (collapseSplit). So the band
+			// change targets slice A's panadapter, not the TX slice's.
+			if h, ok := b.slicePanHandle(rx); ok {
+				handle, hasPan = h, true
+			}
+		}
 		b.mu.RUnlock()
 		if !hasPan {
 			b.log.Warnf("cmd set_band: no panadapter tracked (open a panadapter first)")
 			return
+		}
+		if split && !b.cfg.AllowCrossBandSplit {
+			b.log.Infof("cmd set_band: split (rx slice %d, tx slice %d): collapsing split before the band change", rx, tx)
+			b.collapseSplit(cmd, rx, tx)
 		}
 		b.log.Infof("cmd set_band: band=%s (n=%d) pan=%s", bandLabel, bandNum, handle)
 		if err := cmd.SetBand(handle, bandNum); err != nil {
@@ -1294,6 +1396,34 @@ func (b *Bridge) targetPanHandle() (string, bool) {
 		}
 	}
 	return lowest, lowest != ""
+}
+
+// splitSlices returns slice A (rx) and the TX slice (tx) when the radio is in
+// split (same predicate as updateActiveSliceState). Must be called with b.mu
+// (at least RLock) held.
+func (b *Bridge) splitSlices() (rx, tx int, split bool) {
+	active, ok := resolveActiveSlice(b.slices)
+	if !ok || !active.TX {
+		return 0, 0, false
+	}
+	r, ok := resolveRxSlice(b.slices)
+	if !ok || r.Index == active.Index {
+		return 0, 0, false
+	}
+	return r.Index, active.Index, true
+}
+
+// slicePanHandle returns the tracked panadapter slice idx sits on. Must be
+// called with b.mu (at least RLock) held.
+func (b *Bridge) slicePanHandle(idx int) (string, bool) {
+	s, ok := b.slices[idx]
+	if !ok || s.PanHandle == "" {
+		return "", false
+	}
+	if _, tracked := b.pans[s.PanHandle]; !tracked {
+		return "", false
+	}
+	return s.PanHandle, true
 }
 
 // parseDVKID parses a DVK memory id string, returning 0 if it is empty or out

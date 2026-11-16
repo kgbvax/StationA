@@ -372,6 +372,8 @@ type Commander interface {
 	SetSliceMode(slice int, mode string) error      // slice set <idx> mode=<MODE>
 	SetSliceRxAnt(slice int, ant string) error      // slice set <idx> rxant=<PORT>
 	TuneSlice(slice int, freqHz int64) error        // slice tune <idx> <MHz> autopan=1
+	SetSliceTX(slice int) error                     // slice set <idx> tx=1
+	RemoveSlice(slice int) error                    // slice remove <idx>
 	SetRFPower(level int) error                     // transmit set rfpower=<n>
 	SetTunePower(level int) error                   // transmit set tunepower=<n>
 	SetMaxPowerLevel(level int) error               // transmit set max_power_level=<n>
@@ -434,6 +436,21 @@ func (c *Client) SetSliceMode(slice int, mode string) error {
 // (RF_frequency=).
 func (c *Client) TuneSlice(slice int, freqHz int64) error {
 	return c.Send(context.Background(), fmt.Sprintf("slice tune %d %.6f autopan=1", slice, float64(freqHz)/1e6))
+}
+
+// SetSliceTX makes slice index slice the transmit slice (SmartSDR `slice set
+// <idx> tx=1`, FlexLib's Slice.IsTransmitSlice). The radio clears the flag on
+// the previous TX slice. The bridge uses it only to collapse a split after a
+// band change (collapseSplit).
+func (c *Client) SetSliceTX(slice int) error {
+	return c.Send(context.Background(), fmt.Sprintf("slice set %d tx=1", slice))
+}
+
+// RemoveSlice closes slice index slice (SmartSDR `slice remove <idx>`,
+// FlexLib's Slice.Close). The bridge uses it only to drop the split slice
+// after a band change (collapseSplit).
+func (c *Client) RemoveSlice(slice int) error {
+	return c.Send(context.Background(), fmt.Sprintf("slice remove %d", slice))
 }
 
 // SetSliceRxAnt selects the receive antenna port of slice index slice

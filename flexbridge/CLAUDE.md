@@ -35,7 +35,7 @@ SmartSDR radio (the station's FLEX-8400; the SmartSDR TCP/IP API is common to th
   `max_power_level` (`native`), per config `power_limit.mechanism`. It is a ceiling, not
   a setpoint: it never raises output and never restores a power on lift.
 
-Apart from band changes, slice mode, receive antenna, DVK, mic profiles and the power ceiling it never sends commands to the radio.
+Apart from band changes (including the split collapse on a band change, see Split), slice mode, receive antenna, DVK, mic profiles and the power ceiling it never sends commands to the radio.
 
 ---
 
@@ -150,6 +150,12 @@ logger call VFO A — is published alongside as the RX side while another slice 
 warning (spot click retuned VFO A, VFO B still transmitting on the old band); `gen`/`unknown`
 never count as a mismatch. One Warn per edge. Consumers warn, they do not block: cross-band is
 legal and has legitimate uses (`../docs/known-issues.md`, "Split cross-band").
+Exception, since 2026-11-16: if **slice A changes band** while split (spot click, `set_freq`,
+VFO knob), the bridge collapses the split (`collapseSplit`: `slice set <A> tx=1`, then
+`slice remove <split slice>`). `set_band` in split collapses first and changes the band on
+slice A's pan. A band change of the TX slice keeps the split (warn only). Config
+`[split] allow_cross_band = true` turns the collapse off. The accepted `tx=1` and `slice remove`
+replies update the slice model (`applyAcceptedSliceCmd`). Not yet confirmed live.
 
 **flexbridge is read-only except for band changes, slice mode, receive antenna, DVK, mic profiles, and the power ceiling.** `/cmd` carries
 one-shot intent only (not retained — a stale command must not re-fire on restart):

@@ -79,6 +79,7 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 		AvailTopic:          availabilityTopic(cfg),
 		PublishHADiscovery:  cfg.MQTT.PublishHADiscovery,
 		PowerLimitMechanism: cfg.PowerLimit.Mechanism,
+		AllowCrossBandSplit: cfg.Split.AllowCrossBand,
 	}, pub, &slogAdapter{log})
 
 	// /cmd dispatch: paho runs message handlers on its own goroutine, and a DVK

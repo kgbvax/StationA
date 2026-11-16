@@ -39,6 +39,14 @@ level = "info"             # debug | info | warn | error
 [power_limit]
 mechanism = "clamp"
 
+# Band change while working split. If slice A (VFO A, the slice a logger spot
+# click or set_band moves) goes to another band while the split slice
+# transmits on the old band, the bridge collapses the split: slice A takes
+# the TX flag and the split slice is removed. Set to true to keep a
+# cross-band split instead (for example 60 m cross-band DX).
+[split]
+allow_cross_band = false
+
 # Environment variable overrides (systemd reads /etc/flexbridge/flexbridge.env):
 #   FLEXBRIDGE_MQTT_BROKER
 #   FLEXBRIDGE_MQTT_CLIENT_ID
