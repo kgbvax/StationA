@@ -192,8 +192,8 @@ Two deliberate platform notes:
 
 `docs/quickref/hf-console-quickref.html` (+ `.pdf`, A4 landscape, one sheet per page) is the operator quick
 reference: a seeded tablet render (2x) of each page (Overview, HF, Station, UHF, CAM) with numbered markers and a
-legend underneath. A call-out earns its place only by saying what the label does not (an unlabeled control, a hidden
-gesture, a side effect or interlock); the rest is covered by the sheet's note that unlabeled things do what you think. Generated — do not edit it. Call-outs (title, text, which control) live in
+legend underneath. A call-out says what the control does or the gesture the label does not show (tap, hold, double-tap), in one or two
+short, complete phrases with no background detail; the rest is covered by the sheet's note that unlabeled things do what you think. Generated — do not edit it. Call-outs (title, text, which control) live in
 `test/tool/quickref_sheets.dart`, layout in `docs/quickref/template.html`; rebuild with `docs/quickref/build.sh`
 (render test + headless Chrome). A call-out names its control by label/tooltip/type/key and the render resolves it to
 the control's rect, so markers follow the layout (`marker:` picks the side when the default covers a neighbour). `test/tool/quickref_callouts_test.dart` runs in the normal

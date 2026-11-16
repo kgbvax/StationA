@@ -334,9 +334,9 @@ Seeded _cam() {
 }
 
 // ---------------------------------------------------------------------------
-// The sheets, in reading order. A call-out earns its place only by telling a
-// guest operator something the label does not: an unlabeled control, a hidden
-// gesture, a side effect or interlock, what an automatic mode does here.
+// The sheets, in reading order. A call-out says what the control does or the
+// gesture that the label does not show (tap, hold, double-tap), in one or two
+// short, complete phrases. No background detail, no shorthand ("=", ";").
 // Facts were checked against the code (2026-10-24); keep them true.
 
 final quickrefSheets = <Sheet>[
@@ -355,12 +355,12 @@ final quickrefSheets = <Sheet>[
       s.mqtt.connected.value = false;
     },
     callouts: [
-      Callout('Station · HF · UHF · CAM', 'These are the page buttons: tap a name to switch',
+      Callout('Station · HF · UHF · CAM', 'Tap a name to open that page',
           UnionAnchor([ButtonAnchor('Station', inside: ConsoleScreen), ButtonAnchor('CAM', inside: ConsoleScreen)])),
-      Callout('LINK DOWN banner', 'This console lost the broker; bus commands dropped, not queued', typeAnchor(LinkStatusBanner),
+      Callout('LINK DOWN banner', 'The console has no link to the station. Commands are lost.', typeAnchor(LinkStatusBanner),
           marker: 'inside'),
-      Callout('Status pill', 'Any one device down or unpowered turns the pill OFFLINE', typeAnchor(StatusPill, inside: PowerPanel)),
-      Callout('FAULTS', 'Grey: cleared, or antenna gear unpowered on purpose', TextAnchor('FAULTS', inside: FaultsBar),
+      Callout('Status pill', 'OFFLINE when a device is down or has no power', typeAnchor(StatusPill, inside: PowerPanel)),
+      Callout('FAULTS', 'Lists the active faults. Grey means cleared.', TextAnchor('FAULTS', inside: FaultsBar),
           marker: 'right'),
     ],
   ),
@@ -370,26 +370,26 @@ final quickrefSheets = <Sheet>[
     page: 'HF',
     seed: _hf,
     callouts: [
-      Callout('Compass', 'Tap to aim; arrow = boom, cone = radiation lobe', PointAnchor(typeAnchor(CompassPanel), 0.63, 0.59)),
-      Callout('Spot filter (SSB ≥ 0dB)', 'Spot SNR gate follows radio mode: SSB 0 dB, CW −15 dB',
+      Callout('Compass', 'Tap to aim', PointAnchor(typeAnchor(CompassPanel), 0.63, 0.59)),
+      Callout('Spot filter (SSB ≥ 0dB)', 'Hides weaker spots. The limit follows the radio mode.',
           TextAnchor('SSB ≥', contains: true, inflate: 6)),
-      Callout('Azimuthal / Mercator', 'Map projection; beam and tap-to-aim on azimuthal only',
+      Callout('Azimuthal / Mercator', 'Switch the map projection',
           UnionAnchor([tooltipAnchor('Azimuthal'), tooltipAnchor('Mercator')])),
-      Callout('Selected station', 'Call keyed in DXLog/Log4OM; tap to aim at it', ButtonAnchor('JA1XYZ ·', contains: true)),
-      Callout('AUTO (beam steering)', 'Logger/map aims flip 180° if behind, turn only outside ±30°',
+      Callout('Selected station', 'The call typed into the logger. Tap to aim at it.', ButtonAnchor('JA1XYZ ·', contains: true)),
+      Callout('AUTO (beam steering)', 'Reverses the beam instead of a rotator turn when the target is behind',
           ButtonAnchor('AUTO', inside: UltrabeamPanel), marker: 'right'),
-      Callout('Antenna ports', '30-min idle grounds unless MANUAL tapped',
+      Callout('Antenna ports', 'Tap to select an antenna. AUTO follows the band, MANUAL keeps your choice.',
           UnionAnchor([ButtonAnchor('GND', inside: AntennaPanel), ButtonAnchor('FAN DIPOLE', inside: AntennaPanel)]),
           marker: 'above'),
-      Callout('Band selection', 'Re-tap active band: SSB↔CW; stripe = spot colour on map',
+      Callout('Band selection', 'Tap to change band. Tap the active band to switch SSB and CW.',
           UnionAnchor([ButtonAnchor('80m', inside: TrxPanel), ButtonAnchor('10m', inside: TrxPanel)])),
-      Callout('Voice keyer (DVK)', 'Double-tap: pick memory + repeat time. Hold 0.7 s: auto-repeat [n] countdown; TX pauses it, tap resumes, hold exits',
+      Callout('Voice keyer (DVK)', 'Tap to play. Hold to auto-repeat. Double-tap to set memory and repeat time.',
           UnionAnchor([ButtonAnchor('CQ contest', inside: DvkPanel), ButtonAnchor('STOP', inside: DvkPanel)])),
-      Callout('TUNE', 'TGXL keys the FLEX over the LAN; put the ACOM in standby first, nothing checks',
+      Callout('TUNE', 'Starts a tune cycle and keys the radio. Put the PA in standby first.',
           ButtonAnchor('TUNE', inside: TunerPanel)),
-      Callout('RX ANT', 'Tap: ANT 1 ↔ RX A on the slice you hear; amber = set in SmartSDR',
+      Callout('RX ANT', 'Tap to switch the receive antenna between ANT 1 and RX A',
           ButtonAnchor('ANT 1', inside: TrxPanel)),
-      Callout('MIC profiles', 'Hold to rebind; MIC line shows only console-loaded profiles', typeAnchor(MicProfileRow)),
+      Callout('MIC profiles', 'Hold to rebind', typeAnchor(MicProfileRow)),
     ],
   ),
   Sheet(
@@ -398,16 +398,16 @@ final quickrefSheets = <Sheet>[
     page: 'Station',
     seed: () => _running('Station'),
     callouts: [
-      Callout('START / STOP', 'START also wakes STANDBY; STOP leaves PC mains on',
+      Callout('START / STOP', 'Power the station up or down. START also wakes it from STANDBY.',
           UnionAnchor([ButtonAnchor('START', inside: PowerPanel), ButtonAnchor('STOP', inside: PowerPanel)])),
-      Callout('Phase (ON / STANDBY)', 'Unused station drops to STANDBY; a FLEX VFO change wakes it',
+      Callout('Phase (ON / STANDBY)', 'An unused station goes to STANDBY. A VFO change wakes it.',
           TextAnchor('ON', inside: PowerPanel, inflate: 4)),
-      Callout('NORMAL / STORM / MAINT.', 'STORM/MAINT.: ground, retract, park, lock until NORMAL; MAINT. ±5° nudge on the HF compass',
+      Callout('NORMAL / STORM / MAINT.', 'STORM and MAINT. ground, retract and park the antenna. It stays locked until NORMAL.',
           UnionAnchor([ButtonAnchor('NORMAL', inside: AntModePanel), ButtonAnchor('MAINT.', inside: AntModePanel)])),
-      Callout('Bridges n/m', 'Up / expected bridges on that host; tap lists each',
+      Callout('Bridges n/m', 'Bridges up / expected on the host. Tap for the list.',
           UnionAnchor([TextAnchor('HOSTS & NETWORK', inside: StationSchematic), TextAnchor('SHARI', inside: StationSchematic)],
               grow: const EdgeInsets.fromLTRB(20, 6, 75, 52))),
-      Callout('Schematic block (tap)', 'Tap any block for bridge, host, all values; no controls',
+      Callout('Schematic block', 'Tap a block to see all its values',
           UnionAnchor([TextAnchor('ACOM', inside: StationSchematic), TextAnchor('Temp', inside: StationSchematic)],
               grow: const EdgeInsets.fromLTRB(10, 9, 90, 9)),
           marker: 'above'),
@@ -419,18 +419,18 @@ final quickrefSheets = <Sheet>[
     page: 'UHF',
     seed: () => _uhf('UHF'),
     callouts: [
-      Callout('Map tap', 'Sets azimuth only (great-circle bearing); elevation unchanged',
+      Callout('Map tap', 'Tap to set the azimuth. The elevation does not change.',
           PointAnchor(typeAnchor(MercatorMapPanel), 0.30, 0.30)),
-      Callout('Beam wedge', 'Rotator beam ±20°, amber while a satellite is tracked',
+      Callout('Beam wedge', 'Shows where the antennas point',
           PointAnchor(typeAnchor(MercatorMapPanel), 0.40, 0.42)),
-      Callout('Satellite', 'OscarWatch sub-satellite point; dimmed while below horizon',
+      Callout('Satellite', 'Position of the tracked satellite',
           PointAnchor(typeAnchor(MercatorMapPanel), 0.129, 0.552)),
-      Callout('RADIO AUDIO', 'Feeds CAM stream; auto-off after 60 s; wfview blocks it',
+      Callout('RADIO AUDIO', 'Puts the radio audio on the CAM stream',
           ButtonAnchor('RADIO AUDIO:', contains: true, inside: UhfRadioPanel)),
-      Callout('MONITOR', 'Read-only CI-V readout; unavailable here, press shows ERR',
+      Callout('MONITOR', 'Frequency readout from the radio. Not available at this station.',
           ButtonAnchor('MONITOR:', contains: true, inside: UhfRadioPanel)),
-      Callout('PARK 200° / 0°', 'Also retunes IC-9700 (sat mode off), X-Quads to V', keyAnchor('sat-park')),
-      Callout('H / V / LHCP / RHCP', 'Manual only (PARK sets Vertical)',
+      Callout('PARK 200° / 0°', 'Parks both rotators. Also retunes the radio and sets vertical polarization.', keyAnchor('sat-park')),
+      Callout('H / V / LHCP / RHCP', 'Select the antenna polarization',
           UnionAnchor([ButtonAnchor('H', inside: PolCtrlPanel), ButtonAnchor('RHCP', inside: PolCtrlPanel)])),
     ],
   ),
