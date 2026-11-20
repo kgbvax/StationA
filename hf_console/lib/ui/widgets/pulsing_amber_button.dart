@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../theme.dart';
+import 'stepped_pulse.dart';
 
 /// Amber action button that pulses slowly while engaged.
 ///
@@ -10,9 +11,17 @@ import '../theme.dart';
 /// inactive action-button chrome (or [idleStyle] when a panel wants e.g. the
 /// dim amber tint).
 ///
-/// Honors reduce-motion: holds solid amber instead of oscillating. The pulse
-/// runs forever by design, so widget tests must freeze it (TestHarness does)
-/// or use plain `pump`s — `pumpAndSettle` would never return.
+/// Honors reduce-motion: holds solid amber instead of oscillating. A disabled
+/// button (no [onPressed]: bridge offline, link down, antenna lock) holds
+/// solid amber without pulsing: there is nothing to act on, and an offline PA
+/// reads as standby, so it would otherwise pulse through every night-long
+/// power-down.
+///
+/// The pulse runs as long as the state lasts, so it is a [SteppedPulse]
+/// (about 11 frames per second, 8 after ten seconds), not a vsync
+/// AnimationController (a full frame at the display rate, about 30 % CPU on
+/// the idle web console). Widget tests freeze it (TestHarness does) or use plain `pump`s — `pumpAndSettle`
+/// would never return.
 class PulsingAmberButton extends StatefulWidget {
   const PulsingAmberButton({
     super.key,
@@ -44,11 +53,8 @@ class PulsingAmberButton extends StatefulWidget {
   State<PulsingAmberButton> createState() => _PulsingAmberButtonState();
 }
 
-class _PulsingAmberButtonState extends State<PulsingAmberButton> with SingleTickerProviderStateMixin {
-  late final AnimationController _pulse = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 1440),
-  );
+class _PulsingAmberButtonState extends State<PulsingAmberButton> {
+  final SteppedPulse _pulse = SteppedPulse(halfPeriod: const Duration(milliseconds: 1440));
 
   /// Bottom of the pulse: amber blended mostly toward the pane colour.
   static Color get _amberDim => Color.lerp(AppTheme.amber, AppTheme.pane, 0.55)!;
@@ -61,26 +67,28 @@ class _PulsingAmberButtonState extends State<PulsingAmberButton> with SingleTick
 
   @override
   Widget build(BuildContext context) {
-    final pulsing = widget.engaged && !MediaQuery.disableAnimationsOf(context);
+    final pulsing = widget.engaged && widget.onPressed != null && !MediaQuery.disableAnimationsOf(context);
     if (pulsing) {
-      if (!_pulse.isAnimating) _pulse.repeat(reverse: true);
+      _pulse.start();
     } else {
       _pulse.stop();
-      _pulse.value = 1.0;
     }
 
-    return AnimatedBuilder(
+    // Own layer: a pulse step repaints this button, not the whole panel.
+    return RepaintBoundary(
+      child: AnimatedBuilder(
       animation: _pulse,
       builder: (context, _) {
         ButtonStyle style = widget.engaged
             ? AppTheme.actionButton(amberActive: true)
             : (widget.idleStyle ?? AppTheme.actionButton());
         if (widget.style != null) style = widget.style!.merge(style);
-        if (pulsing) {
-          final t = Curves.easeInOut.transform(_pulse.value);
+        if (widget.engaged) {
+          // Overrides the disabled background too: a disabled engaged key
+          // (180° while the elements move, under a lock) must still read amber.
           style = style.copyWith(
             backgroundColor: WidgetStatePropertyAll(
-              Color.lerp(_amberDim, AppTheme.amber, t)!,
+              pulsing ? Color.lerp(_amberDim, AppTheme.amber, _pulse.value)! : AppTheme.amber,
             ),
           );
         }
@@ -91,6 +99,7 @@ class _PulsingAmberButtonState extends State<PulsingAmberButton> with SingleTick
           child: widget.child,
         );
       },
+      ),
     );
   }
 }

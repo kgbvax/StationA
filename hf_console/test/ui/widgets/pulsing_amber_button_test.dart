@@ -60,4 +60,30 @@ void main() {
 
     expect(bgOf(tester, 'PULSE'), AppTheme.blend(AppTheme.amber, 0.12));
   });
+
+  testWidgets('engaged but disabled holds solid amber', (tester) async {
+    await tester.pumpWidget(TestHarness(
+      child: motionAllowed(
+        const PulsingAmberButton(engaged: true, onPressed: null, child: Text('PULSE')),
+      ),
+    ));
+    // No running pulse: the tree settles (a running one never would).
+    await tester.pumpAndSettle();
+    expect(bgOf(tester, 'PULSE'), AppTheme.amber); // still reads amber
+    await tester.pump(const Duration(milliseconds: 360));
+    expect(bgOf(tester, 'PULSE'), AppTheme.amber);
+  });
+
+  testWidgets('the pulse steps on a timer, not on every vsync', (tester) async {
+    await tester.pumpWidget(TestHarness(
+      child: motionAllowed(
+        PulsingAmberButton(engaged: true, onPressed: () {}, child: const Text('PULSE')),
+      ),
+    ));
+    await tester.pump();
+    // Between two 90 ms steps nothing asks for a frame.
+    await tester.pump(const Duration(milliseconds: 10));
+    expect(tester.binding.hasScheduledFrame, isFalse);
+    await tester.pumpWidget(const SizedBox.shrink()); // cancel the timer
+  });
 }

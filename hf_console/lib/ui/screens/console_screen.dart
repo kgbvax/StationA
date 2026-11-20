@@ -25,6 +25,7 @@ import '../widgets/cam_radio_controls.dart';
 import '../widgets/cam_record_controls.dart';
 import '../widgets/faults_bar.dart';
 import '../widgets/station_schematic.dart';
+import '../widgets/stepped_pulse.dart';
 import '../widgets/dx_config_sheet.dart';
 
 // The DX-spot subscription follows the active page: the UHF and CAM maps
@@ -179,11 +180,10 @@ class SplitBandBanner extends StatefulWidget {
   State<SplitBandBanner> createState() => _SplitBandBannerState();
 }
 
-class _SplitBandBannerState extends State<SplitBandBanner> with SingleTickerProviderStateMixin {
-  late final AnimationController _flash = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 600),
-  );
+class _SplitBandBannerState extends State<SplitBandBanner> {
+  // Timer-stepped, not a vsync controller: the strip can stay up for a whole
+  // session, and a vsync swing redraws the full frame at the display rate.
+  final SteppedPulse _flash = SteppedPulse(halfPeriod: const Duration(milliseconds: 600));
 
   /// Background alpha at the dim end of the swing; the full end is solid.
   static const _dimAlpha = 0.18;
@@ -224,12 +224,13 @@ class _SplitBandBannerState extends State<SplitBandBanner> with SingleTickerProv
       _flash.stop();
       return const SizedBox.shrink();
     }
-    if (!_flash.isAnimating) _flash.repeat(reverse: true);
-    final swing = CurvedAnimation(parent: _flash, curve: Curves.easeInOut);
-    return AnimatedBuilder(
-      key: const ValueKey('split-band-flash'),
-      animation: swing,
-      builder: (context, _) => _strip(split, swing.value),
+    _flash.start();
+    return RepaintBoundary(
+      child: AnimatedBuilder(
+        key: const ValueKey('split-band-flash'),
+        animation: _flash,
+        builder: (context, _) => _strip(split, _flash.value),
+      ),
     );
   }
 }
