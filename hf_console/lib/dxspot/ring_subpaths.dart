@@ -143,3 +143,50 @@ void _projectCutRing(
     out.remove(head);
   }
 }
+/// Thin projected runs for rasterization at canvas resolution: drop every
+/// vertex closer than [minDist] (canvas units) to the last kept vertex of the
+/// same run, and drop whole runs whose bounding box is smaller than [minDist]
+/// in both axes (islands that cover less than a pixel). The first and last
+/// vertex of every kept run stay, so seam-cut pieces still start and end
+/// exactly on the seam and close along it.
+///
+/// The Natural Earth 50m asset carries ~100k vertices in ~1.6k rings. On the
+/// shack tablet's compass (zoom 1.5) most of them land within a pixel of their
+/// neighbour, yet every one costs a `lineTo` and is tessellated by the GPU for
+/// the fill and again for the round-joined stroke: that rasterization froze
+/// the HF page for 2-3 s on each tab switch (Mali, Impeller). With
+/// [minDist] = 1 the compass at zoom 1.5 keeps ~24k vertices in ~780 runs.
+List<List<ProjectedPoint>> thinSubpaths(
+  List<List<ProjectedPoint>> runs,
+  double minDist,
+) {
+  final min2 = minDist * minDist;
+  final out = <List<ProjectedPoint>>[];
+  for (final run in runs) {
+    if (run.length < 2) continue;
+    var x0 = run.first.x, x1 = x0, y0 = run.first.y, y1 = y0;
+    final kept = <ProjectedPoint>[run.first];
+    var last = run.first;
+    final end = run.length - 1;
+    for (var i = 1; i <= end; i++) {
+      final p = run[i];
+      if (p.x < x0) x0 = p.x;
+      if (p.x > x1) x1 = p.x;
+      if (p.y < y0) y0 = p.y;
+      if (p.y > y1) y1 = p.y;
+      if (i == end) {
+        kept.add(p);
+        break;
+      }
+      final dx = p.x - last.x;
+      final dy = p.y - last.y;
+      if (dx * dx + dy * dy >= min2) {
+        kept.add(p);
+        last = p;
+      }
+    }
+    if (x1 - x0 < minDist && y1 - y0 < minDist) continue;
+    out.add(kept);
+  }
+  return out;
+}

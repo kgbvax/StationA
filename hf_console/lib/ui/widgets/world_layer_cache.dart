@@ -10,14 +10,21 @@
 // long as none of those change. Cache hit = single GPU blit (~0.2 ms);
 // zoom-drag then costs only the grid-square + chrome layers.
 //
-// One cache instance lives on `_CompassPanelState` so it survives across
-// rebuilds. Dispose with the state.
+// One cache instance lives for the whole app (`CompassPanel`'s static
+// `sharedWorld`), not on the panel state: switching pages builds a fresh
+// CompassPanel, and a per-state cache re-rasterized the whole world on every
+// switch to HF (2-3 s of 500-880 ms frames on the shack tablet, taps queued
+// behind them). The image is one canvas-sized bitmap, a few MB.
 
 import 'dart:ui' as ui;
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import '../../dxspot/projection.dart';
 import '../../dxspot/ring_subpaths.dart';
+
+/// Vertex thinning distance for the world layer, in canvas units (= pixels of
+/// the cached raster). See [thinSubpaths].
+const double kWorldThinPx = 1.0;
 
 class WorldLayerCache {
   String? _key;
@@ -112,7 +119,7 @@ class WorldLayerCache {
       },
     );
     final path = Path()..fillType = PathFillType.evenOdd;
-    for (final s in subpaths) {
+    for (final s in thinSubpaths(subpaths, kWorldThinPx)) {
       path.moveTo(s[0].x, s[0].y);
       for (int i = 1; i < s.length; i++) {
         path.lineTo(s[i].x, s[i].y);

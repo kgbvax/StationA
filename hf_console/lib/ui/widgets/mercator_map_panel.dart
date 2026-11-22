@@ -30,6 +30,7 @@ import '../../store/selected_spot.dart';
 import '../../store/wiring.dart';
 import '../theme.dart';
 import 'rotator_presets_bar.dart';
+import 'world_layer_cache.dart' show kWorldThinPx;
 
 const double kMercatorZoomMin = 1.0;
 const double kMercatorZoomMax = 12.0;
@@ -984,7 +985,7 @@ class _MercatorPainter extends CustomPainter {
       seamCrossing: projection.seamCrossingBetween,
     );
     final path = Path()..fillType = PathFillType.evenOdd;
-    for (final s in subpaths) {
+    for (final s in thinSubpaths(subpaths, kWorldThinPx)) {
       path.moveTo(s[0].x, s[0].y);
       for (int i = 1; i < s.length; i++) {
         path.lineTo(s[i].x, s[i].y);

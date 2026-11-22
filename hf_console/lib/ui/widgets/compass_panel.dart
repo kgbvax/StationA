@@ -27,6 +27,10 @@ class CompassPanel extends StatefulWidget {
 
   const CompassPanel({super.key, this.showPresets = true, this.rotator = hfRotator});
 
+  /// The world landmass raster, kept for the app's lifetime so that a page
+  /// switch back to HF blits the cached image instead of re-rasterizing.
+  static final WorldLayerCache sharedWorld = WorldLayerCache();
+
   @override
   State<CompassPanel> createState() => _CompassPanelState();
 }
@@ -78,11 +82,11 @@ bool canZoomOut(double z) => z > kCompassZoomMin + 1e-9;
 
 class _CompassPanelState extends State<CompassPanel> {
   double _zoom = kCompassZoomDefault;
-  // World landmass raster cache — lives across rebuilds so a zoom drag reuses
-  // the projected bitmap while (cx, cy, r, zoom, center) don't change. Owned
-  // here (not on the painter) because the painter is reconstructed every
-  // frame. Disposed in `dispose()`.
-  final WorldLayerCache _world = WorldLayerCache();
+  // World landmass raster cache, shared for the app's lifetime: a zoom drag
+  // reuses the projected bitmap while (cx, cy, r, zoom, center) don't change,
+  // and so does a page switch back to HF, which builds a new CompassPanel.
+  // Only one compass is on screen at a time. Never disposed.
+  WorldLayerCache get _world => CompassPanel.sharedWorld;
   // Aging tick for the selected-station marker: the marker dims/greys out as
   // the keyed call grows old, which only repaints if something rebuilds the
   // panel. A quiet band produces no other rebuilds, so keep a slow tick.
@@ -99,7 +103,6 @@ class _CompassPanelState extends State<CompassPanel> {
   @override
   void dispose() {
     _ageTick?.cancel();
-    _world.dispose();
     super.dispose();
   }
 
