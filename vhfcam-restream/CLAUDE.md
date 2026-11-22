@@ -10,7 +10,7 @@ and burns AZ/EL/freq/satellite into the video (see below).
 
 ## Host
 
-Runs on **scmino** (`192.168.1.178`, Raspberry Pi CM5, Debian 12, 117 GB
+Runs on **scmino** (`scmino`, Raspberry Pi CM5, Debian 12, 117 GB
 NVMe), not shari — moved 2026-09-30 to take the x264 overlay encode and the
 recordings off shari's SD card. Same arch (arm64), so `deploy.sh` is
 unchanged apart from its default `SSH_HOST`. Two things point at this host
@@ -18,10 +18,10 @@ and move with it:
 
 - **icom9700-radio-bridge** (on scmino too since 2026-10-18; on shari before)
   sends the radio PCM to `[audio] publish_addr` in
-  `/etc/icom9700-radio-bridge/config.toml` (`"192.168.1.178:45031"` while it
+  `/etc/icom9700-radio-bridge/config.toml` (`"scmino:45031"` while it
   ran on shari; the value in the scmino config is not recorded in the repo).
 - **hf_console** CAM tab: `defaultVhfcamBaseUrl` =
-  `http://192.168.1.178:8083`; a tablet that saved the gear sheet keeps its
+  `http://scmino:8083`; a tablet that saved the gear sheet keeps its
   own stored URL — edit it there.
 
 Never run the service on both hosts at once: both would heartbeat
@@ -118,7 +118,7 @@ load ~+0.8; keep the HD profile clean — 1080p software x264 is not budgeted).
   leave a gap.
 - **Planes**: publishes `muehle/hf/vhfcam/status` (retained LWT online/offline)
   and `/state` (`mqtt_connected`, per-field stale flags). No `/meta` or
-  `/cmd` yet. Broker is the scmino station broker (`tcp://192.168.1.178:1883`, the `deploy.sh`
+  `/cmd` yet. Broker is the scmino station broker (`tcp://scmino:1883`, the `deploy.sh`
   seed; see `../mqtt-broker/CLAUDE.md`).
 - paho conventions apply: handlers Enqueue (never publish inline),
   ctx-aware connect via `shared/mqtt`.
@@ -200,8 +200,8 @@ shows — overlay + radio audio — as MP4 (`internal/recorder`, `[record]`).
 ## Ops
 
 ```bash
-ssh io@192.168.1.178 'journalctl -u vhfcam-restream -f'   # progress heartbeats every 60s
-ssh io@192.168.1.178 'sudo systemctl status vhfcam-restream'
+ssh io@scmino 'journalctl -u vhfcam-restream -f'   # progress heartbeats every 60s
+ssh io@scmino 'sudo systemctl status vhfcam-restream'
 ```
 
 - A restart loop with "Could not find tag for codec" in the log means the

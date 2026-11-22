@@ -1,7 +1,7 @@
 # mqtt-broker — station Mosquitto on scmino, bridged to the Home Assistant broker
 
 This is the **station MQTT broker**: a Mosquitto instance on
-[scmino](../CLAUDE.md) (`192.168.1.178`; originally planned for shari) that the
+[scmino](../CLAUDE.md) (`scmino`; originally planned for shari) that the
 station components connect to, with a mosquitto `bridge` connection
 replicating the `muehle/#` namespace to the Home Assistant broker at
 `192.168.1.50:1883` (HA's own Mosquitto add-on).
@@ -19,7 +19,7 @@ config + a deploy script, like the ESPHome/PlatformIO projects. **No station
 component code changes were needed**: every component already configures a
 single broker address, so each is simply pointed at the shack broker.
 
-> **Current state.** The broker runs on **scmino** (`192.168.1.178:1883`; since
+> **Current state.** The broker runs on **scmino** (`scmino:1883`; since
 > 2026-10-01) and is the station broker: all station clients connect to it. It is
 > bridged to `.50` as a `muehle/#` mirror in both directions, `homeassistant/status`
 > in, `homeassistant/+/+/+/config` out (see `mqtt-broker/mosquitto.conf.example`).
@@ -32,7 +32,7 @@ single broker address, so each is simply pointed at the shack broker.
 ## Topology
 
 ```
-   scmino (192.168.1.178)                        HA box (192.168.1.50)
+   scmino                        HA box (192.168.1.50)
    ┌─────────────────────────────┐               ┌──────────────────┐
    │ Mosquitto (shack, primary)  │── bridge ───▶ │ Mosquitto (HA)   │
    │ 127.0.0.1:1883              │   connection  │ :1883  (untouched)│
@@ -162,14 +162,14 @@ in place where they diverge.
 `tgxl-tuner-bridge`, `powerseq`, `antennaselect`, `antmode`, `beamsteer`,
 `hadiscovery`, `working-station` (opsotter), `icom9700-radio-bridge`, … (the root
 `CLAUDE.md` host list). `shelly-power-bridge` uses the broker
-(`tcp://192.168.1.178:1883`). Edit `/etc/<service>/config.toml` `mqtt.broker` (or the matching
+(`tcp://scmino:1883`). Edit `/etc/<service>/config.toml` `mqtt.broker` (or the matching
 `*_MQTT_BROKER` env override) and the `*_MQTT_PASSWORD` to the shack broker's
 `hf` password, then `sudo systemctl restart <service>`.
 
 **Go services on shari** (`spid-ercm-rotator-bridge`, `hf-mqtt-capture`) →
-`tcp://192.168.1.178:1883` (same edit as above).
+`tcp://scmino:1883` (same edit as above).
 
-**Remote MQTT clients** → `192.168.1.178:1883` (the scmino LAN address):
+**Remote MQTT clients** → `scmino:1883` (the scmino LAN address):
 - **Shelly plugs** — reconfigure each device's MQTT settings to the scmino
   broker, `hf` user. (Device-side, via the Shelly web UI; not in this repo.)
   Done 2026-10-18 with shelly-power-bridge.
@@ -177,10 +177,10 @@ in place where they diverge.
   Done 2026-10-03 (PLC #1).
 - **ant-switch ESP** (`waveshare_relay-antswitch-bridge`) — set `mqtt_broker` in
   the ESPHome YAML / `secrets.yaml` and reflash.
-- **`hf_console` tablet** — set the broker to `192.168.1.178:1883` on first
+- **`hf_console` tablet** — set the broker to `scmino:1883` on first
   launch or via the console top-bar gear. Use the `console` account.
 - **M5Stack Dial rotator head** (`m5dial-hf-rotctrl`) — set `MQTT_HOST` in
-  `src/secrets.h` to `192.168.1.178` and reflash. Use the `dial` account.
+  `src/secrets.h` to `scmino` and reflash. Use the `dial` account.
 
 ## Operational behavior
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Deploy vhfcam-restream to scmino (Raspberry Pi CM5, 192.168.1.178) and
+# Deploy vhfcam-restream to scmino (Raspberry Pi CM5, scmino) and
 # install it as a systemd service. It moved off shari on 2026-09-30.
 #
 # vhfcam-restream is an ffmpeg supervisor: it pulls the camera's RTSPS stream
@@ -13,7 +13,7 @@
 #   SOURCE_URL=... YT_STREAM_KEY=... ./deploy.sh
 #
 # Configurable via environment variables (with defaults):
-#   SSH_HOST        SSH target            (default: 192.168.1.178 = scmino)
+#   SSH_HOST        SSH target            (default: scmino)
 #   SSH_USER        SSH user              (default: io)  [used only if SSH_HOST has no user@]
 #   SERVICE_NAME    systemd service name  (default: vhfcam-restream)
 #   SERVICE_USER    system user to run as (default: vhfcam-restream)
@@ -30,7 +30,7 @@
 #
 # Overlay (drawtext burn-in of station data; needs the station MQTT broker):
 #   OVERLAY_ENABLED overlay.enabled value (default: false)
-#   MQTT_BROKER     overlay.mqtt_broker   (default: tcp://192.168.1.178:1883)
+#   MQTT_BROKER     overlay.mqtt_broker   (default: tcp://scmino:1883)
 #   MQTT_USER       overlay.mqtt_user     (default: hf)
 #   MQTT_PASSWORD   overlay.mqtt_password (default: empty -> set on device)
 #
@@ -57,7 +57,7 @@
 set -euo pipefail
 
 # --- configuration ----------------------------------------------------------
-SSH_HOST="${SSH_HOST:-192.168.1.178}"
+SSH_HOST="${SSH_HOST:-scmino}"
 SSH_USER="${SSH_USER:-io}"
 SERVICE_NAME="${SERVICE_NAME:-vhfcam-restream}"
 SERVICE_USER="${SERVICE_USER:-vhfcam-restream}"
@@ -76,7 +76,7 @@ FFMPEG_BIN="${FFMPEG_BIN:-/usr/bin/ffmpeg}"
 LOG_LEVEL="${LOG_LEVEL:-info}"
 
 OVERLAY_ENABLED="${OVERLAY_ENABLED:-false}"
-MQTT_BROKER="${MQTT_BROKER:-tcp://192.168.1.178:1883}"
+MQTT_BROKER="${MQTT_BROKER:-tcp://scmino:1883}"
 MQTT_USER="${MQTT_USER:-hf}"
 MQTT_PASSWORD="${MQTT_PASSWORD:-}"
 ENABLED="${ENABLED:-true}"

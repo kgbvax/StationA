@@ -1,7 +1,7 @@
 # testui — stationa MQTT test/monitor console
 
 A workstation-side Go relay + schema-aware browser UI for watching and stimulating the
-Mühle station bus. The browser cannot speak raw MQTT (the station broker at `192.168.1.178`
+Mühle station bus. The browser cannot speak raw MQTT (the station broker at `scmino`
 exposes only `1883`/`8883`, no WebSocket listener), and the `hf` MQTT password must not
 reach a web page — so a small Go binary acts as **relay + static server**: it connects to
 the broker with paho (credentials from a local `0600` config), subscribes `muehle/#`,
@@ -41,7 +41,7 @@ export TESTUI_MQTT_PASSWORD=...
 ./deploy.sh        # cross-compile, ship, install as a hardened systemd service
 ```
 
-Then open <http://scmino:8090> (`192.168.1.178`; on shari until 2026-10-02). The unit binds `0.0.0.0:8090` and pulls the `hf`
+Then open <http://scmino:8090> (`scmino`; on shari until 2026-10-02). The unit binds `0.0.0.0:8090` and pulls the `hf`
 MQTT password from an existing station service env on the Pi. `/api/publish` +
 `/api/clear` are unauthenticated — fine for the trusted home LAN, not for an untrusted
 network. See `CLAUDE.md` and `deploy.sh` for the hardening details.

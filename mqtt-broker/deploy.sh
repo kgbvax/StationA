@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Deploy the station Mosquitto broker to scmino (192.168.1.178) and install it
+# Deploy the station Mosquitto broker to scmino and install it
 # as a systemd service. This is infrastructure, not a Go component — no
 # cross-compile, just apt + seed-once config + password files.
 #
@@ -11,10 +11,10 @@
 #
 # Usage:
 #   ./deploy.sh                       # deploy to default host scmino
-#   SSH_HOST=io@192.168.1.178 HA_REMOTE_USER=hf ./deploy.sh
+#   SSH_HOST=io@scmino HA_REMOTE_USER=hf ./deploy.sh
 #
 # Configurable via environment variables (with defaults):
-#   SSH_HOST        SSH target            (default: 192.168.1.178 = scmino)
+#   SSH_HOST        SSH target            (default: scmino)
 #   SSH_USER        SSH user              (default: io)  [used only if SSH_HOST has no user@]
 #   CONFIG_DIR      mosquitto config dir  (default: /etc/mosquitto)
 #   CONF_FILE       mosquitto.conf path   (default: /etc/mosquitto/mosquitto.conf)
@@ -38,7 +38,7 @@
 set -euo pipefail
 
 # --- configuration ----------------------------------------------------------
-SSH_HOST="${SSH_HOST:-192.168.1.178}"
+SSH_HOST="${SSH_HOST:-scmino}"
 SSH_USER="${SSH_USER:-io}"
 CONFIG_DIR="${CONFIG_DIR:-/etc/mosquitto}"
 CONF_FILE="${CONF_FILE:-${CONFIG_DIR}/mosquitto.conf}"
@@ -179,4 +179,4 @@ echo "   ACL:     ${ACL_FILE}"
 echo "   Secrets: ${PASSWD_FILE}  (hf / bridge / console / dial users)"
 echo "   Logs:    ssh ${SSH_TARGET} 'journalctl -u mosquitto -f'"
 echo "   Next:    reconfigure the HA Mosquitto add-on with the 'stationa-bridge' account + ACL"
-echo "            (see README.md 'HA-side setup'), then point any new or re-flashed station component at 192.168.1.178:1883."
+echo "            (see README.md 'HA-side setup'), then point any new or re-flashed station component at scmino:1883."

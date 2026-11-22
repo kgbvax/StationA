@@ -135,7 +135,7 @@ class _DxConfigDialogState extends State<_DxConfigDialog> {
                   const SizedBox(height: 12),
                   _schemeRow(),
                   const SizedBox(height: 16),
-                  _field('MQTT broker host', _broker, hint: 'e.g. 192.168.1.178 (scmino)'),
+                  _field('MQTT broker host', _broker, hint: 'e.g. scmino'),
                   const SizedBox(height: 12),
                   Text('The locator places the station on the maps and is the rotators\' aiming origin.',
                       style: AppTheme.body(11, color: AppTheme.txtMute)),

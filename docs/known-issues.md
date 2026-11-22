@@ -468,7 +468,7 @@ From PRD 02 §0.1. Candidate home: appendix of `docs/conventions/band-mode-refer
 - **Shari**: a Raspberry Pi 4 (192.168.1.139). It was the original service host and now
   runs only spid-ercm-rotator-bridge, hf-mqtt-capture, SvxLink and HamClock (updated
   2026-10-23).
-- **scmino**: a Raspberry Pi CM5 (192.168.1.178). It hosts most station bridges and logic
+- **scmino**: a Raspberry Pi CM5. It hosts most station bridges and logic
   slots, the station Mosquitto mirror, hf_console web, testui, vhfcam-restream and the
   station portal.
 - **shack-pc** (bwpc, 192.168.1.197): the Windows PC in the radio shack. It runs the
@@ -512,7 +512,7 @@ PRD 00 §7 items later resolved in code, recorded so nobody re-opens them:
   `docs/conventions/mqtt-topology.md`). Deployment to shari was still pending as of
   2026-09-03 per project memory.
   Update (2026-10-23): this was never deployed on shari, which runs no Mosquitto. The
-  station broker runs on scmino (192.168.1.178:1883). It is bridged to the HA broker
+  station broker runs on scmino:1883. It is bridged to the HA broker
   192.168.1.50 as a `muehle/#` mirror in both directions, and all station clients now
   connect to the scmino broker (the earlier note here that most clients were still on
   `.50` is superseded). The split-direction design in
@@ -645,7 +645,7 @@ actuates real hardware:
   station depends on it.
 - **MQTT `/cmd` via the station broker** (since 3c2941d, 2026-09-14, the firmware
   config targeted the HA broker 192.168.1.50 directly, `xphasectrl.yaml` `mqtt_broker`;
-  the PLC now belongs on the station broker 192.168.1.178, and a `/cmd` published on
+  the PLC now belongs on the station broker scmino, and a `/cmd` published on
   either broker reaches the other through the both-ways `muehle/#` mirror) — *accepted as-is* (same posture as the rotator
   vectors 3/4 above): any broker account with `hf`-class write rights can set
   polarization. Accepted because polarization switching is low-consequence
@@ -672,7 +672,7 @@ actuates real hardware:
 > (6, 7) stand for the audio-session login. Vector 10's read-only expose posture still
 > holds (the PTT/arm buttons it guarded against no longer exist), and vector 11 (the
 > `bwbroker` indirection) is historical: the bridge default is now
-> `tcp://192.168.1.178:1883` and `deploy.sh` no longer gates on a name.
+> `tcp://scmino:1883` and `deploy.sh` no longer gates on a name.
 > Any future TX path (serial CI-V per the operator decision) must re-run this
 > review. The block below is kept as the audit record.
 
@@ -786,7 +786,7 @@ Each vector states the surface, the exposure, and the decision:
     before config is seeded; the exception to the topology addressing rule is
     annotated in `docs/conventions/mqtt-topology.md`.
     Update: the split-direction shack broker never went live, and the bridge now
-    addresses the station broker directly (`tcp://192.168.1.178:1883`), so this vector
+    addresses the station broker directly (`tcp://scmino:1883`), so this vector
     no longer applies unless a name is reintroduced.
 
 **Register verdict:** all eleven vectors accepted under the house-LAN trust posture,
@@ -998,7 +998,7 @@ gate, logger senders); **merged to main and live since 2026-11-04**. Open items,
 
 station-log took over the retired logger-spot-bridge's feed (`muehle/hf/station-log/working`, replaces
 `muehle/hf/spots`) and its UDP ports. The feed is only live if the loggers on bwpc (192.168.1.197) send to
-scmino (192.168.1.178), and the repo does not record the current settings:
+scmino, and the repo does not record the current settings:
 
 > **2026-11-13:** station-log retired. The feed moved to opsotter `operating/working-station` (unit
 > `working-station` on scmino). It listens on the same UDP ports 12060 and 2249 and publishes the same
@@ -1010,7 +1010,7 @@ scmino (192.168.1.178), and the repo does not record the current settings:
 - **Log4OM**: UDP outbound service type `CALLSIGN` to `scmino:2249` (bare call). Never send `ADIF_MESSAGE`
   to 2249. station-log listened for it on `scmino:2341` until 2026-11-13.
 - **Check** on scmino: `sudo tcpdump -ni any -A 'udp port 12060 or udp port 2249'` while typing a call, then
-  `mosquitto_sub -h 192.168.1.178 -u hf -P "$MQTT_PASSWORD" -t 'muehle/hf/station-log/working' -v`.
+  `mosquitto_sub -h scmino -u hf -P "$MQTT_PASSWORD" -t 'muehle/hf/station-log/working' -v`.
 - **Cutover**: stop `logger-spot-bridge` first (it holds both ports), enable the `[working]` listeners in
   `/etc/station-log/config.toml` (seed-once: add by hand), put `STATION_LOG_QRZ_PASSWORD` in the env file, restart
   station-log. Then remove the unit, `/opt`, `/etc`, `/var/lib` and the service user of logger-spot-bridge on scmino

@@ -1,5 +1,5 @@
 # Station Mosquitto broker — example config.
-# Lives at /etc/mosquitto/mosquitto.conf on scmino (192.168.1.178), 0600, owned
+# Lives at /etc/mosquitto/mosquitto.conf on scmino, 0600, owned
 # by the mosquitto user. Seeded once by deploy.sh; edit on the device after that.
 # See README.md for the full two-broker topology and the topic-direction table.
 

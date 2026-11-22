@@ -10,21 +10,21 @@
 [[link]]
 group = "Station"
 name  = "hf_console (web)"
-url   = "http://192.168.1.178:8091/"
+url   = "http://scmino:8091/"
 host  = "scmino"
 note  = "Station console in the browser — HF/UHF operation, map, CAM tab"
 
 [[link]]
 group = "Station"
 name  = "VHF cam preview"
-url   = "http://192.168.1.178:8083/"
+url   = "http://scmino:8083/"
 host  = "scmino"
 note  = "vhfcam-restream: live HLS + overlay, IC-9700 RX audio, recordings, YouTube toggle"
 
 [[link]]
 group = "Station"
 name  = "testui (bus browser)"
-url   = "http://192.168.1.178:8090/"
+url   = "http://scmino:8090/"
 host  = "scmino"
 note  = "Every slot's meta/state/status live; publish /cmd, clear retained topics"
 
@@ -38,7 +38,7 @@ note  = "Live HamClock view"
 [[link]]
 group = "Station"
 name  = "Ultrabeam controller"
-url   = "http://192.168.1.178:8080/"
+url   = "http://scmino:8080/"
 host  = "scmino"
 note  = "ultrabridge web UI (RCU-06)"
 
@@ -94,7 +94,7 @@ note  = "HA Mosquitto add-on — remote end of the station broker's muehle/# mir
 [[link]]
 group = "Infrastructure"
 name  = "MQTT broker (station)"
-url   = "mqtt://192.168.1.178:1883"
+url   = "mqtt://scmino:1883"
 host  = "scmino"
 note  = "Station Mosquitto — the station bus; bridged to the HA broker .50 (muehle/# both ways)"
 

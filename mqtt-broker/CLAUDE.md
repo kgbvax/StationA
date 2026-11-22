@@ -1,11 +1,11 @@
 # CLAUDE.md — mqtt-broker
 
-The **station Mosquitto broker**, running on **scmino** (`192.168.1.178`,
+The **station Mosquitto broker**, running on **scmino** (`scmino`,
 since 2026-10-01; originally planned for shari) and bridged to the Home
 Assistant broker at `192.168.1.50:1883`.
 
 **Current state: this is the station broker.** All station clients connect to
-`192.168.1.178:1883`, including M5 Stamp PLC #1 (`m5stamp-hf-ctrl`, `hf/switch` +
+`scmino:1883`, including M5 Stamp PLC #1 (`m5stamp-hf-ctrl`, `hf/switch` +
 `hf/pa-arm`; `MQTT_HOST` in its gitignored `src/secrets.h`), shelly-power-bridge
 (`power/*`) and the Shelly plugs it fronts. A Shelly's native topics
 (`<shelly_id>/…`) are NOT under `muehle/#`, so a plug must use the same broker as

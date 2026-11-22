@@ -28,7 +28,7 @@ import 'package:flutter/foundation.dart';
 import 'radio_status.dart';
 import 'vhfcam_transport_io.dart' if (dart.library.html) 'vhfcam_transport_web.dart';
 
-const defaultVhfcamBaseUrl = 'http://192.168.1.178:8083';
+const defaultVhfcamBaseUrl = 'http://scmino:8083';
 
 /// Hosts that served the cam before it moved to scmino (2026-09-30): shari's
 /// wired and wifi addresses and its name. The service is never run on both.

@@ -1,7 +1,7 @@
 # MQTT broker topology
 
 The station runs **two Mosquitto brokers** joined by a mosquitto `bridge`: the
-station broker on **scmino** (`192.168.1.178:1883`, `mqtt-broker/`) and the Home
+station broker on **scmino** (`scmino:1883`, `mqtt-broker/`) and the Home
 Assistant broker at `192.168.1.50:1883` (HA's own Mosquitto add-on, untouched).
 The scmino broker is **the station broker**: every station client connects to it,
 and it is bridged both ways to `.50` as a `muehle/#` mirror. The station keeps a
@@ -15,7 +15,7 @@ seed-once deploy script). This document is the canonical reference for the
 topology, addressing, topic directions, and ACLs.
 
 > **Current state.** The station broker runs on **scmino**
-> (`192.168.1.178:1883`); shari runs no mosquitto. All station clients connect
+> (`scmino:1883`); shari runs no mosquitto. All station clients connect
 > to it. It is bridged to `.50` as a `muehle/#` mirror in both directions,
 > `homeassistant/status` in, `homeassistant/+/+/+/config` out (see
 > `mqtt-broker/mosquitto.conf.example`). A Shelly's native topics are not under
@@ -32,7 +32,7 @@ topology, addressing, topic directions, and ACLs.
 Station broker with the HA bridge:
 
 ```
-   scmino (192.168.1.178)                        HA box (192.168.1.50)
+   scmino                        HA box (192.168.1.50)
    ┌─────────────────────────────┐               ┌──────────────────┐
    │ Mosquitto (station, primary)│── bridge ───▶ │ Mosquitto (HA)   │
    │ 0.0.0.0:1883                │   connection  │ :1883  (untouched)│
@@ -49,7 +49,7 @@ Station broker with the HA bridge:
    └─────────────────────────────────────────────┘
    Remote MQTT clients (Shelly plugs, M5 Stamp PLC #1 and #2, ant-switch ESP,
    console tablet, M5 Dial, M5 DualKey, winpc-power-bridge on bwpc) connect to
-   192.168.1.178:1883 over the shack LAN.
+   scmino:1883 over the shack LAN.
 ```
 
 **Authority:** `muehle/#` is primary on the station broker; HA is a
@@ -62,24 +62,24 @@ one" (§9).
 
 | Client | Broker address | Why |
 |--------|---------------|-----|
-| Go services on scmino | `tcp://127.0.0.1:1883` or `tcp://192.168.1.178:1883` | co-located with the station broker; loopback or the LAN address |
-| Go services on shari (spid-ercm-rotator-bridge, hf-mqtt-capture) | not recorded in the repo | defaults are `tcp://127.0.0.1:1883` but shari runs no broker; the live seed-once config must name the scmino broker (`192.168.1.178:1883`) |
-| Shelly plugs, M5 Stamp PLC #1 and #2, M5 DualKey, M5 Dial, hf_console tablet (setup default), winpc-power-bridge (bwpc) | `192.168.1.178:1883` | the station broker |
-| ant-switch ESP | `waveshare_relay-antswitch-bridge/esphome/station-at1.yaml` and its `docs/known-issues.md` | verify on the device that it names `192.168.1.178` |
-| Workstation (dev `go run`, `mosquitto_sub`) | `192.168.1.178:1883` (station broker); `192.168.1.50:1883` also shows every `muehle/#` topic through the mirror | shari (`.139`) runs no broker |
-| chaseq-ui (bwpc) | `192.168.1.178:1883` | consumer of `hf/chase`, `hf/radio`; sends `/cmd` to `hf/chase` and `hf/radio`; account `hf`; client ID `muehle-chaseq-ui` |
+| Go services on scmino | `tcp://127.0.0.1:1883` or `tcp://scmino:1883` | co-located with the station broker; loopback or the LAN address |
+| Go services on shari (spid-ercm-rotator-bridge, hf-mqtt-capture) | not recorded in the repo | defaults are `tcp://127.0.0.1:1883` but shari runs no broker; the live seed-once config must name the scmino broker (`scmino:1883`) |
+| Shelly plugs, M5 Stamp PLC #1 and #2, M5 DualKey, M5 Dial, hf_console tablet (setup default), winpc-power-bridge (bwpc) | `scmino:1883` | the station broker |
+| ant-switch ESP | `waveshare_relay-antswitch-bridge/esphome/station-at1.yaml` and its `docs/known-issues.md` | verify on the device that it names `scmino` |
+| Workstation (dev `go run`, `mosquitto_sub`) | `scmino:1883` (station broker); `192.168.1.50:1883` also shows every `muehle/#` topic through the mirror | shari (`.139`) runs no broker |
+| chaseq-ui (bwpc) | `scmino:1883` | consumer of `hf/chase`, `hf/radio`; sends `/cmd` to `hf/chase` and `hf/radio`; account `hf`; client ID `muehle-chaseq-ui` |
 | HA's MQTT integration | `192.168.1.50:1883` | HA's own broker, unchanged |
 
 `127.0.0.1` reaches the station broker only on scmino; shari runs no broker.
 Repo defaults point at the station broker: `deploy.sh`, Go `Default()` and
-`config.example.toml` use `tcp://192.168.1.178:1883` or `tcp://127.0.0.1:1883` (on
+`config.example.toml` use `tcp://scmino:1883` or `tcp://127.0.0.1:1883` (on
 scmino). Ultrabridge has no
 example file and its `Default()` leaves the broker empty (MQTT disabled).
 Seed-once on-device configs own the live values.
 
 **`bwbroker` (historical).** `icom9700-radio-bridge` used to address the broker
 through a DNS name, `tcp://bwbroker:1883`. Its default is now
-`tcp://192.168.1.178:1883` like every other service and `deploy.sh` no longer gates
+`tcp://scmino:1883` like every other service and `deploy.sh` no longer gates
 on that name. Any remaining `bwbroker` alias must resolve only to the station broker;
 in the 2026-09-26 incident it resolved to `.50`.
 
@@ -113,7 +113,7 @@ Deployed state (per `mqtt-broker/CLAUDE.md`, not re-checked live): the scmino
 `passwd` holds only `hf`. The `bridge`, `console` and `dial` ACL blocks are
 seeded but have no password entries, and the bridge logs in to `.50` as `hf`,
 not `stationa-bridge`. The tablet's setup default is the station broker
-(`192.168.1.178`). The table
+(`scmino`). The table
 below and the HA-side `stationa-bridge` account are the split-mapping design.
 
 Station broker (`mqtt-broker/acl.conf.example`):
@@ -182,7 +182,7 @@ a `stationa-bridge` account with read `homeassistant/status` +
 ## Operational behavior
 
 - **Shack↔house link down:** the station keeps its full local bus
-  on scmino (Go services via `127.0.0.1`, remote devices via `192.168.1.178`);
+  on scmino (Go services via `127.0.0.1`, remote devices via `scmino`);
   `antennaselect`, `powerseq`, and the console keep working. HA goes stale and
   **cannot command the station** until the link returns — this is the intended
   trade-off (shack autonomy). On link restore, retained `state`/`meta`/`status`

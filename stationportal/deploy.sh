@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Deploy stationportal (the station landing page, binary `stationportal`) to
-# scmino (192.168.1.178) as a hardened systemd service on port 80.
+# scmino as a hardened systemd service on port 80.
 #
 # stationportal is a passive bus consumer (no slot, no publishes) plus an HTTP
 # server. It needs: inbound TCP 80, outbound TCP to the MQTT broker and to the
@@ -10,16 +10,16 @@
 #
 # Usage:
 #   ./deploy.sh                       # deploy to default host scmino
-#   SSH_HOST=io@192.168.1.178 ./deploy.sh
+#   SSH_HOST=io@scmino ./deploy.sh
 #
 # Configurable via environment variables (with defaults):
-#   SSH_HOST        SSH target            (default: 192.168.1.178 = scmino)
+#   SSH_HOST        SSH target            (default: scmino)
 #   SSH_USER        SSH user              (default: io)  [used only if SSH_HOST has no user@]
 #   SERVICE_NAME    systemd service name  (default: stationportal)
 #   SERVICE_USER    system user to run as (default: stationportal)
 #   INSTALL_DIR     remote install dir    (default: /opt/stationportal)
 #   HTTP_ADDR       http_addr value       (default: :80)
-#   MQTT_BROKER     mqtt.broker value     (default: tcp://192.168.1.178:1883 — the
+#   MQTT_BROKER     mqtt.broker value     (default: tcp://scmino:1883 — the
 #                   scmino station broker)
 #   MQTT_USER       mqtt.user value       (default: hf)
 #
@@ -33,7 +33,7 @@
 set -euo pipefail
 
 # --- configuration ----------------------------------------------------------
-SSH_HOST="${SSH_HOST:-192.168.1.178}"
+SSH_HOST="${SSH_HOST:-scmino}"
 SSH_USER="${SSH_USER:-io}"
 SERVICE_NAME="${SERVICE_NAME:-stationportal}"
 SERVICE_USER="${SERVICE_USER:-stationportal}"
@@ -45,7 +45,7 @@ BINARY="${BINARY:-stationportal}"
 PKG="./cmd/stationportal"
 
 HTTP_ADDR="${HTTP_ADDR:-:80}"
-MQTT_BROKER="${MQTT_BROKER:-tcp://192.168.1.178:1883}"
+MQTT_BROKER="${MQTT_BROKER:-tcp://scmino:1883}"
 MQTT_USER="${MQTT_USER:-hf}"
 
 if [[ "$SSH_HOST" == *"@"* ]]; then

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Deploy testui (the stationa MQTT relay + schema-aware test UI, binary `testui`) to
-# scmino (192.168.1.178; on shari until 2026-10-02) as a hardened systemd service, so the
+# scmino (on shari until 2026-10-02) as a hardened systemd service, so the
 # browser can hit the UI on the LAN without running a local server on the workstation.
 #
 # testui is a network service, not a serial bridge: it connects outbound to the MQTT broker
@@ -17,17 +17,17 @@
 #
 # Usage:
 #   ./deploy.sh                       # deploy to default host scmino
-#   SSH_HOST=io@192.168.1.178 ./deploy.sh
+#   SSH_HOST=io@scmino ./deploy.sh
 #
 # Configurable via environment variables (with defaults):
-#   SSH_HOST        SSH target            (default: 192.168.1.178 = scmino)
+#   SSH_HOST        SSH target            (default: scmino)
 #   SSH_USER        SSH user              (default: io)  [used only if SSH_HOST has no user@]
 #   SERVICE_NAME    systemd service name  (default: testui)
 #   SERVICE_USER    system user to run as (default: testui)
 #   INSTALL_DIR     remote install dir    (default: /opt/testui)
 #   HTTP_ADDR       http_addr value       (default: 0.0.0.0:8090)
 #   SITE            site value            (default: muehle)
-#   MQTT_BROKER     mqtt.broker value     (default: tcp://192.168.1.178:1883 — the
+#   MQTT_BROKER     mqtt.broker value     (default: tcp://scmino:1883 — the
 #                   scmino station broker)
 #   MQTT_CLIENT_ID  mqtt.client_id value  (default: testui)
 #   MQTT_USER       mqtt.user value       (default: hf)
@@ -43,7 +43,7 @@
 set -euo pipefail
 
 # --- configuration ----------------------------------------------------------
-SSH_HOST="${SSH_HOST:-192.168.1.178}"
+SSH_HOST="${SSH_HOST:-scmino}"
 SSH_USER="${SSH_USER:-io}"
 SERVICE_NAME="${SERVICE_NAME:-testui}"
 SERVICE_USER="${SERVICE_USER:-testui}"
@@ -56,7 +56,7 @@ PKG="./cmd/testui"
 
 HTTP_ADDR="${HTTP_ADDR:-0.0.0.0:8090}"
 SITE="${SITE:-muehle}"
-MQTT_BROKER="${MQTT_BROKER:-tcp://192.168.1.178:1883}"
+MQTT_BROKER="${MQTT_BROKER:-tcp://scmino:1883}"
 MQTT_CLIENT_ID="${MQTT_CLIENT_ID:-testui}"
 MQTT_USER="${MQTT_USER:-hf}"
 MQTT_PASSWORD="${MQTT_PASSWORD:-}"

@@ -114,7 +114,7 @@ console, tablet APK + web on scmino:8091), `testui` (bus browser, :8090),
 Mosquitto on scmino), `m5dial-hf-rotctrl` and `m5dualkey-hf-antctrl` (M5Stack
 control heads), `hf-mqtt-capture` (bus recorder on shari).
 
-The services run on two Raspberry Pis. **scmino** (`192.168.1.178`, CM5) runs
+The services run on two Raspberry Pis. **scmino** (`scmino`, CM5) runs
 every HF Go bridge and logic slot, `shelly-power-bridge`, the UHF radio and
 sat-track bridges, vhfcam-restream, the station Mosquitto, the console web
 channel (:8091), testui (:8090) and the landing page (:80). **shari**
@@ -122,7 +122,7 @@ channel (:8091), testui (:8090) and the landing page (:80). **shari**
 `hf-mqtt-capture`. `winpc-power-bridge` runs on the shack PC bwpc
 (`192.168.1.197`). The ant-switch, the M5 Stamp PLCs and the control heads are
 embedded firmware that speak MQTT directly. Everything lives under the
-`muehle/…` address tree. All clients connect to the station Mosquitto on scmino (`192.168.1.178:1883`), which
+`muehle/…` address tree. All clients connect to the station Mosquitto on scmino (`scmino:1883`), which
 mirrors `muehle/#` in both directions to the Home Assistant broker (`192.168.1.50:1883`);
 see `mqtt-broker/CLAUDE.md` and `docs/conventions/mqtt-topology.md`. shari runs no
 mosquitto. (The former `uhf/rotator` slot —

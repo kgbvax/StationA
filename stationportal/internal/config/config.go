@@ -52,7 +52,7 @@ func Default() Config {
 		ProbeTimeoutS:  3,
 		LogLevel:       "info",
 		MQTT: MQTT{
-			Broker:   "tcp://192.168.1.178:1883",
+			Broker:   "tcp://scmino:1883",
 			ClientID: "stationportal",
 			User:     "hf",
 		},

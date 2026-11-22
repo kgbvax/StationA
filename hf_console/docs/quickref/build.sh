@@ -4,7 +4,7 @@
 #   docs/quickref/build.sh
 #
 # 0. ffmpeg grabs one current frame from the antenna cam's live HLS preview
-#    ($VHFCAM_BASE_URL/hls/live.m3u8, default http://192.168.1.178:8083, LAN,
+#    ($VHFCAM_BASE_URL/hls/live.m3u8, default http://scmino:8083, LAN,
 #    no auth) for the CAM sheet. If the grab fails, the sheet shows the
 #    CAMERA STREAM STOPPED state and the build goes on.
 # 1. QUICKREF_RENDER=1 flutter test test/tool/quickref_render_test.dart
@@ -25,7 +25,7 @@ cd "$app"
 
 out="${QUICKREF_OUT:-/tmp/quickref}"
 mkdir -p "$out"
-cam="${VHFCAM_BASE_URL:-http://192.168.1.178:8083}"
+cam="${VHFCAM_BASE_URL:-http://scmino:8083}"
 frame="$out/cam-frame.jpg"
 rm -f "$frame"
 if command -v ffmpeg >/dev/null 2>&1 &&

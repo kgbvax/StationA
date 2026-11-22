@@ -4,14 +4,14 @@ testui is a **MQTT relay + static UI server** for the stationa station bus. It i
 deployed slot: it has no `/meta`, `/state`, `/status`, or `/cmd` of its own on the bus — it
 is a passive consumer that subscribes `<site>/#` and proxies browser publish/clear requests
 back onto the bus with safety guards. It can run two ways: on the developer workstation
-(`make run`, loopback only) or deployed to scmino (`192.168.1.178`; on shari until
+(`make run`, loopback only) or deployed to scmino (on shari until
 2026-10-02) as a hardened systemd service (`./deploy.sh`, HTTP bound to the LAN so the
 browser hits `http://scmino:8090` with no local server). The deployed form is a network service, not a serial bridge — no `/dev/tty*`, so
 the unit runs under a stricter sandbox than the serial bridges (`PrivateDevices=true`).
 
 ## Why a relay (not a direct browser MQTT client)
 
-The station broker (`192.168.1.178`) has only `1883`/`8883` open — no WebSocket listener — so a
+The station broker (`scmino`) has only `1883`/`8883` open — no WebSocket listener — so a
 browser cannot use MQTT.js. The Go relay speaks raw MQTT to the broker (credentials from
 a local `0600` config or `TESTUI_MQTT_PASSWORD`), and exposes HTTP+SSE to the browser.
 The browser uses plain `fetch` + `EventSource`.
@@ -104,7 +104,7 @@ make build vet test test-race
 ```
 
 The unit binds HTTP to `0.0.0.0:8090` (config `http_addr`), so the browser reaches
-`http://scmino:8090` directly. `deploy.sh` seeds the station broker `tcp://192.168.1.178:1883`
+`http://scmino:8090` directly. `deploy.sh` seeds the station broker `tcp://scmino:1883`
 (Mosquitto on scmino). On a fresh host the
 `hf` MQTT password is pulled on-device from an existing station service env (never leaves
 the Pi); scmino had none at the time, so the 2026-10-02 move copied

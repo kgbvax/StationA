@@ -1288,7 +1288,7 @@ connection can be diagnosed. Broker: Mosquitto with a persistent store (so retai
 wanted later, and neither is wanted at present.
 
 **Broker topology:** the station broker is Mosquitto
-(`mqtt-broker/`, persistent store) on **scmino** (`192.168.1.178:1883`). It is bridged
+(`mqtt-broker/`, persistent store) on **scmino** (`scmino:1883`). It is bridged
 both ways to the Home Assistant broker at `192.168.1.50:1883` (HA's own Mosquitto
 add-on) as a `muehle/#` mirror: `muehle/#` both ways, `homeassistant/status` in,
 `homeassistant/+/+/+/config` out. All station clients connect to the scmino broker.

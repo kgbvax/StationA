@@ -117,7 +117,7 @@ interface into bridge/device code (shelly's and tgxl's tuner-package variants ha
 
 ### 6. Query recipes
 
-Linux station services run on two hosts: scmino (`192.168.1.178`) runs all of them
+Linux station services run on two hosts: scmino runs all of them
 except `spid-ercm-rotator-bridge` and `hf-mqtt-capture`, which run on shari
 (`192.168.1.139`). `winpc-power-bridge` on bwpc logs to a file (§4 exception); the
 ESPHome/PlatformIO firmware components (ant-switch, M5 Stamp PLCs, M5 control heads) log
@@ -125,7 +125,7 @@ on the device, not to journald.
 
 ```bash
 # scmino: errors and warnings only, last hour
-ssh io@192.168.1.178 journalctl -u flexbridge -u ultrabridge -u acom1200s-pa-bridge \
+ssh io@scmino journalctl -u flexbridge -u ultrabridge -u acom1200s-pa-bridge \
   -u tgxl-tuner-bridge -u wrc-rotator-bridge -u shelly-power-bridge \
   -u antenna-select -u antmode -u beamsteer -u hadiscovery -u powerseq \
   -u icom9700-radio-bridge -u rigctld-ic9700 \
@@ -136,7 +136,7 @@ ssh io@192.168.1.178 journalctl -u flexbridge -u ultrabridge -u acom1200s-pa-bri
 ssh io@192.168.1.139 journalctl -u spid-ercm-rotator-bridge -u hf-mqtt-capture -p warning -S -1h
 
 # One slot's error narrative including context (ultrabridge runs on scmino)
-ssh io@192.168.1.178 "journalctl -u ultrabridge -S -24h | grep -E 'slot=muehle/hf/ant-ctrl|error'"
+ssh io@scmino "journalctl -u ultrabridge -S -24h | grep -E 'slot=muehle/hf/ant-ctrl|error'"
 
 # What error detail the bus carried (capture recorder, on shari; files are named in UTC)
 ssh io@192.168.1.139 "sudo grep 'error' /var/log/hf-mqtt-capture/\$(date -u +%Y-%m-%d)/\$(date -u +%H).log"

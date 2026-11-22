@@ -51,7 +51,7 @@ bus: {
   style.font-size: 16
 
   scmino-broker: {
-    label: "Mosquitto (station broker)\nscmino 192.168.1.178:1883\nbridged both ways to .50 (muehle/# mirror)"
+    label: "Mosquitto (station broker)\nscmino:1883\nbridged both ways to .50 (muehle/# mirror)"
     class: infra
   }
 
@@ -73,7 +73,7 @@ ha: {
 # ---------------- scmino — logic slots & passive consumers ----------------
 
 scmino: {
-  label: "scmino (Raspberry Pi CM5, 192.168.1.178)\nsystemd services, journald consolidated"
+  label: "scmino (Raspberry Pi CM5)\nsystemd services, journald consolidated"
   label.near: outside-top-center
   style.fill: snow
   style.stroke: dimgray
@@ -294,7 +294,7 @@ antennas: {
 # ---------------- consumers on the LAN ----------------
 
 consumers: {
-  label: "LAN clients (tablet setup default: station broker 192.168.1.178:1883)"
+  label: "LAN clients (tablet setup default: station broker scmino:1883)"
   style.fill: cornsilk
   style.stroke: darkgoldenrod
 

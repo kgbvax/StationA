@@ -215,19 +215,19 @@ opsotter `operating/working-station/` on 2026-11-13.
 Bridges import `shared/` but never another
 bridge's `internal/` (Go's `internal/` rule enforces this across separate modules).
 
-**MQTT broker:** the station Mosquitto runs on scmino (`192.168.1.178:1883`, persistent
+**MQTT broker:** the station Mosquitto runs on scmino (`scmino:1883`, persistent
 store; `mqtt-broker/`) and is the broker every station client connects to. It is bridged to
 the Home Assistant broker at `192.168.1.50:1883` as a `muehle/#` mirror. That mirror is how
 Home Assistant sees the bus. `docs/conventions/mqtt-topology.md` describes the topology; the
 scmino broker is authoritative for `muehle/#`.
 
-**scmino** (Raspberry Pi CM5, `192.168.1.178`, user `io`): the station broker and almost
+**scmino** (Raspberry Pi CM5, `scmino`, user `io`): the station broker and almost
 every Go service, as hardened systemd units. **shari** (Raspberry Pi, `192.168.1.139`,
 same user): `spid-ercm-rotator-bridge` and `hf-mqtt-capture`. `winpc-power-bridge` and
 `chaseq-ui` (from opsotter) run on the Windows shack PC `bwpc` (`192.168.1.197`).
 
 ```bash
-ssh io@192.168.1.178                 # scmino
+ssh io@scmino                 # scmino
 journalctl -u flexbridge -f          # follow a service's logs
 sudo systemctl status flexbridge ultrabridge
 ```

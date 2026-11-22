@@ -5,7 +5,7 @@ void main() {
   test('missing or empty stored value resolves to the scmino default', () {
     expect(resolveVhfcamBaseUrl(null), defaultVhfcamBaseUrl);
     expect(resolveVhfcamBaseUrl('  '), defaultVhfcamBaseUrl);
-    expect(defaultVhfcamBaseUrl, 'http://192.168.1.178:8083');
+    expect(defaultVhfcamBaseUrl, 'http://scmino:8083');
   });
 
   test('a saved shari URL migrates to the scmino default', () {

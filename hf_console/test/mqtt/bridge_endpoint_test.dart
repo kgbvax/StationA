@@ -3,8 +3,8 @@ import 'package:hf_console/mqtt/bridge_endpoint.dart';
 
 void main() {
   test('page origin with explicit port', () {
-    final ep = bridgeEndpoint(Uri.parse('http://192.168.1.178:8091/'));
-    expect(ep.url, 'ws://192.168.1.178:8091/mqtt');
+    final ep = bridgeEndpoint(Uri.parse('http://scmino:8091/'));
+    expect(ep.url, 'ws://scmino:8091/mqtt');
     expect(ep.port, 8091); // must reach client.port, not the 1883 default
   });
 

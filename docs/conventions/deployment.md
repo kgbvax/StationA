@@ -2,7 +2,7 @@
 
 All stationa services follow the same deploy pattern: cross-compile on the workstation,
 copy via SCP, install as a hardened systemd service on a station Raspberry Pi. The
-default host is in each `deploy.sh` (`SSH_HOST`; `WINPC_HOST` in `winpc-power-bridge`): `scmino` (`192.168.1.178`, Raspberry
+default host is in each `deploy.sh` (`SSH_HOST`; `WINPC_HOST` in `winpc-power-bridge`): `scmino` (Raspberry
 Pi CM5) for every bridge and logic service except `spid-ercm-rotator-bridge` and
 `hf-mqtt-capture`, which deploy to `shari` (`192.168.1.139`). `winpc-power-bridge` runs
 on the Windows shack PC `bwpc` (see the deviation below).
@@ -186,18 +186,18 @@ lets the TOML config be less sensitive while the password stays confined to its 
 cd /path/to/project && ./deploy.sh
 
 # Check logs
-ssh io@192.168.1.178 'journalctl -u flexbridge -f'
-ssh io@192.168.1.178 'journalctl -u ultrabridge -f'
+ssh io@scmino 'journalctl -u flexbridge -f'
+ssh io@scmino 'journalctl -u ultrabridge -f'
 ssh io@192.168.1.139 'journalctl -u spid-ercm-rotator-bridge -f'
 
 # Restart a service
-ssh io@192.168.1.178 'sudo systemctl restart flexbridge'
+ssh io@scmino 'sudo systemctl restart flexbridge'
 
 # Check status
-ssh io@192.168.1.178 'sudo systemctl status flexbridge'
+ssh io@scmino 'sudo systemctl status flexbridge'
 
 # Edit config on device (seed-once, safe to change here)
-ssh io@192.168.1.178 'sudo -e /etc/ultrabridge/config.toml'
+ssh io@scmino 'sudo -e /etc/ultrabridge/config.toml'
 ```
 
 ---

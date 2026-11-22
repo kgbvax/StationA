@@ -50,10 +50,10 @@ created in-repo. There are no separate per-component remotes to push to.
 | oscarwatch-sattrack-bridge | `oscarwatch-sattrack-bridge/` | OscarWatch Satellite-link WebSocket bridge → `uhf/sat-track` — the satellite being tracked (name, NORAD, transponder, az/el, range, range rate, sunlit, derived sub-satellite point, radio-corrected up/downlink); read-only, runs on scmino |
 | testui | `testui/` | MQTT relay + schema-aware browser UI for the bus (not a slot; passive consumer + /cmd stimulator) |
 | hf_console | `hf_console/` | Flutter station console: Android APK on the shack tablet, iPhone IPA, and web channel `hf-console-web` on scmino :8091 (Go `webbridge/` WebSocket→MQTT TCP relay). Not a slot; consumer + /cmd stimulator |
-| vhfcam-restream | `vhfcam-restream/` | VHF cam (UniFi Protect RTSPS) multi-sink restreamer — YouTube Live + LAN web preview (:8083) with operational-data overlay (AZ/EL/freq/TX drawtext from the bus) and IC-9700 RX audio (demand-driven via icom9700-radio-bridge); web radio controls; Go supervisor around ffmpeg; MQTT consumer + minimal `/status`/`/state` planes (`muehle/hf/vhfcam`). **Runs on scmino** (`192.168.1.178`), not shari |
+| vhfcam-restream | `vhfcam-restream/` | VHF cam (UniFi Protect RTSPS) multi-sink restreamer — YouTube Live + LAN web preview (:8083) with operational-data overlay (AZ/EL/freq/TX drawtext from the bus) and IC-9700 RX audio (demand-driven via icom9700-radio-bridge); web radio controls; Go supervisor around ffmpeg; MQTT consumer + minimal `/status`/`/state` planes (`muehle/hf/vhfcam`). **Runs on scmino** (`scmino`), not shari |
 | stationportal | `stationportal/` | Station landing page on scmino :80 (`http://scmino/`) — links to every key service (probed), live slot/hardware inventory from `/meta` + two-layer liveness, software/host/resource inventory (not a slot; passive consumer) |
 | hf-mqtt-capture | `hf-mqtt-capture/` | Passive MQTT recorder: `muehle/hf/#` to hourly log files in `/var/log/hf-mqtt-capture/` (72 h retention); runs on shari (not a slot) |
-| mqtt-broker | `mqtt-broker/` | Station Mosquitto broker on **scmino** (`192.168.1.178:1883`) — the station broker every client connects to; bridged to the Home Assistant broker `192.168.1.50` as a `muehle/#` mirror (infra — not a slot, not Go) |
+| mqtt-broker | `mqtt-broker/` | Station Mosquitto broker on **scmino** (`scmino:1883`) — the station broker every client connects to; bridged to the Home Assistant broker `192.168.1.50` as a `muehle/#` mirror (infra — not a slot, not Go) |
 
 Non-component directories: `sas/` (hf_console design artefacts and the mobile-console design
 handoff), `requirements/` (file-based requirements queue for the /loop workflow, see
@@ -95,7 +95,7 @@ workspace.
 | `muehle/hf/vhfcam` | vhfcam-restream | camera restreamer bookkeeping — minimal `/status` + `/state`, no device, an accessory, not in hf_console `expectedSlots` (runs on scmino) |
 | `muehle/uhf/pol-ctrl` | m5stamp-pol-ctrl | M5 Stamp PLC #2 — X-Quad polarization (ESPHome), wifi; not yet flashed (USB flash pending, `docs/known-issues.md`) |
 | `muehle/uhf/radio` | icom9700-radio-bridge | Icom IC-9700 — RS-BA1 LAN session carries RX audio capture (demand-driven); park retune via rigctld-ic9700 (scmino, loopback :4532); serial CI-V monitor off on scmino (its CI-V adapter belongs to rigctld-ic9700); no remote TX (2026-09 pivot) |
-| `muehle/uhf/sat-track` | oscarwatch-sattrack-bridge | software source — OscarWatch on BWPC (`ws://192.168.1.197:7373/`); bridge on scmino (192.168.1.178), read-only |
+| `muehle/uhf/sat-track` | oscarwatch-sattrack-bridge | software source — OscarWatch on BWPC (`ws://192.168.1.197:7373/`); bridge on scmino, read-only |
 | `muehle/uhf/az-rotator` | spid-ercm-rotator-bridge | SPID azimuth rotator, serial (Rot1Prog) — runs on shari with rotctld :4534 + PstRotator UDP :12041 + GS-232B TCP :4533; free motion, no arming gate |
 | `muehle/uhf/el-rotator` | spid-ercm-rotator-bridge | GS-500 elevation via ERC-M controller, serial (GS-232B) — same compound bridge as az-rotator (one process, two slots, per-axis device_online) |
 | `muehle/hf/discovery` | hadiscovery | logic slot — no device (runs on scmino); passive consumer of `/meta` |
@@ -116,7 +116,7 @@ test fixtures and the portal `[[resource]]` Ultrabeam note still say port 3), `a
 
 ## Hosts — scmino and shari
 
-Most services run on **scmino** (`192.168.1.178`, Raspberry Pi CM5, `ssh io@`): flexbridge,
+Most services run on **scmino** (Raspberry Pi CM5, `ssh io@scmino`; always address it by name, never by IP, because the IP changes with Tailscale): flexbridge,
 ultrabridge (:8080, RCU-06 FTDI cable on scmino's USB), acom1200s-pa-bridge,
 wrc-rotator-bridge, tgxl-tuner-bridge, antenna-select, beamsteer, antmode, hadiscovery,
 powerseq, shelly-power-bridge, working-station (from opsotter, UDP 12060/2249), chase-queue (from opsotter), icom9700-radio-bridge + rigctld-ic9700,
@@ -128,7 +128,7 @@ components). winpc-power-bridge and chaseq-ui (from opsotter) run on the Windows
 
 ```bash
 # SSH in
-ssh io@192.168.1.178   # scmino: flexbridge, ultrabridge, acom1200s-pa-bridge, …
+ssh io@scmino   # scmino: flexbridge, ultrabridge, acom1200s-pa-bridge, …
 ssh io@192.168.1.139   # shari: spid-ercm-rotator-bridge, hf-mqtt-capture
 
 # Check service status
@@ -148,7 +148,7 @@ sudo systemctl restart flexbridge
 sudo systemctl restart ultrabridge
 ```
 
-The station broker is Mosquitto on scmino (`192.168.1.178:1883`, `mqtt-broker/`); every
+The station broker is Mosquitto on scmino (`scmino:1883`, `mqtt-broker/`); every
 station client connects to it. It is bridged both ways to the Home Assistant broker
 `192.168.1.50:1883` as a `muehle/#` mirror, so Home Assistant sees the bus; the HA broker is
 not a station broker. shari runs no broker. See `mqtt-broker/` and
@@ -188,7 +188,7 @@ from `flexbridge/`). Cross-cutting Go code, not docs, lives in the `shared/` mod
 
 ## MQTT broker access
 
-The station broker is Mosquitto on **scmino** (`192.168.1.178:1883`, `mqtt-broker/`) and is
+The station broker is Mosquitto on **scmino** (`scmino:1883`, `mqtt-broker/`) and is
 authoritative for `muehle/#`; all station clients connect to it (services on scmino may use
 loopback). It bridges to the Home Assistant broker `192.168.1.50:1883` (HA's Mosquitto
 add-on, untouched; it keeps serving HA's other MQTT devices) as a `muehle/#` mirror, which
@@ -210,10 +210,10 @@ broker `.50` also shows all of `muehle/#` through the mirror):
 
 ```bash
 # Subscribe to all topics under muehle/ on the station broker (scmino)
-mosquitto_sub -h 192.168.1.178 -u hf -P "$MQTT_PASSWORD" -t 'muehle/#' -v
+mosquitto_sub -h scmino -u hf -P "$MQTT_PASSWORD" -t 'muehle/#' -v
 
 # Watch a single slot
-mosquitto_sub -h 192.168.1.178 -u hf -P "$MQTT_PASSWORD" -t 'muehle/hf/radio/#' -v
+mosquitto_sub -h scmino -u hf -P "$MQTT_PASSWORD" -t 'muehle/hf/radio/#' -v
 ```
 
 The scmino station broker mirrors `muehle/#` to and from the HA broker `.50`, and HA's MQTT

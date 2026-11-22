@@ -1,6 +1,6 @@
 # hf_console — Mühle HF station tablet/phone console
 
-Flutter console for operating the HF portion of the Mühle station from an Android tablet or an iPhone. Connects directly to the MQTT broker — raw TCP on Android/iOS, WebSocket via the Go bridge on web. The setup screen and the web bridge both default to the station broker on scmino (`192.168.1.178:1883`, see `../mqtt-broker/README.md`; web: see "Web channel on scmino"). It mirrors `muehle/#` both ways to the Home Assistant broker; the console keeps working when the shack↔house link is down. shari runs no broker.
+Flutter console for operating the HF portion of the Mühle station from an Android tablet or an iPhone. Connects directly to the MQTT broker — raw TCP on Android/iOS, WebSocket via the Go bridge on web. The setup screen and the web bridge both default to the station broker on scmino (`scmino:1883`, see `../mqtt-broker/README.md`; web: see "Web channel on scmino"). It mirrors `muehle/#` both ways to the Home Assistant broker; the console keeps working when the shack↔house link is down. shari runs no broker.
 
 ## Design
 
@@ -38,7 +38,7 @@ See `../sas/tablet_console_hybrid_preview.html` for the approved high-fidelity r
 
 ## MQTT
 
-Uses `mqtt_client` v10.x, MQTT 3.1.1, direct TCP to the broker entered on first launch (setup screen default `192.168.1.178:1883`; see the intro). Credentials stored in `flutter_secure_storage`; entered on first launch (use the dedicated `console` account below).
+Uses `mqtt_client` v10.x, MQTT 3.1.1, direct TCP to the broker entered on first launch (setup screen default `scmino:1883`; see the intro). Credentials stored in `flutter_secure_storage`; entered on first launch (use the dedicated `console` account below).
 
 Create a dedicated broker user `console` with narrow ACL (as in `../mqtt-broker/acl.conf.example`; not seeded on the scmino broker yet, whose only local account is `hf`):
 - subscribe: `muehle/+/+/state`, `muehle/+/+/meta`, `muehle/+/+/status`
@@ -168,7 +168,7 @@ legitimate uses, so nothing is blocked and there is no button; the fix is split-
 ## Antenna cam (CAM tab)
 
 The CAM tab plays vhfcam-restream's live HLS preview (`/hls/live.m3u8` on the
-cam server, default `http://192.168.1.178:8083`) and mirrors its radio-audio
+cam server, default `http://scmino:8083`) and mirrors its radio-audio
 controls (`POST /api/cmd/{audio_on,audio_off,power_on}` — audio_on takes the
 IC-9700 CI-V session, exactly like the :8083 reference page). Its RECORDING
 card starts/stops a server-side recording of the preview (`POST
@@ -178,7 +178,7 @@ holds the radio audio while recording; downloads happen on the :8083 page.
 Two deliberate platform notes:
 
 - The base URL is a user setting, key `vhfcam_base_url` (CredentialStore,
-  editable in the gear sheet, default `http://192.168.1.178:8083`). A saved
+  editable in the gear sheet, default `http://scmino:8083`). A saved
   value still pointing at shari (`.139`/`.140`/`shari`, pre-2026-09-30 host)
   is treated as unset and resolves to the scmino default
   (`resolveVhfcamBaseUrl`).
@@ -249,7 +249,7 @@ Sideload `build/app/outputs/flutter-apk/app-release.apk` onto the tablet.
 
 ### Web channel on scmino
 
-There is also a web deployment on scmino (`192.168.1.178`; on shari until
+There is also a web deployment on scmino (on shari until
 2026-10-02) for browser access from the LAN:
 
 ```bash
@@ -267,7 +267,7 @@ http://scmino:8091/
 The browser cannot open raw TCP sockets, so the web build uses WebSocket. The
 Go bridge (`webbridge/`) serves the static Flutter build at `/` and forwards
 the `/mqtt` WebSocket stream byte-for-byte to the station broker
-(`-mqtt-broker`, default `192.168.1.178:1883` — the scmino station broker,
+(`-mqtt-broker`, default `scmino:1883` — the scmino station broker,
 since 2026-10-31; it was `.50` before, so every redeploy then wrote `.50` into
 the unit). The bridge forwards the browser's login unchanged, so that
 account must exist on the scmino broker (the web console logs in as `hf`). The page
