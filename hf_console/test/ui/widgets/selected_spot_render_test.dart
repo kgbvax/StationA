@@ -12,7 +12,7 @@ import '../../support/fake_mqtt_service.dart';
 import '../../support/test_harness.dart';
 
 // The selected-station marker: muehle/hf/station-log/working carries the station the
-// operator keyed in the shack logger (station-log); the maps render a
+// operator keyed in the shack logger (published by working-station (opsotter)); the maps render a
 // pin + callsign (Mercator) / pin or bearing ray + callsign + chip (compass).
 // These tests drive the same path the MQTT service uses — BusStore.apply.
 

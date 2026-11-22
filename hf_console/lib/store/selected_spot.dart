@@ -1,6 +1,7 @@
 // selected_spot.dart — the operator-keyed station from muehle/hf/station-log/working.
 //
-// station-log (scmino; it took over from logger-spot-bridge) publishes the station the operator has keyed
+// working-station (opsotter, scmino; it took over from station-log, retired
+// 2026-11-13, which took over from logger-spot-bridge) publishes the station the operator has keyed
 // in the logging software (DXLog `lookupinfo` / Log4OM outbound CALLSIGN) as
 // the `selected` record of the retained working document: callsign, RF context, map position
 // and the beam answer (azimuth + distance_km). This model parses that record
@@ -8,9 +9,9 @@
 //
 // Terminology (user's ask): this is NOT a spot — a call entered by hand must
 // behave exactly like one picked from a spot list. The feed is a side topic of
-// station-log (`…/station-log/working`), not a slot; BusStore.workingState.
+// the muehle/hf/station-log slot (`…/station-log/working`), not a slot; BusStore.workingState.
 //
-// The bridge resolves position and bearing; the console only renders (and
+// working-station resolves position and bearing; the console only renders (and
 // ages out: dim after 5 min, gone after 15 min — see selectedStaleness).
 
 /// Age buckets the painters/renderers act on. A selection older than

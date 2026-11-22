@@ -12,6 +12,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../mqtt/mqtt_service.dart';
+import '../../platform/app_quit.dart';
 import '../../store/credential_store.dart';
 import '../../dxspot/dxspot_service.dart';
 import '../../vhfcam/vhfcam_service.dart';
@@ -172,6 +173,14 @@ class _DxConfigDialogState extends State<_DxConfigDialog> {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.end,
                     children: [
+                      if (appQuitSupported) ...[
+                        TextButton(
+                          key: const ValueKey('settings-quit'),
+                          onPressed: _confirmQuit,
+                          child: Text('QUIT APP', style: AppTheme.mono(13, color: AppTheme.red, weight: FontWeight.w600)),
+                        ),
+                        const Spacer(),
+                      ],
                       TextButton(
                         onPressed: () => Navigator.of(context).pop(),
                         child: Text('CANCEL', style: AppTheme.mono(13, color: AppTheme.txtMute, weight: FontWeight.w600)),
@@ -189,6 +198,37 @@ class _DxConfigDialogState extends State<_DxConfigDialog> {
               ),
       ),
     );
+  }
+
+  /// QUIT APP behind a confirmation: on the kiosk tablet it also leaves kiosk
+  /// mode until the app is started again.
+  Future<void> _confirmQuit() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppTheme.card,
+        shape: RoundedRectangleBorder(side: BorderSide(color: AppTheme.cardLine)), // square frame
+        title: Text('QUIT APP?', style: AppTheme.display(16, weight: FontWeight.w700)),
+        content: Text(
+          'The console closes and kiosk mode ends until you start the app again. '
+          'The station keeps running.',
+          style: AppTheme.body(13),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: Text('CANCEL', style: AppTheme.mono(13, color: AppTheme.txtMute, weight: FontWeight.w600)),
+          ),
+          ElevatedButton(
+            key: const ValueKey('settings-quit-confirm'),
+            onPressed: () => Navigator.of(ctx).pop(true),
+            style: AppTheme.actionButton(active: true),
+            child: const Text('QUIT'),
+          ),
+        ],
+      ),
+    );
+    if (ok == true) await quitApp();
   }
 
   /// Colour-scheme picker. Applies immediately (the console rebuilds behind

@@ -79,6 +79,7 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 		AvailTopic:          availabilityTopic(cfg),
 		PublishHADiscovery:  cfg.MQTT.PublishHADiscovery,
 		PowerLimitMechanism: cfg.PowerLimit.Mechanism,
+		AllowCrossBandSplit: cfg.Split.AllowCrossBand,
 	}, pub, &slogAdapter{log})
 
 	// /cmd dispatch: paho runs message handlers on its own goroutine, and a DVK
@@ -100,7 +101,7 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("mqtt connect: %w", err)
 	}
-	defer mqttClient.Disconnect(500)
+	defer sharedmqtt.DisconnectOffline(mqttClient, availabilityTopic(cfg), 500)
 	pub.Client = mqttClient
 	log.Info("MQTT connected", "broker", cfg.MQTT.Broker)
 
@@ -305,6 +306,10 @@ func runOnce(ctx context.Context, cfg config.Config, host string, b *bridge.Brid
 			b.HandleStatus(f)
 		}
 	})
+
+	// Replies to the commands the bridge sends: a refused command is logged
+	// with the radio's error code instead of vanishing.
+	client.SetReplyHandler(b.HandleReply)
 
 	info, err := client.Handshake(cctx)
 	if err != nil {

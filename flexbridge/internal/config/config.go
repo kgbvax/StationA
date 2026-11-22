@@ -26,6 +26,15 @@ type Config struct {
 	MQTT       MQTTConfig       `toml:"mqtt"`
 	Log        LogConfig        `toml:"log"`
 	PowerLimit PowerLimitConfig `toml:"power_limit"`
+	Split      SplitConfig      `toml:"split"`
+}
+
+// SplitConfig controls what the bridge does when slice A changes band while
+// the radio works split.
+type SplitConfig struct {
+	// AllowCrossBand keeps the split (RX on the new band, TX on the old one).
+	// false (default): slice A takes TX and the split slice is removed.
+	AllowCrossBand bool `toml:"allow_cross_band"`
 }
 
 // PowerLimitConfig selects how the set_rf_power_limit ceiling is enforced

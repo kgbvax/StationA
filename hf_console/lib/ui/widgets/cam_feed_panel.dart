@@ -146,7 +146,7 @@ class _CamFeedPanelState extends State<CamFeedPanel> {
   _FeedState _stateFor(VhfcamService svc) {
     if (kIsWeb) return _FeedState.web;
     if (!svc.serverOnline) return _FeedState.serverOffline;
-    if (_playerReady) return _FeedState.live;
+    if (_playerReady || svc.stillFrame != null) return _FeedState.live;
     if (!svc.streamLive) return _FeedState.sinkStopped;
     return _FeedState.connecting;
   }
@@ -196,7 +196,11 @@ class _CamFeedPanelState extends State<CamFeedPanel> {
             child: Container(
               color: AppTheme.pane,
               child: switch (state) {
-                _FeedState.live => ClipRect(child: VideoPlayer(_controller!)),
+                _FeedState.live => ClipRect(
+                    child: _playerReady
+                        ? VideoPlayer(_controller!)
+                        : Image.memory(svc.stillFrame!, fit: BoxFit.cover, gaplessPlayback: true),
+                  ),
                 _FeedState.connecting => Center(
                     child: SizedBox(
                       width: 28,

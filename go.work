@@ -5,7 +5,6 @@ use (
 	./antennaselect
 	./antmode
 	./beamsteer
-	./chase-queue
 	./flexbridge
 	./hadiscovery
 	./hf-mqtt-capture
@@ -15,7 +14,6 @@ use (
 	./shared
 	./shelly-power-bridge
 	./spid-ercm-rotator-bridge
-	./station-log
 	./stationportal
 	./testui
 	./tgxl-tuner-bridge

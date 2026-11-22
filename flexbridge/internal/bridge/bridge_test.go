@@ -3,6 +3,7 @@ package bridge
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"strconv"
 	"strings"
@@ -512,6 +513,7 @@ type fakeCommander struct {
 	rxAntCall      []rxAntCall
 	tuneCall       []tuneCall
 	txCall         []txCmd
+	sliceCall      []string
 }
 
 type rxAntCall struct {
@@ -542,6 +544,27 @@ func (f *fakeCommander) TuneSlice(slice int, freqHz int64) error {
 	defer f.mu.Unlock()
 	f.tuneCall = append(f.tuneCall, tuneCall{slice, freqHz})
 	return nil
+}
+
+func (f *fakeCommander) SetSliceTX(slice int) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.sliceCall = append(f.sliceCall, fmt.Sprintf("tx %d", slice))
+	return nil
+}
+
+func (f *fakeCommander) RemoveSlice(slice int) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.sliceCall = append(f.sliceCall, fmt.Sprintf("remove %d", slice))
+	return nil
+}
+
+// sliceCmds returns the split-collapse calls in order ("tx N", "remove N").
+func (f *fakeCommander) sliceCmds() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.sliceCall...)
 }
 
 func (f *fakeCommander) tunes() []tuneCall {

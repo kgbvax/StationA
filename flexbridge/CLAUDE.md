@@ -35,7 +35,7 @@ SmartSDR radio (the station's FLEX-8400; the SmartSDR TCP/IP API is common to th
   `max_power_level` (`native`), per config `power_limit.mechanism`. It is a ceiling, not
   a setpoint: it never raises output and never restores a power on lift.
 
-Apart from band changes, slice mode, receive antenna, DVK, mic profiles and the power ceiling it never sends commands to the radio.
+Apart from band changes (including the split collapse on a band change, see Split), slice mode, receive antenna, DVK, mic profiles and the power ceiling it never sends commands to the radio.
 
 ---
 
@@ -85,6 +85,10 @@ The TCP read loop (`Client.Run`) is the only radio-event feed: it calls
 `Bridge.HandleStatus`. A process-lifetime goroutine, `Bridge.StateHeartbeat`, republishes
 the `/state` snapshot every 5 s while `device_online` is true; every other `/state` publish
 is change-gated.
+
+Every command goes out as `C<seq>|<cmd>` with its own seq. The radio answers
+`R<seq>|<hex code>|<message>`; `Client.Run` maps the reply back to the command and hands it
+to `Bridge.HandleReply`, which logs a refused command as a Warn with the code and message.
 
 A further path drives the radio: the paho `/cmd` subscription. Its handler must not call the
 bridge inline (a band-change or DVK command is a blocking TCP write), so it funnels payloads
@@ -146,6 +150,12 @@ logger call VFO A — is published alongside as the RX side while another slice 
 warning (spot click retuned VFO A, VFO B still transmitting on the old band); `gen`/`unknown`
 never count as a mismatch. One Warn per edge. Consumers warn, they do not block: cross-band is
 legal and has legitimate uses (`../docs/known-issues.md`, "Split cross-band").
+Exception, since 2026-11-16: if **slice A changes band** while split (spot click, `set_freq`,
+VFO knob), the bridge collapses the split (`collapseSplit`: `slice set <A> tx=1`, then
+`slice remove <split slice>`). `set_band` in split collapses first and changes the band on
+slice A's pan. A band change of the TX slice keeps the split (warn only). Config
+`[split] allow_cross_band = true` turns the collapse off. The accepted `tx=1` and `slice remove`
+replies update the slice model (`applyAcceptedSliceCmd`). Confirmed live on the FLEX-8400 2026-11-16.
 
 **flexbridge is read-only except for band changes, slice mode, receive antenna, DVK, mic profiles, and the power ceiling.** `/cmd` carries
 one-shot intent only (not retained — a stale command must not re-fire on restart):
@@ -155,9 +165,12 @@ one-shot intent only (not retained — a stale command must not re-fire on resta
 - `set_mode` + `value` (`cw`/`usb`/`lsb` only) — `slice set <idx> mode=<MODE>` on the TX
   slice, else the active one; confirm on `/state.mode`. Not yet confirmed live on the
   FLEX-8400 (130dc0f).
-- `set_freq` + `value` (integer Hz, 1.8–54 MHz) — `slice tune <idx> <MHz>` on `rxInputSlice`
-  (the TX slice, slice A in split); confirm on `/state.freq_hz` (`rx_freq_hz` in split). Used by
-  chaseq-ui. Not yet confirmed live on the FLEX-8400.
+- `set_freq` + `value` (integer Hz, 1.8–54 MHz) — `slice tune <idx> <MHz> autopan=1` on
+  `rxInputSlice` (the TX slice, slice A in split); confirm on `/state.freq_hz` (`rx_freq_hz` in
+  split). Used by chaseq-ui and logotter. The radio does **not** send the slice status of a tune
+  back to the client that sent it, so the bridge applies an accepted `slice tune`/`slice set`
+  (reply code 0) to its own slice model (`applyAcceptedSliceCmd`, as FlexLib does). Before
+  this, the radio tuned but `/state` stayed on the old frequency (2026-11-14).
 - `select_rx` + `value` (`ant1`/`ant2`/`rx_a`) — `slice set <idx> rxant=<PORT>` on the
   slice `rx_input` reports (the active slice; slice A in split, the slice the operator
   listens on). A port missing from that slice's reported `ant_list` is dropped. Confirm on

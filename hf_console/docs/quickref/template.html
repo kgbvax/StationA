@@ -8,7 +8,7 @@
   Template for hf-console-quickref.html. Do not edit the generated file:
   edit this template or the call-outs in test/tool/quickref_sheets.dart, then
   run docs/quickref/build.sh. The render test replaces the data slot below
-  with {sheets:[{id,title,purpose,width,height,image,callouts:[{title,text,rect:[x,y,w,h],marker?}]}]};
+  with {sheets:[{id,title,width,height,image,callouts:[{title,text,rect:[x,y,w,h],marker?}]}]};
   rects are in logical screenshot pixels (the image itself is rendered at 2x),
   a zero-size rect is a point.
   Layout: numbered markers beside the controls (no outlines), the legend underneath.
@@ -38,8 +38,7 @@
   }
   header { display: flex; align-items: baseline; gap: 6mm; border-bottom: 0.6mm solid var(--ink); padding-bottom: 1.6mm; }
   header h1 { font: 600 20pt/1 var(--cond); letter-spacing: .04em; margin: 0; text-transform: uppercase; }
-  header .purpose { font-size: 10pt; color: var(--mute); flex: 1; }
-  header .tag { font: 8pt var(--mono); color: var(--faint); text-align: right; }
+  header .tag { font: 8pt var(--mono); color: var(--faint); text-align: right; margin-left: auto; }
   main { flex: 1; position: relative; min-height: 0; margin: 3mm 0 2.5mm; }
   footer { border-top: 0.3mm solid var(--rule); padding-top: 1.6mm; font: 7.5pt var(--mono); color: var(--mute); }
   footer .note { font: italic 8.5pt var(--sans); color: var(--ink); margin-bottom: 1.2mm; }
@@ -86,8 +85,7 @@ function ordered(callouts) {
 
 function renderSheet(sheet, n, total) {
   document.body.insertAdjacentHTML("beforeend", `<section class="sheet" id="${sheet.id}">
-    <header><h1>${esc(sheet.title)}</h1><div class="purpose">${esc(sheet.purpose)}</div>
-      <div class="tag">hf_console quick reference<br>${n} / ${total}</div></header>
+    <header><h1>${esc(sheet.title)}</h1><div class="tag">hf_console quick reference<br>${n} / ${total}</div></header>
     <main></main>
     <footer>${FOOT}</footer></section>`);
   const main = document.getElementById(sheet.id).querySelector("main");

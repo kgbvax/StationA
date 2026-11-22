@@ -3,6 +3,10 @@
 #
 #   docs/quickref/build.sh
 #
+# 0. ffmpeg grabs one current frame from the antenna cam's live HLS preview
+#    ($VHFCAM_BASE_URL/hls/live.m3u8, default http://192.168.1.178:8083, LAN,
+#    no auth) for the CAM sheet. If the grab fails, the sheet shows the
+#    CAMERA STREAM STOPPED state and the build goes on.
 # 1. QUICKREF_RENDER=1 flutter test test/tool/quickref_render_test.dart
 #    → docs/quickref/hf-console-quickref.html (self-contained, images inlined)
 #      plus PNGs + call-out JSON in $QUICKREF_OUT (default /tmp/quickref).
@@ -18,6 +22,20 @@ set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 app="$(cd "$here/../.." && pwd)"
 cd "$app"
+
+out="${QUICKREF_OUT:-/tmp/quickref}"
+mkdir -p "$out"
+cam="${VHFCAM_BASE_URL:-http://192.168.1.178:8083}"
+frame="$out/cam-frame.jpg"
+rm -f "$frame"
+if command -v ffmpeg >/dev/null 2>&1 &&
+   ffmpeg -nostdin -loglevel error -y -rw_timeout 10000000 -i "$cam/hls/live.m3u8" \
+     -frames:v 1 -vf scale=1280:-2 -q:v 3 "$frame" && [[ -s "$frame" ]]; then
+  echo "build.sh: CAM sheet uses a frame from $cam"
+  export QUICKREF_CAM_FRAME="$frame"
+else
+  echo "build.sh: no cam frame from $cam (ffmpeg missing or stream down); CAM sheet shows the stopped state" >&2
+fi
 
 QUICKREF_RENDER=1 flutter test test/tool/quickref_render_test.dart
 cp "$here/hf-console-quickref.html" "$app/../stationportal/internal/web/assets/quickref.html"

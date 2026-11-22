@@ -9,7 +9,7 @@ radio-corrected uplink/downlink frequencies and canonical modes. It also holds t
 **sub-satellite point** (lat/lng/alt), which the bridge derives from the look angle and
 the station QTH. Read-only: no `/cmd`.
 
-The slot is the sat-ops analogue of the working-station feed (`muehle/hf/station-log/working`; formerly `muehle/hf/spots`). Consumers:
+The slot is the sat-ops analogue of the working-station feed (`muehle/hf/station-log/working`, published by working-station (opsotter); formerly `muehle/hf/spots`). Consumers:
 - vhfcam-restream overlay (since 2026-10-07): burns `sat_name` + `range_km` and the
   radio-corrected `downlink_hz`/`uplink_hz` (as FREQ) into the data bar while
   `tracking`; recordings are named after the downlink.
@@ -41,7 +41,7 @@ Flags:
   - It tolerates unknown fields, and a `noradId` sent as a number.
 - `internal/geo`: WGS84 math.
   - `SubPoint` (look angle → geodetic) and `LookAngles` (its inverse).
-  - A Maidenhead decoder copied from the since-removed logger-spot-bridge (station-log carries its own copy); `internal/` can't be imported
+  - A Maidenhead decoder copied from the since-removed logger-spot-bridge (station-log carried its own copy until it was retired on 2026-11-13); `internal/` can't be imported
     across modules.
 - `internal/bridge`:
   - `Build(Input, observer, now) State`: the entire mapping, including canonical-mode

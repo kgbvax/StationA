@@ -319,8 +319,8 @@ Accepted actions:
 
 | Action | `value` | Effect |
 |---|---|---|
-| `set_band` | `"<band>"` (e.g. `"20m"`) | **Native band-stacking.** Changes the band on the active slice's panadapter (`display pan s <handle> band=<wavelength>`, where the wavelength is the band number — `20m`→`20`, `160m`→`160`, `6m`→`6`) and the radio restores the last-used frequency/mode for that band. Only the FLEX-8400's regular bands (`160m`–`6m`) are supported; VHF/UHF XVTR bands and `gen`/`unknown` are rejected. Requires a panadapter to be open; if none is tracked the command is a logged no-op |
-| `set_freq` | `"<Hz>"` (integer, 1 800 000–54 000 000) | **Tune.** Sends `slice tune <idx> <MHz>` to the slice CAT calls VFO A (the TX slice, slice A while split) so a logger following CAT follows the tune. The caller sets the mode with `set_mode` (which targets the TX slice). Out-of-range or non-numeric values and no tracked slice are logged no-ops; confirm on `/state.freq_hz` (`rx_freq_hz` in split) |
+| `set_band` | `"<band>"` (e.g. `"20m"`) | **Native band-stacking.** Changes the band on the active slice's panadapter (`display pan s <handle> band=<wavelength>`, where the wavelength is the band number — `20m`→`20`, `160m`→`160`, `6m`→`6`) and the radio restores the last-used frequency/mode for that band. Only the FLEX-8400's regular bands (`160m`–`6m`) are supported; VHF/UHF XVTR bands and `gen`/`unknown` are rejected. Requires a panadapter to be open; if none is tracked the command is a logged no-op. During split, the bridge first collapses the split (slice A takes TX, the split slice is removed) and changes the band on slice A's panadapter, unless `[split] allow_cross_band = true` |
+| `set_freq` | `"<Hz>"` (integer, 1 800 000–54 000 000) | **Tune.** Sends `slice tune <idx> <MHz>` to the slice CAT calls VFO A (the TX slice, slice A while split) so a logger following CAT follows the tune. The caller sets the mode with `set_mode` (which targets the TX slice). Out-of-range or non-numeric values and no tracked slice are logged no-ops; confirm on `/state.freq_hz` (`rx_freq_hz` in split). The radio sends no slice status to the commanding client, so the bridge moves `/state` itself when the radio accepts the tune (reply code 0). A refused tune is a Warn with the radio's code |
 | `set_mode` | `"cw"` / `"usb"` / `"lsb"` | **Slice mode.** Sends `slice set <idx> mode=<CW\|USB\|LSB>` to the slice `/state` reports (the TX slice, else the active one). Only these three are accepted; the caller picks the sideband (hf_console: LSB below 10 MHz, USB above). With no slice tracked the command is a logged no-op |
 | `select_rx` | `"ant1"` / `"ant2"` / `"rx_a"` | **Receive antenna.** Sends `slice set <idx> rxant=<ANT1\|ANT2\|RX_A>` to the slice `rx_input` reports (the active slice; slice A while `split`). Receive path only — `txant` is never changed. A port missing from that slice's reported `ant_list` is dropped with a warn log; with no slice tracked the command is a logged no-op. Confirmed live on the FLEX-8400 (2026-10-30) |
 | `dvk_play_<N>` | — | Play DVK memory N (1–12) and key the transmitter (SmartSDR keys TX automatically on `playback_start`; no separate `xmit` needed). The per-memory form is what the HA buttons use — no `value` to inject |
@@ -513,6 +513,17 @@ exception to "only the TX slice" is split: while a slice other than slice A
 holds the TX flag, slice A rides along in `/state` as `rx_freq_hz` / `rx_band`
 (with `split` and `cross_band`, see the field reference) so a consumer can
 see where the operator listens versus where the next key-up goes out.
+
+Band change while split. If slice A changes band while the split slice
+transmits on the old band (a logger spot click, `set_freq`, or the VFO knob),
+the bridge collapses the split: it sends `slice set <A> tx=1`, then
+`slice remove <split slice>`. Slice A is then the only slice, on the new band,
+with the TX flag, and `/state` follows it (`split` = false). `set_band` during
+split does the same collapse first and then changes the band on slice A's
+panadapter. A band change of the TX slice itself (a deliberate cross-band
+split, for example 60 m cross-band DX) keeps the split and only sets
+`cross_band`. The configuration `[split] allow_cross_band = true` turns the
+collapse off.
 
 ---
 

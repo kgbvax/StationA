@@ -103,7 +103,9 @@ void main() {
       ..setRadio(freqHz: 14105000, band: '20m', split: true, crossBand: true, rxFreqHz: 18100000, rxBand: '17m');
 
     const flashKey = ValueKey('split-band-flash');
-    double opacity(WidgetTester tester) => tester.widget<FadeTransition>(find.byKey(flashKey)).opacity.value;
+    // Background alpha: 0.18 at the dim end of the swing, 1.0 on the solid bar.
+    double opacity(WidgetTester tester) =>
+        ((tester.widget<Container>(find.byKey(bannerKey)).decoration! as BoxDecoration).color!).a;
 
     // TestHarness freezes animations; re-allow motion for the banner only.
     Widget motion(bool allowed) => Builder(
@@ -113,7 +115,7 @@ void main() {
           ),
         );
 
-    testWidgets('fades between full and dim, never off', (tester) async {
+    testWidgets('swings between solid and dim, never off', (tester) async {
       await tester.pumpWidget(TestHarness(store: crossBand, child: motion(true)));
       await tester.pump();
       final seen = <double>[];
@@ -123,7 +125,7 @@ void main() {
       }
       expect(seen.reduce((a, b) => a < b ? a : b), lessThan(0.5));
       expect(seen.reduce((a, b) => a > b ? a : b), greaterThan(0.9));
-      expect(seen.every((o) => o >= 0.25), isTrue);
+      expect(seen.every((o) => o >= 0.17), isTrue);
       // Gradual, not a hard on/off: no step between samples spans the range.
       for (var i = 1; i < seen.length; i++) {
         expect((seen[i] - seen[i - 1]).abs(), lessThan(0.6));
@@ -131,11 +133,17 @@ void main() {
       await tester.pumpWidget(const SizedBox.shrink()); // dispose the repeating ticker
     });
 
-    testWidgets('reduce-motion holds a solid strip', (tester) async {
+    testWidgets('flashes under reduce-motion too', (tester) async {
       await tester.pumpWidget(TestHarness(store: crossBand, child: motion(false)));
-      await tester.pump(const Duration(milliseconds: 450));
-      expect(find.byKey(bannerKey), findsOneWidget);
-      expect(find.byKey(flashKey), findsNothing);
+      await tester.pump();
+      expect(find.byKey(flashKey), findsOneWidget);
+      final seen = <double>[];
+      for (var i = 0; i < 8; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+        seen.add(opacity(tester));
+      }
+      expect(seen.reduce((a, b) => a > b ? a : b) - seen.reduce((a, b) => a < b ? a : b), greaterThan(0.5));
+      await tester.pumpWidget(const SizedBox.shrink());
     });
   });
 

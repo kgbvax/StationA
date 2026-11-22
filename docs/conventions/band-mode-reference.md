@@ -146,7 +146,7 @@ PSK31 etc. are transmitted *in* DIGU/DIGL on most SDRs, so mapping DIGU to `usb`
 make digital operation indistinguishable from voice.)
 
 A bare `SSB` carries no sideband: an adapter either splits it by frequency (LSB below
-10 MHz, USB at or above; the station-log working feed) or omits the mode (oscarwatch-sattrack-bridge).
+10 MHz, USB at or above; the working-station feed, opsotter `working-station`) or omits the mode (oscarwatch-sattrack-bridge).
 hf_console uses the same 10 MHz split when its band re-tap switches the radio from CW to
 SSB (`set_mode`).
 
@@ -189,8 +189,8 @@ selection (canonical label, source declared by the `band_source` capability,
 
 There is no shared band package. These files carry a copy of the tables above:
 
-- Band edges: flexbridge `internal/flexradio/band.go`; station-log
-  `internal/working/working.go` (`BandOfHz`, `bandFor`); m5stamp-hf-ctrl `src/config.h` (PA arm band safety, with the
+- Band edges: flexbridge `internal/flexradio/band.go`; opsotter `operating/working-station`
+  `internal/working/working.go` (`BandOfHz`, `bandFor`, edges in `internal/band/band.go`); m5stamp-hf-ctrl `src/config.h` (PA arm band safety, with the
   same exit hysteresis as flexbridge); testui `internal/web/static/app.js`;
   ultrabridge `internal/ub/service/controller.go` (`bandName`); icom9700-radio-bridge
   `internal/civ/codec.go`.
@@ -200,7 +200,7 @@ There is no shared band package. These files carry a copy of the tables above:
 - Band colours: hf_console `lib/ui/theme.dart`.
 - Mode normalization: flexbridge `internal/flexradio/status.go` (`NormalizeMode`);
   oscarwatch-sattrack-bridge `internal/bridge/bridge.go` (`CanonicalMode`);
-  station-log `internal/working/canon.go` (`CanonicalMode`; carried over from the retired logger-spot-bridge);
+  opsotter `operating/working-station` `internal/working/canon.go` (`CanonicalMode`; carried over from the retired logger-spot-bridge and station-log);
   icom9700-radio-bridge `internal/civ/codec.go` (`ModeFromByte`, CI-V mode bytes).
 
 Known divergences from this reference. They are open code items, not accepted
@@ -214,10 +214,10 @@ deviations:
   and omits `band` outside them instead of publishing `unknown`. It reads only the CI-V
   mode byte, not the data-mode flag, so USB-D/LSB-D/FM-D publish `usb`/`lsb`/`fm`; RTTY
   (`04`/`08`) and DV/DD (`17`/`22`) are omitted instead of mapped to `data`.
-- station-log's working feed (`hf/station-log/working`) omits `band` instead of publishing `unknown`.
-- station-log's working feed (which also carries `freq_hz`) publishes a canonical-looking
+- The working-station feed (`hf/station-log/working`, opsotter `working-station`) omits `band` instead of publishing `unknown`.
+- The working-station feed (which also carries `freq_hz`) publishes a canonical-looking
   logger band label (e.g. N1MM `20m`) as is, and derives `band` from `freq_hz` only
   otherwise (`internal/working/working.go` `bandFor`).
-- station-log working-feed `CanonicalMode` maps `USB-D`/`LSB-D`/`FM-D` (and the `_D` forms) to
+- The working-station feed's `CanonicalMode` maps `USB-D`/`LSB-D`/`FM-D` (and the `_D` forms) to
   `usb`/`lsb`/`fm`, and any other non-empty unrecognized mode string to `data` instead
   of omitting it.
