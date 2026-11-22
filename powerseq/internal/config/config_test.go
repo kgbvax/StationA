@@ -312,7 +312,7 @@ func validWithStandby() Config {
 		{Name: "pc-sleep", Kind: KindCmd, Slot: "power/shack-pc", Action: "sleep", Value: "now", Retain: &f},
 	}
 	cfg.Wake = []Step{
-		{Name: "pc-wake", Kind: KindWOL, MAC: "aa:bb:cc:dd:ee:ff", Broadcast: "192.168.1.255:9"},
+		{Name: "pc-wake", Kind: KindWOL, MAC: "aa:bb:cc:dd:ee:ff", Broadcast: "192.168.1.255:9", Poke: "192.168.1.197:3389"},
 		{Name: "antennas-on", Kind: KindCmd, Slot: "power/antennas", Action: "set_power", Value: "on"},
 	}
 	cfg.Idle = IdleConfig{ActivitySlot: "hf/antenna-select", TimeoutMinutes: 30,
@@ -336,6 +336,7 @@ func TestStandbyConfigRejects(t *testing.T) {
 		"negative deadband":      func(c *Config) { c.Idle.Watches[0].MinDelta = -1 },
 		"bad mac":                func(c *Config) { c.Wake[0].MAC = "nope" },
 		"broadcast without port": func(c *Config) { c.Wake[0].Broadcast = "192.168.1.255" },
+		"poke without port":      func(c *Config) { c.Wake[0].Poke = "192.168.1.197" },
 	}
 	for name, mut := range cases {
 		cfg := validWithStandby()

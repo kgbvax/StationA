@@ -156,7 +156,7 @@ type LogConfig struct {
 //	kind = "wait_status"  wait for N slots' /status.     slots [, state] [, hold_ms] [, timeout_s]
 //	kind = "wait_state"   wait for a slot's /state field. slot, field, value [, hold_ms] [, timeout_s]
 //	kind = "delay"        sleep a fixed duration.        duration_s | duration("network"|"stagger")
-//	kind = "wol"          send a Wake-on-LAN packet.     mac [, broadcast]
+//	kind = "wol"          send a Wake-on-LAN packet.     mac [, broadcast] [, poke]
 //
 // value is ALWAYS a TOML string: the stationa /cmd value-key convention carries
 // the argument under `value` as a string (model value_type is string|int|float,
@@ -190,6 +190,7 @@ type Step struct {
 	// wol
 	MAC       string `toml:"mac"`
 	Broadcast string `toml:"broadcast"` // host:port, default 255.255.255.255:9
+	Poke      string `toml:"poke"`      // optional host:port, one TCP connect after the packet
 }
 
 // The valid step kinds.
@@ -441,6 +442,11 @@ func validateSteps(list string, steps []Step) error {
 			if st.Broadcast != "" {
 				if _, _, err := net.SplitHostPort(st.Broadcast); err != nil {
 					return fmt.Errorf("%s (%q): wol broadcast must be host:port: %v", prefix, st.Name, err)
+				}
+			}
+			if st.Poke != "" {
+				if _, _, err := net.SplitHostPort(st.Poke); err != nil {
+					return fmt.Errorf("%s (%q): wol poke must be host:port: %v", prefix, st.Name, err)
 				}
 			}
 		default:

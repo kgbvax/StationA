@@ -32,6 +32,15 @@ min_user_idle_minutes = 30
 [state]
 interval_s = 30        # /state refresh (user_idle_s); minimum 5
 
+[tailscale]
+# After the PC resumed from sleep (Modern Standby too), Windows has paused
+# Tailscale, and a remote computer often cannot open a tunnel to this PC.
+# The agent then runs `tailscale ping --tsmp` to every online peer, which
+# opens the tunnels from this side. A missing program is logged once per
+# resume and does nothing else.
+ping_after_resume = true
+path = 'C:\Program Files\Tailscale\tailscale.exe'
+
 [log]
 level = "info"         # debug | info | warn | error
 # Windows exception to the logging convention: the agent runs hidden (no

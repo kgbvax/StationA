@@ -294,6 +294,7 @@ func toSeqSteps(cs []config.Step) []seq.Step {
 			Duration:  st.Duration,
 			MAC:       st.MAC,
 			Broadcast: st.Broadcast,
+			Poke:      st.Poke,
 		}
 	}
 	return out
