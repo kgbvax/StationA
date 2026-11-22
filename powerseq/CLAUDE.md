@@ -129,7 +129,12 @@ the last activity (antennaselect `last_activity`, a watch, the last start/wake)
 → `stopping` → shutdown list + bwpc sleep → `idle` with
 `/state.stop_reason=idle_shutdown`; only `start` revives it. The idle check
 runs on the runner goroutine (1 s ticker), so it serializes with start/stop through `begin()`. Step kind `wol` sends the
-magic packet (UDP broadcast; `RestrictAddressFamilies=AF_INET` covers it). A
+magic packet (UDP broadcast; `RestrictAddressFamilies=AF_INET` covers it).
+The optional `poke = "host:port"` then opens one TCP connection to that
+address and closes it (3 s limit, the result is ignored, since 2026-11-22):
+bwpc sleeps in Modern Standby (S0), where a magic packet does nothing but a
+TCP connect wakes the PC (the NIC has "wake on pattern match"). The example
+config pokes `192.168.1.197:3389` in the startup and wake steps. A
 step that times out → `fault` + `phase=idle`; the slots driven so far remain in
 whatever state the retained `/cmd` last set them (self-healing, no rollback).
 

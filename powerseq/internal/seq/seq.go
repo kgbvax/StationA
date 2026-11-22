@@ -141,6 +141,7 @@ type Step struct {
 	// wol
 	MAC       string // target NIC MAC
 	Broadcast string // host:port; "" → DefaultWOLBroadcast
+	Poke      string // host:port; "" → no TCP connect after the packet
 }
 
 // DefaultWOLBroadcast is the wol destination when a step omits broadcast.
@@ -156,6 +157,13 @@ type Watch struct {
 // WOLSender sends a magic packet for mac to addr (host:port). Injected so tests
 // do not touch the network.
 type WOLSender func(mac net.HardwareAddr, addr string) error
+
+// PokeSender opens one TCP connection to addr (host:port) and closes it. A PC
+// in Modern Standby (S0 low-power idle) ignores a magic packet, but a TCP
+// connect to it wakes it ("wake on pattern match"). The result does not
+// matter: a refused or timed-out connect has woken the PC all the same.
+// Injected so tests do not touch the network.
+type PokeSender func(addr string)
 
 // Config is the subset of config the sequencer needs.
 type Config struct {
@@ -208,6 +216,9 @@ type Config struct {
 	// WOL sends wol steps; nil → SendMagicPacket.
 	WOL WOLSender
 
+	// Poke sends the poke of a wol step; nil → SendPoke.
+	Poke PokeSender
+
 	NetworkDelay    time.Duration // delay "network"
 	StepTimeout     time.Duration // default wait deadline
 	ShutdownStagger time.Duration // delay "stagger"
@@ -231,6 +242,7 @@ type resolvedStep struct {
 	Duration time.Duration // delay
 	MAC      net.HardwareAddr
 	Bcast    string
+	Poke     string
 }
 
 // resolvedWatch is a Watch resolved to an absolute slot, plus its change state.
@@ -258,6 +270,7 @@ type Sequencer struct {
 	antModeSlot  string // absolute; "" = power_hold not read
 	watches      []*resolvedWatch
 	wol          WOLSender
+	poke         PokeSender
 
 	mu     sync.Mutex
 	status map[string]string // absolute slot → "online"|"offline" (absent = unseen)
@@ -339,6 +352,7 @@ func New(cfg Config, pub Publisher, log Logger) (*Sequencer, error) {
 		wake:        wake,
 		idleShut:    idleShut,
 		wol:         cfg.WOL,
+		poke:        cfg.Poke,
 		status:      map[string]string{},
 		state:       map[string]any{},
 		phase:       PhaseIdle,
@@ -347,6 +361,9 @@ func New(cfg Config, pub Publisher, log Logger) (*Sequencer, error) {
 	}
 	if s.wol == nil {
 		s.wol = SendMagicPacket
+	}
+	if s.poke == nil {
+		s.poke = SendPoke
 	}
 	if len(standby) > 0 {
 		if cfg.ActivitySlot == "" {
@@ -430,6 +447,7 @@ func resolve(steps []Step, cfg Config, self, list string) ([]resolvedStep, error
 				return nil, fmt.Errorf("%s step %q: wol mac: %w", list, st.Name, err)
 			}
 			r.MAC = mac
+			r.Poke = st.Poke
 			r.Bcast = st.Broadcast
 			if r.Bcast == "" {
 				r.Bcast = DefaultWOLBroadcast
@@ -981,6 +999,9 @@ func (s *Sequencer) execStep(ctx context.Context, st *resolvedStep) (string, boo
 		if err := s.wol(st.MAC, st.Bcast); err != nil {
 			return "wol failed: " + err.Error(), false
 		}
+		if st.Poke != "" {
+			s.poke(st.Poke)
+		}
 		return "", true
 	case KindWaitStatus:
 		reason, ok := s.wait(ctx, st, func() bool {
@@ -1338,6 +1359,17 @@ func SendMagicPacket(mac net.HardwareAddr, addr string) error {
 	defer conn.Close()
 	_, err = conn.Write(MagicPacket(mac))
 	return err
+}
+
+// PokePeriod bounds the connect of SendPoke.
+const PokePeriod = 3 * time.Second
+
+// SendPoke opens one TCP connection to addr and closes it. See PokeSender.
+func SendPoke(addr string) {
+	c, err := net.DialTimeout("tcp", addr, PokePeriod)
+	if err == nil {
+		_ = c.Close()
+	}
 }
 
 // MagicPacket builds the Wake-on-LAN payload for mac.

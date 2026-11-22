@@ -114,3 +114,24 @@ func TestExampleConfigLoads(t *testing.T) {
 		t.Errorf("example config = %+v", cfg)
 	}
 }
+
+func TestTailscaleDefaultsAndFile(t *testing.T) {
+	d := Defaults()
+	if !d.Tailscale.PingAfterResume || d.Tailscale.Path != DefaultTailscalePath {
+		t.Errorf("defaults = %+v", d.Tailscale)
+	}
+	p := filepath.Join(t.TempDir(), "c.toml")
+	if err := os.WriteFile(p, []byte("[tailscale]\nping_after_resume = false\npath = ''\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(&Flags{ConfigPath: p})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Tailscale.PingAfterResume {
+		t.Error("ping_after_resume = false was not kept")
+	}
+	if cfg.Tailscale.Path != DefaultTailscalePath {
+		t.Errorf("empty path = %q, want the default", cfg.Tailscale.Path)
+	}
+}

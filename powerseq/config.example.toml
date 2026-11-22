@@ -134,6 +134,13 @@ level = "info"
 #     broadcast = "192.168.1.255:9"       # optional host:port, default
 #                                         # 255.255.255.255:9 (prefer the
 #                                         # subnet broadcast on a multi-NIC host)
+#     poke      = "192.168.1.197:3389"      # optional host:port. After the
+#                                         # packet, open one TCP connection
+#                                         # and close it. A PC in Modern
+#                                         # Standby (S0) ignores the magic
+#                                         # packet but wakes for a TCP
+#                                         # connect. A refused connect still
+#                                         # wakes it, so no error ends the step.
 #
 # Phase transitions are implicit: entering the first startup step → phase=
 # starting; completing the last → running. Entering the first shutdown step →
@@ -228,6 +235,7 @@ name = "pc-boot"
 kind = "wol"
 mac = "00:00:00:00:00:00"    # REPLACE with the bwpc NIC MAC
 broadcast = "192.168.1.255:9"
+poke = "192.168.1.197:3389"  # also wakes bwpc from Modern Standby (see kind = "wol")
 
 # 5. Guard: the PLC (hf/switch) must be online before the remote-on relays are
 #    commanded. hf/switch/cmd is ONE retained topic — if set_trx and set_pa
@@ -453,6 +461,7 @@ name = "pc-wake"
 kind = "wol"
 mac = "00:00:00:00:00:00"    # REPLACE with the bwpc NIC MAC
 broadcast = "192.168.1.255:9"
+poke = "192.168.1.197:3389"  # also wakes bwpc from Modern Standby (see kind = "wol")
 
 [[wake]]
 name = "antennas-on"

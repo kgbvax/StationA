@@ -4,7 +4,8 @@ winpc-power-bridge is a small agent on the **Windows shack PC** (`bwpc`,
 `192.168.1.197`, OpenSSH server, German `cmd.exe` shell). It publishes the
 station integration-model slot **`muehle/power/shack-pc`** and lets the station
 put the PC to **sleep (S3)** over MQTT. Waking is not its job: a sleeping PC
-runs no code. `powerseq` wakes it with Wake-on-LAN (`kind = "wol"` step).
+runs no code. `powerseq` wakes it with Wake-on-LAN (`kind = "wol"` step, with `poke` for
+Modern Standby, see below).
 
 - Role `pc-power`; one action `sleep`; `/state` = `{ts, power:"awake",
   user_idle_s, device_online:true, error?}`; asleep = `/status` `offline`.
@@ -14,6 +15,18 @@ runs no code. `powerseq` wakes it with Wake-on-LAN (`kind = "wol"` step).
 - **Retained `/cmd` deliveries are dropped** (`Warn`), so a stale retained
   `sleep` can never put the PC to sleep at boot or right after a wake. Send
   `sleep` non-retained (powerseq: `retain = false`).
+
+- **Tailscale after a resume** (`[tailscale] ping_after_resume`, default on,
+  2026-11-22): bwpc goes to Modern Standby (S0 low-power idle) after one
+  hour without use, not to S3. Windows pauses Tailscale then. After the wake,
+  a remote computer (the operator's Mac) cannot open a tunnel to bwpc, but
+  bwpc can open one to it. The main loop notices a resume when the `/state`
+  tick comes more than 3 intervals late (`internal/tailnet.ResumeDetector`,
+  wall clock without the monotonic reading) and runs `tailscale ping --tsmp`
+  to every online peer (`tailnet.PingPeers`). A missing Tailscale program
+  only logs a warning. A magic packet does not wake bwpc from Modern
+  Standby, a TCP connect to it does: powerseq's `wol` step has the `poke`
+  key for that.
 
 Full wire contract: `docs/winpc-power-bridge-mqtt-api.md`.
 

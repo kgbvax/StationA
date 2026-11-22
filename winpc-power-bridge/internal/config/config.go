@@ -40,11 +40,12 @@ type Config struct {
 	// Location is the physical location label, published in /meta.
 	Location string `toml:"location"`
 
-	MQTT   MQTTConfig   `toml:"mqtt"`
-	Device DeviceConfig `toml:"device"`
-	Sleep  SleepConfig  `toml:"sleep"`
-	State  StateConfig  `toml:"state"`
-	Log    LogConfig    `toml:"log"`
+	MQTT      MQTTConfig      `toml:"mqtt"`
+	Device    DeviceConfig    `toml:"device"`
+	Sleep     SleepConfig     `toml:"sleep"`
+	State     StateConfig     `toml:"state"`
+	Tailscale TailscaleConfig `toml:"tailscale"`
+	Log       LogConfig       `toml:"log"`
 
 	// path is the config file that was loaded ("" if none). Relative paths in
 	// the config (log file) resolve against its directory.
@@ -82,6 +83,18 @@ type StateConfig struct {
 	IntervalS int `toml:"interval_s"`
 }
 
+// TailscaleConfig controls the tunnel refresh after a resume from sleep.
+type TailscaleConfig struct {
+	// PingAfterResume runs `tailscale ping --tsmp` to every online peer after
+	// the PC resumed from sleep, so that remote computers can reach it again.
+	PingAfterResume bool `toml:"ping_after_resume"`
+	// Path is the Tailscale command line program.
+	Path string `toml:"path"`
+}
+
+// DefaultTailscalePath is where the Tailscale installer puts its program.
+const DefaultTailscalePath = `C:\Program Files\Tailscale\tailscale.exe`
+
 // LogConfig controls logging.
 type LogConfig struct {
 	Level string `toml:"level"`
@@ -108,9 +121,10 @@ func Defaults() Config {
 			Model: "Windows PC",
 			Link:  "ethernet",
 		},
-		Sleep: SleepConfig{MinUserIdleMinutes: 30},
-		State: StateConfig{IntervalS: 30},
-		Log:   LogConfig{Level: "info"},
+		Sleep:     SleepConfig{MinUserIdleMinutes: 30},
+		State:     StateConfig{IntervalS: 30},
+		Tailscale: TailscaleConfig{PingAfterResume: true, Path: DefaultTailscalePath},
+		Log:       LogConfig{Level: "info"},
 	}
 }
 
@@ -200,6 +214,9 @@ func fillDefaults(cfg *Config) {
 	}
 	if cfg.State.IntervalS == 0 {
 		cfg.State.IntervalS = d.State.IntervalS
+	}
+	if cfg.Tailscale.Path == "" {
+		cfg.Tailscale.Path = d.Tailscale.Path
 	}
 }
 

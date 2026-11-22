@@ -30,6 +30,7 @@ import (
 
 	"winpc-power-bridge/internal/bridge"
 	"winpc-power-bridge/internal/config"
+	"winpc-power-bridge/internal/tailnet"
 	"winpc-power-bridge/internal/winpower"
 )
 
@@ -117,15 +118,38 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 	}
 	defer s.disconnect()
 
-	tick := time.NewTicker(time.Duration(cfg.State.IntervalS) * time.Second)
+	interval := time.Duration(cfg.State.IntervalS) * time.Second
+	tick := time.NewTicker(interval)
 	defer tick.Stop()
+	// A gap of more than 3 intervals between two ticks means that the PC slept.
+	resume := tailnet.NewResumeDetector(3*interval, time.Now())
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-tick.C:
+		case now := <-tick.C:
 			sharedmqtt.Enqueue(jobs, s.b.PublishState)
+			if resume.Tick(now) && cfg.Tailscale.PingAfterResume {
+				go pingTailnet(ctx, cfg.Tailscale.Path, log)
+			}
 		}
+	}
+}
+
+// pingTailnet opens the Tailscale tunnels from this PC to its online peers
+// after a resume from sleep (see package tailnet). It runs in its own
+// goroutine: a `tailscale ping` can take seconds and must not delay /state.
+func pingTailnet(ctx context.Context, exe string, log *slog.Logger) {
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+	res, err := tailnet.PingPeers(ctx, tailnet.ExecRunner, exe)
+	switch {
+	case errors.Is(err, tailnet.ErrNoTailscale):
+		log.Warn("resume: tailscale program not found, tunnels not refreshed", "path", exe)
+	case err != nil:
+		log.Warn("resume: tailscale tunnels not refreshed", "err", err)
+	default:
+		log.Info("resume: tailscale tunnels refreshed", "peers", res.Peers, "answered", res.Pinged)
 	}
 }
 

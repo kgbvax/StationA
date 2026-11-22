@@ -1086,7 +1086,7 @@ func standbySteps() []Step {
 
 func wakeSteps() []Step {
 	return []Step{
-		{Name: "pc-wake", Kind: KindWOL, MAC: "aa:bb:cc:dd:ee:ff", Broadcast: "192.168.1.255:9"},
+		{Name: "pc-wake", Kind: KindWOL, MAC: "aa:bb:cc:dd:ee:ff", Broadcast: "192.168.1.255:9", Poke: "192.168.1.197:3389"},
 		{Name: "antennas-on", Kind: KindCmd, Slot: "power/antennas", Action: "set_power", Value: "on"},
 	}
 }
@@ -1094,6 +1094,7 @@ func wakeSteps() []Step {
 type wolRec struct {
 	mu    sync.Mutex
 	calls []string
+	pokes []string
 }
 
 func (w *wolRec) send(mac net.HardwareAddr, addr string) error {
@@ -1101,6 +1102,12 @@ func (w *wolRec) send(mac net.HardwareAddr, addr string) error {
 	w.calls = append(w.calls, mac.String()+"@"+addr)
 	w.mu.Unlock()
 	return nil
+}
+
+func (w *wolRec) poke(addr string) {
+	w.mu.Lock()
+	w.pokes = append(w.pokes, addr)
+	w.mu.Unlock()
 }
 
 func (w *wolRec) n() int {
@@ -1156,6 +1163,7 @@ func standbyTestConfig(wol *wolRec) Config {
 		{Slot: "uhf/el-rotator", Field: "el", MinDelta: 2},
 	}
 	cfg.WOL = wol.send
+	cfg.Poke = wol.poke
 	return cfg
 }
 
@@ -1199,6 +1207,12 @@ func TestStandbyAfterIdleAndWakeOnActivity(t *testing.T) {
 	runUntil(t, s, func() bool { return phaseIs(s, PhaseRunning) }, time.Second)
 	if wol.n() != 1 || wol.calls[0] != "aa:bb:cc:dd:ee:ff@192.168.1.255:9" {
 		t.Errorf("wol calls = %v", wol.calls)
+	}
+	wol.mu.Lock()
+	pokes := append([]string(nil), wol.pokes...)
+	wol.mu.Unlock()
+	if len(pokes) != 1 || pokes[0] != "192.168.1.197:3389" {
+		t.Errorf("poke calls = %v, want one to 192.168.1.197:3389", pokes)
 	}
 	ant = cmdsTo(pub, "power/antennas")
 	if len(ant) != 2 || ant[1].value != "on" {
