@@ -214,4 +214,15 @@ void main() {
       expect(cmdRetain['muehle/hf/radio'], isFalse);
     });
   });
+
+  group('75auto slot (muehle/hf/auto-op)', () {
+    test('its commands are one-shot (non-retained)', () {
+      expect(cmdRetain['muehle/hf/auto-op'], isFalse, reason: '75auto drops a retained command');
+    });
+
+    test('it is optional, not expected: 75auto is off by default and bwpc sleeps', () {
+      expect(optionalSlots, contains('muehle/hf/auto-op'));
+      expect(expectedSlots, isNot(contains('muehle/hf/auto-op')));
+    });
+  });
 }

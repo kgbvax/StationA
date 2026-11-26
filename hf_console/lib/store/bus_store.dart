@@ -5,6 +5,7 @@ import 'package:clock/clock.dart';
 import 'package:flutter/foundation.dart';
 
 import 'ant_mode.dart';
+import 'auto_op.dart';
 import 'wiring.dart' show expectedSlots, optionalSlots;
 
 /// Whether an HF carrier is up, as far as the bus can tell.
@@ -99,6 +100,18 @@ class FaultRecord {
   String get key => '$address|$text';
 }
 
+/// Freshness of one slot whose `/state` carries a `seq` (the auto-op slot
+/// of 75auto, contract §6). A retained `/state` at the subscribe can be
+/// old. Only a `/beat`, or a live `/state` with a new `seq`, proves that
+/// the publisher runs now.
+class _Freshness {
+  /// The `seq` of the last `/state` since the connect, retained or live.
+  int? seq;
+
+  /// When the last fresh message arrived (local clock). Null before one.
+  DateTime? at;
+}
+
 class BusStore extends ChangeNotifier {
   final Map<String, Slot> _slots = {};
   final _highFreq = <String, ValueNotifier<dynamic>>{};
@@ -140,6 +153,11 @@ class BusStore extends ChangeNotifier {
     _connectedAt = clock.now();
     _linkUp = true;
     _graceTimer?.cancel();
+    // The broker sends the retained /state again: nothing is fresh until a
+    // new message arrives on this connection. A beat is not retained, so the
+    // last one belongs to the old connection.
+    _freshness.clear();
+    _autoOpBeat = null;
     notifyListeners();
     if (scheduleGraceNotify) {
       _graceTimer = Timer(_silenceGrace, notifyListeners);
@@ -165,6 +183,71 @@ class BusStore extends ChangeNotifier {
   /// snapshot keeps the last known mode (and counts in [malformedPayloads]).
   AntModeState _antMode = AntModeState.normal;
   AntModeState get antMode => _antMode;
+
+  /// The view of 75auto (`muehle/hf/auto-op`), parsed from its /state. A
+  /// malformed document keeps the last good view (and counts in
+  /// [malformedPayloads]). An empty retained /state clears it.
+  AutoOpView? _autoOp;
+  AutoOpView? get autoOp => _autoOp;
+
+  /// The parsed /meta of the auto-op slot, or null.
+  AutoOpMeta? _autoOpMeta;
+  AutoOpMeta? get autoOpMeta => _autoOpMeta;
+
+  /// The last /beat of the auto-op slot on this connection, or null.
+  AutoOpBeat? _autoOpBeat;
+  AutoOpBeat? get autoOpBeat => _autoOpBeat;
+
+  final Map<String, _Freshness> _freshness = {};
+
+  /// When the last fresh message of [addr] arrived on the local clock: a
+  /// /beat, or a live /state with a new `seq`. Null before one arrived on
+  /// this connection.
+  DateTime? freshAt(String addr) => _freshness[addr]?.at;
+
+  /// Time since the last fresh message of [addr], on the local clock. Null
+  /// before one arrived on this connection. It keeps growing while the link
+  /// is down.
+  Duration? stateAge(String addr) {
+    final at = _freshness[addr]?.at;
+    return at == null ? null : clock.now().difference(at);
+  }
+
+  /// Whether a fresh message of [addr] arrived on this connection. False
+  /// while the link is down, and false for a /state that is only the
+  /// retained copy of the broker. The caller judges staleness with
+  /// [stateAge].
+  bool stateFresh(String addr) => _linkUp && _freshness[addr]?.at != null;
+
+  void _markFresh(String addr) {
+    (_freshness[addr] ??= _Freshness()).at = clock.now();
+  }
+
+  /// A /state with a `seq`. It is fresh when it is live (not the retained
+  /// copy that the broker sends at the subscribe) and its `seq` differs
+  /// from the last one on this connection. The MQTT retain flag is the
+  /// honest sign of the retained copy: a broker sets it only for the
+  /// delivery at the subscribe (MQTT 3.1.1, 3.3.1.3).
+  void _stateSeq(String addr, int? seq, bool retained) {
+    if (seq == null) return;
+    final f = _freshness[addr] ??= _Freshness();
+    if (!retained && seq != f.seq) f.at = clock.now();
+    f.seq = seq;
+  }
+
+  /// A /beat of [addr]. Not retained, so it never creates a slot: a slot
+  /// without /status would read as bridge down.
+  void _applyBeat(String addr, dynamic payload) {
+    final value = _decodePayload(payload);
+    if (value is! Map<String, dynamic>) {
+      _malformedPayloads++;
+      notifyListeners();
+      return;
+    }
+    if (addr == autoOpSlot) _autoOpBeat = AutoOpBeat.fromBeat(value);
+    _markFresh(addr);
+    notifyListeners();
+  }
 
   UnmodifiableMapView<String, Slot> get slots => UnmodifiableMapView(_slots);
   UnmodifiableListView<FaultRecord> get faultHistory => UnmodifiableListView(_faultHistory);
@@ -212,6 +295,10 @@ class BusStore extends ChangeNotifier {
     if (parts.isEmpty) return;
     final plane = parts.removeLast();
     final addr = parts.join('/');
+    if (plane == 'beat') {
+      _applyBeat(addr, payload);
+      return;
+    }
     if (!const {'meta', 'state', 'status', 'cmd'}.contains(plane)) {
       return;
     }
@@ -223,10 +310,12 @@ class BusStore extends ChangeNotifier {
       switch (plane) {
         case 'meta':
           slot.meta = null;
+          if (addr == autoOpSlot) _autoOpMeta = null;
         case 'state':
           if (slot.state != null) slot.deviceChangedAt = clock.now();
           slot.state = null;
           if (addr == antModeSlot) _antMode = AntModeState.normal;
+          if (addr == autoOpSlot) _autoOp = null;
         case 'status':
           if (slot.status != null) slot.statusChangedAt = clock.now();
           slot.status = null;
@@ -245,6 +334,7 @@ class BusStore extends ChangeNotifier {
         case 'meta':
           if (value is Map<String, dynamic>) {
             slot.meta = value;
+            if (addr == autoOpSlot) _autoOpMeta = AutoOpMeta.fromMeta(value);
           } else {
             _malformedPayloads++;
           }
@@ -266,6 +356,19 @@ class BusStore extends ChangeNotifier {
               } else {
                 _malformedPayloads++;
               }
+            }
+            if (addr == autoOpSlot) {
+              final parsed = AutoOpView.fromState(value);
+              if (parsed != null) {
+                _autoOp = parsed;
+                _stateSeq(addr, parsed.seq, retained);
+              } else {
+                // A malformed document proves no fresh view: the page keeps
+                // showing the last good one with its age.
+                _malformedPayloads++;
+              }
+            } else {
+              _stateSeq(addr, value['seq'] is int ? value['seq'] as int : null, retained);
             }
           } else {
             _malformedPayloads++;

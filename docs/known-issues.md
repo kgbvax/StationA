@@ -1037,3 +1037,45 @@ scmino, and the repo does not record the current settings:
   `set_inline` for the fan-dipole bands.
 - **Old APKs:** an hf_console APK from before this change still sends `tune` `"mem"`/`"full"`; the
   bridge accepts both as `auto`. Its button label says ATR-1000/TUNE MEM until the APK is rebuilt.
+
+## [decision] Remote TX review for 75auto (auto-op) (2026-11-26)
+
+75auto (separate repo, github.com/kgbvax/75auto) runs on bwpc. It publishes its session as the logic slot
+`muehle/hf/auto-op` and takes commands from the 75AUTO page of hf_console on a phone (mirrored to the car
+screen). A command can start or keep a transmission, so this review records the vectors. The slot is off by
+default (`[remote] enabled = false`). Contract: 75auto `docs/interfaces/auto-op-mqtt-api.md`.
+
+- **Who can approve (operator decisions of 2026-11-26).** All commands stay enabled while the car moves.
+  The default is `remote.commands = "operate"` (`none`, `stop` and `operate` are the choices). Supervision from
+  the car through the 75AUTO page counts as control operator supervision in observe, confirm and auto mode.
+  One tap does one action. The page has no confirmation dialogs. The gate of 75auto keeps all hard limits, and
+  no command can loosen them. There is no Resume from the car: the operator clears a latched stop at the station.
+- **Signature and key.** Each command, `stop` included, carries an HMAC-SHA256 signature over a fixed JSON
+  text of `action`, `value`, `ts` and `cmd_id`. The key is 32 random bytes. On bwpc it is a file of 64 hex digits
+  named by `remote.key_file`. On the phone it is in the secure storage of the app, never in the APK. 75auto
+  compares in constant time. It ignores a command with a missing or bad signature and writes it only to its own
+  log. Such a command gives no result on `/state`, so it cannot hide the result of a real command.
+- **Stop TX path.** A `stop` runs at once on its own goroutine and never waits behind other commands. It sets
+  the latch and sends Halt Tx. The page enables Stop TX when the link is up, `/status` is online and commands
+  are not `none`, also with stale data. After a tap the page shows STOP SENT until `/state.latched` is true.
+  With no `latched` and no result for the stop within 3 s, it shows STOP NOT CONFIRMED and keeps the button
+  enabled for a second tap.
+- **Dead-man rule on link loss.** 75auto keeps no state about the phone. The presence timer of its gate stays
+  the only dead-man rule (default 60 min, at most 6 h). In confirm and auto mode, the gate refuses new actions
+  after the presence time without operator input. Only a deliberate tap on the page counts as presence. A
+  heartbeat, a reconnect or a page refresh never counts. So a lost link ends transmission after the presence
+  time at the latest.
+- **Time window.** 75auto takes a command with a `ts` from 15 s before to 5 s after its own clock. For `stop`
+  the window starts 60 s before. It drops a repeated `cmd_id` while its `ts` is in the window, and it drops a
+  retained command.
+- **HA bridge vector.** The mirror `topic muehle/# both 1` carries `muehle/hf/auto-op/cmd` both ways and
+  cannot exclude one topic. So any client on the HA broker `.50` can publish to it. *Accepted*, because only a
+  signed command has an effect. The slot has no `expose` block, so HA renders no device and no command for it.
+  Follow-up: a split bridge mapping with explicit `cmd in` lines per slot and none for `auto-op`
+  (`docs/conventions/mqtt-topology.md`).
+- **Broker accounts.** The `auto-op` and `console` accounts are in `mqtt-broker/acl.conf.example` but are not
+  seeded. Until they are, 75auto and the phone use `hf`, a wide account on a mobile device. The signature limits
+  what a holder of `hf` can make 75auto do, but not what such a holder can do to other slots.
+- **Remote operation.** The operator is the control operator from the car. bwpc sleeps, so `/status` offline is
+  normal while bwpc is asleep. A mobile link drops often. The page shows LINK DOWN, stale data, and NO ANSWER
+  5 s after a command without a result.

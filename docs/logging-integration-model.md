@@ -324,6 +324,11 @@ reliability / late-join / fan-out — **with no change to the apps**.
 | Log4OM consumer (`log4om-consumer`) | consumer of `…/log/event`, no slot | `scmino` |
 | Working-station feed (opsotter `working-station`, realized) | `muehle/hf/station-log/working` (`bandmap`) | `scmino` |
 
+**75auto and logged QSOs (2026-11-26).** 75auto (`hf/auto-op`, role `auto-op`, on `bwpc`) runs FT8 and FT4
+sessions through WSJT-X. The action log in its `/state` shows the QSOs that WSJT-X logged, for display on the
+75AUTO page only. 75auto publishes no `…/log/event` and owns no `qso-log` slot. `wsjtx-log-bridge` stays the
+owner of the QSO log on the bus for WSJT-X. The persistent QSO record stays the opsotter log database (§7).
+
 ---
 
 ## 9. Transport rationale

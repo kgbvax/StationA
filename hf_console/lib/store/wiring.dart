@@ -59,6 +59,10 @@ const cmdRetain = {
   // into a fresh session; the bridge clears the topic after every
   // execute-or-reject.
   'muehle/uhf/radio': false,
+  // 75auto (auto-op): one-shot signed commands. 75auto drops a retained
+  // command, and each command carries its own ts and cmd_id, so a retained
+  // copy would only sit on the broker.
+  'muehle/hf/auto-op': false,
 };
 
 String cmdTopic(String slot) => 'muehle/$slot/cmd';
@@ -99,7 +103,11 @@ const expectedSlots = [
 /// shack PC — closing OscarWatch flips device_online false and sets
 /// /state.error, which must not land on the faults bar. A dead bridge
 /// (/status offline) is still reported like any other.
-const optionalSlots = {'muehle/uhf/sat-track'};
+///
+/// `hf/auto-op` is 75auto on bwpc. It is off by default, and bwpc sleeps, so
+/// its silence is a normal state. The faults bar also hides its bridge-down
+/// row while the shack PC is asleep.
+const optionalSlots = {'muehle/uhf/sat-track', 'muehle/hf/auto-op'};
 
 String cmdPayload(String action, dynamic value) =>
     jsonEncode({'action': action, 'value': value});

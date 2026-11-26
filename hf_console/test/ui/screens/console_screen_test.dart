@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hf_console/dxspot/dxspot_service.dart';
 import 'package:hf_console/store/bus_store.dart';
+import 'package:hf_console/ui/auto/auto_page.dart';
 import 'package:hf_console/ui/screens/console_screen.dart';
 import 'package:hf_console/ui/widgets/ant_mode_panel.dart';
 import 'package:hf_console/ui/widgets/cam_record_controls.dart';
@@ -76,6 +77,20 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
       expect(find.text('Assign'), findsNWidgets(3));
       expect(find.text('none loaded'), findsOneWidget);
+    });
+  });
+
+  group('75AUTO page', () {
+    testWidgets('the tab after CAM opens the page, which keeps the RX/TX annunciator', (tester) async {
+      final store = BusStore()..setAutoOp();
+      await tester.binding.setSurfaceSize(const Size(3600, 2400));
+      await tester.pumpWidget(TestHarness(store: store, mqtt: FakeMqttService(store), child: const ConsoleScreen()));
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(tester.getRect(find.text('75AUTO')).left, greaterThan(tester.getRect(find.text('CAM')).right));
+      await tester.tap(find.text('75AUTO'));
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.byType(AutoPage), findsOneWidget);
+      expect(find.byKey(const ValueKey('rf-annunciator')), findsOneWidget);
     });
   });
 

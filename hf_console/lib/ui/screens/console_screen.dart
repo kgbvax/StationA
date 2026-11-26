@@ -27,6 +27,7 @@ import '../widgets/faults_bar.dart';
 import '../widgets/station_schematic.dart';
 import '../widgets/stepped_pulse.dart';
 import '../widgets/dx_config_sheet.dart';
+import '../auto/auto_page.dart';
 
 // The DX-spot subscription follows the active page: the UHF and CAM maps
 // (both read the VHF array) show 6m/2m/70cm only, the HF compass the HF
@@ -254,6 +255,11 @@ class _PageContent extends StatelessWidget {
         return _UhfPage(key: schemeKey, onSelect: onSelect);
       case 'cam':
         return _CamPage(key: schemeKey, onSelect: onSelect);
+      case '75auto':
+        return AutoPage(
+          key: schemeKey,
+          topBar: (trailing) => _PageTopBar(page: '75auto', onSelect: onSelect, trailing: trailing),
+        );
       case 'hf':
       default:
         return _HfPage(key: schemeKey, onSelect: onSelect);
@@ -679,9 +685,15 @@ class _PageTopBar extends StatelessWidget {
   final String page;
   final ValueChanged<String> onSelect;
 
+  /// A status part of the page, between the page tabs and the RX/TX
+  /// annunciator. With it the bar keeps one row: the tabs do not wrap, and
+  /// the status part takes the rest of the width (the 75AUTO page).
+  final Widget? trailing;
+
   const _PageTopBar({
     required this.page,
     required this.onSelect,
+    this.trailing,
   });
 
   @override
@@ -689,6 +701,23 @@ class _PageTopBar extends StatelessWidget {
     // No link or offline-count indicators here: a dead MQTT link is the red
     // LINK DOWN banner, device trouble is the fault list. A healthy link is
     // not news.
+    if (trailing != null) {
+      return Container(
+        color: AppTheme.card,
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+        child: Row(
+          children: [
+            _PageNav(page: page, onSelect: onSelect),
+            const SizedBox(width: 8),
+            const _DxSettingsButton(),
+            const SizedBox(width: 10),
+            Expanded(child: trailing!),
+            const SizedBox(width: 10),
+            const _RfAnnunciator(),
+          ],
+        ),
+      );
+    }
     return Container(
       color: AppTheme.card,
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
@@ -732,6 +761,7 @@ class _PageNav extends StatelessWidget {
     ('HF', 'hf'),
     ('UHF', 'uhf'),
     ('CAM', 'cam'),
+    ('75AUTO', '75auto'),
   ];
 
   @override
@@ -740,12 +770,19 @@ class _PageNav extends StatelessWidget {
       decoration: BoxDecoration(
         border: Border(bottom: BorderSide(color: AppTheme.cardLine)),
       ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          for (final (label, id) in _pages)
-            _NavTab(label: label, active: page == id, onTap: () => onSelect(id)),
-        ],
+      // Five tabs fill the narrow right column of the tablet shell. Should a
+      // font ever run wider than the bundled one, the tabs scale down
+      // instead of overflowing.
+      child: FittedBox(
+        fit: BoxFit.scaleDown,
+        alignment: Alignment.centerLeft,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (final (label, id) in _pages)
+              _NavTab(label: label, active: page == id, onTap: () => onSelect(id)),
+          ],
+        ),
       ),
     );
   }
@@ -760,7 +797,8 @@ class _NavTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Phones: smaller type so the nav fits on the annunciator's row.
+    // Phones: smaller type and less padding so the five tabs fit on the
+    // annunciator's row.
     final isPhone = MediaQuery.of(context).size.shortestSide < 600;
     return Semantics(
       selected: active,
@@ -769,7 +807,7 @@ class _NavTab extends StatelessWidget {
         onTap: onTap,
         child: Container(
           constraints: const BoxConstraints(minHeight: 48, minWidth: 48),
-          padding: EdgeInsets.symmetric(horizontal: isPhone ? 10 : 16),
+          padding: EdgeInsets.symmetric(horizontal: isPhone ? 4 : 16),
           alignment: Alignment.center,
           decoration: BoxDecoration(
             color: active ? AppTheme.pane : null,
