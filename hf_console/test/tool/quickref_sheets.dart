@@ -355,8 +355,8 @@ final quickrefSheets = <Sheet>[
       s.mqtt.connected.value = false;
     },
     callouts: [
-      Callout('Station · HF · UHF · CAM', 'Tap a name to open that page',
-          UnionAnchor([ButtonAnchor('Station', inside: ConsoleScreen), ButtonAnchor('CAM', inside: ConsoleScreen)])),
+      Callout('Station · HF · UHF · CAM · 75AUTO', 'Tap a name to open that page',
+          UnionAnchor([ButtonAnchor('Station', inside: ConsoleScreen), ButtonAnchor('75AUTO', inside: ConsoleScreen)])),
       Callout('LINK DOWN banner', 'The console has no link to the station. Commands are lost.', typeAnchor(LinkStatusBanner),
           marker: 'inside'),
       Callout('Status pill', 'OFFLINE when a device is down or has no power', typeAnchor(StatusPill, inside: PowerPanel)),
