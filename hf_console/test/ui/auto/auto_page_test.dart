@@ -105,20 +105,6 @@ void main() {
     });
   });
 
-  group('read-only controls', () {
-    testWidgets('every control is off, with one reason line', (tester) async {
-      final (_, mqtt) = await _pumpAuto(tester);
-      final buttons = tester.widgetList<ElevatedButton>(find.byType(ElevatedButton));
-      expect(buttons, hasLength(8)); // Approve, Reject, 5 in the row, Stop TX
-      expect(buttons.every((b) => b.onPressed == null), isTrue);
-      expect(find.text(autoControlsOffReason), findsOneWidget);
-      await tester.tap(find.byKey(const ValueKey('auto-stop-tx')), warnIfMissed: false);
-      await tester.pump();
-      expect(mqtt.publishes, isEmpty);
-      expect(find.byType(Dialog), findsNothing);
-    });
-  });
-
   group('top bar', () {
     testWidgets('a missing mode shows ?, never AUTO', (tester) async {
       final doc = busyAutoOpDoc();

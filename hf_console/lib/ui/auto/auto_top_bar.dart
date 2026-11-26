@@ -5,6 +5,10 @@
 /// In landscape the strip sits in the one row of the console top bar. When
 /// the row is too narrow, the rule set goes first, then the UTC seconds,
 /// then UTC. In portrait the strip wraps under the top bar.
+///
+/// A tap on the mode and presence chip sends `touch`: it counts as operator
+/// presence at 75auto. It goes out only under the same gate as the other
+/// commands of the page. Nothing else on the page sends a touch.
 library;
 
 import 'package:clock/clock.dart';
@@ -14,6 +18,7 @@ import 'package:provider/provider.dart';
 import '../../store/auto_op.dart';
 import '../../store/bus_store.dart';
 import '../theme.dart';
+import 'auto_commands.dart';
 import 'auto_live.dart';
 
 class AutoStatusStrip extends StatelessWidget {
@@ -25,10 +30,15 @@ class AutoStatusStrip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final cmd = context.watch<AutoCommander?>();
     return AutoTicker(
       builder: (context, live) {
         final store = context.read<BusStore>();
-        final items = _items(store, live);
+        VoidCallback? touch;
+        if (cmd != null && autoGateOf(store, live, keyStored: cmd.keyStored).operate == null) {
+          touch = () => cmd.send(AutoControl.presence, null);
+        }
+        final items = _items(store, live, touch);
         if (!oneRow) {
           return Wrap(
             spacing: 6,
@@ -86,7 +96,7 @@ class AutoStatusStrip extends StatelessWidget {
     );
   }
 
-  List<_Item> _items(BusStore store, AutoLive live) {
+  List<_Item> _items(BusStore store, AutoLive live, VoidCallback? touch) {
     final view = store.autoOp;
     final status = store.slots[autoOpSlot]?.status;
     final items = <_Item>[];
@@ -115,7 +125,7 @@ class AutoStatusStrip extends StatelessWidget {
     }
 
     // Mode and presence. A missing mode is "?", never AUTO.
-    items.add(_modeItem(view, live));
+    items.add(_modeItem(view, live).withTap(touch));
 
     final rules = view?.session?.ruleSet;
     if (rules != null && rules.isNotEmpty) {
@@ -193,11 +203,24 @@ class _Item {
   final Key? key;
   final _Item? short;
 
-  _Item(this.id, this.text, this.color,
-      {this.dot, this.right = false, this.filled = false, this.bare = false, this.size = 13, this.key, this.short});
+  /// A tap on the pill. Null for a pill that only shows.
+  final VoidCallback? onTap;
 
-  _Item withShort(_Item s) =>
-      _Item(id, text, color, dot: dot, right: right, filled: filled, bare: bare, size: size, key: key, short: s);
+  _Item(this.id, this.text, this.color,
+      {this.dot,
+      this.right = false,
+      this.filled = false,
+      this.bare = false,
+      this.size = 13,
+      this.key,
+      this.short,
+      this.onTap});
+
+  _Item withShort(_Item s) => _Item(id, text, color,
+      dot: dot, right: right, filled: filled, bare: bare, size: size, key: key, short: s, onTap: onTap);
+
+  _Item withTap(VoidCallback? tap) => _Item(id, text, color,
+      dot: dot, right: right, filled: filled, bare: bare, size: size, key: key, short: short?.withTap(tap), onTap: tap);
 
   TextStyle get _style => bare
       ? AppTheme.mono(size, color: color, weight: FontWeight.w600)
@@ -214,6 +237,18 @@ class _Item {
   Widget get pill {
     final label = Text(text, key: key, maxLines: 1, softWrap: false, style: _style);
     if (bare) return Padding(padding: const EdgeInsets.symmetric(horizontal: 2), child: label);
+    final box = _box(label);
+    if (id != 'mode') return box;
+    // The presence chip: a 48 dp touch target around the 36 dp pill.
+    return GestureDetector(
+      key: const ValueKey('auto-presence-chip'),
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      child: SizedBox(height: 48, child: Center(widthFactor: 1, child: box)),
+    );
+  }
+
+  Widget _box(Widget label) {
     return Container(
       height: 36,
       padding: const EdgeInsets.symmetric(horizontal: 10),

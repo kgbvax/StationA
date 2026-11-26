@@ -9,6 +9,11 @@ import 'auto_op.dart' show parseAutoOpKey;
 /// It is never in the APK. The operator enters it once in the gear sheet.
 const autoOpKeyStorageKey = 'auto_op_key';
 
+/// Counts up after each write or removal of the 75auto command key, so an
+/// open 75AUTO page reads again whether a key is stored. It never carries
+/// the key.
+final autoOpKeyChanges = ValueNotifier<int>(0);
+
 class CredentialStore {
   final _secure = const FlutterSecureStorage();
 
@@ -64,6 +69,7 @@ class CredentialStore {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(autoOpKeyStorageKey, text);
     }
+    autoOpKeyChanges.value++;
     return true;
   }
 
@@ -75,6 +81,7 @@ class CredentialStore {
       final prefs = await SharedPreferences.getInstance();
       await prefs.remove(autoOpKeyStorageKey);
     }
+    autoOpKeyChanges.value++;
   }
 
   Future<void> writeAll(Map<String, String> values) async {

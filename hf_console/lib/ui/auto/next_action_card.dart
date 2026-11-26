@@ -1,9 +1,15 @@
 /// The Next action card of the 75AUTO page: the pending proposal with its
 /// confirm countdown, else the current action, else why the rules propose
-/// nothing. A latched stop outranks all three. Approve and Reject sit at the
-/// bottom of the card, disabled in this build.
+/// nothing. A latched stop outranks all three: then the card says
+/// "LATCHED · resume at the station" with the stop reason, and it has no
+/// buttons. There is no Resume on the page.
+///
+/// Approve and Reject show only with a pending proposal. A tap sends the
+/// pending id and locks both until the result with the same `cmd_id`
+/// arrives, or for 5 s.
 library;
 
+import 'package:clock/clock.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -11,6 +17,7 @@ import '../../store/auto_op.dart';
 import '../../store/bus_store.dart';
 import '../theme.dart';
 import 'auto_card.dart';
+import 'auto_commands.dart';
 import 'auto_live.dart';
 
 /// What the card shows, as text.
@@ -81,14 +88,7 @@ class NextActionCard extends StatelessWidget {
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
         style: AppTheme.mono(17, color: t.whatColor, weight: FontWeight.w600).copyWith(height: 1.25));
-    final buttons = SizedBox(
-      height: 48,
-      child: Row(children: [
-        Expanded(child: _disabled('Approve', primary: true)),
-        const SizedBox(width: 6),
-        Expanded(child: _disabled('Reject')),
-      ]),
-    );
+    final Widget? buttons = pending == null ? null : _ProposalButtons(pending: pending);
     return LayoutBuilder(builder: (context, c) {
       // Under a banner on a landscape phone the card gets less than its
       // full height. Then the title strip goes, and the countdown moves
@@ -107,7 +107,7 @@ class NextActionCard extends StatelessWidget {
                   if (pending != null) _Countdown(pending: pending),
                 ]),
               ),
-              buttons,
+              ?buttons,
             ],
           ),
         );
@@ -134,7 +134,7 @@ class NextActionCard extends StatelessWidget {
                       style: AppTheme.body(11, color: AppTheme.txtMute).copyWith(height: 1.2));
                 }),
               ),
-              buttons,
+              ?buttons,
             ],
           ),
         ),
@@ -144,15 +144,6 @@ class NextActionCard extends StatelessWidget {
 
   /// Below this height the card drops its title strip.
   static const compactBelow = 104.0;
-
-  Widget _disabled(String label, {bool primary = false}) => ElevatedButton(
-        onPressed: null,
-        style: AppTheme.actionButton().copyWith(
-          minimumSize: const WidgetStatePropertyAll(Size(48, 48)),
-          side: WidgetStatePropertyAll(BorderSide(color: primary ? AppTheme.blend(AppTheme.accent, 0.5) : AppTheme.cardLine)),
-        ),
-        child: Text(label.toUpperCase(), style: AppTheme.display(15, weight: FontWeight.w600, letterSpacing: 0.06)),
-      );
 }
 
 /// `CONFIRM n s` from `deadline_ms` and the moving time of the view.
@@ -174,11 +165,72 @@ class _Countdown extends StatelessWidget {
           final left = pending.deadlineMs! - live.nowMs!;
           text = left <= 0 ? 'CONFIRM 0 s' : 'CONFIRM ${(left + 999) ~/ 1000} s';
         }
+        // Amber in the last 5 s. Faint while the data is not fresh: then
+        // the countdown does not move.
+        final soon = pending.expired == true ||
+            (pending.deadlineMs != null && live.nowMs != null && pending.deadlineMs! - live.nowMs! < 5000);
+        final color = !live.live
+            ? AppTheme.txtFaint
+            : soon
+                ? AppTheme.amber
+                : AppTheme.txtMute;
         return Text(text,
             key: const ValueKey('auto-confirm-countdown'),
             maxLines: 1,
-            style: AppTheme.mono(11, color: live.live ? AppTheme.amber : AppTheme.txtFaint, weight: FontWeight.w700));
+            style: AppTheme.mono(11, color: color, weight: FontWeight.w700));
       },
+    );
+  }
+}
+
+/// Approve and Reject of the pending proposal.
+class _ProposalButtons extends StatelessWidget {
+  final AutoOpPending pending;
+
+  const _ProposalButtons({required this.pending});
+
+  @override
+  Widget build(BuildContext context) {
+    final cmd = context.watch<AutoCommander>();
+    return SizedBox(
+      height: 48,
+      child: AutoTicker(builder: (context, live) {
+        final now = clock.now();
+        final gate = autoGateOf(context.read<BusStore>(), live, keyStored: cmd.keyStored);
+        final id = pending.id;
+        final on = gate.operate == null && id != null && !cmd.proposalLocked(now);
+        final problem = cmd.problemControl(gate, now);
+        return Row(children: [
+          Expanded(
+            child: _button(AutoControl.approve,
+                primary: true, problem: problem == AutoControl.approve, onTap: on ? () => cmd.send(AutoControl.approve, id) : null),
+          ),
+          const SizedBox(width: 6),
+          Expanded(
+            child: _button(AutoControl.reject,
+                problem: problem == AutoControl.reject, onTap: on ? () => cmd.send(AutoControl.reject, id) : null),
+          ),
+        ]);
+      }),
+    );
+  }
+
+  Widget _button(AutoControl c, {bool primary = false, bool problem = false, VoidCallback? onTap}) {
+    final Color line = problem
+        ? AppTheme.amber
+        : primary
+            ? AppTheme.blend(AppTheme.accent, onTap == null ? 0.5 : 0.9)
+            : AppTheme.cardLine;
+    return ElevatedButton(
+      key: ValueKey('auto-${c.name}'),
+      onPressed: onTap,
+      style: AppTheme.actionButton().copyWith(
+        minimumSize: const WidgetStatePropertyAll(Size(48, 48)),
+        side: WidgetStatePropertyAll(BorderSide(width: problem ? 1.4 : 1, color: line)),
+      ),
+      child: Text(c.label,
+          style: AppTheme.display(15,
+              color: onTap == null ? AppTheme.txtFaint : null, weight: FontWeight.w600, letterSpacing: 0.06)),
     );
   }
 }

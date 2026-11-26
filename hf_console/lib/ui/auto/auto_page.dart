@@ -12,13 +12,21 @@
 /// Portrait: the readouts and the control column on top, the lists below in
 /// a scroll view.
 ///
-/// This build is read-only. The controls are in place and disabled.
+/// The page owns one [AutoCommander] for its controls. A `/state.error`
+/// of 75auto shows as a red line: in landscape in place of the action log,
+/// in portrait under the status strip. Refused commands show next to their
+/// controls, not there.
 library;
 
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+
+import '../../mqtt/mqtt_service.dart';
+import '../../store/bus_store.dart';
 
 import '../theme.dart';
 import 'action_log_strip.dart';
+import 'auto_commands.dart';
 import 'auto_controls.dart';
 import 'auto_readouts.dart';
 import 'auto_top_bar.dart';
@@ -35,20 +43,44 @@ const autoReadoutHeight = 56.0;
 const autoBottomHeight = 36.0;
 const autoGap = 4.0;
 
-class AutoPage extends StatelessWidget {
+class AutoPage extends StatefulWidget {
   final AutoTopBarBuilder topBar;
 
   const AutoPage({super.key, required this.topBar});
 
   @override
+  State<AutoPage> createState() => _AutoPageState();
+}
+
+class _AutoPageState extends State<AutoPage> {
+  late final AutoCommander _commander;
+
+  AutoTopBarBuilder get topBar => widget.topBar;
+
+  @override
+  void initState() {
+    super.initState();
+    _commander = AutoCommander(store: context.read<BusStore>(), mqtt: context.read<MqttService>());
+  }
+
+  @override
+  void dispose() {
+    _commander.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(builder: (context, c) {
-      final landscape = c.maxWidth > c.maxHeight;
-      return Container(
-        color: AppTheme.page,
-        child: landscape ? _landscape(c.maxWidth) : _portrait(),
-      );
-    });
+    return ChangeNotifierProvider<AutoCommander>.value(
+      value: _commander,
+      child: LayoutBuilder(builder: (context, c) {
+        final landscape = c.maxWidth > c.maxHeight;
+        return Container(
+          color: AppTheme.page,
+          child: landscape ? _landscape(c.maxWidth) : _portrait(),
+        );
+      }),
+    );
   }
 
   Widget _landscape(double width) {
@@ -86,7 +118,7 @@ class AutoPage extends StatelessWidget {
                   child: Row(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      Expanded(child: ActionLogStrip()),
+                      Expanded(child: AutoErrorLine(orElse: ActionLogStrip())),
                       gap,
                       Flexible(
                         child: FittedBox(fit: BoxFit.scaleDown, alignment: Alignment.centerRight, child: HealthRow()),
@@ -114,6 +146,7 @@ class AutoPage extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: const [
               AutoStatusStrip(oneRow: false),
+              AutoErrorLine(),
               gap,
               AutoReadouts(twoRows: true),
               gap,
@@ -142,6 +175,36 @@ class AutoPage extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// The `/state.error` of 75auto as one red line. Without an error it shows
+/// [orElse], or nothing. Plain text only.
+class AutoErrorLine extends StatelessWidget {
+  final Widget? orElse;
+
+  const AutoErrorLine({super.key, this.orElse});
+
+  @override
+  Widget build(BuildContext context) {
+    final error = context.select<BusStore, String?>((s) => s.autoOp?.error);
+    if (error == null || error.isEmpty) return orElse ?? const SizedBox.shrink();
+    return Container(
+      key: const ValueKey('auto-error'),
+      constraints: const BoxConstraints(minHeight: 28),
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      margin: orElse == null ? const EdgeInsets.only(top: autoGap) : EdgeInsets.zero,
+      alignment: Alignment.centerLeft,
+      decoration: BoxDecoration(
+        color: AppTheme.blend(AppTheme.red, 0.12),
+        border: Border.all(color: AppTheme.blend(AppTheme.red, 0.7)),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Text('75AUTO ERROR · $error',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: AppTheme.mono(12, color: AppTheme.red, weight: FontWeight.w600)),
     );
   }
 }
