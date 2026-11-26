@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../store/ant_mode.dart';
+import '../../store/auto_op.dart' show autoOpSlot;
 import '../../store/bus_store.dart';
 import '../../store/station_schematic.dart' show antPoweredSlots;
 import '../theme.dart';
@@ -48,6 +49,8 @@ class FaultsBar extends StatelessWidget {
         .map((r) => r.address)
         .toSet();
 
+    final pcAsleep = store.slots['muehle/power/shack-pc']?.status == 'offline';
+
     final offlineSince = store.offlineSince;
     final List<_Fault> offline = [];
     var antRowsSuppressed = false;
@@ -57,6 +60,10 @@ class FaultsBar extends StatelessWidget {
       // normal state the power panel shows as ASLEEP. Its /state.error still
       // reaches the list through the fault history.
       if (address == 'muehle/power/shack-pc') continue;
+      // 75auto runs on the shack PC. While the PC is asleep, its LWT is
+      // offline as well. Only a confirmed sleep (the agent's /status
+      // offline) hides the row. An unknown PC state does not.
+      if (address == autoOpSlot && pcAsleep) continue;
       if (antUnpowered && antPoweredSlots.contains(address)) {
         antRowsSuppressed = true;
         continue;

@@ -26,6 +26,7 @@ const slotHosts = <String, SlotHost>{
   'muehle/power/antennas': SlotHost('shelly-power-bridge', 'scmino'),
   'muehle/power/shack-pc-mains': SlotHost('shelly-power-bridge', 'scmino'),
   'muehle/power/shack-pc': SlotHost('winpc-power-bridge', 'bwpc'),
+  'muehle/hf/auto-op': SlotHost('75auto', 'bwpc'),
   'muehle/hf/radio': SlotHost('flexbridge', 'scmino'),
   'muehle/hf/ant-ctrl': SlotHost('ultrabridge', 'scmino'),
   'muehle/hf/pa': SlotHost('acom1200s-pa-bridge', 'scmino'),

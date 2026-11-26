@@ -7,12 +7,17 @@
 // no way to reach these fields otherwise. This sheet is reachable from a gear in
 // the top bar and edits the overlay/cam keys plus the broker host (user and
 // password are left untouched; a changed host reconnects with the stored ones).
+//
+// It also takes the command key of 75auto (the 75AUTO page signs each command
+// with it). The sheet never shows the stored key. It only says whether a key
+// is set, and it can replace or clear the key.
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../mqtt/mqtt_service.dart';
 import '../../platform/app_quit.dart';
+import '../../store/auto_op.dart' show parseAutoOpKey;
 import '../../store/credential_store.dart';
 import '../../dxspot/dxspot_service.dart';
 import '../../vhfcam/vhfcam_service.dart';
@@ -43,11 +48,17 @@ class _DxConfigDialogState extends State<_DxConfigDialog> {
   final _url = TextEditingController(text: 'https://horstreporter.kgbvax.net');
   final _callsign = TextEditingController();
   final _camUrl = TextEditingController(text: defaultVhfcamBaseUrl);
+  // The 75auto command key. The field starts empty and stays empty after a
+  // save: the stored key is never read back into it.
+  final _autoOpKey = TextEditingController();
+  bool _autoOpKeySet = false;
+  bool _autoOpKeyClear = false;
+  String? _autoOpKeyError;
   bool _loading = true;
 
   @override
   void dispose() {
-    for (final c in [_broker, _locator, _url, _callsign, _camUrl]) {
+    for (final c in [_broker, _locator, _url, _callsign, _camUrl, _autoOpKey]) {
       c.dispose();
     }
     super.dispose();
@@ -61,8 +72,10 @@ class _DxConfigDialogState extends State<_DxConfigDialog> {
 
   Future<void> _load() async {
     final values = await _storage.readAll();
+    final key = await _storage.readAutoOpKey();
     if (!mounted) return;
     setState(() {
+      _autoOpKeySet = key != null;
       _brokerStored = values['mqtt_host'] ?? '';
       _broker.text = _brokerStored;
       _locator.text = values['station_locator'] ?? '';
@@ -79,6 +92,13 @@ class _DxConfigDialogState extends State<_DxConfigDialog> {
     final baseUrl = _url.text.trim();
     final callsign = _callsign.text.trim().toUpperCase();
     final camUrl = _camUrl.text.trim();
+    // A key that is not 64 hex digits stops the save before anything is
+    // written, so the operator can correct it.
+    final keyText = _autoOpKey.text.trim();
+    if (keyText.isNotEmpty && parseAutoOpKey(keyText) == null) {
+      setState(() => _autoOpKeyError = 'Enter exactly 64 hex digits (0-9, a-f).');
+      return;
+    }
     final stored = await _storage.readAll();
     final brokerChanged = broker.isNotEmpty && broker != _brokerStored;
     await _storage.writeAll({
@@ -88,6 +108,11 @@ class _DxConfigDialogState extends State<_DxConfigDialog> {
       'station_callsign': callsign,
       'vhfcam_base_url': camUrl,
     });
+    if (keyText.isNotEmpty) {
+      await _storage.writeAutoOpKey(keyText);
+    } else if (_autoOpKeyClear) {
+      await _storage.clearAutoOpKey();
+    }
     if (!mounted) return;
     final mqtt = context.read<MqttService>();
     final user = stored['mqtt_user'];
@@ -117,6 +142,8 @@ class _DxConfigDialogState extends State<_DxConfigDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
+      // The settings no longer fit a phone in landscape.
+      scrollable: true,
       backgroundColor: AppTheme.card,
       insetPadding: const EdgeInsets.symmetric(horizontal: 40, vertical: 24),
       contentPadding: const EdgeInsets.fromLTRB(20, 20, 20, 8),
@@ -169,6 +196,8 @@ class _DxConfigDialogState extends State<_DxConfigDialog> {
                   _field('Horstreporter URL', _url, hint: 'https://…'),
                   const SizedBox(height: 12),
                   _field('Antenna cam URL', _camUrl, hint: 'http://…:8083'),
+                  const SizedBox(height: 16),
+                  _autoOpKeySection(),
                   const SizedBox(height: 16),
                   Row(
                     mainAxisAlignment: MainAxisAlignment.end,
@@ -256,13 +285,86 @@ class _DxConfigDialogState extends State<_DxConfigDialog> {
     );
   }
 
-  Widget _field(String label, TextEditingController controller, {String? hint}) {
+  /// The 75auto command key: whether one is set, a field for a new one, and
+  /// CLEAR. A new key or a clear takes effect on SAVE.
+  Widget _autoOpKeySection() {
+    final status = _autoOpKeyClear
+        ? 'cleared on SAVE'
+        : _autoOpKeySet
+            ? 'set'
+            : 'not set';
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                '75auto command key: $status',
+                key: const ValueKey('settings-auto-op-key-status'),
+                style: AppTheme.mono(12, color: _autoOpKeySet && !_autoOpKeyClear ? AppTheme.green : AppTheme.txtMute),
+              ),
+            ),
+            TextButton(
+              key: const ValueKey('settings-auto-op-key-clear'),
+              onPressed: _autoOpKeySet && !_autoOpKeyClear
+                  ? () => setState(() {
+                        _autoOpKeyClear = true;
+                        _autoOpKey.clear();
+                        _autoOpKeyError = null;
+                      })
+                  : null,
+              child: Text('CLEAR', style: AppTheme.mono(12, weight: FontWeight.w600)),
+            ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        _field(
+          'New 75auto command key',
+          _autoOpKey,
+          key: const ValueKey('settings-auto-op-key'),
+          hint: '64 hex digits, blank keeps the stored key',
+          obscure: true,
+          errorText: _autoOpKeyError,
+          onChanged: (_) {
+            if (_autoOpKeyError != null || _autoOpKeyClear) {
+              setState(() {
+                _autoOpKeyError = null;
+                _autoOpKeyClear = false;
+              });
+            }
+          },
+        ),
+        Padding(
+          padding: const EdgeInsets.only(top: 4),
+          child: Text('The 75AUTO page signs each command with this key. It is the key file of 75auto on bwpc.',
+              style: AppTheme.body(11, color: AppTheme.txtMute)),
+        ),
+      ],
+    );
+  }
+
+  Widget _field(
+    String label,
+    TextEditingController controller, {
+    Key? key,
+    String? hint,
+    bool obscure = false,
+    String? errorText,
+    ValueChanged<String>? onChanged,
+  }) {
     return TextField(
+      key: key,
       controller: controller,
       style: AppTheme.mono(13),
       autocorrect: false,
+      obscureText: obscure,
+      enableSuggestions: !obscure,
+      onChanged: onChanged,
       decoration: InputDecoration(
         labelText: label,
+        errorText: errorText,
         labelStyle: AppTheme.mono(11, color: AppTheme.txtMute),
         hintText: hint,
         hintStyle: AppTheme.mono(11, color: AppTheme.txtFaint),

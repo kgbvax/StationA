@@ -1601,7 +1601,8 @@ _Details _details(StationSchematicModel m, String id) {
     final pcAsleep = m.quality(shackPcSlot) == SlotQuality.unpowered;
     m.hostHealth(host).components.forEach((comp, up) {
       // The PC agent's LWT fires whenever bwpc sleeps — expected, not down.
-      if (!up && pcAsleep && slotHosts[shackPcSlot]?.component == comp) {
+      // The other programs on bwpc (75auto) sleep with it.
+      if (!up && pcAsleep && (host == 'bwpc' || slotHosts[shackPcSlot]?.component == comp)) {
         rows.add((comp, 'asleep', AppTheme.txtMute));
       } else {
         rows.add((comp, up ? 'online' : 'down', up ? AppTheme.green : AppTheme.red));

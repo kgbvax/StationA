@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:hf_console/store/auto_op.dart' show autoOpSlot;
 import 'package:hf_console/store/bus_store.dart';
 
 /// Helpers for seeding a [BusStore] with realistic slot state in tests.
@@ -399,4 +400,152 @@ extension BusStoreFixtures on BusStore {
       'reason': reason,
     });
   }
+
+  /// Populate the 75auto slot (`muehle/hf/auto-op`): /status, /meta, and the
+  /// full /state document of the contract (see [autoOpStateDoc]).
+  /// [retained] false delivers the /state as a live publish, which makes the
+  /// slot fresh when [seq] is new. [changes] replaces top-level keys of the
+  /// document.
+  void setAutoOp({
+    int seq = 1234,
+    bool retained = true,
+    String status = 'online',
+    String commands = 'operate',
+    Map<String, dynamic> changes = const {},
+  }) {
+    applyStatus(autoOpSlot, status);
+    applyMeta(autoOpSlot, {
+      'schema': '1.0',
+      'role': 'auto-op',
+      'link': 'none',
+      'location': 'shack',
+      'host': 'bwpc',
+      'capabilities': {
+        'schema_name': 'auto-op/v1',
+        'bands': ['80m', '40m', '30m', '20m', '17m', '15m', '12m', '10m'],
+        'commands': commands,
+        'signed': true,
+      },
+    });
+    apply('$autoOpSlot/state', jsonEncode({...autoOpStateDoc(seq: seq), ...changes}), retained);
+  }
+
+  /// Deliver one /beat of the 75auto slot.
+  void applyAutoOpBeat({int stateSeq = 1234, int nowMs = 1795703563000, int slotOffsetMs = 8100}) {
+    apply(
+      '$autoOpSlot/beat',
+      jsonEncode({'ts': '2026-11-26T14:32:43Z', 'state_seq': stateSeq, 'now_ms': nowMs, 'slot_offset_ms': slotOffsetMs}),
+      false,
+    );
+  }
 }
+
+/// The /state document of the 75auto contract (§5.3), with every key set.
+Map<String, dynamic> autoOpStateDoc({int seq = 1234}) => {
+      'ts': '2026-11-26T14:32:41Z',
+      'seq': seq,
+      'now_ms': 1795703561000,
+      'session': {'state': 'running', 'rule_set': 'everyday.gess', 'level': 'normal', 'mode': 'auto', 'source': 'live'},
+      'station': {
+        'band': '20m',
+        'dial_hz': 14074000,
+        'mode': 'FT8',
+        'dx_call': 'VK9XQ',
+        'dx_entity': 'Christmas Island',
+        'tx_df': 1487,
+        'rx_df': 1502,
+        'tx_enabled': true,
+        'transmitting': false,
+        'period_ms': 15000,
+        'slot_offset_ms': 6100,
+        'band_change': {'target': '17m', 'result': 'pending'},
+        'decode_count': 23,
+        'last_decode_end_ms': 1795703550000,
+        'qso_stage': 'R+RPT',
+        'try_count': 0,
+        'repeat_count': 1,
+        'tx_parity': 'odd',
+        'target_choice': 'follow',
+      },
+      'presence_end_ms': 1795707161000,
+      'pending': {
+        'id': 42,
+        'rule': 'call-needed',
+        'action': 'call-station',
+        'call': 'VK9XQ',
+        'band': '20m',
+        'reason': 'dxcc VK9',
+        'priority': 50,
+        'deadline_ms': 1795703570000,
+        'expired': false,
+      },
+      'current': {
+        'id': 41,
+        'time_ms': 1795703535000,
+        'rule': 'call-needed',
+        'action': 'call-station',
+        'call': 'VK9XQ',
+        'band': '20m',
+        'result': 'took-effect',
+        'cause': '',
+        'gate_reason': '',
+        'reason': 'dxcc VK9',
+      },
+      'idle': {
+        'proposed': 0,
+        'blocks': [
+          {'call': 'DL1ABC', 'why': 'worked before'},
+        ],
+        'more_blocks': 2,
+      },
+      'hint': 'waiting for the answer',
+      'arm': {'source': 'operator', 'until_ms': 1795703900000},
+      'latched': false,
+      'stop_unconfirmed': false,
+      'stop_reason': '',
+      'cycle_error': '',
+      'decodes': [
+        {
+          'period_start_ms': 1795703535000,
+          'df': 1502,
+          'snr': -14,
+          'text': 'DL2XYZ VK9XQ -11',
+          'call': 'VK9XQ',
+          'needed': true,
+          'to_me': true,
+          'latest': true,
+        },
+        {'period_start_ms': 1795703535000, 'df': 800, 'snr': -3, 'text': 'CQ EA8ZZ IL18', 'call': 'EA8ZZ', 'cq': true},
+      ],
+      'tx_lines': [
+        {'period_start_ms': 1795703520000, 'band': '20m', 'df': 1487, 'text': 'VK9XQ DL2XYZ R-09'},
+      ],
+      'bands': [
+        {'band': '40m', 'dial_hz': 7074000, 'seen': true, 'count': 12, 'period_start_ms': 1795702000000},
+        {'band': '20m', 'dial_hz': 14074000, 'seen': false, 'count': 0, 'period_start_ms': 0},
+      ],
+      'log': [
+        {
+          'id': 40,
+          'time_ms': 1795703520000,
+          'rule': 'call-needed',
+          'action': 'call-station',
+          'call': 'VK9XQ',
+          'band': '20m',
+          'result': 'refused',
+          'cause': 'gate',
+          'gate_reason': 'tx limit',
+          'reason': 'dxcc VK9',
+        },
+      ],
+      'health': [
+        {'interface': 'digimode', 'name': 'WSJT-X', 'fresh': true, 'reason': ''},
+      ],
+      'rig': {'present': true, 'ok': true, 'name': 'rigctld', 'reason': ''},
+      'clock_failing': false,
+      'remote': {
+        'commands': 'operate',
+        'last_cmd': {'cmd_id': 'c1f0e7a2c1f0e7a2', 'action': 'target', 'result': 'accepted', 'reason': '', 'at_ms': 1795703561500},
+      },
+      'error': '',
+    };

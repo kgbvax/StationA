@@ -240,6 +240,49 @@ void main() {
       expect(find.textContaining('shack-pc'), findsNothing);
     });
 
+    testWidgets('75auto offline while the shack PC sleeps is not a row', (tester) async {
+      final store = BusStore();
+      store.applyStatus('muehle/power/shack-pc', 'offline');
+      store.setAutoOp(status: 'offline');
+
+      await tester.pumpWidget(TestHarness(store: store, child: const FaultsBar()));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('hf/auto-op'), findsNothing);
+      expect(find.text('No faults'), findsOneWidget);
+    });
+
+    testWidgets('75auto offline while the shack PC is awake is a row', (tester) async {
+      final store = BusStore();
+      store.applyStatus('muehle/power/shack-pc', 'online');
+      store.setAutoOp(status: 'offline');
+
+      await tester.pumpWidget(TestHarness(store: store, child: const FaultsBar()));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('hf/auto-op: bridge down'), findsOneWidget);
+    });
+
+    testWidgets('75auto offline with an unknown shack PC state is a row', (tester) async {
+      final store = BusStore();
+      store.setAutoOp(status: 'offline');
+
+      await tester.pumpWidget(TestHarness(store: store, child: const FaultsBar()));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('hf/auto-op: bridge down'), findsOneWidget);
+    });
+
+    testWidgets('75auto errors in its /state are not faults', (tester) async {
+      final store = BusStore();
+      store.setAutoOp(changes: {'error': 'cycle failed', 'cycle_error': 'cycle failed'});
+
+      await tester.pumpWidget(TestHarness(store: store, child: const FaultsBar()));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('CYCLE FAILED'), findsNothing);
+    });
+
     testWidgets('strip shows 3 rows; expanded shows every row', (tester) async {
       final store = BusStore();
       for (final a in ['muehle/hf/radio', 'muehle/hf/pa', 'muehle/hf/tuner', 'muehle/hf/rotator']) {
