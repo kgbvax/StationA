@@ -36,6 +36,9 @@ topic read muehle/+/+/state
 topic read muehle/+/+/meta
 topic read muehle/+/+/status
 topic write muehle/+/+/cmd
+# The 75AUTO page reads the /beat heartbeat of the auto-op slot. The patterns
+# above do not match it.
+topic read muehle/hf/auto-op/beat
 
 # dial — the M5Stack Dial rotator control head (m5dial-hf-rotctrl firmware,
 # shack-local). Narrower still: it touches exactly one slot — the HF rotator.
@@ -45,3 +48,18 @@ user dial
 topic read muehle/hf/rotator/state
 topic read muehle/hf/rotator/status
 topic write muehle/hf/rotator/cmd
+
+# auto-op: 75auto on bwpc, the automatic digimode operator (separate repo,
+# github.com/kgbvax/75auto). It writes the planes of its logic slot and reads
+# only its own cmd topic. Each command carries an HMAC-SHA256 signature, because
+# the HA bridge mirrors muehle/# both ways (docs/known-issues.md, "Remote TX
+# review for 75auto (auto-op)").
+# Not seeded yet: today the passwd file on scmino holds only hf. 75auto and the
+# phone (the 75AUTO page of hf_console) use hf until the auto-op and console
+# accounts are seeded.
+user auto-op
+topic write muehle/hf/auto-op/state
+topic write muehle/hf/auto-op/meta
+topic write muehle/hf/auto-op/status
+topic write muehle/hf/auto-op/beat
+topic read muehle/hf/auto-op/cmd

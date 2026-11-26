@@ -159,7 +159,7 @@ name     = "bwpc"
 addr     = "192.168.1.197"
 hardware = "Shack PC"
 os       = "Windows"
-role     = "DXLog / Log4OM logger, PstRotator, OscarWatch (Satellite link ws :7373); winpc-power-bridge (sleeps in idle standby, woken by WOL); chaseq-ui (chase-queue list window)"
+role     = "DXLog / Log4OM logger, PstRotator, OscarWatch (Satellite link ws :7373); winpc-power-bridge (sleeps in idle standby, woken by WOL); chaseq-ui (chase-queue list window); 75auto (automatic digimode operator, slot hf/auto-op)"
 
 [[host]]
 name     = "lenovo-tab"
@@ -270,6 +270,13 @@ component = "chase-queue"
 device    = "logic slot — ranks the qualified CQ stations bmrec hears and the needed DX-cluster spots by the active awards (goals), self-contained rows"
 link      = "none"
 host      = "scmino"
+
+[[slot]]
+address   = "muehle/hf/auto-op"
+component = "75auto"
+device    = "logic slot, the automatic digimode operator: the view of its WSJT-X session, and signed commands from the 75AUTO page of hf_console"
+link      = "none"
+host      = "bwpc"
 
 [[slot]]
 address   = "muehle/hf/station-log"
@@ -423,6 +430,14 @@ path = "../opsotter/operating/chaseq-ui"
 kind = "ui"
 host = "bwpc"
 note = "opsotter repo; Task Scheduler at logon; chase-queue list window, Enter = QSY (frequency + mode) + callsign into the configured logger(s) (Log4OM)"
+
+[[software]]
+name  = "75auto"
+path  = "../75auto"
+kind  = "logic"
+host  = "bwpc"
+note  = "separate repo (github.com/kgbvax/75auto). Rule-driven automatic digimode operator (FT8, FT4) through WSJT-X, a desktop app on bwpc. The remote page is off by default ([remote] enabled = false). Offline while bwpc sleeps"
+slots = ["muehle/hf/auto-op"]
 
 [[software]]
 name  = "icom9700-radio-bridge"

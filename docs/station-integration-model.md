@@ -345,6 +345,8 @@ entirely).
     read-only, fronts software.
   - `chase-queue`: a logic slot that ranks the stations on the air by what is needed
     (`hf/chase`; see opsotter `operating/docs/chasing-stations-architecture.md`).
+  - `auto-op`: an automatic digimode operator. A logic slot that publishes the view of its
+    session and takes signed operator commands (`hf/auto-op`, 75auto on bwpc).
   - `log-store`: retired 2026-11-13 with `station-log`. It was a logic slot holding the
     station's QSO record (`hf/station-log`). The QSO record is now the opsotter log
     database (`records/logdb`, CouchDB on `scmino`).
@@ -875,6 +877,25 @@ retained ranked list; `/cmd` skip, handled, undo and the contest-instance action
 opsotter `operating/chase-queue/docs/chase-queue-mqtt-api.md`; domain roles: opsotter `operating/docs/chasing-stations-architecture.md`. Rows are
 self-contained (`freq_hz`, `mode`, `source`, `needs[]`); what is needed comes from the enabled awards (goals).
 
+**`muehle/hf/auto-op`**: the automatic digimode operator (logic slot, 75auto on `bwpc`, role
+`auto-op`, link `none`). 75auto is a separate program and is not in this repo
+(github.com/kgbvax/75auto). It runs digimode sessions (FT8, FT4) through WSJT-X under its
+own rules and its own gate. The slot is off by default (`[remote] enabled = false`).
+```
+client id:    75auto-auto-op
+meta:         role auto-op; link none; host bwpc; capabilities {schema_name auto-op/v1,
+              bands, commands none|stop|operate, signed true}; no expose block, so
+              hadiscovery makes no HA device
+state:        the view of the session (retained JSON; on change at most 2/s, else every 30 s)
+beat:         /beat, NOT retained; every 2 s while a session runs, every 10 s without one
+intent:       stop; approve {id}; reject {id}; mode {observe|confirm|auto}; touch;
+              target {call, choice}   # /cmd NOT retained, HMAC-SHA256 signed
+```
+The consumer is the 75AUTO page of hf_console. bwpc sleeps, so `/status` offline is normal
+while bwpc is asleep. 75auto ignores a command without a valid signature and writes it only
+to its own log. Contract: 75auto `docs/interfaces/auto-op-mqtt-api.md`. The remote TX review
+is in `docs/known-issues.md`, "Remote TX review for 75auto (auto-op)".
+
 **`muehle/hf/discovery`**: HA discovery consumer (logic slot, `hadiscovery`; see §7.3, §9)
 ```
 subscribes: <site>/+/+/meta  (reads each slot's consumer-neutral `expose` block, §3.1)
@@ -890,7 +911,8 @@ open, see `docs/known-issues.md`), `ant/fan-dipole` 80/40 (port 6),
 `rotator` and `pa` since 2026-10-12, and `ant-ctrl` since 2026-10-09; `pa-arm` + `switch`
 are a self-hosted M5 Stamp PLC and `ant-switch` is an ESPHome board. The Shelly power
 bridge and the `power-seq` sequencer run on `scmino` (since 2026-10-18); the logic slots `chase` and
-`station-log` (opsotter `working-station`, no device) run there too. See §7.3. The PA
+`station-log` (opsotter `working-station`, no device) run there too. The logic slot `auto-op`
+(75auto, no device) runs on `bwpc`. See §7.3. The PA
 bridge talks to the ACOM 1200S over USB-serial (Prolific, 9600 8N1) for telemetry,
 `/cmd set_band` band-walk commands and `set_mode`. The `set_band` commands come from the
 antenna-select PA band-follow (on in the seeded config, `[pa_follow] enabled = true`; off
@@ -1136,7 +1158,7 @@ model-only"). Today host placement is carried only by each slot's `/meta.host`.
 muehle/host/shari       # Raspberry Pi, Linux
   role: host;  location: bauwagen;  state: online, temp_c, load
 muehle/host/bwpc        # shack PC (Windows, 192.168.1.197): loggers, PstRotator,
-                        # OscarWatch, winpc-power-bridge
+                        # OscarWatch, winpc-power-bridge, 75auto
   role: host;  location: bauwagen;  state: online
 muehle/host/scmino      # Raspberry Pi CM5, Debian 12 arm64 — runs most station
                         # services since 2026-10-12
@@ -1167,6 +1189,7 @@ muehle/host/scmino      # Raspberry Pi CM5, Debian 12 arm64 — runs most statio
 | Power sequencer (`powerseq`) | `hf/power-seq` | `scmino` |
 | Chase queue (`chase-queue`) | `hf/chase` (logic slot) | `scmino` |
 | Chase list window (`chaseq-ui`) | consumer of `hf/chase`, no slot; `/cmd` to `hf/chase` and `hf/radio` | `bwpc` |
+| Automatic digimode operator (75auto, separate repo) | `hf/auto-op` (logic slot) | `bwpc` |
 | HA discovery bridge (optional, `hadiscovery`) | `hf/discovery` (logic slot); consumer of `meta`/`state`/`status` | `scmino` |
 | VHF cam restreamer (`vhfcam-restream`, :8083) | `hf/vhfcam` (`/status` + `/state` only) | `scmino` |
 | Station broker (`mqtt-broker`, Mosquitto :1883, `muehle/#` mirror to the HA broker `.50`) | none | `scmino` |

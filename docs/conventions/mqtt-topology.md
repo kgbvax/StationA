@@ -68,6 +68,8 @@ one" (§9).
 | ant-switch ESP | `waveshare_relay-antswitch-bridge/esphome/station-at1.yaml` and its `docs/known-issues.md` | verify on the device that it names `scmino` |
 | Workstation (dev `go run`, `mosquitto_sub`) | `scmino:1883` (station broker); `192.168.1.50:1883` also shows every `muehle/#` topic through the mirror | shari (`.139`) runs no broker |
 | chaseq-ui (bwpc) | `scmino:1883` | consumer of `hf/chase`, `hf/radio`; sends `/cmd` to `hf/chase` and `hf/radio`; account `hf`; client ID `muehle-chaseq-ui` |
+| 75auto (bwpc, separate repo) | `scmino:1883` | the `hf/auto-op` logic slot. Publishes `/meta`, `/state`, `/beat`, `/status` and reads its own `/cmd`. Account `hf` until `auto-op` is seeded. Client ID `75auto-auto-op`. Off by default (`[remote] enabled = false`) |
+| hf_console phone, 75AUTO page (in the car) | `scmino:1883` | consumer of `hf/auto-op` (`/meta`, `/state`, `/beat`, `/status`). Sends signed `/cmd` to `hf/auto-op`. Account `hf` until `console` is seeded |
 | HA's MQTT integration | `192.168.1.50:1883` | HA's own broker, unchanged |
 
 `127.0.0.1` reaches the station broker only on scmino; shari runs no broker.
@@ -107,6 +109,17 @@ With the split mapping, local command origins (the console tablet) publish `cmd`
 the station broker directly and are **not** bridged out — HA does not subscribe
 to `/cmd`. With the current full mirror, `/cmd` is carried both ways.
 
+**`muehle/hf/auto-op/cmd` and the mirror.** The mirror line `topic muehle/# both 1`
+carries `muehle/hf/auto-op/cmd` both ways. A `topic` line cannot exclude one topic
+from a pattern. So any client on the HA broker `.50` can publish a command to 75auto.
+For this reason 75auto takes only commands with a valid HMAC-SHA256 signature. It
+ignores an unsigned command or one with a bad signature and writes it only to its own
+log. The review is in `docs/known-issues.md`, "Remote TX review for 75auto (auto-op)".
+Follow-up: replace the mirror with a split mapping that has explicit `cmd in` lines
+per slot (for example `topic muehle/hf/radio/cmd in 1`) and no `cmd in` line for
+`auto-op`. The generic `topic muehle/+/+/cmd in 1` line above would also carry the
+`auto-op` command topic.
+
 ## Accounts and ACLs
 
 Deployed state (per `mqtt-broker/CLAUDE.md`, not re-checked live): the scmino
@@ -124,6 +137,7 @@ Station broker (`mqtt-broker/acl.conf.example`):
 | `bridge` | `muehle/+/+/state`, `/meta`, `/status`, `homeassistant/+/+/+/config` | `homeassistant/status`, `muehle/+/+/cmd`, `local/bridge-to-ha` |
 | `console`| `muehle/+/+/state`, `/meta`, `/status`                | `muehle/+/+/cmd` (narrow)                            |
 | `dial`   | `muehle/hf/rotator/state`, `/status`                  | `muehle/hf/rotator/cmd` (one slot only)              |
+| `auto-op`| `muehle/hf/auto-op/cmd`                               | `muehle/hf/auto-op/state`, `/meta`, `/status`, `/beat` (one slot only) |
 
 - **`hf`** is the shared station account: the station Go services (via
   `127.0.0.1` or the LAN address), M5 Stamp PLC #1 and the **Shelly smart plugs** connect as `hf`. The
@@ -144,7 +158,16 @@ Station broker (`mqtt-broker/acl.conf.example`):
   split mapping, and check on the deployed mosquitto version that ACLs apply to
   the bridge context.
 - **`console`** is the `hf_console` tablet. Configure the tablet with this
-  account, not `hf` (see `hf_console/CLAUDE.md`).
+  account, not `hf` (see `hf_console/CLAUDE.md`). It also reads
+  `muehle/hf/auto-op/beat` for the 75AUTO page, because `muehle/+/+/state`
+  does not match the heartbeat topic.
+- **`auto-op`** is 75auto on bwpc (separate repo, github.com/kgbvax/75auto). It
+  writes the planes of `muehle/hf/auto-op` and reads only its own `/cmd`. It is
+  not seeded yet. Only `hf` is in the scmino `passwd` today, so 75auto and the
+  phone with the 75AUTO page both use `hf` until the `auto-op` and `console`
+  accounts are seeded. `hf` is a wide account on a phone. The signature limits
+  what a holder of `hf` can make 75auto do, but not what such a holder can do to
+  other slots.
 - **`dial`** is the M5Stack Dial rotator head (`m5dial-hf-rotctrl/`), the
   narrowest account: it touches only `muehle/hf/rotator` (read state/status,
   write cmd). Configure the Dial's `src/secrets.h` with this account, not `hf`.
