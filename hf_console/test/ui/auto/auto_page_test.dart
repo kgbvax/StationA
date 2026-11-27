@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hf_console/store/bus_store.dart';
 import 'package:hf_console/ui/auto/auto_controls.dart';
-import 'package:hf_console/ui/auto/auto_page.dart' show autoMaxScale;
+import 'package:hf_console/store/auto_op.dart';
+import 'package:hf_console/ui/auto/auto_page.dart' show autoErrorText, autoMaxScale;
+import 'package:hf_console/ui/auto/input_faults.dart';
 import 'package:hf_console/ui/screens/console_screen.dart';
 import 'package:hf_console/ui/theme.dart';
 
@@ -398,13 +400,43 @@ void main() {
     });
   });
 
-  group('health row', () {
-    testWidgets('a missing rig shows RIG ?, a stale input its reason', (tester) async {
-      final doc = busyAutoOpDoc()..['rig'] = {'present': false};
+  group('input faults', () {
+    testWidgets('healthy inputs show no lights and no fault line', (tester) async {
+      await _pumpAuto(tester, doc: busyAutoOpDoc());
+      for (final name in ['WSJT-X', 'RIG', 'NEEDED', 'SPOTS', 'CLOCK']) {
+        expect(find.text(name), findsNothing);
+      }
+      expect(find.byKey(const ValueKey('auto-error')), findsNothing);
+    });
+
+    testWidgets('a stale input, a bad rig and a failing clock show as one fault line', (tester) async {
+      final doc = busyAutoOpDoc()
+        ..['health'] = [
+          {'interface': 'digimode', 'name': 'WSJT-X', 'fresh': false, 'reason': ''},
+          {'interface': 'spots', 'name': 'SPOTS', 'fresh': false, 'reason': '4 min old'},
+          {'interface': 'needed', 'name': 'NEEDED', 'fresh': null},
+        ]
+        ..['rig'] = {'present': true, 'ok': false, 'reason': 'no reply'}
+        ..['clock_failing'] = true;
       await _pumpAuto(tester, doc: doc);
-      expect(find.text('RIG ?'), findsOneWidget);
-      expect(find.text('SPOTS 4 min old'), findsOneWidget);
-      expect(find.text('CLOCK'), findsOneWidget);
+      expect(find.text('INPUT FAULT · WSJT-X not reporting · RIG no reply · SPOTS 4 min old · CLOCK failing'),
+          findsOneWidget);
+    });
+
+    test('unknown inputs and a missing rig are no faults', () {
+      final doc = busyAutoOpDoc()
+        ..['health'] = [
+          {'interface': 'digimode', 'name': 'WSJT-X'},
+        ]
+        ..['rig'] = {'present': false}
+        ..remove('clock_failing');
+      expect(autoInputFaults(AutoOpView.fromState(doc)), isEmpty);
+    });
+
+    test('the error comes first, then the faults', () {
+      expect(autoErrorText('rule cycle failed', ['CLOCK failing']),
+          '75AUTO ERROR · rule cycle failed · INPUT FAULT · CLOCK failing');
+      expect(autoErrorText('', const []), '');
     });
   });
 

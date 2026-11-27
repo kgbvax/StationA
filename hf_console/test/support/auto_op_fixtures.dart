@@ -38,7 +38,6 @@ Map<String, dynamic> busyAutoOpDoc({int seq = 2000}) => {
         'qso_stage': 'R+RPT',
         'try_count': 0,
         'repeat_count': 1,
-        'tx_parity': 'odd',
         'target_choice': 'follow',
       },
       'presence_end_ms': busyNowMs + 492000,
@@ -111,7 +110,7 @@ Map<String, dynamic> busyAutoOpDoc({int seq = 2000}) => {
       'health': [
         {'interface': 'digimode', 'name': 'WSJT-X', 'fresh': true, 'reason': ''},
         {'interface': 'needed', 'name': 'NEEDED', 'fresh': true, 'reason': ''},
-        {'interface': 'spots', 'name': 'SPOTS', 'fresh': false, 'reason': '4 min old'},
+        {'interface': 'spots', 'name': 'SPOTS', 'fresh': true, 'reason': ''},
       ],
       'rig': {'present': true, 'ok': true, 'name': 'rigctld', 'reason': ''},
       'clock_failing': false,

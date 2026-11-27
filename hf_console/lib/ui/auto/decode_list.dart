@@ -42,14 +42,13 @@ class AutoRow {
 }
 
 /// The rows of the band activity list: the decodes of [view], newest period
-/// first, each period under a header with its time and EVEN or ODD.
+/// first, each period under a header with its time.
 ///
 /// The document holds only the decodes of the current band (contract §5.2).
 /// The decodes carry no band of their own, so there is nothing more to
 /// filter here.
 List<AutoRow> bandActivityRows(AutoOpView? view) {
   final decodes = view?.decodes ?? const <AutoOpDecode>[];
-  final period = view?.station?.periodMs;
   final byPeriod = <int, List<AutoOpDecode>>{};
   for (final d in decodes) {
     byPeriod.putIfAbsent(d.periodStartMs ?? 0, () => []).add(d);
@@ -58,7 +57,7 @@ List<AutoRow> bandActivityRows(AutoOpView? view) {
   final newest = starts.isEmpty ? null : starts.first;
   return [
     for (final p in starts) ...[
-      AutoRow.header(p == 0 ? 'period ?' : [utcHms(p), ?parityOf(p, period)].join(' · ')),
+      AutoRow.header(p == 0 ? 'period ?' : utcHms(p)),
       for (final d in byPeriod[p]!) AutoRow.decode(d, old: p != newest),
     ],
   ];

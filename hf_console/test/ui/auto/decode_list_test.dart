@@ -32,23 +32,15 @@ void main() {
       expect(find.text('<b>CQ</b> X1ABC'), findsOneWidget);
     });
 
-    test('newest period first, each under a header with its time and parity', () {
+    test('newest period first, each under a header with its time', () {
       final rows = bandActivityRows(_view(busyAutoOpDoc()));
       final headers = [for (final r in rows) if (r.header != null) r.header];
-      expect(headers, ['14:32:30 · EVEN', '14:32:00 · EVEN']);
+      expect(headers, ['14:32:30', '14:32:00']);
       expect(rows.first.header, isNotNull);
       // The decodes of the older period are old.
-      final older = rows.skipWhile((r) => r.header != '14:32:00 · EVEN').skip(1);
+      final older = rows.skipWhile((r) => r.header != '14:32:00').skip(1);
       expect(older.every((r) => r.old), isTrue);
       expect(rows[1].old, isFalse);
-    });
-
-    test('an odd period says ODD', () {
-      final doc = busyAutoOpDoc()
-        ..['decodes'] = [
-          {'period_start_ms': busyNowMs - 26000, 'df': 800, 'snr': -3, 'text': 'CQ X1ABC'},
-        ];
-      expect(bandActivityRows(_view(doc)).first.header, '14:32:15 · ODD');
     });
 
     testWidgets('markers: TGT on the DX call, NEW on a needed station, no TO ME tag', (tester) async {
