@@ -265,6 +265,22 @@ void main() {
       // No age of a count either.
       expect(find.text('11m'), findsNothing);
     });
+
+    testWidgets('a band without a batch in this session shows its survey value undimmed', (tester) async {
+      final doc = busyAutoOpDoc();
+      doc['bands'] = [
+        {'band': '80m', 'dial_hz': 3573000, 'seen': false, 'count': 0, 'period_start_ms': 0, 'value': 23},
+        {'band': '20m', 'dial_hz': 14074000, 'seen': true, 'count': 23, 'period_start_ms': busyNowMs, 'value': 42},
+        {'band': '10m', 'dial_hz': 28074000, 'seen': false, 'count': 0, 'period_start_ms': 0},
+      ];
+      await _pumpAuto(tester, doc: doc);
+      Color? color(String key) => tester.widget<Text>(find.byKey(ValueKey(key))).style?.color;
+      expect(_text(tester, 'auto-band-value-80m'), '23');
+      expect(color('auto-band-value-80m'), AppTheme.txt);
+      expect(color('auto-band-value-20m'), AppTheme.txt);
+      // A band without a value shows a dimmed dash.
+      expect(color('auto-band-value-10m'), AppTheme.txtFaint);
+    });
   });
 
   group('band order', () {

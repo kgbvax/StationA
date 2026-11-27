@@ -1,6 +1,8 @@
 /// The band selector of the 75AUTO page. Display only in this work: each
 /// band of the band table, with its value from the band survey of 75auto
-/// (the points of the band, as the Value column of the 75auto window). A band without a batch in this session shows dimmed.
+/// (the points of the band, as the Value column of the 75auto window). A band
+/// without a value shows a dimmed dash. The survey covers every band of the
+/// table, so a band that WSJT-X never tuned to in this session is not dimmed.
 /// The column always lists the HF bands from 160 m to 10 m. A band that is
 /// not in the band table of 75auto shows dimmed with no dial: 75auto does
 /// not change to it.
@@ -168,8 +170,9 @@ class _BandRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final band = entry.band!;
     final label = band.endsWith('m') && !band.endsWith('cm') ? band.substring(0, band.length - 1) : band;
-    final seen = entry.seen;
-    final off = seen == false || !inTable;
+    // Only a band outside the band table is off. `seen` (a decode batch in
+    // this session) says nothing about the survey value.
+    final off = !inTable;
     final border = current ? AppTheme.accent : (pending ? AppTheme.amber : (off ? AppTheme.cardLine : AppTheme.cardLineHi));
     final text = current ? AppTheme.accent : (pending ? AppTheme.amber : (off ? AppTheme.txtFaint : AppTheme.txt));
     final tip = current
