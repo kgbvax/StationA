@@ -267,9 +267,9 @@ class _PageContent extends StatelessWidget {
                 ? _SplitTopBar(
                     status: trailing,
                     railWidth: _TabletShell.rightWidth(c.biggest),
-                    bar: _PageTopBar(page: '75auto', onSelect: onSelect),
+                    bar: _PageTopBar(page: '75auto', onSelect: onSelect, rf: false),
                   )
-                : _PageTopBar(page: '75auto', onSelect: onSelect, trailing: trailing),
+                : _PageTopBar(page: '75auto', onSelect: onSelect, trailing: trailing, rf: false),
           ),
         );
       case 'hf':
@@ -707,15 +707,20 @@ class _PageTopBar extends StatelessWidget {
   final String page;
   final ValueChanged<String> onSelect;
 
-  /// A status part of the page, between the page tabs and the RX/TX
-  /// annunciator. With it the bar keeps one row: the tabs do not wrap, and
-  /// the status part takes the rest of the width (the 75AUTO page).
+  /// A status part of the page, after the page tabs. With it the bar keeps
+  /// one row: the tabs do not wrap, and the status part takes the rest of
+  /// the width (the 75AUTO page).
   final Widget? trailing;
+
+  /// The RX/TX annunciator at the right edge. The 75AUTO page has none: its
+  /// TRANSMIT label and the red frame of Stop TX show the transmit.
+  final bool rf;
 
   const _PageTopBar({
     required this.page,
     required this.onSelect,
     this.trailing,
+    this.rf = true,
   });
 
   @override
@@ -742,8 +747,10 @@ class _PageTopBar extends StatelessWidget {
             ),
             const SizedBox(width: 10),
             Expanded(child: trailing!),
-            const SizedBox(width: 10),
-            const _RfAnnunciator(),
+            if (rf) ...[
+              const SizedBox(width: 10),
+              const _RfAnnunciator(),
+            ],
           ],
         ),
       );
@@ -769,8 +776,10 @@ class _PageTopBar extends StatelessWidget {
               ],
             ),
           ),
-          const SizedBox(width: 10),
-          const _RfAnnunciator(),
+          if (rf) ...[
+            const SizedBox(width: 10),
+            const _RfAnnunciator(),
+          ],
         ],
       ),
     );
