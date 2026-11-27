@@ -1059,6 +1059,29 @@ default (`[remote] enabled = false`). Contract: 75auto `docs/interfaces/auto-op-
   proposes `change-band` only while no QSO runs and WSJT-X neither transmits nor has Tx enabled. The proposal goes
   through the mode (auto sends, confirm waits for Approve, observe only shows). 75auto tunes through rigctld to the
   dial of `[bands]`, and WSJT-X follows the radio. A band outside `[bands]` is refused.
+- **Remote session start and end (operator decisions of 2026-11-27).** The 75AUTO page has its own Start. It sends
+  `auto_start` to powerseq, which wakes the station and bwpc and starts AetherSDR, DAX, WSJT-X and 75auto through
+  winpc-power-bridge. When the chain is ready, the page that tapped Start sends a signed `start_session` with a
+  rule set and a mode, within 30 minutes of the tap. The key stays on the phone. `end_session` ends the session.
+  Both need `operate` and the normal signature and time window. A remote start counts as presence for the gate.
+  - *Auto mode.* A remote start in `auto` mode is allowed. This differs on purpose from the auto start of the last
+    session at program start, which never starts in `auto`. The gate keeps all its hard limits.
+  - *Latch.* `start_session` is refused with `busy` while a session is open, latched or not. After that session
+    ends, a new remote start is allowed. A latched stop is still not resumed from the car: the latched session
+    must end first, and the new session is a new tap with fresh presence.
+  - *Antenna mode.* powerseq refuses `auto_start` while the antenna mode is `storm` or `maintenance`, and the page
+    disables its Start then. 75auto itself does not read the antenna mode, so a session that runs when storm mode
+    starts is not stopped by this rule.
+  - *PA.* When a session starts, from the chain or from the window, powerseq puts the PA in standby once. The
+    operator can then set operate by hand.
+- **Unsigned bwpc program commands (accepted 2026-11-27).** `ensure_program` and `stop_program` on
+  `muehle/power/shack-pc/cmd` need no signature, like `sleep`. A holder of the `hf` account or a client on the HA
+  broker can start the configured programs, or end the programs that the agent started while no session is
+  active. The program paths come only from the agent configuration, so the worst case is a denial of service, for
+  example AetherSDR taking the last FLEX GUI client slot. `stop_program` is refused during a session.
+- **Fake session beat (accepted 2026-11-27).** powerseq holds the station powered while `hf/auto-op` reports a
+  session with a fresh beat. A client that publishes a fake beat on `hf/auto-op` can keep the station powered and
+  bwpc awake. The cost is power and wear only. The split bridge mapping (follow-up below) closes the HA path.
 - **Signature and key.** Each command, `stop` included, carries an HMAC-SHA256 signature over a fixed JSON
   text of `action`, `value`, `ts` and `cmd_id`. The key is 32 random bytes. On bwpc it is a file of 64 hex digits
   named by `remote.key_file`. On the phone it is in the secure storage of the app, never in the APK. 75auto
