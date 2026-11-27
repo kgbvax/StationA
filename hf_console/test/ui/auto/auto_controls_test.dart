@@ -74,6 +74,17 @@ bool _on(WidgetTester tester, String key) => tester.widget<ElevatedButton>(_k(ke
 
 String _line(WidgetTester tester, String key) => tester.widget<Text>(_k(key)).data!;
 
+/// The background of Stop TX, in the disabled state when [disabled].
+Color? _stopBackground(WidgetTester tester, {bool disabled = false}) => tester
+    .widget<ElevatedButton>(_k('auto-stop-tx'))
+    .style!
+    .backgroundColor!
+    .resolve(disabled ? {WidgetState.disabled} : <WidgetState>{});
+
+/// The color of the STOP TX label.
+Color? _stopLabel(WidgetTester tester) =>
+    tester.widget<Text>(find.descendant(of: _k('auto-stop-tx'), matching: find.text('STOP TX'))).style!.color;
+
 Future<void> _tap(WidgetTester tester, String key) async {
   await tester.tap(_k(key), warnIfMissed: false);
   // The key read and the publish run in microtasks.
@@ -207,6 +218,27 @@ void main() {
       expect(_line(tester, 'auto-operate-line'), 'no key');
       await _tap(tester, 'auto-stop-tx');
       expect(mqtt.publishes, isEmpty);
+    });
+
+    testWidgets('it is red only while 75auto transmits', (tester) async {
+      final idle = busyAutoOpDoc();
+      idle['station'] = {...idle['station'] as Map<String, dynamic>, 'transmitting': false};
+      final (store, _) = await _pump(tester, doc: idle);
+      expect(_on(tester, 'auto-stop-tx'), isTrue);
+      expect(_stopBackground(tester), AppTheme.pane);
+      expect(_stopLabel(tester), AppTheme.txt);
+
+      _live(store, busyAutoOpDoc());
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(_stopBackground(tester), AppTheme.red);
+      expect(_stopLabel(tester), AppTheme.activeButtonText);
+    });
+
+    testWidgets('off, it has the disabled colors and no red', (tester) async {
+      await _pump(tester, commands: 'none');
+      expect(_on(tester, 'auto-stop-tx'), isFalse);
+      expect(_stopBackground(tester, disabled: true), AppTheme.pane);
+      expect(_stopLabel(tester), AppTheme.txtFaint);
     });
   });
 

@@ -12,8 +12,9 @@
 /// Each tap sends one signed command (`auto_commands.dart`). There are no
 /// dialogs: the gate of 75auto and the pending id are the interlocks.
 ///
-/// - Stop TX is in the danger style, filled red while 75auto transmits. It
-///   stays on with stale data and never locks. Its second line shows the
+/// - Stop TX is filled red while 75auto transmits, and a plain button
+///   otherwise. When it is off, it has the disabled colors. It stays on
+///   with stale data and never locks. Its second line shows the
 ///   reason when it is off, else what became of the last stop.
 /// - The cards and Approve and Reject need fresh data and `operate`. The
 ///   feedback line shows the reason when they are off, else the result of
@@ -307,12 +308,14 @@ class _StopTx extends StatelessWidget {
       final on = gate.stop == null;
       final line = cmd.stopLine(gate, clock.now());
       final hot = on && transmitting;
+      // Red only while 75auto transmits. Idle, the button is a plain
+      // button; off, it has the disabled colors of every button.
       final Color label = hot
           ? AppTheme.activeButtonText
           : on
-              ? AppTheme.red
-              : AppTheme.blend(AppTheme.red, 0.6);
-      final style = AppTheme.actionButton(danger: true, dangerActive: hot).copyWith(
+              ? AppTheme.txt
+              : AppTheme.txtFaint;
+      final style = AppTheme.actionButton(dangerActive: hot).copyWith(
         minimumSize: const WidgetStatePropertyAll(Size(48, autoStopHeight)),
         padding: const WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: 8, vertical: 2)),
       );
@@ -320,12 +323,7 @@ class _StopTx extends StatelessWidget {
         key: const ValueKey('auto-stop-tx'),
         // Never locked: each tap sends a new stop.
         onPressed: on ? () => cmd.send(AutoControl.stop, null) : null,
-        style: on
-            ? style
-            : style.copyWith(
-                side: WidgetStatePropertyAll(BorderSide(width: 1.4, color: AppTheme.blend(AppTheme.red, 0.6))),
-                backgroundColor: WidgetStatePropertyAll(AppTheme.blend(AppTheme.red, 0.06)),
-              ),
+        style: style,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
