@@ -121,6 +121,13 @@ class AutoOpStation {
   final String? mode;
   final String? dxCall;
   final String? dxEntity;
+
+  /// The operator name and the picture URL of the DX call from the
+  /// callbook (QRZ.com), and the distance to it in km. Empty or 0 when
+  /// 75auto does not know them.
+  final String? dxName;
+  final String? dxImage;
+  final int? dxKm;
   final int? txDf;
   final int? rxDf;
   final bool? txEnabled;
@@ -151,6 +158,9 @@ class AutoOpStation {
     this.mode,
     this.dxCall,
     this.dxEntity,
+    this.dxName,
+    this.dxImage,
+    this.dxKm,
     this.txDf,
     this.rxDf,
     this.txEnabled,
@@ -175,6 +185,9 @@ class AutoOpStation {
       mode: _str(m['mode']),
       dxCall: _str(m['dx_call']),
       dxEntity: _str(m['dx_entity']),
+      dxName: _str(m['dx_name']),
+      dxImage: _str(m['dx_image']),
+      dxKm: _int(m['dx_km']),
       txDf: _int(m['tx_df']),
       rxDf: _int(m['rx_df']),
       txEnabled: _bool(m['tx_enabled']),
@@ -372,7 +385,11 @@ class AutoOpBandCount {
   final int? count;
   final int? periodStartMs;
 
-  const AutoOpBandCount({this.band, this.dialHz, this.seen, this.count, this.periodStartMs});
+  /// The points of the band from the last band survey of 75auto. Null
+  /// without a survey, without award points, or while the survey is stale.
+  final int? value;
+
+  const AutoOpBandCount({this.band, this.dialHz, this.seen, this.count, this.periodStartMs, this.value});
 
   factory AutoOpBandCount._parse(Map<String, dynamic> m) => AutoOpBandCount(
         band: _str(m['band']),
@@ -380,6 +397,7 @@ class AutoOpBandCount {
         seen: _bool(m['seen']),
         count: _int(m['count']),
         periodStartMs: _int(m['period_start_ms']),
+        value: _int(m['value']),
       );
 }
 

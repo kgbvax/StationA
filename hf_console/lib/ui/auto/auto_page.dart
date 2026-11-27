@@ -6,9 +6,10 @@
 /// Landscape (about 914 x 411 dp on a phone, scaled up as a whole on a
 /// larger screen): the top bar, the readout row,
 /// the main area with the band selector, the band activity, the RX
-/// frequency list, and the control column, and the bottom strip with the
-/// action log and the health row. Stop TX stays in view at the bottom of
-/// the control column, also under the LINK DOWN banner.
+/// frequency list with the controls under it (Target, Mode, Arm CQ, Stop
+/// TX), and the DX card, and the bottom strip with the action log and the
+/// health row. Stop TX stays in view under the RX list, also under the
+/// LINK DOWN banner.
 ///
 /// Portrait: the readouts and the control column on top, the lists below in
 /// a scroll view.
@@ -35,6 +36,7 @@ import 'auto_readouts.dart';
 import 'auto_top_bar.dart';
 import 'band_selector.dart';
 import 'decode_list.dart';
+import 'dx_card.dart';
 import 'health_row.dart';
 import 'rx_list.dart';
 
@@ -149,9 +151,15 @@ class _AutoPageState extends State<AutoPage> {
                       gap,
                       const Expanded(child: DecodeList()),
                       gap,
-                      const Expanded(child: RxList()),
+                      const Expanded(
+                        child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                          Expanded(child: RxList()),
+                          SizedBox(height: autoGap),
+                          AutoControls(),
+                        ]),
+                      ),
                       gap,
-                      const SizedBox(width: 272, child: AutoControlColumn()),
+                      const SizedBox(width: 256, child: DxCard()),
                     ],
                   ),
                 ),
@@ -193,7 +201,9 @@ class _AutoPageState extends State<AutoPage> {
               gap,
               AutoReadouts(twoRows: true),
               gap,
-              AutoControlColumn(cardHeight: 124),
+              SizedBox(height: 190, child: DxCard()),
+              gap,
+              AutoControls(),
             ],
           ),
         ),

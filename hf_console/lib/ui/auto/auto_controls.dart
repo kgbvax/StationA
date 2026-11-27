@@ -1,8 +1,7 @@
-/// The control column of the 75AUTO page, from top to bottom: the Next
-/// action card with Approve and Reject, the TARGET card (Follow, Skip) and
-/// the MODE card (Observe, Confirm, Auto) side by side, and Arm CQ and Stop
-/// TX at the bottom. The feedback line sits in the title strip of the MODE
-/// card.
+/// The controls of the 75AUTO page, under the RX frequency list: the
+/// TARGET card (Follow, Skip) and the MODE card (Observe, Confirm, Auto)
+/// side by side, then Arm CQ and Stop TX. The feedback line sits in the
+/// title strip of the MODE card. Approve and Reject are in the DX card.
 ///
 /// Arm CQ sits next to Stop TX, as in the window of 75auto: Arm CQ gives the
 /// rules the permission to call CQ for 30 minutes, Stop takes it away. It
@@ -16,7 +15,7 @@
 /// - Stop TX is in the danger style, filled red while 75auto transmits. It
 ///   stays on with stale data and never locks. Its second line shows the
 ///   reason when it is off, else what became of the last stop.
-/// - The row and Approve and Reject need fresh data and `operate`. The
+/// - The cards and Approve and Reject need fresh data and `operate`. The
 ///   feedback line shows the reason when they are off, else the result of
 ///   the last command. A refused command also gives its button an amber
 ///   border.
@@ -31,7 +30,6 @@ import '../theme.dart';
 import 'auto_card.dart';
 import 'auto_commands.dart';
 import 'auto_live.dart';
-import 'next_action_card.dart';
 
 /// The height of the buttons of the TARGET and MODE cards, and of Stop TX.
 const autoButtonRowHeight = 48.0;
@@ -46,25 +44,24 @@ const autoRowTitleHeight = 16.0;
 /// The height of the TARGET and MODE cards.
 const autoRowCardHeight = autoRowTitleHeight + autoButtonRowHeight + 2 * 2 + 2;
 
-class AutoControlColumn extends StatelessWidget {
-  /// The fixed height of the Next action card. Null lets it fill the rest
-  /// of the column (landscape).
-  final double? cardHeight;
+/// The height of the control block: the TARGET and MODE cards, and Arm CQ
+/// and Stop TX.
+const autoControlsHeight = autoRowCardHeight + 4 + autoStopHeight;
 
-  const AutoControlColumn({super.key, this.cardHeight});
+/// The control block of the 75AUTO page, under the RX frequency list: the
+/// TARGET and MODE cards, then Arm CQ and Stop TX.
+class AutoControls extends StatelessWidget {
+  const AutoControls({super.key});
 
   @override
   Widget build(BuildContext context) {
-    const card = NextActionCard();
-    return Column(
-      mainAxisSize: cardHeight == null ? MainAxisSize.max : MainAxisSize.min,
+    return const Column(
+      mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        if (cardHeight == null) const Expanded(child: card) else SizedBox(height: cardHeight, child: card),
-        const SizedBox(height: 4),
-        const SizedBox(height: autoRowCardHeight, child: _ButtonRow()),
-        const SizedBox(height: 4),
-        const SizedBox(
+        SizedBox(height: autoRowCardHeight, child: _ButtonRow()),
+        SizedBox(height: 4),
+        SizedBox(
           height: autoStopHeight,
           child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
             SizedBox(width: autoArmWidth, child: _ArmCq()),

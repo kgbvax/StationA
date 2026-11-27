@@ -1,8 +1,7 @@
-/// The Next action card of the 75AUTO page: the pending proposal with its
-/// confirm countdown, else the current action, else why the rules propose
-/// nothing. A latched stop outranks all three: then the card says
-/// "LATCHED · resume at the station" with the stop reason, and it has no
-/// buttons. There is no Resume on the page.
+/// The proposal parts of the DX card of the 75AUTO page: the text of the
+/// pending proposal, else of the current action, else why the rules
+/// propose nothing (a latched stop outranks all three), the confirm
+/// countdown, and Approve and Reject. There is no Resume on the page.
 ///
 /// Approve and Reject show only with a pending proposal. A tap sends the
 /// pending id and locks both until the result with the same `cmd_id`
@@ -16,7 +15,6 @@ import 'package:provider/provider.dart';
 import '../../store/auto_op.dart';
 import '../../store/bus_store.dart';
 import '../theme.dart';
-import 'auto_card.dart';
 import 'auto_commands.dart';
 import 'auto_live.dart';
 import 'auto_words.dart';
@@ -110,88 +108,11 @@ NextActionText nextActionText(AutoOpView? view) {
   return NextActionText('Next action', 'no proposal', AppTheme.txtMute, why);
 }
 
-class NextActionCard extends StatelessWidget {
-  const NextActionCard({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    final view = context.select<BusStore, AutoOpView?>((s) => s.autoOp);
-    final t = nextActionText(view);
-    final pending = view?.latched == true ? null : view?.pending;
-    final what = Text(t.what,
-        key: const ValueKey('auto-next-what'),
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: AppTheme.display(19, color: t.whatColor, weight: FontWeight.w700, letterSpacing: 0.04).copyWith(height: 1.2));
-    final Widget? buttons = pending == null ? null : _ProposalButtons(pending: pending);
-    return LayoutBuilder(builder: (context, c) {
-      // Under a banner on a landscape phone the card gets less than its
-      // full height. Then the title strip goes, and the countdown moves
-      // next to the proposal, so Approve and Reject keep 48 dp.
-      if (c.maxHeight < (buttons == null ? compactBelowNoButtons : compactBelow)) {
-        return Container(
-          key: const ValueKey('auto-next-action'),
-          decoration: AppTheme.cardDecoration(),
-          padding: const EdgeInsets.fromLTRB(8, 2, 8, 4),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Expanded(
-                child: Row(children: [
-                  Expanded(child: what),
-                  if (pending != null) _Countdown(pending: pending),
-                ]),
-              ),
-              ?buttons,
-            ],
-          ),
-        );
-      }
-      return AutoCard(
-        key: const ValueKey('auto-next-action'),
-        title: t.title,
-        trailing: pending == null ? null : _Countdown(pending: pending),
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(8, 4, 8, 6),
-          child: LayoutBuilder(builder: (context, c) {
-            // The proposal, its reason, then Approve and Reject right under
-            // the reason. The reason gets the lines that fit, at most 3.
-            const whatHeight = 24.0, lineHeight = 14.0, buttonsHeight = 48.0 + 6;
-            final room = c.maxHeight - whatHeight - (buttons == null ? 0 : buttonsHeight);
-            final lines = t.why.isEmpty ? 0 : (room / lineHeight).floor().clamp(0, 3);
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                what,
-                if (lines > 0)
-                  Text(t.why,
-                      key: const ValueKey('auto-next-why'),
-                      maxLines: lines,
-                      overflow: TextOverflow.ellipsis,
-                      style: AppTheme.body(11, color: AppTheme.txtMute).copyWith(height: 1.2)),
-                if (buttons != null) ...[const SizedBox(height: 6), buttons],
-              ],
-            );
-          }),
-        ),
-      );
-    });
-  }
-
-  /// Below this height the card drops its title strip: the full card needs
-  /// the title, the proposal, and Approve and Reject.
-  static const compactBelow = 112.0;
-
-  /// The same without Approve and Reject: the title, the text, one line of
-  /// the reason.
-  static const compactBelowNoButtons = 72.0;
-}
-
 /// `CONFIRM n s` from `deadline_ms` and the moving time of the view.
-class _Countdown extends StatelessWidget {
+class AutoCountdown extends StatelessWidget {
   final AutoOpPending pending;
 
-  const _Countdown({required this.pending});
+  const AutoCountdown({super.key, required this.pending});
 
   @override
   Widget build(BuildContext context) {
@@ -225,10 +146,10 @@ class _Countdown extends StatelessWidget {
 }
 
 /// Approve and Reject of the pending proposal.
-class _ProposalButtons extends StatelessWidget {
+class ProposalButtons extends StatelessWidget {
   final AutoOpPending pending;
 
-  const _ProposalButtons({required this.pending});
+  const ProposalButtons({super.key, required this.pending});
 
   @override
   Widget build(BuildContext context) {
