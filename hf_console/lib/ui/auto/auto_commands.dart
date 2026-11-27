@@ -13,7 +13,9 @@
 ///   session (no replay).
 /// - A command with a bad signature gives no result. The page then shows
 ///   NO ANSWER after 5 s (STOP NOT CONFIRMED after 3 s for a stop).
-/// - The page never sends a command on its own. Only a tap sends.
+/// - The page never sends a command on its own. Only a tap sends. The
+///   session start of the 75AUTO Start follows its tap: the page sends it
+///   once when the chain of that tap is ready (`auto_start_panel.dart`).
 library;
 
 
@@ -58,7 +60,9 @@ enum AutoControl {
   skip('SKIP', 'target'),
   presence('PRESENCE', 'touch'),
   armCq('ARM CQ', 'arm_cq'),
-  band('BAND', 'band');
+  band('BAND', 'band'),
+  startSession('START SESSION', 'start_session'),
+  endSession('END SESSION', 'end_session');
 
   /// The name of the control in the feedback line.
   final String label;
@@ -249,8 +253,10 @@ class AutoCommander extends ChangeNotifier {
     return now.difference(s.at) < autoAnswerTime;
   }
 
-  /// Sends [control] with [value]. The caller checks the gate first.
-  Future<void> send(AutoControl control, Object? value) async {
+  /// Sends [control] with [value]. The caller checks the gate first. The
+  /// returned record is the same object that [stop] or [operate] holds from
+  /// the moment of the call.
+  Future<AutoSent> send(AutoControl control, Object? value) async {
     final rec = AutoSent(control, newAutoOpCmdId(), clock.now(), value);
     if (control == AutoControl.stop) {
       _stop = rec;
@@ -260,19 +266,20 @@ class AutoCommander extends ChangeNotifier {
     // Set the record before the key read, so a second tap sees the lock.
     _notify();
     final key = await _read();
-    if (_disposed) return;
+    if (_disposed) return rec;
     if (key == null) {
       rec.sent = false;
       rec.notSentWhy = 'no key';
       _keyStored = false;
       _notify();
-      return;
+      return rec;
     }
     _keyStored = true;
     final payload = autoOpCmd(control.action, value, key: key, cmdId: rec.cmdId);
     rec.sent = mqtt.publish(cmdTopic('hf/auto-op'), payload, retain: cmdRetain[autoOpSlot]!);
     if (rec.sent == false) rec.notSentWhy = 'link';
     _notify();
+    return rec;
   }
 
   /// The line of Stop TX at [now], or null for no line.

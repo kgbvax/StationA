@@ -446,6 +446,10 @@ Map<String, dynamic> autoOpStateDoc({int seq = 1234}) => {
       'seq': seq,
       'now_ms': 1795703561000,
       'session': {'state': 'running', 'rule_set': 'everyday.gess', 'level': 'normal', 'mode': 'auto', 'source': 'live'},
+      'start': {
+        'rule_sets': ['everyday.gess', 'hunt.gess'],
+        'last': {'rule_set': 'everyday.gess', 'mode': 'confirm'},
+      },
       'station': {
         'band': '20m',
         'dial_hz': 14074000,

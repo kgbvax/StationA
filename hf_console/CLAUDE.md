@@ -27,6 +27,12 @@ See `../sas/tablet_console_hybrid_preview.html` for the approved high-fidelity r
   HMAC-SHA256. `BusStore.stateFresh` / `stateAge` give the freshness: a retained /state at the subscribe is not fresh
   until a /beat or a live /state with a new `seq` arrives. The command key (64 hex digits) is in the secure storage,
   entered in the gear sheet, and never in the APK.
+- `lib/ui/auto/auto_start_panel.dart`: the Start of the 75AUTO page, shown while no session is open. The tap
+  publishes `auto_start` (requester = the device id from `lib/store/device_id.dart`) to `hf/power-seq`, outside the
+  page gate; the rows follow `/state.chain` of powerseq. When the chain of this device is `ready` within 30 min of the
+  tap, the page sends one signed `start_session` (rule set and mode from the pickers, default `/state.start.last` of
+  75auto) under the page gate. Off in storm and maintenance and without a key; a `busy` refusal offers END SESSION
+  (`end_session`). The pending start is in memory only. The Station tab Start stays the station start only.
 - `lib/ui/widgets/ant_mode_panel.dart` — the antenna-mode strip under the antenna switch (HF page)
 - `lib/store/station_hosts.dart` — slot → component/host map for the schematic's hosts row; mirrors the stationportal
   inventory `[[software]]` table (`test/store/station_hosts_test.dart` cross-checks it)
@@ -226,7 +232,7 @@ Retained cmd slots (self-healing steady state): `power/psu-13v8`, `power/antenna
 
 Retained but one-shot (consumer clears the topic after every execution — a command does NOT re-apply if the bridge restarts): `hf/ant-ctrl`, `hf/ant-mode` (`set_ant_mode` / `repark` / `dismiss_suggestion`; antmode applies, then clears — a request sent during a short antmode restart is applied once it is back, within the 30 s window of the `ts` the console stamps on it).
 
-Non-retained (one-shot): `power/shack-pc` (`sleep` — retained, it would re-sleep the PC on every wake), `hf/pa`, `hf/rotator`, `hf/tuner`, `hf/power-seq`, `hf/radio` (DVK `play`/`stop`, `set_band`/`set_mode`/`set_mic_profile`/`select_rx`), `uhf/az-rotator`, `uhf/el-rotator` (sat `goto`/`stop` — a stale retained or queued motion must never replay against real antennas), `uhf/radio` (icom9700-radio-bridge, receive-only since 2026-09: the action set is exactly `audio_on`/`audio_off`/`power_on`/`monitor_on`/`monitor_off`/`park_radio` — `park_radio` retunes via the bridge's rigctld on scmino; there is no PTT/arm/tuning path anymore), `hf/auto-op` (75auto: signed `stop`/`approve`/`reject`/`mode`/`touch`/`target`/`arm_cq`/`band`. 75auto drops a retained command, and each command carries its own `ts` and `cmd_id`).
+Non-retained (one-shot): `power/shack-pc` (`sleep` — retained, it would re-sleep the PC on every wake), `hf/pa`, `hf/rotator`, `hf/tuner`, `hf/power-seq` (`start`, `stop`, `auto_start`), `hf/radio` (DVK `play`/`stop`, `set_band`/`set_mode`/`set_mic_profile`/`select_rx`), `uhf/az-rotator`, `uhf/el-rotator` (sat `goto`/`stop` — a stale retained or queued motion must never replay against real antennas), `uhf/radio` (icom9700-radio-bridge, receive-only since 2026-09: the action set is exactly `audio_on`/`audio_off`/`power_on`/`monitor_on`/`monitor_off`/`park_radio` — `park_radio` retunes via the bridge's rigctld on scmino; there is no PTT/arm/tuning path anymore), `hf/auto-op` (75auto: signed `stop`/`approve`/`reject`/`mode`/`touch`/`target`/`arm_cq`/`band`/`start_session`/`end_session`. 75auto drops a retained command, and each command carries its own `ts` and `cmd_id`).
 
 The machine-readable source of truth is `cmdRetain` in `lib/store/wiring.dart`; keep this list in sync with it.
 

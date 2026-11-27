@@ -103,6 +103,40 @@ class AutoOpSession {
       );
 }
 
+/// `start.last`: the rule set and the mode of the last live start.
+class AutoOpStartChoice {
+  final String? ruleSet;
+  final String? mode;
+
+  const AutoOpStartChoice({this.ruleSet, this.mode});
+
+  factory AutoOpStartChoice._parse(Map<String, dynamic> m) =>
+      AutoOpStartChoice(ruleSet: _str(m['rule_set']), mode: _str(m['mode']));
+}
+
+/// `start`: the options of a remote session start. The page offers
+/// [last] as the default.
+class AutoOpStart {
+  /// The rule sets of the `[rules]` folder of 75auto: the names that
+  /// `start_session` takes. Null when missing.
+  final List<String>? ruleSets;
+
+  /// Null before the first live start.
+  final AutoOpStartChoice? last;
+
+  const AutoOpStart({this.ruleSets, this.last});
+
+  factory AutoOpStart._parse(Map<String, dynamic> m) {
+    final sets = m['rule_sets'];
+    if (sets != null && (sets is! List || sets.any((e) => e is! String))) throw const _Malformed();
+    final last = _obj(m['last']);
+    return AutoOpStart(
+      ruleSets: sets == null ? null : List<String>.unmodifiable(sets as List),
+      last: last == null ? null : AutoOpStartChoice._parse(last),
+    );
+  }
+}
+
 /// `station.band_change`: a band change in progress.
 class AutoOpBandChange {
   final String? target;
@@ -476,6 +510,7 @@ class AutoOpView {
   /// The time of the view in Unix ms. In a replay this is the replay time.
   final int? nowMs;
   final AutoOpSession? session;
+  final AutoOpStart? start;
   final AutoOpStation? station;
   final int? presenceEndMs;
   final AutoOpPending? pending;
@@ -502,6 +537,7 @@ class AutoOpView {
     this.seq,
     this.nowMs,
     this.session,
+    this.start,
     this.station,
     this.presenceEndMs,
     this.pending,
@@ -529,6 +565,7 @@ class AutoOpView {
   static AutoOpView? fromState(Map<String, dynamic> s) {
     try {
       final session = _obj(s['session']);
+      final start = _obj(s['start']);
       final station = _obj(s['station']);
       final pending = _obj(s['pending']);
       final current = _obj(s['current']);
@@ -541,6 +578,7 @@ class AutoOpView {
         seq: _int(s['seq']),
         nowMs: _int(s['now_ms']),
         session: session == null ? null : AutoOpSession._parse(session),
+        start: start == null ? null : AutoOpStart._parse(start),
         station: station == null ? null : AutoOpStation._parse(station),
         presenceEndMs: _int(s['presence_end_ms']),
         pending: pending == null ? null : AutoOpPending._parse(pending),
@@ -623,6 +661,10 @@ class AutoOpMeta {
 }
 
 // --- /cmd ------------------------------------------------------------------------
+
+/// The value of `start_session`: the rule set, then the mode. The key order
+/// is part of the signed text.
+Map<String, String> autoStartSessionValue(String ruleSet, String mode) => {'rule_set': ruleSet, 'mode': mode};
 
 /// The length of the command key in bytes.
 const autoOpKeyBytes = 32;

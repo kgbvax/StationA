@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hf_console/store/bus_store.dart';
@@ -94,7 +96,10 @@ void main() {
 
       expect(mqtt.publishes.length, 1);
       expect(mqtt.publishes.first.topic, 'muehle/hf/power-seq/cmd');
-      expect(mqtt.publishes.first.payload, contains('start'));
+      // The Station tab Start is the station start only: no auto_start, no
+      // requester, no digimode programs.
+      expect(jsonDecode(mqtt.publishes.first.payload), {'action': 'start'});
+      expect(mqtt.publishes.first.retain, isFalse);
     });
 
     testWidgets('shows the current step while the sequence starts', (tester) async {

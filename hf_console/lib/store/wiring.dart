@@ -119,6 +119,69 @@ String powerSetPayload(String onOff) => cmdPayload('set_power', onOff);
 String powerSeqStartPayload() => jsonEncode({'action': 'start'});
 String powerSeqStopPayload() => jsonEncode({'action': 'stop'});
 
+/// The 75AUTO start: powerseq brings the station up if needed, then wakes
+/// bwpc and starts the digimode programs. [requester] is the device id of
+/// this console; powerseq echoes it in `/state.chain`, so only the device
+/// that asked sends the signed session start. Publish it not retained.
+String powerSeqAutoStartPayload(String requester) => jsonEncode({
+      'action': 'auto_start',
+      'value': {'requester': requester},
+    });
+
+/// The steps of the `auto_start` chain in order, as powerseq names them in
+/// `/state.chain.step`.
+const powerSeqChainSteps = ['station', 'bwpc', 'aethersdr', 'dax', 'wsjtx', '75auto'];
+
+/// `/state.chain` of powerseq: the progress of the last `auto_start`. A
+/// refused `auto_start` also writes it, as `failed` with the reason in
+/// [fault]. Two records with the same fields are equal.
+class PowerSeqChain {
+  /// `running`, `ready`, or `failed`.
+  final String state;
+
+  /// The step that runs, or the step that failed.
+  final String step;
+  final String fault;
+  final String requester;
+
+  /// The time of the record, as powerseq sends it. Compared only for
+  /// equality.
+  final Object? ts;
+
+  const PowerSeqChain({this.state = '', this.step = '', this.fault = '', this.requester = '', this.ts});
+
+  bool get running => state == 'running';
+  bool get ready => state == 'ready';
+  bool get failed => state == 'failed';
+
+  /// The chain of a power-seq `/state`, or null without a chain object.
+  static PowerSeqChain? fromState(Map<String, dynamic>? state) {
+    final c = state?['chain'];
+    if (c is! Map<String, dynamic>) return null;
+    String str(String k) => c[k] is String ? c[k] as String : '';
+    final ts = c['ts'];
+    return PowerSeqChain(
+      state: str('state'),
+      step: str('step'),
+      fault: str('fault'),
+      requester: str('requester'),
+      ts: ts is num || ts is String ? ts : null,
+    );
+  }
+
+  @override
+  bool operator ==(Object other) =>
+      other is PowerSeqChain &&
+      other.state == state &&
+      other.step == step &&
+      other.fault == fault &&
+      other.requester == requester &&
+      other.ts == ts;
+
+  @override
+  int get hashCode => Object.hash(state, step, fault, requester, ts);
+}
+
 /// Put the shack PC to sleep (bwpc agent). No value; publish unretained
 /// (cmdRetain['muehle/power/shack-pc']! = false).
 String shackPcSleepPayload() => jsonEncode({'action': 'sleep'});

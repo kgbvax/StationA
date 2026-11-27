@@ -138,11 +138,31 @@ void main() {
       expect(v.idle, isNull);
     });
 
+    test('start carries the rule sets and the last choice', () {
+      final v = AutoOpView.fromState(autoOpStateDoc())!;
+      expect(v.start!.ruleSets, ['everyday.gess', 'hunt.gess']);
+      expect(v.start!.last!.ruleSet, 'everyday.gess');
+      expect(v.start!.last!.mode, 'confirm');
+    });
+
+    test('start.last is null before the first live start, and a missing start is null', () {
+      final v = AutoOpView.fromState({
+        ...autoOpStateDoc(),
+        'start': {'rule_sets': ['everyday.gess'], 'last': null},
+      })!;
+      expect(v.start!.ruleSets, ['everyday.gess']);
+      expect(v.start!.last, isNull);
+      expect(AutoOpView.fromState({...autoOpStateDoc()}..remove('start'))!.start, isNull);
+    });
+
     for (final (name, change) in [
       ('a decode list of numbers', <String, dynamic>{'decodes': [1, 2, 3]}),
       ('decodes as an object', <String, dynamic>{'decodes': <String, dynamic>{'df': 1}}),
       ('session as a string', <String, dynamic>{'session': 'running'}),
       ('pending as a number', <String, dynamic>{'pending': 42}),
+      ('start as a string', <String, dynamic>{'start': 'everyday.gess'}),
+      ('rule sets as a string', <String, dynamic>{'start': <String, dynamic>{'rule_sets': 'everyday.gess'}}),
+      ('a rule set that is a number', <String, dynamic>{'start': <String, dynamic>{'rule_sets': [1]}}),
     ]) {
       test('$name is malformed and does not throw', () {
         expect(AutoOpView.fromState({...autoOpStateDoc(), ...change}), isNull);
@@ -216,6 +236,15 @@ void main() {
       expect(a['cmd_id'], isNot(b['cmd_id']));
       expect(a['ts'], matches(RegExp(r'^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$')));
       expect(a['sig'], signAutoOpCmd(_key, 'stop', 'null', a['ts'] as String, a['cmd_id'] as String));
+    });
+
+    test('start_session signs its value with rule_set before mode', () {
+      final m = jsonDecode(autoOpCmd('start_session', autoStartSessionValue('everyday.gess', 'auto'),
+          key: _key, now: DateTime.utc(2026, 11, 26, 14, 32, 41), cmdId: '0123456789abcdef')) as Map;
+      expect(m['action'], 'start_session');
+      expect(m['value'], {'rule_set': 'everyday.gess', 'mode': 'auto'});
+      expect(m['sig'],
+          signAutoOpCmd(_key, 'start_session', '{"rule_set":"everyday.gess","mode":"auto"}', m['ts'] as String, '0123456789abcdef'));
     });
 
     test('a local time is sent as UTC', () {

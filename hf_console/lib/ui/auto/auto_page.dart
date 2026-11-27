@@ -33,6 +33,7 @@ import 'action_log_strip.dart';
 import 'auto_commands.dart';
 import 'auto_controls.dart';
 import 'auto_readouts.dart';
+import 'auto_start_panel.dart';
 import 'auto_top_bar.dart';
 import 'band_selector.dart';
 import 'decode_list.dart';
@@ -78,12 +79,16 @@ class AutoPage extends StatefulWidget {
 class _AutoPageState extends State<AutoPage> {
   late final AutoCommander _commander;
 
+  /// Lives with the store, so a pending start outlasts a page change.
+  late final AutoStarter _starter;
+
   AutoTopBarBuilder get topBar => widget.topBar;
 
   @override
   void initState() {
     super.initState();
     _commander = AutoCommander(store: context.read<BusStore>(), mqtt: context.read<MqttService>());
+    _starter = AutoStarter.of(context.read<BusStore>(), context.read<MqttService>());
   }
 
   @override
@@ -94,8 +99,11 @@ class _AutoPageState extends State<AutoPage> {
 
   @override
   Widget build(BuildContext context) {
-    return ChangeNotifierProvider<AutoCommander>.value(
-      value: _commander,
+    return MultiProvider(
+      providers: [
+        ChangeNotifierProvider<AutoCommander>.value(value: _commander),
+        ChangeNotifierProvider<AutoStarter>.value(value: _starter),
+      ],
       child: LayoutBuilder(builder: (context, c) {
         final landscape = c.maxWidth > c.maxHeight;
         if (!landscape) return Container(color: AppTheme.page, child: _portrait());
@@ -149,7 +157,7 @@ class _AutoPageState extends State<AutoPage> {
                     children: [
                       const SizedBox(width: 94, child: BandSelector()),
                       gap,
-                      const Expanded(child: DecodeList()),
+                      const Expanded(child: AutoStartSlot(orElse: DecodeList())),
                       gap,
                       const Expanded(
                         child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
@@ -214,6 +222,7 @@ class _AutoPageState extends State<AutoPage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: const [
+                AutoStartSlot(orElse: SizedBox.shrink(), panelHeight: 420),
                 BandSelector(horizontal: true),
                 gap,
                 SizedBox(height: 300, child: DecodeList()),

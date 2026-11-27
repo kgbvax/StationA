@@ -225,4 +225,44 @@ void main() {
       expect(expectedSlots, isNot(contains('muehle/hf/auto-op')));
     });
   });
+
+  group('power-seq auto_start and chain', () {
+    test('auto_start carries the requester under value', () {
+      expect(jsonDecode(powerSeqAutoStartPayload('hf-console-0123456789abcdef')), {
+        'action': 'auto_start',
+        'value': {'requester': 'hf-console-0123456789abcdef'},
+      });
+    });
+
+    test('the station start stays a plain start, without a requester', () {
+      expect(jsonDecode(powerSeqStartPayload()), {'action': 'start'});
+    });
+
+    test('the chain steps are the rows of the page, in order', () {
+      expect(powerSeqChainSteps, ['station', 'bwpc', 'aethersdr', 'dax', 'wsjtx', '75auto']);
+    });
+
+    test('chain parses from the power-seq state', () {
+      final c = PowerSeqChain.fromState({
+        'phase': 'running',
+        'chain': {'state': 'failed', 'step': 'aethersdr', 'fault': 'rigctl: RPRT -1', 'requester': 'dev-a', 'ts': 1795703561},
+      })!;
+      expect([c.state, c.step, c.fault, c.requester], ['failed', 'aethersdr', 'rigctl: RPRT -1', 'dev-a']);
+      expect(c.failed, isTrue);
+      expect(c.ready, isFalse);
+    });
+
+    test('a state without a chain object, or with a chain of the wrong type, has no chain', () {
+      expect(PowerSeqChain.fromState({'phase': 'idle'}), isNull);
+      expect(PowerSeqChain.fromState({'chain': 'ready'}), isNull);
+      expect(PowerSeqChain.fromState(null), isNull);
+    });
+
+    test('two chain records with the same fields are equal; a new ts is a new record', () {
+      PowerSeqChain c(Object ts) =>
+          PowerSeqChain.fromState({'chain': {'state': 'ready', 'step': '75auto', 'requester': 'a', 'ts': ts}})!;
+      expect(c(1), c(1));
+      expect(c(1), isNot(c(2)));
+    });
+  });
 }
