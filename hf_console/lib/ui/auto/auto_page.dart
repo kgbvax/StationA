@@ -44,7 +44,7 @@ import 'rx_list.dart';
 typedef AutoTopBarBuilder = Widget Function(Widget? trailing);
 
 /// The heights of the landscape layout.
-const autoReadoutHeight = 56.0;
+const autoReadoutHeight = autoReadoutRowHeight;
 
 /// The landscape design size of the area under the top bar: a phone in
 /// landscape. On a larger screen (the mirrored phone on the car screen, a

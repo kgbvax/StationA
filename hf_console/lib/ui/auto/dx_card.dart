@@ -19,6 +19,8 @@
 /// headers.
 library;
 
+import 'package:cached_network_image/cached_network_image.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -159,18 +161,11 @@ class _Station extends StatelessWidget {
           if (hasImage && h >= 32) ...[
             ClipRRect(
               borderRadius: BorderRadius.circular(3),
-              child: Image.network(
-                url,
+              child: SizedBox(
                 key: const ValueKey('auto-dx-image'),
                 width: c.maxWidth,
                 height: h,
-                fit: BoxFit.cover,
-                // Faces are near the top of most QRZ pictures.
-                alignment: Alignment.topCenter,
-                // The web build fetches under CORS. Without CORS headers on
-                // the picture host it falls back to an <img> element.
-                webHtmlElementStrategy: WebHtmlElementStrategy.fallback,
-                errorBuilder: (_, _, _) => SizedBox(width: c.maxWidth, height: h),
+                child: _QrzPicture(url),
               ),
             ),
             const SizedBox(height: 4),
@@ -281,4 +276,37 @@ String _thousands(int n) {
     b.write(s[i]);
   }
   return b.toString();
+}
+
+/// The QRZ picture. On Android and iOS the picture is kept in a file cache
+/// on the device (cached_network_image), so the same picture loads only
+/// once, also after a restart. The web build uses the cache of the browser.
+/// Faces are near the top of most QRZ pictures, so the top stays in view.
+class _QrzPicture extends StatelessWidget {
+  final String url;
+
+  const _QrzPicture(this.url);
+
+  @override
+  Widget build(BuildContext context) {
+    if (kIsWeb) {
+      return Image.network(
+        url,
+        fit: BoxFit.cover,
+        alignment: Alignment.topCenter,
+        // The web build fetches under CORS. Without CORS headers on the
+        // picture host it falls back to an <img> element.
+        webHtmlElementStrategy: WebHtmlElementStrategy.fallback,
+        errorBuilder: (_, _, _) => const SizedBox.expand(),
+      );
+    }
+    return CachedNetworkImage(
+      imageUrl: url,
+      fit: BoxFit.cover,
+      alignment: Alignment.topCenter,
+      fadeInDuration: Duration.zero,
+      placeholder: (_, _) => const SizedBox.expand(),
+      errorWidget: (_, _, _) => const SizedBox.expand(),
+    );
+  }
 }
