@@ -3,8 +3,12 @@
 /// band table in MHz. A band without a batch in this session shows dimmed.
 /// The column always lists the HF bands from 160 m to 10 m. A band that is
 /// not in the band table of 75auto shows dimmed with no dial: 75auto does
-/// not change to it. A tap does nothing (a band change comes from a rule
-/// proposal).
+/// not change to it.
+///
+/// A tap on a band of the table sends a signed `band` request to 75auto.
+/// The rules change band when no QSO runs, so the tap is a request, not a
+/// QSY: the requested band shows with an amber border until the radio is
+/// on it. The tap needs the same gate as the other commands of the page.
 library;
 
 import 'package:flutter/material.dart';
@@ -14,6 +18,8 @@ import '../../store/auto_op.dart';
 import '../../store/bus_store.dart';
 import '../theme.dart';
 import 'auto_card.dart';
+import 'auto_commands.dart';
+import 'auto_live.dart';
 
 class BandSelector extends StatelessWidget {
   /// A horizontal strip for a portrait phone instead of a column.
@@ -23,19 +29,37 @@ class BandSelector extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final view = context.select<BusStore, AutoOpView?>((s) => s.autoOp);
-    final metaBands = context.select<BusStore, List<String>?>((s) => s.autoOpMeta?.bands);
-    final entries = _entries(view, metaBands);
+    final cmd = context.watch<AutoCommander>();
+    return AutoTicker(builder: (context, live) => _build(context, cmd, live));
+  }
+
+  Widget _build(BuildContext context, AutoCommander cmd, AutoLive live) {
+    final store = context.read<BusStore>();
+    final view = store.autoOp;
+    final entries = _entries(view, store.autoOpMeta?.bands);
     final current = view?.station?.band;
     final pending = view?.station?.bandChange?.target;
+    final on = autoGateOf(store, live, keyStored: cmd.keyStored).operate == null;
+    // The open request of this page: sent, not refused, and the radio not
+    // yet on the band.
+    final last = cmd.operate;
+    final requested = last != null &&
+            last.control == AutoControl.band &&
+            last.sent != false &&
+            !last.refused &&
+            last.value != current
+        ? last.value
+        : null;
     final rows = [
       for (final (e, inTable) in entries)
         _BandRow(
           entry: e,
           inTable: inTable,
           current: e.band == current,
-          pending: pending != null && pending.isNotEmpty && e.band == pending && e.band != current,
+          pending: e.band != current &&
+              ((pending != null && pending.isNotEmpty && e.band == pending) || e.band == requested),
           horizontal: horizontal,
+          onTap: on && inTable && e.band != current ? () => cmd.send(AutoControl.band, e.band) : null,
         ),
     ];
     if (horizontal) {
@@ -66,8 +90,7 @@ class BandSelector extends StatelessWidget {
     );
   }
 
-  /// The HF bands that the column always lists, with their FT8 dial for
-  /// the order.
+  /// The HF bands that the column always lists, with their FT8 dial.
   static const fixedBands = {
     '160m': 1840000,
     '80m': 3573000,
@@ -80,7 +103,21 @@ class BandSelector extends StatelessWidget {
     '10m': 28074000,
   };
 
-  /// The bands of the view and the fixed HF bands, sorted by dial, each
+  /// The order of the bands, longest wavelength first. A band that is not
+  /// in the list goes by its number in metres (cm last), after the list.
+  static const _order = ['2200m', '630m', '160m', '80m', '60m', '40m', '30m', '20m', '17m', '15m', '12m', '10m', '6m', '4m', '2m'];
+
+  static double _rank(String band) {
+    final i = _order.indexOf(band);
+    if (i >= 0) return i.toDouble();
+    final m = RegExp(r'^(\d+(?:\.\d+)?)(c?m)$').firstMatch(band);
+    if (m == null) return 1e9;
+    final metres = double.parse(m.group(1)!) / (m.group(2) == 'cm' ? 100 : 1);
+    // Longer wavelength first: a larger number gives a smaller rank.
+    return _order.length + 1000 - metres;
+  }
+
+  /// The bands of the view and the fixed HF bands in band order, each
   /// with whether it is in the band table of 75auto. Without a view, the
   /// table is the bands of /meta, with no count. Without either, no rows.
   static List<(AutoOpBandCount, bool)> _entries(AutoOpView? view, List<String>? metaBands) {
@@ -98,9 +135,9 @@ class BandSelector extends StatelessWidget {
       for (final e in fixedBands.entries)
         if (!known.contains(e.key)) (AutoOpBandCount(band: e.key, dialHz: e.value), false),
     ];
-    // 75auto sends its bands in dial order. Sort again with the fixed ones.
-    int dial((AutoOpBandCount, bool) x) => x.$1.dialHz ?? fixedBands[x.$1.band] ?? 0;
-    out.sort((a, b) => dial(a).compareTo(dial(b)));
+    // A fixed order by band, never by the dial in the view: a dial can be
+    // missing or move inside its band, and the pills must not move.
+    out.sort((a, b) => _rank(a.$1.band!).compareTo(_rank(b.$1.band!)));
     return out;
   }
 }
@@ -116,6 +153,9 @@ class _BandRow extends StatelessWidget {
 
   /// The band is in the band table of 75auto.
   final bool inTable;
+
+  /// Sends the band request. Null: the pill does nothing.
+  final VoidCallback? onTap;
   final bool current;
   final bool pending;
   final bool horizontal;
@@ -126,6 +166,7 @@ class _BandRow extends StatelessWidget {
     required this.current,
     required this.pending,
     required this.horizontal,
+    this.onTap,
   });
 
   @override
@@ -136,7 +177,10 @@ class _BandRow extends StatelessWidget {
     final off = seen == false || !inTable;
     final border = current ? AppTheme.accent : (pending ? AppTheme.amber : (off ? AppTheme.cardLine : AppTheme.cardLineHi));
     final text = current ? AppTheme.accent : (pending ? AppTheme.amber : (off ? AppTheme.txtFaint : AppTheme.txt));
-    return Container(
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      child: Container(
       key: ValueKey('auto-band-$band'),
       decoration: BoxDecoration(
         color: current ? AppTheme.accentDim : AppTheme.pane,
@@ -173,6 +217,7 @@ class _BandRow extends StatelessWidget {
           const SizedBox(width: 3),
         ],
       ),
+    ),
     );
   }
 }

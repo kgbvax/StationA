@@ -1054,6 +1054,11 @@ default (`[remote] enabled = false`). Contract: 75auto `docs/interfaces/auto-op-
   at the window of 75auto: only in auto mode (else refused with `not auto mode`), and only with `operate`. A stop
   or a change out of auto mode ends the arm. A tap while armed arms for 30 minutes from now again. The arm is a
   permission for the rules, not a transmission: the gate keeps all its hard limits for each CQ.
+- **Band request from the page (operator decision of 2026-11-27).** A tap on a band pill sends `band` with the band
+  name. It is a request, not a QSY: 75auto asserts the `operator-band` fact, and the rule `propose-operator-band`
+  proposes `change-band` only while no QSO runs and WSJT-X neither transmits nor has Tx enabled. The proposal goes
+  through the mode (auto sends, confirm waits for Approve, observe only shows). 75auto tunes through rigctld to the
+  dial of `[bands]`, and WSJT-X follows the radio. A band outside `[bands]` is refused.
 - **Signature and key.** Each command, `stop` included, carries an HMAC-SHA256 signature over a fixed JSON
   text of `action`, `value`, `ts` and `cmd_id`. The key is 32 random bytes. On bwpc it is a file of 64 hex digits
   named by `remote.key_file`. On the phone it is in the secure storage of the app, never in the APK. 75auto
