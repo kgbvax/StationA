@@ -1,7 +1,9 @@
 /// The band selector of the 75AUTO page. Display only in this work: each
 /// band of the band table in dial order, with the decode count of its latest
 /// seen batch and the age of that count. A band without a batch in this
-/// session shows `·`. A tap does nothing (a band change comes from a rule
+/// session shows `·`. The column always lists the HF bands from 160 m to
+/// 10 m. A band that is not in the band table of 75auto shows dimmed with
+/// `–`: 75auto does not change to it. A tap does nothing (a band change comes from a rule
 /// proposal).
 library;
 
@@ -28,9 +30,10 @@ class BandSelector extends StatelessWidget {
     final pending = view?.station?.bandChange?.target;
     final now = view?.nowMs;
     final rows = [
-      for (final e in entries)
+      for (final (e, inTable) in entries)
         _BandRow(
           entry: e,
+          inTable: inTable,
           current: e.band == current,
           pending: pending != null && pending.isNotEmpty && e.band == pending && e.band != current,
           nowMs: now,
@@ -65,22 +68,50 @@ class BandSelector extends StatelessWidget {
     );
   }
 
-  /// The bands of the view, sorted by dial. Without a view, the bands of
-  /// /meta with no count.
-  static List<AutoOpBandCount> _entries(AutoOpView? view, List<String>? metaBands) {
+  /// The HF bands that the column always lists, with their FT8 dial for
+  /// the order.
+  static const fixedBands = {
+    '160m': 1840000,
+    '80m': 3573000,
+    '40m': 7074000,
+    '30m': 10136000,
+    '20m': 14074000,
+    '17m': 18100000,
+    '15m': 21074000,
+    '12m': 24915000,
+    '10m': 28074000,
+  };
+
+  /// The bands of the view and the fixed HF bands, sorted by dial, each
+  /// with whether it is in the band table of 75auto. Without a view, the
+  /// table is the bands of /meta, with no count. Without either, no rows.
+  static List<(AutoOpBandCount, bool)> _entries(AutoOpView? view, List<String>? metaBands) {
     final bands = view?.bands;
+    final List<AutoOpBandCount> table;
     if (bands != null && bands.isNotEmpty) {
-      final list = bands.where((b) => b.band != null).toList();
-      // 75auto sends them in dial order. Sort again in case it did not.
-      list.sort((a, b) => (a.dialHz ?? 0).compareTo(b.dialHz ?? 0));
-      return list;
+      table = bands.where((b) => b.band != null).toList();
+    } else {
+      table = [for (final b in metaBands ?? const <String>[]) AutoOpBandCount(band: b, dialHz: fixedBands[b])];
     }
-    return [for (final b in metaBands ?? const <String>[]) AutoOpBandCount(band: b)];
+    if (table.isEmpty) return const [];
+    final known = {for (final b in table) b.band!};
+    final out = <(AutoOpBandCount, bool)>[
+      for (final b in table) (b, true),
+      for (final e in fixedBands.entries)
+        if (!known.contains(e.key)) (AutoOpBandCount(band: e.key, dialHz: e.value), false),
+    ];
+    // 75auto sends its bands in dial order. Sort again with the fixed ones.
+    int dial((AutoOpBandCount, bool) x) => x.$1.dialHz ?? fixedBands[x.$1.band] ?? 0;
+    out.sort((a, b) => dial(a).compareTo(dial(b)));
+    return out;
   }
 }
 
 class _BandRow extends StatelessWidget {
   final AutoOpBandCount entry;
+
+  /// The band is in the band table of 75auto.
+  final bool inTable;
   final bool current;
   final bool pending;
   final int? nowMs;
@@ -88,6 +119,7 @@ class _BandRow extends StatelessWidget {
 
   const _BandRow({
     required this.entry,
+    required this.inTable,
     required this.current,
     required this.pending,
     required this.nowMs,
@@ -100,7 +132,9 @@ class _BandRow extends StatelessWidget {
     final label = band.endsWith('m') && !band.endsWith('cm') ? band.substring(0, band.length - 1) : band;
     final seen = entry.seen;
     final String count;
-    if (seen == false) {
+    if (!inTable) {
+      count = '–';
+    } else if (seen == false) {
       count = '·';
     } else if (seen == true && entry.count != null) {
       count = '${entry.count}';
@@ -115,7 +149,7 @@ class _BandRow extends StatelessWidget {
       final min = (nowMs! - ps) ~/ 60000;
       if (min >= 1) age = min >= 60 ? '${min ~/ 60}h' : '${min}m';
     }
-    final off = seen == false;
+    final off = seen == false || !inTable;
     final border = current ? AppTheme.accent : (pending ? AppTheme.amber : (off ? AppTheme.cardLine : AppTheme.cardLineHi));
     final text = current ? AppTheme.accent : (pending ? AppTheme.amber : (off ? AppTheme.txtFaint : AppTheme.txt));
     return Container(
@@ -128,7 +162,10 @@ class _BandRow extends StatelessWidget {
       child: Row(
         children: [
           // The band color, fixed across schemes (horstreporter palette).
-          Container(key: ValueKey('auto-band-color-$band'), width: 4, color: AppTheme.bandColor(band)),
+          Container(
+              key: ValueKey('auto-band-color-$band'),
+              width: 4,
+              color: inTable ? AppTheme.bandColor(band) : AppTheme.blend(AppTheme.bandColor(band), 0.3)),
           const SizedBox(width: 5),
           Expanded(
             child: FittedBox(

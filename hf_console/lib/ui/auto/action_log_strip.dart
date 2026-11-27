@@ -10,6 +10,7 @@ import '../../store/auto_op.dart';
 import '../../store/bus_store.dart';
 import '../theme.dart';
 import 'auto_live.dart';
+import 'auto_words.dart';
 
 /// One entry of the strip.
 class AutoLogEntry {
@@ -24,17 +25,21 @@ List<AutoLogEntry> actionLogEntries(AutoOpView? view) {
   final out = <AutoLogEntry>[];
   final bc = view?.station?.bandChange;
   if (bc != null && (bc.target ?? '').isNotEmpty) {
-    out.add(AutoLogEntry('QSY ${view?.station?.band ?? '?'}→${bc.target}${bc.result == null || bc.result!.isEmpty ? '' : ' ${bc.result}'}',
-        AppTheme.amber));
+    final outcome = (bc.result ?? '').isEmpty ? null : bc.result!.replaceAll('-', ' ').toUpperCase();
+    out.add(AutoLogEntry('QSY ${view?.station?.band ?? '?'}→${bc.target}${outcome == null ? '' : ' $outcome'}', AppTheme.amber));
   }
   final log = view?.log ?? const <AutoOpLogLine>[];
   var n = 0;
   for (final l in log.reversed) {
+    // "14:29 LOGGED 3B8HC 20m": the short verb, the call and the band. A
+    // result shows only when the action did not simply take effect.
+    final outcome = autoOutcome(l.result);
     final parts = <String>[
       if (l.timeMs != null) utcHm(l.timeMs!),
-      l.action ?? '?',
-      if ((l.call ?? '').isNotEmpty) l.call! else if ((l.band ?? '').isNotEmpty) l.band!,
-      if ((l.result ?? '').isNotEmpty) l.result!,
+      autoVerb(l.action),
+      if ((l.call ?? '').isNotEmpty) l.call!,
+      if ((l.band ?? '').isNotEmpty) l.band!,
+      ?outcome,
       if ((l.gateReason ?? '').isNotEmpty) '(${l.gateReason})',
     ];
     final refused = l.result == 'refused';

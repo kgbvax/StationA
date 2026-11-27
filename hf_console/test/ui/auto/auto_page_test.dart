@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hf_console/store/bus_store.dart';
 import 'package:hf_console/ui/auto/auto_controls.dart';
+import 'package:hf_console/ui/auto/auto_page.dart' show autoScaleFor;
 import 'package:hf_console/ui/screens/console_screen.dart';
 import 'package:hf_console/ui/theme.dart';
 
@@ -53,7 +54,9 @@ String _text(WidgetTester tester, String key) => tester.widget<Text>(find.byKey(
 
 void _expectStopInView(WidgetTester tester, Size logical) {
   final stop = tester.getRect(find.byKey(const ValueKey('auto-stop-tx')));
-  expect(stop.height, autoStopHeight);
+  // On a larger screen the landscape page scales up as a whole.
+  final k = logical.width > logical.height ? autoScaleFor(logical.width, logical.height) : 1.0;
+  expect(stop.height, moreOrLessEquals(autoStopHeight * k));
   expect(stop.top, greaterThanOrEqualTo(0));
   expect(stop.bottom, lessThanOrEqualTo(logical.height));
   expect(stop.right, lessThanOrEqualTo(logical.width));
@@ -226,7 +229,7 @@ void main() {
   group('next action', () {
     testWidgets('a pending proposal shows with its countdown', (tester) async {
       await _pumpAuto(tester);
-      expect(_text(tester, 'auto-next-what'), 'qsy 17m');
+      expect(_text(tester, 'auto-next-what'), 'QSY 17m');
       expect(_text(tester, 'auto-confirm-countdown'), 'CONFIRM 12 s');
       await tester.pump(const Duration(seconds: 2));
       expect(_text(tester, 'auto-confirm-countdown'), 'CONFIRM 10 s');
@@ -256,7 +259,7 @@ void main() {
         'reason': 'dxcc VK9',
       };
       await _pumpAuto(tester, doc: doc);
-      expect(_text(tester, 'auto-next-what'), 'call-station VK9XQ · 20m');
+      expect(_text(tester, 'auto-next-what'), 'CALL VK9XQ · 20m');
       expect(find.byKey(const ValueKey('auto-confirm-countdown')), findsNothing);
     });
 

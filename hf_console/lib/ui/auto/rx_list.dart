@@ -1,6 +1,7 @@
 /// The RX frequency list of the 75AUTO page: the own transmissions, the
-/// decodes within 50 Hz of the RX offset, and every decode to me. Newest
-/// last, so the newest line sits at the bottom, as in WSJT-X.
+/// decodes within 50 Hz of the RX offset, and every decode to me. Oldest
+/// first, as in WSJT-X. The list starts at the top. When it is longer than
+/// the card, the newest line stays in view at the bottom.
 library;
 
 import 'package:flutter/material.dart';
@@ -54,14 +55,19 @@ class RxList extends StatelessWidget {
           maxLines: 1, overflow: TextOverflow.ellipsis, style: AppTheme.display(10, color: AppTheme.txtFaint)),
       child: rows.isEmpty
           ? Center(child: Text(view == null ? 'no data' : 'nothing near $rx Hz', style: AppTheme.mono(12, color: AppTheme.txtFaint)))
-          // Reversed, so the newest line is at the bottom and in view.
-          : ListView.builder(
-              key: const ValueKey('auto-rx-list'),
-              reverse: true,
-              itemExtent: autoRowHeight,
-              itemCount: rows.length,
-              itemBuilder: (context, i) =>
-                  AutoRowView(row: rows[rows.length - 1 - i], dxCall: view?.station?.dxCall, toMeTagOnly: true),
+          // Reversed, so the newest line stays in view at the bottom. Shrink
+          // wrapped at the top, so a short list starts at the top.
+          : Align(
+              alignment: Alignment.topCenter,
+              child: ListView.builder(
+                key: const ValueKey('auto-rx-list'),
+                reverse: true,
+                shrinkWrap: true,
+                itemExtent: autoRowHeight,
+                itemCount: rows.length,
+                itemBuilder: (context, i) =>
+                    AutoRowView(row: rows[rows.length - 1 - i], dxCall: view?.station?.dxCall, toMeTagOnly: true),
+              ),
             ),
     );
   }

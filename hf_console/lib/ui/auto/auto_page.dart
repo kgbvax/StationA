@@ -3,7 +3,8 @@
 /// it mirrored on the center screen of the car, so the page is built for a
 /// glance: big readouts, high contrast, and in landscape no page scroll.
 ///
-/// Landscape (about 914 x 411 dp on a phone): the top bar, the readout row,
+/// Landscape (about 914 x 411 dp on a phone, scaled up as a whole on a
+/// larger screen): the top bar, the readout row,
 /// the main area with the band selector, the band activity, the RX
 /// frequency list, and the control column, and the bottom strip with the
 /// action log and the health row. Stop TX stays in view at the bottom of
@@ -17,6 +18,8 @@
 /// in portrait under the status strip. Refused commands show next to their
 /// controls, not there.
 library;
+
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -40,6 +43,22 @@ typedef AutoTopBarBuilder = Widget Function(Widget? trailing);
 
 /// The heights of the landscape layout.
 const autoReadoutHeight = 56.0;
+
+/// The landscape design size: a phone in landscape. On a larger screen (the
+/// mirrored phone on the car screen, a tablet) the page lays out at this
+/// size and scales up as a whole, so text and controls grow with the
+/// width. The factor is at most [autoMaxScale].
+const autoDesignWidth = 914.0;
+const autoDesignHeight = 411.0;
+const autoMaxScale = 2.0;
+
+/// The scale factor of the landscape page for a [width] x [height] area.
+/// Up to 5 % over the design size gives room, not scale.
+double autoScaleFor(double width, double height) {
+  final k = math.min(width / autoDesignWidth, height / autoDesignHeight);
+  if (k < 1.05) return 1.0;
+  return k.clamp(1.0, autoMaxScale);
+}
 const autoBottomHeight = 36.0;
 const autoGap = 4.0;
 
@@ -75,16 +94,30 @@ class _AutoPageState extends State<AutoPage> {
       value: _commander,
       child: LayoutBuilder(builder: (context, c) {
         final landscape = c.maxWidth > c.maxHeight;
+        if (!landscape) return Container(color: AppTheme.page, child: _portrait());
+        final k = autoScaleFor(c.maxWidth, c.maxHeight);
+        if (k <= 1.0) return Container(color: AppTheme.page, child: _landscape());
+        // Lay out at the smaller size and scale up as a whole. Taps scale
+        // with it.
+        final inner = Size(c.maxWidth / k, c.maxHeight / k);
+        final mq = MediaQuery.of(context);
         return Container(
           color: AppTheme.page,
-          child: landscape ? _landscape(c.maxWidth) : _portrait(),
+          child: FittedBox(
+            key: const ValueKey('auto-page-scaled'),
+            fit: BoxFit.contain,
+            alignment: Alignment.topCenter,
+            child: MediaQuery(
+              data: mq.copyWith(size: inner),
+              child: SizedBox(width: inner.width, height: inner.height, child: _landscape()),
+            ),
+          ),
         );
       }),
     );
   }
 
-  Widget _landscape(double width) {
-    final s = AppTheme.scaleForWidth(width);
+  Widget _landscape() {
     const gap = SizedBox(width: autoGap, height: autoGap);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -102,13 +135,13 @@ class _AutoPageState extends State<AutoPage> {
                   child: Row(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      SizedBox(width: 72 * s, child: const BandSelector()),
+                      const SizedBox(width: 72, child: BandSelector()),
                       gap,
                       const Expanded(child: DecodeList()),
                       gap,
                       const Expanded(child: RxList()),
                       gap,
-                      SizedBox(width: 272 * s, child: const AutoControlColumn()),
+                      const SizedBox(width: 272, child: AutoControlColumn()),
                     ],
                   ),
                 ),
