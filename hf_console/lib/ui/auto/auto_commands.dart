@@ -57,7 +57,8 @@ enum AutoControl {
   follow('FOLLOW', 'target'),
   skip('SKIP', 'target'),
   presence('PRESENCE', 'touch'),
-  armCq('ARM CQ', 'arm_cq');
+  armCq('ARM CQ', 'arm_cq'),
+  band('BAND', 'band');
 
   /// The name of the control in the feedback line.
   final String label;
@@ -86,7 +87,10 @@ class AutoSent {
   /// The result from `/state.remote.last_cmd` with the same `cmd_id`.
   AutoOpCmdResult? result;
 
-  AutoSent(this.control, this.cmdId, this.at);
+  /// The value that went out, for example the band of a band request.
+  final Object? value;
+
+  AutoSent(this.control, this.cmdId, this.at, [this.value]);
 
   bool get refused => result?.result == 'refused';
   bool get accepted => result != null && !refused;
@@ -247,7 +251,7 @@ class AutoCommander extends ChangeNotifier {
 
   /// Sends [control] with [value]. The caller checks the gate first.
   Future<void> send(AutoControl control, Object? value) async {
-    final rec = AutoSent(control, newAutoOpCmdId(), clock.now());
+    final rec = AutoSent(control, newAutoOpCmdId(), clock.now(), value);
     if (control == AutoControl.stop) {
       _stop = rec;
     } else {
@@ -299,7 +303,7 @@ class AutoCommander extends ChangeNotifier {
     final s = _operate;
     if (s == null) return null;
     final age = now.difference(s.at);
-    final name = s.control.label;
+    final name = s.control == AutoControl.band ? 'BAND ${s.value}' : s.control.label;
     if (s.sent == null) return AutoLine('$name SENT', AppTheme.txtMute, control: s.control);
     if (s.sent == false) {
       if (age >= autoProblemShowTime) return null;

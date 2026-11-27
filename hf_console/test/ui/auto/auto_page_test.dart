@@ -250,7 +250,7 @@ void main() {
       // 160 m is not in the band table: no dial. No pill shows a count.
       expect(find.byKey(const ValueKey('auto-band-dial-160m')), findsNothing);
       expect(find.byKey(const ValueKey('auto-band-160m')), findsOneWidget);
-      expect(find.text('23'), findsOneWidget); // the Decodes readout only
+      expect(find.text('23'), findsNothing); // no counts, and no Decodes readout
       final y40 = tester.getCenter(find.byKey(const ValueKey('auto-band-40m'))).dy;
       final y20 = tester.getCenter(find.byKey(const ValueKey('auto-band-20m'))).dy;
       final y10 = tester.getCenter(find.byKey(const ValueKey('auto-band-10m'))).dy;
@@ -260,6 +260,23 @@ void main() {
       expect(color, AppTheme.bandColor('40m'));
       // No age of a count either.
       expect(find.text('11m'), findsNothing);
+    });
+  });
+
+  group('band order', () {
+    testWidgets('the pills keep the band order when a dial is missing or moves', (tester) async {
+      final doc = busyAutoOpDoc();
+      doc['bands'] = [
+        {'band': '20m', 'dial_hz': 0, 'seen': true, 'count': 23, 'period_start_ms': busyNowMs},
+        {'band': '40m', 'dial_hz': 7047500, 'seen': true, 'count': 3, 'period_start_ms': busyNowMs},
+        {'band': '80m', 'dial_hz': 3573000, 'seen': false, 'count': 0, 'period_start_ms': 0},
+      ];
+      await _pumpAuto(tester, doc: doc);
+      double y(String b) => tester.getCenter(find.byKey(ValueKey('auto-band-$b'))).dy;
+      final order = ['160m', '80m', '40m', '30m', '20m', '17m', '15m', '12m', '10m'];
+      for (var i = 1; i < order.length; i++) {
+        expect(y(order[i - 1]), lessThan(y(order[i])), reason: '${order[i - 1]} above ${order[i]}');
+      }
     });
   });
 

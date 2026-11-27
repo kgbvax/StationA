@@ -333,6 +333,31 @@ void main() {
   });
 
   group('mode, target, presence', () {
+    testWidgets('a tap on a band pill sends a band request, and the band shows amber', (tester) async {
+      final doc = busyAutoOpDoc();
+      doc['bands'] = [
+        {'band': '40m', 'dial_hz': 7074000, 'seen': true, 'count': 3, 'period_start_ms': busyNowMs},
+        {'band': '20m', 'dial_hz': 14074000, 'seen': true, 'count': 23, 'period_start_ms': busyNowMs},
+      ];
+      final (_, mqtt) = await _pump(tester, doc: doc);
+      // The current band and a band outside the table send nothing.
+      await tester.tap(_k('auto-band-20m'), warnIfMissed: false);
+      await tester.tap(_k('auto-band-160m'), warnIfMissed: false);
+      await tester.pump();
+      await tester.pump();
+      expect(mqtt.publishes, isEmpty);
+      await tester.tap(_k('auto-band-40m'), warnIfMissed: false);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+      final m = _cmd(mqtt.publishes.single);
+      expect(m['action'], 'band');
+      expect(m['value'], '40m');
+      await tester.pump(const Duration(milliseconds: 200));
+      final box = tester.widget<Container>(_k('auto-band-40m')).decoration as BoxDecoration;
+      expect((box.border as Border).top.color, AppTheme.amber);
+      expect(_line(tester, 'auto-operate-line'), 'BAND 40m SENT');
+    });
+
     testWidgets('ARM CQ in auto mode sends arm_cq with no value', (tester) async {
       final doc = busyAutoOpDoc();
       doc['arm'] = {'source': '', 'until_ms': 0};

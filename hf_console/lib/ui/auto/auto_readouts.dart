@@ -1,4 +1,4 @@
-/// The readout row of the 75AUTO page: band, dial, decodes, the DX station
+/// The readout row of the 75AUTO page: band, dial, the DX station
 /// with its QSO stage, and the transmit box with the slot bar.
 ///
 /// A missing value shows `?`. The page never puts a definite value in the
@@ -36,11 +36,6 @@ class AutoReadouts extends StatelessWidget {
       value: st?.dialHz == null ? '?' : dialText(st!.dialHz!),
       sub: 'TX DF ${st?.txDf ?? '?'}',
     );
-    final decodes = _Readout(
-      label: 'Decodes',
-      value: '${st?.decodeCount ?? '?'}',
-      valueColor: st?.decodeCount == null ? null : AppTheme.green,
-    );
     final dx = _DxReadout(station: st);
     final tx = _TransmitReadout(station: st);
     if (twoRows) {
@@ -52,8 +47,6 @@ class AutoReadouts extends StatelessWidget {
               Expanded(flex: 2, child: band),
               gap,
               Expanded(flex: 4, child: dial),
-              gap,
-              Expanded(flex: 3, child: decodes),
             ]),
           ),
           const SizedBox(height: 4),
@@ -70,8 +63,6 @@ class AutoReadouts extends StatelessWidget {
         SizedBox(width: 92, child: band),
         gap,
         SizedBox(width: 196, child: dial),
-        gap,
-        SizedBox(width: 112, child: decodes),
         gap,
         Expanded(child: dx),
         gap,
@@ -105,11 +96,11 @@ class _Box extends StatelessWidget {
 class _Readout extends StatelessWidget {
   final String label;
   final String value;
-  final Color? valueColor;
+
   /// The small text after the value. Null: none.
   final String? sub;
 
-  const _Readout({required this.label, required this.value, this.valueColor, this.sub});
+  const _Readout({required this.label, required this.value, this.sub});
 
   @override
   Widget build(BuildContext context) {
@@ -126,7 +117,7 @@ class _Readout extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.baseline,
               textBaseline: TextBaseline.alphabetic,
               children: [
-                Text(value, maxLines: 1, style: AppTheme.mono(23, color: valueColor, weight: FontWeight.w600).copyWith(height: 1.1)),
+                Text(value, maxLines: 1, style: AppTheme.mono(23, weight: FontWeight.w600).copyWith(height: 1.1)),
                 if (sub != null) ...[
                   const SizedBox(width: 8),
                   Text(sub!, maxLines: 1, style: AppTheme.mono(11, color: AppTheme.txtMute)),
