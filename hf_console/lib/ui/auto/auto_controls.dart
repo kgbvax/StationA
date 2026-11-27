@@ -37,9 +37,6 @@ import 'auto_live.dart';
 const autoButtonRowHeight = 48.0;
 const autoStopHeight = 60.0;
 
-/// The width of Arm CQ next to Stop TX.
-const autoArmWidth = 84.0;
-
 /// The title strip of the TARGET and MODE cards.
 const autoRowTitleHeight = 16.0;
 
@@ -68,7 +65,8 @@ class AutoControls extends StatelessWidget {
         const SizedBox(
           height: autoStopHeight,
           child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-            SizedBox(width: autoArmWidth, child: _ArmCq()),
+            // Arm CQ and Stop TX share the row in equal halves.
+            Expanded(child: _ArmCq()),
             SizedBox(width: 4),
             Expanded(child: _StopTx()),
           ]),

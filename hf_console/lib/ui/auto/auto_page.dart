@@ -198,7 +198,7 @@ class _AutoPageState extends State<AutoPage> {
               gap,
               AutoReadouts(twoRows: true),
               gap,
-              SizedBox(height: 190, child: DxCard()),
+              SizedBox(height: 208, child: DxCard()),
               gap,
               AutoControls(),
             ],
