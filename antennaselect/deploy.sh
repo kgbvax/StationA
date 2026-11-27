@@ -37,7 +37,7 @@
 #   TUNER_FOLLOW_RESOURCE tuner_follow.resource (default: fan-dipole)
 #   TUNER_FOLLOW_ATU_BANDS tuner_follow.atu_bands (default: 30m,60m,80m,160m; comma-separated)
 #   IDLE_TIMEOUT_MINUTES  idle.timeout_minutes (default: 30)
-#   IDLE_HOLD_SLOTS       idle.hold_slots (default: recorder = bmrec's HF lab; comma-separated, "" = none)
+#   IDLE_HOLD_SLOTS       idle.hold_slots (default: recorder,auto-op = bmrec's HF lab and 75auto; comma-separated, "" = none)
 #
 # Configuration (including the MQTT password) lives in a single 0600 TOML file
 # on the target, NOT in the systemd unit or process command line. The file is
@@ -82,7 +82,7 @@ TUNER_FOLLOW_SLOT="${TUNER_FOLLOW_SLOT:-tuner}"
 TUNER_FOLLOW_RESOURCE="${TUNER_FOLLOW_RESOURCE:-fan-dipole}"
 TUNER_FOLLOW_ATU_BANDS="${TUNER_FOLLOW_ATU_BANDS:-30m,60m,80m,160m}"
 IDLE_TIMEOUT_MINUTES="${IDLE_TIMEOUT_MINUTES:-30}"
-IDLE_HOLD_SLOTS="${IDLE_HOLD_SLOTS-recorder}"
+IDLE_HOLD_SLOTS="${IDLE_HOLD_SLOTS-recorder,auto-op}"
 
 # Render the comma-separated ATU bands list as a TOML array (["30m", "60m", "160m"]).
 atu_bands_toml() {
@@ -201,7 +201,8 @@ trap 'rm -f "$SEED_CONFIG" "${UNIT_FILE:-}"' EXIT
   echo "# (target = off). The switch's off position shorts the open ports to ground."
   echo "timeout_minutes = ${IDLE_TIMEOUT_MINUTES}"
   echo "# Receive-only consumers that hold the station in use while live (expiring"
-  echo "# /state.station_hold): bmrec's HF lab publishes on muehle/hf/recorder."
+  echo "# /state.station_hold): bmrec's HF lab publishes on muehle/hf/recorder, and"
+  echo "# 75auto on muehle/hf/auto-op while a session connects or runs."
   echo "hold_slots = $(hold_slots_toml)"
 } > "$SEED_CONFIG"
 

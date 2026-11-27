@@ -52,6 +52,8 @@ Code-check verdict (2026-09-03): **still open** — `antennaselect/internal/mqtt
 
 Update (2026-10-23): since aaceb17 (2026-10-06) the PA side of this race is mitigated by the PLC #1 arm interlock (`m5stamp-hf-ctrl/src/arm.h`; details in the idle-grounding entry below). The reconciler gap above is unchanged.
 
+Update (2026-11-27): 75auto transmitted into the grounded switch twice (2026-11-26 13:25:15 and 2026-11-27 07:54:00 local). Both were the first FT8 transmission of a new 75auto session. The switch was idle-grounded, and the transmission itself was the first activity that antenna-select saw, so it selected the port in the same second. 75auto already published a `station_hold` on `muehle/hf/auto-op`, but the live `[idle].hold_slots` held only `recorder`. Fix: `hold_slots = ["recorder", "auto-op"]` (live config and the `deploy.sh` default), so a 75auto session ungrounds the antenna when it starts and suspends idle grounding while it runs. Second fix: 75auto refuses and halts TX while antenna-select targets `off` or the switch is not settled on the target (75auto `[antenna]` gate). Manual WSJT-X operation without 75auto stays open: only a TX inhibit on the radio closes it.
+
 ## [defect] Hard-coded browser WebSocket endpoint (PRD §3.1, recorded deviation)
 
 The browser client ignores the configured broker host. It connects to a hard-coded `ws://192.168.1.139:8091/mqtt`. This deviates from the no-hard-coded-host-addresses rule. A reconstruction must make the endpoint configurable, or must record the deviation in the same explicit way.

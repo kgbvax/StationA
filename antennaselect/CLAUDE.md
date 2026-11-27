@@ -114,7 +114,7 @@ The seed config bakes the Mühle wiring map and band policy (matching
   re-arm while the radio is down (tier 1 would otherwise override it there);
   `[idle].timeout_minutes` later, tier 1 retakes the antenna.
 - **Station holds** (`[idle].hold_slots`, `internal/mqtt/hold.go`): a sibling slot's
-  expiring `station_hold` (bmrec's HF lab, slot `recorder`) is presence while live
+  expiring `station_hold` (bmrec's HF lab, slot `recorder`; 75auto, slot `auto-op`, while a session connects or runs) is presence while live
   (`/status` online, `hold_until` in the future, received < 10 min ago); the idle timeout
   runs from when it ends. Anything malformed is no hold. Never above the lock tier.
 - 30/60/80/160m on the fan dipole are non-resonant; the `[tuner_follow]` binding now engages
