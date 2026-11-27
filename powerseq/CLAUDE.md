@@ -146,7 +146,7 @@ chain list; from `running` the chain only. Progress is `/state.chain` (`state`
 `running|ready|failed`, `step`, `fault`, `requester`, `ts`), separate from
 `phase`: a chain step failure leaves the phase as it was, so standby keeps
 working. The step name is the page's progress row (`station` while the startup
-or wake runs; `bwpc`, `aethersdr`, `dax`, `wsjtx`, `75auto` in the example), so
+or wake runs; `bwpc`, `aethersdr`, `wsjtx`, `75auto` in the example), so
 consecutive `[[auto_start]]` steps may share a name (`validateStepList`).
 Refusals: `busy: <phase>` in a transitional phase, `antenna mode
 storm|maintenance` (the ant-mode slot is read with standby or an auto_start

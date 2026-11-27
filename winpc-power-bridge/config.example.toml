@@ -76,12 +76,6 @@ path = 'C:\Program Files\Tailscale\tailscale.exe'
 # check_timeout_s = 90
 #
 # [[program]]
-# name          = "dax"
-# exe           = 'C:\Program Files\FlexRadio Systems\SmartSDR\DAX.exe'
-# check         = "process"
-# restart_owned = true               # binds to the radio as it is now
-#
-# [[program]]
 # name          = "wsjtx"
 # exe           = 'C:\WSJT\wsjtx\bin\wsjtx.exe'
 # check         = "process"          # 75auto binds UDP 2237 at session start

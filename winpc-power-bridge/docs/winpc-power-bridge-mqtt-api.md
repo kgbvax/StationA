@@ -7,7 +7,7 @@ slot `muehle/power/shack-pc` of the station integration model
 derived from `internal/bridge/bridge.go` and `cmd/winpc-power-bridge/main.go`.
 
 The agent puts the PC to **sleep**, and it starts, checks and ends the
-station programs of its `[[program]]` list (DAX, AetherSDR, WSJT-X, 75auto) for
+station programs of its `[[program]]` list (AetherSDR, WSJT-X, 75auto) for
 the powerseq start chain of 75auto (section 7). It cannot wake the PC: a
 sleeping PC runs no code. The wake path is Wake-on-LAN, sent by `powerseq` (`kind = "wol"`
 step with the PC's wired NIC MAC).
@@ -59,7 +59,7 @@ Published on every (re)connect.
   "capabilities": {
     "actions": ["sleep", "ensure_program", "stop_program"],
     "min_user_idle_minutes": 30,
-    "programs": ["aethersdr", "dax", "wsjtx", "75auto"]
+    "programs": ["aethersdr", "wsjtx", "75auto"]
   },
   "expose": {
     "device": { "name": "Shack PC (bwpc)", "model": "Windows PC" },
@@ -88,7 +88,7 @@ Published on (re)connect, every `state.interval_s` (default 30 s, no dedup —
 ```json
 { "ts": "2026-10-10T09:41:00Z", "power": "awake", "user_idle_s": 1834, "device_online": true,
   "program_aethersdr": "failed", "program_aethersdr_error": "check: reply \"RPRT -1\"",
-  "program_dax": "ready", "program_wsjtx": "stopped", "program_75auto": "stopped" }
+  "program_wsjtx": "ready", "program_wsjtx": "stopped", "program_75auto": "stopped" }
 ```
 
 Programs also publish `/state` on every `ensure_program` (once with
@@ -144,7 +144,7 @@ whenever `/status` is `offline`.
   touched. An empty payload is ignored silently.
 
 - `ensure_program` and `stop_program` take the program name under `value`:
-  `{"action":"ensure_program","value":"dax"}`. They are unsigned, like
+  `{"action":"ensure_program","value":"wsjtx"}`. They are unsigned, like
   `sleep`: the program paths come only from the agent configuration, so a
   client with bus access can at worst start the programs or end the copies
   that the agent started outside a session.
@@ -286,13 +286,13 @@ shows the request on the PC.
 
 ```toml
 [[auto_start]]
-name   = "dax"
+name   = "wsjtx"
 kind   = "cmd"
 slot   = "power/shack-pc"
 action = "ensure_program"
-value  = "dax"
+value  = "wsjtx"
 retain = false          # the agent drops retained commands
 ```
 
-followed by a `wait_state` on `program_dax` = `ready` that ignores a `/state`
+followed by a `wait_state` on `program_wsjtx` = `ready` that ignores a `/state`
 from before the step and fails on `failed`.

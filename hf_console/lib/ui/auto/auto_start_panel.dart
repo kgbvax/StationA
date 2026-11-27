@@ -6,7 +6,7 @@
 ///   not go through the gate of the 75AUTO page, because 75auto is often
 ///   offline at that moment (bwpc asleep or off).
 /// - powerseq runs the chain: station power, bwpc awake and logged on,
-///   AetherSDR, DAX, WSJT-X, 75auto. `/state.chain` shows the step that runs
+///   AetherSDR, WSJT-X, 75auto. `/state.chain` shows the step that runs
 ///   or failed, and the page shows one row per step. The last row, the
 ///   session, is the page's own.
 /// - When the chain is `ready` and its requester is this console, within
@@ -51,7 +51,6 @@ const autoStartStepLabels = {
   'station': 'Station power',
   'bwpc': 'bwpc',
   'aethersdr': 'AetherSDR',
-  'dax': 'DAX',
   'wsjtx': 'WSJT-X',
   '75auto': '75auto',
   'session': 'Session',

@@ -183,7 +183,7 @@ void main() {
     expect(find.descendant(of: _k('auto-start-row-aethersdr'), matching: find.text('AetherSDR')), findsOneWidget);
     expect(_text(tester, 'auto-start-row-aethersdr-state'), 'FAILED');
     expect(_text(tester, 'auto-start-row-aethersdr-note'), 'rigctl: RPRT -1 (no radio)');
-    for (final id in ['dax', 'wsjtx', '75auto', 'session']) {
+    for (final id in ['wsjtx', '75auto', 'session']) {
       expect(_text(tester, 'auto-start-row-$id-state'), '—');
     }
     expect(_on(tester, 'auto-start'), isTrue, reason: 'the operator can start again');
@@ -214,7 +214,7 @@ void main() {
   testWidgets('ready for another requester: no start_session, the progress shows', (tester) async {
     final (store, mqtt) = await _pump(tester);
     await _tap(tester, 'auto-start');
-    _chain(store, 'running', 'dax', requester: 'hf-console-elsewhere', ts: 2);
+    _chain(store, 'running', 'wsjtx', requester: 'hf-console-elsewhere', ts: 2);
     await _settle(tester);
     _chain(store, 'ready', '75auto', requester: 'hf-console-elsewhere', ts: 3);
     await _settle(tester);

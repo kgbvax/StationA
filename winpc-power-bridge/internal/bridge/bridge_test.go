@@ -57,7 +57,7 @@ type harness struct {
 }
 
 func newHarness() *harness {
-	h := &harness{pub: &fakePub{}, progs: &fakePrograms{state: map[string]string{"dax": "stopped", "wsjtx": "stopped"}}}
+	h := &harness{pub: &fakePub{}, progs: &fakePrograms{state: map[string]string{"aethersdr": "stopped", "wsjtx": "stopped"}}}
 	h.b = New(Config{
 		Site: "muehle", Station: "power", Slot: "shack-pc",
 		Location: "bauwagen", Host: "bwpc",
@@ -293,7 +293,7 @@ func (f *fakePrograms) Refresh() { f.refreshs++ }
 
 func (f *fakePrograms) Fields() []programs.Field {
 	var out []programs.Field
-	for _, n := range []string{"dax", "wsjtx"} {
+	for _, n := range []string{"aethersdr", "wsjtx"} {
 		out = append(out, programs.Field{Name: n, State: f.state[n], Error: f.errs[n]})
 	}
 	return out
@@ -318,12 +318,12 @@ func (f *fakePub) rawStates(t *testing.T) []map[string]any {
 
 func TestEnsureProgramPublishesStartingThenResult(t *testing.T) {
 	h := newHarness()
-	h.b.HandleCommand(false, []byte(`{"action":"ensure_program","value":"dax"}`))
-	if strings.Join(h.progs.ensured, ",") != "dax" {
+	h.b.HandleCommand(false, []byte(`{"action":"ensure_program","value":"aethersdr"}`))
+	if strings.Join(h.progs.ensured, ",") != "aethersdr" {
 		t.Fatalf("ensured = %v", h.progs.ensured)
 	}
 	sts := h.pub.rawStates(t)
-	if len(sts) != 2 || sts[0]["program_dax"] != "starting" || sts[1]["program_dax"] != "ready" {
+	if len(sts) != 2 || sts[0]["program_aethersdr"] != "starting" || sts[1]["program_aethersdr"] != "ready" {
 		t.Fatalf("states = %v, want starting then ready", sts)
 	}
 	if sts[1]["program_wsjtx"] != "stopped" {
@@ -336,11 +336,11 @@ func TestEnsureProgramPublishesStartingThenResult(t *testing.T) {
 
 func TestProgramErrorField(t *testing.T) {
 	h := newHarness()
-	h.progs.state["dax"] = "failed"
-	h.progs.errs = map[string]string{"dax": "not started by the chain"}
+	h.progs.state["aethersdr"] = "failed"
+	h.progs.errs = map[string]string{"aethersdr": "not started by the chain"}
 	h.b.PublishState()
 	st := h.pub.rawStates(t)[0]
-	if st["program_dax"] != "failed" || st["program_dax_error"] != "not started by the chain" {
+	if st["program_aethersdr"] != "failed" || st["program_aethersdr_error"] != "not started by the chain" {
 		t.Errorf("state = %v", st)
 	}
 	if _, ok := st["program_wsjtx_error"]; ok {
@@ -370,8 +370,8 @@ func TestStopProgramRefusalInError(t *testing.T) {
 
 func TestStopProgram(t *testing.T) {
 	h := newHarness()
-	h.b.HandleCommand(false, []byte(`{"action":"stop_program","value":"dax"}`))
-	if strings.Join(h.progs.stopped, ",") != "dax" {
+	h.b.HandleCommand(false, []byte(`{"action":"stop_program","value":"aethersdr"}`))
+	if strings.Join(h.progs.stopped, ",") != "aethersdr" {
 		t.Fatalf("stopped = %v", h.progs.stopped)
 	}
 	if st := h.pub.lastState(t); st.Error != "" {
@@ -381,7 +381,7 @@ func TestStopProgram(t *testing.T) {
 
 func TestRetainedEnsureDropped(t *testing.T) {
 	h := newHarness()
-	h.b.HandleCommand(true, []byte(`{"action":"ensure_program","value":"dax"}`))
+	h.b.HandleCommand(true, []byte(`{"action":"ensure_program","value":"aethersdr"}`))
 	if len(h.progs.ensured) != 0 || len(h.pub.msgs) != 0 {
 		t.Errorf("retained ensure_program ran: ensured %v, %d publishes", h.progs.ensured, len(h.pub.msgs))
 	}

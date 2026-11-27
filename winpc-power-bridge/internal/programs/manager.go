@@ -1,5 +1,5 @@
 // Package programs starts, checks and ends the station programs on the shack
-// PC (DAX, AetherSDR, WSJT-X, 75auto) for the /cmd actions ensure_program and
+// PC (AetherSDR, WSJT-X, 75auto) for the /cmd actions ensure_program and
 // stop_program, and keeps the PC awake while a start chain or a 75auto session
 // needs it.
 //

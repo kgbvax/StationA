@@ -38,7 +38,7 @@ func newHold() (*Activity, *PowerHold, *fakeRequest) {
 func TestHoldWhileChainRuns(t *testing.T) {
 	a, h, r := newHold()
 	now := time.Unix(1_800_000_000, 0)
-	a.PowerSeqState([]byte(`{"phase":"running","chain":{"state":"running","step":"dax"}}`), now)
+	a.PowerSeqState([]byte(`{"phase":"running","chain":{"state":"running","step":"aethersdr"}}`), now)
 	h.Update(now)
 	if !r.held {
 		t.Fatal("no power request while the chain runs")
