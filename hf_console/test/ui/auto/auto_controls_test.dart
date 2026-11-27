@@ -81,6 +81,10 @@ Color? _stopBackground(WidgetTester tester, {bool disabled = false}) => tester
     .backgroundColor!
     .resolve(disabled ? {WidgetState.disabled} : <WidgetState>{});
 
+/// The frame color of Stop TX.
+Color? _stopFrame(WidgetTester tester) =>
+    tester.widget<ElevatedButton>(_k('auto-stop-tx')).style!.side!.resolve(<WidgetState>{})!.color;
+
 /// The color of the STOP TX label.
 Color? _stopLabel(WidgetTester tester) =>
     tester.widget<Text>(find.descendant(of: _k('auto-stop-tx'), matching: find.text('STOP TX'))).style!.color;
@@ -220,18 +224,21 @@ void main() {
       expect(mqtt.publishes, isEmpty);
     });
 
-    testWidgets('it is red only while 75auto transmits', (tester) async {
+    testWidgets('its frame is red only while 75auto transmits', (tester) async {
       final idle = busyAutoOpDoc();
       idle['station'] = {...idle['station'] as Map<String, dynamic>, 'transmitting': false};
       final (store, _) = await _pump(tester, doc: idle);
       expect(_on(tester, 'auto-stop-tx'), isTrue);
       expect(_stopBackground(tester), AppTheme.pane);
+      expect(_stopFrame(tester), AppTheme.cardLineHi);
       expect(_stopLabel(tester), AppTheme.txt);
 
       _live(store, busyAutoOpDoc());
       await tester.pump(const Duration(milliseconds: 300));
-      expect(_stopBackground(tester), AppTheme.red);
-      expect(_stopLabel(tester), AppTheme.activeButtonText);
+      // Not filled: the background and the label stay plain.
+      expect(_stopBackground(tester), AppTheme.pane);
+      expect(_stopFrame(tester), AppTheme.red);
+      expect(_stopLabel(tester), AppTheme.txt);
     });
 
     testWidgets('off, it has the disabled colors and no red', (tester) async {
