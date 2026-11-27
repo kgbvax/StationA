@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/BurntSushi/toml"
@@ -46,6 +47,10 @@ type Config struct {
 	State     StateConfig     `toml:"state"`
 	Tailscale TailscaleConfig `toml:"tailscale"`
 	Log       LogConfig       `toml:"log"`
+
+	// Programs are the station programs that the agent starts, checks and
+	// ends on /cmd ensure_program and stop_program.
+	Programs []ProgramConfig `toml:"program"`
 
 	// path is the config file that was loaded ("" if none). Relative paths in
 	// the config (log file) resolve against its directory.
@@ -104,6 +109,64 @@ type LogConfig struct {
 	// config file directory.
 	File string `toml:"file"`
 }
+
+// Program check kinds: how the agent decides that a program is ready.
+const (
+	// CheckProcess: the process stays up for settle_s after its start.
+	CheckProcess = "process"
+	// CheckTCP: a TCP connect to check_address succeeds and the reply to the
+	// probe line matches reply_pattern.
+	CheckTCP = "tcp"
+	// CheckNone: ready as soon as the process is started.
+	CheckNone = "none"
+)
+
+// OwnedFileName is the file next to the config that records the programs the
+// agent started itself (PID and process start time), so an agent restart
+// keeps them.
+const OwnedFileName = "programs-owned.json"
+
+// ProgramConfig is one [[program]] entry.
+type ProgramConfig struct {
+	// Name is the program id on the bus (ensure_program value, the
+	// program_<name> /state field): lower case letters, digits and "_".
+	Name string `toml:"name"`
+	// Exe is the full path of the program file.
+	Exe string `toml:"exe"`
+	// Args are the command line arguments.
+	Args []string `toml:"args"`
+	// Workdir is the working directory ("" = the directory of Exe).
+	Workdir string `toml:"workdir"`
+	// Process is the image name in the process list (default: the file name
+	// of Exe). It finds a copy that the operator started.
+	Process string `toml:"process"`
+	// Check is the ready check kind: process, tcp or none.
+	Check string `toml:"check"`
+	// CheckAddress is host:port for the tcp check.
+	CheckAddress string `toml:"check_address"`
+	// Probe is the line sent after the tcp connect (a newline is added).
+	Probe string `toml:"probe"`
+	// ReplyPattern is a regular expression the first reply line must match.
+	ReplyPattern string `toml:"reply_pattern"`
+	// SettleS: the process check waits this long after a start and then
+	// requires that the process still runs. Default 5.
+	SettleS int `toml:"settle_s"`
+	// CheckTimeoutS: after a start, the tcp check tries again until this
+	// time has passed. Default 60.
+	CheckTimeoutS int `toml:"check_timeout_s"`
+	// RestartOwned: a copy that the agent started itself is ended and started
+	// again on every ensure_program, so that it binds to the radio as it is
+	// now. A copy that the operator started is never restarted.
+	RestartOwned bool `toml:"restart_owned"`
+}
+
+// Program defaults.
+const (
+	DefaultSettleS       = 5
+	DefaultCheckTimeoutS = 60
+)
+
+var programNameRE = regexp.MustCompile(`^[a-z0-9_]+$`)
 
 // Defaults returns a Config with the built-in defaults.
 func Defaults() Config {
@@ -218,6 +281,28 @@ func fillDefaults(cfg *Config) {
 	if cfg.Tailscale.Path == "" {
 		cfg.Tailscale.Path = d.Tailscale.Path
 	}
+	for i := range cfg.Programs {
+		p := &cfg.Programs[i]
+		p.Check = strings.ToLower(p.Check)
+		if p.Process == "" {
+			p.Process = baseName(p.Exe)
+		}
+		if p.SettleS == 0 {
+			p.SettleS = DefaultSettleS
+		}
+		if p.CheckTimeoutS == 0 {
+			p.CheckTimeoutS = DefaultCheckTimeoutS
+		}
+	}
+}
+
+// baseName is the last element of a Windows or slash path. filepath.Base
+// does not split at a backslash on the developer Mac.
+func baseName(p string) string {
+	if i := strings.LastIndexAny(p, `\/`); i >= 0 {
+		return p[i+1:]
+	}
+	return p
 }
 
 // Validate checks that the config is usable.
@@ -239,6 +324,41 @@ func (c Config) Validate() error {
 	default:
 		return fmt.Errorf("log.level must be debug|info|warn|error (got %q)", c.Log.Level)
 	}
+	seen := map[string]bool{}
+	for i, p := range c.Programs {
+		if err := p.validate(); err != nil {
+			return fmt.Errorf("program %d (%q): %w", i+1, p.Name, err)
+		}
+		if seen[p.Name] {
+			return fmt.Errorf("program %q: name used twice", p.Name)
+		}
+		seen[p.Name] = true
+	}
+	return nil
+}
+
+func (p ProgramConfig) validate() error {
+	if !programNameRE.MatchString(p.Name) {
+		return fmt.Errorf("name must be lower case letters, digits and _")
+	}
+	if p.Exe == "" {
+		return fmt.Errorf("exe must be set")
+	}
+	if p.SettleS < 0 || p.CheckTimeoutS < 1 {
+		return fmt.Errorf("settle_s must be >= 0 and check_timeout_s >= 1")
+	}
+	switch p.Check {
+	case CheckProcess, CheckNone:
+	case CheckTCP:
+		if p.CheckAddress == "" || p.Probe == "" || p.ReplyPattern == "" {
+			return fmt.Errorf("check tcp needs check_address, probe and reply_pattern")
+		}
+		if _, err := regexp.Compile(p.ReplyPattern); err != nil {
+			return fmt.Errorf("reply_pattern: %w", err)
+		}
+	default:
+		return fmt.Errorf("check must be process|tcp|none (got %q)", p.Check)
+	}
 	return nil
 }
 
@@ -259,6 +379,18 @@ func (c Config) LogFilePath() string {
 		base = filepath.Dir(exe)
 	}
 	return filepath.Join(base, c.Log.File)
+}
+
+// OwnedFilePath is the owned-programs record next to the config file (or next
+// to the executable if no config file was loaded).
+func (c Config) OwnedFilePath() string {
+	base := ""
+	if c.path != "" {
+		base = filepath.Dir(c.path)
+	} else if exe, err := os.Executable(); err == nil {
+		base = filepath.Dir(exe)
+	}
+	return filepath.Join(base, OwnedFileName)
 }
 
 // defaultConfigPath is config.toml next to the executable.

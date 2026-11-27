@@ -7,8 +7,28 @@ put the PC to **sleep (S3)** over MQTT. Waking is not its job: a sleeping PC
 runs no code. `powerseq` wakes it with Wake-on-LAN (`kind = "wol"` step, with `poke` for
 Modern Standby, see below).
 
-- Role `pc-power`; one action `sleep`; `/state` = `{ts, power:"awake",
-  user_idle_s, device_online:true, error?}`; asleep = `/status` `offline`.
+- Role `pc-power`; actions `sleep`, `ensure_program`, `stop_program`;
+  `/state` = `{ts, power:"awake", user_idle_s, device_online:true, error?,
+  program_<name>, program_<name>_error?}`; asleep = `/status` `offline`.
+- **Programs** (`[[program]]`, 2026-11-27): the bwpc actuator of the powerseq
+  75auto start chain. `ensure_program <name>` uses a copy that runs and passes
+  its ready check (`process`, `tcp` probe, or `none`), starts a missing one and
+  records it as owned (PID + process start time in `programs-owned.json` next
+  to the config; a reused PID is not owned), restarts an owned one that fails
+  its check or has `restart_owned`, and fails an operator copy that fails its
+  check with `not started by the chain`. It never ends an operator copy.
+  `/state` shows `starting` first in every case. `stop_program` ends only
+  owned copies (WM_CLOSE, then TerminateProcess after 10 s) and is refused
+  while a 75auto session is active. Programs start with
+  `CREATE_BREAKAWAY_FROM_JOB`, so `schtasks /end` of the agent leaves them
+  running. The commands are unsigned like `sleep`; the program paths come
+  only from the config.
+- **Power request**: the agent holds a `PowerRequestSystemRequired` power
+  request while `hf/power-seq` `chain.state` = `running` or a 75auto session
+  (`hf/auto-op` `session.state` connecting/running) has a `/beat` or live
+  `/state` younger than 30 s. Otherwise it is released, also with owned
+  programs running. Whether this keeps bwpc out of Modern Standby is a bench
+  check.
 - **Sleep guard:** a `sleep` is refused (`/state.error = "user active, sleep
   refused"`, `Warn` log) when the last keyboard/mouse input in the user session
   is newer than `[sleep] min_user_idle_minutes` (default 30).
@@ -70,7 +90,20 @@ explicitly named missing file is an error), `-log.level debug|info|warn|error`.
    `Suspend` (enable `SeShutdownPrivilege` via `golang.org/x/sys/windows`, then
    `powrprof!SetSuspendState(FALSE,FALSE,FALSE)`). `winpower_other.go` stubs
    return `ErrUnsupported` elsewhere.
-4. `internal/config` — TOML + `WINPC_POWER_BRIDGE_MQTT_*` env overrides.
+4. `internal/programs` — `Manager` (the ensure/stop decisions, the owned
+   record, the ready checks), `Activity` + `PowerHold` (the power request).
+   The process table (`Proc`), clock and power request are injected, so the
+   decisions are tested on macOS. `proc_windows.go`: Toolhelp snapshot
+   (`CreateToolhelp32Snapshot`/`Process32*`), creation time
+   (`OpenProcess` + `GetExitCodeProcess` + `GetProcessTimes`), start
+   (`os.StartProcess` with `CREATE_BREAKAWAY_FROM_JOB`), end (`EnumWindows` +
+   `PostMessageW(WM_CLOSE)`, then `TerminateProcess`), power request
+   (`kernel32!PowerCreateRequest`/`PowerSetRequest`/`PowerClearRequest`).
+   `proc_other.go` stubs return `ErrUnsupported`. `ensure_program` runs on
+   the jobs worker (it can take until `check_timeout_s`); the power hold runs
+   on its own goroutine, fed from the paho handlers of the powerseq and
+   75auto topics (parse and record only, no publish).
+5. `internal/config` — TOML + `WINPC_POWER_BRIDGE_MQTT_*` env overrides.
 
 ### Sleep and reconnect — design choice
 
@@ -101,7 +134,10 @@ offline, so a `sleep` can never arrive late, after a wake.
 Config: `config.toml` in the install dir (`C:\Users\iotte\winpc-power-bridge\`),
 seed-once from `config.example.toml`. Keys: `host`, `location`, `[mqtt]`,
 `[device]`, `[sleep] min_user_idle_minutes`, `[state] interval_s`,
-`[log] level`, `[log] file`.
+`[tailscale]`, `[log] level`, `[log] file`, `[[program]]` (name, exe, args,
+workdir, process, check, check_address, probe, reply_pattern, settle_s,
+check_timeout_s, restart_owned; see `config.example.toml`). The config is
+seed-once: on bwpc add the `[[program]]` entries by hand.
 
 **MQTT password** — same rule as pelcobridge2 (the earlier shack-PC component,
 decommissioned 2026-10-10):
@@ -197,6 +233,14 @@ file in the install dir, and the bus:
 4. Publish a **retained** `sleep`, restart the task → `Warn` "dropping retained
    /cmd replay", PC stays on. Clear the retained message afterwards
    (`mosquitto_pub … -r -n`).
+5. Configure the programs. With the screen locked, send
+   `{"action":"ensure_program","value":"dax"}` (non-retained) → the program
+   opens on the desktop, `/state` `program_dax` `starting` then `ready`, an
+   entry in `programs-owned.json`. `schtasks /end` + `/run` of the agent →
+   the program keeps running and is still owned.
+6. During a 75auto session, `powercfg /requests` lists the agent's request
+   under SYSTEM; after the session it is gone. `stop_program` during the
+   session is refused.
 
 ---
 

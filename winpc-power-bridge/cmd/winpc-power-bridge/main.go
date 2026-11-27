@@ -2,7 +2,10 @@
 // the station integration-model slot muehle/power/shack-pc. It reports that
 // the PC is awake plus the user-idle time, and on /cmd {"action":"sleep"} it
 // puts the PC to sleep (S3) if nobody has used keyboard or mouse for
-// min_user_idle_minutes. powerseq wakes it again with Wake-on-LAN.
+// min_user_idle_minutes. powerseq wakes it again with Wake-on-LAN. On
+// /cmd ensure_program and stop_program it starts, checks and ends the station
+// programs of the [[program]] list, and it holds a power request while a
+// powerseq start chain runs or a 75auto session is active.
 //
 // It runs as a hidden logon Task Scheduler task in the interactive user
 // session (GetLastInputInfo only sees that session), not as a service. See
@@ -30,6 +33,7 @@ import (
 
 	"winpc-power-bridge/internal/bridge"
 	"winpc-power-bridge/internal/config"
+	"winpc-power-bridge/internal/programs"
 	"winpc-power-bridge/internal/tailnet"
 	"winpc-power-bridge/internal/winpower"
 )
@@ -48,6 +52,9 @@ const (
 	disconnectQuiesceMs = 500
 	// logRotateBytes: a log file above this size is moved to <file>.1 at start.
 	logRotateBytes = 5 << 20
+	// holdInterval is how often the power request is re-evaluated, so that a
+	// 75auto heartbeat that stops releases it soon after the fresh window.
+	holdInterval = 5 * time.Second
 )
 
 func main() {
@@ -97,7 +104,21 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 	jobs := make(chan func(), 64)
 	go sharedmqtt.RunJobs(ctx, jobs)
 
-	s := &session{cfg: cfg, log: log, jobs: jobs}
+	act := &programs.Activity{}
+	hold := programs.NewPowerHold(act,
+		programs.NewSystemPowerRequest("winpc-power-bridge: 75auto start chain or session active"), log)
+	nudge := make(chan struct{}, 1)
+	go runPowerHold(ctx, hold, nudge)
+
+	mgr := programs.New(ctx, programs.Options{
+		Programs:      cfg.Programs,
+		Proc:          programs.OSProc{},
+		OwnedFile:     cfg.OwnedFilePath(),
+		SessionActive: func() bool { return act.SessionActive(time.Now()) },
+		Log:           log,
+	})
+
+	s := &session{cfg: cfg, log: log, jobs: jobs, act: act, nudge: nudge}
 	s.statusTopic = schema.StatusTopic(cfg.MQTT.Site, cfg.MQTT.Station, cfg.MQTT.Slot)
 	s.cmdTopic = schema.CmdTopic(cfg.MQTT.Site, cfg.MQTT.Station, cfg.MQTT.Slot)
 
@@ -111,7 +132,7 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 		DeviceSerial: cfg.Device.Serial,
 		Link:         cfg.Device.Link,
 		MinUserIdle:  time.Duration(cfg.Sleep.MinUserIdleMinutes) * time.Minute,
-	}, s, winpower.UserIdle, func() error { return s.sleep(ctx) }, log)
+	}, s, winpower.UserIdle, func() error { return s.sleep(ctx) }, mgr, log)
 
 	if err := s.connect(ctx); err != nil {
 		return err
@@ -128,10 +149,27 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case now := <-tick.C:
-			sharedmqtt.Enqueue(jobs, s.b.PublishState)
+			sharedmqtt.Enqueue(jobs, s.b.Tick)
 			if resume.Tick(now) && cfg.Tailscale.PingAfterResume {
 				go pingTailnet(ctx, cfg.Tailscale.Path, log)
 			}
+		}
+	}
+}
+
+// runPowerHold re-evaluates the power request on every activity message
+// (nudge) and every holdInterval, on its own goroutine: a long ensure_program
+// on the jobs worker must not delay the release or the hold.
+func runPowerHold(ctx context.Context, hold *programs.PowerHold, nudge <-chan struct{}) {
+	t := time.NewTicker(holdInterval)
+	defer t.Stop()
+	for {
+		hold.Update(time.Now())
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		case <-nudge:
 		}
 	}
 }
@@ -165,6 +203,9 @@ type session struct {
 	b           *bridge.Bridge
 	statusTopic string
 	cmdTopic    string
+	// act takes the powerseq and 75auto activity for the power request.
+	act   *programs.Activity
+	nudge chan struct{}
 
 	mu     sync.Mutex
 	client pahomqtt.Client
@@ -283,11 +324,45 @@ func (s *session) options() *pahomqtt.ClientOptions {
 		if !tok.WaitTimeout(subTimeout) || tok.Error() != nil {
 			s.log.Error("subscribe cmd failed", "topic", s.cmdTopic, "err", tok.Error())
 		}
+		s.subscribeActivity(c)
 	}
 	opts.OnConnectionLost = func(_ pahomqtt.Client, err error) {
 		s.log.Warn("MQTT connection lost", "err", err)
 	}
 	return opts
+}
+
+// subscribeActivity subscribes the powerseq /state (chain.state) and the 75auto
+// /state and /beat. The handlers only parse and record (programs.Activity is
+// cheap and locked) and nudge the power-hold goroutine; they never publish.
+func (s *session) subscribeActivity(c pahomqtt.Client) {
+	site := s.cfg.MQTT.Site
+	poke := func() {
+		select {
+		case s.nudge <- struct{}{}:
+		default:
+		}
+	}
+	subs := map[string]pahomqtt.MessageHandler{
+		schema.StateTopic(site, "hf", "power-seq"): func(_ pahomqtt.Client, m pahomqtt.Message) {
+			s.act.PowerSeqState(m.Payload())
+			poke()
+		},
+		schema.StateTopic(site, "hf", "auto-op"): func(_ pahomqtt.Client, m pahomqtt.Message) {
+			s.act.AutoOpState(m.Payload(), m.Retained(), time.Now())
+			poke()
+		},
+		schema.SiblingTopic(site, "hf", "auto-op", "beat"): func(_ pahomqtt.Client, _ pahomqtt.Message) {
+			s.act.AutoOpBeat(time.Now())
+			poke()
+		},
+	}
+	for topic, h := range subs {
+		tok := c.Subscribe(topic, 0, h)
+		if !tok.WaitTimeout(subTimeout) || tok.Error() != nil {
+			s.log.Error("subscribe failed", "topic", topic, "err", tok.Error())
+		}
+	}
 }
 
 // newLogger builds the root slog logger (logging convention §1: text handler,

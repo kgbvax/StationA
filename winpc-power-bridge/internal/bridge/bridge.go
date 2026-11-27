@@ -1,6 +1,7 @@
 // Package bridge owns the canonical muehle/power/shack-pc slot: the /meta
-// birth certificate, the retained /state snapshot and the /cmd "sleep" action
-// with its user-idle guard.
+// birth certificate, the retained /state snapshot, the /cmd "sleep" action
+// with its user-idle guard, and the program actions ensure_program and
+// stop_program.
 //
 // The package has no MQTT client and no Windows dependency. The idle-time
 // source and the suspend sequence are injected, so the guard and the command
@@ -15,6 +16,8 @@ import (
 	"time"
 
 	schema "codeberg.org/kgbvax/stationa/shared/schema"
+
+	"winpc-power-bridge/internal/programs"
 )
 
 // Role is the canonical role of the slot, published in /meta.
@@ -24,8 +27,27 @@ const Role = "pc-power"
 // PC publishes nothing (its /status is "offline").
 const PowerAwake = "awake"
 
-// ActionSleep is the one /cmd action.
-const ActionSleep = "sleep"
+// The /cmd actions. ensure_program and stop_program take the program name
+// under value.
+const (
+	ActionSleep         = "sleep"
+	ActionEnsureProgram = "ensure_program"
+	ActionStopProgram   = "stop_program"
+)
+
+// Programs is the program manager (internal/programs.Manager). Its calls run
+// on the jobs worker; Ensure can take until the program's check timeout.
+type Programs interface {
+	// Ensure makes the program run and pass its check; progress publishes
+	// the starting state first.
+	Ensure(name string, progress func()) error
+	// Stop ends a program that the agent started.
+	Stop(name string) error
+	// Refresh re-checks the programs on the /state tick.
+	Refresh()
+	// Fields are the program_<name> /state fields in configuration order.
+	Fields() []programs.Field
+}
 
 // ErrUserActive is the guard refusal: input in the user session is newer than
 // the configured minimum idle time.
@@ -77,6 +99,7 @@ type Bridge struct {
 	pub     Publisher
 	idle    IdleFunc
 	suspend SuspendFunc
+	progs   Programs
 	log     *slog.Logger
 
 	// cmdErr is the outcome of the last /cmd (refusal or suspend failure). It
@@ -85,18 +108,49 @@ type Bridge struct {
 	cmdErr string
 }
 
-// New constructs a Bridge.
-func New(cfg Config, pub Publisher, idle IdleFunc, suspend SuspendFunc, log *slog.Logger) *Bridge {
-	return &Bridge{cfg: cfg, pub: pub, idle: idle, suspend: suspend, log: log}
+// New constructs a Bridge. progs may be nil (no programs configured).
+func New(cfg Config, pub Publisher, idle IdleFunc, suspend SuspendFunc, progs Programs, log *slog.Logger) *Bridge {
+	return &Bridge{cfg: cfg, pub: pub, idle: idle, suspend: suspend, progs: progs, log: log}
 }
 
-// State is the /state JSON document.
+// State is the /state JSON document. Each program adds the flat top-level
+// fields program_<name> (stopped, starting, ready, failed) and, when set,
+// program_<name>_error.
 type State struct {
-	TS           string `json:"ts"`
-	Power        string `json:"power"`
-	UserIdleS    int64  `json:"user_idle_s"`
-	DeviceOnline bool   `json:"device_online"`
-	Error        string `json:"error,omitempty"`
+	TS           string           `json:"ts"`
+	Power        string           `json:"power"`
+	UserIdleS    int64            `json:"user_idle_s"`
+	DeviceOnline bool             `json:"device_online"`
+	Error        string           `json:"error,omitempty"`
+	Programs     []programs.Field `json:"-"`
+}
+
+// MarshalJSON adds the program fields at the top level.
+func (s State) MarshalJSON() ([]byte, error) {
+	type plain State
+	base, err := json.Marshal(plain(s))
+	if err != nil || len(s.Programs) == 0 {
+		return base, err
+	}
+	m := map[string]any{}
+	if err := json.Unmarshal(base, &m); err != nil {
+		return nil, err
+	}
+	for _, f := range s.Programs {
+		m["program_"+f.Name] = f.State
+		if f.Error != "" {
+			m["program_"+f.Name+"_error"] = f.Error
+		}
+	}
+	return json.Marshal(m)
+}
+
+// Tick is the periodic refresh: re-check the programs, then publish /state.
+func (b *Bridge) Tick() {
+	if b.progs != nil {
+		b.progs.Refresh()
+	}
+	b.PublishState()
 }
 
 // PublishState publishes the retained /state snapshot with a fresh
@@ -115,6 +169,9 @@ func (b *Bridge) PublishState() {
 	}
 	if b.cmdErr != "" {
 		st.Error = b.cmdErr
+	}
+	if b.progs != nil {
+		st.Programs = b.progs.Fields()
 	}
 	data, err := json.Marshal(st)
 	if err != nil {
@@ -136,7 +193,7 @@ func (b *Bridge) HandleCommand(retained bool, payload []byte) {
 		return // a retained-clear (empty payload); nothing to do
 	}
 	if retained {
-		b.log.Warn("cmd: dropping retained /cmd replay (send sleep non-retained)", "payload", string(payload))
+		b.log.Warn("cmd: dropping retained /cmd replay (send commands non-retained)", "payload", string(payload))
 		return
 	}
 	var c schema.CmdPayload
@@ -147,6 +204,10 @@ func (b *Bridge) HandleCommand(retained bool, payload []byte) {
 	switch c.Action {
 	case ActionSleep:
 		b.handleSleep()
+	case ActionEnsureProgram:
+		b.handleEnsure(c.Value)
+	case ActionStopProgram:
+		b.handleStop(c.Value)
 	default:
 		b.log.Warn("cmd: unknown action ignored", "action", c.Action)
 	}
@@ -176,6 +237,38 @@ func (b *Bridge) handleSleep() {
 	} else {
 		b.cmdErr = ""
 		b.log.Info("resumed from sleep", "slept", time.Since(start).Round(time.Second))
+	}
+	b.PublishState()
+}
+
+// handleEnsure runs ensure_program. The manager publishes the starting state
+// through PublishState before any work; the result follows here.
+func (b *Bridge) handleEnsure(name string) {
+	var err error
+	if b.progs == nil {
+		err = programs.ErrUnknownProgram
+	} else {
+		err = b.progs.Ensure(name, b.PublishState)
+	}
+	if err != nil {
+		b.cmdErr = fmt.Sprintf("%s refused: %v: %s", ActionEnsureProgram, err, name)
+		b.log.Warn("ensure_program refused", "program", name, "err", err)
+	}
+	b.PublishState()
+}
+
+// handleStop runs stop_program: only a program that the agent started is
+// ended, and never while a 75auto session is active.
+func (b *Bridge) handleStop(name string) {
+	var err error
+	if b.progs == nil {
+		err = programs.ErrUnknownProgram
+	} else {
+		err = b.progs.Stop(name)
+	}
+	if err != nil {
+		b.cmdErr = fmt.Sprintf("%s %s refused: %v", ActionStopProgram, name, err)
+		b.log.Warn("stop_program refused", "program", name, "err", err)
 	}
 	b.PublishState()
 }
@@ -229,6 +322,8 @@ type metaDevice struct {
 type metaCapabilities struct {
 	Actions            []string `json:"actions"`
 	MinUserIdleMinutes int      `json:"min_user_idle_minutes"`
+	// Programs are the configured program names (ensure_program values).
+	Programs []string `json:"programs,omitempty"`
 }
 
 type metaExpose struct {
@@ -264,6 +359,12 @@ type exposeCommand struct {
 }
 
 func (b *Bridge) meta() metaPayload {
+	var names []string
+	if b.progs != nil {
+		for _, f := range b.progs.Fields() {
+			names = append(names, f.Name)
+		}
+	}
 	return metaPayload{
 		Schema:   "1.0",
 		Role:     Role,
@@ -272,8 +373,9 @@ func (b *Bridge) meta() metaPayload {
 		Location: b.cfg.Location,
 		Host:     b.cfg.Host,
 		Capabilities: metaCapabilities{
-			Actions:            []string{ActionSleep},
+			Actions:            []string{ActionSleep, ActionEnsureProgram, ActionStopProgram},
 			MinUserIdleMinutes: int(b.cfg.MinUserIdle / time.Minute),
+			Programs:           names,
 		},
 		Expose: metaExpose{
 			Device: exposeDevice{

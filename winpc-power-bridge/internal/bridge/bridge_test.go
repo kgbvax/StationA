@@ -1,10 +1,13 @@
 package bridge
 
 import (
+	"winpc-power-bridge/internal/programs"
+
 	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 )
@@ -50,10 +53,11 @@ type harness struct {
 	idleErr  error
 	suspends int
 	suspErr  error
+	progs    *fakePrograms
 }
 
 func newHarness() *harness {
-	h := &harness{pub: &fakePub{}}
+	h := &harness{pub: &fakePub{}, progs: &fakePrograms{state: map[string]string{"dax": "stopped", "wsjtx": "stopped"}}}
 	h.b = New(Config{
 		Site: "muehle", Station: "power", Slot: "shack-pc",
 		Location: "bauwagen", Host: "bwpc",
@@ -62,6 +66,7 @@ func newHarness() *harness {
 	}, h.pub,
 		func() (time.Duration, error) { return h.idle, h.idleErr },
 		func() error { h.suspends++; return h.suspErr },
+		h.progs,
 		slog.New(slog.NewTextHandler(io.Discard, nil)))
 	return h
 }
@@ -246,10 +251,146 @@ func TestMeta(t *testing.T) {
 	if meta.Role != "pc-power" || meta.Host != "bwpc" {
 		t.Errorf("role/host = %q/%q", meta.Role, meta.Host)
 	}
-	if len(meta.Capabilities.Actions) != 1 || meta.Capabilities.Actions[0] != "sleep" {
+	if strings.Join(meta.Capabilities.Actions, ",") != "sleep,ensure_program,stop_program" {
 		t.Errorf("capabilities.actions = %v", meta.Capabilities.Actions)
 	}
 	if len(meta.Expose.Actions) != 1 || meta.Expose.Actions[0].Command["action"] != "sleep" {
 		t.Errorf("expose.actions = %+v", meta.Expose.Actions)
+	}
+}
+
+// fakePrograms records the program commands.
+type fakePrograms struct {
+	state    map[string]string
+	errs     map[string]string
+	ensured  []string
+	stopped  []string
+	stopErr  error
+	refreshs int
+}
+
+func (f *fakePrograms) Ensure(name string, progress func()) error {
+	if _, ok := f.state[name]; !ok {
+		return programs.ErrUnknownProgram
+	}
+	f.ensured = append(f.ensured, name)
+	f.state[name] = programs.StateStarting
+	progress()
+	f.state[name] = programs.StateReady
+	return nil
+}
+
+func (f *fakePrograms) Stop(name string) error {
+	if f.stopErr != nil {
+		return f.stopErr
+	}
+	f.stopped = append(f.stopped, name)
+	f.state[name] = programs.StateStopped
+	return nil
+}
+
+func (f *fakePrograms) Refresh() { f.refreshs++ }
+
+func (f *fakePrograms) Fields() []programs.Field {
+	var out []programs.Field
+	for _, n := range []string{"dax", "wsjtx"} {
+		out = append(out, programs.Field{Name: n, State: f.state[n], Error: f.errs[n]})
+	}
+	return out
+}
+
+// rawStates returns every /state published, decoded as maps.
+func (f *fakePub) rawStates(t *testing.T) []map[string]any {
+	t.Helper()
+	var out []map[string]any
+	for _, m := range f.msgs {
+		if m.topic != "muehle/power/shack-pc/state" {
+			continue
+		}
+		var raw map[string]any
+		if err := json.Unmarshal(m.payload, &raw); err != nil {
+			t.Fatal(err)
+		}
+		out = append(out, raw)
+	}
+	return out
+}
+
+func TestEnsureProgramPublishesStartingThenResult(t *testing.T) {
+	h := newHarness()
+	h.b.HandleCommand(false, []byte(`{"action":"ensure_program","value":"dax"}`))
+	if strings.Join(h.progs.ensured, ",") != "dax" {
+		t.Fatalf("ensured = %v", h.progs.ensured)
+	}
+	sts := h.pub.rawStates(t)
+	if len(sts) != 2 || sts[0]["program_dax"] != "starting" || sts[1]["program_dax"] != "ready" {
+		t.Fatalf("states = %v, want starting then ready", sts)
+	}
+	if sts[1]["program_wsjtx"] != "stopped" {
+		t.Errorf("program_wsjtx = %v", sts[1]["program_wsjtx"])
+	}
+	if _, ok := sts[1]["error"]; ok {
+		t.Errorf("error set: %v", sts[1])
+	}
+}
+
+func TestProgramErrorField(t *testing.T) {
+	h := newHarness()
+	h.progs.state["dax"] = "failed"
+	h.progs.errs = map[string]string{"dax": "not started by the chain"}
+	h.b.PublishState()
+	st := h.pub.rawStates(t)[0]
+	if st["program_dax"] != "failed" || st["program_dax_error"] != "not started by the chain" {
+		t.Errorf("state = %v", st)
+	}
+	if _, ok := st["program_wsjtx_error"]; ok {
+		t.Errorf("empty program error published: %v", st)
+	}
+}
+
+func TestEnsureUnknownProgramRefused(t *testing.T) {
+	h := newHarness()
+	h.b.HandleCommand(false, []byte(`{"action":"ensure_program","value":"notepad"}`))
+	if len(h.progs.ensured) != 0 {
+		t.Fatal("unknown program ensured")
+	}
+	if st := h.pub.lastState(t); st.Error != "ensure_program refused: unknown program: notepad" {
+		t.Errorf("error = %q", st.Error)
+	}
+}
+
+func TestStopProgramRefusalInError(t *testing.T) {
+	h := newHarness()
+	h.progs.stopErr = programs.ErrSessionActive
+	h.b.HandleCommand(false, []byte(`{"action":"stop_program","value":"wsjtx"}`))
+	if st := h.pub.lastState(t); st.Error != "stop_program wsjtx refused: 75auto session active" {
+		t.Errorf("error = %q", st.Error)
+	}
+}
+
+func TestStopProgram(t *testing.T) {
+	h := newHarness()
+	h.b.HandleCommand(false, []byte(`{"action":"stop_program","value":"dax"}`))
+	if strings.Join(h.progs.stopped, ",") != "dax" {
+		t.Fatalf("stopped = %v", h.progs.stopped)
+	}
+	if st := h.pub.lastState(t); st.Error != "" {
+		t.Errorf("error = %q", st.Error)
+	}
+}
+
+func TestRetainedEnsureDropped(t *testing.T) {
+	h := newHarness()
+	h.b.HandleCommand(true, []byte(`{"action":"ensure_program","value":"dax"}`))
+	if len(h.progs.ensured) != 0 || len(h.pub.msgs) != 0 {
+		t.Errorf("retained ensure_program ran: ensured %v, %d publishes", h.progs.ensured, len(h.pub.msgs))
+	}
+}
+
+func TestTickRefreshesPrograms(t *testing.T) {
+	h := newHarness()
+	h.b.Tick()
+	if h.progs.refreshs != 1 || len(h.pub.rawStates(t)) != 1 {
+		t.Errorf("refreshs = %d", h.progs.refreshs)
 	}
 }

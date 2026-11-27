@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -133,5 +134,119 @@ func TestTailscaleDefaultsAndFile(t *testing.T) {
 	}
 	if cfg.Tailscale.Path != DefaultTailscalePath {
 		t.Errorf("empty path = %q, want the default", cfg.Tailscale.Path)
+	}
+}
+
+const programsTOML = `
+[[program]]
+name    = "dax"
+exe     = 'C:\Program Files\FlexRadio Systems\DAX\DAX.exe'
+check   = "process"
+restart_owned = true
+
+[[program]]
+name          = "aethersdr"
+exe           = 'C:\AetherSDR\AetherSDR.exe'
+args          = ["--rigctl"]
+workdir       = 'C:\AetherSDR'
+process       = "aethersdr.exe"
+check         = "tcp"
+check_address = "127.0.0.1:4532"
+probe         = "f"
+reply_pattern = '^[0-9]+$'
+settle_s      = 2
+check_timeout_s = 90
+`
+
+func TestProgramsLoadWithDefaults(t *testing.T) {
+	cfg, err := Load(&Flags{ConfigPath: writeConfig(t, programsTOML)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Programs) != 2 {
+		t.Fatalf("programs = %+v", cfg.Programs)
+	}
+	dax, aeth := cfg.Programs[0], cfg.Programs[1]
+	if dax.Process != "DAX.exe" {
+		t.Errorf("dax process = %q, want the exe base name", dax.Process)
+	}
+	if dax.SettleS != 5 || dax.CheckTimeoutS != 60 || !dax.RestartOwned {
+		t.Errorf("dax = %+v", dax)
+	}
+	if aeth.Process != "aethersdr.exe" || aeth.SettleS != 2 || aeth.CheckTimeoutS != 90 ||
+		aeth.CheckAddress != "127.0.0.1:4532" || aeth.Probe != "f" || len(aeth.Args) != 1 {
+		t.Errorf("aethersdr = %+v", aeth)
+	}
+}
+
+func TestProgramsValidate(t *testing.T) {
+	for name, body := range map[string]string{
+		"no name":       "[[program]]\nexe = 'a.exe'\ncheck = \"none\"\n",
+		"bad name":      "[[program]]\nname = \"Dax-1\"\nexe = 'a.exe'\ncheck = \"none\"\n",
+		"no exe":        "[[program]]\nname = \"dax\"\ncheck = \"none\"\n",
+		"bad check":     "[[program]]\nname = \"dax\"\nexe = 'a.exe'\ncheck = \"udp\"\n",
+		"no check":      "[[program]]\nname = \"dax\"\nexe = 'a.exe'\n",
+		"duplicate":     "[[program]]\nname = \"dax\"\nexe = 'a.exe'\ncheck = \"none\"\n[[program]]\nname = \"dax\"\nexe = 'b.exe'\ncheck = \"none\"\n",
+		"tcp no addr":   "[[program]]\nname = \"a\"\nexe = 'a.exe'\ncheck = \"tcp\"\nprobe = \"f\"\nreply_pattern = '.'\n",
+		"tcp no probe":  "[[program]]\nname = \"a\"\nexe = 'a.exe'\ncheck = \"tcp\"\ncheck_address = \"127.0.0.1:1\"\nreply_pattern = '.'\n",
+		"tcp no reply":  "[[program]]\nname = \"a\"\nexe = 'a.exe'\ncheck = \"tcp\"\ncheck_address = \"127.0.0.1:1\"\nprobe = \"f\"\n",
+		"tcp bad regex": "[[program]]\nname = \"a\"\nexe = 'a.exe'\ncheck = \"tcp\"\ncheck_address = \"127.0.0.1:1\"\nprobe = \"f\"\nreply_pattern = '('\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			cfg, err := Load(&Flags{ConfigPath: writeConfig(t, body)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.Validate() == nil {
+				t.Error("want validation error")
+			}
+		})
+	}
+}
+
+func TestOwnedFileNextToConfig(t *testing.T) {
+	p := writeConfig(t, "")
+	cfg, err := Load(&Flags{ConfigPath: p})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(filepath.Dir(p), OwnedFileName)
+	if got := cfg.OwnedFilePath(); got != want {
+		t.Errorf("owned file = %q, want %q", got, want)
+	}
+}
+
+// TestExampleProgramsValid uncomments the [[program]] example block of the
+// example config and checks that it validates.
+func TestExampleProgramsValid(t *testing.T) {
+	data, err := os.ReadFile("../../config.example.toml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var b strings.Builder
+	in := false
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.HasPrefix(line, "# [[program]]") {
+			in = true
+		}
+		if in && strings.HasPrefix(line, "# ---") {
+			break
+		}
+		if in {
+			b.WriteString(strings.TrimPrefix(strings.TrimPrefix(line, "#"), " ") + "\n")
+		}
+	}
+	cfg, err := Load(&Flags{ConfigPath: writeConfig(t, b.String())})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Programs) != 4 || cfg.Programs[1].Process != "DAX.exe" {
+		t.Errorf("programs = %+v", cfg.Programs)
 	}
 }

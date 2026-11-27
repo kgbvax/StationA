@@ -41,6 +41,58 @@ interval_s = 30        # /state refresh (user_idle_s); minimum 5
 ping_after_resume = true
 path = 'C:\Program Files\Tailscale\tailscale.exe'
 
+# ---------------------------------------------------------------------------
+# Programs for /cmd ensure_program and stop_program (value = name). The agent
+# uses a copy that already runs, and it never ends a copy that it did not
+# start itself. The copies it started are recorded (PID and process start
+# time) in programs-owned.json next to this file.
+#
+#   name            id on the bus: lower case letters, digits, _ (required)
+#   exe             full path of the program file (required)
+#   args            command line arguments (default none)
+#   workdir         working directory (default: the directory of exe)
+#   process         image name in the process list (default: file name of exe)
+#   check           ready check (required):
+#                     process  the process still runs settle_s after a start
+#                     tcp      connect to check_address, send probe, the first
+#                              reply line must match reply_pattern; after a
+#                              start, tried again until check_timeout_s
+#                     none     ready as soon as it is started
+#   settle_s        default 5
+#   check_timeout_s default 60
+#   restart_owned   end and start again a copy that the agent started, on
+#                   every ensure_program (default false). A copy that the
+#                   operator started is never restarted.
+#
+# Example for the 75auto start chain (paths are placeholders, set them on the PC):
+#
+# [[program]]
+# name          = "aethersdr"
+# exe           = 'C:\Program Files\AetherSDR\AetherSDR.exe'
+# check         = "tcp"
+# check_address = "127.0.0.1:4532"   # its rigctl port, as in the 75auto config
+# probe         = "f"                # rigctl: get frequency
+# reply_pattern = '^[0-9]+$'         # "RPRT -1" = no radio connection
+# check_timeout_s = 90
+#
+# [[program]]
+# name          = "dax"
+# exe           = 'C:\Program Files\FlexRadio Systems\SmartSDR\DAX.exe'
+# check         = "process"
+# restart_owned = true               # binds to the radio as it is now
+#
+# [[program]]
+# name          = "wsjtx"
+# exe           = 'C:\WSJT\wsjtx\bin\wsjtx.exe'
+# check         = "process"          # 75auto binds UDP 2237 at session start
+# restart_owned = true
+#
+# [[program]]
+# name          = "75auto"
+# exe           = 'C:\Users\iotte\75auto\75auto.exe'
+# check         = "none"             # powerseq waits for the 75auto /status
+# ---------------------------------------------------------------------------
+
 [log]
 level = "info"         # debug | info | warn | error
 # Windows exception to the logging convention: the agent runs hidden (no
