@@ -2,8 +2,9 @@
 /// the right column.
 ///
 /// From top to bottom: the call with the DXCC entity and the try or repeat
-/// count, the QSO stage chips, the QRZ picture with the operator name and
-/// the distance, and at the bottom the proposal strip.
+/// count, the QSO stage chips, the QRZ picture across the card with the
+/// operator name and the distance under it, and at the bottom the
+/// proposal strip.
 ///
 /// - The proposal strip shows only while a proposal waits: its text, the
 ///   confirm countdown, and Approve and Reject.
@@ -27,9 +28,6 @@ import '../theme.dart';
 import 'auto_card.dart';
 import 'auto_readouts.dart';
 import 'next_action_card.dart';
-
-/// The size of the QRZ picture.
-const autoDxImageSize = 72.0;
 
 class DxCard extends StatelessWidget {
   const DxCard({super.key});
@@ -115,7 +113,8 @@ class DxCard extends StatelessWidget {
   }
 }
 
-/// The QRZ picture, the operator name, and the distance.
+/// The QRZ picture across the card, and under it the operator name and
+/// the distance.
 class _Station extends StatelessWidget {
   final String? name;
   final String? image;
@@ -128,46 +127,51 @@ class _Station extends StatelessWidget {
     final url = image ?? '';
     final hasImage = url.startsWith('https://') || url.startsWith('http://');
     final kmText = km == null || km! <= 0 ? null : '${_thousands(km!)} km';
+    final text = Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+      if ((name ?? '').isNotEmpty)
+        Text(name!,
+            key: const ValueKey('auto-dx-name'),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: AppTheme.body(14, weight: FontWeight.w600).copyWith(height: 1.25)),
+      if (kmText != null)
+        Text(kmText,
+            key: const ValueKey('auto-dx-km'),
+            maxLines: 1,
+            style: AppTheme.mono(13, color: AppTheme.txtMute, weight: FontWeight.w600).copyWith(height: 1.3)),
+    ]);
     return LayoutBuilder(builder: (context, c) {
-      final size = c.maxHeight.clamp(0.0, autoDxImageSize);
-      return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        if (hasImage && size >= 32) ...[
-          ClipRRect(
-            borderRadius: BorderRadius.circular(3),
-            child: Image.network(
-              url,
-              key: const ValueKey('auto-dx-image'),
-              width: size,
-              height: size,
-              fit: BoxFit.cover,
-              // The web build fetches under CORS. Without CORS headers on
-              // the picture host it falls back to an <img> element.
-              webHtmlElementStrategy: WebHtmlElementStrategy.fallback,
-              errorBuilder: (_, _, _) => SizedBox(width: size, height: size),
+      // The picture takes the width of the card, the name and the distance
+      // go under it. Its height is what is left above them, at most 3/4 of
+      // the width. Below 32 dp the card shows no picture.
+      final textHeight = ((name ?? '').isNotEmpty ? 18.0 : 0) + (kmText != null ? 17.0 : 0) + 4;
+      final h = (c.maxHeight - textHeight).clamp(0.0, c.maxWidth * 0.75);
+      return SingleChildScrollView(
+        // Clipped, not overflowing, when a banner leaves little height.
+        physics: const NeverScrollableScrollPhysics(),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          if (hasImage && h >= 32) ...[
+            ClipRRect(
+              borderRadius: BorderRadius.circular(3),
+              child: Image.network(
+                url,
+                key: const ValueKey('auto-dx-image'),
+                width: c.maxWidth,
+                height: h,
+                fit: BoxFit.cover,
+                // Faces are near the top of most QRZ pictures.
+                alignment: Alignment.topCenter,
+                // The web build fetches under CORS. Without CORS headers on
+                // the picture host it falls back to an <img> element.
+                webHtmlElementStrategy: WebHtmlElementStrategy.fallback,
+                errorBuilder: (_, _, _) => SizedBox(width: c.maxWidth, height: h),
+              ),
             ),
-          ),
-          const SizedBox(width: 8),
-        ],
-        Expanded(
-          // Clipped, not overflowing, when a banner leaves little height.
-          child: SingleChildScrollView(
-            physics: const NeverScrollableScrollPhysics(),
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            if ((name ?? '').isNotEmpty)
-              Text(name!,
-                  key: const ValueKey('auto-dx-name'),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: AppTheme.body(14, weight: FontWeight.w600).copyWith(height: 1.2)),
-            if (kmText != null)
-              Text(kmText,
-                  key: const ValueKey('auto-dx-km'),
-                  maxLines: 1,
-                  style: AppTheme.mono(13, color: AppTheme.txtMute, weight: FontWeight.w600).copyWith(height: 1.4)),
-          ]),
-          ),
-        ),
-      ]);
+            const SizedBox(height: 4),
+          ],
+          text,
+        ]),
+      );
     });
   }
 }

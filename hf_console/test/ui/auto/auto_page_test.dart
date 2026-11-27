@@ -316,6 +316,22 @@ void main() {
       expect(find.byKey(const ValueKey('auto-confirm-countdown')), findsNothing);
     });
 
+    testWidgets('the QRZ picture spans the card, with the name under it', (tester) async {
+      final doc = busyAutoOpDoc();
+      doc['pending'] = null;
+      final st = doc['station'] as Map<String, dynamic>;
+      st['dx_name'] = 'Ana Example';
+      st['dx_image'] = 'https://example.org/vk9xq.jpg';
+      await _pumpAuto(tester, doc: doc, device: _tablet);
+      final image = tester.getRect(find.byKey(const ValueKey('auto-dx-image')));
+      final name = tester.getRect(find.byKey(const ValueKey('auto-dx-name')));
+      final call = tester.getRect(find.byKey(const ValueKey('auto-dx-card')));
+      expect(name.top, greaterThanOrEqualTo(image.bottom));
+      // The width of the card less its padding (scaled with the page).
+      expect(image.width, greaterThan(call.width * 0.9));
+      expect(image.height, greaterThanOrEqualTo(32));
+    });
+
     testWidgets('a pending proposal shows as a strip under the station', (tester) async {
       await _pumpAuto(tester);
       expect(_text(tester, 'auto-dx-call'), 'VK9XQ');
