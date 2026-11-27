@@ -138,11 +138,51 @@ config pokes `192.168.1.197:3389` in the startup and wake steps. A
 step that times out → `fault` + `phase=idle`; the slots driven so far remain in
 whatever state the retained `/cmd` last set them (self-healing, no rollback).
 
+**auto_start chain** (optional `[[auto_start]]`, the 75AUTO Start of
+hf_console): `/cmd {"action":"auto_start","value":{"requester":"<device id>"}}`
+runs `[[startup]]` (from `idle`) or `[[wake]]` (from `standby`) first, then the
+chain list; from `running` the chain only. Progress is `/state.chain` (`state`
+`running|ready|failed`, `step`, `fault`, `requester`, `ts`), separate from
+`phase`: a chain step failure leaves the phase as it was, so standby keeps
+working. The step name is the page's progress row (`station` while the startup
+or wake runs; `bwpc`, `aethersdr`, `dax`, `wsjtx`, `75auto` in the example), so
+consecutive `[[auto_start]]` steps may share a name (`validateStepList`).
+Refusals: `busy: <phase>` in a transitional phase, `antenna mode
+storm|maintenance` (the ant-mode slot is read with standby or an auto_start
+list), `busy: session active`, `auto_start not configured` — each writes
+`chain.state=failed`; a second `auto_start` while a chain runs or is queued is
+only logged and `chain` stays unchanged. Refusals decided in `AutoStart()` (paho
+goroutine) set `chain` under `mu` and call `RequestRepublish`; the runner
+publishes them (`serviceRequests`, also served inside `sleepCtx`, so a running
+sequence does not delay them). The chain runs under its own context
+(`chainCancel`); `request("stop")` cancels it directly, so the chain ends
+`failed` `stopped by the operator` before the shutdown runs and no `ready`
+follows (`endChain` turns a late ready into that failure). The example chain
+uses `wait_state` options `fresh = true` (`stateSeq` per slot: only a `/state`
+received after the step started counts) and `fail_value = "failed"` (fail at
+once); a `wait_state` fault names the `<field>_error` sibling.
+**Session hold** (`[mqtt] auto_op_slot`, default `auto-op`, `""` disables;
+`auto_op_beat_s`, default 30): `hf/auto-op` `/state` `session.state`
+`connecting|running` with a `/beat` or live `/state` younger than the beat age
+(a retained `/state` is not a beat), a running chain, or a ready chain for 30
+min (`ChainReadyHold`) hold the idle logic like `power_hold`
+(`sessionHoldLocked` in `idleDecision`). An accepted `auto_start` sets
+`sessionHeld`; when the hold ends `sessionHoldEndedAt` restarts both idle
+clocks (standby check and `lastActivityLocked`). **PA standby** (`[mqtt]
+pa_slot`, default `pa`): a live `/state` edge from not active to
+`connecting|running` sets `paStandbyPending`; the runner sends `set_mode
+standby` to `hf/pa/cmd`, not retained, once per session. A retained `/state`
+only re-baselines the edge (restart or reconnect during a session sends
+nothing). The mqtt layer subscribes `hf/auto-op/state` itself (it also feeds
+`SetState` for the `75auto` row's `wait_status`) and `/beat`.
+
 **Phase persistence** (`internal/seq/persist.go`, top-level `state_file`,
 default `/var/lib/powerseq/state.json` in the unit's `StateDirectory=powerseq`;
 `""` = off): the phase survives a deploy, crash or power cut. Saved: phase,
-step, fault, stop_reason and the idle clocks (`runningSince`, `standbySince`,
-`lastWatch`, `holdEndedAt`). Written atomically (temp file in the same dir,
+step, fault, stop_reason, the auto_start `chain` and the idle clocks
+(`runningSince`, `standbySince`, `lastWatch`, `holdEndedAt`,
+`sessionHoldEndedAt`). A chain that was `running` is restored `failed` with
+`interrupted by a powerseq restart` (never resumed). Written atomically (temp file in the same dir,
 fsync, rename, dir fsync) on the runner goroutine only: every phase/step
 change at once (`begin()` writes the transitional phase **before** the first
 step runs), clock-only changes (set on the paho goroutine) from the idle tick
@@ -189,9 +229,9 @@ both replay the full sequence. A command that arrives mid-sequence is dropped
 
 ```
 muehle/hf/power-seq/meta     retained  birth certificate (capabilities + expose)
-muehle/hf/power-seq/state    retained  { phase, step, fault?, stop_reason?, ts }
+muehle/hf/power-seq/state    retained  { phase, step, fault?, stop_reason?, chain?, ts }
 muehle/hf/power-seq/status   retained  online | offline (LWT — the service)
-muehle/hf/power-seq/cmd      not retained   start | stop (operator one-button)
+muehle/hf/power-seq/cmd      not retained   start | stop (operator one-button) | auto_start
 ```
 
 `/cmd` is **not retained** (a one-shot operator command; a stale retained
@@ -248,8 +288,11 @@ target) adds it to the existing `/etc/powerseq/config.toml` in place. It is
 idempotent, backs the file up first (`config.toml.pre-migrate-<ts>`) and the
 migrated file must pass `powerseq -check` with the new binary before the
 service is stopped — otherwise the backup is restored and the deploy aborts.
-Current migration: idle shutdown (`shutdown_minutes`, env `SHUTDOWN_MINUTES`
-default 120, + `[[idle_shutdown]]` = the live `[[shutdown]]` + bwpc sleep).
+Migrations: 1. idle shutdown (`shutdown_minutes`, env `SHUTDOWN_MINUTES`
+default 120, + `[[idle_shutdown]]` = the live `[[shutdown]]` + bwpc sleep);
+2. auto_start chain (`[mqtt]` `auto_op_slot`/`auto_op_beat_s`/`pa_slot` + the
+example `[[auto_start]]` list; its bwpc `wol` step copies mac/broadcast/poke
+from the live `[[startup]]` wol step, so the real MAC stays).
 Add future migrations to that script as their own idempotent block.
 
 The unit is hardened like tgxl-tuner-bridge (network-only):

@@ -59,9 +59,9 @@ muehle/hf/power-seq/cmd
 | Suffix | Retained | Direction | Purpose |
 |--------|----------|-----------|---------|
 | `/meta` | yes | sequencer → bus | birth certificate: capabilities + `expose` |
-| `/state` | yes | sequencer → bus | `{ phase, step, fault?, stop_reason?, ts }` |
+| `/state` | yes | sequencer → bus | `{ phase, step, fault?, stop_reason?, chain?, ts }` |
 | `/status` | yes | broker LWT | liveness of **the service**: `online` / `offline` |
-| `/cmd` | **no** | bus → sequencer | operator one-button: `start` \| `stop` |
+| `/cmd` | **no** | bus → sequencer | operator one-button: `start` \| `stop`; the 75AUTO Start: `auto_start` |
 
 `/cmd` is **not retained** (model §8): it is a one-shot operator command. A
 stale retained `start` replaying on service restart could re-energize the
@@ -112,8 +112,10 @@ Retained. Published on every (re)connect.
 `controls` and `watches` are **derived from the configured sequence**:
 `controls` = the slots any `cmd` step targets (one writer); `watches` = every
 slot the sequence references (`cmd` + `wait_status` + `wait_state` targets),
-plus, with idle standby, the activity slot, the watch slots and the ant-mode
-slot. The
+plus, with idle standby, the activity slot and the watch slots, the ant-mode
+slot (with idle standby or an `[[auto_start]]` list), the 75auto slot
+(`auto_op_slot`) and the PA slot (`pa_slot`, also in `controls`: it gets the
+session-start standby, §6.3). The
 fields are read-only sensors (a logic slot reacts to state and emits intent,
 model §1) — the operator surface is the one-shot `/cmd`, which is not retained
 and so not an exposed writable field.
@@ -138,6 +140,26 @@ Retained. Published on every phase/step/fault change.
 | `step` | string (always present) | the current step within a sequence (e.g. `psu-on`); empty at idle/running/standby |
 | `fault` | string, omitempty | why a sequence aborted; omitted when there is no fault |
 | `stop_reason` | `operator` \| `idle_shutdown`, omitempty | why the station was last stopped: an operator `stop`, or the idle shutdown (§6.2); cleared by `start` |
+| `chain` | object, omitempty | progress of the last `auto_start` (§6.3); absent before the first one |
+| `chain.state` | `running` \| `ready` \| `failed` | `ready` = the last step passed; the page then sends the signed 75auto `start_session` |
+| `chain.step` | string (always present) | the step name = the progress row: `station` while the startup or wake list runs first, then the `[[auto_start]]` names (`bwpc`, `aethersdr`, `dax`, `wsjtx`, `75auto` in the example). Empty for a refused `auto_start` |
+| `chain.fault` | string, omitempty | why the chain failed or was refused (see §5) |
+| `chain.requester` | string (always present) | the `requester` of the `auto_start` (the device id of the page) |
+| `chain.ts` | string (RFC3339) | when `chain.state` last changed (accept, ready, failure) |
+
+```json
+{ "ts": "2026-11-27T09:00:05Z", "phase": "running", "step": "",
+  "chain": { "state": "running", "step": "dax", "requester": "tablet-1", "ts": "2026-11-27T09:00:01Z" } }
+{ "ts": "2026-11-27T09:02:10Z", "phase": "running", "step": "",
+  "chain": { "state": "failed", "step": "aethersdr",
+             "fault": "program_aethersdr=failed (program_aethersdr_error=not started by the chain)",
+             "requester": "tablet-1", "ts": "2026-11-27T09:02:10Z" } }
+```
+
+The chain is separate from `phase`: a chain step that fails leaves `phase` as
+it was (normally `running`), so standby and the idle shutdown keep working.
+A failure in the startup or wake list that runs first is a station fault as
+with `start` (`phase=idle` + `fault`), and `chain.fault` carries the same text.
 
 `step` is always present (only `fault` is omitempty), per model §7.1 — a
 consumer reading `state.step` gets `""` (not a missing key) at idle/running.
@@ -158,6 +180,7 @@ restored phase, not `idle`. No `/cmd` is sent because of a restart.
 | `starting`, `stopping`, `entering_standby`, `waking` (killed mid-sequence) | `phase=idle`, `fault="<step>: interrupted by a powerseq restart (<phase>)"`, `stop_reason` kept. The sequence is **not** re-run; `start` or `stop` recovers |
 | `standby`, but `[[standby]]` no longer configured | `phase=idle` with a fault |
 | none (missing or corrupt state file) | `phase=idle` (logged as Error) |
+| any, with `chain.state=running` (killed during an `auto_start`) | `chain.state=failed`, `chain.fault="interrupted by a powerseq restart"`. The chain is not resumed and no `/cmd` is sent. A `ready` or `failed` chain comes back as it was |
 
 So a consumer that sees `idle` after a powerseq restart can take it at face
 value: an `idle` caused by the restart itself always carries a `fault`.
@@ -175,6 +198,7 @@ restores an idle sequencer's `/state` instead of leaving it absent.
 ```json
 { "action": "start" }
 { "action": "stop" }
+{ "action": "auto_start", "value": { "requester": "tablet-1" } }
 ```
 
 - `start` is honored when `phase=idle` (runs the startup sequence) or
@@ -185,7 +209,27 @@ restores an idle sequencer's `/state` instead of leaving it absent.
   or corrupt state file), and the shutdown re-states "off" — it never
   energizes.
 - A command that arrives mid-sequence (e.g. `start` while `starting`) is
-  dropped and logged; aborting an in-progress sequence is deferred.
+  dropped and logged; aborting an in-progress sequence is deferred. The
+  exception is a running `auto_start` chain: `stop` ends it at once (its own
+  context, not the command queue), `chain.state=failed` with `stopped by the
+  operator` is published before the shutdown runs, and no `ready` follows.
+  This also holds while the chain runs its startup or wake list.
+- `auto_start` runs the 75AUTO Start chain (§6.3). `value.requester` is echoed
+  as `chain.requester`. What runs depends on the phase:
+
+  | Phase / condition | Result |
+  |---|---|
+  | `idle` | the startup list, then the chain |
+  | `standby` | the wake list, then the chain |
+  | `running` | the chain only |
+  | `starting`, `stopping`, `entering_standby`, `waking` | refused: `chain.fault="busy: <phase>"` |
+  | a chain runs | refused, `/state.chain` stays unchanged (logged only) |
+  | ant-mode `storm` or `maintenance` | refused: `chain.fault="antenna mode <mode>"` |
+  | a 75auto session is active (§6.3) | refused: `chain.fault="busy: session active"` (a program restart would break it) |
+  | no `[[auto_start]]` configured | refused: `chain.fault="auto_start not configured"` |
+
+  Every refusal except "a chain runs" publishes `chain.state=failed` with the
+  reason, so the page always gets an answer.
 
 `start` / `stop` are published by an operator (or HA as one writer) directly to
 `muehle/hf/power-seq/cmd`. Example:
@@ -206,9 +250,9 @@ is one of five kinds:
 |------|--------|--------|
 | `cmd` | emit a retained `/cmd` to a slot | `slot`, `action`, `value` (string), `retain?` (default true) |
 | `wait_status` | wait until every listed slot's `/status` == `state` (`online` is two-layer since 2026-10-18: `/state.device_online` must not be `false` either) | `slots` (AND), `state?` (`online`\|`offline`, default `online`), `hold_ms?`, `timeout_s?` |
-| `wait_state` | wait until a slot's `/state` field == `value` | `slot`, `field`, `value`, `hold_ms?`, `timeout_s?` |
+| `wait_state` | wait until a slot's `/state` field == `value` | `slot`, `field`, `value`, `fresh?`, `fail_value?`, `hold_ms?`, `timeout_s?` |
 | `delay` | sleep a fixed duration | `duration_s` (literal) **or** `duration` (`network`\|`stagger`, refs `[timing]`) |
-| `wol` | send a Wake-on-LAN magic packet (UDP) | `mac`, `broadcast?` (`host:port`, default `255.255.255.255:9`) |
+| `wol` | send a Wake-on-LAN magic packet (UDP) | `mac`, `broadcast?` (`host:port`, default `255.255.255.255:9`), `poke?` (`host:port`, one TCP connect after the packet) |
 
 `slot` addresses are site-relative (e.g. `power/psu-13v8` → `muehle/power/psu-13v8`).
 `value` is always a string (the value-key convention; model value_type is
@@ -221,6 +265,13 @@ bridge whose LWT fired cannot pass on a stale retained `/state`), and its
 *device* behind a live bridge cannot pass either — model §3 two-layer liveness).
 When a wait fails, check both layers: the fault string does not say which one
 blocked. A `wait_state` on the sequencer's own slot is a config error.
+
+`wait_state` options: `fresh = true` ignores every `/state` of the slot that
+arrived before the step started, so a retained value from an earlier run
+cannot pass the step. `fail_value = "<v>"` fails the step at once when the
+field takes that value, with the reason `<field>=<v>`. A `wait_state` failure
+or timeout names the `<field>_error` sibling when the `/state` has one, e.g.
+`program_dax=failed (program_dax_error=no window)`.
 
 `hold_ms` is optional (omitted → `[timing].default_hold_ms`; an **explicit `0`
 means edge-triggered** even when a default hold is set). `timeout_s` is optional
@@ -353,6 +404,45 @@ indefinitely.
 - Limits: UHF TX is not visible on the bus (the IC-9700 bridge is receive-only),
   so UHF use counts only through the watches (frequency, rotator position).
 
+### 6.3 The `auto_start` chain and the 75auto session (`[[auto_start]]`, optional)
+
+The 75AUTO Start of hf_console publishes `auto_start` (§5). powerseq runs the
+startup or wake list when needed, then `[[auto_start]]`, an ordered step list
+of the same kinds, validated like the others. Consecutive steps may share a
+name: the name is the progress row the page shows (`chain.step`). The chain
+runs under a context of its own, so `stop` ends it at once. The example list
+(`config.example.toml`):
+
+| Row | Steps |
+|---|---|
+| `bwpc` | `wol` with `poke` (same MAC and poke as `pc-boot`: bwpc enters Modern Standby by itself while the station stays `running`); `wait_status power/shack-pc` (300 s, a cold boot and the auto logon) |
+| `aethersdr`, `dax`, `wsjtx`, `75auto` | `cmd power/shack-pc ensure_program <name>` with `retain = false` (winpc-power-bridge drops retained commands); `wait_state program_<name> = ready` with `fresh = true`, `fail_value = "failed"` |
+| `75auto` | `wait_status hf/auto-op` (75auto publishes its slot at program start) |
+
+**Session hold.** powerseq reads `hf/auto-op` (`[mqtt] auto_op_slot`,
+default `auto-op`; `""` disables the session hold, the `busy: session active`
+refusal and the PA standby). A session is **active** while the last
+`/state` has `session.state` `connecting` or `running` and the last `/beat` or
+live `/state` is younger than `[mqtt] auto_op_beat_s` (default 30 s; 75auto
+beats every 2 s in a session). A retained `/state` (at a subscribe) can be
+old and does not count as a beat, so a crashed 75auto does not hold the power.
+The idle logic holds (no standby, no wake, no idle shutdown, in any phase)
+while a session is active, while a chain runs, and for 30 min after
+`chain.state` turns `ready` (the page needs that long at most to send its
+`start_session`). An accepted `auto_start` is activity. When the hold ends,
+both idle clocks restart: standby waits a full `timeout_minutes` and the idle
+shutdown a full `shutdown_minutes` from that moment. An `[[idle.watch]]`
+cannot do this, because it counts only changes.
+
+**PA standby.** When a live `hf/auto-op/state` turns `session.state` from not
+active to `connecting` or `running`, powerseq sends
+`{"action":"set_mode","value":"standby"}` to `hf/pa/cmd` (`[mqtt] pa_slot`,
+default `pa`; **not retained**) once for that session. The operator can then
+put the PA in operate; nothing switches it back during that session. A new
+session after `ended` gets a new standby. A retained `/state` only sets the
+baseline, so a powerseq restart or a reconnect during a session sends nothing.
+This also covers a session started at the bwpc window.
+
 All emitted `/cmd` use the stationa value-key convention
 (`{"action":"<act>","value":"<val>"}`) and are **retained** (the steady-state
 self-healing exception, model §8) — the controlled slots re-apply the last
@@ -383,8 +473,10 @@ sequencer's own `/cmd`. For the default §7.1 sequence this yields:
 | `muehle/power/shack-pc/status` | observability (standby `pc-sleep` target) |
 | `muehle/hf/antenna-select/status` + `/state` | idle standby trigger (`activity`, `last_activity`) |
 | `muehle/uhf/radio/…`, `muehle/uhf/az-rotator/…`, `muehle/uhf/el-rotator/…` (`/status` + `/state`) | `[[idle.watch]]` activity sources |
-| `muehle/hf/ant-mode/state` | antenna-mode `power_hold` (§6.1; with idle standby and `ant_mode_slot` set) |
-| `muehle/hf/power-seq/cmd` | operator one-button `start` \| `stop` (not retained) |
+| `muehle/hf/ant-mode/state` | antenna-mode `power_hold` (§6.1) and the `auto_start` refusal in `storm`/`maintenance` (§5); with idle standby or `[[auto_start]]`, and `ant_mode_slot` set |
+| `muehle/hf/auto-op/state` + `/beat` (+ `/status`) | 75auto session hold and PA standby edge (§6.3; `auto_op_slot`), the `75auto` row's `wait_status` |
+| `muehle/power/shack-pc/state` | `program_<name>` of the `auto_start` chain (§6.3) |
+| `muehle/hf/power-seq/cmd` | operator one-button `start` \| `stop`, and `auto_start` (not retained) |
 
 A `/status` of `online`/`offline` sets the slot's liveness (absent ≠ offline —
 `wait_status state="offline"` needs an actual offline payload); the runner polls

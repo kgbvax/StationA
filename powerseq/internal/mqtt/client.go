@@ -98,6 +98,10 @@ func New(ctx context.Context, cfg config.Config, log *slog.Logger) (*Client, *se
 		Standby:         toSeqSteps(cfg.Standby),
 		Wake:            toSeqSteps(cfg.Wake),
 		IdleShutdown:    toSeqSteps(cfg.IdleShutdown),
+		AutoStart:       toSeqSteps(cfg.AutoStart),
+		AutoOpSlot:      cfg.MQTT.AutoOpSlot,
+		PASlot:          cfg.MQTT.PASlot,
+		AutoOpBeatAge:   time.Duration(cfg.MQTT.AutoOpBeatS) * time.Second,
 		ActivitySlot:    cfg.Idle.ActivitySlot,
 		IdleTimeout:     time.Duration(cfg.Idle.TimeoutMinutes) * time.Minute,
 		ShutdownTimeout: time.Duration(cfg.Idle.ShutdownMinutes) * time.Minute,
@@ -210,6 +214,23 @@ func (c *Client) subscribeAll(cl pahomqtt.Client) {
 			c.seq.SetAntMode(m.Payload())
 		})
 	}
+	// 75auto session: /state (session.state; a live one is a beat) and
+	// /beat. The /state handler also feeds the generic snapshot, because a
+	// wait_status on the slot reads its device_online, and a second
+	// subscription of the same topic would replace this handler.
+	autoOp := c.seq.AutoOpSlot()
+	if topic := c.seq.AutoOpStateTopic(); topic != "" {
+		c.subscribe(cl, topic, func(_ pahomqtt.Client, m pahomqtt.Message) {
+			c.log.Debug("observed auto-op state", "topic", m.Topic(), "bytes", len(m.Payload()), "retained", m.Retained())
+			c.seq.SetAutoOpState(m.Payload(), m.Retained())
+			if len(m.Payload()) > 0 {
+				c.seq.SetState(autoOp, m.Payload())
+			}
+		})
+		c.subscribe(cl, c.seq.AutoOpBeatTopic(), func(_ pahomqtt.Client, _ pahomqtt.Message) {
+			c.seq.AutoOpBeat()
+		})
+	}
 	statusSlots, stateSlots := c.seq.Subscriptions()
 	// Liveness + control observability: /status of every slot the sequence
 	// references (model §7.1 — subscribe is for observability, not only waits).
@@ -223,6 +244,9 @@ func (c *Client) subscribeAll(cl pahomqtt.Client) {
 	}
 	// wait_state confirmation: <slot>/state (whole JSON snapshot).
 	for _, slot := range stateSlots {
+		if slot == autoOp {
+			continue // subscribed above
+		}
 		topic := slot + "/state"
 		c.subscribe(cl, topic, func(_ pahomqtt.Client, m pahomqtt.Message) {
 			c.log.Debug("observed state", "topic", m.Topic(), "bytes", len(m.Payload()), "retained", m.Retained())
@@ -239,6 +263,8 @@ func (c *Client) subscribeAll(cl pahomqtt.Client) {
 	c.subscribeQoS(cl, c.seq.CmdTopic(), 0, func(_ pahomqtt.Client, m pahomqtt.Message) {
 		var cmd struct {
 			Action string `json:"action"`
+			// auto_start: {"requester": "<device id>"} under value.
+			Value json.RawMessage `json:"value"`
 		}
 		if err := json.Unmarshal(m.Payload(), &cmd); err != nil {
 			c.log.Warn("bad /cmd", "err", err)
@@ -252,6 +278,14 @@ func (c *Client) subscribeAll(cl pahomqtt.Client) {
 			c.seq.Start()
 		case "stop":
 			c.seq.Stop()
+		case "auto_start":
+			var v struct {
+				Requester string `json:"requester"`
+			}
+			if len(cmd.Value) > 0 && json.Unmarshal(cmd.Value, &v) != nil {
+				c.log.Warn("auto_start: value is not {\"requester\": ...}, requester left empty", "value", string(cmd.Value))
+			}
+			c.seq.AutoStart(v.Requester)
 		default:
 			c.log.Warn("unknown /cmd action", "action", cmd.Action)
 		}
@@ -288,6 +322,8 @@ func toSeqSteps(cs []config.Step) []seq.Step {
 			Slots:     st.Slots,
 			State:     st.State,
 			Field:     st.Field,
+			Fresh:     st.Fresh,
+			FailValue: st.FailValue,
 			HoldMs:    st.HoldMs,
 			TimeoutS:  st.TimeoutS,
 			DurationS: st.DurationS,

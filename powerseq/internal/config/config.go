@@ -53,6 +53,11 @@ type Config struct {
 	// the station has been idle for Idle.ShutdownMinutes (optional, requires
 	// Standby/Wake). Ends in phase=idle; only a `start` revives the station.
 	IdleShutdown []Step `toml:"idle_shutdown"`
+	// AutoStart is the optional auto_start chain: it brings the station from
+	// any power state to a running 75auto session on bwpc. Run after the
+	// startup list (from idle) or the wake list (from standby). Consecutive
+	// steps may share a name: the name is the progress row the page shows.
+	AutoStart []Step `toml:"auto_start"`
 	// Idle configures when the station counts as idle (standby trigger) and
 	// what counts as activity (wake trigger). Only used with Standby/Wake.
 	Idle IdleConfig `toml:"idle"`
@@ -79,6 +84,18 @@ type MQTTConfig struct {
 	// retained ant-mode state there is no hold, so the default is safe before
 	// antmode is deployed. Read only with idle standby configured.
 	AntModeSlot string `toml:"ant_mode_slot"`
+
+	// AutoOpSlot is the 75auto slot (same site/station). A session in
+	// connecting or running with a beat younger than AutoOpBeatS holds the
+	// idle logic, refuses an auto_start, and its start edge puts the PA
+	// (PASlot) in standby once. Empty disables all three.
+	AutoOpSlot string `toml:"auto_op_slot"`
+	// PASlot is the PA slot (same site/station) that gets set_mode standby
+	// when a 75auto session starts. Empty disables the standby.
+	PASlot string `toml:"pa_slot"`
+	// AutoOpBeatS is how old (seconds) the last 75auto /beat or /state may be
+	// for its session to count as active. 75auto beats every 2 s in a session.
+	AutoOpBeatS int `toml:"auto_op_beat_s"`
 }
 
 // TimingConfig holds the sequencer cadence. Times are in seconds for TOML
@@ -154,7 +171,7 @@ type LogConfig struct {
 //
 //	kind = "cmd"          emit a retained /cmd.          slot, action, value [, retain]
 //	kind = "wait_status"  wait for N slots' /status.     slots [, state] [, hold_ms] [, timeout_s]
-//	kind = "wait_state"   wait for a slot's /state field. slot, field, value [, hold_ms] [, timeout_s]
+//	kind = "wait_state"   wait for a slot's /state field. slot, field, value [, fresh] [, fail_value] [, hold_ms] [, timeout_s]
 //	kind = "delay"        sleep a fixed duration.        duration_s | duration("network"|"stagger")
 //	kind = "wol"          send a Wake-on-LAN packet.     mac [, broadcast] [, poke]
 //
@@ -178,6 +195,11 @@ type Step struct {
 
 	// wait_state
 	Field string `toml:"field"`
+	// Fresh: a /state received before the step started does not pass it (a
+	// retained value from an earlier run).
+	Fresh bool `toml:"fresh"`
+	// FailValue: the field taking this value fails the step at once.
+	FailValue string `toml:"fail_value"`
 
 	// waits (wait_status + wait_state)
 	HoldMs   *int `toml:"hold_ms"`
@@ -224,6 +246,9 @@ func Defaults() Config {
 			Slot:            "power-seq",
 			DiscoveryPrefix: "homeassistant",
 			AntModeSlot:     "ant-mode",
+			AutoOpSlot:      "auto-op",
+			PASlot:          "pa",
+			AutoOpBeatS:     30,
 		},
 		Timing: TimingConfig{
 			NetworkDelayS:    30,
@@ -321,6 +346,15 @@ func (c Config) Validate() error {
 	if strings.ContainsAny(c.MQTT.AntModeSlot, "/+#") {
 		return fmt.Errorf("mqtt ant_mode_slot must be a slot name in the own station (got %q)", c.MQTT.AntModeSlot)
 	}
+	if strings.ContainsAny(c.MQTT.AutoOpSlot, "/+#") {
+		return fmt.Errorf("mqtt auto_op_slot must be a slot name in the own station (got %q)", c.MQTT.AutoOpSlot)
+	}
+	if strings.ContainsAny(c.MQTT.PASlot, "/+#") {
+		return fmt.Errorf("mqtt pa_slot must be a slot name in the own station (got %q)", c.MQTT.PASlot)
+	}
+	if c.MQTT.AutoOpBeatS <= 0 {
+		return fmt.Errorf("mqtt auto_op_beat_s must be > 0 (got %d)", c.MQTT.AutoOpBeatS)
+	}
 	if c.StateFile != "" && !filepath.IsAbs(c.StateFile) {
 		return fmt.Errorf("state_file must be an absolute path or \"\" (got %q)", c.StateFile)
 	}
@@ -329,6 +363,11 @@ func (c Config) Validate() error {
 	}
 	if err := validateSteps("shutdown", c.Shutdown); err != nil {
 		return err
+	}
+	if len(c.AutoStart) > 0 {
+		if err := validateStepList("auto_start", c.AutoStart, true); err != nil {
+			return err
+		}
 	}
 	// Standby and wake come as a pair: a station that can power down on idle
 	// must also be able to revive.
@@ -381,6 +420,13 @@ func (c Config) Validate() error {
 }
 
 func validateSteps(list string, steps []Step) error {
+	return validateStepList(list, steps, false)
+}
+
+// validateStepList checks one step list. rowNames allows consecutive steps to
+// share a name ([[auto_start]]: the name is a progress row of several steps);
+// a name may still not come back after another one.
+func validateStepList(list string, steps []Step, rowNames bool) error {
 	if len(steps) == 0 {
 		return fmt.Errorf("at least one [[%s]] step is required (the sequence is config-driven)", list)
 	}
@@ -390,7 +436,8 @@ func validateSteps(list string, steps []Step) error {
 		if st.Name == "" {
 			return fmt.Errorf("%s: step name is required", prefix)
 		}
-		if seen[st.Name] {
+		repeat := rowNames && i > 0 && steps[i-1].Name == st.Name
+		if seen[st.Name] && !repeat {
 			return fmt.Errorf("%s: duplicate step name %q (names must be unique within %s)", prefix, st.Name, list)
 		}
 		seen[st.Name] = true

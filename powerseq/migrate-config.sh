@@ -18,6 +18,11 @@
 #      [[idle_shutdown]] list = its own [[shutdown]] steps + a bwpc sleep
 #      (power/shack-pc sleep, not retained). Copying the live [[shutdown]]
 #      keeps any site edits to it.
+#   2. auto_start chain (2026-11-27): a config with no [[auto_start]] and no
+#      auto_op_slot gets auto_op_slot, auto_op_beat_s and pa_slot in [mqtt]
+#      and the example [[auto_start]] list (bwpc wake, the four programs on
+#      bwpc, 75auto online). The bwpc wol step copies mac, broadcast and poke
+#      from the live [[startup]] wol step (pc-boot), so the real MAC stays.
 set -euo pipefail
 
 CFG="${1:?usage: migrate-config.sh <config.toml>}"
@@ -88,4 +93,80 @@ else
   ' "$CFG" > "$TMP"
   cat "$TMP" > "$CFG"   # in place: keeps owner + mode of the 0600 file
   echo "migrated: idle shutdown (shutdown_minutes = ${SHUTDOWN_MINUTES}, [[idle_shutdown]] = [[shutdown]] + pc-sleep)"
+fi
+
+# --- 2. auto_start chain ----------------------------------------------------
+if has '^[[:space:]]*\[\[auto_start\]\]' || has '^[[:space:]]*auto_op_slot[[:space:]]*='; then
+  : # already migrated (or hand-configured)
+elif ! has '^[[:space:]]*\[mqtt\]'; then
+  echo "migrate-config: no [mqtt] — auto_start chain not added"
+else
+  TMP2="$(mktemp)"
+  trap 'rm -f "${TMP:-}" "$TMP2"' EXIT
+  awk '
+    {
+      line = $0
+      trimmed = line; sub(/^[ \t]+/, "", trimmed)
+      if (trimmed ~ /^\[mqtt\][ \t]*(#.*)?$/) {
+        print line
+        print "# 75auto session hold, auto_start refusal and PA standby on the session"
+        print "# start. Added by migrate-config.sh; \"\" disables."
+        print "auto_op_slot = \"auto-op\""
+        print "auto_op_beat_s = 30"
+        print "pa_slot = \"pa\""
+        next
+      }
+      # The first wol step of [[startup]] (pc-boot): keep its mac/broadcast/poke.
+      if (substr(trimmed, 1, 1) == "[") {
+        if (in_start && is_wol) done_wol = 1
+        in_start = (trimmed ~ /^\[\[startup\]\][ \t]*(#.*)?$/) && !done_wol
+        is_wol = 0; m = ""; b = ""; p = ""
+      } else if (in_start) {
+        if (trimmed ~ /^kind[ \t]*=[ \t]*"wol"/) is_wol = 1
+        if (trimmed ~ /^mac[ \t]*=/) m = line
+        if (trimmed ~ /^broadcast[ \t]*=/) b = line
+        if (trimmed ~ /^poke[ \t]*=/) p = line
+        if (is_wol) { wm = m; wb = b; wp = p }
+      }
+      print line
+    }
+    function step(name, kind) {
+      print ""
+      print "[[auto_start]]"
+      print "name = \"" name "\""
+      print "kind = \"" kind "\""
+    }
+    END {
+      if (wm == "") wm = "mac = \"00:00:00:00:00:00\"    # REPLACE with the bwpc NIC MAC"
+      print ""
+      print "# --- auto_start chain (added by migrate-config.sh) ---------------------------"
+      print "# The 75AUTO Start of hf_console: startup or wake first, then these steps."
+      print "# The step name is the progress row of the page. See config.example.toml."
+      step("bwpc", "wol")
+      print wm
+      if (wb != "") print wb
+      if (wp != "") print wp
+      step("bwpc", "wait_status")
+      print "slots = [\"power/shack-pc\"]"
+      print "timeout_s = 300"
+      n = split("aethersdr dax wsjtx 75auto", progs, " ")
+      for (i = 1; i <= n; i++) {
+        step(progs[i], "cmd")
+        print "slot = \"power/shack-pc\""
+        print "action = \"ensure_program\""
+        print "value = \"" progs[i] "\""
+        print "retain = false"
+        step(progs[i], "wait_state")
+        print "slot = \"power/shack-pc\""
+        print "field = \"program_" progs[i] "\""
+        print "value = \"ready\""
+        print "fresh = true"
+        print "fail_value = \"failed\""
+      }
+      step("75auto", "wait_status")
+      print "slots = [\"hf/auto-op\"]"
+    }
+  ' "$CFG" > "$TMP2"
+  cat "$TMP2" > "$CFG"   # in place: keeps owner + mode of the 0600 file
+  echo "migrated: auto_start chain ([mqtt] auto_op_slot/auto_op_beat_s/pa_slot + [[auto_start]])"
 fi

@@ -53,6 +53,19 @@ user = "hf"
 # and in storm until the park is parked or failed. No
 # retained ant-mode state = no hold. "" disables. Default "ant-mode".
 ant_mode_slot = "ant-mode"
+# 75auto slot (same site/station: muehle/hf/auto-op). A 75auto session in
+# session.state connecting or running, whose last /beat or live /state is
+# younger than auto_op_beat_s, counts as activity: no standby, no idle
+# shutdown, and the idle clocks restart when it ends. A crashed 75auto stops
+# beating and stops holding. An auto_start is refused while such a session
+# runs. "" disables. Default "auto-op".
+auto_op_slot = "auto-op"
+# Beat age for the session hold (s). 75auto beats every 2 s in a session.
+auto_op_beat_s = 30
+# PA slot (muehle/hf/pa) that gets one set_mode standby (not retained) when a
+# 75auto session starts (session.state turns connecting or running). A manual
+# operate later in the same session is not overridden. "" disables.
+pa_slot = "pa"
 # password is loaded from POWERSEQ_MQTT_PASSWORD (EnvironmentFile), not here.
 password = ""
 
@@ -112,6 +125,13 @@ level = "info"
 #     value     = "on"           # string; observed JSON coerced to string. May
 #                                # be "" — then the wait passes when the field
 #                                # is absent/nil/empty (wait for a field to clear)
+#     fresh     = true           # optional: a /state received before the step
+#                                # started does not pass it (a retained value
+#                                # from an earlier run)
+#     fail_value = "failed"      # optional: the field taking this value fails
+#                                # the step at once (no wait for the timeout)
+#     # A wait_state fault names the field and, when the /state has it, the
+#     # <field>_error sibling, e.g. "program_dax=failed (program_dax_error=...)".
 #     hold_ms   = 500            # optional (see wait_status)
 #     timeout_s = 60            # optional, must be > 0 if given
 #     # IMPLICIT liveness precondition (two layers): the slot's /status MUST be
@@ -475,6 +495,111 @@ name = "wait-antenna-gear-online"
 kind = "wait_status"
 slots = ["hf/ant-ctrl", "hf/rotator"]
 timeout_s = 120
+
+# --- auto_start (the 75AUTO Start of hf_console) ------------------------------
+# /cmd {"action":"auto_start","value":{"requester":"<device id>"}} takes the
+# station from any power state to a running 75auto on bwpc. powerseq first
+# runs [[startup]] (phase idle) or [[wake]] (phase standby), then this list;
+# in running it runs this list only. Progress is /state.chain {state
+# running|ready|failed, step, fault, requester, ts}. The step name is the row
+# the page shows ("station" while the startup or wake runs), so consecutive
+# steps may share a name. A chain step that fails leaves the phase as it is.
+# The page sends the signed 75auto start_session when chain.state is ready.
+#
+# bwpc: the PC enters Modern Standby by itself after one hour while the
+# station stays running, so the chain wakes it first (same MAC and poke as
+# pc-boot; nothing happens to an awake PC). Then the winpc-power-bridge
+# agent must be online (it runs at logon).
+[[auto_start]]
+name = "bwpc"
+kind = "wol"
+mac = "00:00:00:00:00:00"    # REPLACE with the bwpc NIC MAC
+broadcast = "192.168.1.255:9"
+poke = "192.168.1.197:3389"
+
+[[auto_start]]
+name = "bwpc"
+kind = "wait_status"
+slots = ["power/shack-pc"]
+timeout_s = 300              # a cold boot and the auto logon
+
+# The programs, in order. ensure_program is not retained (the agent drops
+# retained commands). The agent publishes program_<name> = starting at once,
+# then ready or failed (+ program_<name>_error). fresh: a retained ready from
+# the last chain does not pass.
+[[auto_start]]
+name = "aethersdr"
+kind = "cmd"
+slot = "power/shack-pc"
+action = "ensure_program"
+value = "aethersdr"
+retain = false
+
+[[auto_start]]
+name = "aethersdr"
+kind = "wait_state"
+slot = "power/shack-pc"
+field = "program_aethersdr"
+value = "ready"
+fresh = true
+fail_value = "failed"
+
+[[auto_start]]
+name = "dax"
+kind = "cmd"
+slot = "power/shack-pc"
+action = "ensure_program"
+value = "dax"
+retain = false
+
+[[auto_start]]
+name = "dax"
+kind = "wait_state"
+slot = "power/shack-pc"
+field = "program_dax"
+value = "ready"
+fresh = true
+fail_value = "failed"
+
+[[auto_start]]
+name = "wsjtx"
+kind = "cmd"
+slot = "power/shack-pc"
+action = "ensure_program"
+value = "wsjtx"
+retain = false
+
+[[auto_start]]
+name = "wsjtx"
+kind = "wait_state"
+slot = "power/shack-pc"
+field = "program_wsjtx"
+value = "ready"
+fresh = true
+fail_value = "failed"
+
+[[auto_start]]
+name = "75auto"
+kind = "cmd"
+slot = "power/shack-pc"
+action = "ensure_program"
+value = "75auto"
+retain = false
+
+[[auto_start]]
+name = "75auto"
+kind = "wait_state"
+slot = "power/shack-pc"
+field = "program_75auto"
+value = "ready"
+fresh = true
+fail_value = "failed"
+
+# 75auto publishes its slot at program start, before any session.
+[[auto_start]]
+name = "75auto"
+kind = "wait_status"
+slots = ["hf/auto-op"]
 
 # --- env overrides (systemd EnvironmentFile) ---------------------------------
 # These POWERSEQ_MQTT_* env vars overlay the [mqtt] section above and are used

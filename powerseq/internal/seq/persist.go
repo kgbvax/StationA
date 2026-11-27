@@ -22,6 +22,11 @@ package seq
 //	no longer configured       the station is gone; start runs the full startup).
 //	missing / corrupt file     idle, logged as Error (the phase is unknown).
 //
+// The auto_start chain record is saved with the phase. A chain that was
+// running is not resumed: it comes back failed with "interrupted by a
+// powerseq restart" (ready and failed come back as they were, so the ready
+// window of the session hold keeps counting).
+//
 // A restart never emits a /cmd: Run publishes the restored /state and waits for
 // inputs like before. The writes happen on the runner goroutine only (never in
 // a paho handler): every phase/step change is written at once, before the
@@ -57,16 +62,23 @@ type savedState struct {
 	StandbySince time.Time `json:"standby_since,omitzero"`
 	LastWatch    time.Time `json:"last_watch,omitzero"`
 	HoldEndedAt  time.Time `json:"hold_ended_at,omitzero"`
-	SavedAt      time.Time `json:"saved_at"`
+	// SessionHoldEndedAt is the last end of the 75auto session hold.
+	SessionHoldEndedAt time.Time   `json:"session_hold_ended_at,omitzero"`
+	Chain              *chainState `json:"chain,omitempty"`
+	SavedAt            time.Time   `json:"saved_at"`
 }
 
 func (a savedState) samePhase(b savedState) bool {
+	if (a.Chain == nil) != (b.Chain == nil) || (a.Chain != nil && !a.Chain.equal(*b.Chain)) {
+		return false
+	}
 	return a.Phase == b.Phase && a.Step == b.Step && a.Fault == b.Fault && a.StopReason == b.StopReason
 }
 
 func (a savedState) sameClocks(b savedState) bool {
 	return a.RunningSince.Equal(b.RunningSince) && a.StandbySince.Equal(b.StandbySince) &&
-		a.LastWatch.Equal(b.LastWatch) && a.HoldEndedAt.Equal(b.HoldEndedAt)
+		a.LastWatch.Equal(b.LastWatch) && a.HoldEndedAt.Equal(b.HoldEndedAt) &&
+		a.SessionHoldEndedAt.Equal(b.SessionHoldEndedAt)
 }
 
 func transitional(phase string) bool {
@@ -89,17 +101,23 @@ func knownPhase(phase string) bool {
 func (s *Sequencer) snapshot() savedState {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return savedState{
-		Version:      stateFileVersion,
-		Phase:        s.phase,
-		Step:         s.step,
-		Fault:        s.fault,
-		StopReason:   s.stopReason,
-		RunningSince: s.runningSince,
-		StandbySince: s.standbySince,
-		LastWatch:    s.lastWatch,
-		HoldEndedAt:  s.holdEndedAt,
+	st := savedState{
+		Version:            stateFileVersion,
+		Phase:              s.phase,
+		Step:               s.step,
+		Fault:              s.fault,
+		StopReason:         s.stopReason,
+		RunningSince:       s.runningSince,
+		StandbySince:       s.standbySince,
+		LastWatch:          s.lastWatch,
+		HoldEndedAt:        s.holdEndedAt,
+		SessionHoldEndedAt: s.sessionHoldEndedAt,
 	}
+	if s.chain.State != "" {
+		c := s.chain
+		st.Chain = &c
+	}
+	return st
 }
 
 // persist writes the state file when the snapshot differs from the last one
@@ -148,6 +166,19 @@ func (s *Sequencer) restore(now time.Time) {
 	s.standbySince = st.StandbySince
 	s.lastWatch = st.LastWatch
 	s.holdEndedAt = st.HoldEndedAt
+	s.sessionHoldEndedAt = st.SessionHoldEndedAt
+	if st.Chain != nil {
+		s.chain = *st.Chain
+		if s.chain.State == ChainRunning {
+			s.chain.State = ChainFailed
+			s.chain.Fault = "interrupted by a powerseq restart"
+			s.chain.TS = now
+			s.log.Warnf("restart during an auto_start chain (step %q): not resumed, chain failed", st.Chain.Step)
+		}
+		// A ready chain inside its window holds the idle logic again; the
+		// next idle check sees the hold and records its end.
+		s.sessionHeld = s.chain.State == ChainReady
+	}
 	// Watch anchors are empty after a restart: the first value of each watch
 	// is a baseline, and readbacks that settle right after the restart are not
 	// activity.

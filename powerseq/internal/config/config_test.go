@@ -437,3 +437,89 @@ func TestStateFileDefaultOverrideAndValidation(t *testing.T) {
 		t.Errorf("explicit empty state_file = %q (err %v), want disabled", got.StateFile, err)
 	}
 }
+
+func validWithAutoStart() Config {
+	cfg := validConfig()
+	f := false
+	cfg.AutoStart = []Step{
+		{Name: "bwpc", Kind: KindWOL, MAC: "aa:bb:cc:dd:ee:ff", Poke: "192.168.1.197:3389"},
+		{Name: "bwpc", Kind: KindWaitStatus, Slots: []string{"power/shack-pc"}},
+		{Name: "dax", Kind: KindCmd, Slot: "power/shack-pc", Action: "ensure_program", Value: "dax", Retain: &f},
+		{Name: "dax", Kind: KindWaitState, Slot: "power/shack-pc", Field: "program_dax", Value: "ready", Fresh: true, FailValue: "failed"},
+	}
+	return cfg
+}
+
+// [[auto_start]] is validated like the other lists, except that consecutive
+// steps may share a name (the name is the progress row of the page).
+func TestAutoStartConfigRules(t *testing.T) {
+	if err := validWithAutoStart().Validate(); err != nil {
+		t.Fatalf("valid auto_start rejected: %v", err)
+	}
+	if err := validConfig().Validate(); err != nil {
+		t.Fatalf("config without auto_start rejected: %v", err)
+	}
+	cases := map[string]func(*Config){
+		"unknown kind":     func(c *Config) { c.AutoStart[2].Kind = "launch" },
+		"cmd without slot": func(c *Config) { c.AutoStart[2].Slot = "" },
+		"no name":          func(c *Config) { c.AutoStart[0].Name = "" },
+		"bad mac":          func(c *Config) { c.AutoStart[0].MAC = "zz" },
+		"bad auto_op_slot": func(c *Config) { c.MQTT.AutoOpSlot = "hf/auto-op" },
+		"bad pa_slot":      func(c *Config) { c.MQTT.PASlot = "pa/#" },
+		"beat age 0":       func(c *Config) { c.MQTT.AutoOpBeatS = 0 },
+	}
+	for name, mut := range cases {
+		cfg := validWithAutoStart()
+		mut(&cfg)
+		if err := cfg.Validate(); err == nil {
+			t.Errorf("%s: expected a validation error", name)
+		}
+	}
+}
+
+func TestAutoOpDefaults(t *testing.T) {
+	cfg := Defaults()
+	if cfg.MQTT.AutoOpSlot != "auto-op" || cfg.MQTT.PASlot != "pa" || cfg.MQTT.AutoOpBeatS != 30 {
+		t.Errorf("defaults = %q %q %d", cfg.MQTT.AutoOpSlot, cfg.MQTT.PASlot, cfg.MQTT.AutoOpBeatS)
+	}
+	cfg = validConfig()
+	cfg.MQTT.AutoOpSlot = "" // disabled
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("empty auto_op_slot rejected: %v", err)
+	}
+}
+
+// The shipped example chain: the row-id step names in order, actuator
+// commands not retained, every program wait fresh with fail_value.
+func TestExampleAutoStart(t *testing.T) {
+	cfg, err := Load(&Flags{ConfigPath: "../../config.example.toml"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rows []string
+	for _, st := range cfg.AutoStart {
+		if len(rows) == 0 || rows[len(rows)-1] != st.Name {
+			rows = append(rows, st.Name)
+		}
+		switch st.Kind {
+		case KindCmd:
+			if st.Retain == nil || *st.Retain || st.Action != "ensure_program" || st.Value != st.Name {
+				t.Errorf("cmd step %+v: want a not retained ensure_program of %s", st, st.Name)
+			}
+		case KindWaitState:
+			if !st.Fresh || st.FailValue != "failed" || st.Field != "program_"+st.Name || st.Value != "ready" {
+				t.Errorf("wait_state step %+v", st)
+			}
+		}
+	}
+	if got := strings.Join(rows, " "); got != "bwpc aethersdr dax wsjtx 75auto" {
+		t.Errorf("auto_start rows = %s", got)
+	}
+	last := cfg.AutoStart[len(cfg.AutoStart)-1]
+	if last.Kind != KindWaitStatus || len(last.Slots) != 1 || last.Slots[0] != "hf/auto-op" {
+		t.Errorf("last auto_start step = %+v, want wait_status hf/auto-op", last)
+	}
+	if cfg.AutoStart[0].Kind != KindWOL || cfg.AutoStart[0].Poke == "" {
+		t.Errorf("first auto_start step = %+v, want the bwpc wol with poke", cfg.AutoStart[0])
+	}
+}
