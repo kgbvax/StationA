@@ -235,20 +235,22 @@ void main() {
   });
 
   group('band selector', () {
-    testWidgets('dials from bands, no counts, band colors, Hz order, and no dial off the table', (tester) async {
+    testWidgets('values from the survey, no counts, band colors, band order, and nothing off the table', (tester) async {
       final doc = busyAutoOpDoc();
       // Out of order on purpose: the selector sorts by dial.
       doc['bands'] = [
-        {'band': '20m', 'dial_hz': 14074000, 'seen': true, 'count': 23, 'period_start_ms': busyNowMs - 10000},
+        {'band': '20m', 'dial_hz': 14074000, 'seen': true, 'count': 23, 'period_start_ms': busyNowMs - 10000, 'value': 42},
         {'band': '10m', 'dial_hz': 28074000, 'seen': false, 'count': 0, 'period_start_ms': 0},
-        {'band': '40m', 'dial_hz': 7074000, 'seen': true, 'count': 12, 'period_start_ms': busyNowMs - 660000},
+        {'band': '40m', 'dial_hz': 7074000, 'seen': true, 'count': 12, 'period_start_ms': busyNowMs - 660000, 'value': 7},
       ];
       await _pumpAuto(tester, doc: doc);
-      expect(_text(tester, 'auto-band-dial-40m'), '7.074');
-      expect(_text(tester, 'auto-band-dial-20m'), '14.074');
-      expect(_text(tester, 'auto-band-dial-10m'), '28.074');
-      // 160 m is not in the band table: no dial. No pill shows a count.
-      expect(find.byKey(const ValueKey('auto-band-dial-160m')), findsNothing);
+      expect(_text(tester, 'auto-band-value-40m'), '7');
+      expect(_text(tester, 'auto-band-value-20m'), '42');
+      expect(_text(tester, 'auto-band-value-10m'), '–');
+      // No QRG in the pills.
+      expect(find.text('7.074'), findsNothing);
+      // 160 m is not in the band table: no value. No pill shows a count.
+      expect(find.byKey(const ValueKey('auto-band-value-160m')), findsNothing);
       expect(find.byKey(const ValueKey('auto-band-160m')), findsOneWidget);
       expect(find.text('23'), findsNothing); // no counts, and no Decodes readout
       final y40 = tester.getCenter(find.byKey(const ValueKey('auto-band-40m'))).dy;
@@ -297,24 +299,29 @@ void main() {
       expect(_text(tester, 'auto-confirm-countdown'), a);
     });
 
-    testWidgets('auto mode without a pending proposal shows the current action', (tester) async {
+    testWidgets('with a DX call the card shows the station: call, name and distance', (tester) async {
       final doc = busyAutoOpDoc();
       doc['pending'] = null;
-      doc['current'] = {
-        'id': 41,
-        'time_ms': busyNowMs - 20000,
-        'rule': 'call-needed',
-        'action': 'call-station',
-        'call': 'VK9XQ',
-        'band': '20m',
-        'result': 'took-effect',
-        'cause': '',
-        'gate_reason': '',
-        'reason': 'dxcc VK9',
-      };
+      final st = doc['station'] as Map<String, dynamic>;
+      st['dx_name'] = 'Ana Example';
+      st['dx_image'] = '';
+      st['dx_km'] = 11234;
       await _pumpAuto(tester, doc: doc);
-      expect(_text(tester, 'auto-next-what'), 'CALL VK9XQ · Christmas I. · 20m');
+      expect(_text(tester, 'auto-dx-call'), 'VK9XQ');
+      expect(_text(tester, 'auto-dx-name'), 'Ana Example');
+      expect(_text(tester, 'auto-dx-km'), '11 234 km');
+      // No proposal strip without a proposal, and no picture without a URL.
+      expect(find.byKey(const ValueKey('auto-proposal')), findsNothing);
+      expect(find.byKey(const ValueKey('auto-dx-image')), findsNothing);
       expect(find.byKey(const ValueKey('auto-confirm-countdown')), findsNothing);
+    });
+
+    testWidgets('a pending proposal shows as a strip under the station', (tester) async {
+      await _pumpAuto(tester);
+      expect(_text(tester, 'auto-dx-call'), 'VK9XQ');
+      expect(find.byKey(const ValueKey('auto-proposal')), findsOneWidget);
+      expect(find.descendant(of: find.byKey(const ValueKey('auto-proposal')), matching: find.text('QSY 17m')),
+          findsOneWidget);
     });
 
     testWidgets('a finished call does not stay as the current action', (tester) async {
@@ -351,6 +358,7 @@ void main() {
       final doc = busyAutoOpDoc();
       doc['pending'] = null;
       doc['current'] = null;
+      (doc['station'] as Map<String, dynamic>)['dx_call'] = '';
       doc['idle'] = {
         'proposed': 0,
         'blocks': [

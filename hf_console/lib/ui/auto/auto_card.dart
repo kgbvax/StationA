@@ -22,7 +22,14 @@ class AutoCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final head = Container(
+    final titleText = Text(title.toUpperCase(),
+        maxLines: 1,
+        softWrap: false,
+        overflow: TextOverflow.ellipsis,
+        style: AppTheme.display(11, color: AppTheme.txtMute, letterSpacing: 0.08));
+    final head = LayoutBuilder(builder: (context, c) {
+      final width = c.maxWidth.isFinite ? c.maxWidth : 400.0;
+      return Container(
       height: titleHeight,
       padding: const EdgeInsets.symmetric(horizontal: 8),
       decoration: BoxDecoration(
@@ -31,14 +38,20 @@ class AutoCard extends StatelessWidget {
       ),
       child: Row(
         children: [
-          Text(title.toUpperCase(), maxLines: 1, style: AppTheme.display(11, color: AppTheme.txtMute, letterSpacing: 0.08)),
-          if (trailing != null) ...[
+          // A long title, for example a long DXCC name, ends with an
+          // ellipsis. With a trailing part, the title takes at most 60 % of
+          // the row, and the trailing part the rest.
+          if (trailing == null)
+            Expanded(child: titleText)
+          else ...[
+            ConstrainedBox(constraints: BoxConstraints(maxWidth: width * 0.6), child: titleText),
             const SizedBox(width: 8),
             Expanded(child: Align(alignment: Alignment.centerRight, child: trailing!)),
           ],
         ],
       ),
     );
+    });
     return Container(
       decoration: AppTheme.cardDecoration(),
       clipBehavior: Clip.hardEdge,

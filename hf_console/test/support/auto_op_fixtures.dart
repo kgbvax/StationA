@@ -24,6 +24,8 @@ Map<String, dynamic> busyAutoOpDoc({int seq = 2000}) => {
         'mode': 'FT8',
         'dx_call': 'VK9XQ',
         'dx_entity': 'Christmas I.',
+        'dx_name': 'Test Operator',
+        'dx_km': 11234,
         'tx_df': 1487,
         'rx_df': 1502,
         'tx_enabled': true,

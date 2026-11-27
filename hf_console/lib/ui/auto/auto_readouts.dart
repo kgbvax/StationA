@@ -1,5 +1,5 @@
-/// The readout row of the 75AUTO page: band, dial, the DX station
-/// with its QSO stage, and the transmit box with the slot bar.
+/// The readout row of the 75AUTO page: mode (band and digimode), dial,
+/// and the transmit box with the slot bar. The DX station is the DX card.
 ///
 /// A missing value shows `?`. The page never puts a definite value in the
 /// place of missing data.
@@ -27,7 +27,7 @@ class AutoReadouts extends StatelessWidget {
     final st = context.select<BusStore, AutoOpStation?>((s) => s.autoOp?.station);
     const gap = SizedBox(width: 4);
     final band = _Readout(
-      label: 'Band',
+      label: 'Mode',
       value: st?.band ?? '?',
       sub: st?.mode ?? '?',
     );
@@ -36,7 +36,6 @@ class AutoReadouts extends StatelessWidget {
       value: st?.dialHz == null ? '?' : dialText(st!.dialHz!),
       sub: 'TX DF ${st?.txDf ?? '?'}',
     );
-    final dx = _DxReadout(station: st);
     final tx = _TransmitReadout(station: st);
     if (twoRows) {
       return Column(
@@ -50,10 +49,7 @@ class AutoReadouts extends StatelessWidget {
             ]),
           ),
           const SizedBox(height: 4),
-          SizedBox(
-            height: 56,
-            child: Row(children: [Expanded(flex: 5, child: dx), gap, Expanded(flex: 4, child: tx)]),
-          ),
+          SizedBox(height: 56, child: tx),
         ],
       );
     }
@@ -64,9 +60,7 @@ class AutoReadouts extends StatelessWidget {
         gap,
         SizedBox(width: 196, child: dial),
         gap,
-        Expanded(child: dx),
-        gap,
-        SizedBox(width: 196, child: tx),
+        Expanded(child: tx),
       ],
     );
   }
@@ -132,71 +126,13 @@ class _Readout extends StatelessWidget {
 }
 
 /// The DX station: call, entity, try or repeat count, and the QSO stage.
-class _DxReadout extends StatelessWidget {
-  final AutoOpStation? station;
-
-  const _DxReadout({required this.station});
-
-  @override
-  Widget build(BuildContext context) {
-    final st = station;
-    final call = st?.dxCall;
-    final parts = <String>['DX call'];
-    final entity = st?.dxEntity;
-    if (entity != null && entity.isNotEmpty) parts.add(entity);
-    final rpt = st?.repeatCount ?? 0;
-    final tries = st?.tryCount ?? 0;
-    if (rpt > 0) {
-      parts.add('rpt $rpt');
-    } else if (tries > 0) {
-      parts.add('try $tries');
-    }
-    final String value;
-    final Color color;
-    if (call == null) {
-      value = '?';
-      color = AppTheme.txtMute;
-    } else if (call.isEmpty) {
-      value = 'no DX';
-      color = AppTheme.txtFaint;
-    } else {
-      value = call;
-      color = AppTheme.accent;
-    }
-    final stage = st?.qsoStage;
-    final now = stage == null ? -1 : qsoStages.indexOf(stage);
-    return _Box(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(parts.join(' · ').toUpperCase(), maxLines: 1, overflow: TextOverflow.ellipsis, style: _labelStyle()),
-          FittedBox(
-            fit: BoxFit.scaleDown,
-            alignment: Alignment.centerLeft,
-            child: Row(
-              children: [
-                Text(value, maxLines: 1, style: AppTheme.mono(24, color: color, weight: FontWeight.w700).copyWith(height: 1.1)),
-                const SizedBox(width: 10),
-                for (var i = 0; i < qsoStages.length; i++) ...[
-                  _StageChip(qsoStages[i], done: now >= 0 && i < now, current: i == now),
-                  const SizedBox(width: 3),
-                ],
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _StageChip extends StatelessWidget {
+/// One QSO stage chip: done green, current filled accent.
+class AutoStageChip extends StatelessWidget {
   final String label;
   final bool done;
   final bool current;
 
-  const _StageChip(this.label, {required this.done, required this.current});
+  const AutoStageChip(this.label, {super.key, required this.done, required this.current});
 
   @override
   Widget build(BuildContext context) {

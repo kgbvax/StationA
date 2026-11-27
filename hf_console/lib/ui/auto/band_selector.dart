@@ -1,6 +1,6 @@
 /// The band selector of the 75AUTO page. Display only in this work: each
-/// band of the band table in dial order, with its dial frequency from the
-/// band table in MHz. A band without a batch in this session shows dimmed.
+/// band of the band table, with its value from the band survey of 75auto
+/// (the points of the band, as the Value column of the 75auto window). A band without a batch in this session shows dimmed.
 /// The column always lists the HF bands from 160 m to 10 m. A band that is
 /// not in the band table of 75auto shows dimmed with no dial: 75auto does
 /// not change to it.
@@ -142,12 +142,6 @@ class BandSelector extends StatelessWidget {
   }
 }
 
-/// A dial in Hz as MHz with three decimals, for example 7074000 → 7.074.
-String dialMhz(int hz) {
-  final khz = (hz / 1000).round();
-  return '${khz ~/ 1000}.${(khz % 1000).toString().padLeft(3, '0')}';
-}
-
 class _BandRow extends StatelessWidget {
   final AutoOpBandCount entry;
 
@@ -204,11 +198,15 @@ class _BandRow extends StatelessWidget {
                 textBaseline: TextBaseline.alphabetic,
                 children: [
                   Text(label, style: AppTheme.mono(13, color: text, weight: FontWeight.w700)),
-                  if (inTable && entry.dialHz != null) ...[
+                  if (inTable) ...[
                     const SizedBox(width: 6),
-                    Text(dialMhz(entry.dialHz!),
-                        key: ValueKey('auto-band-dial-$band'),
-                        style: AppTheme.mono(11, color: off ? AppTheme.txtFaint : AppTheme.txtMute)),
+                    // The value of the band survey, as the Value column of
+                    // the 75auto window. A dash without one.
+                    Text(entry.value == null ? '–' : '${entry.value}',
+                        key: ValueKey('auto-band-value-$band'),
+                        style: AppTheme.mono(12,
+                            color: off || entry.value == null ? AppTheme.txtFaint : AppTheme.txt,
+                            weight: FontWeight.w600)),
                   ],
                 ],
               ),
