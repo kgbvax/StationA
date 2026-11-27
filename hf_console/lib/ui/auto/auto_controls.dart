@@ -13,9 +13,9 @@
 /// Each tap sends one signed command (`auto_commands.dart`). There are no
 /// dialogs: the gate of 75auto and the pending id are the interlocks.
 ///
-/// - Stop TX has the enabled colors while 75auto transmits, and the
-///   disabled colors otherwise. No red: that is too loud for the car
-///   screen. It still takes a tap when 75auto does not transmit, because a
+/// - Stop TX has the enabled colors and a red frame while 75auto
+///   transmits, and the disabled colors otherwise. No red fill: that is
+///   too loud for the car screen. It still takes a tap when 75auto does not transmit, because a
 ///   stop also takes away the Arm CQ permission. It stays on with stale
 ///   data and never locks. Its second line shows the
 ///   reason when it is off, else what became of the last stop.
@@ -320,11 +320,12 @@ class _StopTx extends StatelessWidget {
       final on = gate.stop == null;
       final line = cmd.stopLine(gate, clock.now());
       final hot = on && transmitting;
-      // While 75auto transmits, the button has the enabled colors. Else it
-      // has the disabled colors, but it still takes a tap while on.
+      // While 75auto transmits, the button has the enabled colors and a red
+      // frame, no red fill. Else it has the disabled colors, but it still
+      // takes a tap while on.
       final Color label = hot ? AppTheme.txt : AppTheme.txtFaint;
       final style = AppTheme.actionButton().copyWith(
-        side: WidgetStatePropertyAll(BorderSide(width: 1.4, color: hot ? AppTheme.cardLineHi : AppTheme.cardLine)),
+        side: WidgetStatePropertyAll(BorderSide(width: hot ? 2 : 1.4, color: hot ? AppTheme.red : AppTheme.cardLine)),
         minimumSize: const WidgetStatePropertyAll(Size(48, autoStopHeight)),
         padding: const WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: 8, vertical: 2)),
       );

@@ -224,7 +224,7 @@ void main() {
       expect(mqtt.publishes, isEmpty);
     });
 
-    testWidgets('it has the enabled colors only while 75auto transmits, and no red', (tester) async {
+    testWidgets('it has the enabled colors and a red frame only while 75auto transmits', (tester) async {
       final idle = busyAutoOpDoc();
       idle['station'] = {...idle['station'] as Map<String, dynamic>, 'transmitting': false};
       final (store, _) = await _pump(tester, doc: idle);
@@ -237,7 +237,8 @@ void main() {
       _live(store, busyAutoOpDoc());
       await tester.pump(const Duration(milliseconds: 300));
       expect(_stopBackground(tester), AppTheme.pane);
-      expect(_stopFrame(tester), AppTheme.cardLineHi);
+      // A red frame, no red fill.
+      expect(_stopFrame(tester), AppTheme.red);
       expect(_stopLabel(tester), AppTheme.txt);
     });
 
