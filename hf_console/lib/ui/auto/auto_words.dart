@@ -17,12 +17,13 @@ String autoVerb(String? action) {
   };
 }
 
-/// The results that need no word on the page: the action did what it says.
-const _quietResults = {'took-effect', 'logged', 'shown'};
+/// The results that need no word on the page: a logged QSO, a shown line.
+const _quietResults = {'logged', 'shown'};
 
-/// The outcome word for a result of 75auto, or null when the result needs
-/// no word.
+/// The outcome word for a result of 75auto: OK for `took-effect`, else the
+/// result in capitals. Null when the result needs no word.
 String? autoOutcome(String? result) {
   if (result == null || result.isEmpty || _quietResults.contains(result)) return null;
+  if (result == 'took-effect') return 'OK';
   return result.replaceAll('-', ' ').toUpperCase();
 }

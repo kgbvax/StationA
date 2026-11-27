@@ -51,8 +51,6 @@ class RxList extends StatelessWidget {
     final rx = view?.station?.rxDf;
     return AutoCard(
       title: 'RX frequency · ${rx ?? '?'} Hz ±$rxWindowHz',
-      trailing: Text('orange own TX · red to me',
-          maxLines: 1, overflow: TextOverflow.ellipsis, style: AppTheme.display(10, color: AppTheme.txtFaint)),
       child: rows.isEmpty
           ? Center(child: Text(view == null ? 'no data' : 'nothing near $rx Hz', style: AppTheme.mono(12, color: AppTheme.txtFaint)))
           // Reversed, so the newest line stays in view at the bottom. Shrink

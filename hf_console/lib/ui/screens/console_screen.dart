@@ -256,9 +256,21 @@ class _PageContent extends StatelessWidget {
       case 'cam':
         return _CamPage(key: schemeKey, onSelect: onSelect);
       case '75auto':
-        return AutoPage(
-          key: schemeKey,
-          topBar: (trailing) => _PageTopBar(page: '75auto', onSelect: onSelect, trailing: trailing),
+        // On a tablet the other pages put the page tabs at the top of the
+        // right rail. The 75AUTO bar puts them in a block of the same width
+        // at the right, so they do not move when the page changes.
+        final tablet = MediaQuery.of(context).size.shortestSide >= 600;
+        return LayoutBuilder(
+          builder: (context, c) => AutoPage(
+            key: schemeKey,
+            topBar: (trailing) => tablet && trailing != null
+                ? _SplitTopBar(
+                    status: trailing,
+                    railWidth: _TabletShell.rightWidth(c.biggest),
+                    bar: _PageTopBar(page: '75auto', onSelect: onSelect),
+                  )
+                : _PageTopBar(page: '75auto', onSelect: onSelect, trailing: trailing),
+          ),
         );
       case 'hf':
       default:
@@ -388,6 +400,14 @@ class _TabletShell extends StatelessWidget {
   /// every row (Station page), instead of the 3-row strip at the bottom.
   final bool expandFaults;
 
+  /// The width of the right rail for a page area of [area]. The top bar of
+  /// the 75AUTO page puts its page tabs in a block of this width, so they
+  /// stand where the rail puts them on the other pages.
+  static double rightWidth(Size area) {
+    final isCompact = area.width < 1200 || area.height < 720;
+    return math.max(isCompact ? 320.0 : 420.0, area.width * (isCompact ? 0.48 : 0.44));
+  }
+
   const _TabletShell({
     required this.page,
     required this.onSelect,
@@ -407,6 +427,8 @@ class _TabletShell extends StatelessWidget {
         final isCompact = constraints.maxWidth < 1200 || constraints.maxHeight < 720;
         final rightFraction = isCompact ? 0.48 : 0.44;
         final rightMinWidth = isCompact ? 320.0 : 420.0;
+        // Keep in step with [rightWidth], which the 75AUTO bar uses.
+        assert(rightWidth(constraints.biggest) == math.max(rightMinWidth, constraints.maxWidth * rightFraction));
 
         return Row(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -702,14 +724,22 @@ class _PageTopBar extends StatelessWidget {
     // LINK DOWN banner, device trouble is the fault list. A healthy link is
     // not news.
     if (trailing != null) {
+      // The same padding, spacing and top alignment as the bar of the other
+      // pages, so the page tabs do not move when the page changes.
       return Container(
         color: AppTheme.card,
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
         child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _PageNav(page: page, onSelect: onSelect),
-            const SizedBox(width: 8),
-            const _DxSettingsButton(),
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _PageNav(page: page, onSelect: onSelect),
+                const SizedBox(width: 10),
+                const _DxSettingsButton(),
+              ],
+            ),
             const SizedBox(width: 10),
             Expanded(child: trailing!),
             const SizedBox(width: 10),
@@ -741,6 +771,47 @@ class _PageTopBar extends StatelessWidget {
           ),
           const SizedBox(width: 10),
           const _RfAnnunciator(),
+        ],
+      ),
+    );
+  }
+}
+
+/// The tablet top bar of the 75AUTO page: the status at the left, and the
+/// top bar of the other pages in a block of the rail width at the right.
+class _SplitTopBar extends StatelessWidget {
+  final Widget status;
+  final double railWidth;
+  final Widget bar;
+
+  const _SplitTopBar({required this.status, required this.railWidth, required this.bar});
+
+  @override
+  Widget build(BuildContext context) {
+    // The bar block sets the height. The status fills the rest at the left.
+    return Container(
+      color: AppTheme.card,
+      child: Stack(
+        children: [
+          Positioned(
+            left: 0,
+            top: 0,
+            bottom: 0,
+            right: railWidth,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              alignment: Alignment.centerLeft,
+              child: status,
+            ),
+          ),
+          Align(
+            alignment: Alignment.topRight,
+            child: Container(
+              width: railWidth,
+              decoration: BoxDecoration(border: Border(left: BorderSide(color: AppTheme.cardLine))),
+              child: bar,
+            ),
+          ),
         ],
       ),
     );

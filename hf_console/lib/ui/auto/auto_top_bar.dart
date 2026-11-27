@@ -1,17 +1,18 @@
 /// The status part of the top bar of the 75AUTO page: the session pill
 /// (with REPLAY), the mode and presence chip, the rule set, the age of the
-/// data from bwpc, and UTC.
+/// data from bwpc. No clock: the room goes to the status.
 ///
 /// In landscape the strip sits in the one row of the console top bar. When
-/// the row is too narrow, the rule set goes first, then the UTC seconds,
-/// then UTC. In portrait the strip wraps under the top bar.
+/// the row is too narrow, the rule set goes first, then the host of the age
+/// pill. In portrait the strip wraps under the top bar.
 ///
 /// A tap on the mode and presence chip sends `touch`: it counts as operator
 /// presence at 75auto. It goes out only under the same gate as the other
 /// commands of the page. Nothing else on the page sends a touch.
 library;
 
-import 'package:clock/clock.dart';
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -58,12 +59,9 @@ class AutoStatusStrip extends StatelessWidget {
     final shown = [...items];
     double total() => shown.fold(0.0, (w, i) => w + i.width + gap);
     // The order in which items leave a narrow row.
-    for (final drop in const ['rules', 'utc-seconds', 'utc', 'age-host']) {
+    for (final drop in const ['rules', 'age-host']) {
       if (total() <= width) break;
-      if (drop == 'utc-seconds') {
-        final i = shown.indexWhere((e) => e.id == 'utc');
-        if (i >= 0) shown[i] = shown[i].short!;
-      } else if (drop == 'age-host') {
+      if (drop == 'age-host') {
         final i = shown.indexWhere((e) => e.id == 'age');
         if (i >= 0 && shown[i].short != null) shown[i] = shown[i].short!;
       } else {
@@ -144,18 +142,16 @@ class AutoStatusStrip extends StatelessWidget {
       case AutoData.fresh:
         final age = live.age!;
         final color = age >= const Duration(seconds: 3) ? AppTheme.amber : AppTheme.txtMute;
-        final full = _Item('age', '$host · ${ageText(age)}', color, right: true, key: const ValueKey('auto-age'));
-        items.add(full.withShort(_Item('age', ageText(age), color, right: true, key: const ValueKey('auto-age'))));
+        // A fixed width, so the pill does not change size with each new age.
+        final full = _Item('age', '$host · ${ageText(age)}', color,
+            right: true, key: const ValueKey('auto-age'), widthOf: '$host · 88.8 min');
+        items.add(full.withShort(
+            _Item('age', ageText(age), color, right: true, key: const ValueKey('auto-age'), widthOf: '88.8 min')));
       case AutoData.stale:
         final age = live.age;
         final text = age == null ? 'DATA STALE' : 'DATA STALE · ${ageText(age)}';
         items.add(_Item('age', text, AppTheme.red, right: true, key: const ValueKey('auto-age')));
     }
-
-    final now = clock.now().toUtc();
-    final hms = utcHmsOf(now);
-    items.add(_Item('utc', '$hms UTC', AppTheme.txt, right: true, bare: true, size: 16)
-        .withShort(_Item('utc', '${hms.substring(0, 5)} UTC', AppTheme.txt, right: true, bare: true, size: 16)));
     return items;
   }
 
@@ -206,6 +202,10 @@ class _Item {
   /// A tap on the pill. Null for a pill that only shows.
   final VoidCallback? onTap;
 
+  /// A template text that sets the width of the pill, so it keeps one
+  /// width while its text changes. Null: the width follows the text.
+  final String? widthOf;
+
   _Item(this.id, this.text, this.color,
       {this.dot,
       this.right = false,
@@ -214,23 +214,37 @@ class _Item {
       this.size = 13,
       this.key,
       this.short,
-      this.onTap});
+      this.onTap,
+      this.widthOf});
 
   _Item withShort(_Item s) => _Item(id, text, color,
-      dot: dot, right: right, filled: filled, bare: bare, size: size, key: key, short: s, onTap: onTap);
+      dot: dot, right: right, filled: filled, bare: bare, size: size, key: key, short: s, onTap: onTap, widthOf: widthOf);
 
   _Item withTap(VoidCallback? tap) => _Item(id, text, color,
-      dot: dot, right: right, filled: filled, bare: bare, size: size, key: key, short: short?.withTap(tap), onTap: tap);
+      dot: dot,
+      right: right,
+      filled: filled,
+      bare: bare,
+      size: size,
+      key: key,
+      short: short?.withTap(tap),
+      onTap: tap,
+      widthOf: widthOf);
 
   TextStyle get _style => bare
       ? AppTheme.mono(size, color: color, weight: FontWeight.w600)
       : AppTheme.display(size, color: filled ? AppTheme.activeButtonText : color, weight: FontWeight.w600, letterSpacing: 0.06);
 
-  double get width {
-    final tp = TextPainter(text: TextSpan(text: text, style: _style), textDirection: TextDirection.ltr, maxLines: 1)
-      ..layout();
+  double _textWidth(String t) {
+    final tp = TextPainter(text: TextSpan(text: t, style: _style), textDirection: TextDirection.ltr, maxLines: 1)..layout();
     final w = tp.width;
     tp.dispose();
+    return w;
+  }
+
+  double get width {
+    var w = _textWidth(text);
+    if (widthOf != null) w = math.max(w, _textWidth(widthOf!));
     return w + (bare ? 4 : 22) + (dot != null ? 14 : 0);
   }
 
@@ -238,6 +252,7 @@ class _Item {
     final label = Text(text, key: key, maxLines: 1, softWrap: false, style: _style);
     if (bare) return Padding(padding: const EdgeInsets.symmetric(horizontal: 2), child: label);
     final box = _box(label);
+    if (widthOf != null) return SizedBox(width: width, child: box);
     if (id != 'mode') return box;
     // The presence chip: a 48 dp touch target around the 36 dp pill.
     return GestureDetector(
@@ -251,6 +266,7 @@ class _Item {
   Widget _box(Widget label) {
     return Container(
       height: 36,
+      alignment: widthOf == null ? null : Alignment.center,
       padding: const EdgeInsets.symmetric(horizontal: 10),
       decoration: BoxDecoration(
         color: filled ? color : AppTheme.pane,
