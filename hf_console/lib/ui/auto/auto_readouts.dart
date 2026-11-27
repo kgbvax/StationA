@@ -13,6 +13,10 @@ import '../../store/bus_store.dart';
 import '../theme.dart';
 import 'auto_live.dart';
 
+/// The height of the readout row. It fits the label and the value of Mode
+/// and Dial with no space between them.
+const autoReadoutRowHeight = 50.0;
+
 /// The QSO stages in order (contract §5.3, `station.qso_stage`).
 const qsoStages = ['CALL', 'RPT', 'R+RPT', 'RR73', 'LOG'];
 
@@ -41,7 +45,7 @@ class AutoReadouts extends StatelessWidget {
       return Column(
         children: [
           SizedBox(
-            height: 56,
+            height: autoReadoutRowHeight,
             child: Row(children: [
               Expanded(flex: 2, child: band),
               gap,
@@ -49,7 +53,7 @@ class AutoReadouts extends StatelessWidget {
             ]),
           ),
           const SizedBox(height: 4),
-          SizedBox(height: 56, child: tx),
+          SizedBox(height: autoReadoutRowHeight, child: tx),
         ],
       );
     }
@@ -155,7 +159,7 @@ class AutoStageChip extends StatelessWidget {
   }
 }
 
-/// The transmit box: TX or RX, a warning while WSJT-X still sends after a
+/// The transmit box, without a title: TX or RX, a warning while WSJT-X still sends after a
 /// stop, and the slot bar. Live TX is red. The bar runs on the local clock from
 /// `slot_offset_ms` and freezes, faint, while the data is not fresh.
 class _TransmitReadout extends StatelessWidget {
@@ -199,7 +203,6 @@ class _TransmitReadout extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text('TRANSMIT', maxLines: 1, style: _labelStyle()),
               FittedBox(
                 fit: BoxFit.scaleDown,
                 alignment: Alignment.centerLeft,
