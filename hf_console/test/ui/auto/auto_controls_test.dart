@@ -333,6 +333,58 @@ void main() {
   });
 
   group('mode, target, presence', () {
+    testWidgets('ARM CQ in auto mode sends arm_cq with no value', (tester) async {
+      final doc = busyAutoOpDoc();
+      doc['arm'] = {'source': '', 'until_ms': 0};
+      final (_, mqtt) = await _pump(tester, doc: doc);
+      expect(_line(tester, 'auto-arm-cq-label'), 'ARM CQ');
+      expect(_on(tester, 'auto-arm-cq'), isTrue);
+      await _tap(tester, 'auto-arm-cq');
+      final m = _cmd(mqtt.publishes.single);
+      expect(m['action'], 'arm_cq');
+      expect(m['value'], isNull);
+    });
+
+    testWidgets('ARM CQ is off outside auto mode, and confirm mode shows CQ CONFIRM', (tester) async {
+      final doc = busyAutoOpDoc();
+      (doc['session'] as Map<String, dynamic>)['mode'] = 'observe';
+      doc['arm'] = {'source': '', 'until_ms': 0};
+      await _pump(tester, doc: doc);
+      expect(_on(tester, 'auto-arm-cq'), isFalse);
+      expect(_line(tester, 'auto-arm-cq-sub'), 'auto only');
+
+      final c = busyAutoOpDoc();
+      (c['session'] as Map<String, dynamic>)['mode'] = 'confirm';
+      c['arm'] = {'source': 'confirm', 'until_ms': 0};
+      await _pump(tester, doc: c);
+      expect(_on(tester, 'auto-arm-cq'), isFalse);
+      expect(_line(tester, 'auto-arm-cq-sub'), 'CONFIRM');
+    });
+
+    testWidgets('an operator arm shows the time left, and a tap arms again', (tester) async {
+      final doc = busyAutoOpDoc();
+      doc['arm'] = {'source': 'operator', 'until_ms': busyNowMs + 25 * 60000 + 30000};
+      final (_, mqtt) = await _pump(tester, doc: doc);
+      expect(_line(tester, 'auto-arm-cq-label'), 'CQ');
+      expect(_line(tester, 'auto-arm-cq-sub'), matches(RegExp(r'^25:[23]\d$')));
+      await _tap(tester, 'auto-arm-cq');
+      expect(_cmd(mqtt.publishes.single)['action'], 'arm_cq');
+    });
+
+    testWidgets('a refused arm_cq gives ARM CQ an amber border', (tester) async {
+      final (store, mqtt) = await _pump(tester);
+      await _tap(tester, 'auto-arm-cq');
+      final id = _cmd(mqtt.publishes.single)['cmd_id'];
+      final doc = busyAutoOpDoc();
+      doc['remote'] = {
+        ...(doc['remote'] as Map<String, dynamic>? ?? {}),
+        'last_cmd': {'cmd_id': id, 'action': 'arm_cq', 'result': 'refused', 'reason': 'not auto mode', 'at_ms': busyNowMs},
+      };
+      _live(store, doc);
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(_line(tester, 'auto-operate-line'), 'ARM CQ REFUSED · not auto mode');
+    });
+
     testWidgets('a tap on the active mode sends nothing, another mode sends mode', (tester) async {
       final (_, mqtt) = await _pump(tester);
       await _tap(tester, 'auto-auto');

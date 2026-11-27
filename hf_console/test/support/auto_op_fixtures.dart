@@ -12,7 +12,7 @@ const busyNowMs = 1795703561000;
 int _p(int s) => 1795703520000 + s * 1000;
 
 /// A busy session in auto mode: a QSO with VK9XQ at R+RPT, a pending QSY
-/// proposal, decodes with NEW, TGT, and TO ME, own lines, band counts, a
+/// proposal, decodes with NEW, TGT, and one to me, own lines, band counts, a
 /// log, and one degraded input.
 Map<String, dynamic> busyAutoOpDoc({int seq = 2000}) => {
       ...autoOpStateDoc(seq: seq),

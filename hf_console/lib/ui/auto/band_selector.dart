@@ -1,10 +1,9 @@
 /// The band selector of the 75AUTO page. Display only in this work: each
 /// band of the band table in dial order, with its dial frequency from the
-/// band table in MHz, the decode count of its latest seen batch and the age
-/// of that count. A band without a batch in this
-/// session shows `·`. The column always lists the HF bands from 160 m to
-/// 10 m. A band that is not in the band table of 75auto shows dimmed with
-/// `–`: 75auto does not change to it. A tap does nothing (a band change comes from a rule
+/// band table in MHz. A band without a batch in this session shows dimmed.
+/// The column always lists the HF bands from 160 m to 10 m. A band that is
+/// not in the band table of 75auto shows dimmed with no dial: 75auto does
+/// not change to it. A tap does nothing (a band change comes from a rule
 /// proposal).
 library;
 
@@ -29,7 +28,6 @@ class BandSelector extends StatelessWidget {
     final entries = _entries(view, metaBands);
     final current = view?.station?.band;
     final pending = view?.station?.bandChange?.target;
-    final now = view?.nowMs;
     final rows = [
       for (final (e, inTable) in entries)
         _BandRow(
@@ -37,7 +35,6 @@ class BandSelector extends StatelessWidget {
           inTable: inTable,
           current: e.band == current,
           pending: pending != null && pending.isNotEmpty && e.band == pending && e.band != current,
-          nowMs: now,
           horizontal: horizontal,
         ),
     ];
@@ -121,7 +118,6 @@ class _BandRow extends StatelessWidget {
   final bool inTable;
   final bool current;
   final bool pending;
-  final int? nowMs;
   final bool horizontal;
 
   const _BandRow({
@@ -129,7 +125,6 @@ class _BandRow extends StatelessWidget {
     required this.inTable,
     required this.current,
     required this.pending,
-    required this.nowMs,
     required this.horizontal,
   });
 
@@ -138,24 +133,6 @@ class _BandRow extends StatelessWidget {
     final band = entry.band!;
     final label = band.endsWith('m') && !band.endsWith('cm') ? band.substring(0, band.length - 1) : band;
     final seen = entry.seen;
-    final String count;
-    if (!inTable) {
-      count = '–';
-    } else if (seen == false) {
-      count = '·';
-    } else if (seen == true && entry.count != null) {
-      count = '${entry.count}';
-    } else {
-      count = '?';
-    }
-    // The age of the count, from the start of its batch on the clock of
-    // bwpc. Shown from one minute on.
-    String? age;
-    final ps = entry.periodStartMs;
-    if (seen == true && ps != null && ps > 0 && nowMs != null) {
-      final min = (nowMs! - ps) ~/ 60000;
-      if (min >= 1) age = min >= 60 ? '${min ~/ 60}h' : '${min}m';
-    }
     final off = seen == false || !inTable;
     final border = current ? AppTheme.accent : (pending ? AppTheme.amber : (off ? AppTheme.cardLine : AppTheme.cardLineHi));
     final text = current ? AppTheme.accent : (pending ? AppTheme.amber : (off ? AppTheme.txtFaint : AppTheme.txt));
@@ -184,18 +161,10 @@ class _BandRow extends StatelessWidget {
                 children: [
                   Text(label, style: AppTheme.mono(13, color: text, weight: FontWeight.w700)),
                   if (inTable && entry.dialHz != null) ...[
-                    const SizedBox(width: 5),
+                    const SizedBox(width: 6),
                     Text(dialMhz(entry.dialHz!),
                         key: ValueKey('auto-band-dial-$band'),
-                        style: AppTheme.mono(9, color: off ? AppTheme.txtFaint : AppTheme.txtMute)),
-                  ],
-                  const SizedBox(width: 6),
-                  Text(count,
-                      key: ValueKey('auto-band-count-$band'),
-                      style: AppTheme.mono(11, color: off ? AppTheme.txtFaint : AppTheme.txtMute)),
-                  if (age != null) ...[
-                    const SizedBox(width: 2),
-                    Text(age, style: AppTheme.mono(8, color: AppTheme.txtFaint)),
+                        style: AppTheme.mono(11, color: off ? AppTheme.txtFaint : AppTheme.txtMute)),
                   ],
                 ],
               ),

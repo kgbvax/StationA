@@ -235,7 +235,7 @@ void main() {
   });
 
   group('band selector', () {
-    testWidgets('counts from bands, band colors, Hz order, and · for an unseen band', (tester) async {
+    testWidgets('dials from bands, no counts, band colors, Hz order, and no dial off the table', (tester) async {
       final doc = busyAutoOpDoc();
       // Out of order on purpose: the selector sorts by dial.
       doc['bands'] = [
@@ -244,9 +244,13 @@ void main() {
         {'band': '40m', 'dial_hz': 7074000, 'seen': true, 'count': 12, 'period_start_ms': busyNowMs - 660000},
       ];
       await _pumpAuto(tester, doc: doc);
-      expect(_text(tester, 'auto-band-count-40m'), '12');
-      expect(_text(tester, 'auto-band-count-20m'), '23');
-      expect(_text(tester, 'auto-band-count-10m'), '·');
+      expect(_text(tester, 'auto-band-dial-40m'), '7.074');
+      expect(_text(tester, 'auto-band-dial-20m'), '14.074');
+      expect(_text(tester, 'auto-band-dial-10m'), '28.074');
+      // 160 m is not in the band table: no dial. No pill shows a count.
+      expect(find.byKey(const ValueKey('auto-band-dial-160m')), findsNothing);
+      expect(find.byKey(const ValueKey('auto-band-160m')), findsOneWidget);
+      expect(find.text('23'), findsOneWidget); // the Decodes readout only
       final y40 = tester.getCenter(find.byKey(const ValueKey('auto-band-40m'))).dy;
       final y20 = tester.getCenter(find.byKey(const ValueKey('auto-band-20m'))).dy;
       final y10 = tester.getCenter(find.byKey(const ValueKey('auto-band-10m'))).dy;
@@ -254,8 +258,8 @@ void main() {
       expect(y20, lessThan(y10));
       final color = tester.widget<Container>(find.byKey(const ValueKey('auto-band-color-40m'))).color;
       expect(color, AppTheme.bandColor('40m'));
-      // The age of a count from one minute on.
-      expect(find.text('11m'), findsOneWidget);
+      // No age of a count either.
+      expect(find.text('11m'), findsNothing);
     });
   });
 
@@ -292,8 +296,38 @@ void main() {
         'reason': 'dxcc VK9',
       };
       await _pumpAuto(tester, doc: doc);
-      expect(_text(tester, 'auto-next-what'), 'CALL VK9XQ · 20m');
+      expect(_text(tester, 'auto-next-what'), 'CALL VK9XQ · Christmas I. · 20m');
       expect(find.byKey(const ValueKey('auto-confirm-countdown')), findsNothing);
+    });
+
+    testWidgets('a finished call does not stay as the current action', (tester) async {
+      final doc = busyAutoOpDoc();
+      doc['pending'] = null;
+      // The QSO with EP2AES is logged: no DX call, but 75auto still sends
+      // the call as its newest action line.
+      (doc['station'] as Map<String, dynamic>)['dx_call'] = '';
+      doc['current'] = {
+        'id': 52,
+        'time_ms': busyNowMs - 20000,
+        'rule': 'call-needed',
+        'action': 'call-station',
+        'call': 'EP2AES',
+        'band': '17m',
+        'result': 'took-effect',
+        'cause': '',
+        'gate_reason': '',
+        'reason': 'dxcc EP',
+      };
+      doc['idle'] = {
+        'proposed': 0,
+        'blocks': [
+          {'call': 'DL1ABC', 'why': 'worked before'},
+        ],
+        'more_blocks': 0,
+      };
+      await _pumpAuto(tester, doc: doc, device: _tablet);
+      expect(_text(tester, 'auto-next-what'), 'no proposal');
+      expect(_text(tester, 'auto-next-why'), 'DL1ABC: worked before');
     });
 
     testWidgets('without pending or current it says why the rules propose nothing', (tester) async {

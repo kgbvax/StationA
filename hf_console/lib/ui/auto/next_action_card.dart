@@ -31,15 +31,44 @@ class NextActionText {
   const NextActionText(this.title, this.what, this.whatColor, this.why);
 }
 
-String _target(String? call, String? band) => [
-      if (call != null && call.isNotEmpty) call,
-      if (band != null && band.isNotEmpty) band,
-    ].join(' · ');
-
 /// The action as the card writes it: the short capital verb, then the call
-/// and the band, for example "QSY 17m" or "CALL VK9XQ · 20m".
-String _what(String? action, String? call, String? band) =>
-    [autoVerb(action), _target(call, band)].where((s) => s.isNotEmpty).join(' ');
+/// and the band, for example "QSY 17m" or "CALL VK9XQ · 20m". With [entity]
+/// (the DXCC name of the call) it goes after the call:
+/// "CALL VK9XQ · Christmas Island · 20m".
+String _what(String? action, String? call, String? band, {String? entity}) {
+  final target = [
+    if (call != null && call.isNotEmpty) call,
+    if (entity != null && entity.isNotEmpty) entity,
+    if (band != null && band.isNotEmpty) band,
+  ].join(' · ');
+  return [autoVerb(action), target].where((s) => s.isNotEmpty).join(' ');
+}
+
+/// Whether the `current` line of 75auto is still under way. 75auto sends
+/// its newest action line as `current` and keeps it after the action ended,
+/// for example after the QSO of a call was logged. The card shows it only
+/// while it is under way:
+/// - a result of `sent`: the action waits for its effect;
+/// - a call while its call is still the DX call;
+/// - a CQ while there is no DX call.
+/// Else the card shows why the rules propose nothing. The action log keeps
+/// the finished line.
+bool _live(AutoOpView view, AutoOpLogLine c) {
+  if (c.result == 'sent') return true;
+  final dx = view.station?.dxCall ?? '';
+  return switch (c.action) {
+    'call-station' => (c.call ?? '').isNotEmpty && c.call == dx,
+    'send-cq' => dx.isEmpty,
+    _ => false,
+  };
+}
+
+/// The DXCC name of [call]: 75auto sends it only for the DX call.
+String? _entityOf(AutoOpView view, String? call) {
+  final st = view.station;
+  if (call == null || call.isEmpty || st?.dxCall != call) return null;
+  return st?.dxEntity;
+}
 
 /// The text of the card for [view].
 NextActionText nextActionText(AutoOpView? view) {
@@ -52,7 +81,7 @@ NextActionText nextActionText(AutoOpView? view) {
   final hint = view.hint ?? '';
   final p = view.pending;
   if (p != null) {
-    final what = _what(p.action, p.call, p.band);
+    final what = _what(p.action, p.call, p.band, entity: _entityOf(view, p.call));
     final why = [
       if (p.reason != null && p.reason!.isNotEmpty) p.reason!,
       if (p.rule != null && p.rule!.isNotEmpty) 'rule ${p.rule}',
@@ -60,8 +89,8 @@ NextActionText nextActionText(AutoOpView? view) {
     return NextActionText('Next action', what, AppTheme.accent, why);
   }
   final c = view.current;
-  if (c != null) {
-    final what = _what(c.action, c.call, c.band);
+  if (c != null && _live(view, c)) {
+    final what = _what(c.action, c.call, c.band, entity: _entityOf(view, c.call));
     final why = [
       ?autoOutcome(c.result),
       if (c.gateReason != null && c.gateReason!.isNotEmpty) c.gateReason!,

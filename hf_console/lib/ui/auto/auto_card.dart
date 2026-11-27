@@ -51,7 +51,7 @@ class AutoCard extends StatelessWidget {
   }
 }
 
-/// A small marker tag in a list row: NEW, TGT, TO ME.
+/// A small marker tag in a list row: NEW, TGT.
 class AutoTag extends StatelessWidget {
   final String label;
   final Color color;

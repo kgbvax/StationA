@@ -51,11 +51,12 @@ void main() {
       expect(bandActivityRows(_view(doc)).first.header, '14:32:15 · ODD');
     });
 
-    testWidgets('markers: TGT on the DX call, NEW on a needed station, TO ME', (tester) async {
+    testWidgets('markers: TGT on the DX call, NEW on a needed station, no TO ME tag', (tester) async {
       await _pumpList(tester, busyAutoOpDoc(), const DecodeList());
       expect(find.text('TGT'), findsWidgets);
       expect(find.text('NEW'), findsWidgets);
-      expect(find.text('TO ME'), findsOneWidget);
+      // A decode to me shows in red. It has no tag.
+      expect(find.text('TO ME'), findsNothing);
     });
   });
 
