@@ -1,6 +1,7 @@
-/// The controls of the 75AUTO page, under the RX frequency list: the
-/// TARGET card (Follow, Skip) and the MODE card (Observe, Confirm, Auto)
-/// side by side, then Arm CQ and Stop TX. The feedback line sits in the
+/// The controls of the 75AUTO page: the TARGET card (Follow, Skip) and the
+/// MODE card (Observe, Confirm, Auto) side by side, then Arm CQ and Stop TX.
+/// In landscape the TARGET and MODE cards sit under the band activity list,
+/// and Arm CQ and Stop TX under the RX frequency list. The feedback line sits in the
 /// title strip of the MODE card. Approve and Reject are in the DX card.
 ///
 /// Arm CQ sits next to Stop TX, as in the window of 75auto: Arm CQ gives the
@@ -12,8 +13,11 @@
 /// Each tap sends one signed command (`auto_commands.dart`). There are no
 /// dialogs: the gate of 75auto and the pending id are the interlocks.
 ///
-/// - Stop TX is in the danger style, filled red while 75auto transmits. It
-///   stays on with stale data and never locks. Its second line shows the
+/// - Stop TX has the enabled colors and a red frame while 75auto
+///   transmits, and the disabled colors otherwise. No red fill: that is
+///   too loud for the car screen. It still takes a tap when 75auto does not transmit, because a
+///   stop also takes away the Arm CQ permission. It stays on with stale
+///   data and never locks. Its second line shows the
 ///   reason when it is off, else what became of the last stop.
 /// - The cards and Approve and Reject need fresh data and `operate`. The
 ///   feedback line shows the reason when they are off, else the result of
@@ -30,13 +34,11 @@ import '../theme.dart';
 import 'auto_card.dart';
 import 'auto_commands.dart';
 import 'auto_live.dart';
+import 'auto_tips.dart';
 
 /// The height of the buttons of the TARGET and MODE cards, and of Stop TX.
 const autoButtonRowHeight = 48.0;
 const autoStopHeight = 60.0;
-
-/// The width of Arm CQ next to Stop TX.
-const autoArmWidth = 84.0;
 
 /// The title strip of the TARGET and MODE cards.
 const autoRowTitleHeight = 16.0;
@@ -48,23 +50,26 @@ const autoRowCardHeight = autoRowTitleHeight + autoButtonRowHeight + 2 * 2 + 2;
 /// and Stop TX.
 const autoControlsHeight = autoRowCardHeight + 4 + autoStopHeight;
 
-/// The control block of the 75AUTO page, under the RX frequency list: the
-/// TARGET and MODE cards, then Arm CQ and Stop TX.
+/// The control block of the 75AUTO page: the TARGET and MODE cards, then
+/// Arm CQ and Stop TX. Without [targetMode] it holds only Arm CQ and Stop
+/// TX, and [AutoTargetMode] shows the cards elsewhere.
 class AutoControls extends StatelessWidget {
-  const AutoControls({super.key});
+  final bool targetMode;
+
+  const AutoControls({super.key, this.targetMode = true});
 
   @override
   Widget build(BuildContext context) {
-    return const Column(
+    return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        SizedBox(height: autoRowCardHeight, child: _ButtonRow()),
-        SizedBox(height: 4),
-        SizedBox(
+        if (targetMode) ...const [AutoTargetMode(), SizedBox(height: 4)],
+        const SizedBox(
           height: autoStopHeight,
           child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-            SizedBox(width: autoArmWidth, child: _ArmCq()),
+            // Arm CQ and Stop TX share the row in equal halves.
+            Expanded(child: _ArmCq()),
             SizedBox(width: 4),
             Expanded(child: _StopTx()),
           ]),
@@ -72,6 +77,15 @@ class AutoControls extends StatelessWidget {
       ],
     );
   }
+}
+
+/// The TARGET card (Follow, Skip) and the MODE card (Observe, Confirm,
+/// Auto), side by side, at their fixed height.
+class AutoTargetMode extends StatelessWidget {
+  const AutoTargetMode({super.key});
+
+  @override
+  Widget build(BuildContext context) => const SizedBox(height: autoRowCardHeight, child: _ButtonRow());
 }
 
 /// The TARGET card (Follow, Skip) and the MODE card (Observe, Confirm,
@@ -175,7 +189,7 @@ class _RowButton extends StatelessWidget {
         : active
             ? AppTheme.accent
             : AppTheme.cardLine;
-    return ElevatedButton(
+    return autoTip(control.tip, ElevatedButton(
       key: ValueKey('auto-${control.name}'),
       onPressed: onTap,
       style: AppTheme.actionButton().copyWith(
@@ -202,7 +216,7 @@ class _RowButton extends StatelessWidget {
           ),
         ]),
       ),
-    );
+    ));
   }
 }
 
@@ -266,7 +280,7 @@ class _ArmCq extends StatelessWidget {
         sub = auto ? null : 'auto only';
       }
       final Color text = armed ? AppTheme.blend(AppTheme.accent, 0.9) : (on ? AppTheme.txt : AppTheme.txtFaint);
-      return ElevatedButton(
+      return autoTip(AutoControl.armCq.tip, ElevatedButton(
         key: const ValueKey('auto-arm-cq'),
         onPressed: on ? () => cmd.send(AutoControl.armCq, null) : null,
         style: AppTheme.actionButton().copyWith(
@@ -289,7 +303,7 @@ class _ArmCq extends StatelessWidget {
                   style: AppTheme.mono(11, color: armed ? text : AppTheme.txtMute, weight: FontWeight.w600)),
           ]),
         ),
-      );
+      ));
     });
   }
 }
@@ -307,25 +321,20 @@ class _StopTx extends StatelessWidget {
       final on = gate.stop == null;
       final line = cmd.stopLine(gate, clock.now());
       final hot = on && transmitting;
-      final Color label = hot
-          ? AppTheme.activeButtonText
-          : on
-              ? AppTheme.red
-              : AppTheme.blend(AppTheme.red, 0.6);
-      final style = AppTheme.actionButton(danger: true, dangerActive: hot).copyWith(
+      // While 75auto transmits, the button has the enabled colors and a red
+      // frame, no red fill. Else it has the disabled colors, but it still
+      // takes a tap while on.
+      final Color label = hot ? AppTheme.txt : AppTheme.txtFaint;
+      final style = AppTheme.actionButton().copyWith(
+        side: WidgetStatePropertyAll(BorderSide(width: hot ? 2 : 1.4, color: hot ? AppTheme.red : AppTheme.cardLine)),
         minimumSize: const WidgetStatePropertyAll(Size(48, autoStopHeight)),
         padding: const WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: 8, vertical: 2)),
       );
-      return ElevatedButton(
+      return autoTip(AutoControl.stop.tip, ElevatedButton(
         key: const ValueKey('auto-stop-tx'),
         // Never locked: each tap sends a new stop.
         onPressed: on ? () => cmd.send(AutoControl.stop, null) : null,
-        style: on
-            ? style
-            : style.copyWith(
-                side: WidgetStatePropertyAll(BorderSide(width: 1.4, color: AppTheme.blend(AppTheme.red, 0.6))),
-                backgroundColor: WidgetStatePropertyAll(AppTheme.blend(AppTheme.red, 0.06)),
-              ),
+        style: style,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -343,12 +352,12 @@ class _StopTx extends StatelessWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: AppTheme.mono(10,
-                          color: hot ? AppTheme.activeButtonText : line.color,
+                          color: line.color,
                           weight: FontWeight.w600)
                       .copyWith(height: 1.2)),
           ],
         ),
-      );
+      ));
     });
   }
 }

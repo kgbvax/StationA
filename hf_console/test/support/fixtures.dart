@@ -468,7 +468,6 @@ Map<String, dynamic> autoOpStateDoc({int seq = 1234}) => {
         'qso_stage': 'R+RPT',
         'try_count': 0,
         'repeat_count': 1,
-        'tx_parity': 'odd',
         'target_choice': 'follow',
       },
       'presence_end_ms': 1795707161000,

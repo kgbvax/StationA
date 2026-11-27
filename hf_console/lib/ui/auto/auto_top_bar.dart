@@ -21,6 +21,7 @@ import '../../store/bus_store.dart';
 import '../theme.dart';
 import 'auto_commands.dart';
 import 'auto_live.dart';
+import 'auto_tips.dart';
 
 class AutoStatusStrip extends StatelessWidget {
   /// One row with items dropped when narrow (landscape top bar), or a wrap
@@ -251,12 +252,14 @@ class _Item {
     if (widthOf != null) return SizedBox(width: width, child: box);
     if (id != 'mode') return box;
     // The presence chip: a 48 dp touch target around the 36 dp pill.
-    return GestureDetector(
-      key: const ValueKey('auto-presence-chip'),
-      behavior: HitTestBehavior.opaque,
-      onTap: onTap,
-      child: SizedBox(height: 48, child: Center(widthFactor: 1, child: box)),
-    );
+    return autoTip(
+        AutoControl.presence.tip,
+        GestureDetector(
+          key: const ValueKey('auto-presence-chip'),
+          behavior: HitTestBehavior.opaque,
+          onTap: onTap,
+          child: SizedBox(height: 48, child: Center(widthFactor: 1, child: box)),
+        ));
   }
 
   Widget _box(Widget label) {

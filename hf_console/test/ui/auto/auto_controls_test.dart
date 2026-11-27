@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hf_console/store/auto_op.dart';
 import 'package:hf_console/store/bus_store.dart';
+import 'package:hf_console/ui/auto/auto_tips.dart';
 import 'package:hf_console/ui/screens/console_screen.dart';
 import 'package:hf_console/ui/theme.dart';
 import 'package:mqtt_client/mqtt_client.dart';
@@ -73,6 +74,21 @@ Finder _k(String key) => find.byKey(ValueKey(key));
 bool _on(WidgetTester tester, String key) => tester.widget<ElevatedButton>(_k(key)).onPressed != null;
 
 String _line(WidgetTester tester, String key) => tester.widget<Text>(_k(key)).data!;
+
+/// The background of Stop TX, in the disabled state when [disabled].
+Color? _stopBackground(WidgetTester tester, {bool disabled = false}) => tester
+    .widget<ElevatedButton>(_k('auto-stop-tx'))
+    .style!
+    .backgroundColor!
+    .resolve(disabled ? {WidgetState.disabled} : <WidgetState>{});
+
+/// The frame color of Stop TX.
+Color? _stopFrame(WidgetTester tester) =>
+    tester.widget<ElevatedButton>(_k('auto-stop-tx')).style!.side!.resolve(<WidgetState>{})!.color;
+
+/// The color of the STOP TX label.
+Color? _stopLabel(WidgetTester tester) =>
+    tester.widget<Text>(find.descendant(of: _k('auto-stop-tx'), matching: find.text('STOP TX'))).style!.color;
 
 Future<void> _tap(WidgetTester tester, String key) async {
   await tester.tap(_k(key), warnIfMissed: false);
@@ -207,6 +223,31 @@ void main() {
       expect(_line(tester, 'auto-operate-line'), 'no key');
       await _tap(tester, 'auto-stop-tx');
       expect(mqtt.publishes, isEmpty);
+    });
+
+    testWidgets('it has the enabled colors and a red frame only while 75auto transmits', (tester) async {
+      final idle = busyAutoOpDoc();
+      idle['station'] = {...idle['station'] as Map<String, dynamic>, 'transmitting': false};
+      final (store, _) = await _pump(tester, doc: idle);
+      // Idle: the disabled colors, but it still takes a tap.
+      expect(_on(tester, 'auto-stop-tx'), isTrue);
+      expect(_stopBackground(tester), AppTheme.pane);
+      expect(_stopFrame(tester), AppTheme.cardLine);
+      expect(_stopLabel(tester), AppTheme.txtFaint);
+
+      _live(store, busyAutoOpDoc());
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(_stopBackground(tester), AppTheme.pane);
+      // A red frame, no red fill.
+      expect(_stopFrame(tester), AppTheme.red);
+      expect(_stopLabel(tester), AppTheme.txt);
+    });
+
+    testWidgets('off, it has the disabled colors and no red', (tester) async {
+      await _pump(tester, commands: 'none');
+      expect(_on(tester, 'auto-stop-tx'), isFalse);
+      expect(_stopBackground(tester, disabled: true), AppTheme.pane);
+      expect(_stopLabel(tester), AppTheme.txtFaint);
     });
   });
 
@@ -483,6 +524,52 @@ void main() {
       expect(find.byType(BottomSheet), findsNothing, reason: k);
     }
     expect(mqtt.publishes, hasLength(6));
+  });
+
+  group('tooltips', () {
+    // Every control of the page that sends a command.
+    const controls = [
+      'auto-follow',
+      'auto-skip',
+      'auto-observe',
+      'auto-confirm',
+      'auto-auto',
+      'auto-arm-cq',
+      'auto-stop-tx',
+      'auto-approve',
+      'auto-reject',
+      'auto-presence-chip',
+      'auto-band-20m',
+      'auto-band-17m',
+      'auto-band-160m',
+    ];
+
+    String? tipOf(WidgetTester tester, String key) {
+      final tips = find.ancestor(of: _k(key), matching: find.byType(Tooltip));
+      if (tips.evaluate().isEmpty) return null;
+      return tester.widget<Tooltip>(tips.first).message;
+    }
+
+    testWidgets('in the web build every control has a tooltip', (tester) async {
+      autoTipsOn = true;
+      addTearDown(() => autoTipsOn = false);
+      await _pump(tester);
+      for (final k in controls) {
+        expect(_k(k), findsOneWidget, reason: k);
+        expect(tipOf(tester, k), isNotEmpty, reason: k);
+      }
+      expect(tipOf(tester, 'auto-skip'), contains('60 minutes'));
+      expect(tipOf(tester, 'auto-band-17m'), startsWith('17m: Ask 75auto'));
+      expect(tipOf(tester, 'auto-band-20m'), '20m: the band of the radio now.');
+      expect(tipOf(tester, 'auto-band-160m'), contains('not in the band table'));
+    });
+
+    testWidgets('on the tablet no control has a tooltip', (tester) async {
+      await _pump(tester);
+      for (final k in controls) {
+        expect(tipOf(tester, k), isNull, reason: k);
+      }
+    });
   });
 
   testWidgets('/state.error shows as a red line in place of the action log', (tester) async {

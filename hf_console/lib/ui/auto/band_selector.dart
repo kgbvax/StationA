@@ -1,6 +1,10 @@
 /// The band selector of the 75AUTO page. Display only in this work: each
 /// band of the band table, with its value from the band survey of 75auto
-/// (the points of the band, as the Value column of the 75auto window). A band without a batch in this session shows dimmed.
+/// (the points of the band, as the Value column of the 75auto window). A band
+/// without a value shows a dimmed dash. The survey covers every band of the
+/// table, so a band that WSJT-X never tuned to in this session is not dimmed.
+/// A band whose value is more than 10 % above the value of the current band
+/// shows with a green border and a green value: a better band.
 /// The column always lists the HF bands from 160 m to 10 m. A band that is
 /// not in the band table of 75auto shows dimmed with no dial: 75auto does
 /// not change to it.
@@ -20,6 +24,7 @@ import '../theme.dart';
 import 'auto_card.dart';
 import 'auto_commands.dart';
 import 'auto_live.dart';
+import 'auto_tips.dart';
 
 class BandSelector extends StatelessWidget {
   /// A horizontal strip for a portrait phone instead of a column.
@@ -50,6 +55,7 @@ class BandSelector extends StatelessWidget {
             last.value != current
         ? last.value
         : null;
+    final currentValue = entries.where((x) => x.$1.band == current).firstOrNull?.$1.value;
     final rows = [
       for (final (e, inTable) in entries)
         _BandRow(
@@ -58,6 +64,7 @@ class BandSelector extends StatelessWidget {
           current: e.band == current,
           pending: e.band != current &&
               ((pending != null && pending.isNotEmpty && e.band == pending) || e.band == requested),
+          better: inTable && e.band != current && isBetterBand(e.value, currentValue),
           horizontal: horizontal,
           onTap: on && inTable && e.band != current ? () => cmd.send(AutoControl.band, e.band) : null,
         ),
@@ -89,6 +96,11 @@ class BandSelector extends StatelessWidget {
       ),
     );
   }
+
+  /// Whether a band with [value] is better than the current band with
+  /// [currentValue]: more than 10 % higher. False without either value.
+  static bool isBetterBand(int? value, int? currentValue) =>
+      value != null && currentValue != null && value * 10 > currentValue * 11;
 
   /// The HF bands that the column always lists, with their FT8 dial.
   static const fixedBands = {
@@ -152,6 +164,9 @@ class _BandRow extends StatelessWidget {
   final VoidCallback? onTap;
   final bool current;
   final bool pending;
+
+  /// The value of the band is more than 10 % above the current band.
+  final bool better;
   final bool horizontal;
 
   const _BandRow({
@@ -159,6 +174,7 @@ class _BandRow extends StatelessWidget {
     required this.inTable,
     required this.current,
     required this.pending,
+    required this.better,
     required this.horizontal,
     this.onTap,
   });
@@ -167,18 +183,28 @@ class _BandRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final band = entry.band!;
     final label = band.endsWith('m') && !band.endsWith('cm') ? band.substring(0, band.length - 1) : band;
-    final seen = entry.seen;
-    final off = seen == false || !inTable;
-    final border = current ? AppTheme.accent : (pending ? AppTheme.amber : (off ? AppTheme.cardLine : AppTheme.cardLineHi));
+    // Only a band outside the band table is off. `seen` (a decode batch in
+    // this session) says nothing about the survey value.
+    final off = !inTable;
+    final border = current
+        ? AppTheme.accent
+        : (pending ? AppTheme.amber : (better ? AppTheme.green : (off ? AppTheme.cardLine : AppTheme.cardLineHi)));
     final text = current ? AppTheme.accent : (pending ? AppTheme.amber : (off ? AppTheme.txtFaint : AppTheme.txt));
-    return GestureDetector(
+    final tip = current
+        ? '$band: the band of the radio now.'
+        : inTable
+            ? (better
+                ? '$band: value more than 10 % above the current band. ${AutoControl.band.tip}'
+                : '$band: ${AutoControl.band.tip}')
+            : '$band: not in the band table of 75auto. 75auto does not change to it.';
+    return autoTip(tip, GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTap: onTap,
       child: Container(
       key: ValueKey('auto-band-$band'),
       decoration: BoxDecoration(
         color: current ? AppTheme.accentDim : AppTheme.pane,
-        border: Border.all(color: border, width: current || pending ? 1.4 : 1),
+        border: Border.all(color: border, width: current || pending || better ? 1.4 : 1),
         borderRadius: BorderRadius.circular(4),
       ),
       child: Row(
@@ -205,7 +231,7 @@ class _BandRow extends StatelessWidget {
                     Text(entry.value == null ? '–' : '${entry.value}',
                         key: ValueKey('auto-band-value-$band'),
                         style: AppTheme.mono(12,
-                            color: off || entry.value == null ? AppTheme.txtFaint : AppTheme.txt,
+                            color: off || entry.value == null ? AppTheme.txtFaint : (better ? AppTheme.green : AppTheme.txt),
                             weight: FontWeight.w600)),
                   ],
                 ],
@@ -216,6 +242,6 @@ class _BandRow extends StatelessWidget {
         ],
       ),
     ),
-    );
+    ));
   }
 }

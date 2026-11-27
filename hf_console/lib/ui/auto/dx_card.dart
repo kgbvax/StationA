@@ -1,8 +1,8 @@
 /// The DX card of the 75AUTO page: the station that 75auto works now, in
 /// the right column.
 ///
-/// From top to bottom: the call with the DXCC entity and the try or repeat
-/// count, the QSO stage chips, the QRZ picture across the card with the
+/// From top to bottom: the call with the try or repeat count in the title,
+/// the DXCC entity under the call, the QSO stage chips, the QRZ picture across the card with the
 /// operator name and the distance under it, and at the bottom the
 /// proposal strip.
 ///
@@ -42,7 +42,7 @@ class DxCard extends StatelessWidget {
 
     final title = <String>['DX call'];
     final entity = st?.dxEntity;
-    if (hasDx && entity != null && entity.isNotEmpty) title.add(entity);
+    final hasEntity = hasDx && entity != null && entity.isNotEmpty;
     final rpt = st?.repeatCount ?? 0;
     final tries = st?.tryCount ?? 0;
     if (hasDx && rpt > 0) {
@@ -84,6 +84,12 @@ class DxCard extends StatelessWidget {
                   maxLines: 1,
                   style: AppTheme.mono(26, color: color, weight: FontWeight.w700).copyWith(height: 1.1)),
             ),
+            if (hasEntity)
+              Text(entity,
+                  key: const ValueKey('auto-dx-entity'),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppTheme.body(14, color: AppTheme.txtMute, weight: FontWeight.w600).copyWith(height: 1.25)),
             const SizedBox(height: 3),
             FittedBox(
               fit: BoxFit.scaleDown,

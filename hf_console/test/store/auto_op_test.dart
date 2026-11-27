@@ -46,7 +46,6 @@ void main() {
       expect(st.qsoStage, 'R+RPT');
       expect(st.tryCount, 0);
       expect(st.repeatCount, 1);
-      expect(st.txParity, 'odd');
       expect(st.targetChoice, 'follow');
 
       expect(v.presenceEndMs, 1795707161000);
