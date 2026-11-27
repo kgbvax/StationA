@@ -1,6 +1,7 @@
 /// The control column of the 75AUTO page, from top to bottom: the Next
-/// action card with Approve and Reject, one row with Follow, Skip, Observe,
-/// Confirm, and Auto, one feedback line, and Stop TX at the bottom.
+/// action card with Approve and Reject, the TARGET card (Follow, Skip) and
+/// the MODE card (Observe, Confirm, Auto) side by side, and Stop TX at the
+/// bottom. The feedback line sits in the title strip of the MODE card.
 ///
 /// Each tap sends one signed command (`auto_commands.dart`). There are no
 /// dialogs: the gate of 75auto and the pending id are the interlocks.
@@ -20,16 +21,20 @@ import 'package:provider/provider.dart';
 
 import '../../store/bus_store.dart';
 import '../theme.dart';
+import 'auto_card.dart';
 import 'auto_commands.dart';
 import 'auto_live.dart';
 import 'next_action_card.dart';
 
-/// The height of the button row and of Stop TX.
+/// The height of the buttons of the TARGET and MODE cards, and of Stop TX.
 const autoButtonRowHeight = 48.0;
 const autoStopHeight = 60.0;
 
-/// The height of the feedback line under the row.
-const autoLineHeight = 14.0;
+/// The title strip of the TARGET and MODE cards.
+const autoRowTitleHeight = 16.0;
+
+/// The height of the TARGET and MODE cards.
+const autoRowCardHeight = autoRowTitleHeight + autoButtonRowHeight + 2 * 2 + 2;
 
 class AutoControlColumn extends StatelessWidget {
   /// The fixed height of the Next action card. Null lets it fill the rest
@@ -47,17 +52,16 @@ class AutoControlColumn extends StatelessWidget {
       children: [
         if (cardHeight == null) const Expanded(child: card) else SizedBox(height: cardHeight, child: card),
         const SizedBox(height: 4),
-        const SizedBox(height: autoButtonRowHeight, child: _ButtonRow()),
-        const SizedBox(height: 2),
-        const SizedBox(height: autoLineHeight, child: _OperateLine()),
-        const SizedBox(height: 2),
+        const SizedBox(height: autoRowCardHeight, child: _ButtonRow()),
+        const SizedBox(height: 4),
         const SizedBox(height: autoStopHeight, child: _StopTx()),
       ],
     );
   }
 }
 
-/// Follow, Skip, Observe, Confirm, and Auto.
+/// The TARGET card (Follow, Skip) and the MODE card (Observe, Confirm,
+/// Auto), side by side.
 class _ButtonRow extends StatelessWidget {
   const _ButtonRow();
 
@@ -86,32 +90,46 @@ class _ButtonRow extends StatelessWidget {
         return () => cmd.send(c, value);
       }
 
-      return Row(children: [
+      Widget card(String title, List<Widget> buttons, {Widget? trailing}) => AutoCard(
+            title: title,
+            titleHeight: autoRowTitleHeight,
+            trailing: trailing,
+            child: Padding(
+              padding: const EdgeInsets.all(2),
+              child: Row(children: [
+                for (var i = 0; i < buttons.length; i++) ...[
+                  if (i > 0) const SizedBox(width: 3),
+                  Expanded(child: buttons[i]),
+                ],
+              ]),
+            ),
+          );
+
+      return Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
         Expanded(
-          child: button(AutoControl.follow,
-              active: follow,
-              dot: follow,
-              // A second tap on an active Follow clears it.
-              onTap: on && hasDx
-                  ? () => cmd.send(AutoControl.follow, {'call': dx, 'choice': follow ? 'clear' : 'follow'})
-                  : null),
+          flex: 2,
+          child: card('Target', [
+            button(AutoControl.follow,
+                active: follow,
+                dot: follow,
+                // A second tap on an active Follow clears it.
+                onTap: on && hasDx
+                    ? () => cmd.send(AutoControl.follow, {'call': dx, 'choice': follow ? 'clear' : 'follow'})
+                    : null),
+            button(AutoControl.skip,
+                active: skip,
+                onTap: on && hasDx ? () => cmd.send(AutoControl.skip, {'call': dx, 'choice': 'skip'}) : null),
+          ]),
         ),
         const SizedBox(width: 4),
         Expanded(
-          child: button(AutoControl.skip,
-              active: skip,
-              onTap: on && hasDx ? () => cmd.send(AutoControl.skip, {'call': dx, 'choice': 'skip'}) : null),
+          flex: 3,
+          child: card('Mode', [
+            button(AutoControl.observe, active: mode == 'observe', onTap: modeTap(AutoControl.observe, 'observe')),
+            button(AutoControl.confirm, active: mode == 'confirm', onTap: modeTap(AutoControl.confirm, 'confirm')),
+            button(AutoControl.auto, active: mode == 'auto', onTap: modeTap(AutoControl.auto, 'auto')),
+          ], trailing: const _OperateLine()),
         ),
-        const SizedBox(width: 4),
-        Expanded(
-            child: button(AutoControl.observe,
-                active: mode == 'observe', onTap: modeTap(AutoControl.observe, 'observe'))),
-        const SizedBox(width: 4),
-        Expanded(
-            child: button(AutoControl.confirm,
-                active: mode == 'confirm', onTap: modeTap(AutoControl.confirm, 'confirm'))),
-        const SizedBox(width: 4),
-        Expanded(child: button(AutoControl.auto, active: mode == 'auto', onTap: modeTap(AutoControl.auto, 'auto'))),
       ]);
     });
   }
@@ -174,8 +192,9 @@ class _RowButton extends StatelessWidget {
   }
 }
 
-/// The one line of the row and of Approve and Reject: why they are off, or
-/// the result of the last command.
+/// The one line of the TARGET and MODE cards and of Approve and Reject: why
+/// they are off, or the result of the last command. It sits in the title
+/// strip of the MODE card.
 class _OperateLine extends StatelessWidget {
   const _OperateLine();
 
@@ -188,6 +207,7 @@ class _OperateLine extends StatelessWidget {
       // A long reason scales down a little rather than lose its end.
       return FittedBox(
         fit: BoxFit.scaleDown,
+        alignment: Alignment.centerRight,
         child: Text(line?.text ?? '',
             key: const ValueKey('auto-operate-line'),
             maxLines: 1,

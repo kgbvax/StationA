@@ -19,6 +19,7 @@ import '../theme.dart';
 import 'auto_card.dart';
 import 'auto_commands.dart';
 import 'auto_live.dart';
+import 'auto_words.dart';
 
 /// What the card shows, as text.
 class NextActionText {
@@ -35,6 +36,11 @@ String _target(String? call, String? band) => [
       if (band != null && band.isNotEmpty) band,
     ].join(' · ');
 
+/// The action as the card writes it: the short capital verb, then the call
+/// and the band, for example "QSY 17m" or "CALL VK9XQ · 20m".
+String _what(String? action, String? call, String? band) =>
+    [autoVerb(action), _target(call, band)].where((s) => s.isNotEmpty).join(' ');
+
 /// The text of the card for [view].
 NextActionText nextActionText(AutoOpView? view) {
   if (view == null) return NextActionText('Next action', 'no data', AppTheme.txtFaint, '');
@@ -46,7 +52,7 @@ NextActionText nextActionText(AutoOpView? view) {
   final hint = view.hint ?? '';
   final p = view.pending;
   if (p != null) {
-    final what = [p.action ?? '?', _target(p.call, p.band)].where((s) => s.isNotEmpty).join(' ');
+    final what = _what(p.action, p.call, p.band);
     final why = [
       if (p.reason != null && p.reason!.isNotEmpty) p.reason!,
       if (p.rule != null && p.rule!.isNotEmpty) 'rule ${p.rule}',
@@ -55,7 +61,7 @@ NextActionText nextActionText(AutoOpView? view) {
   }
   final c = view.current;
   if (c != null) {
-    final what = [c.action ?? '?', _target(c.call, c.band)].where((s) => s.isNotEmpty).join(' ');
+    final what = _what(c.action, c.call, c.band);
     final why = [
       if (c.result != null && c.result!.isNotEmpty) c.result!,
       if (c.gateReason != null && c.gateReason!.isNotEmpty) c.gateReason!,
@@ -87,13 +93,13 @@ class NextActionCard extends StatelessWidget {
         key: const ValueKey('auto-next-what'),
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
-        style: AppTheme.mono(17, color: t.whatColor, weight: FontWeight.w600).copyWith(height: 1.25));
+        style: AppTheme.display(19, color: t.whatColor, weight: FontWeight.w700, letterSpacing: 0.04).copyWith(height: 1.2));
     final Widget? buttons = pending == null ? null : _ProposalButtons(pending: pending);
     return LayoutBuilder(builder: (context, c) {
       // Under a banner on a landscape phone the card gets less than its
       // full height. Then the title strip goes, and the countdown moves
       // next to the proposal, so Approve and Reject keep 48 dp.
-      if (c.maxHeight < compactBelow) {
+      if (c.maxHeight < (buttons == null ? compactBelowNoButtons : compactBelow)) {
         return Container(
           key: const ValueKey('auto-next-action'),
           decoration: AppTheme.cardDecoration(),
@@ -118,32 +124,38 @@ class NextActionCard extends StatelessWidget {
         trailing: pending == null ? null : _Countdown(pending: pending),
         child: Padding(
           padding: const EdgeInsets.fromLTRB(8, 4, 8, 6),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              what,
-              Expanded(
-                child: LayoutBuilder(builder: (context, c) {
-                  // As many lines of the reason as fit. None on a short screen.
-                  final lines = (c.maxHeight / 16).floor();
-                  if (lines < 1 || t.why.isEmpty) return const SizedBox.shrink();
-                  return Text(t.why,
+          child: LayoutBuilder(builder: (context, c) {
+            // The proposal, its reason, then Approve and Reject right under
+            // the reason. The reason gets the lines that fit, at most 3.
+            const whatHeight = 24.0, lineHeight = 14.0, buttonsHeight = 48.0 + 6;
+            final room = c.maxHeight - whatHeight - (buttons == null ? 0 : buttonsHeight);
+            final lines = t.why.isEmpty ? 0 : (room / lineHeight).floor().clamp(0, 3);
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                what,
+                if (lines > 0)
+                  Text(t.why,
                       key: const ValueKey('auto-next-why'),
                       maxLines: lines,
                       overflow: TextOverflow.ellipsis,
-                      style: AppTheme.body(11, color: AppTheme.txtMute).copyWith(height: 1.2));
-                }),
-              ),
-              ?buttons,
-            ],
-          ),
+                      style: AppTheme.body(11, color: AppTheme.txtMute).copyWith(height: 1.2)),
+                if (buttons != null) ...[const SizedBox(height: 6), buttons],
+              ],
+            );
+          }),
         ),
       );
     });
   }
 
-  /// Below this height the card drops its title strip.
-  static const compactBelow = 104.0;
+  /// Below this height the card drops its title strip: the full card needs
+  /// the title, the proposal, and Approve and Reject.
+  static const compactBelow = 112.0;
+
+  /// The same without Approve and Reject: the title, the text, one line of
+  /// the reason.
+  static const compactBelowNoButtons = 72.0;
 }
 
 /// `CONFIRM n s` from `deadline_ms` and the moving time of the view.
@@ -221,16 +233,21 @@ class _ProposalButtons extends StatelessWidget {
         : primary
             ? AppTheme.blend(AppTheme.accent, onTap == null ? 0.5 : 0.9)
             : AppTheme.cardLine;
+    // Approve is the filled accent button while it can be tapped.
+    final filled = primary && onTap != null;
     return ElevatedButton(
       key: ValueKey('auto-${c.name}'),
       onPressed: onTap,
       style: AppTheme.actionButton().copyWith(
         minimumSize: const WidgetStatePropertyAll(Size(48, 48)),
         side: WidgetStatePropertyAll(BorderSide(width: problem ? 1.4 : 1, color: line)),
+        backgroundColor: filled ? WidgetStatePropertyAll(AppTheme.accent) : null,
       ),
       child: Text(c.label,
           style: AppTheme.display(15,
-              color: onTap == null ? AppTheme.txtFaint : null, weight: FontWeight.w600, letterSpacing: 0.06)),
+              color: onTap == null ? AppTheme.txtFaint : (filled ? AppTheme.activeButtonText : null),
+              weight: FontWeight.w600,
+              letterSpacing: 0.06)),
     );
   }
 }

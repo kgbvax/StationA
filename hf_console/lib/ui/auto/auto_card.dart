@@ -12,9 +12,13 @@ class AutoCard extends StatelessWidget {
   final Widget child;
   final bool shrink;
 
-  const AutoCard({super.key, required this.title, this.trailing, required this.child, this.shrink = false});
+  /// The height of the title strip.
+  final double titleHeight;
 
-  static const titleHeight = 22.0;
+  const AutoCard(
+      {super.key, required this.title, this.trailing, required this.child, this.shrink = false, this.titleHeight = defaultTitleHeight});
+
+  static const defaultTitleHeight = 22.0;
 
   @override
   Widget build(BuildContext context) {
