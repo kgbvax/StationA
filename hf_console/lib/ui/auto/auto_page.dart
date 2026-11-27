@@ -7,16 +7,16 @@
 /// larger screen): the top bar, the readout row,
 /// the main area with the band selector, the band activity, the RX
 /// frequency list with the controls under it (Target, Mode, Arm CQ, Stop
-/// TX), and the DX card, and the bottom strip with the action log and the
-/// health row. Stop TX stays in view under the RX list, also under the
-/// LINK DOWN banner.
+/// TX), and the DX card, and the bottom strip with the action log. Stop TX
+/// stays in view under the RX list, also under the LINK DOWN banner.
 ///
 /// Portrait: the readouts and the control column on top, the lists below in
 /// a scroll view.
 ///
 /// The page owns one [AutoCommander] for its controls. A `/state.error`
-/// of 75auto shows as a red line: in landscape in place of the action log,
-/// in portrait under the status strip. Refused commands show next to their
+/// of 75auto and the faults of its inputs (see [autoInputFaults]) show as
+/// a red line: in landscape in place of the action log, in portrait under
+/// the status strip. Healthy inputs show nothing. Refused commands show next to their
 /// controls, not there.
 library;
 
@@ -37,7 +37,7 @@ import 'auto_top_bar.dart';
 import 'band_selector.dart';
 import 'decode_list.dart';
 import 'dx_card.dart';
-import 'health_row.dart';
+import 'input_faults.dart';
 import 'rx_list.dart';
 
 /// Builds the console top bar with an optional status part on its right.
@@ -166,16 +166,7 @@ class _AutoPageState extends State<AutoPage> {
                 gap,
                 const SizedBox(
                   height: autoBottomHeight,
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Expanded(child: AutoErrorLine(orElse: ActionLogStrip())),
-                      gap,
-                      Flexible(
-                        child: FittedBox(fit: BoxFit.scaleDown, alignment: Alignment.centerRight, child: HealthRow()),
-                      ),
-                    ],
-                  ),
+                  child: AutoErrorLine(orElse: ActionLogStrip()),
                 ),
               ],
             ),
@@ -221,8 +212,6 @@ class _AutoPageState extends State<AutoPage> {
                 SizedBox(height: 200, child: RxList()),
                 gap,
                 ActionLogStrip(vertical: true),
-                gap,
-                HealthRow(wrap: true),
               ],
             ),
           ),
@@ -232,8 +221,8 @@ class _AutoPageState extends State<AutoPage> {
   }
 }
 
-/// The `/state.error` of 75auto as one red line. Without an error it shows
-/// [orElse], or nothing. Plain text only.
+/// The `/state.error` of 75auto and the input faults as one red line.
+/// Without either it shows [orElse], or nothing. Plain text only.
 class AutoErrorLine extends StatelessWidget {
   final Widget? orElse;
 
@@ -241,8 +230,8 @@ class AutoErrorLine extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final error = context.select<BusStore, String?>((s) => s.autoOp?.error);
-    if (error == null || error.isEmpty) return orElse ?? const SizedBox.shrink();
+    final text = context.select<BusStore, String>((s) => autoErrorText(s.autoOp?.error, autoInputFaultsNow(s)));
+    if (text.isEmpty) return orElse ?? const SizedBox.shrink();
     return Container(
       key: const ValueKey('auto-error'),
       constraints: const BoxConstraints(minHeight: 28),
@@ -254,10 +243,17 @@ class AutoErrorLine extends StatelessWidget {
         border: Border.all(color: AppTheme.blend(AppTheme.red, 0.7)),
         borderRadius: BorderRadius.circular(4),
       ),
-      child: Text('75AUTO ERROR · $error',
+      child: Text(text,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
           style: AppTheme.mono(12, color: AppTheme.red, weight: FontWeight.w600)),
     );
   }
 }
+
+/// The text of the error line: the 75auto error first, then the input
+/// faults. Empty when there is nothing to show.
+String autoErrorText(String? error, List<String> faults) => [
+      if (error != null && error.isNotEmpty) '75AUTO ERROR · $error',
+      if (faults.isNotEmpty) 'INPUT FAULT · ${faults.join(' · ')}',
+    ].join(' · ');
