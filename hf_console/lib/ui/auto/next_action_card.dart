@@ -63,7 +63,7 @@ NextActionText nextActionText(AutoOpView? view) {
   if (c != null) {
     final what = _what(c.action, c.call, c.band);
     final why = [
-      if (c.result != null && c.result!.isNotEmpty) c.result!,
+      ?autoOutcome(c.result),
       if (c.gateReason != null && c.gateReason!.isNotEmpty) c.gateReason!,
       if (c.reason != null && c.reason!.isNotEmpty) c.reason!,
       if (hint.isNotEmpty) hint,

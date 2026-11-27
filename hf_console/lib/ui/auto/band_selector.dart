@@ -1,6 +1,7 @@
 /// The band selector of the 75AUTO page. Display only in this work: each
-/// band of the band table in dial order, with the decode count of its latest
-/// seen batch and the age of that count. A band without a batch in this
+/// band of the band table in dial order, with its dial frequency from the
+/// band table in MHz, the decode count of its latest seen batch and the age
+/// of that count. A band without a batch in this
 /// session shows `·`. The column always lists the HF bands from 160 m to
 /// 10 m. A band that is not in the band table of 75auto shows dimmed with
 /// `–`: 75auto does not change to it. A tap does nothing (a band change comes from a rule
@@ -107,6 +108,12 @@ class BandSelector extends StatelessWidget {
   }
 }
 
+/// A dial in Hz as MHz with three decimals, for example 7074000 → 7.074.
+String dialMhz(int hz) {
+  final khz = (hz / 1000).round();
+  return '${khz ~/ 1000}.${(khz % 1000).toString().padLeft(3, '0')}';
+}
+
 class _BandRow extends StatelessWidget {
   final AutoOpBandCount entry;
 
@@ -176,6 +183,12 @@ class _BandRow extends StatelessWidget {
                 textBaseline: TextBaseline.alphabetic,
                 children: [
                   Text(label, style: AppTheme.mono(13, color: text, weight: FontWeight.w700)),
+                  if (inTable && entry.dialHz != null) ...[
+                    const SizedBox(width: 5),
+                    Text(dialMhz(entry.dialHz!),
+                        key: ValueKey('auto-band-dial-$band'),
+                        style: AppTheme.mono(9, color: off ? AppTheme.txtFaint : AppTheme.txtMute)),
+                  ],
                   const SizedBox(width: 6),
                   Text(count,
                       key: ValueKey('auto-band-count-$band'),

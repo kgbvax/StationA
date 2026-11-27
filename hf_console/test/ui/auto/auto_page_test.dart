@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hf_console/store/bus_store.dart';
 import 'package:hf_console/ui/auto/auto_controls.dart';
-import 'package:hf_console/ui/auto/auto_page.dart' show autoScaleFor;
+import 'package:hf_console/ui/auto/auto_page.dart' show autoMaxScale;
 import 'package:hf_console/ui/screens/console_screen.dart';
 import 'package:hf_console/ui/theme.dart';
 
@@ -54,9 +54,13 @@ String _text(WidgetTester tester, String key) => tester.widget<Text>(find.byKey(
 
 void _expectStopInView(WidgetTester tester, Size logical) {
   final stop = tester.getRect(find.byKey(const ValueKey('auto-stop-tx')));
-  // On a larger screen the landscape page scales up as a whole.
-  final k = logical.width > logical.height ? autoScaleFor(logical.width, logical.height) : 1.0;
-  expect(stop.height, moreOrLessEquals(autoStopHeight * k));
+  // On a larger screen the area under the top bar scales up as a whole,
+  // at most 2x. A phone does not scale.
+  if (logical.width < 960) {
+    expect(stop.height, moreOrLessEquals(autoStopHeight));
+  } else {
+    expect(stop.height, inInclusiveRange(autoStopHeight, autoStopHeight * autoMaxScale));
+  }
   expect(stop.top, greaterThanOrEqualTo(0));
   expect(stop.bottom, lessThanOrEqualTo(logical.height));
   expect(stop.right, lessThanOrEqualTo(logical.width));
@@ -71,6 +75,35 @@ void main() {
   });
 
   group('layout', () {
+    for (final (name, device) in [('phone', _phoneLandscape), ('tablet', _tablet), ('ID.7', (const Size(3200, 1520), 2.0))]) {
+      testWidgets('$name: the page tabs stay in place between HF and 75AUTO', (tester) async {
+        tester.view.physicalSize = device.$1;
+        tester.view.devicePixelRatio = device.$2;
+        addTearDown(tester.view.reset);
+        final store = BusStore()..seedAutoOp(busyAutoOpDoc());
+        await tester.pumpWidget(TestHarness(store: store, mqtt: FakeMqttService(store), child: const ConsoleScreen()));
+        await tester.pump(const Duration(milliseconds: 100));
+        // The left and top edge of each tab. The active tab has a bolder
+        // label, so a width can change by a fraction of a pixel.
+        List<double> tabs() => [
+              for (final t in ['Station', 'HF', 'UHF', 'CAM', '75AUTO'])
+                ...() {
+                  final r = tester.getRect(find.widgetWithText(InkWell, t));
+                  return [r.left, r.top];
+                }(),
+            ];
+        await tester.tap(find.widgetWithText(InkWell, 'HF'));
+        await tester.pump(const Duration(milliseconds: 300));
+        final onHf = tabs();
+        await tester.tap(find.widgetWithText(InkWell, '75AUTO'));
+        await tester.pump(const Duration(milliseconds: 300));
+        final onAuto = tabs();
+        for (var i = 0; i < onHf.length; i++) {
+          expect(onAuto[i], moreOrLessEquals(onHf[i], epsilon: 1.0));
+        }
+      });
+    }
+
     testWidgets('landscape phone: no overflow, no page scroll, Stop TX in view', (tester) async {
       await _pumpAuto(tester);
       expect(find.byKey(const ValueKey('auto-portrait-scroll')), findsNothing);

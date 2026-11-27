@@ -44,12 +44,14 @@ typedef AutoTopBarBuilder = Widget Function(Widget? trailing);
 /// The heights of the landscape layout.
 const autoReadoutHeight = 56.0;
 
-/// The landscape design size: a phone in landscape. On a larger screen (the
-/// mirrored phone on the car screen, a tablet) the page lays out at this
-/// size and scales up as a whole, so text and controls grow with the
-/// width. The factor is at most [autoMaxScale].
+/// The landscape design size of the area under the top bar: a phone in
+/// landscape. On a larger screen (the mirrored phone on the car screen, a
+/// tablet) that area lays out at this size and scales up as a whole, so
+/// text and controls grow with the width. The factor is at most
+/// [autoMaxScale]. The top bar does not scale: it is the bar of every
+/// page, and its page tabs stay in place.
 const autoDesignWidth = 914.0;
-const autoDesignHeight = 411.0;
+const autoDesignHeight = 350.0;
 const autoMaxScale = 2.0;
 
 /// The scale factor of the landscape page for a [width] x [height] area.
@@ -95,25 +97,34 @@ class _AutoPageState extends State<AutoPage> {
       child: LayoutBuilder(builder: (context, c) {
         final landscape = c.maxWidth > c.maxHeight;
         if (!landscape) return Container(color: AppTheme.page, child: _portrait());
-        final k = autoScaleFor(c.maxWidth, c.maxHeight);
-        if (k <= 1.0) return Container(color: AppTheme.page, child: _landscape());
-        // Lay out at the smaller size and scale up as a whole. Taps scale
-        // with it.
-        final inner = Size(c.maxWidth / k, c.maxHeight / k);
-        final mq = MediaQuery.of(context);
         return Container(
           color: AppTheme.page,
-          child: FittedBox(
-            key: const ValueKey('auto-page-scaled'),
-            fit: BoxFit.contain,
-            alignment: Alignment.topCenter,
-            child: MediaQuery(
-              data: mq.copyWith(size: inner),
-              child: SizedBox(width: inner.width, height: inner.height, child: _landscape()),
-            ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              topBar(const AutoStatusStrip()),
+              Expanded(child: LayoutBuilder(builder: (context, b) => _scaled(context, b.biggest))),
+            ],
           ),
         );
       }),
+    );
+  }
+
+  /// The area under the top bar, scaled up as a whole on a larger screen.
+  /// Taps scale with it.
+  Widget _scaled(BuildContext context, Size size) {
+    final k = autoScaleFor(size.width, size.height);
+    if (k <= 1.0) return _landscape();
+    final inner = Size(size.width / k, size.height / k);
+    return FittedBox(
+      key: const ValueKey('auto-page-scaled'),
+      fit: BoxFit.contain,
+      alignment: Alignment.topCenter,
+      child: MediaQuery(
+        data: MediaQuery.of(context).copyWith(size: inner),
+        child: SizedBox(width: inner.width, height: inner.height, child: _landscape()),
+      ),
     );
   }
 
@@ -122,7 +133,6 @@ class _AutoPageState extends State<AutoPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        topBar(const AutoStatusStrip()),
         Expanded(
           child: Padding(
             padding: const EdgeInsets.all(autoGap),
@@ -135,7 +145,7 @@ class _AutoPageState extends State<AutoPage> {
                   child: Row(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      const SizedBox(width: 72, child: BandSelector()),
+                      const SizedBox(width: 94, child: BandSelector()),
                       gap,
                       const Expanded(child: DecodeList()),
                       gap,

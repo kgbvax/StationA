@@ -31,8 +31,8 @@ List<AutoLogEntry> actionLogEntries(AutoOpView? view) {
   final log = view?.log ?? const <AutoOpLogLine>[];
   var n = 0;
   for (final l in log.reversed) {
-    // "14:29 LOGGED 3B8HC 20m": the short verb, the call and the band. A
-    // result shows only when the action did not simply take effect.
+    // "14:27 CALL VK9XQ 20m OK": the short verb, the call, the band, and
+    // the outcome word.
     final outcome = autoOutcome(l.result);
     final parts = <String>[
       if (l.timeMs != null) utcHm(l.timeMs!),

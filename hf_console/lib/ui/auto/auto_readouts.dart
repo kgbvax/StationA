@@ -40,7 +40,6 @@ class AutoReadouts extends StatelessWidget {
       label: 'Decodes',
       value: '${st?.decodeCount ?? '?'}',
       valueColor: st?.decodeCount == null ? null : AppTheme.green,
-      sub: st?.lastDecodeEndMs == null ? 'last ?' : 'last ${utcHms(st!.lastDecodeEndMs!)}',
     );
     final dx = _DxReadout(station: st);
     final tx = _TransmitReadout(station: st);
@@ -107,9 +106,10 @@ class _Readout extends StatelessWidget {
   final String label;
   final String value;
   final Color? valueColor;
-  final String sub;
+  /// The small text after the value. Null: none.
+  final String? sub;
 
-  const _Readout({required this.label, required this.value, this.valueColor, required this.sub});
+  const _Readout({required this.label, required this.value, this.valueColor, this.sub});
 
   @override
   Widget build(BuildContext context) {
@@ -127,8 +127,10 @@ class _Readout extends StatelessWidget {
               textBaseline: TextBaseline.alphabetic,
               children: [
                 Text(value, maxLines: 1, style: AppTheme.mono(23, color: valueColor, weight: FontWeight.w600).copyWith(height: 1.1)),
-                const SizedBox(width: 8),
-                Text(sub, maxLines: 1, style: AppTheme.mono(11, color: AppTheme.txtMute)),
+                if (sub != null) ...[
+                  const SizedBox(width: 8),
+                  Text(sub!, maxLines: 1, style: AppTheme.mono(11, color: AppTheme.txtMute)),
+                ],
               ],
             ),
           ),
@@ -262,11 +264,8 @@ class _TransmitReadout extends StatelessWidget {
           '' => 'no TX yet',
           _ => 'parity ?',
         };
-        final sub = stopUnconfirmed
-            ? 'WSJT-X STILL SENDING'
-            : st?.txEnabled == false
-                ? '$parity · TX OFF'
-                : parity;
+        // No "TX OFF": RX above already says it.
+        final sub = stopUnconfirmed ? 'WSJT-X STILL SENDING' : parity;
         var frac = 0.0;
         final off = live.slotOffsetMs;
         final period = live.periodMs;

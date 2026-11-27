@@ -73,8 +73,6 @@ class DecodeList extends StatelessWidget {
     final rows = bandActivityRows(view);
     return AutoCard(
       title: 'Band activity',
-      trailing: Text('CQ green · NEW needed · TGT target',
-          maxLines: 1, overflow: TextOverflow.ellipsis, style: AppTheme.display(10, color: AppTheme.txtFaint)),
       child: rows.isEmpty
           ? Center(child: Text(view == null ? 'no data' : 'no decodes', style: AppTheme.mono(12, color: AppTheme.txtFaint)))
           : ListView.builder(
