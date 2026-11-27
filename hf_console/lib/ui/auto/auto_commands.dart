@@ -56,7 +56,8 @@ enum AutoControl {
   auto('AUTO', 'mode'),
   follow('FOLLOW', 'target'),
   skip('SKIP', 'target'),
-  presence('PRESENCE', 'touch');
+  presence('PRESENCE', 'touch'),
+  armCq('ARM CQ', 'arm_cq');
 
   /// The name of the control in the feedback line.
   final String label;

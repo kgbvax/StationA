@@ -1,7 +1,14 @@
 /// The control column of the 75AUTO page, from top to bottom: the Next
 /// action card with Approve and Reject, the TARGET card (Follow, Skip) and
-/// the MODE card (Observe, Confirm, Auto) side by side, and Stop TX at the
-/// bottom. The feedback line sits in the title strip of the MODE card.
+/// the MODE card (Observe, Confirm, Auto) side by side, and Arm CQ and Stop
+/// TX at the bottom. The feedback line sits in the title strip of the MODE
+/// card.
+///
+/// Arm CQ sits next to Stop TX, as in the window of 75auto: Arm CQ gives the
+/// rules the permission to call CQ for 30 minutes, Stop takes it away. It
+/// is on in auto mode under the same gate as the other commands. While the
+/// arm lasts it shows the time that is left, and a tap arms for 30 minutes
+/// from now again.
 ///
 /// Each tap sends one signed command (`auto_commands.dart`). There are no
 /// dialogs: the gate of 75auto and the pending id are the interlocks.
@@ -30,6 +37,9 @@ import 'next_action_card.dart';
 const autoButtonRowHeight = 48.0;
 const autoStopHeight = 60.0;
 
+/// The width of Arm CQ next to Stop TX.
+const autoArmWidth = 84.0;
+
 /// The title strip of the TARGET and MODE cards.
 const autoRowTitleHeight = 16.0;
 
@@ -54,7 +64,14 @@ class AutoControlColumn extends StatelessWidget {
         const SizedBox(height: 4),
         const SizedBox(height: autoRowCardHeight, child: _ButtonRow()),
         const SizedBox(height: 4),
-        const SizedBox(height: autoStopHeight, child: _StopTx()),
+        const SizedBox(
+          height: autoStopHeight,
+          child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            SizedBox(width: autoArmWidth, child: _ArmCq()),
+            SizedBox(width: 4),
+            Expanded(child: _StopTx()),
+          ]),
+        ),
       ],
     );
   }
@@ -218,6 +235,68 @@ class _OperateLine extends StatelessWidget {
   }
 }
 
+/// Arm CQ. Off: ARM CQ. Armed by the operator: CQ and the time left.
+/// Confirm mode: CQ CONFIRM, off (each CQ needs an approval there).
+class _ArmCq extends StatelessWidget {
+  const _ArmCq();
+
+  @override
+  Widget build(BuildContext context) {
+    final cmd = context.watch<AutoCommander>();
+    return AutoTicker(builder: (context, live) {
+      final store = context.read<BusStore>();
+      final gate = autoGateOf(store, live, keyStored: cmd.keyStored);
+      final view = store.autoOp;
+      final auto = view?.session?.mode == 'auto';
+      final arm = view?.arm;
+      final now = live.nowMs;
+      final left = arm?.source == 'operator' && arm?.untilMs != null && now != null ? arm!.untilMs! - now : 0;
+      final armed = left > 0;
+      final confirm = arm?.source == 'confirm';
+      final on = gate.operate == null && auto;
+      final problem = cmd.problemControl(gate, clock.now()) == AutoControl.armCq;
+      final String top;
+      final String? sub;
+      if (confirm) {
+        top = 'CQ';
+        sub = 'CONFIRM';
+      } else if (armed) {
+        final s = (left + 999) ~/ 1000;
+        top = 'CQ';
+        sub = '${s ~/ 60}:${(s % 60).toString().padLeft(2, '0')}';
+      } else {
+        top = 'ARM CQ';
+        sub = auto ? null : 'auto only';
+      }
+      final Color text = armed ? AppTheme.blend(AppTheme.accent, 0.9) : (on ? AppTheme.txt : AppTheme.txtFaint);
+      return ElevatedButton(
+        key: const ValueKey('auto-arm-cq'),
+        onPressed: on ? () => cmd.send(AutoControl.armCq, null) : null,
+        style: AppTheme.actionButton().copyWith(
+          padding: const WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: 4, vertical: 2)),
+          minimumSize: const WidgetStatePropertyAll(Size(48, 48)),
+          side: WidgetStatePropertyAll(BorderSide(
+              width: armed || problem ? 1.4 : 1,
+              color: problem ? AppTheme.amber : (armed ? AppTheme.accent : AppTheme.cardLine))),
+          backgroundColor: WidgetStatePropertyAll(armed ? AppTheme.accentDim : AppTheme.pane),
+        ),
+        child: FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Text(top,
+                key: const ValueKey('auto-arm-cq-label'),
+                style: AppTheme.display(15, color: text, weight: FontWeight.w700, letterSpacing: 0.06)),
+            if (sub != null)
+              Text(sub,
+                  key: const ValueKey('auto-arm-cq-sub'),
+                  style: AppTheme.mono(11, color: armed ? text : AppTheme.txtMute, weight: FontWeight.w600)),
+          ]),
+        ),
+      );
+    });
+  }
+}
+
 /// Stop TX, always in view at the bottom of the column.
 class _StopTx extends StatelessWidget {
   const _StopTx();
@@ -260,14 +339,16 @@ class _StopTx extends StatelessWidget {
                   style: AppTheme.display(19, color: label, weight: FontWeight.w700, letterSpacing: 0.08)
                       .copyWith(height: 1.15)),
             ]),
-            Text(line?.text ?? '',
-                key: const ValueKey('auto-stop-line'),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: AppTheme.mono(10,
-                        color: hot ? AppTheme.activeButtonText : (line?.color ?? AppTheme.txtMute),
-                        weight: FontWeight.w600)
-                    .copyWith(height: 1.2)),
+            // Only with text, so a plain STOP TX sits in the middle.
+            if ((line?.text ?? '').isNotEmpty)
+              Text(line!.text,
+                  key: const ValueKey('auto-stop-line'),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppTheme.mono(10,
+                          color: hot ? AppTheme.activeButtonText : line.color,
+                          weight: FontWeight.w600)
+                      .copyWith(height: 1.2)),
           ],
         ),
       );

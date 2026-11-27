@@ -1,10 +1,10 @@
 /// The status part of the top bar of the 75AUTO page: the session pill
-/// (with REPLAY), the mode and presence chip, the rule set, the age of the
+/// (with REPLAY), the mode and presence chip, and the age of the
 /// data from bwpc. No clock: the room goes to the status.
 ///
 /// In landscape the strip sits in the one row of the console top bar. When
-/// the row is too narrow, the rule set goes first, then the host of the age
-/// pill. In portrait the strip wraps under the top bar.
+/// the row is too narrow, the age pill drops its host. In portrait the
+/// strip wraps under the top bar.
 ///
 /// A tap on the mode and presence chip sends `touch`: it counts as operator
 /// presence at 75auto. It goes out only under the same gate as the other
@@ -59,7 +59,7 @@ class AutoStatusStrip extends StatelessWidget {
     final shown = [...items];
     double total() => shown.fold(0.0, (w, i) => w + i.width + gap);
     // The order in which items leave a narrow row.
-    for (final drop in const ['rules', 'age-host']) {
+    for (final drop in const ['age-host']) {
       if (total() <= width) break;
       if (drop == 'age-host') {
         final i = shown.indexWhere((e) => e.id == 'age');
@@ -125,10 +125,6 @@ class AutoStatusStrip extends StatelessWidget {
     // Mode and presence. A missing mode is "?", never AUTO.
     items.add(_modeItem(view, live).withTap(touch));
 
-    final rules = view?.session?.ruleSet;
-    if (rules != null && rules.isNotEmpty) {
-      items.add(_Item('rules', 'RULES $rules', AppTheme.txtMute));
-    }
 
     // Age of the data from bwpc.
     final host = store.autoOpMeta?.host ?? '75auto';

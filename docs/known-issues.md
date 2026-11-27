@@ -1050,6 +1050,10 @@ default (`[remote] enabled = false`). Contract: 75auto `docs/interfaces/auto-op-
   the car through the 75AUTO page counts as control operator supervision in observe, confirm and auto mode.
   One tap does one action. The page has no confirmation dialogs. The gate of 75auto keeps all hard limits, and
   no command can loosen them. There is no Resume from the car: the operator clears a latched stop at the station.
+- **Arm CQ from the page (operator decision of 2026-11-27).** `arm_cq` arms CQ calls for 30 minutes, as Arm CQ
+  at the window of 75auto: only in auto mode (else refused with `not auto mode`), and only with `operate`. A stop
+  or a change out of auto mode ends the arm. A tap while armed arms for 30 minutes from now again. The arm is a
+  permission for the rules, not a transmission: the gate keeps all its hard limits for each CQ.
 - **Signature and key.** Each command, `stop` included, carries an HMAC-SHA256 signature over a fixed JSON
   text of `action`, `value`, `ts` and `cmd_id`. The key is 32 random bytes. On bwpc it is a file of 64 hex digits
   named by `remote.key_file`. On the phone it is in the secure storage of the app, never in the APK. 75auto

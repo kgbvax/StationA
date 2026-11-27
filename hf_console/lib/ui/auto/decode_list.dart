@@ -90,8 +90,9 @@ class AutoRowView extends StatelessWidget {
   final AutoRow row;
   final String? dxCall;
 
-  /// Only the TO ME tag on a decode to me (the RX list, where the text
-  /// matters more than the other tags).
+  /// No tags on a decode to me (the RX list, where the text matters more
+  /// than the tags). A decode to me has no tag of its own: its red colour
+  /// says it.
   final bool toMeTagOnly;
 
   const AutoRowView({super.key, required this.row, required this.dxCall, this.toMeTagOnly = false});
@@ -139,7 +140,6 @@ class AutoRowView extends StatelessWidget {
         fill = AppTheme.blend(AppTheme.red, 0.12);
         weight = FontWeight.w600;
         if (toMeTagOnly) tags = [];
-        tags.add(AutoTag('TO ME', AppTheme.red));
       }
     }
     return Container(
