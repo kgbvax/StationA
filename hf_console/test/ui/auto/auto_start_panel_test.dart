@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hf_console/mqtt/mqtt_service.dart';
+import 'package:mqtt_client/mqtt_client.dart';
 import 'package:hf_console/store/auto_op.dart';
 import 'package:hf_console/store/bus_store.dart';
 import 'package:hf_console/ui/auto/auto_start_panel.dart';
@@ -49,7 +50,23 @@ void _chain(BusStore store, String state, String step, {String fault = '', Strin
   });
 }
 
-Future<(BusStore, FakeMqttService)> _pump(WidgetTester tester, {bool key = true, Map<String, dynamic>? doc}) async {
+/// A fake MQTT service whose publish to [failTopic] fails (not sent) while
+/// [fail] is true. Each publish is recorded, also a failed one.
+class _FailingMqtt extends FakeMqttService {
+  final String failTopic;
+  bool fail = true;
+
+  _FailingMqtt(super.store, this.failTopic);
+
+  @override
+  bool publish(String topic, String payload, {required bool retain, MqttQos qos = MqttQos.atLeastOnce}) {
+    super.publish(topic, payload, retain: retain, qos: qos);
+    return !(fail && topic == failTopic);
+  }
+}
+
+Future<(BusStore, FakeMqttService)> _pump(WidgetTester tester,
+    {bool key = true, Map<String, dynamic>? doc, FakeMqttService Function(BusStore)? mqttOf}) async {
   tester.view.physicalSize = const Size(2400, 1080);
   tester.view.devicePixelRatio = 2.625;
   addTearDown(tester.view.reset);
@@ -58,7 +75,7 @@ Future<(BusStore, FakeMqttService)> _pump(WidgetTester tester, {bool key = true,
   final store = BusStore()..seedAutoOp(d);
   store.applyStatus(_seqSlot, 'online');
   store.applyState(_seqSlot, {'phase': 'idle', 'fault': ''});
-  final mqtt = FakeMqttService(store);
+  final mqtt = mqttOf?.call(store) ?? FakeMqttService(store);
   await tester.pumpWidget(TestHarness(store: store, mqtt: mqtt, child: const ConsoleScreen()));
   await tester.pump(const Duration(milliseconds: 100));
   await tester.tap(find.widgetWithText(InkWell, '75AUTO'));
@@ -322,6 +339,88 @@ void main() {
     _chain(store, 'failed', '', fault: 'busy: stopping', requester: _starter(tester).deviceId, ts: 2);
     await _settle(tester);
     expect(_text(tester, 'auto-start-line'), 'REFUSED · busy: stopping');
+  });
+
+  testWidgets('two taps before powerseq answers: one auto_start, the line says start sent', (tester) async {
+    final (_, mqtt) = await _pump(tester);
+    await _tap(tester, 'auto-start');
+    await _tap(tester, 'auto-start');
+    expect(_onSeq(mqtt), hasLength(1));
+    expect(_text(tester, 'auto-start-line'), 'start sent');
+    expect(_on(tester, 'auto-start'), isFalse);
+  });
+
+  testWidgets('auto_start not sent: NOT SENT · tap again, and Start is on again', (tester) async {
+    late _FailingMqtt failing;
+    final (_, mqtt) = await _pump(tester, mqttOf: (s) => failing = _FailingMqtt(s, '$_seqSlot/cmd'));
+    await _tap(tester, 'auto-start');
+    expect(_onSeq(mqtt), hasLength(1));
+    expect(_text(tester, 'auto-start-line'), 'NOT SENT · tap again');
+    expect(_on(tester, 'auto-start'), isTrue);
+    failing.fail = false;
+    await _tap(tester, 'auto-start');
+    expect(_onSeq(mqtt), hasLength(2));
+    expect(_text(tester, 'auto-start-line'), 'start sent');
+  });
+
+  testWidgets('ready while the 75auto data is not fresh: wait, then one start_session at the live /state',
+      (tester) async {
+    final (store, mqtt) = await _pump(tester);
+    await _tap(tester, 'auto-start');
+    final me = _starter(tester).deviceId!;
+    _chain(store, 'running', 'station', requester: me, ts: 2);
+    await _settle(tester);
+    // A reconnect: the retained /state of 75auto is not fresh, the gate is closed.
+    store.markConnected(scheduleGraceNotify: false);
+    _chain(store, 'ready', '75auto', requester: me, ts: 3);
+    await _settle(tester);
+    expect(_on75(mqtt), isEmpty);
+    expect(_text(tester, 'auto-start-row-session-note'), 'waiting · DATA STALE');
+    _live(store, _idleDoc());
+    await _settle(tester);
+    final sent = _on75(mqtt);
+    expect(sent, hasLength(1));
+    expect(_signed(sent.single)['action'], 'start_session');
+    _live(store, _idleDoc());
+    await _settle(tester);
+    expect(_on75(mqtt), hasLength(1));
+  });
+
+  testWidgets('a station stop after ready (gate closed): no start_session when 75auto turns live', (tester) async {
+    final (store, mqtt) = await _pump(tester);
+    await _tap(tester, 'auto-start');
+    final me = _starter(tester).deviceId!;
+    _chain(store, 'running', 'station', requester: me, ts: 2);
+    await _settle(tester);
+    store.markConnected(scheduleGraceNotify: false);
+    _chain(store, 'ready', '75auto', requester: me, ts: 3);
+    await _settle(tester);
+    expect(_on75(mqtt), isEmpty);
+    _chain(store, 'failed', 'station', fault: 'stopped by the operator', requester: me, ts: 4);
+    await _settle(tester);
+    _live(store, _idleDoc());
+    await _settle(tester);
+    expect(_on75(mqtt), isEmpty);
+  });
+
+  testWidgets('powerseq offline: Start is off with powerseq offline', (tester) async {
+    final (store, mqtt) = await _pump(tester);
+    store.applyStatus(_seqSlot, 'offline');
+    await _settle(tester);
+    expect(_on(tester, 'auto-start'), isFalse);
+    expect(_text(tester, 'auto-start-line'), 'powerseq offline');
+    await _tap(tester, 'auto-start');
+    expect(_onSeq(mqtt), isEmpty);
+  });
+
+  testWidgets('link down: Start is off with LINK DOWN', (tester) async {
+    final (store, mqtt) = await _pump(tester);
+    store.markDisconnected();
+    await _settle(tester);
+    expect(_on(tester, 'auto-start'), isFalse);
+    expect(_text(tester, 'auto-start-line'), 'LINK DOWN');
+    await _tap(tester, 'auto-start');
+    expect(_onSeq(mqtt), isEmpty);
   });
 
   testWidgets('in portrait the panel sits in the scroll column without an overflow', (tester) async {
