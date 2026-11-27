@@ -33,12 +33,13 @@ func (h *hookPublisher) Publish(topic string, retained bool, payload []byte) err
 }
 
 // fakePC answers ensure_program on power/shack-pc/cmd with a /state that
-// carries program_<name> (after a short delay, like a real round trip).
+// carries program_<name>=starting and then the reply (after a short delay,
+// like a real round trip).
 type fakePC struct {
 	s      *Sequencer
 	mu     sync.Mutex
 	fields map[string]any
-	reply  map[string]string // program → reply value; "" = no reply; absent = "ready"
+	reply  map[string]string // program → reply value; "" = stays starting; absent = "ready"
 	errs   map[string]string // program → program_<name>_error
 }
 
@@ -55,19 +56,25 @@ func (f *fakePC) onPublish(topic string, payload []byte) {
 	if !ok {
 		r = "ready"
 	}
-	if r == "" {
-		f.mu.Unlock()
-		return
+	// Like the real actuator: starting first, then the result.
+	f.fields["program_"+c.Value] = "starting"
+	starting, _ := json.Marshal(f.fields)
+	var result []byte
+	if r != "" {
+		f.fields["program_"+c.Value] = r
+		if e := f.errs[c.Value]; e != "" {
+			f.fields["program_"+c.Value+"_error"] = e
+		}
+		result, _ = json.Marshal(f.fields)
 	}
-	f.fields["program_"+c.Value] = r
-	if e := f.errs[c.Value]; e != "" {
-		f.fields["program_"+c.Value+"_error"] = e
-	}
-	b, _ := json.Marshal(f.fields)
 	f.mu.Unlock()
 	go func() {
 		time.Sleep(3 * time.Millisecond)
-		f.s.SetState(abs("power/shack-pc"), b)
+		f.s.SetState(abs("power/shack-pc"), starting)
+		if result != nil {
+			time.Sleep(time.Millisecond)
+			f.s.SetState(abs("power/shack-pc"), result)
+		}
 	}()
 }
 
@@ -128,6 +135,18 @@ func (r *chainRig) rec() *recPublisher { return &r.pub.recPublisher }
 // list; with start it is driven to phase=running first.
 func newChainSeq(t *testing.T, start bool, mut func(*Config)) *chainRig {
 	t.Helper()
+	r := newChainRig(t, mut)
+	startRun(t, r.s, context.Background())
+	if start {
+		r.s.Start()
+		runUntil(t, r.s, func() bool { return phaseIs(r.s, PhaseRunning) }, time.Second)
+	}
+	return r
+}
+
+// newChainRig builds the sequencer of newChainSeq without starting the runner.
+func newChainRig(t *testing.T, mut func(*Config)) *chainRig {
+	t.Helper()
 	pub := &hookPublisher{}
 	wol := &wolRec{}
 	cfg := chainTestConfig(wol)
@@ -142,12 +161,34 @@ func newChainSeq(t *testing.T, start bool, mut func(*Config)) *chainRig {
 	pub.hook = pc.onPublish
 	s.SetBrokerOnline(true)
 	s.markOnline("hf/antenna-select", "uhf/radio", "uhf/el-rotator", "power/shack-pc", "hf/auto-op")
-	startRun(t, s, context.Background())
-	if start {
-		s.Start()
-		runUntil(t, s, func() bool { return phaseIs(s, PhaseRunning) }, time.Second)
-	}
 	return &chainRig{s: s, pub: pub, wol: wol, pc: pc}
+}
+
+// onPublish adds f to the publish hook (after the fake actuator). f runs on
+// the publishing goroutine, mostly the runner.
+func (r *chainRig) onPublish(f func(topic string, payload []byte)) {
+	r.pub.hmu.Lock()
+	defer r.pub.hmu.Unlock()
+	prev := r.pub.hook
+	r.pub.hook = func(topic string, payload []byte) {
+		prev(topic, payload)
+		f(topic, payload)
+	}
+}
+
+// onFirstState calls f once, on the first own /state publish for which match
+// returns true.
+func (r *chainRig) onFirstState(match func(statePayload) bool, f func()) {
+	var once sync.Once
+	r.onPublish(func(topic string, payload []byte) {
+		if topic != testSelfBase+"/state" {
+			return
+		}
+		var st statePayload
+		if json.Unmarshal(payload, &st) == nil && match(st) {
+			once.Do(f)
+		}
+	})
 }
 
 // lastChain returns the chain of the last published /state (nil = none).
@@ -185,7 +226,13 @@ func ensureCmds(pub *recPublisher) []string {
 // beats every 10 ms until the returned stop is called (or the test ends).
 func liveSession(t *testing.T, s *Sequencer, state string) (stop func()) {
 	t.Helper()
-	s.SetAutoOpState([]byte(fmt.Sprintf(`{"session":{"state":%q}}`, state)), false)
+	return session(t, s, state, "live")
+}
+
+// session is liveSession with a session.source.
+func session(t *testing.T, s *Sequencer, state, source string) (stop func()) {
+	t.Helper()
+	s.SetAutoOpState([]byte(fmt.Sprintf(`{"session":{"state":%q,"source":%q}}`, state, source)), false)
 	done := make(chan struct{})
 	var once sync.Once
 	stop = func() { once.Do(func() { close(done) }) }
@@ -528,25 +575,24 @@ func TestSessionHoldThenFullTimeout(t *testing.T) {
 	}
 }
 
-// A session with fresh beats holds the idle shutdown; its end restarts the
-// idle-shutdown clock.
+// A session with fresh beats holds the standby and so the idle shutdown; its
+// end restarts the idle-shutdown clock.
 func TestSessionHoldRestartsIdleShutdownClock(t *testing.T) {
 	r := newChainSeq(t, true, func(c *Config) {
 		c.IdleShutdown = idleShutdownSteps()
 		c.ShutdownTimeout = testShutdownTimeout
 	})
 	r.s.setActivity("inactive", time.Time{})
-	runUntil(t, r.s, func() bool { return phaseIs(r.s, PhaseStandby) }, time.Second)
 	stop := liveSession(t, r.s, "running")
 	time.Sleep(2 * testShutdownTimeout)
-	if !phaseIs(r.s, PhaseStandby) {
-		t.Fatalf("idle shutdown during a live session: phase=%s", mustPhase(r.s))
+	if !phaseIs(r.s, PhaseRunning) {
+		t.Fatalf("standby or idle shutdown during a live session: phase=%s", mustPhase(r.s))
 	}
 	r.s.SetAutoOpState([]byte(`{"session":{"state":"ended"}}`), false)
 	stop()
 	ended := time.Now()
 	time.Sleep(time.Until(ended.Add(testShutdownTimeout - 70*time.Millisecond)))
-	if !phaseIs(r.s, PhaseStandby) {
+	if phaseIs(r.s, PhaseIdle) {
 		t.Fatalf("idle shutdown right after the session ended: phase=%s", mustPhase(r.s))
 	}
 	runUntil(t, r.s, func() bool { return phaseIs(r.s, PhaseIdle) }, time.Second)
@@ -569,7 +615,7 @@ func paCmds(pub *recPublisher) []cmdTuple { return cmdsTo(pub, "hf/pa") }
 func TestPAStandbyOnSessionStartEdge(t *testing.T) {
 	r := newChainSeq(t, true, nil)
 	r.s.SetAutoOpState([]byte(`{"session":{"state":"not-started"}}`), false)
-	r.s.SetAutoOpState([]byte(`{"session":{"state":"connecting"}}`), false)
+	r.s.SetAutoOpState([]byte(`{"session":{"state":"connecting","source":"live"}}`), false)
 	runUntil(t, r.s, func() bool { return len(paCmds(r.rec())) == 1 }, time.Second)
 	c := paCmds(r.rec())[0]
 	if c.action != "set_mode" || c.value != "standby" || c.retained {
@@ -577,23 +623,23 @@ func TestPAStandbyOnSessionStartEdge(t *testing.T) {
 	}
 	// The same session goes on (the operator puts the PA in operate): no
 	// second standby.
-	r.s.SetAutoOpState([]byte(`{"session":{"state":"running"}}`), false)
-	r.s.SetAutoOpState([]byte(`{"session":{"state":"running"}}`), false)
+	r.s.SetAutoOpState([]byte(`{"session":{"state":"running","source":"live"}}`), false)
+	r.s.SetAutoOpState([]byte(`{"session":{"state":"running","source":"live"}}`), false)
 	time.Sleep(30 * time.Millisecond)
 	if n := len(paCmds(r.rec())); n != 1 {
 		t.Fatalf("pa cmds = %d during one session, want 1", n)
 	}
 	// A new session after an ended one: a new standby.
 	r.s.SetAutoOpState([]byte(`{"session":{"state":"ended"}}`), false)
-	r.s.SetAutoOpState([]byte(`{"session":{"state":"connecting"}}`), false)
+	r.s.SetAutoOpState([]byte(`{"session":{"state":"connecting","source":"live"}}`), false)
 	runUntil(t, r.s, func() bool { return len(paCmds(r.rec())) == 2 }, time.Second)
 }
 
 // powerseq restarts during a session: the retained /state only re-baselines.
 func TestPAStandbyNotSentOnRetainedState(t *testing.T) {
 	r := newChainSeq(t, true, nil)
-	r.s.SetAutoOpState([]byte(`{"session":{"state":"running"}}`), true)
-	r.s.SetAutoOpState([]byte(`{"session":{"state":"running"}}`), false)
+	r.s.SetAutoOpState([]byte(`{"session":{"state":"running","source":"live"}}`), true)
+	r.s.SetAutoOpState([]byte(`{"session":{"state":"running","source":"live"}}`), false)
 	time.Sleep(30 * time.Millisecond)
 	if n := len(paCmds(r.rec())); n != 0 {
 		t.Fatalf("pa cmds = %d after a restart during a session, want 0", n)
@@ -654,4 +700,228 @@ func TestRestartDuringChainRestoresFailed(t *testing.T) {
 	if n := len(pub2.cmds()); n != 0 {
 		t.Fatalf("restart sent %d /cmd", n)
 	}
+}
+
+// ----- stop and the chain ----------------------------------------------------
+
+// A stop right after the chain record turns running, before its first step:
+// the chain fails "stopped by the operator" and sends no chain step.
+func TestStopRightAfterChainRunning(t *testing.T) {
+	r := newChainSeq(t, true, nil)
+	r.onFirstState(func(st statePayload) bool {
+		return st.Chain != nil && st.Chain.State == ChainRunning
+	}, r.s.Stop)
+	r.s.AutoStart("tablet-1")
+	c := waitChain(t, r, ChainFailed)
+	if c.Fault != "stopped by the operator" {
+		t.Fatalf("chain = %+v, want failed stopped by the operator", c)
+	}
+	runUntil(t, r.s, func() bool { return phaseIs(r.s, PhaseIdle) }, 2*time.Second)
+	if n := len(ensureCmds(r.rec())); n != 0 || r.wol.n() != 0 {
+		t.Fatalf("chain steps sent after the stop: ensure=%d wol=%d", n, r.wol.n())
+	}
+}
+
+// A stop while the startup of an auto_start from idle runs: the chain fails
+// "stopped by the operator" and the shutdown runs.
+func TestStopDuringAutoStartStartup(t *testing.T) {
+	r := newChainSeq(t, false, func(c *Config) {
+		c.Startup = []Step{{Name: "wait-never", Kind: KindWaitStatus, Slots: []string{"hf/never"}, TimeoutS: intPtr(5)}}
+	})
+	r.s.AutoStart("tablet-1")
+	runUntil(t, r.s, func() bool { return phaseIs(r.s, PhaseStarting) && chainIs(r.rec(), ChainRunning) }, time.Second)
+	r.s.Stop()
+	c := waitChain(t, r, ChainFailed)
+	if c.Fault != "stopped by the operator" {
+		t.Fatalf("chain = %+v", c)
+	}
+	runUntil(t, r.s, func() bool { return len(cmdsTo(r.rec(), "hf/pa-arm")) > 0 && phaseIs(r.s, PhaseIdle) }, 2*time.Second)
+	if n := len(ensureCmds(r.rec())); n != 0 || r.wol.n() != 0 {
+		t.Fatalf("chain ran: ensure=%d wol=%d", n, r.wol.n())
+	}
+}
+
+// AutoStart then Stop before the runner takes the auto_start: nothing of the
+// chain is sent, and the next auto_start is accepted.
+func TestStopBeforeQueuedAutoStart(t *testing.T) {
+	r := newChainRig(t, nil)
+	r.s.AutoStart("tablet-1")
+	r.s.Stop()
+	startRun(t, r.s, context.Background())
+	c := waitChain(t, r, ChainFailed)
+	if c.Fault != "stopped by the operator" {
+		t.Fatalf("chain = %+v", c)
+	}
+	runUntil(t, r.s, func() bool { return len(cmdsTo(r.rec(), "hf/pa-arm")) > 0 && phaseIs(r.s, PhaseIdle) }, 2*time.Second)
+	for _, c := range cmdsTo(r.rec(), "power/master") {
+		if c.value == "on" {
+			t.Fatalf("startup ran: %+v", c)
+		}
+	}
+	if n := len(ensureCmds(r.rec())); n != 0 || r.wol.n() != 0 {
+		t.Fatalf("chain ran: ensure=%d wol=%d", n, r.wol.n())
+	}
+	r.s.AutoStart("tablet-1")
+	waitChain(t, r, ChainReady)
+}
+
+// A stop right after ready: the chain turns failed "stopped by the operator"
+// (a waiting console must not start a session on a stopped station), and the
+// next auto_start is accepted, not refused with a stale stop.
+func TestStopRightAfterReadyThenAutoStart(t *testing.T) {
+	r := newChainSeq(t, true, nil)
+	r.onFirstState(func(st statePayload) bool {
+		return st.Chain != nil && st.Chain.State == ChainReady
+	}, r.s.Stop)
+	r.s.AutoStart("tablet-1")
+	runUntil(t, r.s, func() bool {
+		c := lastChain(r.rec())
+		return phaseIs(r.s, PhaseIdle) && c != nil && c.State == ChainFailed
+	}, 2*time.Second)
+	if c := lastChain(r.rec()); c.Fault != "stopped by the operator" {
+		t.Fatalf("chain = %+v", c)
+	}
+	r.s.AutoStart("tablet-2")
+	c := waitChain(t, r, ChainReady)
+	if c.Requester != "tablet-2" {
+		t.Fatalf("chain = %+v", c)
+	}
+}
+
+// A station stop while the chain is ready turns it failed.
+func TestStopAfterReadyFailsChain(t *testing.T) {
+	r := newChainSeq(t, true, nil)
+	r.s.AutoStart("tablet-1")
+	waitChain(t, r, ChainReady)
+	r.s.Stop()
+	c := waitChain(t, r, ChainFailed)
+	if c.Fault != "stopped by the operator" || c.Requester != "tablet-1" {
+		t.Fatalf("chain = %+v", c)
+	}
+	runUntil(t, r.s, func() bool { return phaseIs(r.s, PhaseIdle) }, 2*time.Second)
+}
+
+// A startup step that fails inside an auto_start from idle: the chain fails
+// with the startup fault, the station is idle with the fault, no chain step
+// is sent and the session hold ends.
+func TestAutoStartStartupFailure(t *testing.T) {
+	r := newChainSeq(t, false, func(c *Config) {
+		c.Startup = []Step{{Name: "wait-never", Kind: KindWaitStatus, Slots: []string{"hf/never"}}}
+		c.StepTimeout = 50 * time.Millisecond
+	})
+	r.s.AutoStart("tablet-1")
+	c := waitChain(t, r, ChainFailed)
+	if !strings.HasPrefix(c.Fault, "wait-never: timeout") || c.Step != "station" {
+		t.Fatalf("chain = %+v, want the startup fault at step station", c)
+	}
+	ph, _, fault := r.s.Phase()
+	if ph != PhaseIdle || !strings.HasPrefix(fault, "wait-never: timeout") {
+		t.Fatalf("phase=%s fault=%q, want idle + the startup fault", ph, fault)
+	}
+	if n := len(ensureCmds(r.rec())); n != 0 || r.wol.n() != 0 {
+		t.Fatalf("chain ran: ensure=%d wol=%d", n, r.wol.n())
+	}
+	r.s.mu.Lock()
+	held := r.s.sessionHoldLocked(time.Now())
+	r.s.mu.Unlock()
+	if held {
+		t.Fatal("session hold still active after the failed chain")
+	}
+}
+
+// ----- sessions in standby and replay ----------------------------------------
+
+// A live session in standby is activity: it wakes the station.
+func TestLiveSessionInStandbyWakes(t *testing.T) {
+	r := newChainSeq(t, true, nil)
+	r.s.setActivity("inactive", time.Time{})
+	runUntil(t, r.s, func() bool { return phaseIs(r.s, PhaseStandby) }, time.Second)
+	liveSession(t, r.s, "running")
+	runUntil(t, r.s, func() bool { return phaseIs(r.s, PhaseRunning) }, time.Second)
+	// The session then holds the standby.
+	time.Sleep(3 * testIdleTimeout)
+	if !phaseIs(r.s, PhaseRunning) {
+		t.Fatalf("standby during the live session: phase=%s", mustPhase(r.s))
+	}
+}
+
+// A replay session is not a station session: no hold, no PA standby, no
+// busy refusal.
+func TestReplaySessionNoHold(t *testing.T) {
+	r := newChainSeq(t, true, nil)
+	r.s.setActivity("inactive", time.Time{})
+	session(t, r.s, "connecting", "replay")
+	session(t, r.s, "running", "replay")
+	runUntil(t, r.s, func() bool { return phaseIs(r.s, PhaseStandby) }, time.Second)
+	if n := len(paCmds(r.rec())); n != 0 {
+		t.Fatalf("pa cmds = %d for a replay session, want 0", n)
+	}
+	r.s.mu.Lock()
+	reason := r.s.autoStartRefusalLocked(time.Now())
+	r.s.mu.Unlock()
+	if reason != "" {
+		t.Fatalf("auto_start refused during a replay: %q", reason)
+	}
+}
+
+// ----- fresh wait_state ------------------------------------------------------
+
+// A fresh wait needs a non-terminal value first: an old ready queued before
+// the ensure does not pass; starting, then ready does.
+func TestFreshWaitNeedsNonTerminalFirst(t *testing.T) {
+	f := false
+	startup := []Step{
+		{Name: "dax", Kind: KindCmd, Slot: "power/shack-pc", Action: "ensure_program", Value: "dax", Retain: &f},
+		{Name: "dax", Kind: KindWaitState, Slot: "power/shack-pc", Field: "program_dax", Value: "ready", Fresh: true, FailValue: "failed"},
+	}
+	cfg := baseConfig(startup, exampleShutdown())
+	cfg.StepTimeout = 2 * time.Second
+	pub := &recPublisher{}
+	s, err := New(cfg, pub, newTestLogger(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.SetBrokerOnline(true)
+	s.markOnline("power/shack-pc")
+	startRun(t, s, context.Background())
+	s.Start()
+	runUntil(t, s, func() bool { _, st, _ := s.Phase(); return len(cmdsTo(pub, "power/shack-pc")) == 1 && st == "dax" }, time.Second)
+	s.setState("power/shack-pc", "program_dax", "ready") // the old tick
+	time.Sleep(30 * time.Millisecond)
+	if !phaseIs(s, PhaseStarting) {
+		t.Fatalf("old ready passed the fresh wait: phase=%s", mustPhase(s))
+	}
+	s.setState("power/shack-pc", "program_dax", "starting")
+	s.setState("power/shack-pc", "program_dax", "ready")
+	runUntil(t, s, func() bool { return phaseIs(s, PhaseRunning) }, time.Second)
+}
+
+// The actuator's starting can arrive before the wait step begins (between the
+// ensure and the wait): it still counts.
+func TestFreshWaitCountsStartingBeforeWaitStep(t *testing.T) {
+	f := false
+	startup := []Step{
+		{Name: "dax", Kind: KindCmd, Slot: "power/shack-pc", Action: "ensure_program", Value: "dax", Retain: &f},
+		{Name: "dax", Kind: KindWaitState, Slot: "power/shack-pc", Field: "program_dax", Value: "ready", Fresh: true, FailValue: "failed"},
+	}
+	cfg := baseConfig(startup, exampleShutdown())
+	cfg.StepTimeout = 2 * time.Second
+	pub := &hookPublisher{}
+	s, err := New(cfg, pub, newTestLogger(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pub.hook = func(topic string, _ []byte) {
+		if topic == abs("power/shack-pc")+"/cmd" {
+			s.setState("power/shack-pc", "program_dax", "starting") // inside the cmd step
+		}
+	}
+	s.SetBrokerOnline(true)
+	s.markOnline("power/shack-pc")
+	startRun(t, s, context.Background())
+	s.Start()
+	runUntil(t, s, func() bool { _, st, _ := s.Phase(); return len(pub.cmds()) > 0 && st == "dax" }, time.Second)
+	time.Sleep(20 * time.Millisecond)
+	s.setState("power/shack-pc", "program_dax", "ready")
+	runUntil(t, s, func() bool { return phaseIs(s, PhaseRunning) }, time.Second)
 }

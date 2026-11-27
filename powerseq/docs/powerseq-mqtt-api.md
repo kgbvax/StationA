@@ -213,7 +213,13 @@ restores an idle sequencer's `/state` instead of leaving it absent.
   exception is a running `auto_start` chain: `stop` ends it at once (its own
   context, not the command queue), `chain.state=failed` with `stopped by the
   operator` is published before the shutdown runs, and no `ready` follows.
-  This also holds while the chain runs its startup or wake list.
+  This also holds while the chain runs its startup or wake list, right after
+  the chain turned `running` (before its first step), and for an
+  `auto_start` that is queued but not yet started (nothing of it is sent). A
+  `stop` while `chain.state=ready` also turns the chain `failed` with
+  `stopped by the operator`, so a page that waits to send `start_session`
+  does not start a session on a stopped station. A stop never blocks the next
+  `auto_start`.
 - `auto_start` runs the 75AUTO Start chain (§6.3). `value.requester` is echoed
   as `chain.requester`. What runs depends on the phase:
 
@@ -266,9 +272,14 @@ bridge whose LWT fired cannot pass on a stale retained `/state`), and its
 When a wait fails, check both layers: the fault string does not say which one
 blocked. A `wait_state` on the sequencer's own slot is a config error.
 
-`wait_state` options: `fresh = true` ignores every `/state` of the slot that
-arrived before the step started, so a retained value from an earlier run
-cannot pass the step. `fail_value = "<v>"` fails the step at once when the
+`wait_state` options: `fresh = true` accepts `value` (or `fail_value`) only
+after a `/state` of the slot received after the step started has shown the
+field at a non-terminal value (any value other than `value` and
+`fail_value`, e.g. `starting`). The actuator always publishes `starting`
+first, so neither a retained value from an earlier run nor a `/state` tick
+queued before the command can pass the step. When the step right before is a
+`cmd` to the same slot, the step starts at that `cmd` (the `starting` can
+arrive before the wait runs). `fail_value = "<v>"` fails the step at once when the
 field takes that value, with the reason `<field>=<v>`. A `wait_state` failure
 or timeout names the `<field>_error` sibling when the `/state` has one, e.g.
 `program_dax=failed (program_dax_error=no window)`.
@@ -329,7 +340,8 @@ Configured with an `[idle]` block; omit all three to disable.
   than the standby entry (VFO change, TX, operator hold, a live station hold
   such as bmrec's HF lab recording — antennaselect
   publishes no `last_activity` after a restart, so a restart never wakes), a
-  watch moves, or `start` arrives. → `waking` → `[[wake]]` → `running`.
+  watch moves, a live 75auto session is active (§6.3), or `start` arrives.
+  → `waking` → `[[wake]]` → `running`.
   antennaselect reconnects the antenna on the same activity.
 - A watch is a `/state` field (`slot`, `field`, `min_delta?`): a change of at
   least `min_delta` (numeric) since the last counted value is activity. Changes
@@ -422,14 +434,19 @@ runs under a context of its own, so `stop` ends it at once. The example list
 **Session hold.** powerseq reads `hf/auto-op` (`[mqtt] auto_op_slot`,
 default `auto-op`; `""` disables the session hold, the `busy: session active`
 refusal and the PA standby). A session is **active** while the last
-`/state` has `session.state` `connecting` or `running` and the last `/beat` or
+`/state` has `session.source` `live` and `session.state` `connecting` or
+`running`, and the last `/beat` or
 live `/state` is younger than `[mqtt] auto_op_beat_s` (default 30 s; 75auto
 beats every 2 s in a session). A retained `/state` (at a subscribe) can be
 old and does not count as a beat, so a crashed 75auto does not hold the power.
-The idle logic holds (no standby, no wake, no idle shutdown, in any phase)
-while a session is active, while a chain runs, and for 30 min after
-`chain.state` turns `ready` (the page needs that long at most to send its
-`start_session`). An accepted `auto_start` is activity. When the hold ends,
+A `replay` session (or one without `source`) is not active: it does not
+transmit, so it gives no hold, no PA standby and no `busy: session active`
+(75auto holds the station by the same rule). The standby and the idle
+shutdown hold while a session is active, while a chain runs, and for 30 min
+after `chain.state` turns `ready` (the page needs that long at most to send
+its `start_session`). The hold does not stop a wake: in `standby` an active
+session is activity and wakes the station (75auto can start a session on
+bwpc without the chain, and must not transmit with the antenna gear off). An accepted `auto_start` is activity. When the hold ends,
 both idle clocks restart: standby waits a full `timeout_minutes` and the idle
 shutdown a full `shutdown_minutes` from that moment. An `[[idle.watch]]`
 cannot do this, because it counts only changes.
@@ -438,7 +455,8 @@ cannot do this, because it counts only changes.
 active to `connecting` or `running`, powerseq sends
 `{"action":"set_mode","value":"standby"}` to `hf/pa/cmd` (`[mqtt] pa_slot`,
 default `pa`; **not retained**) once for that session. The operator can then
-put the PA in operate; nothing switches it back during that session. A new
+put the PA in operate; nothing switches it back during that session. Only a
+live session (`session.source` `live`) makes the edge. A new
 session after `ended` gets a new standby. A retained `/state` only sets the
 baseline, so a powerseq restart or a reconnect during a session sends nothing.
 This also covers a session started at the bwpc window.

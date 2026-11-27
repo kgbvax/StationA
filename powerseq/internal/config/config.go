@@ -85,10 +85,11 @@ type MQTTConfig struct {
 	// antmode is deployed. Read only with idle standby configured.
 	AntModeSlot string `toml:"ant_mode_slot"`
 
-	// AutoOpSlot is the 75auto slot (same site/station). A session in
-	// connecting or running with a beat younger than AutoOpBeatS holds the
-	// idle logic, refuses an auto_start, and its start edge puts the PA
-	// (PASlot) in standby once. Empty disables all three.
+	// AutoOpSlot is the 75auto slot (same site/station). A live session
+	// (session.source live) in connecting or running with a beat younger than
+	// AutoOpBeatS holds the standby and idle shutdown, wakes the station from
+	// standby, refuses an auto_start, and its start edge puts the PA (PASlot)
+	// in standby once. Empty disables all of these.
 	AutoOpSlot string `toml:"auto_op_slot"`
 	// PASlot is the PA slot (same site/station) that gets set_mode standby
 	// when a 75auto session starts. Empty disables the standby.
@@ -195,8 +196,9 @@ type Step struct {
 
 	// wait_state
 	Field string `toml:"field"`
-	// Fresh: a /state received before the step started does not pass it (a
-	// retained value from an earlier run).
+	// Fresh: value/fail_value count only after a /state received after the
+	// step started (or the cmd to the same slot right before it) showed a
+	// non-terminal value, e.g. "starting".
 	Fresh bool `toml:"fresh"`
 	// FailValue: the field taking this value fails the step at once.
 	FailValue string `toml:"fail_value"`

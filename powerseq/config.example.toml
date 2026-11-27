@@ -53,17 +53,18 @@ user = "hf"
 # and in storm until the park is parked or failed. No
 # retained ant-mode state = no hold. "" disables. Default "ant-mode".
 ant_mode_slot = "ant-mode"
-# 75auto slot (same site/station: muehle/hf/auto-op). A 75auto session in
-# session.state connecting or running, whose last /beat or live /state is
-# younger than auto_op_beat_s, counts as activity: no standby, no idle
-# shutdown, and the idle clocks restart when it ends. A crashed 75auto stops
+# 75auto slot (same site/station: muehle/hf/auto-op). A live 75auto session
+# (session.source live, session.state connecting or running) whose last /beat
+# or live /state is younger than auto_op_beat_s counts as activity: no
+# standby, no idle shutdown, a wake from standby, and the idle clocks restart
+# when it ends. A replay session counts for nothing. A crashed 75auto stops
 # beating and stops holding. An auto_start is refused while such a session
 # runs. "" disables. Default "auto-op".
 auto_op_slot = "auto-op"
 # Beat age for the session hold (s). 75auto beats every 2 s in a session.
 auto_op_beat_s = 30
 # PA slot (muehle/hf/pa) that gets one set_mode standby (not retained) when a
-# 75auto session starts (session.state turns connecting or running). A manual
+# live 75auto session starts (session.state turns connecting or running). A manual
 # operate later in the same session is not overridden. "" disables.
 pa_slot = "pa"
 # password is loaded from POWERSEQ_MQTT_PASSWORD (EnvironmentFile), not here.
@@ -125,9 +126,10 @@ level = "info"
 #     value     = "on"           # string; observed JSON coerced to string. May
 #                                # be "" — then the wait passes when the field
 #                                # is absent/nil/empty (wait for a field to clear)
-#     fresh     = true           # optional: a /state received before the step
-#                                # started does not pass it (a retained value
-#                                # from an earlier run)
+#     fresh     = true           # optional: value/fail_value count only after
+#                                # a /state received after the step started
+#                                # (or the cmd to the same slot right before
+#                                # it) showed another value, e.g. "starting"
 #     fail_value = "failed"      # optional: the field taking this value fails
 #                                # the step at once (no wait for the timeout)
 #     # A wait_state fault names the field and, when the /state has it, the
@@ -525,8 +527,9 @@ timeout_s = 300              # a cold boot and the auto logon
 
 # The programs, in order. ensure_program is not retained (the agent drops
 # retained commands). The agent publishes program_<name> = starting at once,
-# then ready or failed (+ program_<name>_error). fresh: a retained ready from
-# the last chain does not pass.
+# then ready or failed (+ program_<name>_error). fresh: ready counts only
+# after the starting of this ensure; a retained ready from the last chain or
+# a /state queued before the ensure does not pass.
 [[auto_start]]
 name = "aethersdr"
 kind = "cmd"

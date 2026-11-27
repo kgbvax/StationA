@@ -47,12 +47,13 @@
 // fails leaves the phase as it was. The chain runs under its own cancellable
 // context, so a station stop ends it at once.
 //
-// A 75auto session holds the idle logic like the ant-mode power hold: while
-// the hf/auto-op /state reports session.state connecting or running and the
+// A live 75auto session holds the standby and the idle shutdown: while the
+// hf/auto-op /state reports session.source live, session.state connecting or
+// running, and the
 // last /beat or live /state is younger than AutoOpBeatAge, also while a chain
-// runs and for ChainReadyHold after it is ready. When the hold ends, both idle
-// clocks restart. On the session start edge powerseq sends the PA to standby
-// once.
+// runs and for ChainReadyHold after it is ready. In standby a live session
+// wakes the station. When the hold ends, both idle clocks restart. On the
+// session start edge powerseq sends the PA to standby once.
 //
 // The phase survives a process restart (Config.StateFile, see persist.go): a
 // restart restores idle/running/standby with their idle clocks, and turns a
@@ -109,7 +110,7 @@ const (
 	DefaultChainReadyHold = 30 * time.Minute
 )
 
-// chainStep is the chain step name while the startup or wake list runs first.
+// chainStepStation is the chain step name while the startup or wake list runs first.
 const chainStepStation = "station"
 
 // Step kinds.
@@ -160,7 +161,10 @@ type Step struct {
 
 	// wait_state
 	Field string // top-level JSON key in the /state snapshot
-	// Fresh: a /state received before the step started does not pass it.
+	// Fresh: the step passes (or fails on FailValue) only after a /state
+	// received after the step started showed the field at a non-terminal
+	// value (neither Value nor FailValue, e.g. "starting"). A cmd step to the
+	// same slot right before it counts as the step start.
 	Fresh bool
 	// FailValue: the field taking this value fails the step at once ("" = off).
 	FailValue string
@@ -335,7 +339,14 @@ type Sequencer struct {
 	// stateSeq counts the /state messages per slot (a fresh wait_state needs
 	// one received after the step started).
 	stateSeq map[string]uint64
-	online   bool // broker connection state (set by the mqtt layer)
+	// stateHist keeps the last /state docs of every fresh wait_state slot, so
+	// a fresh wait sees a non-terminal value that a newer /state replaced
+	// between two polls.
+	stateHist map[string][]stateRec
+	// lastCmd marks the cmd step that ran right before the current step
+	// (runner goroutine only): a fresh wait_state on its slot starts there.
+	lastCmd cmdMark
+	online  bool // broker connection state (set by the mqtt layer)
 
 	phase      string
 	step       string
@@ -366,7 +377,8 @@ type Sequencer struct {
 
 	// 75auto session (hf/auto-op).
 	autoOpSession      string    // session.state of the last /state
-	autoOpActive       bool      // session.state was connecting|running (edge baseline)
+	autoOpLive         bool      // session.source of the last /state was "live"
+	autoOpActive       bool      // a live session was connecting|running (edge baseline)
 	autoOpBeat         time.Time // last /beat or live /state
 	paStandbyPending   bool      // a PA set_mode standby waits for the runner
 	sessionHeld        bool      // the session hold was active at the last idle check
@@ -379,6 +391,21 @@ type Sequencer struct {
 
 	cmdCh       chan string   // "start" | "stop" | "auto_start" → runner
 	republishCh chan struct{} // → runner: re-publish /state, send a pending PA standby
+}
+
+// stateRec is one /state of a fresh wait_state slot.
+type stateRec struct {
+	seq uint64
+	doc map[string]any
+}
+
+// stateHistMax bounds stateHist per slot.
+const stateHistMax = 64
+
+// cmdMark is a cmd step and the slot's /state count before it was sent.
+type cmdMark struct {
+	slot string
+	seq  uint64
 }
 
 // chainState is the progress record of an auto_start (persisted and
@@ -451,9 +478,15 @@ func New(cfg Config, pub Publisher, log Logger) (*Sequencer, error) {
 		status:      map[string]string{},
 		state:       map[string]any{},
 		stateSeq:    map[string]uint64{},
+		stateHist:   map[string][]stateRec{},
 		phase:       PhaseIdle,
 		cmdCh:       make(chan string, 4),
 		republishCh: make(chan struct{}, 1),
+	}
+	for _, st := range s.allSteps() {
+		if st.Kind == KindWaitState && st.Fresh {
+			s.stateHist[st.Slot] = nil
+		}
 	}
 	if s.wol == nil {
 		s.wol = SendMagicPacket
@@ -725,12 +758,15 @@ func (s *Sequencer) AutoOpSlot() string { return s.autoOpSlot }
 // standby is edge-triggered: a live /state that turns the session from not
 // active to connecting or running asks the runner to send it once. A retained
 // /state only re-baselines the edge, so a powerseq restart or a reconnect
-// during a session sends nothing. Empty payload = no session; malformed =
-// keep the last known session state (Error).
+// during a session sends nothing. Only a session with session.source "live"
+// counts (a replay does not transmit; 75auto holds the station by the same
+// rule). Empty payload = no session; malformed = keep the last known session
+// state (Error).
 func (s *Sequencer) SetAutoOpState(payload []byte, retained bool) {
 	var doc struct {
 		Session *struct {
-			State string `json:"state"`
+			State  string `json:"state"`
+			Source string `json:"source"`
 		} `json:"session"`
 	}
 	if len(payload) > 0 {
@@ -739,13 +775,15 @@ func (s *Sequencer) SetAutoOpState(payload []byte, retained bool) {
 			return
 		}
 	}
-	state := ""
+	state, live := "", false
 	if doc.Session != nil {
 		state = doc.Session.State
+		live = doc.Session.Source == "live"
 	}
-	active := sessionStateActive(state)
+	active := live && sessionStateActive(state)
 	s.mu.Lock()
 	s.autoOpSession = state
+	s.autoOpLive = live
 	if !retained {
 		s.autoOpBeat = time.Now()
 	}
@@ -770,10 +808,10 @@ func (s *Sequencer) AutoOpBeat() {
 
 func sessionStateActive(state string) bool { return state == "connecting" || state == "running" }
 
-// sessionActiveLocked reports a 75auto session that is connecting or running
-// and still beats.
+// sessionActiveLocked reports a live 75auto session that is connecting or
+// running and still beats.
 func (s *Sequencer) sessionActiveLocked(now time.Time) bool {
-	return s.autoOpSlot != "" && sessionStateActive(s.autoOpSession) &&
+	return s.autoOpSlot != "" && s.autoOpLive && sessionStateActive(s.autoOpSession) &&
 		!s.autoOpBeat.IsZero() && now.Sub(s.autoOpBeat) < s.cfg.AutoOpBeatAge
 }
 
@@ -819,6 +857,13 @@ func (s *Sequencer) SetState(slot string, payload []byte) {
 	s.mu.Lock()
 	s.state[slot] = m
 	s.stateSeq[slot]++
+	if h, ok := s.stateHist[slot]; ok {
+		h = append(h, stateRec{seq: s.stateSeq[slot], doc: m})
+		if len(h) > stateHistMax {
+			h = h[len(h)-stateHistMax:]
+		}
+		s.stateHist[slot] = h
+	}
 	s.noteWatchesLocked(slot, m)
 	s.mu.Unlock()
 }
@@ -1130,8 +1175,11 @@ func (s *Sequencer) flushPAStandby() {
 //     part of that clock, and after a restart into standby the retained
 //     /state can arrive after the first idle check.
 //
-// Nothing is decided while a 75auto session or an auto_start chain holds the
-// idle logic (sessionHoldLocked). Nothing either while the antenna-mode slot holds the idle logic
+// The session hold (a live 75auto session or an auto_start chain,
+// sessionHoldLocked) blocks the standby and the idle shutdown, not the wake:
+// in standby a live session is activity and wakes the station (75auto may be
+// started on bwpc without the chain, and it must not transmit with the
+// antenna gear off). Nothing is decided while the antenna-mode slot holds the idle logic
 // (power_hold): a borrow, a maintenance or a storm park must not be cut by a
 // standby or idle shutdown, and is not a reason to wake. Nor right after a broker (re)connect until the
 // ant-mode /state is re-delivered (or AntModeHold passes): a borrow may have
@@ -1151,7 +1199,7 @@ func (s *Sequencer) idleDecision(now time.Time) string {
 		s.log.Infof("session hold ended: idle clocks restarted (phase=%s)", s.phase)
 	}
 	s.sessionHeld = held
-	if held || !s.online || s.powerHold {
+	if !s.online || s.powerHold {
 		return ""
 	}
 	if s.antModeSlot != "" && !s.antModeSeen && now.Before(s.antModeWaitUntil) {
@@ -1160,6 +1208,9 @@ func (s *Sequencer) idleDecision(now time.Time) string {
 	m, _ := s.state[s.activitySlot].(map[string]any)
 	switch s.phase {
 	case PhaseRunning:
+		if held {
+			return ""
+		}
 		fit := s.status[s.activitySlot] == "online" && m != nil && coerceToString(m["device_online"]) != "false"
 		if !fit || coerceToString(m["activity"]) != "inactive" {
 			return ""
@@ -1179,6 +1230,13 @@ func (s *Sequencer) idleDecision(now time.Time) string {
 				s.log.Infof("wake: %s last_activity %s", s.activitySlot, ts.Format(time.RFC3339))
 				return "wake"
 			}
+		}
+		if s.sessionActiveLocked(now) {
+			s.log.Infof("wake: 75auto session %s", s.autoOpSession)
+			return "wake"
+		}
+		if held {
+			return ""
 		}
 		if len(s.idleShut) > 0 && m != nil && now.Sub(s.lastActivityLocked(m)) >= s.cfg.ShutdownTimeout {
 			return "idle_shutdown"
@@ -1244,6 +1302,14 @@ func (s *Sequencer) begin(cmd string) (steps []resolvedStep, endPhase string, ok
 			s.fault = ""
 			s.stopReason = "operator"
 			steps, endPhase, ok = s.shutdown, PhaseIdle, true
+			// A ready chain is over with the stop: a console that waits to
+			// start the session must not start it on a stopped station.
+			if s.chain.State == ChainReady {
+				s.chain.State = ChainFailed
+				s.chain.Fault = "stopped by the operator"
+				s.chain.TS = time.Now()
+				s.log.Infof("auto_start chain: ready ended by the stop")
+			}
 		}
 	case "idle_shutdown":
 		if s.phase == PhaseStandby && len(s.idleShut) > 0 {
@@ -1298,10 +1364,11 @@ func (s *Sequencer) runSequence(ctx context.Context, steps []resolvedStep, endPh
 }
 
 // beginAutoStart re-checks an auto_start on the runner (the authoritative
-// guard, like begin) and returns the list to run before the chain: the
-// startup list from idle, the wake list from standby, none from running. A
-// refusal writes chain.state=failed with the reason.
-func (s *Sequencer) beginAutoStart(now time.Time) (prefix []resolvedStep, prefixEnd string, ok bool) {
+// guard, like begin) and returns the chain context (cancelled by a station
+// stop) and the list to run before the chain: the startup list from idle, the
+// wake list from standby, none from running. A refusal writes
+// chain.state=failed with the reason.
+func (s *Sequencer) beginAutoStart(ctx context.Context, now time.Time) (chainCtx context.Context, prefix []resolvedStep, prefixEnd string, ok bool) {
 	s.mu.Lock()
 	s.chainQueued = false
 	requester := s.chainRequester
@@ -1316,9 +1383,12 @@ func (s *Sequencer) beginAutoStart(now time.Time) (prefix []resolvedStep, prefix
 		s.log.Warnf("auto_start from %q refused: %s", requester, reason)
 		s.persist(now, false)
 		s.publishState()
-		return nil, "", false
+		return nil, nil, "", false
 	}
 	s.chain = chainState{State: ChainRunning, Requester: requester, TS: now}
+	// The cancel is in place before mu is released: a stop that sees the
+	// chain running also finds the chain to cancel.
+	chainCtx, s.chainCancel = context.WithCancel(ctx)
 	switch s.phase {
 	case PhaseIdle:
 		s.phase = PhaseStarting
@@ -1343,7 +1413,7 @@ func (s *Sequencer) beginAutoStart(now time.Time) (prefix []resolvedStep, prefix
 	s.log.Infof("auto_start from %q: chain running (phase=%s)", requester, phase)
 	s.persist(now, false)
 	s.publishState()
-	return prefix, prefixEnd, true
+	return chainCtx, prefix, prefixEnd, true
 }
 
 // runAutoStart runs an auto_start: the startup or wake list when needed, then
@@ -1351,20 +1421,10 @@ func (s *Sequencer) beginAutoStart(now time.Time) (prefix []resolvedStep, prefix
 // (request). A chain step failure leaves the phase as it is; a startup or
 // wake failure is a station fault as with start (phase idle).
 func (s *Sequencer) runAutoStart(ctx context.Context) {
-	prefix, prefixEnd, ok := s.beginAutoStart(time.Now())
+	chainCtx, prefix, prefixEnd, ok := s.beginAutoStart(ctx, time.Now())
 	if !ok {
 		return
 	}
-	chainCtx, cancel := context.WithCancel(ctx)
-	s.mu.Lock()
-	s.chainCancel = cancel
-	s.mu.Unlock()
-	defer func() {
-		s.mu.Lock()
-		s.chainCancel = nil
-		s.mu.Unlock()
-		cancel()
-	}()
 	if len(prefix) > 0 && !s.runSequence(chainCtx, prefix, prefixEnd) {
 		_, _, fault := s.Phase()
 		s.endChain(ChainFailed, fault)
@@ -1397,13 +1457,20 @@ func (s *Sequencer) setChainStep(step string) {
 
 // endChain records the end of a chain. After a station stop it is failed
 // "stopped by the operator", also when the last step had already passed: no
-// ready is published after a stop.
+// ready is published after a stop. The chain cancel and the stop latch are
+// cleared under mu before the publish, so a stop from then on sees no chain
+// to cancel (a stop on a ready chain fails it in begin) and leaves no latch
+// for the next auto_start.
 func (s *Sequencer) endChain(state, fault string) {
 	now := time.Now()
 	s.mu.Lock()
 	if s.chainStopped {
 		state, fault = ChainFailed, "stopped by the operator"
 		s.chainStopped = false
+	}
+	if s.chainCancel != nil {
+		s.chainCancel()
+		s.chainCancel = nil
 	}
 	s.chain.State = state
 	s.chain.Fault = fault
@@ -1422,8 +1489,11 @@ func (s *Sequencer) endChain(state, fault string) {
 // execStep executes one resolved step, returning (reason, ok). ok=false aborts
 // the sequence; reason is appended to the step name in the fault string.
 func (s *Sequencer) execStep(ctx context.Context, st *resolvedStep) (string, bool) {
+	prevCmd := s.lastCmd
+	s.lastCmd = cmdMark{}
 	switch st.Kind {
 	case KindCmd:
+		s.lastCmd = cmdMark{slot: st.Slot, seq: s.stateSeqOf(st.Slot)}
 		if !s.brokerOnline() {
 			return "broker disconnected", false
 		}
@@ -1464,18 +1534,29 @@ func (s *Sequencer) execStep(ctx context.Context, st *resolvedStep) (string, boo
 		})
 		return s.withObserved(st.Slots, "", reason, ok)
 	case KindWaitState:
-		// fresh: only a /state received after the step started counts, so a
-		// retained value from an earlier run cannot pass it.
+		// fresh: the target (or fail) value counts only after a /state
+		// received after the step started showed a non-terminal value. The
+		// actuator publishes "starting" first, so neither a retained value
+		// from an earlier run nor a /state tick queued before the cmd passes
+		// it. The step starts at the cmd to the same slot right before it,
+		// when there is one: the "starting" can arrive before the wait runs.
 		var base uint64
+		seen := false
 		if st.Fresh {
 			base = s.stateSeqOf(st.Slot)
+			if prevCmd.slot == st.Slot {
+				base = prevCmd.seq
+			}
 		}
 		reason, ok := s.wait(ctx, st, func() (bool, string) {
 			if !s.isOnline(st.Slot) {
 				return false, "" // implicit liveness precondition
 			}
-			if st.Fresh && s.stateSeqOf(st.Slot) <= base {
-				return false, ""
+			if st.Fresh && !seen {
+				seen, base = s.nonTerminalSince(st, base)
+				if !seen {
+					return false, ""
+				}
 			}
 			v := s.stateField(st.Slot, st.Field)
 			if st.FailVal != "" && v == st.FailVal {
@@ -1620,6 +1701,26 @@ func (s *Sequencer) stateSeqOf(slot string) uint64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.stateSeq[slot]
+}
+
+// nonTerminalSince reports whether a /state of st.Slot newer than seq showed
+// st.Field at a value other than st.Value and st.FailVal, and returns the
+// newest seq it looked at (the next scan starts there).
+func (s *Sequencer) nonTerminalSince(st *resolvedStep, seq uint64) (bool, uint64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	last := seq
+	for _, r := range s.stateHist[st.Slot] {
+		if r.seq <= seq {
+			continue
+		}
+		last = r.seq
+		v := coerceToString(r.doc[st.Field])
+		if v != st.Value && (st.FailVal == "" || v != st.FailVal) {
+			return true, last
+		}
+	}
+	return false, last
 }
 
 func (s *Sequencer) statusOf(slot string) string {

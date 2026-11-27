@@ -98,7 +98,8 @@ when `hf/antenna-select` reports `activity=inactive` (antenna grounded), no
 `[[idle.watch]]` (UHF radio freq, UHF rotator position) moved and `running`
 lasted `timeout_minutes` → `entering_standby` → antenna power off + shack PC
 (bwpc) sleep (`retain=false`) → `standby`. A `last_activity` newer than the
-standby entry, a watch moving, or `start` → `waking` → WOL to bwpc + antenna
+standby entry, a watch moving, a live 75auto session (see Session hold) or
+`start` → `waking` → WOL to bwpc + antenna
 power on → `running`. A watch change during a sequence or within `[idle]
 settle_s` (default 30) of a phase change only re-baselines the watch: the UHF
 rotator readbacks step when standby cuts the antenna power (link still up),
@@ -157,16 +158,31 @@ publishes them (`serviceRequests`, also served inside `sleepCtx`, so a running
 sequence does not delay them). The chain runs under its own context
 (`chainCancel`); `request("stop")` cancels it directly, so the chain ends
 `failed` `stopped by the operator` before the shutdown runs and no `ready`
-follows (`endChain` turns a late ready into that failure). The example chain
-uses `wait_state` options `fresh = true` (`stateSeq` per slot: only a `/state`
-received after the step started counts) and `fail_value = "failed"` (fail at
-once); a `wait_state` fault names the `<field>_error` sibling.
+follows (`endChain` turns a late ready into that failure). `beginAutoStart`
+creates the chain context and sets `chainCancel` under the same `mu` section
+that sets `chain.state=running`, and `endChain` clears `chainCancel` and
+`chainStopped` under `mu` before it publishes, so no stop falls between them
+and no stale stop latch refuses the next `auto_start`. A queued `auto_start`
+that a stop overtakes is refused `stopped by the operator` (nothing sent). A
+stop on a `ready` chain turns it `failed` `stopped by the operator` in
+`begin("stop")`. The example chain uses `wait_state` options `fresh = true`
+and `fail_value = "failed"` (fail at once); a `wait_state` fault names the
+`<field>_error` sibling. A fresh wait accepts `value` or `fail_value` only
+after a `/state` received after the step started showed a non-terminal value
+(the actuator publishes `starting` first; `stateHist` keeps the recent
+`/state` docs of fresh-wait slots so a `starting` replaced between two polls
+still counts). A `cmd` step to the same slot right before the wait counts as
+the step start (`lastCmd`). A plain `wait_state` is unchanged.
 **Session hold** (`[mqtt] auto_op_slot`, default `auto-op`, `""` disables;
-`auto_op_beat_s`, default 30): `hf/auto-op` `/state` `session.state`
-`connecting|running` with a `/beat` or live `/state` younger than the beat age
-(a retained `/state` is not a beat), a running chain, or a ready chain for 30
-min (`ChainReadyHold`) hold the idle logic like `power_hold`
-(`sessionHoldLocked` in `idleDecision`). An accepted `auto_start` sets
+`auto_op_beat_s`, default 30): `hf/auto-op` `/state` `session.source=live` and
+`session.state` `connecting|running` with a `/beat` or live `/state` younger
+than the beat age (a retained `/state` is not a beat), a running chain, or a
+ready chain for 30 min (`ChainReadyHold`) hold the standby and the idle
+shutdown (`sessionHoldLocked` in `idleDecision`). Unlike `power_hold` it does
+not block the wake: in `standby` an active session wakes the station (75auto
+can start on bwpc without the chain). A `replay` session counts for nothing
+(no hold, no PA standby, no `busy: session active`), the same rule 75auto
+uses for its station hold. An accepted `auto_start` sets
 `sessionHeld`; when the hold ends `sessionHoldEndedAt` restarts both idle
 clocks (standby check and `lastActivityLocked`). **PA standby** (`[mqtt]
 pa_slot`, default `pa`): a live `/state` edge from not active to
