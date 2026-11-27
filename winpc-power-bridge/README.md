@@ -27,3 +27,5 @@ GOOS=windows GOARCH=amd64 go build ./...
 ## License
 
 AGPL-3.0-or-later — see `LICENSE`.
+
+Setup of bwpc for the 75AUTO remote start (auto-logon, lock at logon, program list, bench check): [docs/bwpc-host-setup.md](docs/bwpc-host-setup.md).
