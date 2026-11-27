@@ -26,7 +26,7 @@ import '../widgets/cam_record_controls.dart';
 import '../widgets/faults_bar.dart';
 import '../widgets/station_schematic.dart';
 import '../widgets/stepped_pulse.dart';
-import '../widgets/dx_config_sheet.dart';
+import '../widgets/settings_sheet.dart';
 import '../auto/auto_page.dart';
 
 // The DX-spot subscription follows the active page: the UHF and CAM maps
@@ -959,7 +959,7 @@ class _DxSettingsButton extends StatelessWidget {
   Widget build(BuildContext context) {
     return InkWell(
       borderRadius: BorderRadius.circular(4),
-      onTap: () => showDxConfigSheet(context),
+      onTap: () => showSettingsSheet(context),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
         decoration: BoxDecoration(

@@ -10,7 +10,7 @@ import 'dxspot/dxspot_service.dart';
 import 'vhfcam/vhfcam_service.dart';
 import 'ui/theme.dart';
 import 'ui/screens/console_screen.dart';
-import 'ui/screens/setup_screen.dart';
+import 'ui/widgets/settings_sheet.dart';
 import 'ui/screens/startup_splash.dart';
 
 /// Bound on the first broker-connect wait shown on the splash. After it
@@ -54,7 +54,9 @@ class _AppRootState extends State<_AppRoot> with WidgetsBindingObserver {
   final _dxSpot = DxSpotService();
   final _vhfcam = VhfcamService();
   bool _ready = false;
-  bool _showConsole = false;
+  // The navigator of the MaterialApp, so the boot can open the settings sheet
+  // over the console when no broker login is stored.
+  final _navigatorKey = GlobalKey<NavigatorState>();
   String? _bootHost;
   int? _bootPort;
 
@@ -124,7 +126,8 @@ class _AppRootState extends State<_AppRoot> with WidgetsBindingObserver {
     // overlay above.
     _vhfcam.configure(baseUrl: values['vhfcam_base_url'] ?? '');
     _vhfcam.start();
-    if (host != null && port != null && user != null && pass != null && pass.isNotEmpty) {
+    final hasLogin = host != null && port != null && user != null && pass != null && pass.isNotEmpty;
+    if (hasLogin) {
       _bootHost = host;
       _bootPort = port;
       try {
@@ -132,13 +135,20 @@ class _AppRootState extends State<_AppRoot> with WidgetsBindingObserver {
       } catch (_) {
         // offline start is allowed; the indicator and faults bar show the state
       }
-      if (mounted) {
-        setState(() => _showConsole = true);
-      }
     }
-    if (mounted) {
-      setState(() => _ready = true);
-    }
+    _showReady(openSettings: !hasLogin);
+  }
+
+  /// Shows the console. Without a stored broker login the settings sheet
+  /// opens over it: there is one settings sheet, no separate setup screen.
+  void _showReady({required bool openSettings}) {
+    if (!mounted || _ready) return;
+    setState(() => _ready = true);
+    if (!openSettings) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final ctx = _navigatorKey.currentContext;
+      if (ctx != null) showSettingsSheet(ctx);
+    });
   }
 
   Future<void> _connect(String host, int port, String username, String password) async {
@@ -176,6 +186,7 @@ class _AppRootState extends State<_AppRoot> with WidgetsBindingObserver {
         valueListenable: AppTheme.notifier,
         builder: (context, scheme, _) {
           return MaterialApp(
+            navigatorKey: _navigatorKey,
             debugShowCheckedModeBanner: false,
             title: 'Mühle HF',
             theme: ThemeData.dark().copyWith(
@@ -187,52 +198,18 @@ class _AppRootState extends State<_AppRoot> with WidgetsBindingObserver {
               ),
             ),
             home: _ready
-                ? (_showConsole
-                    // Top inset only: in kiosk lock-task mode the status bar
-                    // stays visible (LOCK_TASK_FEATURE_SYSTEM_INFO) and its
-                    // window takes every touch in the top strip (59 px on
-                    // the shack tablet), which swallowed taps on the tab row.
-                    ? const Scaffold(
-                        body: SafeArea(
-                          left: false,
-                          right: false,
-                          bottom: false,
-                          child: ConsoleScreen(),
-                        ),
-                      )
-                    : Scaffold(
-                        body: Builder(
-                          builder: (context) {
-                            return SetupScreen(
-                              onSave: (host, port, user, pass, locator, baseUrl) async {
-                                await _storage.writeAll({
-                                  'mqtt_host': host,
-                                  'mqtt_port': port.toString(),
-                                  'mqtt_user': user,
-                                  'mqtt_password': pass,
-                                  'station_locator': locator,
-                                  'horstreporter_base_url': baseUrl,
-                                });
-                                try {
-                                  await _connect(host, port, user, pass);
-                                } catch (_) {
-                                  // keep going; console will show the offline indicator
-                                }
-                                final stored = await _storage.readAll();
-                                _dxSpot.configure(
-                                  baseUrl: baseUrl,
-                                  locator: locator,
-                                  callsign: stored['station_callsign'],
-                                );
-                                _dxSpot.restart();
-                                if (mounted) {
-                                  setState(() => _showConsole = true);
-                                }
-                              },
-                            );
-                          },
-                        ),
-                      ))
+                // Top inset only: in kiosk lock-task mode the status bar
+                // stays visible (LOCK_TASK_FEATURE_SYSTEM_INFO) and its
+                // window takes every touch in the top strip (59 px on
+                // the shack tablet), which swallowed taps on the tab row.
+                ? const Scaffold(
+                    body: SafeArea(
+                      left: false,
+                      right: false,
+                      bottom: false,
+                      child: ConsoleScreen(),
+                    ),
+                  )
                 : StartupSplash(
                     host: _bootHost,
                     port: _bootPort,
@@ -240,15 +217,8 @@ class _AppRootState extends State<_AppRoot> with WidgetsBindingObserver {
                     onWaitExpired: () {
                       // The countdown only runs when broker credentials exist,
                       // so expiry means "show the console with its offline
-                      // indicator" — set both flags in one pass so the splash
-                      // expiry timer racing the connect timeout cannot flash
-                      // the setup screen.
-                      if (mounted && !_ready) {
-                        setState(() {
-                          _ready = true;
-                          _showConsole = true;
-                        });
-                      }
+                      // indicator".
+                      _showReady(openSettings: false);
                     },
                   ),
           );

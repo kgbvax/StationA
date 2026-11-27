@@ -1,6 +1,6 @@
 # hf_console — Mühle HF station tablet/phone console
 
-Flutter console for operating the HF portion of the Mühle station from an Android tablet or an iPhone. Connects directly to the MQTT broker — raw TCP on Android/iOS, WebSocket via the Go bridge on web. The setup screen and the web bridge both default to the station broker on scmino (`scmino:1883`, see `../mqtt-broker/README.md`; web: see "Web channel on scmino"). It mirrors `muehle/#` both ways to the Home Assistant broker; the console keeps working when the shack↔house link is down. shari runs no broker.
+Flutter console for operating the HF portion of the Mühle station from an Android tablet or an iPhone. Connects directly to the MQTT broker — raw TCP on Android/iOS, WebSocket via the Go bridge on web. The settings sheet and the web bridge both default to the station broker on scmino (`scmino:1883`, see `../mqtt-broker/README.md`; web: see "Web channel on scmino"). It mirrors `muehle/#` both ways to the Home Assistant broker; the console keeps working when the shack↔house link is down. shari runs no broker.
 
 ## Design
 
@@ -26,7 +26,7 @@ See `../sas/tablet_console_hybrid_preview.html` for the approved high-fidelity r
   repository): `AutoOpView` parsed from /state, /beat and /meta, and `autoOpCmd`, which signs each command with
   HMAC-SHA256. `BusStore.stateFresh` / `stateAge` give the freshness: a retained /state at the subscribe is not fresh
   until a /beat or a live /state with a new `seq` arrives. The command key (64 hex digits) is in the secure storage,
-  entered in the gear sheet, and never in the APK.
+  entered in the settings sheet, and never in the APK.
 - `lib/ui/auto/auto_start_panel.dart`: the Start of the 75AUTO page, shown while no session is open. The tap
   publishes `auto_start` (requester = the device id from `lib/store/device_id.dart`) to `hf/power-seq`, outside the
   page gate; the rows follow `/state.chain` of powerseq. When the chain of this device is `ready` within 30 min of the
@@ -49,7 +49,9 @@ See `../sas/tablet_console_hybrid_preview.html` for the approved high-fidelity r
 
 ## MQTT
 
-Uses `mqtt_client` v10.x, MQTT 3.1.1, direct TCP to the broker entered on first launch (setup screen default `scmino:1883`; see the intro). Credentials stored in `flutter_secure_storage`; entered on first launch (use the dedicated `console` account below).
+Uses `mqtt_client` v10.x, MQTT 3.1.1, direct TCP to the broker in the settings sheet (default `scmino:1883`; see the intro). Credentials stored in `flutter_secure_storage` (web: SharedPreferences, per browser origin); use the dedicated `console` account below.
+
+There is one settings sheet (`lib/ui/widgets/settings_sheet.dart`, the gear in the top bar) and no separate setup screen. It holds every setting: broker host, port, username and password, colour scheme, DX overlay, cam URL and the 75auto key. The boot shows the console and opens the sheet over it when no broker login is stored. A changed login reconnects on SAVE. Do not add a first-launch-only screen: settings that only show once cannot be seen or changed later.
 
 Create a dedicated broker user `console` with narrow ACL (as in `../mqtt-broker/acl.conf.example`; not seeded on the scmino broker yet, whose only local account is `hf`):
 - subscribe: `muehle/+/+/state`, `muehle/+/+/meta`, `muehle/+/+/status`
@@ -189,7 +191,7 @@ holds the radio audio while recording; downloads happen on the :8083 page.
 Two deliberate platform notes:
 
 - The base URL is a user setting, key `vhfcam_base_url` (CredentialStore,
-  editable in the gear sheet, default `http://scmino:8083`). A saved
+  editable in the settings sheet, default `http://scmino:8083`). A saved
   value still pointing at shari (`.139`/`.140`/`shari`, pre-2026-09-30 host)
   is treated as unset and resolves to the scmino default
   (`resolveVhfcamBaseUrl`).

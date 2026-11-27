@@ -1,12 +1,11 @@
-// dx_config_sheet.dart — in-console editor for the non-broker settings: the
-// colour scheme (applied live, not on SAVE), the DX-overlay pair (station Maidenhead locator + horstreporter base URL) and
-// the antenna-cam base URL (vhfcam-restream's preview server).
+// settings_sheet.dart — the one settings sheet of the console: the broker
+// login (host, port, user, password), the colour scheme (applied live, not on
+// SAVE), the DX-overlay pair (station Maidenhead locator + horstreporter base
+// URL) and the antenna-cam base URL (vhfcam-restream's preview server).
 //
-// The full setup screen only shows when broker credentials are missing, so an
-// already-provisioned tablet (creds stored) boots straight to the console and has
-// no way to reach these fields otherwise. This sheet is reachable from a gear in
-// the top bar and edits the overlay/cam keys plus the broker host (user and
-// password are left untouched; a changed host reconnects with the stored ones).
+// There is no separate setup screen. The gear in the top bar opens this sheet
+// at any time, and the boot opens it over the console when no broker login is
+// stored. A changed broker field reconnects with the new login on SAVE.
 //
 // It also takes the command key of 75auto (the 75AUTO page signs each command
 // with it). The sheet never shows the stored key. It only says whether a key
@@ -23,27 +22,32 @@ import '../../dxspot/dxspot_service.dart';
 import '../../vhfcam/vhfcam_service.dart';
 import '../theme.dart';
 
-/// Opens a modal dialog to edit the station locator, horstreporter URL and
-/// antenna-cam URL, then live-applies them to the running services (configure
-/// + restart for the DX overlay; configure for the cam service).
-Future<void> showDxConfigSheet(BuildContext context) async {
+/// Opens the settings dialog. SAVE stores every field and live-applies it:
+/// a broker reconnect when the login changed, configure + restart for the DX
+/// overlay, configure for the cam service.
+Future<void> showSettingsSheet(BuildContext context) async {
   await showDialog<void>(
     context: context,
-    builder: (_) => const _DxConfigDialog(),
+    builder: (_) => const _SettingsDialog(),
   );
 }
 
-class _DxConfigDialog extends StatefulWidget {
-  const _DxConfigDialog();
+class _SettingsDialog extends StatefulWidget {
+  const _SettingsDialog();
 
   @override
-  State<_DxConfigDialog> createState() => _DxConfigDialogState();
+  State<_SettingsDialog> createState() => _SettingsDialogState();
 }
 
-class _DxConfigDialogState extends State<_DxConfigDialog> {
+class _SettingsDialogState extends State<_SettingsDialog> {
   final _storage = CredentialStore();
   final _broker = TextEditingController();
-  String _brokerStored = '';
+  final _port = TextEditingController();
+  final _user = TextEditingController();
+  final _pass = TextEditingController();
+  bool _passHidden = true;
+  // The stored login, to see on SAVE whether the operator changed it.
+  String _loginStored = '';
   final _locator = TextEditingController();
   final _url = TextEditingController(text: 'https://horstreporter.kgbvax.net');
   final _callsign = TextEditingController();
@@ -58,7 +62,7 @@ class _DxConfigDialogState extends State<_DxConfigDialog> {
 
   @override
   void dispose() {
-    for (final c in [_broker, _locator, _url, _callsign, _camUrl, _autoOpKey]) {
+    for (final c in [_broker, _port, _user, _pass, _locator, _url, _callsign, _camUrl, _autoOpKey]) {
       c.dispose();
     }
     super.dispose();
@@ -76,8 +80,11 @@ class _DxConfigDialogState extends State<_DxConfigDialog> {
     if (!mounted) return;
     setState(() {
       _autoOpKeySet = key != null;
-      _brokerStored = values['mqtt_host'] ?? '';
-      _broker.text = _brokerStored;
+      _broker.text = values['mqtt_host'] ?? 'scmino';
+      _port.text = values['mqtt_port'] ?? '1883';
+      _user.text = values['mqtt_user'] ?? '';
+      _pass.text = values['mqtt_password'] ?? '';
+      _loginStored = _loginText(values['mqtt_host'], values['mqtt_port'], values['mqtt_user'], values['mqtt_password']);
       _locator.text = values['station_locator'] ?? '';
       _url.text = values['horstreporter_base_url'] ?? 'https://horstreporter.kgbvax.net';
       _callsign.text = values['station_callsign'] ?? '';
@@ -86,8 +93,14 @@ class _DxConfigDialogState extends State<_DxConfigDialog> {
     });
   }
 
+  static String _loginText(String? host, String? port, String? user, String? pass) =>
+      [host ?? '', port ?? '', user ?? '', pass ?? ''].join('\u0000');
+
   Future<void> _save() async {
     final broker = _broker.text.trim();
+    final port = int.tryParse(_port.text.trim()) ?? 1883;
+    final user = _user.text.trim();
+    final pass = _pass.text;
     final locator = _locator.text.trim().toUpperCase();
     final baseUrl = _url.text.trim();
     final callsign = _callsign.text.trim().toUpperCase();
@@ -99,10 +112,13 @@ class _DxConfigDialogState extends State<_DxConfigDialog> {
       setState(() => _autoOpKeyError = 'Enter exactly 64 hex digits (0-9, a-f).');
       return;
     }
-    final stored = await _storage.readAll();
-    final brokerChanged = broker.isNotEmpty && broker != _brokerStored;
+    final hasLogin = broker.isNotEmpty && user.isNotEmpty && pass.isNotEmpty;
+    final loginChanged = _loginText(broker, '$port', user, pass) != _loginStored;
     await _storage.writeAll({
-      if (brokerChanged) 'mqtt_host': broker,
+      if (broker.isNotEmpty) 'mqtt_host': broker,
+      'mqtt_port': '$port',
+      'mqtt_user': user,
+      'mqtt_password': pass,
       'station_locator': locator,
       'horstreporter_base_url': baseUrl,
       'station_callsign': callsign,
@@ -115,10 +131,7 @@ class _DxConfigDialogState extends State<_DxConfigDialog> {
     }
     if (!mounted) return;
     final mqtt = context.read<MqttService>();
-    final user = stored['mqtt_user'];
-    final pass = stored['mqtt_password'];
-    final port = int.tryParse(stored['mqtt_port'] ?? '') ?? 1883;
-    if (brokerChanged && user != null && pass != null && pass.isNotEmpty) {
+    if (loginChanged && hasLogin) {
       // Fire and forget: the connection indicator shows the outcome.
       mqtt
           .connect(
@@ -164,6 +177,33 @@ class _DxConfigDialogState extends State<_DxConfigDialog> {
                   const SizedBox(height: 16),
                   _field('MQTT broker host', _broker, hint: 'e.g. scmino'),
                   const SizedBox(height: 12),
+                  _field('MQTT broker port', _port, hint: '1883'),
+                  const SizedBox(height: 12),
+                  _field('MQTT username', _user, key: const ValueKey('settings-mqtt-user'), hint: 'e.g. console'),
+                  const SizedBox(height: 12),
+                  _field(
+                    'MQTT password',
+                    _pass,
+                    key: const ValueKey('settings-mqtt-password'),
+                    obscure: _passHidden,
+                    suffix: IconButton(
+                      tooltip: _passHidden ? 'Show password' : 'Hide password',
+                      icon: Icon(_passHidden ? Icons.visibility_off : Icons.visibility, size: 18, color: AppTheme.txtMute),
+                      onPressed: () => setState(() => _passHidden = !_passHidden),
+                    ),
+                  ),
+                  ValueListenableBuilder<TextEditingValue>(
+                    valueListenable: _pass,
+                    builder: (context, v, _) {
+                      if (v.text.isNotEmpty) return const SizedBox.shrink();
+                      return Padding(
+                        padding: const EdgeInsets.only(top: 4),
+                        child: Text('The console connects to the broker after you enter a username and a password.',
+                            style: AppTheme.body(11, color: AppTheme.amber)),
+                      );
+                    },
+                  ),
+                  const SizedBox(height: 16),
                   Text('The locator places the station on the maps and is the rotators\' aiming origin.',
                       style: AppTheme.body(11, color: AppTheme.txtMute)),
                   const SizedBox(height: 16),
@@ -203,12 +243,22 @@ class _DxConfigDialogState extends State<_DxConfigDialog> {
                     mainAxisAlignment: MainAxisAlignment.end,
                     children: [
                       if (appQuitSupported) ...[
-                        TextButton(
-                          key: const ValueKey('settings-quit'),
-                          onPressed: _confirmQuit,
-                          child: Text('QUIT APP', style: AppTheme.mono(13, color: AppTheme.red, weight: FontWeight.w600)),
+                        // Takes the free width and scales its label down
+                        // before the row can overflow the 320 px sheet.
+                        Expanded(
+                          child: Align(
+                            alignment: Alignment.centerLeft,
+                            child: FittedBox(
+                              fit: BoxFit.scaleDown,
+                              child: TextButton(
+                                key: const ValueKey('settings-quit'),
+                                onPressed: _confirmQuit,
+                                child: Text('QUIT APP',
+                                    style: AppTheme.mono(13, color: AppTheme.red, weight: FontWeight.w600)),
+                              ),
+                            ),
+                          ),
                         ),
-                        const Spacer(),
                       ],
                       TextButton(
                         onPressed: () => Navigator.of(context).pop(),
@@ -352,6 +402,7 @@ class _DxConfigDialogState extends State<_DxConfigDialog> {
     String? hint,
     bool obscure = false,
     String? errorText,
+    Widget? suffix,
     ValueChanged<String>? onChanged,
   }) {
     return TextField(
@@ -365,6 +416,7 @@ class _DxConfigDialogState extends State<_DxConfigDialog> {
       decoration: InputDecoration(
         labelText: label,
         errorText: errorText,
+        suffixIcon: suffix,
         labelStyle: AppTheme.mono(11, color: AppTheme.txtMute),
         hintText: hint,
         hintStyle: AppTheme.mono(11, color: AppTheme.txtFaint),
