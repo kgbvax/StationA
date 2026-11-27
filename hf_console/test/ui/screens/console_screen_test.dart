@@ -81,7 +81,7 @@ void main() {
   });
 
   group('75AUTO page', () {
-    testWidgets('the tab after CAM opens the page, which keeps the RX/TX annunciator', (tester) async {
+    testWidgets('the tab after CAM opens the page, which has no RX/TX annunciator', (tester) async {
       final store = BusStore()..setAutoOp();
       await tester.binding.setSurfaceSize(const Size(3600, 2400));
       await tester.pumpWidget(TestHarness(store: store, mqtt: FakeMqttService(store), child: const ConsoleScreen()));
@@ -90,7 +90,21 @@ void main() {
       await tester.tap(find.text('75AUTO'));
       await tester.pump(const Duration(milliseconds: 100));
       expect(find.byType(AutoPage), findsOneWidget);
+      expect(find.byKey(const ValueKey('rf-annunciator')), findsNothing);
+    });
+
+    testWidgets('phone: the 75AUTO page has no RX/TX annunciator, the other pages keep it', (tester) async {
+      final store = BusStore()..setAutoOp();
+      tester.view.physicalSize = const Size(2400, 1080);
+      tester.view.devicePixelRatio = 2.625;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(TestHarness(store: store, mqtt: FakeMqttService(store), child: const ConsoleScreen()));
+      await tester.pump(const Duration(milliseconds: 100));
       expect(find.byKey(const ValueKey('rf-annunciator')), findsOneWidget);
+      await tester.tap(find.widgetWithText(InkWell, '75AUTO'));
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.byType(AutoPage), findsOneWidget);
+      expect(find.byKey(const ValueKey('rf-annunciator')), findsNothing);
     });
   });
 
