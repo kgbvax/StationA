@@ -196,9 +196,3 @@ String dialText(int hz) {
   final rest = (hz % 1000000).toString().padLeft(6, '0');
   return '$mhz.${rest.substring(0, 3)} ${rest.substring(3)}';
 }
-
-/// EVEN or ODD of a period that starts at [startMs], or null.
-String? parityOf(int? startMs, int? periodMs) {
-  if (startMs == null || periodMs == null || periodMs <= 0) return null;
-  return (startMs ~/ periodMs).isEven ? 'EVEN' : 'ODD';
-}

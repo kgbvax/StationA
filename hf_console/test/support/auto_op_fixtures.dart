@@ -38,7 +38,6 @@ Map<String, dynamic> busyAutoOpDoc({int seq = 2000}) => {
         'qso_stage': 'R+RPT',
         'try_count': 0,
         'repeat_count': 1,
-        'tx_parity': 'odd',
         'target_choice': 'follow',
       },
       'presence_end_ms': busyNowMs + 492000,

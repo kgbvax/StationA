@@ -146,9 +146,6 @@ class AutoOpStation {
   final int? tryCount;
   final int? repeatCount;
 
-  /// `even`, `odd`, or empty before the first transmission.
-  final String? txParity;
-
   /// `follow` or `skip` for the DX call, else empty.
   final String? targetChoice;
 
@@ -173,7 +170,6 @@ class AutoOpStation {
     this.qsoStage,
     this.tryCount,
     this.repeatCount,
-    this.txParity,
     this.targetChoice,
   });
 
@@ -200,7 +196,6 @@ class AutoOpStation {
       qsoStage: _str(m['qso_stage']),
       tryCount: _int(m['try_count']),
       repeatCount: _int(m['repeat_count']),
-      txParity: _str(m['tx_parity']),
       targetChoice: _str(m['target_choice']),
     );
   }

@@ -155,8 +155,8 @@ class AutoStageChip extends StatelessWidget {
   }
 }
 
-/// The transmit box: TX or RX, the parity of the own transmission, and the
-/// slot bar. Live TX is red. The bar runs on the local clock from
+/// The transmit box: TX or RX, a warning while WSJT-X still sends after a
+/// stop, and the slot bar. Live TX is red. The bar runs on the local clock from
 /// `slot_offset_ms` and freezes, faint, while the data is not fresh.
 class _TransmitReadout extends StatelessWidget {
   final AutoOpStation? station;
@@ -185,14 +185,6 @@ class _TransmitReadout extends StatelessWidget {
           value = 'RX';
           valueColor = AppTheme.txtMute;
         }
-        final parity = switch (st?.txParity) {
-          'even' => 'EVEN',
-          'odd' => 'ODD',
-          '' => 'no TX yet',
-          _ => 'parity ?',
-        };
-        // No "TX OFF": RX above already says it.
-        final sub = stopUnconfirmed ? 'WSJT-X STILL SENDING' : parity;
         var frac = 0.0;
         final off = live.slotOffsetMs;
         final period = live.periodMs;
@@ -216,11 +208,12 @@ class _TransmitReadout extends StatelessWidget {
                   textBaseline: TextBaseline.alphabetic,
                   children: [
                     Text(value, key: const ValueKey('auto-tx'), style: AppTheme.mono(20, color: valueColor, weight: FontWeight.w700).copyWith(height: 1.1)),
-                    const SizedBox(width: 12),
-                    Text(sub,
-                        style: AppTheme.mono(12,
-                            color: stopUnconfirmed ? AppTheme.red : AppTheme.txtMute,
-                            weight: stopUnconfirmed ? FontWeight.w700 : FontWeight.w400)),
+                    // No "TX OFF": RX already says it.
+                    if (stopUnconfirmed) ...[
+                      const SizedBox(width: 12),
+                      Text('WSJT-X STILL SENDING',
+                          style: AppTheme.mono(12, color: AppTheme.red, weight: FontWeight.w700)),
+                    ],
                   ],
                 ),
               ),
