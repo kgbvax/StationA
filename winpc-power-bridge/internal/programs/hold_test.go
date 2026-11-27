@@ -38,22 +38,22 @@ func newHold() (*Activity, *PowerHold, *fakeRequest) {
 func TestHoldWhileChainRuns(t *testing.T) {
 	a, h, r := newHold()
 	now := time.Unix(1_800_000_000, 0)
-	a.PowerSeqState([]byte(`{"phase":"running","chain":{"state":"running","step":"dax"}}`))
+	a.PowerSeqState([]byte(`{"phase":"running","chain":{"state":"running","step":"dax"}}`), now)
 	h.Update(now)
 	if !r.held {
 		t.Fatal("no power request while the chain runs")
 	}
-	a.PowerSeqState([]byte(`{"phase":"running","chain":{"state":"ready"}}`))
+	a.PowerSeqState([]byte(`{"phase":"running","chain":{"state":"failed"}}`), now)
 	h.Update(now)
 	if r.held {
-		t.Fatal("power request kept after the chain ended")
+		t.Fatal("power request kept after the chain failed")
 	}
 }
 
 func TestHoldWhileSessionHasFreshBeats(t *testing.T) {
 	a, h, r := newHold()
 	now := time.Unix(1_800_000_000, 0)
-	a.AutoOpState([]byte(`{"session":{"state":"running"}}`), false, now)
+	a.AutoOpState([]byte(`{"session":{"state":"running","source":"live"}}`), false, now)
 	h.Update(now)
 	if !r.held || !a.SessionActive(now) {
 		t.Fatal("no power request during a fresh session")
@@ -76,9 +76,9 @@ func TestHoldWhileSessionHasFreshBeats(t *testing.T) {
 func TestSessionEndedReleases(t *testing.T) {
 	a, h, r := newHold()
 	now := time.Unix(1_800_000_000, 0)
-	a.AutoOpState([]byte(`{"session":{"state":"connecting"}}`), false, now)
+	a.AutoOpState([]byte(`{"session":{"state":"connecting","source":"live"}}`), false, now)
 	h.Update(now)
-	a.AutoOpState([]byte(`{"session":{"state":"ended"}}`), false, now.Add(time.Second))
+	a.AutoOpState([]byte(`{"session":{"state":"ended","source":"live"}}`), false, now.Add(time.Second))
 	h.Update(now.Add(time.Second))
 	if r.held {
 		t.Fatal("power request kept after the session ended")
@@ -88,7 +88,7 @@ func TestSessionEndedReleases(t *testing.T) {
 func TestRetainedSessionStateIsNotFresh(t *testing.T) {
 	a, h, r := newHold()
 	now := time.Unix(1_800_000_000, 0)
-	a.AutoOpState([]byte(`{"session":{"state":"running"}}`), true, now)
+	a.AutoOpState([]byte(`{"session":{"state":"running","source":"live"}}`), true, now)
 	h.Update(now)
 	if r.held || a.SessionActive(now) {
 		t.Fatal("a retained replay counted as a fresh session")
@@ -102,7 +102,7 @@ func TestRetainedSessionStateIsNotFresh(t *testing.T) {
 func TestSetFailureRetried(t *testing.T) {
 	a, h, r := newHold()
 	now := time.Unix(1_800_000_000, 0)
-	a.PowerSeqState([]byte(`{"chain":{"state":"running"}}`))
+	a.PowerSeqState([]byte(`{"chain":{"state":"running"}}`), now)
 	r.err = errors.New("denied")
 	h.Update(now)
 	r.err = nil
@@ -115,10 +115,70 @@ func TestSetFailureRetried(t *testing.T) {
 func TestMalformedPayloadsIgnored(t *testing.T) {
 	a, h, r := newHold()
 	now := time.Unix(1_800_000_000, 0)
-	a.PowerSeqState([]byte(`{"chain":{"state":"running"}}`))
-	a.PowerSeqState([]byte(`not json`))
+	a.PowerSeqState([]byte(`{"chain":{"state":"running"}}`), now)
+	a.PowerSeqState([]byte(`not json`), now)
 	h.Update(now)
 	if !r.held {
 		t.Fatal("malformed payload changed the chain state")
+	}
+}
+
+func TestHoldWhileReadyChainIsYoung(t *testing.T) {
+	a, h, r := newHold()
+	now := time.Unix(1_800_000_000, 0)
+	ts := now.UTC().Format(time.RFC3339)
+	a.PowerSeqState([]byte(`{"chain":{"state":"ready","ts":"`+ts+`"}}`), now.Add(time.Minute))
+	h.Update(now.Add(29 * time.Minute))
+	if !r.held {
+		t.Fatal("no power request for a ready chain younger than 30 min")
+	}
+	h.Update(now.Add(31 * time.Minute))
+	if r.held {
+		t.Fatal("power request kept for a ready chain older than 30 min")
+	}
+}
+
+func TestReadyChainWithoutTSUsesReceiveTime(t *testing.T) {
+	a, h, r := newHold()
+	now := time.Unix(1_800_000_000, 0)
+	a.PowerSeqState([]byte(`{"chain":{"state":"ready","ts":"garbage"}}`), now)
+	h.Update(now.Add(29 * time.Minute))
+	if !r.held {
+		t.Fatal("no power request for a ready chain received less than 30 min ago")
+	}
+	h.Update(now.Add(30 * time.Minute))
+	if r.held {
+		t.Fatal("power request kept 30 min after the ready chain arrived")
+	}
+}
+
+func TestReplaySessionDoesNotHold(t *testing.T) {
+	a, h, r := newHold()
+	now := time.Unix(1_800_000_000, 0)
+	a.AutoOpState([]byte(`{"session":{"state":"running","source":"replay"}}`), false, now)
+	a.AutoOpBeat(now)
+	h.Update(now)
+	if r.held || a.SessionActive(now) {
+		t.Fatal("a replay session counted as active")
+	}
+	a.AutoOpState([]byte(`{"session":{"state":"running"}}`), false, now)
+	if a.SessionActive(now) {
+		t.Fatal("a session without source counted as live")
+	}
+}
+
+func TestOfflinePowerSeqIgnoresRunningChain(t *testing.T) {
+	a, h, r := newHold()
+	now := time.Unix(1_800_000_000, 0)
+	a.PowerSeqState([]byte(`{"chain":{"state":"running"}}`), now)
+	a.PowerSeqStatus([]byte("offline"))
+	h.Update(now)
+	if r.held {
+		t.Fatal("power request held for the retained chain of an offline powerseq")
+	}
+	a.PowerSeqStatus([]byte("online"))
+	h.Update(now)
+	if !r.held {
+		t.Fatal("no power request after powerseq came back online")
 	}
 }

@@ -36,8 +36,9 @@ step with the PC's wired NIC MAC).
 | `muehle/power/shack-pc/state` | yes | agent → bus | live snapshot |
 | `muehle/power/shack-pc/status` | yes | agent → bus | `online` \| `offline` (LWT + explicit) |
 | `muehle/power/shack-pc/cmd` | **no** | bus → agent | `sleep`, `ensure_program`, `stop_program` |
-| `muehle/hf/power-seq/state` | yes | bus → agent | read: `chain.state` for the power request |
-| `muehle/hf/auto-op/state`, `muehle/hf/auto-op/beat` | yes / no | bus → agent | read: `session.state` and heartbeat for the power request and the `stop_program` guard |
+| `muehle/hf/power-seq/state` | yes | bus → agent | read: `chain.state` and `chain.ts` for the power request |
+| `muehle/hf/power-seq/status` | yes | bus → agent | read: while `offline`, the powerseq chain does not count for the power request |
+| `muehle/hf/auto-op/state`, `muehle/hf/auto-op/beat` | yes / no | bus → agent | read: `session.state`, `session.source` and heartbeat for the power request and the `stop_program` guard |
 
 All agent publishes are QoS 1.
 
@@ -246,8 +247,10 @@ Ends an owned copy: `WM_CLOSE` to its visible windows, so the program can
 close cleanly (WSJT-X removes its lock file), and `TerminateProcess` if it
 still runs after 10 s. Then `program_<name>` = `stopped`. It is refused:
 
-- while a 75auto session is active (`session.state` `connecting` or `running`
-  with a `/beat` or live `/state` of `hf/auto-op` younger than 30 s);
+- while a 75auto session is active (`session.source` = `live`,
+  `session.state` `connecting` or `running`, and a `/beat` or live `/state`
+  of `hf/auto-op` younger than 30 s). A replay session (`source` `replay`)
+  drives no radio and does not count;
 - for a copy that the operator started (`not started by the chain`).
 
 With no copy running the result is `stopped`.
@@ -263,9 +266,17 @@ agent restart shows `ready`).
 ### Power request
 
 The agent holds a Windows power request (`PowerCreateRequest`, type
-`PowerRequestSystemRequired`) while `muehle/hf/power-seq/state` has
-`chain.state` = `running`, or while a 75auto session is active (definition
-above). A retained `hf/auto-op` `/state` that arrives at subscribe does not
+`PowerRequestSystemRequired`) while one of these is true:
+
+- `muehle/hf/power-seq/state` has `chain.state` = `running`;
+- `chain.state` = `ready` and the chain is younger than 30 min. The age comes
+  from `chain.ts`; if `ts` does not parse, from the time the agent received
+  that `/state`. powerseq holds a ready chain for 30 min while the console
+  sends the session start;
+- a 75auto session is active (definition above).
+
+While `muehle/hf/power-seq/status` is `offline`, the chain does not count: a
+retained `/state` of a powerseq that stopped can show `running` for ever. A retained `hf/auto-op` `/state` that arrives at subscribe does not
 count as a heartbeat. In all other cases the request is released, also with
 owned programs still running, so the PC sleeps as before. The agent checks
 this every 5 s and on every message of those topics. `powercfg /requests`

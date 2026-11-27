@@ -2,11 +2,13 @@ package programs
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"io"
 	"log/slog"
 	"net"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -26,6 +28,7 @@ type fakeProc struct {
 	// dieOnStart makes a started process exit at once (process check fails).
 	dieOnStart map[string]bool
 	startErr   error
+	endErr     error
 }
 
 type fakeEntry struct {
@@ -74,6 +77,9 @@ func (f *fakeProc) Start(s Spec) (Process, error) {
 }
 
 func (f *fakeProc) End(p Process) error {
+	if f.endErr != nil {
+		return f.endErr
+	}
 	f.ends = append(f.ends, p.PID)
 	delete(f.procs, p.PID)
 	return nil
@@ -449,6 +455,92 @@ func TestFieldsInConfigOrder(t *testing.T) {
 	}
 	if strings.Join(names, ",") != "dax,wsjtx,aethersdr,75auto" {
 		t.Errorf("names = %v", names)
+	}
+}
+
+func TestStopNotRefusedDuringReplaySession(t *testing.T) {
+	h := newHarness(t, testPrograms)
+	act := &Activity{}
+	now := time.Unix(1_800_000_000, 0)
+	act.AutoOpState([]byte(`{"session":{"state":"running","source":"replay"}}`), false, now)
+	act.AutoOpBeat(now)
+	h.m.sessionActive = func() bool { return act.SessionActive(now) }
+	h.ensure(t, "wsjtx")
+	if err := h.m.Stop("wsjtx"); err != nil {
+		t.Fatalf("stop during a replay session: %v", err)
+	}
+	if h.m.Owned("wsjtx") {
+		t.Error("program still owned after stop")
+	}
+}
+
+func TestRestartEndFailureFails(t *testing.T) {
+	h := newHarness(t, testPrograms)
+	h.ensure(t, "dax")
+	var old Process
+	for pid, e := range h.proc.procs {
+		old = Process{PID: pid, Start: e.start}
+	}
+	h.proc.endErr = errors.New("access denied")
+	h.ensure(t, "dax")
+	f := h.wantState(t, "dax", StateFailed)
+	if !strings.Contains(f.Error, "end: access denied") {
+		t.Errorf("error = %q, want the End reason", f.Error)
+	}
+	if len(h.proc.starts) != 1 {
+		t.Errorf("starts = %v, want no second start", h.proc.starts)
+	}
+	m2 := h.newManager(testPrograms)
+	if !m2.Owned("dax") || m2.owned["dax"] != old {
+		t.Errorf("owned record = %v, want the old copy %v", m2.owned, old)
+	}
+}
+
+func TestCorruptOwnedFileTreatedAsEmpty(t *testing.T) {
+	h := newHarness(t, testPrograms)
+	if err := os.WriteFile(h.owned, []byte("{not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	m := New(context.Background(), Options{
+		Programs: testPrograms, Proc: h.proc, OwnedFile: h.owned, Clock: h.clock,
+		Log: slog.New(slog.NewTextHandler(&buf, nil)),
+	})
+	for _, f := range m.Fields() {
+		if m.Owned(f.Name) || f.State != StateStopped {
+			t.Errorf("%s: owned %v state %q after a corrupt record", f.Name, m.Owned(f.Name), f.State)
+		}
+	}
+	if !strings.Contains(buf.String(), "owned record malformed") {
+		t.Errorf("no log line for the corrupt record: %q", buf.String())
+	}
+}
+
+func TestRefreshOperatorCopyExited(t *testing.T) {
+	h := newHarness(t, testPrograms)
+	h.proc.run("wsjtx.exe")
+	h.ensure(t, "wsjtx")
+	h.wantState(t, "wsjtx", StateReady)
+	h.proc.procs = map[int]fakeEntry{}
+	h.m.Refresh()
+	if f := h.field(t, "wsjtx"); f.State != StateStopped {
+		t.Errorf("state = %q, want stopped", f.State)
+	}
+}
+
+func TestEnsureReusesOwnedWithoutRestartOwned(t *testing.T) {
+	progs := []config.ProgramConfig{
+		{Name: "dax", Exe: `C:\Flex\DAX.exe`, Process: "DAX.exe", Check: config.CheckProcess, SettleS: 5, CheckTimeoutS: 60},
+	}
+	h := newHarness(t, progs)
+	h.ensure(t, "dax")
+	h.ensure(t, "dax")
+	h.wantState(t, "dax", StateReady)
+	if len(h.proc.starts) != 1 || len(h.proc.ends) != 0 {
+		t.Errorf("starts = %v ends = %v, want one start and no end", h.proc.starts, h.proc.ends)
+	}
+	if !h.m.Owned("dax") {
+		t.Error("reused copy no longer owned")
 	}
 }
 

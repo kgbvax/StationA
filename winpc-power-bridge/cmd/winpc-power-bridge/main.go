@@ -332,7 +332,7 @@ func (s *session) options() *pahomqtt.ClientOptions {
 	return opts
 }
 
-// subscribeActivity subscribes the powerseq /state (chain.state) and the 75auto
+// subscribeActivity subscribes the powerseq /state (chain) and /status and the 75auto
 // /state and /beat. The handlers only parse and record (programs.Activity is
 // cheap and locked) and nudge the power-hold goroutine; they never publish.
 func (s *session) subscribeActivity(c pahomqtt.Client) {
@@ -345,7 +345,11 @@ func (s *session) subscribeActivity(c pahomqtt.Client) {
 	}
 	subs := map[string]pahomqtt.MessageHandler{
 		schema.StateTopic(site, "hf", "power-seq"): func(_ pahomqtt.Client, m pahomqtt.Message) {
-			s.act.PowerSeqState(m.Payload())
+			s.act.PowerSeqState(m.Payload(), time.Now())
+			poke()
+		},
+		schema.StatusTopic(site, "hf", "power-seq"): func(_ pahomqtt.Client, m pahomqtt.Message) {
+			s.act.PowerSeqStatus(m.Payload())
 			poke()
 		},
 		schema.StateTopic(site, "hf", "auto-op"): func(_ pahomqtt.Client, m pahomqtt.Message) {

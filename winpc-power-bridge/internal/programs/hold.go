@@ -12,23 +12,34 @@ import (
 // frozen 75auto stops holding the power within this window.
 const FreshWindow = 30 * time.Second
 
-// Activity tracks what needs the PC awake: a powerseq start chain that runs
-// (muehle/hf/power-seq /state chain.state) and a 75auto session that is
-// connecting or running with a fresh heartbeat (muehle/hf/auto-op /state and
-// /beat). The Observe methods are cheap and safe to call from a paho handler.
+// ReadyHold is how long a powerseq chain in state ready keeps the power
+// request: powerseq holds a ready chain for the same time while the console
+// sends the session start.
+const ReadyHold = 30 * time.Minute
+
+// Activity tracks what needs the PC awake: a powerseq start chain that runs or
+// is ready and young (muehle/hf/power-seq /state chain), and a live 75auto
+// session that is connecting or running with a fresh heartbeat
+// (muehle/hf/auto-op /state and /beat). The Observe methods are cheap and safe
+// to call from a paho handler.
 type Activity struct {
-	mu           sync.Mutex
-	chainRunning bool
-	sessionState string
-	lastFresh    time.Time
+	mu            sync.Mutex
+	chainState    string
+	chainTS       time.Time
+	powerSeqDown  bool
+	sessionState  string
+	sessionSource string
+	lastFresh     time.Time
 }
 
-// PowerSeqState takes one powerseq /state payload. An empty payload (a
-// cleared retained message) means no chain; malformed JSON is ignored.
-func (a *Activity) PowerSeqState(payload []byte) {
+// PowerSeqState takes one powerseq /state payload, received at now. An empty
+// payload (a cleared retained message) means no chain; malformed JSON is
+// ignored. The chain time is the record's ts; if ts does not parse, it is now.
+func (a *Activity) PowerSeqState(payload []byte, now time.Time) {
 	var st struct {
 		Chain struct {
 			State string `json:"state"`
+			TS    string `json:"ts"`
 		} `json:"chain"`
 	}
 	if len(payload) > 0 {
@@ -36,9 +47,36 @@ func (a *Activity) PowerSeqState(payload []byte) {
 			return
 		}
 	}
+	ts, err := time.Parse(time.RFC3339, st.Chain.TS)
+	if err != nil {
+		ts = now
+	}
 	a.mu.Lock()
-	a.chainRunning = st.Chain.State == "running"
+	a.chainState = st.Chain.State
+	a.chainTS = ts
 	a.mu.Unlock()
+}
+
+// PowerSeqStatus takes one powerseq /status payload. While powerseq is
+// offline its retained /state can be stale (a chain that stays running after
+// powerseq died), so the chain does not count.
+func (a *Activity) PowerSeqStatus(payload []byte) {
+	a.mu.Lock()
+	a.powerSeqDown = string(payload) == "offline"
+	a.mu.Unlock()
+}
+
+func (a *Activity) chainWantedLocked(now time.Time) bool {
+	if a.powerSeqDown {
+		return false
+	}
+	switch a.chainState {
+	case "running":
+		return true
+	case "ready":
+		return now.Sub(a.chainTS) < ReadyHold
+	}
+	return false
 }
 
 // AutoOpState takes one 75auto /state payload. A retained delivery (a broker
@@ -47,7 +85,8 @@ func (a *Activity) PowerSeqState(payload []byte) {
 func (a *Activity) AutoOpState(payload []byte, retained bool, now time.Time) {
 	var st struct {
 		Session struct {
-			State string `json:"state"`
+			State  string `json:"state"`
+			Source string `json:"source"`
 		} `json:"session"`
 	}
 	if len(payload) > 0 {
@@ -57,6 +96,7 @@ func (a *Activity) AutoOpState(payload []byte, retained bool, now time.Time) {
 	}
 	a.mu.Lock()
 	a.sessionState = st.Session.State
+	a.sessionSource = st.Session.Source
 	if !retained && len(payload) > 0 {
 		a.lastFresh = now
 	}
@@ -70,8 +110,9 @@ func (a *Activity) AutoOpBeat(now time.Time) {
 	a.mu.Unlock()
 }
 
-// SessionActive reports a 75auto session in connecting or running whose last
-// beat or live /state is younger than FreshWindow.
+// SessionActive reports a live 75auto session (session.source "live"; a
+// replay drives no radio) in connecting or running whose last beat or live
+// /state is younger than FreshWindow.
 func (a *Activity) SessionActive(now time.Time) bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -79,6 +120,9 @@ func (a *Activity) SessionActive(now time.Time) bool {
 }
 
 func (a *Activity) sessionActiveLocked(now time.Time) bool {
+	if a.sessionSource != "live" {
+		return false
+	}
 	if a.sessionState != "connecting" && a.sessionState != "running" {
 		return false
 	}
@@ -89,7 +133,7 @@ func (a *Activity) sessionActiveLocked(now time.Time) bool {
 func (a *Activity) wanted(now time.Time) bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	return a.chainRunning || a.sessionActiveLocked(now)
+	return a.chainWantedLocked(now) || a.sessionActiveLocked(now)
 }
 
 // PowerRequest is a system power request that keeps the PC out of sleep.

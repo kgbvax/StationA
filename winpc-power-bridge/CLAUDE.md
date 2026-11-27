@@ -19,15 +19,18 @@ Modern Standby, see below).
   check with `not started by the chain`. It never ends an operator copy.
   `/state` shows `starting` first in every case. `stop_program` ends only
   owned copies (WM_CLOSE, then TerminateProcess after 10 s) and is refused
-  while a 75auto session is active. Programs start with
+  while a live 75auto session is active (a replay session does not count). Programs start with
   `CREATE_BREAKAWAY_FROM_JOB`, so `schtasks /end` of the agent leaves them
   running. The commands are unsigned like `sleep`; the program paths come
   only from the config.
 - **Power request**: the agent holds a `PowerRequestSystemRequired` power
-  request while `hf/power-seq` `chain.state` = `running` or a 75auto session
-  (`hf/auto-op` `session.state` connecting/running) has a `/beat` or live
-  `/state` younger than 30 s. Otherwise it is released, also with owned
-  programs running. Whether this keeps bwpc out of Modern Standby is a bench
+  request while `hf/power-seq` `chain.state` = `running`, or `ready` with a
+  chain `ts` younger than 30 min (receive time if `ts` does not parse), or
+  while a live 75auto session (`hf/auto-op` `session.source` = `live`,
+  `session.state` connecting/running) has a `/beat` or live `/state` younger
+  than 30 s. The chain does not count while `hf/power-seq` `/status` is
+  `offline` (a stale retained `running`). Otherwise it is released, also
+  with owned programs running. Whether this keeps bwpc out of Modern Standby is a bench
   check.
 - **Sleep guard:** a `sleep` is refused (`/state.error = "user active, sleep
   refused"`, `Warn` log) when the last keyboard/mouse input in the user session
