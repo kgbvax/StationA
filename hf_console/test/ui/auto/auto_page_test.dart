@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hf_console/store/bus_store.dart';
 import 'package:hf_console/ui/auto/auto_controls.dart';
 import 'package:hf_console/store/auto_op.dart';
+import 'package:hf_console/ui/auto/band_selector.dart';
 import 'package:hf_console/ui/auto/auto_page.dart' show autoErrorText, autoMaxScale;
 import 'package:hf_console/ui/auto/input_faults.dart';
 import 'package:hf_console/ui/screens/console_screen.dart';
@@ -280,6 +281,37 @@ void main() {
       expect(color('auto-band-value-20m'), AppTheme.txt);
       // A band without a value shows a dimmed dash.
       expect(color('auto-band-value-10m'), AppTheme.txtFaint);
+    });
+
+    testWidgets('a band more than 10 % above the current band shows green', (tester) async {
+      final doc = busyAutoOpDoc(); // current band 20m
+      doc['bands'] = [
+        {'band': '40m', 'dial_hz': 7074000, 'seen': false, 'count': 0, 'period_start_ms': 0, 'value': 111},
+        {'band': '30m', 'dial_hz': 10136000, 'seen': false, 'count': 0, 'period_start_ms': 0, 'value': 110},
+        {'band': '20m', 'dial_hz': 14074000, 'seen': true, 'count': 23, 'period_start_ms': busyNowMs, 'value': 100},
+        {'band': '15m', 'dial_hz': 21074000, 'seen': false, 'count': 0, 'period_start_ms': 0, 'value': 50},
+      ];
+      await _pumpAuto(tester, doc: doc);
+      Color? value(String b) => tester.widget<Text>(find.byKey(ValueKey('auto-band-value-$b'))).style?.color;
+      Color border(String b) =>
+          ((tester.widget<Container>(find.byKey(ValueKey('auto-band-$b'))).decoration as BoxDecoration).border as Border)
+              .top
+              .color;
+      expect(value('40m'), AppTheme.green);
+      expect(border('40m'), AppTheme.green);
+      // Exactly 10 % above is not more than 10 %.
+      expect(value('30m'), AppTheme.txt);
+      expect(border('30m'), isNot(AppTheme.green));
+      expect(value('15m'), AppTheme.txt);
+      expect(border('20m'), AppTheme.accent);
+    });
+
+    test('isBetterBand needs both values and more than 10 %', () {
+      expect(BandSelector.isBetterBand(111, 100), isTrue);
+      expect(BandSelector.isBetterBand(110, 100), isFalse);
+      expect(BandSelector.isBetterBand(1, 0), isTrue);
+      expect(BandSelector.isBetterBand(null, 100), isFalse);
+      expect(BandSelector.isBetterBand(100, null), isFalse);
     });
   });
 
