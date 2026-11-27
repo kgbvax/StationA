@@ -20,6 +20,7 @@ import '../theme.dart';
 import 'auto_card.dart';
 import 'auto_commands.dart';
 import 'auto_live.dart';
+import 'auto_tips.dart';
 
 class BandSelector extends StatelessWidget {
   /// A horizontal strip for a portrait phone instead of a column.
@@ -171,7 +172,12 @@ class _BandRow extends StatelessWidget {
     final off = seen == false || !inTable;
     final border = current ? AppTheme.accent : (pending ? AppTheme.amber : (off ? AppTheme.cardLine : AppTheme.cardLineHi));
     final text = current ? AppTheme.accent : (pending ? AppTheme.amber : (off ? AppTheme.txtFaint : AppTheme.txt));
-    return GestureDetector(
+    final tip = current
+        ? '$band: the band of the radio now.'
+        : inTable
+            ? '$band: ${AutoControl.band.tip}'
+            : '$band: not in the band table of 75auto. 75auto does not change to it.';
+    return autoTip(tip, GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTap: onTap,
       child: Container(
@@ -216,6 +222,6 @@ class _BandRow extends StatelessWidget {
         ],
       ),
     ),
-    );
+    ));
   }
 }

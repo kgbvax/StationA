@@ -17,6 +17,7 @@ import '../../store/bus_store.dart';
 import '../theme.dart';
 import 'auto_commands.dart';
 import 'auto_live.dart';
+import 'auto_tips.dart';
 import 'auto_words.dart';
 
 /// What the card shows, as text.
@@ -185,7 +186,7 @@ class ProposalButtons extends StatelessWidget {
             : AppTheme.cardLine;
     // Approve is the filled accent button while it can be tapped.
     final filled = primary && onTap != null;
-    return ElevatedButton(
+    return autoTip(c.tip, ElevatedButton(
       key: ValueKey('auto-${c.name}'),
       onPressed: onTap,
       style: AppTheme.actionButton().copyWith(
@@ -198,6 +199,6 @@ class ProposalButtons extends StatelessWidget {
               color: onTap == null ? AppTheme.txtFaint : (filled ? AppTheme.activeButtonText : null),
               weight: FontWeight.w600,
               letterSpacing: 0.06)),
-    );
+    ));
   }
 }
