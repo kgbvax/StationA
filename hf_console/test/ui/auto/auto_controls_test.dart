@@ -224,20 +224,20 @@ void main() {
       expect(mqtt.publishes, isEmpty);
     });
 
-    testWidgets('its frame is red only while 75auto transmits', (tester) async {
+    testWidgets('it has the enabled colors only while 75auto transmits, and no red', (tester) async {
       final idle = busyAutoOpDoc();
       idle['station'] = {...idle['station'] as Map<String, dynamic>, 'transmitting': false};
       final (store, _) = await _pump(tester, doc: idle);
+      // Idle: the disabled colors, but it still takes a tap.
       expect(_on(tester, 'auto-stop-tx'), isTrue);
       expect(_stopBackground(tester), AppTheme.pane);
-      expect(_stopFrame(tester), AppTheme.cardLineHi);
-      expect(_stopLabel(tester), AppTheme.txt);
+      expect(_stopFrame(tester), AppTheme.cardLine);
+      expect(_stopLabel(tester), AppTheme.txtFaint);
 
       _live(store, busyAutoOpDoc());
       await tester.pump(const Duration(milliseconds: 300));
-      // Not filled: the background and the label stay plain.
       expect(_stopBackground(tester), AppTheme.pane);
-      expect(_stopFrame(tester), AppTheme.red);
+      expect(_stopFrame(tester), AppTheme.cardLineHi);
       expect(_stopLabel(tester), AppTheme.txt);
     });
 
