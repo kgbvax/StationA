@@ -34,6 +34,7 @@ import '../theme.dart';
 import 'auto_card.dart';
 import 'auto_commands.dart';
 import 'auto_live.dart';
+import 'auto_tips.dart';
 
 /// The height of the buttons of the TARGET and MODE cards, and of Stop TX.
 const autoButtonRowHeight = 48.0;
@@ -188,7 +189,7 @@ class _RowButton extends StatelessWidget {
         : active
             ? AppTheme.accent
             : AppTheme.cardLine;
-    return ElevatedButton(
+    return autoTip(control.tip, ElevatedButton(
       key: ValueKey('auto-${control.name}'),
       onPressed: onTap,
       style: AppTheme.actionButton().copyWith(
@@ -215,7 +216,7 @@ class _RowButton extends StatelessWidget {
           ),
         ]),
       ),
-    );
+    ));
   }
 }
 
@@ -279,7 +280,7 @@ class _ArmCq extends StatelessWidget {
         sub = auto ? null : 'auto only';
       }
       final Color text = armed ? AppTheme.blend(AppTheme.accent, 0.9) : (on ? AppTheme.txt : AppTheme.txtFaint);
-      return ElevatedButton(
+      return autoTip(AutoControl.armCq.tip, ElevatedButton(
         key: const ValueKey('auto-arm-cq'),
         onPressed: on ? () => cmd.send(AutoControl.armCq, null) : null,
         style: AppTheme.actionButton().copyWith(
@@ -302,7 +303,7 @@ class _ArmCq extends StatelessWidget {
                   style: AppTheme.mono(11, color: armed ? text : AppTheme.txtMute, weight: FontWeight.w600)),
           ]),
         ),
-      );
+      ));
     });
   }
 }
@@ -329,7 +330,7 @@ class _StopTx extends StatelessWidget {
         minimumSize: const WidgetStatePropertyAll(Size(48, autoStopHeight)),
         padding: const WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: 8, vertical: 2)),
       );
-      return ElevatedButton(
+      return autoTip(AutoControl.stop.tip, ElevatedButton(
         key: const ValueKey('auto-stop-tx'),
         // Never locked: each tap sends a new stop.
         onPressed: on ? () => cmd.send(AutoControl.stop, null) : null,
@@ -356,7 +357,7 @@ class _StopTx extends StatelessWidget {
                       .copyWith(height: 1.2)),
           ],
         ),
-      );
+      ));
     });
   }
 }
