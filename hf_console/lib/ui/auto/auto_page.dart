@@ -5,9 +5,9 @@
 ///
 /// Landscape (about 914 x 411 dp on a phone, scaled up as a whole on a
 /// larger screen): the top bar, the readout row,
-/// the main area with the band selector, the band activity, the RX
-/// frequency list with the controls under it (Target, Mode, Arm CQ, Stop
-/// TX), and the DX card, and the bottom strip with the action log and the
+/// the main area with the band selector, the band activity with Target and
+/// Mode under it, the RX frequency list with Arm CQ and Stop TX under it,
+/// and the DX card, and the bottom strip with the action log and the
 /// health row. Stop TX stays in view under the RX list, also under the
 /// LINK DOWN banner.
 ///
@@ -149,13 +149,19 @@ class _AutoPageState extends State<AutoPage> {
                     children: [
                       const SizedBox(width: 94, child: BandSelector()),
                       gap,
-                      const Expanded(child: DecodeList()),
+                      const Expanded(
+                        child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                          Expanded(child: DecodeList()),
+                          SizedBox(height: autoGap),
+                          AutoTargetMode(),
+                        ]),
+                      ),
                       gap,
                       const Expanded(
                         child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
                           Expanded(child: RxList()),
                           SizedBox(height: autoGap),
-                          AutoControls(),
+                          AutoControls(targetMode: false),
                         ]),
                       ),
                       gap,

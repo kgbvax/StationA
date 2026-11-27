@@ -1,6 +1,7 @@
-/// The controls of the 75AUTO page, under the RX frequency list: the
-/// TARGET card (Follow, Skip) and the MODE card (Observe, Confirm, Auto)
-/// side by side, then Arm CQ and Stop TX. The feedback line sits in the
+/// The controls of the 75AUTO page: the TARGET card (Follow, Skip) and the
+/// MODE card (Observe, Confirm, Auto) side by side, then Arm CQ and Stop TX.
+/// In landscape the TARGET and MODE cards sit under the band activity list,
+/// and Arm CQ and Stop TX under the RX frequency list. The feedback line sits in the
 /// title strip of the MODE card. Approve and Reject are in the DX card.
 ///
 /// Arm CQ sits next to Stop TX, as in the window of 75auto: Arm CQ gives the
@@ -48,20 +49,22 @@ const autoRowCardHeight = autoRowTitleHeight + autoButtonRowHeight + 2 * 2 + 2;
 /// and Stop TX.
 const autoControlsHeight = autoRowCardHeight + 4 + autoStopHeight;
 
-/// The control block of the 75AUTO page, under the RX frequency list: the
-/// TARGET and MODE cards, then Arm CQ and Stop TX.
+/// The control block of the 75AUTO page: the TARGET and MODE cards, then
+/// Arm CQ and Stop TX. Without [targetMode] it holds only Arm CQ and Stop
+/// TX, and [AutoTargetMode] shows the cards elsewhere.
 class AutoControls extends StatelessWidget {
-  const AutoControls({super.key});
+  final bool targetMode;
+
+  const AutoControls({super.key, this.targetMode = true});
 
   @override
   Widget build(BuildContext context) {
-    return const Column(
+    return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        SizedBox(height: autoRowCardHeight, child: _ButtonRow()),
-        SizedBox(height: 4),
-        SizedBox(
+        if (targetMode) ...const [AutoTargetMode(), SizedBox(height: 4)],
+        const SizedBox(
           height: autoStopHeight,
           child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
             SizedBox(width: autoArmWidth, child: _ArmCq()),
@@ -72,6 +75,15 @@ class AutoControls extends StatelessWidget {
       ],
     );
   }
+}
+
+/// The TARGET card (Follow, Skip) and the MODE card (Observe, Confirm,
+/// Auto), side by side, at their fixed height.
+class AutoTargetMode extends StatelessWidget {
+  const AutoTargetMode({super.key});
+
+  @override
+  Widget build(BuildContext context) => const SizedBox(height: autoRowCardHeight, child: _ButtonRow());
 }
 
 /// The TARGET card (Follow, Skip) and the MODE card (Observe, Confirm,
