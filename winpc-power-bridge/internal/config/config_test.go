@@ -139,8 +139,8 @@ func TestTailscaleDefaultsAndFile(t *testing.T) {
 
 const programsTOML = `
 [[program]]
-name    = "dax"
-exe     = 'C:\Program Files\FlexRadio Systems\DAX\DAX.exe'
+name    = "wsjtx"
+exe     = 'C:\Program Files\FlexRadio Systems\WSJT\wsjtx\bin\wsjtx.exe'
 check   = "process"
 restart_owned = true
 
@@ -169,12 +169,12 @@ func TestProgramsLoadWithDefaults(t *testing.T) {
 	if len(cfg.Programs) != 2 {
 		t.Fatalf("programs = %+v", cfg.Programs)
 	}
-	dax, aeth := cfg.Programs[0], cfg.Programs[1]
-	if dax.Process != "DAX.exe" {
-		t.Errorf("dax process = %q, want the exe base name", dax.Process)
+	wsjtx, aeth := cfg.Programs[0], cfg.Programs[1]
+	if wsjtx.Process != "wsjtx.exe" {
+		t.Errorf("wsjtx process = %q, want the exe base name", wsjtx.Process)
 	}
-	if dax.SettleS != 5 || dax.CheckTimeoutS != 60 || !dax.RestartOwned {
-		t.Errorf("dax = %+v", dax)
+	if wsjtx.SettleS != 5 || wsjtx.CheckTimeoutS != 60 || !wsjtx.RestartOwned {
+		t.Errorf("wsjtx = %+v", wsjtx)
 	}
 	if aeth.Process != "aethersdr.exe" || aeth.SettleS != 2 || aeth.CheckTimeoutS != 90 ||
 		aeth.CheckAddress != "127.0.0.1:4532" || aeth.Probe != "f" || len(aeth.Args) != 1 {
@@ -185,11 +185,11 @@ func TestProgramsLoadWithDefaults(t *testing.T) {
 func TestProgramsValidate(t *testing.T) {
 	for name, body := range map[string]string{
 		"no name":       "[[program]]\nexe = 'a.exe'\ncheck = \"none\"\n",
-		"bad name":      "[[program]]\nname = \"Dax-1\"\nexe = 'a.exe'\ncheck = \"none\"\n",
-		"no exe":        "[[program]]\nname = \"dax\"\ncheck = \"none\"\n",
-		"bad check":     "[[program]]\nname = \"dax\"\nexe = 'a.exe'\ncheck = \"udp\"\n",
-		"no check":      "[[program]]\nname = \"dax\"\nexe = 'a.exe'\n",
-		"duplicate":     "[[program]]\nname = \"dax\"\nexe = 'a.exe'\ncheck = \"none\"\n[[program]]\nname = \"dax\"\nexe = 'b.exe'\ncheck = \"none\"\n",
+		"bad name":      "[[program]]\nname = \"Wsjtx-1\"\nexe = 'a.exe'\ncheck = \"none\"\n",
+		"no exe":        "[[program]]\nname = \"wsjtx\"\ncheck = \"none\"\n",
+		"bad check":     "[[program]]\nname = \"wsjtx\"\nexe = 'a.exe'\ncheck = \"udp\"\n",
+		"no check":      "[[program]]\nname = \"wsjtx\"\nexe = 'a.exe'\n",
+		"duplicate":     "[[program]]\nname = \"wsjtx\"\nexe = 'a.exe'\ncheck = \"none\"\n[[program]]\nname = \"wsjtx\"\nexe = 'b.exe'\ncheck = \"none\"\n",
 		"tcp no addr":   "[[program]]\nname = \"a\"\nexe = 'a.exe'\ncheck = \"tcp\"\nprobe = \"f\"\nreply_pattern = '.'\n",
 		"tcp no probe":  "[[program]]\nname = \"a\"\nexe = 'a.exe'\ncheck = \"tcp\"\ncheck_address = \"127.0.0.1:1\"\nreply_pattern = '.'\n",
 		"tcp no reply":  "[[program]]\nname = \"a\"\nexe = 'a.exe'\ncheck = \"tcp\"\ncheck_address = \"127.0.0.1:1\"\nprobe = \"f\"\n",
@@ -246,7 +246,7 @@ func TestExampleProgramsValid(t *testing.T) {
 	if err := cfg.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	if len(cfg.Programs) != 4 || cfg.Programs[1].Process != "DAX.exe" {
+	if len(cfg.Programs) != 3 || cfg.Programs[1].Process != "wsjtx.exe" {
 		t.Errorf("programs = %+v", cfg.Programs)
 	}
 }

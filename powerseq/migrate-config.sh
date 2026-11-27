@@ -149,7 +149,7 @@ else
       step("bwpc", "wait_status")
       print "slots = [\"power/shack-pc\"]"
       print "timeout_s = 300"
-      n = split("aethersdr dax wsjtx 75auto", progs, " ")
+      n = split("aethersdr wsjtx 75auto", progs, " ")
       for (i = 1; i <= n; i++) {
         step(progs[i], "cmd")
         print "slot = \"power/shack-pc\""

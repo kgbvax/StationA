@@ -142,14 +142,14 @@ Retained. Published on every phase/step/fault change.
 | `stop_reason` | `operator` \| `idle_shutdown`, omitempty | why the station was last stopped: an operator `stop`, or the idle shutdown (§6.2); cleared by `start` |
 | `chain` | object, omitempty | progress of the last `auto_start` (§6.3); absent before the first one |
 | `chain.state` | `running` \| `ready` \| `failed` | `ready` = the last step passed; the page then sends the signed 75auto `start_session` |
-| `chain.step` | string (always present) | the step name = the progress row: `station` while the startup or wake list runs first, then the `[[auto_start]]` names (`bwpc`, `aethersdr`, `dax`, `wsjtx`, `75auto` in the example). Empty for a refused `auto_start` |
+| `chain.step` | string (always present) | the step name = the progress row: `station` while the startup or wake list runs first, then the `[[auto_start]]` names (`bwpc`, `aethersdr`, `wsjtx`, `75auto` in the example). Empty for a refused `auto_start` |
 | `chain.fault` | string, omitempty | why the chain failed or was refused (see §5) |
 | `chain.requester` | string (always present) | the `requester` of the `auto_start` (the device id of the page) |
 | `chain.ts` | string (RFC3339) | when `chain.state` last changed (accept, ready, failure) |
 
 ```json
 { "ts": "2026-11-27T09:00:05Z", "phase": "running", "step": "",
-  "chain": { "state": "running", "step": "dax", "requester": "tablet-1", "ts": "2026-11-27T09:00:01Z" } }
+  "chain": { "state": "running", "step": "wsjtx", "requester": "tablet-1", "ts": "2026-11-27T09:00:01Z" } }
 { "ts": "2026-11-27T09:02:10Z", "phase": "running", "step": "",
   "chain": { "state": "failed", "step": "aethersdr",
              "fault": "program_aethersdr=failed (program_aethersdr_error=not started by the chain)",
@@ -282,7 +282,7 @@ queued before the command can pass the step. When the step right before is a
 arrive before the wait runs). `fail_value = "<v>"` fails the step at once when the
 field takes that value, with the reason `<field>=<v>`. A `wait_state` failure
 or timeout names the `<field>_error` sibling when the `/state` has one, e.g.
-`program_dax=failed (program_dax_error=no window)`.
+`program_wsjtx=failed (program_wsjtx_error=no window)`.
 
 `hold_ms` is optional (omitted → `[timing].default_hold_ms`; an **explicit `0`
 means edge-triggered** even when a default hold is set). `timeout_s` is optional
@@ -428,7 +428,7 @@ runs under a context of its own, so `stop` ends it at once. The example list
 | Row | Steps |
 |---|---|
 | `bwpc` | `wol` with `poke` (same MAC and poke as `pc-boot`: bwpc enters Modern Standby by itself while the station stays `running`); `wait_status power/shack-pc` (300 s, a cold boot and the auto logon) |
-| `aethersdr`, `dax`, `wsjtx`, `75auto` | `cmd power/shack-pc ensure_program <name>` with `retain = false` (winpc-power-bridge drops retained commands); `wait_state program_<name> = ready` with `fresh = true`, `fail_value = "failed"` |
+| `aethersdr`, `wsjtx`, `75auto` | `cmd power/shack-pc ensure_program <name>` with `retain = false` (winpc-power-bridge drops retained commands); `wait_state program_<name> = ready` with `fresh = true`, `fail_value = "failed"` |
 | `75auto` | `wait_status hf/auto-op` (75auto publishes its slot at program start) |
 
 **Session hold.** powerseq reads `hf/auto-op` (`[mqtt] auto_op_slot`,

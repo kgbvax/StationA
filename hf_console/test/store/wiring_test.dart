@@ -239,7 +239,7 @@ void main() {
     });
 
     test('the chain steps are the rows of the page, in order', () {
-      expect(powerSeqChainSteps, ['station', 'bwpc', 'aethersdr', 'dax', 'wsjtx', '75auto']);
+      expect(powerSeqChainSteps, ['station', 'bwpc', 'aethersdr', 'wsjtx', '75auto']);
     });
 
     test('chain parses from the power-seq state', () {

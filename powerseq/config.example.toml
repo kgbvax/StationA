@@ -133,7 +133,7 @@ level = "info"
 #     fail_value = "failed"      # optional: the field taking this value fails
 #                                # the step at once (no wait for the timeout)
 #     # A wait_state fault names the field and, when the /state has it, the
-#     # <field>_error sibling, e.g. "program_dax=failed (program_dax_error=...)".
+#     # <field>_error sibling, e.g. "program_wsjtx=failed (program_wsjtx_error=...)".
 #     hold_ms   = 500            # optional (see wait_status)
 #     timeout_s = 60            # optional, must be > 0 if given
 #     # IMPLICIT liveness precondition (two layers): the slot's /status MUST be
@@ -543,23 +543,6 @@ name = "aethersdr"
 kind = "wait_state"
 slot = "power/shack-pc"
 field = "program_aethersdr"
-value = "ready"
-fresh = true
-fail_value = "failed"
-
-[[auto_start]]
-name = "dax"
-kind = "cmd"
-slot = "power/shack-pc"
-action = "ensure_program"
-value = "dax"
-retain = false
-
-[[auto_start]]
-name = "dax"
-kind = "wait_state"
-slot = "power/shack-pc"
-field = "program_dax"
 value = "ready"
 fresh = true
 fail_value = "failed"

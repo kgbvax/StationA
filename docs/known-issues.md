@@ -1060,7 +1060,7 @@ default (`[remote] enabled = false`). Contract: 75auto `docs/interfaces/auto-op-
   through the mode (auto sends, confirm waits for Approve, observe only shows). 75auto tunes through rigctld to the
   dial of `[bands]`, and WSJT-X follows the radio. A band outside `[bands]` is refused.
 - **Remote session start and end (operator decisions of 2026-11-27).** The 75AUTO page has its own Start. It sends
-  `auto_start` to powerseq, which wakes the station and bwpc and starts AetherSDR, DAX, WSJT-X and 75auto through
+  `auto_start` to powerseq, which wakes the station and bwpc and starts AetherSDR, WSJT-X and 75auto through
   winpc-power-bridge. When the chain is ready, the page that tapped Start sends a signed `start_session` with a
   rule set and a mode, within 30 minutes of the tap. The key stays on the phone. `end_session` ends the session.
   Both need `operate` and the normal signature and time window. A remote start counts as presence for the gate.

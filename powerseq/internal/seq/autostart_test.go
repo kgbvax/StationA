@@ -87,7 +87,7 @@ func (f *fakePC) set(program, reply, errText string) {
 	}
 }
 
-var chainPrograms = []string{"aethersdr", "dax", "wsjtx", "75auto"}
+var chainPrograms = []string{"aethersdr", "wsjtx", "75auto"}
 
 // chainSteps is the example [[auto_start]] list in seq.Step form.
 func chainSteps() []Step {
@@ -375,15 +375,15 @@ func TestAutoStartRefusedWhileSessionActive(t *testing.T) {
 	}
 }
 
-// A retained program_dax=ready from the last chain does not pass a fresh wait.
+// A retained program_wsjtx=ready from the last chain does not pass a fresh wait.
 func TestFreshWaitIgnoresOldState(t *testing.T) {
 	r := newChainSeq(t, true, nil)
-	r.s.SetState(abs("power/shack-pc"), []byte(`{"program_dax":"ready"}`))
-	r.pc.set("dax", "", "")
+	r.s.SetState(abs("power/shack-pc"), []byte(`{"program_wsjtx":"ready"}`))
+	r.pc.set("wsjtx", "", "")
 	r.s.AutoStart("tablet-1")
 	c := waitChain(t, r, ChainFailed)
-	if c.Step != "dax" || !strings.Contains(c.Fault, "timeout") {
-		t.Fatalf("chain = %+v, want dax timeout", c)
+	if c.Step != "wsjtx" || !strings.Contains(c.Fault, "timeout") {
+		t.Fatalf("chain = %+v, want wsjtx timeout", c)
 	}
 }
 
@@ -410,15 +410,15 @@ func TestFailValueFailsAtOnceWithReason(t *testing.T) {
 // A wait_state timeout carries the <field>_error sibling.
 func TestWaitStateTimeoutCarriesErrorSibling(t *testing.T) {
 	s, pub := newTestSeqWith(t,
-		[]Step{{Name: "wait-x", Kind: KindWaitState, Slot: "power/shack-pc", Field: "program_dax", Value: "ready"}},
+		[]Step{{Name: "wait-x", Kind: KindWaitState, Slot: "power/shack-pc", Field: "program_wsjtx", Value: "ready"}},
 		exampleShutdown())
 	s.markOnline("power/shack-pc")
-	s.SetState(abs("power/shack-pc"), []byte(`{"program_dax":"starting","program_dax_error":"no window"}`))
+	s.SetState(abs("power/shack-pc"), []byte(`{"program_wsjtx":"starting","program_wsjtx_error":"no window"}`))
 	startRun(t, s, context.Background())
 	s.Start()
 	runUntil(t, s, func() bool { _, _, f := s.Phase(); return f != "" }, time.Second)
 	_, _, fault := s.Phase()
-	if !strings.Contains(fault, "program_dax_error=no window") {
+	if !strings.Contains(fault, "program_wsjtx_error=no window") {
 		t.Fatalf("fault = %q", fault)
 	}
 	_ = pub
@@ -466,11 +466,11 @@ func TestAutoStartRefusedInStorm(t *testing.T) {
 // runs, and no ready follows.
 func TestStopDuringChain(t *testing.T) {
 	r := newChainSeq(t, true, func(c *Config) { c.StepTimeout = 5 * time.Second })
-	r.pc.set("dax", "", "")
+	r.pc.set("wsjtx", "", "")
 	r.s.AutoStart("tablet-1")
 	runUntil(t, r.s, func() bool {
 		c := lastChain(r.rec())
-		return c != nil && c.Step == "dax"
+		return c != nil && c.Step == "wsjtx"
 	}, time.Second)
 	r.s.Stop()
 	runUntil(t, r.s, func() bool { return phaseIs(r.s, PhaseIdle) }, 2*time.Second)
@@ -537,14 +537,14 @@ func TestTwoAutoStartsSecondRefused(t *testing.T) {
 func TestChainHoldsStandby(t *testing.T) {
 	r := newChainSeq(t, true, func(c *Config) { c.StepTimeout = 5 * time.Second })
 	r.s.setActivity("inactive", time.Time{})
-	r.pc.set("dax", "", "")
+	r.pc.set("wsjtx", "", "")
 	r.s.AutoStart("tablet-1")
 	time.Sleep(3 * testIdleTimeout)
 	if !phaseIs(r.s, PhaseRunning) || !chainIs(r.rec(), ChainRunning) {
 		t.Fatalf("standby under a running chain: phase=%s", mustPhase(r.s))
 	}
 	// Let it pass: the program comes up, the chain turns ready.
-	r.s.SetState(abs("power/shack-pc"), []byte(`{"program_dax":"ready"}`))
+	r.s.SetState(abs("power/shack-pc"), []byte(`{"program_wsjtx":"ready"}`))
 	waitChain(t, r, ChainReady)
 	readyAt := time.Now()
 	time.Sleep(testReadyHold - 40*time.Millisecond)
@@ -871,8 +871,8 @@ func TestReplaySessionNoHold(t *testing.T) {
 func TestFreshWaitNeedsNonTerminalFirst(t *testing.T) {
 	f := false
 	startup := []Step{
-		{Name: "dax", Kind: KindCmd, Slot: "power/shack-pc", Action: "ensure_program", Value: "dax", Retain: &f},
-		{Name: "dax", Kind: KindWaitState, Slot: "power/shack-pc", Field: "program_dax", Value: "ready", Fresh: true, FailValue: "failed"},
+		{Name: "wsjtx", Kind: KindCmd, Slot: "power/shack-pc", Action: "ensure_program", Value: "wsjtx", Retain: &f},
+		{Name: "wsjtx", Kind: KindWaitState, Slot: "power/shack-pc", Field: "program_wsjtx", Value: "ready", Fresh: true, FailValue: "failed"},
 	}
 	cfg := baseConfig(startup, exampleShutdown())
 	cfg.StepTimeout = 2 * time.Second
@@ -885,14 +885,14 @@ func TestFreshWaitNeedsNonTerminalFirst(t *testing.T) {
 	s.markOnline("power/shack-pc")
 	startRun(t, s, context.Background())
 	s.Start()
-	runUntil(t, s, func() bool { _, st, _ := s.Phase(); return len(cmdsTo(pub, "power/shack-pc")) == 1 && st == "dax" }, time.Second)
-	s.setState("power/shack-pc", "program_dax", "ready") // the old tick
+	runUntil(t, s, func() bool { _, st, _ := s.Phase(); return len(cmdsTo(pub, "power/shack-pc")) == 1 && st == "wsjtx" }, time.Second)
+	s.setState("power/shack-pc", "program_wsjtx", "ready") // the old tick
 	time.Sleep(30 * time.Millisecond)
 	if !phaseIs(s, PhaseStarting) {
 		t.Fatalf("old ready passed the fresh wait: phase=%s", mustPhase(s))
 	}
-	s.setState("power/shack-pc", "program_dax", "starting")
-	s.setState("power/shack-pc", "program_dax", "ready")
+	s.setState("power/shack-pc", "program_wsjtx", "starting")
+	s.setState("power/shack-pc", "program_wsjtx", "ready")
 	runUntil(t, s, func() bool { return phaseIs(s, PhaseRunning) }, time.Second)
 }
 
@@ -901,8 +901,8 @@ func TestFreshWaitNeedsNonTerminalFirst(t *testing.T) {
 func TestFreshWaitCountsStartingBeforeWaitStep(t *testing.T) {
 	f := false
 	startup := []Step{
-		{Name: "dax", Kind: KindCmd, Slot: "power/shack-pc", Action: "ensure_program", Value: "dax", Retain: &f},
-		{Name: "dax", Kind: KindWaitState, Slot: "power/shack-pc", Field: "program_dax", Value: "ready", Fresh: true, FailValue: "failed"},
+		{Name: "wsjtx", Kind: KindCmd, Slot: "power/shack-pc", Action: "ensure_program", Value: "wsjtx", Retain: &f},
+		{Name: "wsjtx", Kind: KindWaitState, Slot: "power/shack-pc", Field: "program_wsjtx", Value: "ready", Fresh: true, FailValue: "failed"},
 	}
 	cfg := baseConfig(startup, exampleShutdown())
 	cfg.StepTimeout = 2 * time.Second
@@ -913,15 +913,15 @@ func TestFreshWaitCountsStartingBeforeWaitStep(t *testing.T) {
 	}
 	pub.hook = func(topic string, _ []byte) {
 		if topic == abs("power/shack-pc")+"/cmd" {
-			s.setState("power/shack-pc", "program_dax", "starting") // inside the cmd step
+			s.setState("power/shack-pc", "program_wsjtx", "starting") // inside the cmd step
 		}
 	}
 	s.SetBrokerOnline(true)
 	s.markOnline("power/shack-pc")
 	startRun(t, s, context.Background())
 	s.Start()
-	runUntil(t, s, func() bool { _, st, _ := s.Phase(); return len(pub.cmds()) > 0 && st == "dax" }, time.Second)
+	runUntil(t, s, func() bool { _, st, _ := s.Phase(); return len(pub.cmds()) > 0 && st == "wsjtx" }, time.Second)
 	time.Sleep(20 * time.Millisecond)
-	s.setState("power/shack-pc", "program_dax", "ready")
+	s.setState("power/shack-pc", "program_wsjtx", "ready")
 	runUntil(t, s, func() bool { return phaseIs(s, PhaseRunning) }, time.Second)
 }

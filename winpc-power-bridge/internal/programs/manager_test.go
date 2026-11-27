@@ -104,7 +104,6 @@ type harness struct {
 }
 
 var testPrograms = []config.ProgramConfig{
-	{Name: "dax", Exe: `C:\Flex\DAX.exe`, Process: "DAX.exe", Check: config.CheckProcess, SettleS: 5, CheckTimeoutS: 60, RestartOwned: true},
 	{Name: "wsjtx", Exe: `C:\WSJTX\bin\wsjtx.exe`, Process: "wsjtx.exe", Check: config.CheckProcess, SettleS: 5, CheckTimeoutS: 60, RestartOwned: true},
 	{Name: "aethersdr", Exe: `C:\AetherSDR\AetherSDR.exe`, Process: "AetherSDR.exe", Check: config.CheckTCP,
 		CheckAddress: "127.0.0.1:1", Probe: "f", ReplyPattern: `^[0-9]+$`, SettleS: 5, CheckTimeoutS: 30},
@@ -164,12 +163,12 @@ func (h *harness) wantState(t *testing.T, name, state string) Field {
 func TestEnsureStartsMissingProgram(t *testing.T) {
 	h := newHarness(t, testPrograms)
 	t0 := h.clock.Now()
-	h.ensure(t, "dax")
-	h.wantState(t, "dax", StateReady)
-	if len(h.proc.starts) != 1 || h.proc.starts[0] != `C:\Flex\DAX.exe` {
+	h.ensure(t, "wsjtx")
+	h.wantState(t, "wsjtx", StateReady)
+	if len(h.proc.starts) != 1 || h.proc.starts[0] != `C:\WSJTX\bin\wsjtx.exe` {
 		t.Fatalf("starts = %v", h.proc.starts)
 	}
-	if !h.m.Owned("dax") {
+	if !h.m.Owned("wsjtx") {
 		t.Error("started program not recorded as owned")
 	}
 	if got := h.clock.Now().Sub(t0); got < 5*time.Second {
@@ -192,23 +191,23 @@ func TestEnsureAdoptsOperatorProgram(t *testing.T) {
 
 func TestEnsureRestartsOwnedWithRestartOwned(t *testing.T) {
 	h := newHarness(t, testPrograms)
-	h.ensure(t, "dax")
+	h.ensure(t, "wsjtx")
 	first := h.proc.starts
-	h.ensure(t, "dax")
-	h.wantState(t, "dax", StateReady)
+	h.ensure(t, "wsjtx")
+	h.wantState(t, "wsjtx", StateReady)
 	if len(h.proc.ends) != 1 || len(h.proc.starts) != len(first)+1 {
 		t.Errorf("ends = %v starts = %v, want one end and a new start", h.proc.ends, h.proc.starts)
 	}
-	if !h.m.Owned("dax") {
+	if !h.m.Owned("wsjtx") {
 		t.Error("restarted program not owned")
 	}
 }
 
 func TestEnsureDoesNotRestartOperatorProgramWithRestartOwned(t *testing.T) {
 	h := newHarness(t, testPrograms)
-	h.proc.run("DAX.exe")
-	h.ensure(t, "dax")
-	h.wantState(t, "dax", StateReady)
+	h.proc.run("wsjtx.exe")
+	h.ensure(t, "wsjtx")
+	h.wantState(t, "wsjtx", StateReady)
 	if len(h.proc.ends) != 0 || len(h.proc.starts) != 0 {
 		t.Errorf("ends = %v starts = %v, want none", h.proc.ends, h.proc.starts)
 	}
@@ -216,7 +215,7 @@ func TestEnsureDoesNotRestartOperatorProgramWithRestartOwned(t *testing.T) {
 
 func TestEnsureRestartsOwnedProgramThatFailsItsCheck(t *testing.T) {
 	ln := listen(t, "RPRT -1")
-	progs := []config.ProgramConfig{testPrograms[2]}
+	progs := []config.ProgramConfig{testPrograms[1]}
 	progs[0].CheckAddress = ln
 	h := newHarness(t, progs)
 	// First ensure: started and owned, but the check fails (no radio).
@@ -236,7 +235,7 @@ func TestEnsureRestartsOwnedProgramThatFailsItsCheck(t *testing.T) {
 func TestEnsureRestartedOwnedBecomesReady(t *testing.T) {
 	var bad atomic.Int32
 	bad.Store(1 << 20) // every reply is an error reply until reset
-	progs := []config.ProgramConfig{testPrograms[2]}
+	progs := []config.ProgramConfig{testPrograms[1]}
 	progs[0].CheckAddress = listenFunc(t, func() string {
 		if bad.Add(-1) >= 0 {
 			return "RPRT -1"
@@ -255,7 +254,7 @@ func TestEnsureRestartedOwnedBecomesReady(t *testing.T) {
 }
 
 func TestEnsureRefusesForeignFailingProgram(t *testing.T) {
-	progs := []config.ProgramConfig{testPrograms[2]}
+	progs := []config.ProgramConfig{testPrograms[1]}
 	progs[0].CheckAddress = closedPort(t)
 	h := newHarness(t, progs)
 	h.proc.run("AetherSDR.exe")
@@ -270,7 +269,7 @@ func TestEnsureRefusesForeignFailingProgram(t *testing.T) {
 }
 
 func TestTCPCheckListenerReady(t *testing.T) {
-	progs := []config.ProgramConfig{testPrograms[2]}
+	progs := []config.ProgramConfig{testPrograms[1]}
 	progs[0].CheckAddress = listen(t, "14074000")
 	h := newHarness(t, progs)
 	h.ensure(t, "aethersdr")
@@ -278,7 +277,7 @@ func TestTCPCheckListenerReady(t *testing.T) {
 }
 
 func TestTCPCheckClosedPortFailsAfterTimeout(t *testing.T) {
-	progs := []config.ProgramConfig{testPrograms[2]}
+	progs := []config.ProgramConfig{testPrograms[1]}
 	progs[0].CheckAddress = closedPort(t)
 	h := newHarness(t, progs)
 	t0 := h.clock.Now()
@@ -293,7 +292,7 @@ func TestTCPCheckClosedPortFailsAfterTimeout(t *testing.T) {
 }
 
 func TestTCPCheckErrorReplyInError(t *testing.T) {
-	progs := []config.ProgramConfig{testPrograms[2]}
+	progs := []config.ProgramConfig{testPrograms[1]}
 	progs[0].CheckAddress = listen(t, "RPRT -1")
 	h := newHarness(t, progs)
 	h.ensure(t, "aethersdr")
@@ -305,9 +304,9 @@ func TestTCPCheckErrorReplyInError(t *testing.T) {
 
 func TestProcessCheckFailsWhenProcessExits(t *testing.T) {
 	h := newHarness(t, testPrograms)
-	h.proc.dieOnStart["DAX.exe"] = true
-	h.ensure(t, "dax")
-	f := h.wantState(t, "dax", StateFailed)
+	h.proc.dieOnStart["wsjtx.exe"] = true
+	h.ensure(t, "wsjtx")
+	f := h.wantState(t, "wsjtx", StateFailed)
 	if !strings.Contains(f.Error, "exited") {
 		t.Errorf("error = %q", f.Error)
 	}
@@ -316,12 +315,12 @@ func TestProcessCheckFailsWhenProcessExits(t *testing.T) {
 func TestStartErrorFails(t *testing.T) {
 	h := newHarness(t, testPrograms)
 	h.proc.startErr = errors.New("access denied")
-	h.ensure(t, "dax")
-	f := h.wantState(t, "dax", StateFailed)
+	h.ensure(t, "wsjtx")
+	f := h.wantState(t, "wsjtx", StateFailed)
 	if !strings.Contains(f.Error, "access denied") {
 		t.Errorf("error = %q", f.Error)
 	}
-	if h.m.Owned("dax") {
+	if h.m.Owned("wsjtx") {
 		t.Error("owned without a start")
 	}
 }
@@ -373,14 +372,14 @@ func TestStopForeignRefused(t *testing.T) {
 
 func TestStopOwned(t *testing.T) {
 	h := newHarness(t, testPrograms)
-	h.ensure(t, "dax")
-	if err := h.m.Stop("dax"); err != nil {
+	h.ensure(t, "wsjtx")
+	if err := h.m.Stop("wsjtx"); err != nil {
 		t.Fatal(err)
 	}
-	if len(h.proc.ends) != 1 || h.m.Owned("dax") {
-		t.Errorf("ends = %v owned = %v", h.proc.ends, h.m.Owned("dax"))
+	if len(h.proc.ends) != 1 || h.m.Owned("wsjtx") {
+		t.Errorf("ends = %v owned = %v", h.proc.ends, h.m.Owned("wsjtx"))
 	}
-	if f := h.field(t, "dax"); f.State != StateStopped {
+	if f := h.field(t, "wsjtx"); f.State != StateStopped {
 		t.Errorf("state = %q", f.State)
 	}
 }
@@ -406,7 +405,7 @@ func TestStopUnknown(t *testing.T) {
 
 func TestOwnedRecordSurvivesRestart(t *testing.T) {
 	h := newHarness(t, testPrograms)
-	h.ensure(t, "dax")
+	h.ensure(t, "wsjtx")
 	h.ensure(t, "75auto")
 	// The 75auto PID is reused by another process after the agent restart.
 	var pid int
@@ -419,27 +418,27 @@ func TestOwnedRecordSurvivesRestart(t *testing.T) {
 	h.proc.procs[pid] = fakeEntry{"75auto.exe", h.proc.clock}
 
 	m2 := h.newManager(testPrograms)
-	if !m2.Owned("dax") {
-		t.Error("dax with matching PID and start time not owned after restart")
+	if !m2.Owned("wsjtx") {
+		t.Error("wsjtx with matching PID and start time not owned after restart")
 	}
 	if m2.Owned("75auto") {
 		t.Error("reused PID with another start time still owned")
 	}
 	h.m = m2
-	if f := h.field(t, "dax"); f.State != StateReady {
+	if f := h.field(t, "wsjtx"); f.State != StateReady {
 		t.Errorf("owned live program after restart: state %q", f.State)
 	}
 }
 
 func TestRefreshMarksDeadProgramStopped(t *testing.T) {
 	h := newHarness(t, testPrograms)
-	h.ensure(t, "dax")
+	h.ensure(t, "wsjtx")
 	h.proc.procs = map[int]fakeEntry{}
 	h.m.Refresh()
-	if f := h.field(t, "dax"); f.State != StateStopped {
+	if f := h.field(t, "wsjtx"); f.State != StateStopped {
 		t.Errorf("state = %q, want stopped", f.State)
 	}
-	if h.m.Owned("dax") {
+	if h.m.Owned("wsjtx") {
 		t.Error("dead program still owned")
 	}
 }
@@ -453,7 +452,7 @@ func TestFieldsInConfigOrder(t *testing.T) {
 			t.Errorf("%s initial state %q", f.Name, f.State)
 		}
 	}
-	if strings.Join(names, ",") != "dax,wsjtx,aethersdr,75auto" {
+	if strings.Join(names, ",") != "wsjtx,aethersdr,75auto" {
 		t.Errorf("names = %v", names)
 	}
 }
@@ -476,14 +475,14 @@ func TestStopNotRefusedDuringReplaySession(t *testing.T) {
 
 func TestRestartEndFailureFails(t *testing.T) {
 	h := newHarness(t, testPrograms)
-	h.ensure(t, "dax")
+	h.ensure(t, "wsjtx")
 	var old Process
 	for pid, e := range h.proc.procs {
 		old = Process{PID: pid, Start: e.start}
 	}
 	h.proc.endErr = errors.New("access denied")
-	h.ensure(t, "dax")
-	f := h.wantState(t, "dax", StateFailed)
+	h.ensure(t, "wsjtx")
+	f := h.wantState(t, "wsjtx", StateFailed)
 	if !strings.Contains(f.Error, "end: access denied") {
 		t.Errorf("error = %q, want the End reason", f.Error)
 	}
@@ -491,7 +490,7 @@ func TestRestartEndFailureFails(t *testing.T) {
 		t.Errorf("starts = %v, want no second start", h.proc.starts)
 	}
 	m2 := h.newManager(testPrograms)
-	if !m2.Owned("dax") || m2.owned["dax"] != old {
+	if !m2.Owned("wsjtx") || m2.owned["wsjtx"] != old {
 		t.Errorf("owned record = %v, want the old copy %v", m2.owned, old)
 	}
 }
@@ -530,16 +529,16 @@ func TestRefreshOperatorCopyExited(t *testing.T) {
 
 func TestEnsureReusesOwnedWithoutRestartOwned(t *testing.T) {
 	progs := []config.ProgramConfig{
-		{Name: "dax", Exe: `C:\Flex\DAX.exe`, Process: "DAX.exe", Check: config.CheckProcess, SettleS: 5, CheckTimeoutS: 60},
+		{Name: "wsjtx", Exe: `C:\WSJTX\bin\wsjtx.exe`, Process: "wsjtx.exe", Check: config.CheckProcess, SettleS: 5, CheckTimeoutS: 60},
 	}
 	h := newHarness(t, progs)
-	h.ensure(t, "dax")
-	h.ensure(t, "dax")
-	h.wantState(t, "dax", StateReady)
+	h.ensure(t, "wsjtx")
+	h.ensure(t, "wsjtx")
+	h.wantState(t, "wsjtx", StateReady)
 	if len(h.proc.starts) != 1 || len(h.proc.ends) != 0 {
 		t.Errorf("starts = %v ends = %v, want one start and no end", h.proc.starts, h.proc.ends)
 	}
-	if !h.m.Owned("dax") {
+	if !h.m.Owned("wsjtx") {
 		t.Error("reused copy no longer owned")
 	}
 }

@@ -159,7 +159,7 @@ name     = "bwpc"
 addr     = "192.168.1.197"
 hardware = "Shack PC"
 os       = "Windows"
-role     = "DXLog / Log4OM logger, PstRotator, OscarWatch (Satellite link ws :7373); winpc-power-bridge (sleeps in idle standby, woken by WOL; starts AetherSDR, DAX and WSJT-X for the 75AUTO remote start); chaseq-ui (chase-queue list window); 75auto (automatic digimode operator, slot hf/auto-op); logs on automatically at boot and locks the screen"
+role     = "DXLog / Log4OM logger, PstRotator, OscarWatch (Satellite link ws :7373); winpc-power-bridge (sleeps in idle standby, woken by WOL; starts AetherSDR and WSJT-X for the 75AUTO remote start); chaseq-ui (chase-queue list window); 75auto (automatic digimode operator, slot hf/auto-op); logs on automatically at boot and locks the screen"
 
 [[host]]
 name     = "lenovo-tab"
@@ -421,7 +421,7 @@ name  = "winpc-power-bridge"
 path  = "winpc-power-bridge/"
 kind  = "bridge"
 host  = "bwpc"
-note  = "Task Scheduler at logon (user session); sleep cmd from powerseq standby; ensure_program/stop_program start and check AetherSDR, DAX, WSJT-X and 75auto for the powerseq auto_start chain"
+note  = "Task Scheduler at logon (user session); sleep cmd from powerseq standby; ensure_program/stop_program start and check AetherSDR, WSJT-X and 75auto for the powerseq auto_start chain"
 slots = ["muehle/power/shack-pc"]
 
 [[software]]

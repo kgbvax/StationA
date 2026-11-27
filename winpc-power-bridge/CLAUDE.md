@@ -237,8 +237,8 @@ file in the install dir, and the bus:
    /cmd replay", PC stays on. Clear the retained message afterwards
    (`mosquitto_pub … -r -n`).
 5. Configure the programs. With the screen locked, send
-   `{"action":"ensure_program","value":"dax"}` (non-retained) → the program
-   opens on the desktop, `/state` `program_dax` `starting` then `ready`, an
+   `{"action":"ensure_program","value":"wsjtx"}` (non-retained) → the program
+   opens on the desktop, `/state` `program_wsjtx` `starting` then `ready`, an
    entry in `programs-owned.json`. `schtasks /end` + `/run` of the agent →
    the program keeps running and is still owned.
 6. During a 75auto session, `powercfg /requests` lists the agent's request

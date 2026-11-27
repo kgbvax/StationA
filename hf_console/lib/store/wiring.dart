@@ -130,7 +130,7 @@ String powerSeqAutoStartPayload(String requester) => jsonEncode({
 
 /// The steps of the `auto_start` chain in order, as powerseq names them in
 /// `/state.chain.step`.
-const powerSeqChainSteps = ['station', 'bwpc', 'aethersdr', 'dax', 'wsjtx', '75auto'];
+const powerSeqChainSteps = ['station', 'bwpc', 'aethersdr', 'wsjtx', '75auto'];
 
 /// `/state.chain` of powerseq: the progress of the last `auto_start`. A
 /// refused `auto_start` also writes it, as `failed` with the reason in

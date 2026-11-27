@@ -444,8 +444,8 @@ func validWithAutoStart() Config {
 	cfg.AutoStart = []Step{
 		{Name: "bwpc", Kind: KindWOL, MAC: "aa:bb:cc:dd:ee:ff", Poke: "192.168.1.197:3389"},
 		{Name: "bwpc", Kind: KindWaitStatus, Slots: []string{"power/shack-pc"}},
-		{Name: "dax", Kind: KindCmd, Slot: "power/shack-pc", Action: "ensure_program", Value: "dax", Retain: &f},
-		{Name: "dax", Kind: KindWaitState, Slot: "power/shack-pc", Field: "program_dax", Value: "ready", Fresh: true, FailValue: "failed"},
+		{Name: "wsjtx", Kind: KindCmd, Slot: "power/shack-pc", Action: "ensure_program", Value: "wsjtx", Retain: &f},
+		{Name: "wsjtx", Kind: KindWaitState, Slot: "power/shack-pc", Field: "program_wsjtx", Value: "ready", Fresh: true, FailValue: "failed"},
 	}
 	return cfg
 }
@@ -512,7 +512,7 @@ func TestExampleAutoStart(t *testing.T) {
 			}
 		}
 	}
-	if got := strings.Join(rows, " "); got != "bwpc aethersdr dax wsjtx 75auto" {
+	if got := strings.Join(rows, " "); got != "bwpc aethersdr wsjtx 75auto" {
 		t.Errorf("auto_start rows = %s", got)
 	}
 	last := cfg.AutoStart[len(cfg.AutoStart)-1]

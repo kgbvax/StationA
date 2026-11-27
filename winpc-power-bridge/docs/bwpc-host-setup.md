@@ -1,6 +1,6 @@
 # bwpc host setup for the 75AUTO remote start
 
-The 75AUTO Start in hf_console needs a logged-on Windows desktop on bwpc. winpc-power-bridge starts AetherSDR, DAX, WSJT-X and 75auto on that desktop. This runbook sets up bwpc so that a cold boot ends at a locked desktop with the agent online. The operator does these steps at bwpc, because they need the Windows password.
+The 75AUTO Start in hf_console needs a logged-on Windows desktop on bwpc. winpc-power-bridge starts AetherSDR, WSJT-X and 75auto on that desktop. This runbook sets up bwpc so that a cold boot ends at a locked desktop with the agent online. The operator does these steps at bwpc, because they need the Windows password.
 
 ## 1. Automatic logon
 
@@ -24,11 +24,10 @@ Create a scheduled task that locks the desktop right after the logon. The progra
 
 ## 3. Program list of winpc-power-bridge
 
-Fill the `[[program]]` list in `%USERPROFILE%\winpc-power-bridge\config.toml` with the real paths on bwpc. `config.example.toml` has the template. Use these names, because the powerseq chain steps use them: `aethersdr`, `dax`, `wsjtx`, `75auto`.
+Fill the `[[program]]` list in `%USERPROFILE%\winpc-power-bridge\config.toml` with the real paths on bwpc. `config.example.toml` has the template. Use these names, because the powerseq chain steps use them: `aethersdr`, `wsjtx`, `75auto`.
 
 - `aethersdr`: check `tcp` on its rigctl port, probe `f`, a number as the reply pattern.
-- `dax`: check `process`, `restart_owned = true`.
-- `wsjtx`: the patched WSJT-X, check `process`, `restart_owned = true`.
+- `wsjtx`: the patched WSJT-X, check `process`, `restart_owned = true`. WSJT-X takes its audio and CAT from AetherSDR over TCI. In its settings, use Rig "TCI Client RX1", CAT TCI port `127.0.0.1:50001`, and turn on "Use TCI Audio".
 - `75auto`: check `none`, with the working folder that holds `75auto.toml`.
 
 Restart the agent task after the edit.
@@ -46,11 +45,11 @@ powerseq wakes bwpc with a magic packet and a TCP connect to port 3389. The TCP 
 Do these checks once after the setup, with the operator at the station.
 
 1. Reboot bwpc. It ends at a locked desktop, winpc-power-bridge is online, and no chain program runs.
-2. With AetherSDR started first and no SmartSDR window, `ensure_program dax` gives DAX audio in WSJT-X without manual action.
-3. AetherSDR answers rigctl `f` with a frequency, and WSJT-X CAT works through it. With another client in the last GUI client slot, the check fails.
+2. With AetherSDR started first and no SmartSDR window, `ensure_program wsjtx` gives TCI audio in WSJT-X without manual action.
+3. AetherSDR answers rigctl `f` with a frequency, and WSJT-X CAT works through its TCI server on `127.0.0.1:50001`. With another client in the last GUI client slot, the check fails.
 4. During a session with the screen locked, bwpc stays awake for 90 min. `powercfg /requests` lists the agent under SYSTEM. After the session ends, bwpc sleeps again.
 5. Run `schtasks /end` and `schtasks /run` on the agent task. The programs that the agent started keep running.
-6. With chain-owned DAX and WSJT-X running, power-cycle the FLEX, then tap Start. Both restart, and WSJT-X gets DAX audio. WSJT-X closes cleanly, with no lock-file dialog at the next start.
+6. With a chain-owned WSJT-X running, power-cycle the FLEX, then tap Start. WSJT-X restarts, and it gets TCI audio again. WSJT-X closes cleanly, with no lock-file dialog at the next start.
 7. A 45 min observe session keeps the antenna connected.
 8. Shut bwpc down, then start the station from the Station tab. bwpc wakes at the boot step. If it does not, record the gap in `docs/known-issues.md`.
 9. A 75AUTO Start from a cold station ends in a running session, and the PA is in standby.

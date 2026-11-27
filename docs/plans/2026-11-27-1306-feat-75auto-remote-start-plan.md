@@ -10,14 +10,16 @@ execution: code
 
 # 75auto Remote Start Chain - Plan
 
+> Update 2026-11-27: DAX is dropped from the chain. WSJT-X on bwpc uses the AetherSDR TCI emulation (TCI server on 127.0.0.1:50001, TCI audio inside WSJT-X). The chain is now station, bwpc, aethersdr, wsjtx, 75auto. This update fixes the chain list, R3, R9, R23, the diagrams and the bench checks. The text elsewhere is history.
+
 ## Goal Capsule
 
 - Objective: The operator, away from the shack, starts an FT8/FT4 session of 75auto from the 75AUTO page of hf_console with one tap, from any station power state. The page shows where the start stopped if it fails.
-- Means: powerseq runs the start as an ordered sequence. A per-program actuator on bwpc starts DAX, AetherSDR, the patched WSJT-X and 75auto. 75auto gets a remote session start.
+- Means: powerseq runs the start as an ordered sequence. A per-program actuator on bwpc starts AetherSDR, the patched WSJT-X and 75auto. 75auto gets a remote session start.
 - Product authority: the operator (station owner). 75auto is a separate repo (github.com/kgbvax/75auto). Its changes land there, and the stationa changes land here.
 - Open blockers: none.
 - Execution profile: three merges, grouped below as PR1 to PR3. stationa has no CI, so a "PR" here is a branch merged to main. PR1 lands in the 75auto repo. PR3 ends with the bench check on bwpc.
-- Stop conditions: stop and ask if the bench check shows that bwpc cannot be kept out of Modern Standby (KTD7), or that DAX does not stream without a SmartSDR window. Both break the chain.
+- Stop conditions: stop and ask if the bench check shows that bwpc cannot be kept out of Modern Standby (KTD7), or that WSJT-X gets no TCI audio from AetherSDR without a SmartSDR window. Both break the chain.
 - Who finishes: an implementing agent builds and tests all units. Deploys to scmino and bwpc and the bench check need the operator present, because a 75auto deploy ends a live session.
 
 ---
@@ -30,13 +32,13 @@ One Start tap on the 75AUTO page powers the station up, wakes bwpc, starts the f
 
 ### Problem Frame
 
-A 75auto session starts only at the bwpc desk today. A person must log on to Windows, start DAX for the audio, AetherSDR for the rigctl emulation and the patched WSJT-X. Then the person picks a rule set and a mode in the start panel of the 75auto window. Nothing starts 75auto at logon, and its remote interface has no start command (75auto `docs/interfaces/auto-op-mqtt-api.md`, action table).
+A 75auto session starts only at the bwpc desk today. A person must log on to Windows, start AetherSDR for the rigctl emulation and the TCI audio, and the patched WSJT-X. Then the person picks a rule set and a mode in the start panel of the 75auto window. Nothing starts 75auto at logon, and its remote interface has no start command (75auto `docs/interfaces/auto-op-mqtt-api.md`, action table).
 
 The 75AUTO page can watch, steer and stop a running session. It cannot begin one, so remote operation works only after somebody prepared bwpc locally. powerseq also does not see a 75auto session as activity, so its idle shutdown can power the station down under a running session.
 
 ### Key Decisions
 
-- **The stack stays on bwpc now, and the contract is ready for a Linux move later.** The DAX setup and the patched WSJT-X already work on Windows. A headless Linux stack is a separate, larger piece of work. Governs R9, R10. (session-settled: user-directed, chosen over "move to Linux headless now" and "automate on bwpc only": keep the working Windows stack but do not lock hf_console and powerseq to it.)
+- **The stack stays on bwpc now, and the contract is ready for a Linux move later.** The AetherSDR setup and the patched WSJT-X already work on Windows. A headless Linux stack is a separate, larger piece of work. Governs R9, R10. (session-settled: user-directed, chosen over "move to Linux headless now" and "automate on bwpc only": keep the working Windows stack but do not lock hf_console and powerseq to it.)
 - **One tap runs the full chain.** The operator does not prepare bwpc before the tap. Governs R1, R3, R5. (session-settled: user-directed, chosen over "session start only" and "chain plus self-heal": the full chain is the smallest change that makes remote start work from cold, and self-heal is deferred.)
 - **powerseq owns the order.** powerseq already has ordered steps, delays, liveness waits, a wake step and a hold. The bwpc actuator does no ordering. Governs R5, R6, R10. (session-settled: user-directed, chosen over "the bwpc agent owns the chain" and "75auto owns the chain": one sequencer for the station, and a Linux move replaces only the actuator.)
 - **A running session holds the power.** Governs R15. (session-settled: user-directed, chosen over "close the chain at session end" and "no coupling": powerseq must not cut power under a session, and the programs stay up until the normal idle timers end them.)
@@ -58,7 +60,7 @@ The 75AUTO page can watch, steer and stop a running session. It cannot begin one
 - R1. hf_console is the entry point. The 75AUTO page gets its own Start control, next to the existing Start of the Station tab. The 75AUTO Start takes the station from any power state to a running 75auto session.
 - R1a. The Start of the Station tab keeps its current behavior: it runs the powerseq station start and does not start the digimode programs or a session.
 - R2. Before the tap, the operator picks a rule set and a mode (`observe`, `confirm` or `auto`) on the page. The page offers the last used values as the default.
-- R3. During the start, the page shows the state of each step: station power, bwpc awake and logged on, AetherSDR, DAX, WSJT-X, 75auto and the session.
+- R3. During the start, the page shows the state of each step: station power, bwpc awake and logged on, AetherSDR, WSJT-X, 75auto and the session.
 - R4. If a step fails or times out, the chain stops there, and the page shows the failed step with a reason. The operator can start again from the page.
 
 **Sequencing**
@@ -70,7 +72,7 @@ The 75AUTO page can watch, steer and stop a running session. It cannot begin one
 
 - R7. If a program already runs, the chain uses it and does not start a second copy.
 - R8. The chain never closes a program that it did not start.
-- R9. The bwpc actuator starts and stops DAX, AetherSDR, the patched WSJT-X and 75auto, and reports ready for the first three. 75auto reports its own readiness on its slot. The actuator also reports whether a logged-on desktop session exists.
+- R9. The bwpc actuator starts and stops AetherSDR, the patched WSJT-X and 75auto, and reports ready for the first two. 75auto reports its own readiness on its slot. The actuator also reports whether a logged-on desktop session exists.
 - R10. The actuator contract does not depend on Windows. A Linux agent on another host can implement it later, and powerseq and hf_console then need only configuration changes.
 - R11. Ready means that the program can do its job, not only that its process exists. For example, the rigctl port answers, or WSJT-X sends its status.
 
@@ -94,7 +96,7 @@ The 75AUTO page can watch, steer and stop a running session. It cannot begin one
 **Safety and stale programs**
 
 - R18. If a program that the chain started itself fails its ready check, the chain restarts it. A program that the chain did not start is never restarted, and the chain stops at that step with a reason (per R8).
-- R23. Each chain restarts the DAX and WSJT-X copies that the chain started itself, so they bind to the radio as it is now. Copies that the operator started are not restarted (per R8).
+- R23. Each chain restarts the WSJT-X copy that the chain started itself, so they bind to the radio as it is now. Copies that the operator started are not restarted (per R8).
 - R19. The 75AUTO Start is refused while the antenna mode is `storm` or `maintenance`.
 - R20. A remote session start is refused while a session is open, also a latched one. After that session ends, a new remote start is allowed.
 
@@ -107,7 +109,7 @@ The 75AUTO page can watch, steer and stop a running session. It cannot begin one
 - F1. Remote start from cold
   - **Trigger:** The operator taps Start on the 75AUTO page.
   - **Actors:** A1, A2, A3, A4
-  - **Steps:** The page asks powerseq for the chain. powerseq powers the station up if needed. powerseq wakes bwpc and waits for the actuator to report a logged-on session. powerseq starts AetherSDR, DAX, WSJT-X and 75auto in that order and waits for each ready. When powerseq reports the chain ready, the page sends the signed session start with the chosen rule set and mode.
+  - **Steps:** The page asks powerseq for the chain. powerseq powers the station up if needed. powerseq wakes bwpc and waits for the actuator to report a logged-on session. powerseq starts AetherSDR, WSJT-X and 75auto in that order and waits for each ready. When powerseq reports the chain ready, the page sends the signed session start with the chosen rule set and mode.
   - **Outcome:** The page shows the session as `running`.
   - **Covered by:** R1, R2, R3, R5, R6, R9, R11, R12, R12a, R13
 
@@ -116,13 +118,11 @@ flowchart TB
   T[Start tap on 75AUTO page] --> P[Station power up]
   P --> W[Wake bwpc, logged-on session]
   W --> A[AetherSDR ready]
-  A --> D[DAX ready]
-  D --> X[WSJT-X ready]
+  A --> X[WSJT-X ready]
   X --> S[75auto ready]
   S --> R[Session start: rule set + mode]
   P -. fail or timeout .-> F[Chain stops, page shows step + reason]
   W -.-> F
-  D -.-> F
   A -.-> F
   X -.-> F
   S -.-> F
@@ -144,7 +144,7 @@ flowchart TB
 - AE5. **Covers R14.** Given that Windows Update restarts bwpc, then bwpc logs on and locks, and no program of the chain starts until the next Start tap.
 - AE6. **Covers R1a.** Given that the operator taps Start on the Station tab, then powerseq runs the station start only, and no digimode program and no session starts.
 - AE7. **Covers R12.** Given that `remote.commands` is `stop` in the 75auto configuration, when the page sends a session start, then 75auto refuses it with the reason `stop only`, and the page shows that reason.
-- AE8. **Covers R23.** Given that the chain started DAX and WSJT-X yesterday and the FLEX was power-cycled since, when the operator taps Start, then the chain ends and starts both again before their ready checks, and the session gets audio.
+- AE8. **Covers R23.** Given that the chain started WSJT-X yesterday and the FLEX was power-cycled since, when the operator taps Start, then the chain ends and starts it again before its ready check, and the session gets audio.
 - AE9. **Covers R19.** Given that antmode is in `storm`, when the operator taps the 75AUTO Start, then nothing starts and the page shows "antenna mode storm".
 - AE10. **Covers R20.** Given that the operator tapped STOP TX and the latched session is still open, when the operator taps Start, then 75auto refuses with `busy`. When the operator first ends that session, the next Start begins a new session.
 - AE11. **Covers R21.** Given that the PA is in operate, when a 75auto session goes to `connecting`, then the PA goes to standby. When the operator then sets the PA to operate on the console, the PA stays in operate until the session ends.
@@ -162,7 +162,7 @@ flowchart TB
 ### Dependencies / Assumptions
 
 - powerseq wakes bwpc from Modern Standby with a TCP connect (`wol` step with `poke`), because a magic packet does not wake it from that state (`winpc-power-bridge/CLAUDE.md`). Assumption, not verified: wake-on-LAN also wakes bwpc from a full shutdown.
-- Assumption: the standalone DAX of SmartSDR for Windows streams audio without a SmartSDR GUI client, and AetherSDR gives WSJT-X the rigctl CAT that it needs.
+- Assumption: AetherSDR gives WSJT-X the CAT and the audio that it needs over its TCI emulation, without a SmartSDR GUI client.
 - The FLEX-8400 allows a limited number of GUI clients. AetherSDR uses one of them (see AE3).
 - A remote session start in `auto` mode can begin transmitting with nobody at the station. The remote TX decision in `docs/known-issues.md` ("Remote TX review for 75auto", 2026-11-26) must cover the session start before this work goes live. The presence timer of the gate stays the dead-man rule.
 
@@ -179,7 +179,7 @@ flowchart TB
 
 ## Planning Contract
 
-Product Contract preservation: changed. R15 split into R15 and R16, and R17 to R23 added, with no change to the earlier R-IDs. R21 (PA standby) was added by the operator during planning. The document review narrowed R17 to the chain and the session (a permanent power request would stop bwpc from ever sleeping), added R22 (antenna-select grounds a quiet session after 30 min) and R23 (owned DAX and WSJT-X restarted on each chain, chosen by the operator after the review), aligned R9 with the 75auto readiness check, and moved AetherSDR before DAX in F1 and R3, because DAX binds to the GUI client. The new rules come from the plan-time research (programs that outlive an idle shutdown, a frozen 75auto, Modern Standby under a locked screen, the antenna-mode lock, the stop latch) and were confirmed by the operator before this write.
+Product Contract preservation: changed. R15 split into R15 and R16, and R17 to R23 added, with no change to the earlier R-IDs. R21 (PA standby) was added by the operator during planning. The document review narrowed R17 to the chain and the session (a permanent power request would stop bwpc from ever sleeping), added R22 (antenna-select grounds a quiet session after 30 min) and R23 (owned WSJT-X restarted on each chain, chosen by the operator after the review), aligned R9 with the 75auto readiness check, and moved AetherSDR before the other programs in F1 and R3. The new rules come from the plan-time research (programs that outlive an idle shutdown, a frozen 75auto, Modern Standby under a locked screen, the antenna-mode lock, the stop latch) and were confirmed by the operator before this write.
 
 ### Key Technical Decisions
 
@@ -200,14 +200,13 @@ Product Contract preservation: changed. R15 split into R15 and R16, and R17 to R
 
   A `wait_state` failure or timeout also adds the `<field>_error` sibling to the fault text, so the actuator's reason reaches `/state.chain.fault` and the page. The chain `cmd` steps to the actuator use `retain = false`, because winpc-power-bridge drops retained commands. Governs R4, R9, R11.
 - KTD5. **`ensure_program` is one idempotent action.** It takes the program name under `value`.
-  1. If the program runs and passes its check, the result is `ready`. This adopts a program that the operator started (R7). An owned program whose configuration sets `restart_owned = true` (DAX and WSJT-X) is ended and started again first (R23).
+  1. If the program runs and passes its check, the result is `ready`. This adopts a program that the operator started (R7). An owned program whose configuration sets `restart_owned = true` (WSJT-X) is ended and started again first (R23).
   2. If the program runs, fails its check and the actuator started it, the actuator ends it and starts it again (R18).
   3. If the program runs, fails its check and the actuator did not start it, the result is `failed`, with the reason `not started by the chain` (R8).
   4. If the program does not run, the actuator starts it and records it as owned.
 
   The actuator publishes `program_<name>=starting` as soon as it takes the command, in every branch. A program with check kind `none` (75auto) is started and recorded as owned, and its result is `ready` at once. The owned record (PID plus process start time) is saved in a file next to the agent configuration, so an agent restart keeps it. A PID whose start time does not match is not owned. The actuator starts programs outside its own Task Scheduler job, so a restart of the agent task does not end them. `stop_program` is refused while a 75auto session is active. Governs R7, R8, R18.
 - KTD6. **Ready checks are of three kinds, set per program in the actuator configuration.** `process` means that the process stays up for `settle_s`. `tcp` means that a TCP connect to an address succeeds and a probe line gets a reply that matches a pattern. `none` means no check.
-  - DAX: `process`, because DAX has no local API.
   - AetherSDR: `tcp` on its rigctl port (the station 75auto configuration uses `127.0.0.1:4532`), probe `f`, reply a number. A listener that answers `RPRT` with an error means that AetherSDR has no radio connection, for example because another client holds the last GUI client slot (AE3).
   - WSJT-X: `process`, because 75auto binds the WSJT-X UDP port 2237 at session start (75auto `internal/driver/wsjtx/transport.go`). The session reaching `running` is the real proof.
   - 75auto: `none`. The chain then waits with `wait_status` on `hf/auto-op`, because 75auto publishes its slot at program start, before any session (75auto `cmd/75auto/main.go`).
@@ -217,7 +216,7 @@ Product Contract preservation: changed. R15 split into R15 and R16, and R17 to R
 - KTD8. **The session hold is a second hold source in powerseq, next to the antenna-mode `power_hold`.** It is active while the `hf/auto-op` `/state` has `session.state` `connecting` or `running`, and the last `/beat` or `/state` of `hf/auto-op` is younger than 30 s (75auto beats every 2 s during a session, per its contract). The hold is also active while `chain.state` is `running`, and for 30 min after it turns `ready` (the KTD10 window), so standby cannot fire under a start that the operator just asked for. An accepted `auto_start` counts as activity. When the hold ends, both idle clocks restart: the idle-shutdown clock like `holdEndedAt` for the antenna mode, and the standby baseline as if a watch had moved. `[[idle.watch]]` cannot express this, because it counts only changes. Governs R15, R16. (session-settled: user-approved, chosen over an idle watch on the session state: a session that stays `running` for hours would count as idle.)
 - KTD9. **powerseq refuses `auto_start` while the antenna mode is `storm` or `maintenance`.** It reads the mode from the `hf/ant-mode` `/state` that it already subscribes. The page also disables its Start in those modes and checks again before it sends the session start. Governs R19. (session-settled: user-approved, chosen over no check: somebody can be at the mast in maintenance.)
 - KTD10. **The requesting page sends the session start, within a time limit.** The `auto_start` command carries `{"requester": "<device id>"}` under `value`, and `/state.chain` echoes it. Only the page whose device id matches sends the signed `start_session`, and only within 30 min of its tap, which covers a cold start through a bwpc boot. It keeps that pending start in memory only, so an app restart drops it. Governs R1, R12a. (session-settled: user-approved, chosen over powerseq holding a command key: the key stays on the operator device.)
-- KTD11. **`/state.chain` is the progress and feedback record.** Fields: `state` (`running`, `ready`, `failed`), `step`, `fault`, `requester`, `ts`. A refused `auto_start` writes `state=failed` with its reason, so the page always gets an answer. The page maps step names to its rows, so the `[[auto_start]]` step names are the row ids (`station`, `bwpc`, `aethersdr`, `dax`, `wsjtx`, `75auto`). The page itself sets a last row, `session`, when it sends `start_session`, from the 75auto session state. A chain is not resumed after a powerseq restart. It is restored as `failed` with `interrupted by a powerseq restart`. Governs R3, R4.
+- KTD11. **`/state.chain` is the progress and feedback record.** Fields: `state` (`running`, `ready`, `failed`), `step`, `fault`, `requester`, `ts`. A refused `auto_start` writes `state=failed` with its reason, so the page always gets an answer. The page maps step names to its rows, so the `[[auto_start]]` step names are the row ids (`station`, `bwpc`, `aethersdr`, `wsjtx`, `75auto`). The page itself sets a last row, `session`, when it sends `start_session`, from the 75auto session state. A chain is not resumed after a powerseq restart. It is restored as `failed` with `interrupted by a powerseq restart`. Governs R3, R4.
 - KTD12. **75auto gets `start_session` and `end_session` as remote actions.** `start_session` takes `{"rule_set", "mode"}` under `value` and calls the same `App.Start` path as the window, with `Source: live` and the stored level and globals, like `AutoStart`. `end_session` calls `App.End`. Both follow the `operate` rule and the time window of `internal/remote/command.go`. `start_session` refuses with `busy` while a session is open, latched or not (R20). A start in `auto` mode is allowed, which differs on purpose from `AutoStart`, which never starts in `auto`. The `docs/known-issues.md` decision record covers this. A remote start counts as presence for the gate. Governs R12, R20.
 - KTD13. **75auto publishes its start options on `/state`.** A new `start` object carries the rule-set names from the `[rules]` folder and the stored last choice (rule set and mode). The page uses it for R2. Governs R2.
 
@@ -239,7 +238,7 @@ sequenceDiagram
   S->>S: startup or wake if phase idle/standby (KTD3)
   S->>W: wait_status power/shack-pc online
   S->>W: wol + poke (bwpc step)
-  loop aethersdr, dax, wsjtx, 75auto
+  loop aethersdr, wsjtx, 75auto
     S->>W: /cmd ensure_program {value: name}
     W-->>S: /state program_<name> = ready
   end
@@ -281,7 +280,7 @@ flowchart TB
 
 ### Assumptions
 
-- The standalone DAX of SmartSDR for Windows streams audio without a SmartSDR window, and AetherSDR answers rigctl on its configured port. U6 checks both on bwpc.
+- AetherSDR gives WSJT-X TCI audio and CAT on 127.0.0.1:50001 without a SmartSDR window, and it answers rigctl on its configured port. U6 checks both on bwpc.
 - A Windows power request keeps bwpc out of Modern Standby while the screen is locked (KTD7). U6 checks it.
 - The live 75auto configuration on bwpc has `[remote] commands = "operate"` and `[start] auto_start = false`. The `75auto-station` copy has no `[remote]` section, so the live file is authoritative.
 
@@ -360,10 +359,10 @@ Waits on: nothing. It can be built in parallel with PR1.
   7. Keep the existing `sleep` action and its guard unchanged.
 - **Patterns to follow:** `internal/winpower` build tags and stubs, the `cmdErr` refusal pattern and `TestRetainedCmdIgnored` in `internal/bridge`.
 - **Test scenarios:**
-  - `ensure_program dax` with DAX not running: start is called, the record says owned, and `/state` goes `starting` then `ready` after `settle_s`.
+  - `ensure_program wsjtx` with WSJT-X not running: start is called, the record says owned, and `/state` goes `starting` then `ready` after `settle_s`.
   - Covers AE2. `ensure_program wsjtx` with a WSJT-X that the operator started and that passes its check: no start, `ready`, not owned.
-  - Covers AE8. `ensure_program dax` with an owned DAX and `restart_owned = true`: end, start again, then `ready`.
-  - `ensure_program dax` with an operator-started DAX and `restart_owned = true`: no restart, `ready` if the check passes.
+  - Covers AE8. `ensure_program wsjtx` with an owned WSJT-X and `restart_owned = true`: end, start again, then `ready`.
+  - `ensure_program wsjtx` with an operator-started WSJT-X and `restart_owned = true`: no restart, `ready` if the check passes.
   - An owned program without `restart_owned` that fails its check: end, start again, then `ready` (R18).
   - `ensure_program aethersdr` with a foreign AetherSDR whose rigctl port does not answer: `failed` with `not started by the chain`, and no end is called.
   - `tcp` check: a listener on the address gives `ready`, and a closed port gives `failed` after the timeout.
@@ -396,7 +395,7 @@ Waits on: nothing. It can be built in parallel with PR1.
   3. Add the session hold next to `powerHold` in `idleDecision`, with the chain window and the restart of both idle clocks at hold end (KTD8).
   4. Add the `fresh` and `fail_value` options to `wait_state`, and the `<field>_error` sibling to the observed text (KTD4).
   5. Persist `chain`, and restore a `running` chain as `failed` with the restart reason.
-  6. Ship an example `[[auto_start]]` list: the `wol` step with `poke` (name `bwpc`), wait for `power/shack-pc` online, then for AetherSDR, DAX, WSJT-X and 75auto an `ensure_program` with `retain = false` plus a `wait_state` with `fresh` and `fail_value`, then `wait_status hf/auto-op`.
+  6. Ship an example `[[auto_start]]` list: the `wol` step with `poke` (name `bwpc`), wait for `power/shack-pc` online, then for AetherSDR, WSJT-X and 75auto an `ensure_program` with `retain = false` plus a `wait_state` with `fresh` and `fail_value`, then `wait_status hf/auto-op`.
   7. Add the PA standby on the session start edge (KTD14) next to the session hold, with `hf/pa` as a configured slot.
   8. Add migration 2, which appends the example list and the slot keys to the live configuration. The migration must stay idempotent and pass `powerseq -check`.
 - **Patterns to follow:** `SetAntMode`, `powerHold` and `holdEndedAt` in `seq.go`, the step validation of `[[standby]]` in `config.go`, and migration 1 in `migrate-config.sh`.
@@ -478,7 +477,7 @@ Waits on: PR1 and PR2, merge order, and both deployed (75auto on bwpc, powerseq 
 - **Requirements:** R13, R22. KTD1, KTD15.
 - **Dependencies:** U1, U2, U3.
 - **Files:**
-  - `stationportal/internal/inventory/inventory.toml` (bwpc role and software: DAX, AetherSDR, WSJT-X as managed by winpc-power-bridge; the winpc-power-bridge note)
+  - `stationportal/internal/inventory/inventory.toml` (bwpc role and software: AetherSDR, WSJT-X as managed by winpc-power-bridge; the winpc-power-bridge note)
   - `antennaselect/config.example.toml` (`auto-op` in the `[idle].hold_slots` example) and the live `/etc/antenna-select/config.toml` on scmino, which is device-owned and needs a manual edit at deploy
   - `CLAUDE.md` (the rows of `powerseq`, `winpc-power-bridge` and `muehle/power/shack-pc`)
 - **Approach:** no new slot is added, so `hf_console/lib/store/station_hosts.dart` does not change. The live antenna-select change waits until 75auto with KTD15 runs on bwpc.
@@ -498,11 +497,11 @@ Waits on: PR1 and PR2, merge order, and both deployed (75auto on bwpc, powerseq 
 - **Test expectation:** none, because the unit changes no code. The bench checks below are its proof.
 - **Verification:**
   1. A reboot of bwpc ends at a locked desktop with winpc-power-bridge online, and no chain program running (AE5).
-  2. With AetherSDR started first and no SmartSDR window, `ensure_program` for DAX gives DAX audio in WSJT-X without manual action.
+  2. With AetherSDR started first and no SmartSDR window, `ensure_program` for WSJT-X gives TCI audio in WSJT-X without manual action.
   3. AetherSDR answers rigctl `f` with a frequency, and WSJT-X CAT works through it. With another client in the last GUI client slot, the probe fails.
   4. During a session with the screen locked, bwpc stays out of Modern Standby for 90 min. After the session ends, bwpc sleeps again.
   5. A restart of the winpc-power-bridge task leaves the owned programs running.
-  6. With chain-owned DAX and WSJT-X running, a power cycle of the FLEX, then a Start: both restart, and WSJT-X gets DAX audio (AE8).
+  6. With a chain-owned WSJT-X running, a power cycle of the FLEX, then a Start: WSJT-X restarts, and it gets TCI audio again (AE8).
   7. A 45 min `observe` session keeps the antenna connected (R22).
   8. A shut-down bwpc wakes from the `pc-boot` step (wake-on-LAN). If it does not, record the gap in `docs/known-issues.md`.
   9. A full 75AUTO Start from a cold station ends in a running session (AE1), and the PA is in standby (AE11).
