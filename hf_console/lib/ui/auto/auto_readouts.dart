@@ -199,7 +199,7 @@ class _TransmitReadout extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text('TRANSMIT · SLOT', maxLines: 1, style: _labelStyle()),
+              Text('TRANSMIT', maxLines: 1, style: _labelStyle()),
               FittedBox(
                 fit: BoxFit.scaleDown,
                 alignment: Alignment.centerLeft,

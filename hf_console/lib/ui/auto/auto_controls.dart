@@ -13,7 +13,7 @@
 /// Each tap sends one signed command (`auto_commands.dart`). There are no
 /// dialogs: the gate of 75auto and the pending id are the interlocks.
 ///
-/// - Stop TX is filled red while 75auto transmits, and a plain button
+/// - Stop TX has a red frame while 75auto transmits, and the plain frame
 ///   otherwise. When it is off, it has the disabled colors. It stays on
 ///   with stale data and never locks. Its second line shows the
 ///   reason when it is off, else what became of the last stop.
@@ -36,9 +36,6 @@ import 'auto_live.dart';
 /// The height of the buttons of the TARGET and MODE cards, and of Stop TX.
 const autoButtonRowHeight = 48.0;
 const autoStopHeight = 60.0;
-
-/// The width of Arm CQ next to Stop TX.
-const autoArmWidth = 84.0;
 
 /// The title strip of the TARGET and MODE cards.
 const autoRowTitleHeight = 16.0;
@@ -68,7 +65,8 @@ class AutoControls extends StatelessWidget {
         const SizedBox(
           height: autoStopHeight,
           child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-            SizedBox(width: autoArmWidth, child: _ArmCq()),
+            // Arm CQ and Stop TX share the row in equal halves.
+            Expanded(child: _ArmCq()),
             SizedBox(width: 4),
             Expanded(child: _StopTx()),
           ]),
@@ -320,14 +318,12 @@ class _StopTx extends StatelessWidget {
       final on = gate.stop == null;
       final line = cmd.stopLine(gate, clock.now());
       final hot = on && transmitting;
-      // Red only while 75auto transmits. Idle, the button is a plain
+      // While 75auto transmits, only the frame turns red: a filled red
+      // button is too loud for the car screen. Idle, the button is a plain
       // button; off, it has the disabled colors of every button.
-      final Color label = hot
-          ? AppTheme.activeButtonText
-          : on
-              ? AppTheme.txt
-              : AppTheme.txtFaint;
-      final style = AppTheme.actionButton(dangerActive: hot).copyWith(
+      final Color label = on ? AppTheme.txt : AppTheme.txtFaint;
+      final style = AppTheme.actionButton().copyWith(
+        side: WidgetStatePropertyAll(BorderSide(width: hot ? 2 : 1.4, color: hot ? AppTheme.red : AppTheme.cardLineHi)),
         minimumSize: const WidgetStatePropertyAll(Size(48, autoStopHeight)),
         padding: const WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: 8, vertical: 2)),
       );
@@ -353,7 +349,7 @@ class _StopTx extends StatelessWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: AppTheme.mono(10,
-                          color: hot ? AppTheme.activeButtonText : line.color,
+                          color: line.color,
                           weight: FontWeight.w600)
                       .copyWith(height: 1.2)),
           ],
