@@ -359,7 +359,7 @@ void main() {
       await _pumpAuto(tester, doc: doc);
       expect(_text(tester, 'auto-dx-call'), 'VK9XQ');
       expect(_text(tester, 'auto-dx-name'), 'Ana Example');
-      expect(_text(tester, 'auto-dx-km'), '11 234 km');
+      expect(_text(tester, 'auto-dx-km'), '11234km');
       // No proposal strip without a proposal, and no picture without a URL.
       expect(find.byKey(const ValueKey('auto-proposal')), findsNothing);
       expect(find.byKey(const ValueKey('auto-dx-image')), findsNothing);

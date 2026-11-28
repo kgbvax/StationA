@@ -134,7 +134,7 @@ class _Station extends StatelessWidget {
   Widget build(BuildContext context) {
     final url = image ?? '';
     final hasImage = url.startsWith('https://') || url.startsWith('http://');
-    final kmText = km == null || km! <= 0 ? null : '${_thousands(km!)} km';
+    final kmText = km == null || km! <= 0 ? null : '${km}km';
     final text = Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
       if ((name ?? '').isNotEmpty)
         Text(name!,
@@ -265,17 +265,6 @@ class _Latched extends StatelessWidget {
       ]),
     );
   }
-}
-
-/// 11234 → "11 234".
-String _thousands(int n) {
-  final s = n.toString();
-  final b = StringBuffer();
-  for (var i = 0; i < s.length; i++) {
-    if (i > 0 && (s.length - i) % 3 == 0) b.write(' ');
-    b.write(s[i]);
-  }
-  return b.toString();
 }
 
 /// The QRZ picture. On Android and iOS the picture is kept in a file cache
