@@ -237,6 +237,29 @@ void main() {
     });
   });
 
+  group('stage chips', () {
+    Color? border(WidgetTester tester, String label) {
+      final box = tester.widget<Container>(
+          find.ancestor(of: find.text(label), matching: find.byType(Container)).first);
+      return ((box.decoration as BoxDecoration).border as Border).top.color;
+    }
+
+    testWidgets('a stage the QSO skips stays dark, the stages seen are green', (tester) async {
+      await _pumpAuto(tester);
+      // R+RPT is the stage now; CALL and RPT were not seen on this page.
+      expect(border(tester, 'CALL'), AppTheme.cardLineHi);
+      expect(border(tester, 'RPT'), AppTheme.cardLineHi);
+    });
+
+    testWidgets('the stage LOG shows green, not lit', (tester) async {
+      final doc = busyAutoOpDoc();
+      (doc['station'] as Map<String, dynamic>)['qso_stage'] = 'LOG';
+      await _pumpAuto(tester, doc: doc);
+      expect(find.byKey(const ValueKey('auto-stage-now')), findsNothing);
+      expect(border(tester, 'LOG'), AppTheme.green);
+    });
+  });
+
   group('band selector', () {
     testWidgets('values from the survey, no counts, band colors, band order, and nothing off the table', (tester) async {
       final doc = busyAutoOpDoc();

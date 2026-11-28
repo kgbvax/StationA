@@ -28,6 +28,7 @@ import '../../store/auto_op.dart';
 import '../../store/bus_store.dart';
 import '../theme.dart';
 import 'auto_card.dart';
+import 'auto_live.dart';
 import 'auto_readouts.dart';
 import 'next_action_card.dart';
 
@@ -65,8 +66,6 @@ class DxCard extends StatelessWidget {
       value = call;
       color = AppTheme.accent;
     }
-    final stage = st?.qsoStage;
-    final now = stage == null ? -1 : qsoStages.indexOf(stage);
     final t = nextActionText(view);
 
     return AutoCard(
@@ -81,34 +80,39 @@ class DxCard extends StatelessWidget {
             FittedBox(
               fit: BoxFit.scaleDown,
               alignment: Alignment.centerLeft,
-              child: Text(value,
-                  key: const ValueKey('auto-dx-call'),
-                  maxLines: 1,
-                  style: AppTheme.mono(26, color: color, weight: FontWeight.w700).copyWith(height: 1.1)),
+              child: Text(
+                value,
+                key: const ValueKey('auto-dx-call'),
+                maxLines: 1,
+                style: AppTheme.mono(
+                  26,
+                  color: color,
+                  weight: FontWeight.w700,
+                ).copyWith(height: 1.1),
+              ),
             ),
             if (hasEntity)
-              Text(entity,
-                  key: const ValueKey('auto-dx-entity'),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: AppTheme.body(14, color: AppTheme.txtMute, weight: FontWeight.w600).copyWith(height: 1.25)),
+              Text(
+                entity,
+                key: const ValueKey('auto-dx-entity'),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: AppTheme.body(
+                  14,
+                  color: AppTheme.txtMute,
+                  weight: FontWeight.w600,
+                ).copyWith(height: 1.25),
+              ),
             const SizedBox(height: 3),
-            FittedBox(
-              fit: BoxFit.scaleDown,
-              alignment: Alignment.centerLeft,
-              child: Row(children: [
-                for (var i = 0; i < qsoStages.length; i++) ...[
-                  AutoStageChip(qsoStages[i], done: hasDx && now >= 0 && i < now, current: hasDx && i == now),
-                  const SizedBox(width: 3),
-                ],
-              ]),
-            ),
+            _StageChips(call: hasDx ? call : null, stage: st?.qsoStage),
             const SizedBox(height: 6),
             Expanded(
               child: hasDx
                   ? _Station(name: st?.dxName, image: st?.dxImage, km: st?.dxKm)
                   // The strip below has the text of a proposal or a latch.
-                  : (view?.latched == true || pending != null ? const SizedBox.shrink() : _Doing(text: t)),
+                  : (view?.latched == true || pending != null
+                        ? const SizedBox.shrink()
+                        : _Doing(text: t)),
             ),
             if (view?.latched == true)
               _Latched(text: t)
@@ -117,6 +121,62 @@ class DxCard extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// The QSO stage chips. A chip is green when its stage was seen for the
+/// current DX call, and lit for the stage now. 75auto names the stage of
+/// the latest message only, so a stage that the QSO skips (RPT when we
+/// answer a CQ) stays dark instead of green. LOG is the end, so it shows
+/// green. The chips fade while the data is not fresh: a retained stage of
+/// a session that has stopped is not a live stage.
+class _StageChips extends StatefulWidget {
+  final String? call;
+  final String? stage;
+
+  const _StageChips({required this.call, required this.stage});
+
+  @override
+  State<_StageChips> createState() => _StageChipsState();
+}
+
+class _StageChipsState extends State<_StageChips> {
+  final _seen = <int>{};
+  String? _seenFor;
+
+  @override
+  Widget build(BuildContext context) {
+    if (widget.call != _seenFor) {
+      _seen.clear();
+      _seenFor = widget.call;
+    }
+    final now = widget.call == null || widget.stage == null
+        ? -1
+        : qsoStages.indexOf(widget.stage!);
+    if (now >= 0) _seen.add(now);
+    return AutoTicker(
+      period: const Duration(seconds: 1),
+      builder: (context, live) {
+        final row = FittedBox(
+          fit: BoxFit.scaleDown,
+          alignment: Alignment.centerLeft,
+          child: Row(
+            children: [
+              for (var i = 0; i < qsoStages.length; i++) ...[
+                AutoStageChip(
+                  qsoStages[i],
+                  done:
+                      _seen.contains(i) && (i != now || qsoStages[i] == 'LOG'),
+                  current: i == now && qsoStages[i] != 'LOG',
+                ),
+                const SizedBox(width: 3),
+              ],
+            ],
+          ),
+        );
+        return live.live ? row : Opacity(opacity: 0.45, child: row);
+      },
     );
   }
 }
@@ -135,45 +195,68 @@ class _Station extends StatelessWidget {
     final url = image ?? '';
     final hasImage = url.startsWith('https://') || url.startsWith('http://');
     final kmText = km == null || km! <= 0 ? null : '${km}km';
-    final text = Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
-      if ((name ?? '').isNotEmpty)
-        Text(name!,
+    final text = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if ((name ?? '').isNotEmpty)
+          Text(
+            name!,
             key: const ValueKey('auto-dx-name'),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: AppTheme.body(14, weight: FontWeight.w600).copyWith(height: 1.25)),
-      if (kmText != null)
-        Text(kmText,
+            style: AppTheme.body(
+              14,
+              weight: FontWeight.w600,
+            ).copyWith(height: 1.25),
+          ),
+        if (kmText != null)
+          Text(
+            kmText,
             key: const ValueKey('auto-dx-km'),
             maxLines: 1,
-            style: AppTheme.mono(13, color: AppTheme.txtMute, weight: FontWeight.w600).copyWith(height: 1.3)),
-    ]);
-    return LayoutBuilder(builder: (context, c) {
-      // The picture takes the width of the card, the name and the distance
-      // go under it. Its height is what is left above them, at most 3/4 of
-      // the width. Below 32 dp the card shows no picture.
-      final textHeight = ((name ?? '').isNotEmpty ? 18.0 : 0) + (kmText != null ? 17.0 : 0) + 4;
-      final h = (c.maxHeight - textHeight).clamp(0.0, c.maxWidth * 0.75);
-      return SingleChildScrollView(
-        // Clipped, not overflowing, when a banner leaves little height.
-        physics: const NeverScrollableScrollPhysics(),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-          if (hasImage && h >= 32) ...[
-            ClipRRect(
-              borderRadius: BorderRadius.circular(3),
-              child: SizedBox(
-                key: const ValueKey('auto-dx-image'),
-                width: c.maxWidth,
-                height: h,
-                child: _QrzPicture(url),
-              ),
-            ),
-            const SizedBox(height: 4),
-          ],
-          text,
-        ]),
-      );
-    });
+            style: AppTheme.mono(
+              13,
+              color: AppTheme.txtMute,
+              weight: FontWeight.w600,
+            ).copyWith(height: 1.3),
+          ),
+      ],
+    );
+    return LayoutBuilder(
+      builder: (context, c) {
+        // The picture takes the width of the card, the name and the distance
+        // go under it. Its height is what is left above them, at most 3/4 of
+        // the width. Below 32 dp the card shows no picture.
+        final textHeight =
+            ((name ?? '').isNotEmpty ? 18.0 : 0) +
+            (kmText != null ? 17.0 : 0) +
+            4;
+        final h = (c.maxHeight - textHeight).clamp(0.0, c.maxWidth * 0.75);
+        return SingleChildScrollView(
+          // Clipped, not overflowing, when a banner leaves little height.
+          physics: const NeverScrollableScrollPhysics(),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (hasImage && h >= 32) ...[
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(3),
+                  child: SizedBox(
+                    key: const ValueKey('auto-dx-image'),
+                    width: c.maxWidth,
+                    height: h,
+                    child: _QrzPicture(url),
+                  ),
+                ),
+                const SizedBox(height: 4),
+              ],
+              text,
+            ],
+          ),
+        );
+      },
+    );
   }
 }
 
@@ -186,23 +269,41 @@ class _Doing extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(builder: (context, c) {
-      final lines = text.why.isEmpty ? 0 : ((c.maxHeight - 22) / 14).floor().clamp(0, 4);
-      return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        Text(text.what,
-            key: const ValueKey('auto-next-what'),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: AppTheme.display(17, color: text.whatColor, weight: FontWeight.w700, letterSpacing: 0.04)
-                .copyWith(height: 1.2)),
-        if (lines > 0)
-          Text(text.why,
-              key: const ValueKey('auto-next-why'),
-              maxLines: lines,
+    return LayoutBuilder(
+      builder: (context, c) {
+        final lines = text.why.isEmpty
+            ? 0
+            : ((c.maxHeight - 22) / 14).floor().clamp(0, 4);
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              text.what,
+              key: const ValueKey('auto-next-what'),
+              maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: AppTheme.body(11, color: AppTheme.txtMute).copyWith(height: 1.2)),
-      ]);
-    });
+              style: AppTheme.display(
+                17,
+                color: text.whatColor,
+                weight: FontWeight.w700,
+                letterSpacing: 0.04,
+              ).copyWith(height: 1.2),
+            ),
+            if (lines > 0)
+              Text(
+                text.why,
+                key: const ValueKey('auto-next-why'),
+                maxLines: lines,
+                overflow: TextOverflow.ellipsis,
+                style: AppTheme.body(
+                  11,
+                  color: AppTheme.txtMute,
+                ).copyWith(height: 1.2),
+              ),
+          ],
+        );
+      },
+    );
   }
 }
 
@@ -218,23 +319,40 @@ class _ProposalStrip extends StatelessWidget {
     return Container(
       key: const ValueKey('auto-proposal'),
       padding: const EdgeInsets.only(top: 4),
-      decoration: BoxDecoration(border: Border(top: BorderSide(color: AppTheme.cardLine))),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, mainAxisSize: MainAxisSize.min, children: [
-        Text(text.what,
+      decoration: BoxDecoration(
+        border: Border(top: BorderSide(color: AppTheme.cardLine)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            text.what,
             key: const ValueKey('auto-next-what'),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: AppTheme.display(17, color: text.whatColor, weight: FontWeight.w700, letterSpacing: 0.04)
-                .copyWith(height: 1.2)),
-        if (text.why.isNotEmpty)
-          Text(text.why,
+            style: AppTheme.display(
+              17,
+              color: text.whatColor,
+              weight: FontWeight.w700,
+              letterSpacing: 0.04,
+            ).copyWith(height: 1.2),
+          ),
+          if (text.why.isNotEmpty)
+            Text(
+              text.why,
               key: const ValueKey('auto-next-why'),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: AppTheme.body(11, color: AppTheme.txtMute).copyWith(height: 1.2)),
-        const SizedBox(height: 4),
-        ProposalButtons(pending: pending),
-      ]),
+              style: AppTheme.body(
+                11,
+                color: AppTheme.txtMute,
+              ).copyWith(height: 1.2),
+            ),
+          const SizedBox(height: 4),
+          ProposalButtons(pending: pending),
+        ],
+      ),
     );
   }
 }
@@ -249,20 +367,39 @@ class _Latched extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.only(top: 4),
-      decoration: BoxDecoration(border: Border(top: BorderSide(color: AppTheme.blend(AppTheme.red, 0.6)))),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, mainAxisSize: MainAxisSize.min, children: [
-        Text(text.what,
+      decoration: BoxDecoration(
+        border: Border(
+          top: BorderSide(color: AppTheme.blend(AppTheme.red, 0.6)),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            text.what,
             key: const ValueKey('auto-next-what'),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: AppTheme.display(15, color: AppTheme.red, weight: FontWeight.w700).copyWith(height: 1.2)),
-        if (text.why.isNotEmpty)
-          Text(text.why,
+            style: AppTheme.display(
+              15,
+              color: AppTheme.red,
+              weight: FontWeight.w700,
+            ).copyWith(height: 1.2),
+          ),
+          if (text.why.isNotEmpty)
+            Text(
+              text.why,
               key: const ValueKey('auto-next-why'),
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
-              style: AppTheme.body(11, color: AppTheme.txtMute).copyWith(height: 1.2)),
-      ]),
+              style: AppTheme.body(
+                11,
+                color: AppTheme.txtMute,
+              ).copyWith(height: 1.2),
+            ),
+        ],
+      ),
     );
   }
 }
